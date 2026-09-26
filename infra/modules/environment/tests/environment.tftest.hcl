@@ -113,8 +113,13 @@ run "staging_is_isolated_and_minimal" {
   }
 
   assert {
-    condition     = toset(keys(google_project_iam_member.planner)) == toset(["roles/viewer", "roles/iam.securityReviewer"])
-    error_message = "Without a budget the planner is read-only: viewer and security reviewer only."
+    condition     = length(google_project_iam_member.planner) == 0 && google_project_iam_member.planner_role.role == google_project_iam_custom_role.planner.id
+    error_message = "Without a budget the planner holds only its custom read-only role."
+  }
+
+  assert {
+    condition     = length([for p in google_project_iam_custom_role.planner.permissions : p if startswith(p, "run.") || startswith(p, "datastore.") || startswith(p, "firebaseauth.")]) == 0
+    error_message = "Without Cloud Run, Firestore or Identity Platform the planner gets no permission on them."
   }
 
   assert {
@@ -158,8 +163,13 @@ run "prod_is_isolated_and_minimal" {
   }
 
   assert {
-    condition     = toset(keys(google_project_iam_member.planner)) == toset(["roles/viewer", "roles/iam.securityReviewer"])
-    error_message = "Without a budget the planner is read-only: viewer and security reviewer only."
+    condition     = length(google_project_iam_member.planner) == 0 && google_project_iam_member.planner_role.role == google_project_iam_custom_role.planner.id
+    error_message = "Without a budget the planner holds only its custom read-only role."
+  }
+
+  assert {
+    condition     = length([for p in google_project_iam_custom_role.planner.permissions : p if startswith(p, "run.") || startswith(p, "datastore.") || startswith(p, "firebaseauth.")]) == 0
+    error_message = "Without Cloud Run, Firestore or Identity Platform the planner gets no permission on them."
   }
 
   assert {
@@ -242,8 +252,69 @@ run "dev_gets_firestore_and_auth" {
   }
 
   assert {
-    condition     = toset(keys(google_project_iam_member.planner)) == toset(["roles/viewer", "roles/iam.securityReviewer"])
-    error_message = "Firestore and Identity Platform must not widen the planner's roles."
+    condition     = length(google_project_iam_member.planner) == 0 && google_project_iam_member.planner_role.role == google_project_iam_custom_role.planner.id
+    error_message = "Firestore and Identity Platform must not give the planner another role."
+  }
+
+  assert {
+    condition = alltrue([for p in ["datastore.databases.get", "datastore.databases.getMetadata", "firebaseauth.configs.get", "run.services.get", "run.services.getIamPolicy"] :
+    contains(google_project_iam_custom_role.planner.permissions, p)])
+    error_message = "The planner must be able to read the Firestore database, Identity Platform config and Cloud Run metadata."
+  }
+}
+
+# The planner's custom role (ADR-0015) reads metadata and IAM policies only, never data, and
+# replaces roles/viewer and roles/iam.securityReviewer.
+run "planner_is_least_privilege" {
+  command = apply
+
+  variables {
+    environment            = "dev"
+    deploy_apps            = true
+    deletion_protection    = false
+    firestore_and_auth     = true
+    terraform_state_bucket = "test-state-bucket"
+  }
+
+  assert {
+    condition = !anytrue([for r in concat(keys(google_project_iam_member.planner), [google_project_iam_member.planner_role.role]) :
+    contains(["roles/viewer", "roles/iam.securityReviewer", "roles/editor", "roles/owner"], r)])
+    error_message = "The planner must not hold roles/viewer, roles/iam.securityReviewer or any basic role."
+  }
+
+  assert {
+    condition     = google_project_iam_member.planner_role.member == "serviceAccount:${google_service_account.planner.email}" && google_project_iam_member.planner_role.role == google_project_iam_custom_role.planner.id
+    error_message = "The planner must hold its custom role."
+  }
+
+  assert {
+    condition     = alltrue([for p in google_project_iam_custom_role.planner.permissions : can(regex("\\.(get|list|getIamPolicy|getMetadata)$", p))])
+    error_message = "Every planner permission must be a read of metadata or IAM policy: no create, update, delete, setIamPolicy, use or download."
+  }
+
+  assert {
+    condition     = length([for p in google_project_iam_custom_role.planner.permissions : p if can(regex("^datastore\\.(entities|indexes|statistics)\\.", p))]) == 0
+    error_message = "The planner must not read or list Firestore documents."
+  }
+
+  assert {
+    condition     = length([for p in google_project_iam_custom_role.planner.permissions : p if can(regex("^(firebaseauth\\.users|identitytoolkit\\.)", p))]) == 0
+    error_message = "The planner must not read Identity Platform users or tenants."
+  }
+
+  assert {
+    condition     = length([for p in google_project_iam_custom_role.planner.permissions : p if can(regex("^(logging|secretmanager)\\.|downloadArtifacts$", p))]) == 0
+    error_message = "The planner must not read logs, secrets or container images."
+  }
+
+  assert {
+    condition     = length(google_project_iam_custom_role.planner.permissions) <= 25
+    error_message = "The planner role must stay small; review ADR-0015 before widening it."
+  }
+
+  assert {
+    condition     = google_storage_bucket_iam_member.planner_state[0].role == "roles/storage.objectViewer"
+    error_message = "The planner reads the state bucket only; it can never write or lock the state."
   }
 }
 

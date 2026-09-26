@@ -33,6 +33,38 @@ locals {
 
   deployer_member = "serviceAccount:${google_service_account.deployer.email}"
 
+  # What `terraform plan` reads to refresh each managed resource type (ADR-0015). Only get, list and
+  # getIamPolicy on metadata; never data. Grouped so each environment gets only what it manages.
+  planner_permissions = {
+    base = [
+      "artifactregistry.repositories.get",          # Artifact Registry repository
+      "artifactregistry.repositories.getIamPolicy", # its deployer binding
+      "iam.roles.get",                              # this custom role
+      "iam.serviceAccounts.get",                    # deployer, planner and runtime identities
+      "iam.serviceAccounts.getIamPolicy",           # their federation and act-as bindings
+      "iam.workloadIdentityPoolProviders.get",      # GitHub provider
+      "iam.workloadIdentityPools.get",              # Workload Identity pool
+      "resourcemanager.projects.get",               # the project itself
+      "resourcemanager.projects.getIamPolicy",      # project-level bindings
+      "serviceusage.services.get",                  # enabled APIs
+      "serviceusage.services.list",                 # enabled APIs
+      "storage.buckets.get",                        # state bucket, read by the backend
+      "storage.buckets.getIamPolicy",               # the planner's state bucket binding
+    ]
+    cloud_run = [
+      "run.services.get",          # web, api and worker
+      "run.services.getIamPolicy", # their invoker and developer bindings
+    ]
+    firestore_and_auth = [
+      "datastore.databases.get",         # Firestore database metadata, never documents
+      "datastore.databases.getMetadata", # Firestore database metadata, never documents
+      "firebaseauth.configs.get",        # Identity Platform configuration, never users
+    ]
+    budget = [
+      "monitoring.notificationChannels.get", # budget alert channels
+    ]
+  }
+
   # The deployable applications of the repository. Only the web and API are public; the worker
   # accepts requests from the deployer alone, which it needs for health checks.
   apps = {
@@ -125,12 +157,33 @@ resource "google_service_account_iam_member" "planner_federation" {
   member             = "${module.github_oidc.ref_principal_set}refs/heads/main"
 }
 
+# The planner's only project role (ADR-0015). It can read the metadata and IAM policies of the
+# resources this module manages, and nothing else: no Firestore documents, no Identity Platform
+# users, no logs, no images, no secrets and no writes.
+resource "google_project_iam_custom_role" "planner" {
+  project     = var.project_id
+  role_id     = "melonofficeTerraformPlanner"
+  title       = "MelonOffice Terraform planner"
+  description = "Read-only metadata and IAM policies of the resources Terraform manages, for terraform plan."
+  permissions = sort(concat(
+    local.planner_permissions.base,
+    var.deploy_apps ? local.planner_permissions.cloud_run : [],
+    var.firestore_and_auth ? local.planner_permissions.firestore_and_auth : [],
+    local.budget_enabled ? local.planner_permissions.budget : [],
+  ))
+
+  depends_on = [module.services]
+}
+
+resource "google_project_iam_member" "planner_role" {
+  project = var.project_id
+  role    = google_project_iam_custom_role.planner.id
+  member  = "serviceAccount:${google_service_account.planner.email}"
+}
+
 resource "google_project_iam_member" "planner" {
   # With a budget, the provider bills API quota to the project, which needs serviceusage.services.use.
-  for_each = toset(concat(
-    ["roles/viewer", "roles/iam.securityReviewer"],
-    local.budget_enabled ? ["roles/serviceusage.serviceUsageConsumer"] : [],
-  ))
+  for_each = toset(local.budget_enabled ? ["roles/serviceusage.serviceUsageConsumer"] : [])
 
   project = var.project_id
   role    = each.value
