@@ -37,19 +37,20 @@ locals {
   # getIamPolicy on metadata; never data. Grouped so each environment gets only what it manages.
   planner_permissions = {
     base = [
-      "artifactregistry.repositories.get",          # Artifact Registry repository
-      "artifactregistry.repositories.getIamPolicy", # its deployer binding
-      "iam.roles.get",                              # this custom role
-      "iam.serviceAccounts.get",                    # deployer, planner and runtime identities
-      "iam.serviceAccounts.getIamPolicy",           # their federation and act-as bindings
-      "iam.workloadIdentityPoolProviders.get",      # GitHub provider
-      "iam.workloadIdentityPools.get",              # Workload Identity pool
-      "resourcemanager.projects.get",               # the project itself
-      "resourcemanager.projects.getIamPolicy",      # project-level bindings
-      "serviceusage.services.get",                  # enabled APIs
-      "serviceusage.services.list",                 # enabled APIs
-      "storage.buckets.get",                        # state bucket, read by the backend
-      "storage.buckets.getIamPolicy",               # the planner's state bucket binding
+      "artifactregistry.repositories.get",             # Artifact Registry repository
+      "artifactregistry.repositories.getIamPolicy",    # its deployer binding
+      "iam.roles.get",                                 # this custom role
+      "iam.serviceAccounts.get",                       # deployer, planner and runtime identities
+      "iam.serviceAccounts.getIamPolicy",              # their federation and act-as bindings
+      "iam.workloadIdentityPoolProviders.get",         # GitHub provider
+      "iam.workloadIdentityPools.get",                 # Workload Identity pool
+      "iam.workloadIdentityPools.getAttestationRules", # read by the provider when refreshing the pool
+      "resourcemanager.projects.get",                  # the project itself
+      "resourcemanager.projects.getIamPolicy",         # project-level bindings
+      "serviceusage.services.get",                     # enabled APIs
+      "serviceusage.services.list",                    # enabled APIs
+      "storage.buckets.get",                           # state bucket, read by the backend
+      "storage.buckets.getIamPolicy",                  # the planner's state bucket binding
     ]
     cloud_run = [
       "run.services.get",          # web, api and worker

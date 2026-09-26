@@ -288,7 +288,7 @@ run "planner_is_least_privilege" {
   }
 
   assert {
-    condition     = alltrue([for p in google_project_iam_custom_role.planner.permissions : can(regex("\\.(get|list|getIamPolicy|getMetadata)$", p))])
+    condition     = alltrue([for p in google_project_iam_custom_role.planner.permissions : can(regex("\\.(get|list|getIamPolicy|getMetadata|getAttestationRules)$", p))])
     error_message = "Every planner permission must be a read of metadata or IAM policy: no create, update, delete, setIamPolicy, use or download."
   }
 
