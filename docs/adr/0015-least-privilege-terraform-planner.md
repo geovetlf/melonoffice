@@ -23,28 +23,29 @@ A security review on 2026-09-26 confirmed in Cloud Shell that `roles/viewer` (6,
 ## Decision
 
 - **The planner loses `roles/viewer` and `roles/iam.securityReviewer`** in every environment.
-- **It gets one custom project role, `melonofficeTerraformPlanner`.** The role holds only `get`, `list`, `getMetadata` and `getIamPolicy` permissions on the resource types this module manages.
+- **It gets one custom project role, `melonofficeTerraformPlanner`.** The role holds only `get`, `list`, `getMetadata`, `getAttestationRules` and `getIamPolicy` permissions on the resource types this module manages.
   - Each environment gets only the groups it needs.
-  - Dev gets 18 permissions.
-  - Staging and prod, with no Cloud Run, Firestore or Identity Platform, get 13.
+  - Dev gets 19 permissions.
+  - Staging and prod, with no Cloud Run, Firestore or Identity Platform, get 14.
 
-| Permission                                                               | Why plan needs it                                              | Group                          |
-| ------------------------------------------------------------------------ | -------------------------------------------------------------- | ------------------------------ |
-| `resourcemanager.projects.get`                                           | Read the project                                               | all                            |
-| `resourcemanager.projects.getIamPolicy`                                  | Refresh project-level IAM bindings                             | all                            |
-| `serviceusage.services.get`, `serviceusage.services.list`                | Refresh the enabled APIs                                       | all                            |
-| `artifactregistry.repositories.get`                                      | Refresh the image repository                                   | all                            |
-| `artifactregistry.repositories.getIamPolicy`                             | Refresh the deployer's writer binding                          | all                            |
-| `iam.workloadIdentityPools.get`, `iam.workloadIdentityPoolProviders.get` | Refresh the GitHub federation                                  | all                            |
-| `iam.serviceAccounts.get`                                                | Refresh the deployer, planner and runtime identities           | all                            |
-| `iam.serviceAccounts.getIamPolicy`                                       | Refresh their federation and act-as bindings                   | all                            |
-| `iam.roles.get`                                                          | Refresh this custom role                                       | all                            |
-| `storage.buckets.get`                                                    | Let the state backend read the bucket's metadata               | all                            |
-| `storage.buckets.getIamPolicy`                                           | Refresh the planner's state bucket binding                     | all                            |
-| `run.services.get`, `run.services.getIamPolicy`                          | Refresh the Cloud Run services and their IAM                   | only with `deploy_apps`        |
-| `datastore.databases.get`, `datastore.databases.getMetadata`             | Refresh the Firestore database's metadata, never its documents | only with `firestore_and_auth` |
-| `firebaseauth.configs.get`                                               | Refresh the Identity Platform configuration, never users       | only with `firestore_and_auth` |
-| `monitoring.notificationChannels.get`                                    | Refresh the budget alert channels                              | only with a budget             |
+| Permission                                                               | Why plan needs it                                                                                             | Group                          |
+| ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- | ------------------------------ |
+| `resourcemanager.projects.get`                                           | Read the project                                                                                              | all                            |
+| `resourcemanager.projects.getIamPolicy`                                  | Refresh project-level IAM bindings                                                                            | all                            |
+| `serviceusage.services.get`, `serviceusage.services.list`                | Refresh the enabled APIs                                                                                      | all                            |
+| `artifactregistry.repositories.get`                                      | Refresh the image repository                                                                                  | all                            |
+| `artifactregistry.repositories.getIamPolicy`                             | Refresh the deployer's writer binding                                                                         | all                            |
+| `iam.workloadIdentityPools.get`, `iam.workloadIdentityPoolProviders.get` | Refresh the GitHub federation                                                                                 | all                            |
+| `iam.workloadIdentityPools.getAttestationRules`                          | The provider reads the pool's attestation rules when refreshing it (found by CD's first plan after the apply) | all                            |
+| `iam.serviceAccounts.get`                                                | Refresh the deployer, planner and runtime identities                                                          | all                            |
+| `iam.serviceAccounts.getIamPolicy`                                       | Refresh their federation and act-as bindings                                                                  | all                            |
+| `iam.roles.get`                                                          | Refresh this custom role                                                                                      | all                            |
+| `storage.buckets.get`                                                    | Let the state backend read the bucket's metadata                                                              | all                            |
+| `storage.buckets.getIamPolicy`                                           | Refresh the planner's state bucket binding                                                                    | all                            |
+| `run.services.get`, `run.services.getIamPolicy`                          | Refresh the Cloud Run services and their IAM                                                                  | only with `deploy_apps`        |
+| `datastore.databases.get`, `datastore.databases.getMetadata`             | Refresh the Firestore database's metadata, never its documents                                                | only with `firestore_and_auth` |
+| `firebaseauth.configs.get`                                               | Refresh the Identity Platform configuration, never users                                                      | only with `firestore_and_auth` |
+| `monitoring.notificationChannels.get`                                    | Refresh the budget alert channels                                                                             | only with a budget             |
 
 - **Unchanged:**
   - `roles/storage.objectViewer` on the state bucket only, to read the state; the planner can never write or lock it;
