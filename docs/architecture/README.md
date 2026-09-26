@@ -18,6 +18,7 @@ The MelonOffice architecture was defined in the **Phase 0 Architecture Plan (v0.
 | [0012](../adr/0012-dev-deployment-on-cloud-run.md)            | Phase 1B infrastructure and dev deployment on Cloud Run | D-5              |
 | [0013](../adr/0013-entitlements-core.md)                      | Entitlements core                                       | D-25, D-12, D-22 |
 | [0014](../adr/0014-firestore-and-identity-platform-in-dev.md) | Firestore and Identity Platform in dev                  | D-6              |
+| [0015](../adr/0015-least-privilege-terraform-planner.md)      | Least-privilege Terraform planner                       | Security review  |
 
 ## Current phase
 

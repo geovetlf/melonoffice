@@ -29,7 +29,7 @@ Each environment has its own Google Cloud project and its own Terraform state. N
 
 - No service-account keys exist. GitHub Actions authenticates through Workload Identity Federation, and people use `gcloud` login.
 - `github-deployer` can be used only by jobs in the matching GitHub environment. It can push images and roll out revisions of the three services.
-- `github-planner` can be used only from `main`. It is read-only and runs `terraform plan`.
+- `github-planner` can be used only from `main`. It runs `terraform plan` with one custom role that reads only the metadata and IAM policies of the managed resources: no Firestore documents, Identity Platform users, logs, images or secrets ([ADR-0015](../adr/0015-least-privilege-terraform-planner.md)). A new resource type needs its read permission added to that role.
 - The worker is private. Only the deployer can call it, for its health check.
 - Terraform is applied by the owner, never by CI.
 

@@ -9,7 +9,7 @@
 - **Store:** Firestore in Native mode, as the project's `(default)` database in the environment's region. No Cloud SQL.
 - **Identity:** Identity Platform, Google Cloud's managed sign-in. No third-party auth provider. It starts with email and password only, with unique emails. MFA and other sign-in providers are added when the auth work needs them.
 - **Only in dev.** The `environment` module creates both only when `firestore_and_auth = true`, which only `infra/envs/dev` sets. `check-environments.sh` fails CI if staging or production set it.
-- **Access.** Only the API's runtime identity gets `roles/datastore.user`. The worker, the web app, the deployer and the planner get no new role.
+- **Access.** Only the API's runtime identity gets `roles/datastore.user`. The worker, the web app and the deployer get no new role. The planner reads only the database's metadata and the Identity Platform configuration ([ADR-0015](0015-least-privilege-terraform-planner.md)).
 - **No Firebase project and no client rules yet.** The database is reached only from the API with its own identity, so no client can read it directly.
 
 ## Consequences

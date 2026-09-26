@@ -14,7 +14,7 @@
   - The worker accepts only authenticated calls, from the deployer identity for health checks.
 - **Authentication from GitHub.** GitHub Actions uses Workload Identity Federation. No service-account key is created or stored anywhere. Each environment's pool accepts only tokens from this repository. There are two service accounts:
   - `github-deployer` can be used only by jobs running in the matching GitHub environment. It can push images and roll out new revisions of the three services, nothing else.
-  - `github-planner` can be used only from the `main` branch. It is read-only, for `terraform plan`.
+  - `github-planner` can be used only from the `main` branch. It is read-only, for `terraform plan`. Its permissions are narrowed to a custom role in [ADR-0015](0015-least-privilege-terraform-planner.md).
 - **Who changes what.**
   - Infrastructure is applied by the owner with short-lived local credentials (`gcloud auth application-default login`).
   - CD never applies Terraform. It only rolls out new images with `gcloud run services update`, which is why Terraform ignores image changes on existing services.
