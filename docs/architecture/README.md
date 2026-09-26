@@ -19,7 +19,8 @@ The MelonOffice architecture was defined in the **Phase 0 Architecture Plan (v0.
 | [0013](../adr/0013-entitlements-core.md)                      | Entitlements core                                       | D-25, D-12, D-22 |
 | [0014](../adr/0014-firestore-and-identity-platform-in-dev.md) | Firestore and Identity Platform in dev                  | D-6              |
 | [0015](../adr/0015-least-privilege-terraform-planner.md)      | Least-privilege Terraform planner                       | Security review  |
+| [0016](../adr/0016-auth-and-identity-foundation.md)           | Auth and identity foundation                            | D-6, D-25        |
 
 ## Current phase
 
-Phase 2, first part: the entitlements core in [`packages/entitlements`](../../packages/entitlements). The Phase 1B infrastructure code is in [`infra`](../../infra); how to apply it and deploy dev is in [`../infrastructure`](../infrastructure/README.md).
+Phase 2: the entitlements core in [`packages/entitlements`](../../packages/entitlements) and, in Phase 2A, auth and identity in [`packages/auth`](../../packages/auth). The Phase 1B infrastructure code is in [`infra`](../../infra); how to apply it and deploy dev is in [`../infrastructure`](../infrastructure/README.md).

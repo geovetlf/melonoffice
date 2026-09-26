@@ -7,7 +7,7 @@ import tseslint from 'typescript-eslint';
 
 /** Server-only modules that browser code must never import. */
 const SERVER_ONLY = [
-  { group: ['@melonoffice/observability'], message: 'Server-only package.' },
+  { group: ['@melonoffice/observability', '@melonoffice/auth'], message: 'Server-only package.' },
   { group: ['hono', 'hono/*', '@hono/*'], message: 'Server-only dependency.' },
   { group: ['node:*'], message: 'Node built-ins are not available in the browser.' },
 ];
@@ -81,7 +81,7 @@ export default tseslint.config(
   },
   {
     // Server-side shared packages never depend on applications.
-    files: ['packages/observability/src/**', 'packages/config/**'],
+    files: ['packages/observability/src/**', 'packages/auth/src/**', 'packages/config/**'],
     rules: restrictImports(APPS),
   },
   {
