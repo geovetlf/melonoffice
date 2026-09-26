@@ -1,0 +1,23 @@
+{
+  "name": "@melonoffice/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/server.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@hono/node-server": "2.1.1",
+    "@melonoffice/observability": "workspace:*",
+    "hono": "4.13.9"
+  },
+  "devDependencies": {
+    "@melonoffice/config": "workspace:*"
+  }
+}

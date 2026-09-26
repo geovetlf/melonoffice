@@ -6,7 +6,7 @@ This repository is private and proprietary. See [LICENSE](LICENSE).
 
 ## Status
 
-Foundation stage. The architecture is defined in Phase 0 and recorded as decision records in [`docs/adr`](docs/adr).
+Foundation stage (Phase 1A). The architecture is defined in Phase 0 and recorded as decision records in [`docs/adr`](docs/adr). See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, commands and the architecture guardrails.
 
 ## Repository conventions
 
