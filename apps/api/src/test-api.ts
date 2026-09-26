@@ -8,6 +8,7 @@ import {
 import { Timestamp, type Firestore } from '@google-cloud/firestore';
 import type { Membership, Organization } from '@melonoffice/domain';
 import { createLogger } from '@melonoffice/observability';
+import type { AuthorizationService } from '@melonoffice/rbac';
 import { InMemoryTenancyStore, type TenancyStore } from '@melonoffice/tenancy';
 import { createApp } from './app.js';
 import { FirestoreTenancyStore, MEMBERSHIPS, ORGANIZATIONS } from './tenancy-firestore.js';
@@ -69,7 +70,7 @@ export const STORES: [string, () => Stores][] = [
   ...(emulatorHost ? [['firestore', firestoreStores] as [string, () => Stores]] : []),
 ];
 
-export function setupApp(stores: Stores) {
+export function setupApp(stores: Stores, authorization?: AuthorizationService) {
   const lines: string[] = [];
   const logger = createLogger({ service: 'api', sink: (line) => lines.push(line) });
   const app = createApp({
@@ -77,6 +78,7 @@ export function setupApp(stores: Stores) {
     version: 'test',
     auth: { verifier, users: stores.users },
     tenancy: stores.tenancy,
+    ...(authorization ? { authorization } : {}),
   });
   const as = (token: string, init: RequestInit = {}): RequestInit => ({
     ...init,

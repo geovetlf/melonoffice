@@ -24,8 +24,8 @@ export interface Membership {
   readonly userId: UserId;
   readonly status: MembershipStatus;
   /**
-   * The member's role, as a name only. What a role may do is RBAC's job and is not defined yet.
-   * Today the only role is `owner` (D-22: owner only).
+   * The member's role, as a name only. What a role may do is defined by RBAC (ADR-0019); a name
+   * RBAC does not know grants nothing. Today the only role is `owner` (D-22: owner only).
    */
   readonly role: MembershipRole;
   readonly createdAt: IsoTimestamp;
@@ -41,4 +41,5 @@ export interface Membership {
  */
 export type MembershipStatus = 'active' | 'suspended' | 'revoked';
 
-export type MembershipRole = 'owner';
+/** A role name. It is data, not a permission: RBAC maps known names to permissions. */
+export type MembershipRole = string;

@@ -6,6 +6,7 @@ import { isOrganizationId, membershipIdOf } from './ids.js';
 import { InMemoryTenancyStore } from './memory.js';
 import {
   createOrganization,
+  isResolvedTenant,
   listMyOrganizations,
   parseOrganizationName,
   resolveTenant,
@@ -149,6 +150,14 @@ describe('resolveTenant (cross-tenant)', () => {
       role: 'owner',
     });
     expect(Object.isFrozen(tenant)).toBe(true);
+  });
+
+  it('marks only the exact contexts it returns as resolved', async () => {
+    const { store, alice, orgA, orgB } = await setup();
+    const tenant = await resolveTenant(alice, orgA, store);
+    expect(isResolvedTenant(tenant)).toBe(true);
+    expect(isResolvedTenant({ ...tenant })).toBe(false);
+    expect(isResolvedTenant({ ...tenant, organizationId: orgB })).toBe(false);
   });
 
   it('user A in organization B, without a membership, is refused', async () => {

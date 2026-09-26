@@ -17,6 +17,7 @@
     "@hono/node-server": "2.1.1",
     "@melonoffice/auth": "workspace:*",
     "@melonoffice/observability": "workspace:*",
+    "@melonoffice/rbac": "workspace:*",
     "@melonoffice/tenancy": "workspace:*",
     "hono": "4.13.9"
   },

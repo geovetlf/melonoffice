@@ -8,7 +8,12 @@ import tseslint from 'typescript-eslint';
 /** Server-only modules that browser code must never import. */
 const SERVER_ONLY = [
   {
-    group: ['@melonoffice/observability', '@melonoffice/auth', '@melonoffice/tenancy'],
+    group: [
+      '@melonoffice/observability',
+      '@melonoffice/auth',
+      '@melonoffice/tenancy',
+      '@melonoffice/rbac',
+    ],
     message: 'Server-only package.',
   },
   { group: ['hono', 'hono/*', '@hono/*'], message: 'Server-only dependency.' },
@@ -88,6 +93,7 @@ export default tseslint.config(
       'packages/observability/src/**',
       'packages/auth/src/**',
       'packages/tenancy/src/**',
+      'packages/rbac/src/**',
       'packages/config/**',
     ],
     rules: restrictImports(APPS),

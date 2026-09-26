@@ -15,6 +15,7 @@ import {
   isOrganizationId,
   membershipIdOf,
   newOrganizationId,
+  OWNER_ROLE,
   TenancyError,
   type CreatedOrganization,
   type NewOrganization,
@@ -60,12 +61,12 @@ const MEMBERSHIP_STATUSES: readonly string[] = [
   'suspended',
   'revoked',
 ] satisfies MembershipStatus[];
-const ROLES: readonly string[] = ['owner'] satisfies MembershipRole[];
 
 const iso = (timestamp: FirestoreTimestamp): IsoTimestamp =>
   timestamp.toDate().toISOString() as IsoTimestamp;
 
-// Stored values are checked, not trusted: an unknown status or role is an error, never access.
+// Stored values are checked, not trusted: an unknown status is an error, never access. The role
+// is passed on as a name: RBAC alone interprets it, and a name it does not know grants nothing.
 function toOrganization(id: string, data: OrganizationDocument): Organization {
   if (!ORGANIZATION_STATUSES.includes(data.status)) throw new Error('invalid organization record');
   return Object.freeze({
@@ -79,7 +80,7 @@ function toOrganization(id: string, data: OrganizationDocument): Organization {
 }
 
 function toMembership(id: string, data: MembershipDocument): Membership {
-  if (!MEMBERSHIP_STATUSES.includes(data.status) || !ROLES.includes(data.role)) {
+  if (!MEMBERSHIP_STATUSES.includes(data.status) || typeof data.role !== 'string') {
     throw new Error('invalid membership record');
   }
   return Object.freeze({
@@ -121,7 +122,7 @@ export class FirestoreTenancyStore implements TenancyStore {
       const membership: MembershipDocument = {
         organizationId,
         userId: creator,
-        role: 'owner',
+        role: OWNER_ROLE,
         status: 'active',
         createdAt: at,
         updatedAt: at,

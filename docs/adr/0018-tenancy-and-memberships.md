@@ -4,6 +4,7 @@
 - Date: 2026-09-26
 - Builds on: [ADR-0016](0016-auth-and-identity-foundation.md), [ADR-0017](0017-user-persistence-in-firestore.md)
 - Changes part of ADR-0016: organization resolution moves from auth to tenancy.
+- Amended by: [ADR-0019](0019-rbac-foundation.md). The membership role is a name that only RBAC interprets, so an unknown stored role is no longer a storage error; RBAC denies it.
 
 ## Context
 

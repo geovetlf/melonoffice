@@ -22,6 +22,7 @@ The MelonOffice architecture was defined in the **Phase 0 Architecture Plan (v0.
 | [0016](../adr/0016-auth-and-identity-foundation.md)           | Auth and identity foundation                            | D-6, D-25        |
 | [0017](../adr/0017-user-persistence-in-firestore.md)          | User persistence in Firestore                           | D-6              |
 | [0018](../adr/0018-tenancy-and-memberships.md)                | Tenancy and memberships foundation                      | D-10, D-22       |
+| [0019](../adr/0019-rbac-foundation.md)                        | RBAC foundation                                         | D-22, D-25       |
 
 ## Current phase
 
