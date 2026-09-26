@@ -1,3 +1,4 @@
+import type { AuditService } from '@melonoffice/audit';
 import type { AuthDependencies } from '@melonoffice/auth';
 import type { Logger } from '@melonoffice/observability';
 import { createAuthorizationService, type AuthorizationService } from '@melonoffice/rbac';
@@ -16,6 +17,8 @@ export interface AppOptions {
   readonly auth?: AuthDependencies;
   /** Organizations and memberships. Absent: organization routes answer 503 (fails closed). */
   readonly tenancy?: TenancyStore;
+  /** Where audit events go (ADR-0020). Absent: /v1 answers 503 (fails closed). */
+  readonly audit?: AuditService;
   /** Role permissions (ADR-0019). Defaults to the built-in roles; tests may narrow them. */
   readonly authorization?: AuthorizationService;
 }
@@ -30,6 +33,7 @@ export function createApp({
   version,
   auth,
   tenancy,
+  audit,
   authorization = createAuthorizationService(),
 }: AppOptions): Hono<Env> {
   const app = new Hono<Env>();
@@ -41,6 +45,7 @@ export function createApp({
       incoming && REQUEST_ID_PATTERN.test(incoming) ? incoming : crypto.randomUUID();
     const requestLogger = logger.child({ requestId });
     c.set('logger', requestLogger);
+    c.set('requestId', requestId);
     c.header(REQUEST_ID_HEADER, requestId);
     const started = performance.now();
     await next();
@@ -53,8 +58,10 @@ export function createApp({
   });
 
   registerHealth(app, { service: SERVICE_NAME, version });
-  registerAuthRoutes(app, auth);
-  if (auth !== undefined) registerTenancyRoutes(app, tenancy, authorization);
+  registerAuthRoutes(app, auth, audit);
+  if (auth !== undefined && audit !== undefined) {
+    registerTenancyRoutes(app, tenancy, authorization, audit);
+  }
 
   app.notFound((c) => c.json({ error: 'not_found' }, 404));
   app.onError((error, c) => {

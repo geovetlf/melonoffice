@@ -1,9 +1,16 @@
+import type { AuditEvent } from '@melonoffice/audit';
 import type { Membership, Organization, OrganizationId, UserId } from '@melonoffice/domain';
 
 export interface NewOrganization {
   /** Already validated by `createOrganization()`. */
   readonly name: string;
   readonly creator: UserId;
+  /**
+   * Audit events for the creation (ADR-0020). The store writes them together with the
+   * organization, so the organization never exists without its record. If building them throws,
+   * nothing is created.
+   */
+  readonly audit?: (created: CreatedOrganization) => readonly AuditEvent[];
 }
 
 export interface CreatedOrganization {

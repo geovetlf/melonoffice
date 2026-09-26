@@ -59,6 +59,9 @@ importers:
       '@hono/node-server':
         specifier: 2.1.1
         version: 2.1.1(hono@4.13.9)
+      '@melonoffice/audit':
+        specifier: workspace:*
+        version: link:../../packages/audit
       '@melonoffice/auth':
         specifier: workspace:*
         version: link:../../packages/auth
@@ -131,6 +134,19 @@ importers:
       '@melonoffice/config':
         specifier: workspace:*
         version: link:../../packages/config
+
+  packages/audit:
+    dependencies:
+      '@melonoffice/domain':
+        specifier: workspace:*
+        version: link:../domain
+    devDependencies:
+      '@melonoffice/auth':
+        specifier: workspace:*
+        version: link:../auth
+      '@melonoffice/config':
+        specifier: workspace:*
+        version: link:../config
 
   packages/auth:
     dependencies:
@@ -209,6 +225,9 @@ importers:
 
   packages/tenancy:
     dependencies:
+      '@melonoffice/audit':
+        specifier: workspace:*
+        version: link:../audit
       '@melonoffice/auth':
         specifier: workspace:*
         version: link:../auth

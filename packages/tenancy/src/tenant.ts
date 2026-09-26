@@ -9,7 +9,7 @@ import type {
 } from '@melonoffice/domain';
 import { TenancyError } from './errors.js';
 import { isOrganizationId } from './ids.js';
-import type { CreatedOrganization, TenancyStore } from './store.js';
+import type { CreatedOrganization, NewOrganization, TenancyStore } from './store.js';
 
 /**
  * Who is acting and in which organization, for any server-side caller: API routes, MelonMotor,
@@ -97,10 +97,15 @@ export async function createOrganization(
   auth: AuthenticatedContext,
   input: { readonly name: unknown },
   store: TenancyStore,
+  options: { readonly audit?: NewOrganization['audit'] } = {},
 ): Promise<CreatedOrganization> {
   if (auth.actor !== 'user') throw new TenancyError('requires_user');
   const name = parseOrganizationName(input.name);
-  return store.createOrganization({ name, creator: auth.userId });
+  return store.createOrganization({
+    name,
+    creator: auth.userId,
+    ...(options.audit === undefined ? {} : { audit: options.audit }),
+  });
 }
 
 export interface MyOrganization {

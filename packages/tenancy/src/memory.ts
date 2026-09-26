@@ -5,6 +5,7 @@ import type {
   OrganizationId,
   UserId,
 } from '@melonoffice/domain';
+import type { InMemoryAuditStore } from '@melonoffice/audit';
 import { TenancyError } from './errors.js';
 import { membershipIdOf, newOrganizationId, OWNER_ROLE } from './ids.js';
 import type { CreatedOrganization, NewOrganization, TenancyStore } from './store.js';
@@ -15,10 +16,18 @@ export class InMemoryTenancyStore implements TenancyStore {
   readonly #memberships = new Map<string, Membership>();
   readonly #creators = new Set<UserId>();
 
-  constructor(private readonly now: () => Date = () => new Date()) {}
+  constructor(
+    private readonly now: () => Date = () => new Date(),
+    /** Receives creation audit events in the same step as the data. */
+    private readonly audit?: InMemoryAuditStore,
+  ) {}
 
   // No await before the writes, so concurrent calls cannot both pass the creator check.
-  async createOrganization({ name, creator }: NewOrganization): Promise<CreatedOrganization> {
+  async createOrganization({
+    name,
+    creator,
+    audit,
+  }: NewOrganization): Promise<CreatedOrganization> {
     if (this.#creators.has(creator)) throw new TenancyError('organization_limit_reached');
     const at = this.now().toISOString() as IsoTimestamp;
     const organization: Organization = Object.freeze({
@@ -38,6 +47,11 @@ export class InMemoryTenancyStore implements TenancyStore {
       createdAt: at,
       updatedAt: at,
     });
+    const events = audit?.({ organization, membership }) ?? [];
+    if (events.length > 0) {
+      if (this.audit === undefined) throw new Error('no audit store for creation events');
+      this.audit.appendNow(events);
+    }
     this.#creators.add(creator);
     this.#organizations.set(organization.id, organization);
     this.#memberships.set(membership.id, membership);

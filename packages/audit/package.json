@@ -1,5 +1,5 @@
 {
-  "name": "@melonoffice/tenancy",
+  "name": "@melonoffice/audit",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -19,11 +19,10 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@melonoffice/audit": "workspace:*",
-    "@melonoffice/auth": "workspace:*",
     "@melonoffice/domain": "workspace:*"
   },
   "devDependencies": {
+    "@melonoffice/auth": "workspace:*",
     "@melonoffice/config": "workspace:*"
   }
 }

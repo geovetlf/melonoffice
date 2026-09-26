@@ -1,3 +1,4 @@
+import type { AuditService } from '@melonoffice/audit';
 import {
   authenticate,
   isAuthError,
@@ -10,8 +11,11 @@ import type { User } from '@melonoffice/domain';
 import type { Logger } from '@melonoffice/observability';
 import type { Context, Hono } from 'hono';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
+import { recordRequired, requestFields } from './audit.js';
 
-export type AuthEnv = { Variables: { logger: Logger; auth: AuthenticatedContext } };
+export type AuthEnv = {
+  Variables: { logger: Logger; requestId: string; auth: AuthenticatedContext };
+};
 
 const STATUS: Record<AuthErrorCode, ContentfulStatusCode> = {
   missing_token: 401,
@@ -41,12 +45,20 @@ async function guard<T>(c: Context<AuthEnv>, run: () => Promise<T>): Promise<T |
 }
 
 /**
- * Identity routes under /v1. Without auth dependencies every /v1 route answers 503, so the API
- * fails closed until persistence for users is configured.
+ * Identity routes under /v1. Without auth dependencies or an audit service every /v1 route
+ * answers 503, so the API fails closed until both are configured.
  */
-export function registerAuthRoutes(app: Hono<AuthEnv>, deps: AuthDependencies | undefined): void {
+export function registerAuthRoutes(
+  app: Hono<AuthEnv>,
+  deps: AuthDependencies | undefined,
+  audit: AuditService | undefined,
+): void {
   if (deps === undefined) {
     app.all('/v1/*', (c) => c.json({ error: 'auth_not_configured' }, 503));
+    return;
+  }
+  if (audit === undefined) {
+    app.all('/v1/*', (c) => c.json({ error: 'audit_not_configured' }, 503));
     return;
   }
 
@@ -59,6 +71,16 @@ export function registerAuthRoutes(app: Hono<AuthEnv>, deps: AuthDependencies | 
       return deps.users.recordSignIn(identity);
     });
     if (result instanceof Response) return result;
+    // A sign-in is a required event (ADR-0020). Rejected tokens are not recorded: the caller is
+    // unidentified, and recording them would let anyone fill the log.
+    const unaudited = await recordRequired(c, audit, {
+      action: result.created ? 'auth.register' : 'auth.sign_in',
+      result: 'success',
+      actor: { type: 'user', userId: result.user.id, via: 'direct' },
+      target: { type: 'user', id: result.user.id },
+      ...requestFields(c),
+    });
+    if (unaudited) return unaudited;
     return c.json(toMe(result.user), result.created ? 201 : 200);
   });
 

@@ -21,6 +21,7 @@ import {
   type NewOrganization,
   type TenancyStore,
 } from '@melonoffice/tenancy';
+import { AUDIT_LOGS, toAuditDocument } from './audit-firestore.js';
 
 /** Collections (ADR-0018). Read and written only by the API, never by clients. */
 export const ORGANIZATIONS = 'organizations';
@@ -95,9 +96,10 @@ function toMembership(id: string, data: MembershipDocument): Membership {
 }
 
 /**
- * Organizations and memberships in Firestore. An organization, its owner's membership and the
- * creator record are written in one transaction with `create`, so they exist together or not at
- * all, and a second organization by the same user fails even under concurrent requests.
+ * Organizations and memberships in Firestore. An organization, its owner's membership, the
+ * creator record and the creation's audit events are written in one transaction with `create`,
+ * so they exist together or not at all, and a second organization by the same user fails even
+ * under concurrent requests.
  */
 export class FirestoreTenancyStore implements TenancyStore {
   constructor(
@@ -105,7 +107,11 @@ export class FirestoreTenancyStore implements TenancyStore {
     private readonly now: () => Date = () => new Date(),
   ) {}
 
-  async createOrganization({ name, creator }: NewOrganization): Promise<CreatedOrganization> {
+  async createOrganization({
+    name,
+    creator,
+    audit,
+  }: NewOrganization): Promise<CreatedOrganization> {
     const creatorRef = this.db.collection(ORGANIZATION_CREATORS).doc(creator);
     return this.db.runTransaction(async (tx) => {
       if ((await tx.get(creatorRef)).exists) throw new TenancyError('organization_limit_reached');
@@ -128,13 +134,18 @@ export class FirestoreTenancyStore implements TenancyStore {
         updatedAt: at,
       };
       const record: CreatorDocument = { organizationId, createdAt: at };
-      tx.create(creatorRef, record);
-      tx.create(this.db.collection(ORGANIZATIONS).doc(organizationId), organization);
-      tx.create(this.db.collection(MEMBERSHIPS).doc(membershipId), membership);
-      return {
+      const created = {
         organization: toOrganization(organizationId, organization),
         membership: toMembership(membershipId, membership),
       };
+      const events = audit?.(created) ?? [];
+      tx.create(creatorRef, record);
+      tx.create(this.db.collection(ORGANIZATIONS).doc(organizationId), organization);
+      tx.create(this.db.collection(MEMBERSHIPS).doc(membershipId), membership);
+      for (const event of events) {
+        tx.create(this.db.collection(AUDIT_LOGS).doc(event.id), toAuditDocument(event));
+      }
+      return created;
     });
   }
 

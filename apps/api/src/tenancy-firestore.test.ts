@@ -1,5 +1,6 @@
 import { Timestamp } from '@google-cloud/firestore';
 import type { OrganizationId, UserId } from '@melonoffice/domain';
+import { buildAuditEvent } from '@melonoffice/audit';
 import { TenancyError } from '@melonoffice/tenancy';
 import { describe, expect, it } from 'vitest';
 import {
@@ -8,6 +9,7 @@ import {
   ORGANIZATION_CREATORS,
   ORGANIZATIONS,
 } from './tenancy-firestore.js';
+import { AUDIT_LOGS, FirestoreAuditStore } from './audit-firestore.js';
 import { emulatorFirestore, emulatorHost } from './test-firestore.js';
 
 const NOW = new Date('2026-09-26T12:00:00Z');
@@ -132,5 +134,111 @@ describe.runIf(emulatorHost)('FirestoreTenancyStore roles (emulator)', () => {
     const { organization } = await store.createOrganization({ name: 'Acme', creator: ALICE });
     await db.collection(MEMBERSHIPS).doc(`${organization.id}_${ALICE}`).update({ role: 'admin' });
     expect((await store.findMembership(organization.id, ALICE))?.role).toBe('admin');
+  });
+});
+
+describe.runIf(emulatorHost)('FirestoreTenancyStore creation audit (emulator)', () => {
+  const event = (organizationId: string) =>
+    buildAuditEvent(
+      {
+        action: 'organization.create',
+        result: 'success',
+        actor: { type: 'user', userId: ALICE, via: 'direct' },
+        organizationId: organizationId as OrganizationId,
+        source: 'api',
+      },
+      NOW,
+    );
+
+  it('writes the creation events in the same transaction as the organization', async () => {
+    const db = emulatorFirestore();
+    const store = new FirestoreTenancyStore(db, () => NOW);
+    let id = '';
+    const { organization } = await store.createOrganization({
+      name: 'Acme',
+      creator: ALICE,
+      audit: ({ organization: created }) => {
+        const built = event(created.id);
+        id = built.id;
+        return [built];
+      },
+    });
+    const stored = await db.collection(AUDIT_LOGS).doc(id).get();
+    expect(stored.data()).toMatchObject({
+      action: 'organization.create',
+      organizationId: organization.id,
+      actorUserId: ALICE,
+    });
+  });
+
+  it('creates nothing when the events cannot be built', async () => {
+    const db = emulatorFirestore();
+    const store = new FirestoreTenancyStore(db, () => NOW);
+    await expect(
+      store.createOrganization({
+        name: 'Acme',
+        creator: ALICE,
+        audit: () => {
+          throw new Error('audit unavailable');
+        },
+      }),
+    ).rejects.toThrow('audit unavailable');
+    for (const collection of [ORGANIZATIONS, MEMBERSHIPS, ORGANIZATION_CREATORS, AUDIT_LOGS]) {
+      expect(await db.collection(collection).listDocuments()).toHaveLength(0);
+    }
+  });
+});
+
+describe.runIf(emulatorHost)('FirestoreAuditStore (emulator)', () => {
+  const signIn = () =>
+    buildAuditEvent(
+      {
+        action: 'auth.sign_in',
+        result: 'success',
+        actor: { type: 'user', userId: ALICE, via: 'direct' },
+        source: 'api',
+      },
+      NOW,
+    );
+
+  it('stores flat documents with every field, nulls for absent ones', async () => {
+    const db = emulatorFirestore();
+    const event = signIn();
+    await new FirestoreAuditStore(db).append([event]);
+    expect((await db.collection(AUDIT_LOGS).doc(event.id).get()).data()).toEqual({
+      occurredAt: Timestamp.fromDate(NOW),
+      action: 'auth.sign_in',
+      result: 'success',
+      actorType: 'user',
+      actorUserId: ALICE,
+      actorVia: 'direct',
+      organizationId: null,
+      targetType: null,
+      targetId: null,
+      requestedOrganizationId: null,
+      permission: null,
+      reason: null,
+      requestId: null,
+      source: 'api',
+    });
+  });
+
+  it('never overwrites a recorded event', async () => {
+    const db = emulatorFirestore();
+    const audit = new FirestoreAuditStore(db);
+    const event = signIn();
+    await audit.append([event]);
+    await expect(audit.append([{ ...event, result: 'failure' }])).rejects.toThrow();
+    expect((await db.collection(AUDIT_LOGS).doc(event.id).get()).data()?.result).toBe('success');
+  });
+
+  it('writes a batch all or nothing', async () => {
+    const db = emulatorFirestore();
+    const audit = new FirestoreAuditStore(db);
+    const existing = signIn();
+    await audit.append([existing]);
+    const fresh = signIn();
+    await expect(audit.append([fresh, existing])).rejects.toThrow();
+    expect((await db.collection(AUDIT_LOGS).doc(fresh.id).get()).exists).toBe(false);
   });
 });
