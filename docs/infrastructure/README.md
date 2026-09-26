@@ -1,0 +1,111 @@
+# Infrastructure
+
+This document covers the Phase 1B cloud environments and the dev deployment. The decisions are in [ADR-0012](../adr/0012-dev-deployment-on-cloud-run.md).
+
+| Environment | Terraform      | Cloud Run services     | Deployed by              |
+| ----------- | -------------- | ---------------------- | ------------------------ |
+| dev         | plan and apply | `web`, `api`, `worker` | `CD (dev)` from `main`   |
+| staging     | plan only      | none                   | not deployed in Phase 1B |
+| prod        | plan only      | none                   | not deployed in Phase 1B |
+
+## Layout
+
+```
+infra/
+├─ modules/
+│  ├─ environment/        # composes everything one environment needs (+ offline tests)
+│  ├─ project_services/   # enables the required Google Cloud APIs
+│  ├─ artifact_registry/  # Docker repository with a cleanup policy
+│  ├─ github_oidc/        # Workload Identity Federation for this repository
+│  ├─ cloud_run_service/  # one service, its runtime identity and its IAM
+│  └─ budget/             # optional monthly spend alert
+└─ envs/
+   ├─ dev/  staging/  prod/   # same module, different inputs and state
+```
+
+Each environment has its own Google Cloud project and its own Terraform state. Nothing in the code names a project, billing account, region or bucket. Those values come from `terraform.tfvars`, which Git ignores; start from `terraform.tfvars.example`.
+
+## Security model
+
+- No service-account keys exist. GitHub Actions authenticates through Workload Identity Federation, and people use `gcloud` login.
+- `github-deployer` can be used only by jobs in the matching GitHub environment. It can push images and roll out revisions of the three services.
+- `github-planner` can be used only from `main`. It is read-only and runs `terraform plan`.
+- The worker is private. Only the deployer can call it, for its health check.
+- Terraform is applied by the owner, never by CI.
+
+## One-time setup (owner)
+
+You need the Google Cloud CLI and Terraform 1.16 or later. For each project you need the Owner role. For the optional budget, you also need Billing Account Administrator on the billing account.
+
+1. **Projects and billing.** Create or choose one project per environment, then link billing:
+   ```sh
+   gcloud billing projects link <project id> --billing-account=<billing account id>
+   gcloud services enable serviceusage.googleapis.com cloudresourcemanager.googleapis.com --project=<project id>
+   ```
+2. **State bucket.** Create one per environment, inside that environment's project:
+   ```sh
+   gcloud storage buckets create gs://<state bucket> --project=<project id> --location=<region> \
+     --uniform-bucket-level-access --public-access-prevention
+   gcloud storage buckets update gs://<state bucket> --versioning
+   ```
+3. **Short-lived local credentials:**
+   ```sh
+   gcloud auth application-default login
+   ```
+4. **Apply dev:**
+   ```sh
+   cd infra/envs/dev
+   cp terraform.tfvars.example terraform.tfvars   # fill in the real values
+   terraform init -backend-config="bucket=<dev state bucket>"
+   terraform plan -out=tfplan
+   terraform apply tfplan
+   terraform output
+   ```
+   On first creation, the services run Google's sample image until CD deploys MelonOffice.
+5. **Plan staging and prod.** Run the same `init` and `plan` in `infra/envs/staging` and `infra/envs/prod`, and do not apply them in Phase 1B.
+6. **GitHub environment.** In Settings → Environments, create `dev`. Under Deployment branches, allow only `main`. Add these environment variables, most of them from `terraform output`:
+
+   | Variable                         | Value                                                  |
+   | -------------------------------- | ------------------------------------------------------ |
+   | `GCP_PROJECT_ID`                 | dev project ID                                         |
+   | `GCP_REGION`                     | region used in tfvars                                  |
+   | `GCP_WORKLOAD_IDENTITY_PROVIDER` | output `workload_identity_provider`                    |
+   | `GCP_DEPLOYER_SERVICE_ACCOUNT`   | output `deployer_service_account`                      |
+   | `GCP_PLANNER_SERVICE_ACCOUNT`    | output `planner_service_account`                       |
+   | `TF_STATE_BUCKET`                | dev state bucket                                       |
+   | `TF_BUDGET` (optional)           | the dev `budget` object as JSON, if you configured one |
+
+   None of these values is a secret, and no GitHub secret is needed.
+
+7. **First deployment.** Run `CD (dev)` from the Actions tab (Run workflow on `main`), or merge to `main`.
+
+## What CI and CD do
+
+- **CI** (`ci.yml`, every pull request and push to `main`) runs:
+  - format, lint, typecheck, unit tests and build;
+  - Terraform `fmt`, `validate` for the three environments, and the mocked module tests;
+  - the gitleaks secret scan.
+
+  It has no cloud credentials.
+
+- **CD (dev)** (`cd-dev.yml`, push to `main` or manual) has three jobs:
+  - **validate**: lint, typecheck, tests and build.
+  - **terraform-plan**: a read-only drift check for dev.
+  - **deploy**, which:
+    1. builds the three images tagged with the commit SHA and pushes them to Artifact Registry;
+    2. rolls out each service;
+    3. checks `GET /health` on web and api, and checks that api reports the deployed commit;
+    4. checks the worker's health with a short-lived ID token, and that it refuses unauthenticated calls;
+    5. runs a browser smoke test: the page renders, switches between English and Spanish, and logs no errors.
+
+  Any failed step fails the workflow.
+
+There is no staging or production deployment workflow.
+
+## Rollback
+
+Every deploy creates a new Cloud Run revision. To roll back dev, route traffic to an earlier revision, or re-run `CD (dev)` on an earlier commit:
+
+```sh
+gcloud run services update-traffic <service> --to-revisions=<revision>=100 --region=<region> --project=<project id>
+```
