@@ -1,0 +1,24 @@
+.placeholder {
+  max-width: 40rem;
+  margin: 0 auto;
+  padding: var(--mo-space-12) var(--mo-space-4);
+}
+
+.placeholder h1 {
+  margin: 0;
+  font-size: var(--mo-font-size-xxl);
+  color: var(--mo-color-accent);
+}
+
+.placeholder__tagline {
+  font-size: var(--mo-font-size-lg);
+  color: var(--mo-color-text-secondary);
+}
+
+.placeholder__languages {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--mo-space-2);
+  margin-top: var(--mo-space-6);
+}
