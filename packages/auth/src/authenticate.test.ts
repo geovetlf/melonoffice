@@ -1,25 +1,18 @@
-import type { OrganizationId, UserId } from '@melonoffice/domain';
+import type { UserId } from '@melonoffice/domain';
 import { describe, expect, it } from 'vitest';
 import { authenticate, type AuthDependencies } from './authenticate.js';
 import { actAsGia } from './context.js';
 import { AuthError } from './errors.js';
 import { createIdentityPlatformVerifier } from './identity-platform.js';
-import { noMemberships, type MembershipDirectory } from './tenancy.js';
 import { createSigner, NOW, PROJECT_ID } from './test-tokens.js';
 import { InMemoryUserDirectory, type UserDirectory } from './users.js';
 
-const ORG_A = 'org-a' as OrganizationId;
-
 const registerSubject = async (users: UserDirectory, subject: string) =>
   (await users.recordSignIn({ subject, emailVerified: false })).user;
-const ORG_B = 'org-b' as OrganizationId;
 
-async function setup(membershipsOf: Record<string, OrganizationId[]> = {}) {
+async function setup() {
   const signer = await createSigner();
   const users = new InMemoryUserDirectory(() => NOW);
-  const memberships: MembershipDirectory = {
-    organizationsOf: async (userId) => membershipsOf[userId] ?? [],
-  };
   const deps: AuthDependencies = {
     verifier: createIdentityPlatformVerifier({
       projectId: PROJECT_ID,
@@ -27,9 +20,8 @@ async function setup(membershipsOf: Record<string, OrganizationId[]> = {}) {
       now: () => NOW,
     }),
     users,
-    memberships,
   };
-  return { ...signer, users, deps, membershipsOf };
+  return { ...signer, users, deps };
 }
 
 async function codeOf(promise: Promise<unknown>): Promise<string> {
@@ -91,70 +83,13 @@ describe('authenticate', () => {
     expect(asBob.userId).toBe(bob.id);
     expect(asBob.userId).not.toBe(alice.id);
   });
-
-  describe('organization', () => {
-    it('is absent while the user has no membership', async () => {
-      const { sign, users, deps } = await setup();
-      await registerSubject(users, 'uid-alice');
-      const context = await authenticate({ authorization: `Bearer ${await sign()}` }, deps);
-      expect(context.organizationId).toBeUndefined();
-    });
-
-    it('is the only organization the user belongs to', async () => {
-      const { sign, users, deps, membershipsOf } = await setup();
-      const alice = await registerSubject(users, 'uid-alice');
-      membershipsOf[alice.id] = [ORG_A];
-      const context = await authenticate({ authorization: `Bearer ${await sign()}` }, deps);
-      expect(context.organizationId).toBe(ORG_A);
-    });
-
-    it('can be chosen by the client only among its own organizations', async () => {
-      const { sign, users, deps, membershipsOf } = await setup();
-      const alice = await registerSubject(users, 'uid-alice');
-      membershipsOf[alice.id] = [ORG_A, ORG_B];
-      const token = `Bearer ${await sign()}`;
-      expect(
-        (await authenticate({ authorization: token, requestedOrganization: ORG_B }, deps))
-          .organizationId,
-      ).toBe(ORG_B);
-      expect((await authenticate({ authorization: token }, deps)).organizationId).toBeUndefined();
-    });
-
-    it("refuses another user's organization, so a client-sent id cannot grant access", async () => {
-      const { sign, users, deps, membershipsOf } = await setup();
-      const alice = await registerSubject(users, 'uid-alice');
-      const bob = await registerSubject(users, 'uid-bob');
-      membershipsOf[alice.id] = [ORG_A];
-      membershipsOf[bob.id] = [ORG_B];
-      const request = { authorization: `Bearer ${await sign()}`, requestedOrganization: ORG_B };
-      expect(await codeOf(authenticate(request, deps))).toBe('organization_forbidden');
-    });
-
-    it('answers the same for an organization that does not exist', async () => {
-      const { sign, users, deps, membershipsOf } = await setup();
-      const alice = await registerSubject(users, 'uid-alice');
-      membershipsOf[alice.id] = [ORG_A];
-      const request = { authorization: `Bearer ${await sign()}`, requestedOrganization: 'nope' };
-      expect(await codeOf(authenticate(request, deps))).toBe('organization_forbidden');
-    });
-
-    it('is never granted before memberships exist', async () => {
-      const { sign, users, deps } = await setup();
-      await registerSubject(users, 'uid-alice');
-      const request = { authorization: `Bearer ${await sign()}`, requestedOrganization: ORG_A };
-      expect(await codeOf(authenticate(request, { ...deps, memberships: noMemberships }))).toBe(
-        'organization_forbidden',
-      );
-    });
-  });
 });
 
 describe('actAsGia', () => {
-  it('keeps the same user, organization and identity, and only marks the actor', async () => {
+  it('keeps the same user and identity, and only marks the actor', async () => {
     const context = Object.freeze({
       actor: 'user' as const,
       userId: 'u1' as UserId,
-      organizationId: ORG_A,
       email: 'alice@example.com',
       emailVerified: true,
     });
@@ -164,11 +99,11 @@ describe('actAsGia', () => {
     expect(context.actor).toBe('user');
   });
 
-  it('cannot be widened: extra fields passed along are type errors and are not privileges', () => {
+  it('cannot be widened or redirected: extra arguments are type errors and are ignored', () => {
     const context = { actor: 'user' as const, userId: 'u1' as UserId, emailVerified: false };
     // @ts-expect-error actAsGia takes exactly one context argument.
-    const gia = actAsGia(context, { organizationId: ORG_B });
-    expect(gia.organizationId).toBeUndefined();
+    const gia = actAsGia(context, { userId: 'u2' });
+    expect(gia.userId).toBe('u1');
   });
 });
 

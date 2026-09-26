@@ -15,6 +15,7 @@ export type RoleId = Brand<string, 'RoleId'>;
 export type SkillId = Brand<string, 'SkillId'>;
 export type ToolId = Brand<string, 'ToolId'>;
 export type UserId = Brand<string, 'UserId'>;
+export type MembershipId = Brand<string, 'MembershipId'>;
 export type HistoryEventId = Brand<string, 'HistoryEventId'>;
 
 /** An i18n message key; user-visible names are never stored as fixed strings. */
