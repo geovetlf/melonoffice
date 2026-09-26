@@ -53,7 +53,7 @@ Phase 2 needs to know who makes each request before tenancy, RBAC, entitlements 
 
 ## Not in this change
 
-- **User persistence.** Only the `UserDirectory` port and an in-memory implementation for tests exist, so the deployed API answers `auth_not_configured` on `/v1`. A Firestore implementation, and the API's `IDENTITY_PLATFORM_PROJECT_ID` setting in Terraform, need their own review.
+- **User persistence.** Only the `UserDirectory` port and an in-memory implementation for tests exist, so the deployed API answers `auth_not_configured` on `/v1`. The Firestore implementation and the API's `IDENTITY_PLATFORM_PROJECT_ID` setting came later, in [ADR-0017](0017-user-persistence-in-firestore.md).
 - Memberships, organizations, RBAC, the audit log, the web sign-in screen and entitlement checks on routes.
 
 ## Consequences

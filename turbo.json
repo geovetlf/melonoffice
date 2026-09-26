@@ -9,7 +9,8 @@
       "dependsOn": ["^typecheck"]
     },
     "test": {
-      "outputs": []
+      "outputs": [],
+      "env": ["FIRESTORE_EMULATOR_HOST", "REQUIRE_FIRESTORE_EMULATOR"]
     }
   }
 }

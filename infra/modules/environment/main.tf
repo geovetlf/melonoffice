@@ -77,7 +77,12 @@ locals {
     api = {
       public = true
       memory = "512Mi"
-      env    = { LOG_LEVEL = var.log_level }
+      # Turns on auth: the project whose Identity Platform issues tokens and whose Firestore
+      # holds users (ADR-0017). Not a secret. Only set where Firestore and auth exist.
+      env = merge(
+        { LOG_LEVEL = var.log_level },
+        var.firestore_and_auth ? { IDENTITY_PLATFORM_PROJECT_ID = var.project_id } : {},
+      )
     }
     worker = {
       public = false

@@ -59,6 +59,11 @@ run "dev_deploys_three_apps" {
   }
 
   assert {
+    condition     = alltrue([for app in module.app : !contains(keys(app.env), "IDENTITY_PLATFORM_PROJECT_ID")])
+    error_message = "Without Firestore and Identity Platform, no service may turn auth on."
+  }
+
+  assert {
     condition     = !contains(keys(google_project_iam_member.planner), "roles/serviceusage.serviceUsageConsumer")
     error_message = "Without a budget, the planner must not get serviceusage.services.use."
   }
@@ -244,6 +249,16 @@ run "dev_gets_firestore_and_auth" {
   assert {
     condition     = google_identity_platform_config.default[0].sign_in[0].email[0].enabled && google_identity_platform_config.default[0].sign_in[0].email[0].password_required && !google_identity_platform_config.default[0].sign_in[0].allow_duplicate_emails
     error_message = "Identity Platform must allow email and password sign-in only, with unique emails."
+  }
+
+  assert {
+    condition     = length(module.app["api"].env) == 2 && module.app["api"].env["IDENTITY_PLATFORM_PROJECT_ID"] == "test-project" && contains(keys(module.app["api"].env), "LOG_LEVEL")
+    error_message = "The api must get this environment's project for auth and Firestore, and nothing else new."
+  }
+
+  assert {
+    condition     = !contains(keys(module.app["web"].env), "IDENTITY_PLATFORM_PROJECT_ID") && !contains(keys(module.app["worker"].env), "IDENTITY_PLATFORM_PROJECT_ID")
+    error_message = "Only the api turns auth on; web and worker do not."
   }
 
   assert {

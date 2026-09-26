@@ -17,3 +17,8 @@ output "invoker_members" {
   description = "Members allowed to call the service; allUsers when it is public."
   value       = concat(var.public ? ["allUsers"] : [], values(var.invoker_members))
 }
+
+output "env" {
+  description = "Environment variables set on the container."
+  value       = var.env
+}

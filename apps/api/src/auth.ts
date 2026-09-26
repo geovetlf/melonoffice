@@ -6,6 +6,7 @@ import {
   type AuthErrorCode,
   type AuthenticatedContext,
 } from '@melonoffice/auth';
+import type { OrganizationId, User } from '@melonoffice/domain';
 import type { Logger } from '@melonoffice/observability';
 import type { Context, Hono } from 'hono';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
@@ -54,17 +55,16 @@ export function registerAuthRoutes(app: Hono<AuthEnv>, deps: AuthDependencies | 
     return;
   }
 
-  // Registers the signed-in account as a MelonOffice user. The identity comes from the token
-  // alone; the body is never read, so it cannot name another user.
+  // Records a sign-in: creates the user the first time, then refreshes the email, its verified
+  // flag and the sign-in time. The identity comes from the token alone; the body is never read,
+  // so it cannot name another user or change the email.
   app.post('/v1/me', async (c) => {
     const result = await guard(c, async () => {
       const identity = await verifyRequest(c.req.header('authorization'), deps.verifier);
-      const existing = await deps.users.findBySubject(identity.subject);
-      const user = existing ?? (await deps.users.register(identity.subject));
-      return { user, created: existing === undefined };
+      return deps.users.recordSignIn(identity);
     });
     if (result instanceof Response) return result;
-    return c.json({ userId: result.user.id }, result.created ? 201 : 200);
+    return c.json(toMe(result.user), result.created ? 201 : 200);
   });
 
   // Every other /v1 route needs a registered user.
@@ -83,15 +83,26 @@ export function registerAuthRoutes(app: Hono<AuthEnv>, deps: AuthDependencies | 
     await next();
   });
 
-  app.get('/v1/me', (c) => {
+  // Always the caller's own record: the id comes from the verified context, never the request.
+  app.get('/v1/me', async (c) => {
     const auth = c.get('auth');
-    return c.json({
-      userId: auth.userId,
-      email: auth.email ?? null,
-      emailVerified: auth.emailVerified,
-      organizationId: auth.organizationId ?? null,
-    });
+    const user = await deps.users.findById(auth.userId);
+    if (user === undefined) return reject(c, 'user_not_registered');
+    return c.json(toMe(user, auth.organizationId));
   });
+}
+
+/** The public view of the caller's own user. */
+function toMe(user: User, organizationId?: OrganizationId) {
+  return {
+    userId: user.id,
+    email: user.email ?? null,
+    emailVerified: user.emailVerified,
+    createdAt: user.createdAt,
+    updatedAt: user.updatedAt,
+    lastLoginAt: user.lastLoginAt,
+    organizationId: organizationId ?? null,
+  };
 }
 
 /** For routes that act inside an organization: refuses a request that has none. */
