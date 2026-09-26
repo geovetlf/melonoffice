@@ -31,7 +31,30 @@ jobs:
       - run: pnpm format:check
       - run: pnpm lint
       - run: pnpm typecheck
+      # User persistence is tested against the Firestore emulator (ADR-0017), pinned by version
+      # and checksum. It needs Java 21, which the runner image ships.
+      - name: Start the Firestore emulator
+        env:
+          EMULATOR_VERSION: 1.22.0
+          EMULATOR_SHA256: 9b6498b7f62714d67f48f59b3818883cd682dbcd46b9f59511de81c97bb5166c
+        run: |
+          jar="$RUNNER_TEMP/firestore-emulator.jar"
+          curl --fail --silent --show-error --location --retry 3 -o "$jar" \
+            "https://storage.googleapis.com/firebase-preview-drop/emulator/cloud-firestore-emulator-v${EMULATOR_VERSION}.jar"
+          echo "${EMULATOR_SHA256}  ${jar}" | sha256sum --check
+          nohup "${JAVA_HOME_21_X64}/bin/java" -jar "$jar" --host 127.0.0.1 --port 8085 \
+            > "$RUNNER_TEMP/firestore-emulator.log" 2>&1 &
+          for _ in $(seq 1 60); do
+            curl --silent --output /dev/null http://127.0.0.1:8085 && exit 0
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/firestore-emulator.log"
+          exit 1
       - run: pnpm test
+        env:
+          FIRESTORE_EMULATOR_HOST: 127.0.0.1:8085
+          # The Firestore tests fail instead of skipping if the emulator is missing.
+          REQUIRE_FIRESTORE_EMULATOR: '1'
       - run: pnpm build
 
   terraform:

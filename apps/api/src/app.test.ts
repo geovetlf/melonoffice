@@ -61,6 +61,18 @@ describe('loadConfig', () => {
     });
   });
 
+  it('turns auth on only with a valid project id', () => {
+    expect(loadConfig({}).identityProjectId).toBeUndefined();
+    expect(loadConfig({ IDENTITY_PLATFORM_PROJECT_ID: 'melonoffice' }).identityProjectId).toBe(
+      'melonoffice',
+    );
+    for (const bad of ['', 'Melon', 'a', 'x/../y', 'melonoffice-']) {
+      expect(() => loadConfig({ IDENTITY_PLATFORM_PROJECT_ID: bad })).toThrow(
+        'Invalid IDENTITY_PLATFORM_PROJECT_ID',
+      );
+    }
+  });
+
   it('rejects invalid values', () => {
     expect(() => loadConfig({ PORT: 'x' })).toThrow('Invalid PORT');
     expect(() => loadConfig({ LOG_LEVEL: 'loud' })).toThrow('Invalid LOG_LEVEL');

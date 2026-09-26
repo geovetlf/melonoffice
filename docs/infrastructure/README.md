@@ -1,6 +1,6 @@
 # Infrastructure
 
-This document covers the cloud environments and the dev deployment. The decisions are in [ADR-0012](../adr/0012-dev-deployment-on-cloud-run.md) and, for Firestore and Identity Platform in dev, [ADR-0014](../adr/0014-firestore-and-identity-platform-in-dev.md).
+This document covers the cloud environments and the dev deployment. The decisions are in [ADR-0012](../adr/0012-dev-deployment-on-cloud-run.md) and, for Firestore and Identity Platform in dev, [ADR-0014](../adr/0014-firestore-and-identity-platform-in-dev.md). Where Firestore and Identity Platform are on, Terraform also sets `IDENTITY_PLATFORM_PROJECT_ID` on the `api` service, which turns auth on ([ADR-0017](../adr/0017-user-persistence-in-firestore.md)).
 
 | Environment | Terraform      | Cloud Run services     | Deployed by              |
 | ----------- | -------------- | ---------------------- | ------------------------ |
