@@ -52,10 +52,14 @@ jobs:
             terraform -chdir="infra/envs/${env}" init -backend=false -input=false
             terraform -chdir="infra/envs/${env}" validate
           done
-      - name: Test the environment module
+      - name: Check environment isolation
+        run: infra/scripts/check-environments.sh
+      - name: Test the modules
         run: |
-          terraform -chdir=infra/modules/environment init -input=false
-          terraform -chdir=infra/modules/environment test
+          for module in environment github_oidc; do
+            terraform -chdir="infra/modules/${module}" init -input=false
+            terraform -chdir="infra/modules/${module}" test
+          done
 
   secret-scan:
     name: Secret scan

@@ -37,8 +37,9 @@ Each environment has its own Google Cloud project and its own Terraform state. N
 
 You need the Google Cloud CLI and Terraform 1.16 or later. For each project you need the Owner role. For the optional budget, you also need Billing Account Administrator on the billing account.
 
-1. **Projects and billing.** Create or choose one project per environment, then link billing:
+1. **Projects and billing.** Create one project per environment inside the organization (the project IDs are in [ADR-0011](../adr/0011-cloud-environments.md)), then link billing:
    ```sh
+   gcloud projects create <project id> --organization=<organization id> --name=<display name>
    gcloud billing projects link <project id> --billing-account=<billing account id>
    gcloud services enable serviceusage.googleapis.com cloudresourcemanager.googleapis.com --project=<project id>
    ```
@@ -62,7 +63,7 @@ You need the Google Cloud CLI and Terraform 1.16 or later. For each project you 
    terraform output
    ```
    On first creation, the services run Google's sample image until CD deploys MelonOffice.
-5. **Plan staging and prod.** Run the same `init` and `plan` in `infra/envs/staging` and `infra/envs/prod`, and do not apply them in Phase 1B.
+5. **Plan staging and prod.** Run the same `init` and `plan` in `infra/envs/staging` and `infra/envs/prod`, each with its own project and state bucket, and remove the `budget` block from `terraform.tfvars` unless you want one. Plans are read-only; do not apply staging or prod without explicit approval.
 6. **GitHub environment.** In Settings → Environments, create `dev`. Under Deployment branches, allow only `main`. Add these environment variables, most of them from `terraform output`:
 
    | Variable                         | Value                                                  |

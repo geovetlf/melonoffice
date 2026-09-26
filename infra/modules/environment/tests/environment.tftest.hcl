@@ -96,6 +96,68 @@ run "deployer_is_bound_to_the_github_environment" {
   }
 }
 
+# Staging and prod get their own identities, bound to their own GitHub environment, with the
+# same minimal permissions as dev and no Cloud Run services.
+run "staging_is_isolated_and_minimal" {
+  command = apply
+
+  variables {
+    environment         = "staging"
+    github_environment  = "staging"
+    deletion_protection = true
+  }
+
+  assert {
+    condition     = endswith(google_service_account_iam_member.deployer_federation.member, "/attribute.environment/staging")
+    error_message = "The staging deployer must only trust jobs in the staging GitHub environment."
+  }
+
+  assert {
+    condition     = toset(keys(google_project_iam_member.planner)) == toset(["roles/viewer", "roles/iam.securityReviewer"])
+    error_message = "Without a budget the planner is read-only: viewer and security reviewer only."
+  }
+
+  assert {
+    condition     = google_artifact_registry_repository_iam_member.deployer_writer.role == "roles/artifactregistry.writer"
+    error_message = "The deployer may only push images to this environment's repository."
+  }
+
+  assert {
+    condition     = length(module.app) == 0 && length(module.budget) == 0
+    error_message = "Staging creates no Cloud Run service and no budget unless one is configured."
+  }
+
+  assert {
+    condition     = output.service_urls == {}
+    error_message = "Staging must not expose any service URL."
+  }
+}
+
+run "prod_is_isolated_and_minimal" {
+  command = apply
+
+  variables {
+    environment         = "prod"
+    github_environment  = "prod"
+    deletion_protection = true
+  }
+
+  assert {
+    condition     = endswith(google_service_account_iam_member.deployer_federation.member, "/attribute.environment/prod")
+    error_message = "The prod deployer must only trust jobs in the prod GitHub environment."
+  }
+
+  assert {
+    condition     = toset(keys(google_project_iam_member.planner)) == toset(["roles/viewer", "roles/iam.securityReviewer"])
+    error_message = "Without a budget the planner is read-only: viewer and security reviewer only."
+  }
+
+  assert {
+    condition     = length(module.app) == 0
+    error_message = "Production creates no Cloud Run service in Phase 1B."
+  }
+}
+
 # A full mocked apply of dev with a budget exercises every resource's argument validation.
 run "dev_with_budget_applies" {
   command = apply
