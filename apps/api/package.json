@@ -14,10 +14,12 @@
   },
   "dependencies": {
     "@hono/node-server": "2.1.1",
+    "@melonoffice/auth": "workspace:*",
     "@melonoffice/observability": "workspace:*",
     "hono": "4.13.9"
   },
   "devDependencies": {
-    "@melonoffice/config": "workspace:*"
+    "@melonoffice/config": "workspace:*",
+    "@melonoffice/domain": "workspace:*"
   }
 }

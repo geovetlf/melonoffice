@@ -56,6 +56,9 @@ importers:
       '@hono/node-server':
         specifier: 2.1.1
         version: 2.1.1(hono@4.13.9)
+      '@melonoffice/auth':
+        specifier: workspace:*
+        version: link:../../packages/auth
       '@melonoffice/observability':
         specifier: workspace:*
         version: link:../../packages/observability
@@ -66,6 +69,9 @@ importers:
       '@melonoffice/config':
         specifier: workspace:*
         version: link:../../packages/config
+      '@melonoffice/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
 
   apps/web:
     dependencies:
@@ -116,6 +122,19 @@ importers:
       '@melonoffice/config':
         specifier: workspace:*
         version: link:../../packages/config
+
+  packages/auth:
+    dependencies:
+      '@melonoffice/domain':
+        specifier: workspace:*
+        version: link:../domain
+      jose:
+        specifier: 6.2.12
+        version: 6.2.12
+    devDependencies:
+      '@melonoffice/config':
+        specifier: workspace:*
+        version: link:../config
 
   packages/config: {}
 
@@ -1266,6 +1285,9 @@ packages:
 
   isexe@2.0.0:
     resolution: {integrity: sha512-RHxMLp9lnKHGHRng9QFhRCMbYAcVpn69smSGcq3f36xjgVVWThj4qqLbTLlq7Ssj8B+fIQ1EuCEGI2lKsyQeIw==}
+
+  jose@6.2.12:
+    resolution: {integrity: sha512-9NiFmJEex0sy2Dk58j2UGBSHgUs2ypF9eZSu4L6vjOX3Dp96Sw1F3uL+H+D1sx02jZZdzUT0HgvCy59CuvXcWw==}
 
   js-tokens@4.0.0:
     resolution: {integrity: sha512-RdJUflcE3cUzKiMqQgsCu06FPu9UdIJO0beYbPhHN4k6apgJtifcoCtT9bcxOpYBtpD2kCM6Sbzg4CausW/PKQ==}
@@ -3086,6 +3108,8 @@ snapshots:
   isarray@2.0.5: {}
 
   isexe@2.0.0: {}
+
+  jose@6.2.12: {}
 
   js-tokens@4.0.0: {}
 

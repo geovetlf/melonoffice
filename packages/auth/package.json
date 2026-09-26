@@ -1,0 +1,28 @@
+{
+  "name": "@melonoffice/auth",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "@melonoffice/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@melonoffice/domain": "workspace:*",
+    "jose": "6.2.12"
+  },
+  "devDependencies": {
+    "@melonoffice/config": "workspace:*"
+  }
+}
