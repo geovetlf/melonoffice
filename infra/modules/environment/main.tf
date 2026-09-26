@@ -202,6 +202,12 @@ resource "google_identity_platform_config" "default" {
       enabled           = true
       password_required = true
     }
+
+    # Google returns this block even when phone sign-in is off. Declaring it keeps plans clean.
+    phone_number {
+      enabled            = false
+      test_phone_numbers = {}
+    }
   }
 
   depends_on = [module.services]
