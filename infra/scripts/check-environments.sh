@@ -34,11 +34,15 @@ for env in "${envs[@]}"; do
   fi
 done
 
-# Only dev deploys services in Phase 1B; staging and prod are protected from deletion.
+# Only dev deploys services and has Firestore and Identity Platform; staging and prod are protected
+# from deletion.
 grep -Eq '^\s*deploy_apps\s*=\s*true' infra/envs/dev/main.tf || fail "dev must deploy the apps"
 for env in staging prod; do
   grep -Eq '^\s*deploy_apps\s*=\s*false' "infra/envs/${env}/main.tf" || fail "${env} must not deploy apps"
   grep -Eq '^\s*deletion_protection\s*=\s*true' "infra/envs/${env}/main.tf" || fail "${env} must keep deletion protection"
+  if grep -Eq '^\s*firestore_and_auth\s*=\s*true' "infra/envs/${env}/main.tf"; then
+    fail "${env} must not enable Firestore and Identity Platform yet (dev only)"
+  fi
 done
 
 # No real variable files are committed.

@@ -21,6 +21,11 @@ locals {
     "serviceusage.googleapis.com",
     "sts.googleapis.com",
   ]
+  # Firestore holds tenant data and Identity Platform signs users in (D-6).
+  firestore_and_auth_services = [
+    "firestore.googleapis.com",
+    "identitytoolkit.googleapis.com",
+  ]
   budget_services = [
     "billingbudgets.googleapis.com",
     "monitoring.googleapis.com",
@@ -53,7 +58,11 @@ module "services" {
   source = "../project_services"
 
   project_id = var.project_id
-  services   = concat(local.base_services, local.budget_enabled ? local.budget_services : [])
+  services = concat(
+    local.base_services,
+    var.firestore_and_auth ? local.firestore_and_auth_services : [],
+    local.budget_enabled ? local.budget_services : [],
+  )
 }
 
 module "registry" {
@@ -161,6 +170,50 @@ module "app" {
   invoker_members     = each.value.public ? {} : { deployer = local.deployer_member }
 
   depends_on = [module.services]
+}
+
+# The default Firestore database, in Native mode. Its location is permanent. Terraform never
+# deletes it: a destroy only removes it from state.
+resource "google_firestore_database" "default" {
+  count = var.firestore_and_auth ? 1 : 0
+
+  project                 = var.project_id
+  name                    = "(default)"
+  location_id             = var.region
+  type                    = "FIRESTORE_NATIVE"
+  delete_protection_state = var.deletion_protection ? "DELETE_PROTECTION_ENABLED" : "DELETE_PROTECTION_DISABLED"
+  deletion_policy         = "ABANDON"
+
+  depends_on = [module.services]
+}
+
+# Enables Identity Platform with email and password sign-in only. Other providers and MFA are
+# added when the auth work needs them. Identity Platform cannot be disabled once enabled; a
+# destroy only removes it from state.
+resource "google_identity_platform_config" "default" {
+  count = var.firestore_and_auth ? 1 : 0
+
+  project = var.project_id
+
+  sign_in {
+    allow_duplicate_emails = false
+
+    email {
+      enabled           = true
+      password_required = true
+    }
+  }
+
+  depends_on = [module.services]
+}
+
+# The API reads and writes Firestore with its own runtime identity. No other service gets access.
+resource "google_project_iam_member" "api_firestore" {
+  count = var.firestore_and_auth && var.deploy_apps ? 1 : 0
+
+  project = var.project_id
+  role    = "roles/datastore.user"
+  member  = "serviceAccount:${module.app["api"].runtime_service_account}"
 }
 
 module "budget" {

@@ -34,6 +34,12 @@ variable "deploy_apps" {
   default     = false
 }
 
+variable "firestore_and_auth" {
+  description = "Create the Firestore database and enable Identity Platform (D-6). Only dev in Phase 2."
+  type        = bool
+  default     = false
+}
+
 variable "max_instances" {
   description = "Maximum instances per service."
   type        = number
