@@ -27,7 +27,7 @@ Phase 2 needs to know who makes each request before tenancy, RBAC, entitlements 
   - sign-in method `password` only: anonymous, custom-token and other providers are rejected;
   - no Identity Platform tenant.
 
-  `jose` is a small, dependency-free JWT library. The Firebase Admin SDK would do the same checks but brings Firebase and Google Cloud clients the API does not otherwise need.
+  `jose` 6.2.12 is a small, dependency-free JWT library, approved by Geovet on 2026-09-26. The Firebase Admin SDK would do the same checks but brings Firebase and Google Cloud clients the API does not otherwise need, so it is not used.
 
 - **Stable internal user id.** A `User` has its own `UserId` and records the provider subject separately. The provider can change without changing every reference to the user.
 - **Registration is explicit.** `POST /v1/me` creates the user for the token's subject, once. Every other `/v1` route needs a registered user and otherwise answers `user_not_registered`.
@@ -59,5 +59,5 @@ Phase 2 needs to know who makes each request before tenancy, RBAC, entitlements 
 ## Consequences
 
 - A disabled or deleted Identity Platform account keeps a working token until it expires, up to one hour, because verification is local. Checking revocation needs the Admin API and is left for the persistence work.
-- Whether an unverified email may register or use the product is not decided. `emailVerified` is carried in the context so that rule can be added in one place.
+- **Unverified email is not blocked (Geovet, 2026-09-26).** Users with an unverified email can register and sign in. `emailVerified` is carried in the context, and being verified grants no extra permission. Whether a verified email is required is a pending product decision. It must be made before any sensitive feature is enabled, and the rule will live in one place.
 - Adding a sign-in method means adding it to the allowed list in `identity-platform.ts` and to Identity Platform in Terraform, in the same change.
