@@ -1,6 +1,6 @@
 # ADR-0011: Separate dev, staging and production cloud projects
 
-- Status: Accepted (D-5, approved by Geovet on 2026-09-26). Dev is applied and deployed; staging and production are planned only.
+- Status: Accepted (D-5, approved by Geovet on 2026-09-26). Dev is applied and deployed. Production infrastructure is applied, with no services. Staging is planned only.
 - Date: 2026-09-26
 
 ## Decision
@@ -18,6 +18,8 @@
 - Project IDs, the billing account and bucket names live in each root's `terraform.tfvars`, which Git ignores. The code names no project.
 - Development work can never modify production resources: the dev identities have no role in the other projects.
 - In Phase 1B, staging and production create no Cloud Run service and have no deploy workflow. Applying them needs Geovet's explicit approval. CI never applies.
+- Production infrastructure was applied by Geovet from Cloud Shell on 2026-09-26 (19 resources: APIs, Artifact Registry, Workload Identity, deployer and planner). Staging has been planned (19 resources) but not applied.
+- The GitHub environment `prod` allows only the `main` branch and requires Geovet's approval, with no administrator bypass. It must exist before any workflow names it, because GitHub would otherwise create it without rules. The same applies to `staging` before staging is applied.
 
 ## Bootstrap exception
 

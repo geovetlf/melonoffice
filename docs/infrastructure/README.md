@@ -6,7 +6,7 @@ This document covers the Phase 1B cloud environments and the dev deployment. The
 | ----------- | -------------- | ---------------------- | ------------------------ |
 | dev         | plan and apply | `web`, `api`, `worker` | `CD (dev)` from `main`   |
 | staging     | plan only      | none                   | not deployed in Phase 1B |
-| prod        | plan only      | none                   | not deployed in Phase 1B |
+| prod        | plan and apply | none                   | not deployed in Phase 1B |
 
 ## Layout
 
@@ -64,7 +64,10 @@ You need the Google Cloud CLI and Terraform 1.16 or later. For each project you 
    ```
    On first creation, the services run Google's sample image until CD deploys MelonOffice.
 5. **Plan staging and prod.** Run the same `init` and `plan` in `infra/envs/staging` and `infra/envs/prod`, each with its own project and state bucket, and remove the `budget` block from `terraform.tfvars` unless you want one. Plans are read-only; do not apply staging or prod without explicit approval.
-6. **GitHub environment.** In Settings → Environments, create `dev`. Under Deployment branches, allow only `main`. Add these environment variables, most of them from `terraform output`:
+
+   Production has been applied (infrastructure only). Before applying staging, create its GitHub environment first (step 6), because its deployer trusts any job that names that environment.
+
+6. **GitHub environments.** In Settings → Environments, create `dev`. Under Deployment branches, allow only `main`. Add these variables to `dev`, most of them from `terraform output`:
 
    | Variable                         | Value                                                  |
    | -------------------------------- | ------------------------------------------------------ |
@@ -77,6 +80,8 @@ You need the Google Cloud CLI and Terraform 1.16 or later. For each project you 
    | `TF_BUDGET` (optional)           | the dev `budget` object as JSON, if you configured one |
 
    None of these values is a secret, and no GitHub secret is needed.
+
+   `prod` already exists: it allows only `main`, requires Geovet's approval, has no administrator bypass and holds no variables or secrets. Create `staging` the same way before staging is applied.
 
 7. **First deployment.** Run `CD (dev)` from the Actions tab (Run workflow on `main`), or merge to `main`.
 
