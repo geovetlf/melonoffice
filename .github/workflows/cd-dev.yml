@@ -97,16 +97,24 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # Values pasted into the GitHub variables form can carry an invisible line break or space,
+      # which Google then reports as an unknown account. Strip whitespace and check the result.
       - name: Check configuration
+        id: config
         run: |
           for name in GCP_PROJECT_ID GCP_REGION GCP_WORKLOAD_IDENTITY_PROVIDER GCP_DEPLOYER_SERVICE_ACCOUNT; do
-            if [ -z "${!name}" ]; then echo "::error::GitHub variable $name is not set on the dev environment"; exit 1; fi
+            if [ -z "$(printf '%s' "${!name}" | tr -d '[:space:]')" ]; then
+              echo "::error::GitHub variable $name is not set on the dev environment"; exit 1
+            fi
           done
-          # A stray character pasted into the variable makes Google report the account as not found.
-          if ! [[ "$GCP_DEPLOYER_SERVICE_ACCOUNT" =~ ^[a-z0-9-]+@[a-z0-9-]+\.iam\.gserviceaccount\.com$ ]]; then
-            echo "::error::GCP_DEPLOYER_SERVICE_ACCOUNT is not a plain service account email; check it for extra characters or spaces"
+          provider="$(printf '%s' "$GCP_WORKLOAD_IDENTITY_PROVIDER" | tr -d '[:space:]')"
+          deployer="$(printf '%s' "$GCP_DEPLOYER_SERVICE_ACCOUNT" | tr -d '[:space:]')"
+          if ! [[ "$deployer" =~ ^[a-z0-9-]+@[a-z0-9-]+\.iam\.gserviceaccount\.com$ ]]; then
+            echo "::error::GCP_DEPLOYER_SERVICE_ACCOUNT is not a service account email; check it for extra characters"
             exit 1
           fi
+          echo "provider=${provider}" >> "$GITHUB_OUTPUT"
+          echo "deployer=${deployer}" >> "$GITHUB_OUTPUT"
         env:
           GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
           GCP_REGION: ${{ vars.GCP_REGION }}
@@ -115,8 +123,8 @@ jobs:
 
       - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
-          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ vars.GCP_DEPLOYER_SERVICE_ACCOUNT }}
+          workload_identity_provider: ${{ steps.config.outputs.provider }}
+          service_account: ${{ steps.config.outputs.deployer }}
       - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
 
       - name: Build and push images
@@ -161,8 +169,8 @@ jobs:
       - id: worker-token
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
-          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ vars.GCP_DEPLOYER_SERVICE_ACCOUNT }}
+          workload_identity_provider: ${{ steps.config.outputs.provider }}
+          service_account: ${{ steps.config.outputs.deployer }}
           token_format: id_token
           id_token_audience: ${{ steps.urls.outputs.worker }}
           id_token_include_email: true
