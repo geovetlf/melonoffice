@@ -1,0 +1,188 @@
+name: CD (dev)
+
+# Deploys the main branch to the dev environment only. Staging and production have no deploy
+# workflow in Phase 1B. Google Cloud access uses Workload Identity Federation: no keys are stored.
+#
+# Required GitHub configuration (see docs/infrastructure/README.md):
+#   Environment "dev", limited to the main branch, with these variables:
+#     GCP_PROJECT_ID, GCP_REGION, GCP_WORKLOAD_IDENTITY_PROVIDER,
+#     GCP_DEPLOYER_SERVICE_ACCOUNT, GCP_PLANNER_SERVICE_ACCOUNT, TF_STATE_BUCKET
+#   and, when dev has a budget, TF_BUDGET (the budget object as JSON, not a secret).
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cd-dev
+  cancel-in-progress: false
+
+env:
+  TURBO_TELEMETRY_DISABLED: '1'
+  TERRAFORM_VERSION: 1.16.4
+
+jobs:
+  validate:
+    name: Lint, typecheck, test, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+
+  # Read-only drift check. It never applies: dev infrastructure changes are applied by the owner.
+  terraform-plan:
+    name: Terraform plan (dev)
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: dev
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        working-directory: infra/envs/dev
+    env:
+      TF_IN_AUTOMATION: '1'
+      TF_INPUT: '0'
+      TF_VAR_project_id: ${{ vars.GCP_PROJECT_ID }}
+      TF_VAR_region: ${{ vars.GCP_REGION }}
+      TF_VAR_terraform_state_bucket: ${{ vars.TF_STATE_BUCKET }}
+      TF_BUDGET: ${{ vars.TF_BUDGET }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_PLANNER_SERVICE_ACCOUNT }}
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+      - run: terraform init -backend-config="bucket=${TF_VAR_terraform_state_bucket}"
+      # The planner can read the state but not lock it. Pending changes are shown, not applied.
+      - run: |
+          if [ -n "$TF_BUDGET" ]; then export TF_VAR_budget="$TF_BUDGET"; fi
+          terraform plan -lock=false
+
+  deploy:
+    name: Build, deploy and check dev
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: dev
+      url: ${{ steps.urls.outputs.web }}
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      REGION: ${{ vars.GCP_REGION }}
+      PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      IMAGE_TAG: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Check configuration
+        run: |
+          for name in GCP_PROJECT_ID GCP_REGION GCP_WORKLOAD_IDENTITY_PROVIDER GCP_DEPLOYER_SERVICE_ACCOUNT; do
+            if [ -z "${!name}" ]; then echo "::error::GitHub variable $name is not set on the dev environment"; exit 1; fi
+          done
+        env:
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          GCP_REGION: ${{ vars.GCP_REGION }}
+          GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          GCP_DEPLOYER_SERVICE_ACCOUNT: ${{ vars.GCP_DEPLOYER_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOYER_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+
+      - name: Build and push images
+        run: |
+          registry="${REGION}-docker.pkg.dev/${PROJECT_ID}/melonoffice"
+          gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+          for app in web api worker; do
+            docker build -f "apps/${app}/Dockerfile" --build-arg "SERVICE_VERSION=${IMAGE_TAG}" \
+              -t "${registry}/${app}:${IMAGE_TAG}" .
+            docker push "${registry}/${app}:${IMAGE_TAG}"
+          done
+
+      # Terraform owns each service's configuration; this only rolls out the new image.
+      - name: Deploy to Cloud Run
+        run: |
+          registry="${REGION}-docker.pkg.dev/${PROJECT_ID}/melonoffice"
+          for app in web api worker; do
+            gcloud run services update "$app" --project "$PROJECT_ID" --region "$REGION" \
+              --image "${registry}/${app}:${IMAGE_TAG}" --quiet
+          done
+
+      - name: Read service URLs
+        id: urls
+        run: |
+          for app in web api worker; do
+            url="$(gcloud run services describe "$app" --project "$PROJECT_ID" --region "$REGION" --format='value(status.url)')"
+            echo "${app}=${url}" >> "$GITHUB_OUTPUT"
+            echo "${app}: ${url}"
+          done
+
+      - name: Check web and api health
+        run: |
+          for url in "${{ steps.urls.outputs.web }}" "${{ steps.urls.outputs.api }}"; do
+            body="$(curl --fail --silent --show-error --retry 5 --retry-delay 5 --retry-all-errors "${url}/health")"
+            echo "${url}/health -> ${body}"
+            echo "$body" | grep -q '"status":"ok"'
+          done
+          # The api reports the commit it was built from, which proves the new revision is serving.
+          curl --fail --silent --show-error "${{ steps.urls.outputs.api }}/health" | grep -q "\"version\":\"${IMAGE_TAG}\""
+
+      # The worker is private: call it with a short-lived ID token for the deployer identity.
+      - id: worker-token
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOYER_SERVICE_ACCOUNT }}
+          token_format: id_token
+          id_token_audience: ${{ steps.urls.outputs.worker }}
+          id_token_include_email: true
+      - name: Check worker health
+        env:
+          ID_TOKEN: ${{ steps.worker-token.outputs.id_token }}
+        run: |
+          url="${{ steps.urls.outputs.worker }}"
+          body="$(curl --fail --silent --show-error --retry 5 --retry-delay 5 --retry-all-errors \
+            -H "Authorization: Bearer ${ID_TOKEN}" "${url}/health")"
+          echo "${url}/health -> ${body}"
+          echo "$body" | grep -q '"status":"ok"'
+          # Without a token the worker must refuse the request.
+          code="$(curl --silent --output /dev/null --write-out '%{http_code}' "${url}/health")"
+          [ "$code" = 403 ] || { echo "::error::worker answered ${code} without authentication"; exit 1; }
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - name: Browser smoke test of the web app
+        env:
+          SMOKE_BASE_URL: ${{ steps.urls.outputs.web }}
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --filter @melonoffice/web exec playwright install --with-deps chromium
+          pnpm --filter @melonoffice/web test:smoke

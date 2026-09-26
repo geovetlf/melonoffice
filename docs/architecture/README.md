@@ -15,7 +15,8 @@ The MelonOffice architecture was defined in the **Phase 0 Architecture Plan (v0.
 | [0009](../adr/0009-one-main-specialty-per-specialist.md) | One main specialty per specialist                                   | D-29     |
 | [0010](../adr/0010-initial-languages.md)                 | English and Spanish first, extensible i18n                          | D-17     |
 | [0011](../adr/0011-cloud-environments.md)                | Separate dev, staging and production cloud projects (planning only) | D-5      |
+| [0012](../adr/0012-dev-deployment-on-cloud-run.md)       | Phase 1B infrastructure and dev deployment on Cloud Run             | D-5      |
 
 ## Current phase
 
-Phase 1A (engineering foundation). Phase 1B (cloud environments) waits for explicit approval and for the Google Cloud projects and billing configuration.
+Phase 1B (cloud environments and dev deployment). The infrastructure code is in [`infra`](../../infra); how to apply it and deploy dev is in [`../infrastructure`](../infrastructure/README.md).

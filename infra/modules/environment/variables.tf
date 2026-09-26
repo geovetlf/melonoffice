@@ -1,0 +1,70 @@
+variable "environment" {
+  description = "Environment name."
+  type        = string
+
+  validation {
+    condition     = contains(["dev", "staging", "prod"], var.environment)
+    error_message = "environment must be dev, staging or prod."
+  }
+}
+
+variable "project_id" {
+  description = "Google Cloud project ID of this environment. Each environment has its own project."
+  type        = string
+}
+
+variable "region" {
+  description = "Region for Cloud Run and Artifact Registry."
+  type        = string
+}
+
+variable "github_repository" {
+  description = "Repository whose workflows may authenticate, as owner/name."
+  type        = string
+}
+
+variable "github_environment" {
+  description = "GitHub Actions environment whose jobs may use the deployer identity."
+  type        = string
+}
+
+variable "deploy_apps" {
+  description = "Create the web, api and worker Cloud Run services. Only dev is deployed in Phase 1B."
+  type        = bool
+  default     = false
+}
+
+variable "max_instances" {
+  description = "Maximum instances per service."
+  type        = number
+  default     = 2
+}
+
+variable "deletion_protection" {
+  description = "Prevent Terraform from deleting Cloud Run services."
+  type        = bool
+  default     = true
+}
+
+variable "log_level" {
+  description = "LOG_LEVEL passed to the api and worker."
+  type        = string
+  default     = "info"
+}
+
+variable "terraform_state_bucket" {
+  description = "Bucket holding this environment's Terraform state. When set, the planner can read it."
+  type        = string
+  default     = null
+}
+
+variable "budget" {
+  description = "Monthly spend alert. Null means no budget is created."
+  type = object({
+    billing_account_id = string
+    monthly_amount     = number
+    currency_code      = string
+    alert_emails       = optional(list(string), [])
+  })
+  default = null
+}

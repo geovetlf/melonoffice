@@ -10,6 +10,9 @@ RUN pnpm install --frozen-lockfile \
   && pnpm --filter=@melonoffice/api deploy --prod --legacy /out
 
 FROM node:22-slim
+# The commit being deployed, reported by GET /health. CD passes it with --build-arg.
+ARG SERVICE_VERSION=dev
+ENV SERVICE_VERSION=$SERVICE_VERSION
 ENV NODE_ENV=production
 ENV PORT=8080
 WORKDIR /app
