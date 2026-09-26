@@ -65,6 +65,9 @@ importers:
       '@melonoffice/observability':
         specifier: workspace:*
         version: link:../../packages/observability
+      '@melonoffice/rbac':
+        specifier: workspace:*
+        version: link:../../packages/rbac
       '@melonoffice/tenancy':
         specifier: workspace:*
         version: link:../../packages/tenancy
@@ -184,6 +187,22 @@ importers:
 
   packages/observability:
     devDependencies:
+      '@melonoffice/config':
+        specifier: workspace:*
+        version: link:../config
+
+  packages/rbac:
+    dependencies:
+      '@melonoffice/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@melonoffice/tenancy':
+        specifier: workspace:*
+        version: link:../tenancy
+    devDependencies:
+      '@melonoffice/auth':
+        specifier: workspace:*
+        version: link:../auth
       '@melonoffice/config':
         specifier: workspace:*
         version: link:../config

@@ -6,7 +6,7 @@ import type {
   UserId,
 } from '@melonoffice/domain';
 import { TenancyError } from './errors.js';
-import { membershipIdOf, newOrganizationId } from './ids.js';
+import { membershipIdOf, newOrganizationId, OWNER_ROLE } from './ids.js';
 import type { CreatedOrganization, NewOrganization, TenancyStore } from './store.js';
 
 /** For tests and local runs only: everything is lost on restart and not shared between instances. */
@@ -34,7 +34,7 @@ export class InMemoryTenancyStore implements TenancyStore {
       organizationId: organization.id,
       userId: creator,
       status: 'active',
-      role: 'owner',
+      role: OWNER_ROLE,
       createdAt: at,
       updatedAt: at,
     });

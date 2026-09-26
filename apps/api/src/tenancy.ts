@@ -1,8 +1,8 @@
+import type { AuthorizationService } from '@melonoffice/rbac';
 import {
   createOrganization,
   isTenancyError,
   listMyOrganizations,
-  resolveTenant,
   type TenancyErrorCode,
   type TenancyStore,
 } from '@melonoffice/tenancy';
@@ -10,6 +10,7 @@ import type { Membership, Organization } from '@melonoffice/domain';
 import type { Context, Hono } from 'hono';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import type { AuthEnv } from './auth.js';
+import { withPermission } from './authorization.js';
 
 const STATUS: Record<TenancyErrorCode, ContentfulStatusCode> = {
   invalid_organization_name: 400,
@@ -31,10 +32,14 @@ async function guard<T>(c: Context<AuthEnv>, run: () => Promise<T>): Promise<T |
 
 /**
  * Organization routes under /v1 (ADR-0018). They run after authentication, so `auth` is always
- * the verified caller; the user id is never read from the request. Without a store they answer
- * 503, failing closed.
+ * the verified caller; the user id is never read from the request. Routes inside an organization
+ * go through `withPermission` (ADR-0019). Without a store they answer 503, failing closed.
  */
-export function registerTenancyRoutes(app: Hono<AuthEnv>, store: TenancyStore | undefined): void {
+export function registerTenancyRoutes(
+  app: Hono<AuthEnv>,
+  store: TenancyStore | undefined,
+  authorization: AuthorizationService,
+): void {
   if (store === undefined) {
     app.all('/v1/organizations', (c) => c.json({ error: 'tenancy_not_configured' }, 503));
     app.all('/v1/organizations/*', (c) => c.json({ error: 'tenancy_not_configured' }, 503));
@@ -59,20 +64,18 @@ export function registerTenancyRoutes(app: Hono<AuthEnv>, store: TenancyStore | 
     });
   });
 
-  // The path id only selects; resolveTenant grants access through an active membership.
-  app.get('/v1/organizations/:organizationId', async (c) => {
-    const result = await guard(c, async () => {
-      const tenant = await resolveTenant(c.get('auth'), c.req.param('organizationId'), store);
+  // The path id only selects; the tenant comes from an active membership and RBAC decides.
+  app.get(
+    '/v1/organizations/:organizationId',
+    withPermission('organization.read', { store, authorization }, async (c, tenant) => {
       const organization = await store.findOrganization(tenant.organizationId);
       const membership = await store.findMembership(tenant.organizationId, tenant.userId);
       if (organization === undefined || membership === undefined) {
         throw new Error('resolved tenant is missing its records');
       }
-      return toView(organization, membership);
-    });
-    if (result instanceof Response) return result;
-    return c.json(result);
-  });
+      return c.json(toView(organization, membership));
+    }),
+  );
 }
 
 /** The public view of an organization, with the caller's own membership in it. */

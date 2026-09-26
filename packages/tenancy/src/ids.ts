@@ -3,6 +3,9 @@ import { randomUUID } from 'node:crypto';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
+/** The role given to the creator of an organization (D-22). RBAC defines what it allows. */
+export const OWNER_ROLE = 'owner';
+
 /** Organization ids: random and opaque, never derived from the name or anyone's email. */
 export const newOrganizationId = (): OrganizationId => randomUUID() as OrganizationId;
 

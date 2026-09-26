@@ -1,6 +1,7 @@
 import { InMemoryUserDirectory } from '@melonoffice/auth';
 import type { OrganizationId, UserId } from '@melonoffice/domain';
 import { createLogger } from '@melonoffice/observability';
+import { createAuthorizationService, type AuthorizationService } from '@melonoffice/rbac';
 import { describe, expect, it } from 'vitest';
 import { createApp } from './app.js';
 import { setupApp, STORES, verifier } from './test-api.js';
@@ -238,3 +239,91 @@ describe('regression', () => {
     expect((await app.request('/v1/organizations', { method: 'POST', headers })).status).toBe(503);
   });
 });
+
+describe.each(STORES)(
+  'RBAC on GET /v1/organizations/:id with storage in %s',
+  (_name, createStores) => {
+    /** Alice owns an organization; Bob is registered with no membership anywhere. */
+    async function setup(authorization?: AuthorizationService) {
+      const ctx = setupApp(createStores(), authorization);
+      const aliceId = (await ctx.register('token-alice')) as UserId;
+      await ctx.register('token-bob');
+      const created = await ctx.app.request(
+        '/v1/organizations',
+        ctx.as('token-alice', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ name: 'Org A' }),
+        }),
+      );
+      const orgA = ((await created.json()) as View).organization.id as OrganizationId;
+      const membership = await ctx.tenancy.findMembership(orgA, aliceId);
+      if (membership === undefined) throw new Error('missing membership');
+      const read = async (headers: Record<string, string>) => {
+        const response = await ctx.app.request(`/v1/organizations/${orgA}`, { headers });
+        return {
+          status: response.status,
+          body: (await response.json()) as Record<string, unknown>,
+        };
+      };
+      return { ...ctx, orgA, membership, read };
+    }
+
+    const alice = { authorization: 'Bearer token-alice' };
+
+    it('allows the owner, whose role lists organization.read', async () => {
+      const { read, orgA } = await setup();
+      const { status, body } = await read(alice);
+      expect(status).toBe(200);
+      expect((body as unknown as View).organization.id).toBe(orgA);
+    });
+
+    it.each([
+      ['no token', {}, 401, 'missing_token'],
+      ['an invalid token', { authorization: 'Bearer forged' }, 401, 'invalid_token'],
+      [
+        'a valid token without a membership',
+        { authorization: 'Bearer token-bob' },
+        403,
+        'organization_forbidden',
+      ],
+    ])('refuses %s', async (_name, headers, status, error) => {
+      const { read } = await setup();
+      expect(await read(headers)).toEqual({ status, body: { error } });
+    });
+
+    it.each(['suspended', 'revoked'] as const)('refuses a %s membership', async (status) => {
+      const { read, put, membership } = await setup();
+      await put({ ...membership, status });
+      expect(await read(alice)).toEqual({ status: 403, body: { error: 'organization_forbidden' } });
+    });
+
+    it('refuses a member whose role does not list the permission', async () => {
+      const { read } = await setup(createAuthorizationService({ owner: [] }));
+      expect(await read(alice)).toEqual({ status: 403, body: { error: 'permission_denied' } });
+    });
+
+    it('refuses a stored role RBAC does not know, without saying why', async () => {
+      const { read, put, membership, lines } = await setup();
+      await put({ ...membership, role: 'admin' });
+      expect(await read(alice)).toEqual({ status: 403, body: { error: 'permission_denied' } });
+      expect(lines.join('\n')).toContain('"reason":"unknown_role"');
+    });
+
+    it('ignores membership, user and role values sent by the client', async () => {
+      const { app, orgA, membership } = await setup(createAuthorizationService({ owner: [] }));
+      const response = await app.request(
+        `/v1/organizations/${orgA}?membershipId=${membership.id}&role=owner`,
+        {
+          headers: {
+            ...alice,
+            'x-membership-id': membership.id,
+            'x-user-id': membership.userId,
+            'x-role': 'owner',
+          },
+        },
+      );
+      expect(response.status).toBe(403);
+    });
+  },
+);

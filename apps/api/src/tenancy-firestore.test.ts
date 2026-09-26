@@ -105,16 +105,32 @@ describe.runIf(emulatorHost)('FirestoreTenancyStore (emulator)', () => {
     }
   });
 
-  it('refuses stored records with an unknown status or role instead of trusting them', async () => {
+  it('refuses stored records with an unknown status instead of trusting them', async () => {
     const { db, store } = setup();
     const { organization } = await store.createOrganization({ name: 'Acme', creator: ALICE });
-    await db.collection(MEMBERSHIPS).doc(`${organization.id}_${ALICE}`).update({ role: 'admin' });
+    const ref = db.collection(MEMBERSHIPS).doc(`${organization.id}_${ALICE}`);
+    await ref.update({ status: 'owner' });
     await expect(store.findMembership(organization.id, ALICE)).rejects.toThrow(
       'invalid membership record',
     );
+    await ref.update({ status: 'active', role: 42 });
+    await expect(store.findMembership(organization.id, ALICE)).rejects.toThrow(
+      'invalid membership record',
+    );
+    await ref.update({ role: 'owner' });
     await db.collection(ORGANIZATIONS).doc(organization.id).update({ status: 'deleted' });
     await expect(store.findOrganization(organization.id)).rejects.toThrow(
       'invalid organization record',
     );
+  });
+});
+
+describe.runIf(emulatorHost)('FirestoreTenancyStore roles (emulator)', () => {
+  it('passes an unknown role on as a name, for RBAC to deny', async () => {
+    const db = emulatorFirestore();
+    const store = new FirestoreTenancyStore(db, () => NOW);
+    const { organization } = await store.createOrganization({ name: 'Acme', creator: ALICE });
+    await db.collection(MEMBERSHIPS).doc(`${organization.id}_${ALICE}`).update({ role: 'admin' });
+    expect((await store.findMembership(organization.id, ALICE))?.role).toBe('admin');
   });
 });

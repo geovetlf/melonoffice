@@ -24,9 +24,19 @@ export interface TenantContext {
   readonly membershipId: MembershipId;
   /** Always `active`: any other status is refused before a context exists. */
   readonly membershipStatus: 'active';
-  /** A name only; what it allows is decided by RBAC, which does not exist yet. */
+  /** A name only; what it allows is decided by RBAC (ADR-0019). */
   readonly role: MembershipRole;
 }
+
+// Every context resolveTenant returns, and nothing else. A copy, an edited context or one built by
+// hand is not in it, so it cannot pass as resolved. Weak, so contexts are still garbage collected.
+const issued = new WeakSet<TenantContext>();
+
+/**
+ * Whether this exact object came from `resolveTenant()`. Authorization accepts only these, so a
+ * context with a changed user, organization, membership or role authorizes nothing.
+ */
+export const isResolvedTenant = (context: TenantContext): boolean => issued.has(context);
 
 /**
  * Places an authenticated caller in an organization. `requested` is only a selector (a path
@@ -51,7 +61,7 @@ export async function resolveTenant(
   }
   const organization = await store.findOrganization(requested);
   if (organization?.status !== 'active') throw new TenancyError('organization_forbidden');
-  return Object.freeze({
+  const tenant: TenantContext = Object.freeze({
     actor: auth.actor,
     userId: auth.userId,
     organizationId: organization.id,
@@ -59,6 +69,8 @@ export async function resolveTenant(
     membershipStatus: 'active',
     role: membership.role,
   });
+  issued.add(tenant);
+  return tenant;
 }
 
 export const ORGANIZATION_NAME_MAX_LENGTH = 100;
