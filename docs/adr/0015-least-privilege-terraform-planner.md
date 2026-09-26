@@ -1,6 +1,6 @@
 # ADR-0015: Least-privilege Terraform planner
 
-- Status: Accepted (approved by Geovet on 2026-09-26). Not applied yet: each environment is applied separately by the owner.
+- Status: Accepted (approved by Geovet on 2026-09-26). Applied and verified in dev and production on 2026-09-26; staging not applied yet.
 - Date: 2026-09-26
 - Builds on: [ADR-0011](0011-cloud-environments.md), [ADR-0012](0012-dev-deployment-on-cloud-run.md), [ADR-0014](0014-firestore-and-identity-platform-in-dev.md)
 
@@ -70,9 +70,21 @@ A security review on 2026-09-26 confirmed in Cloud Shell that `roles/viewer` (6,
 - Applying this does not affect `terraform apply`: the owner applies with their own credentials, never with the planner.
 - **A resource type added later needs its read permission added here in the same change.** Otherwise CD's plan fails with a 403 naming the missing permission. It never affects deploys or the running app.
 - A deleted custom role ID stays reserved for 7 days, so the role is kept, not recreated.
-- Each environment picks this up only when the owner applies it:
-  - dev first;
-  - production with its own approval;
-  - staging when it is first applied.
+- Each environment picks this up only when the owner applies it. Staging will show the pending change (2 to add, 2 to destroy) when it is first planned.
 
-  Until then, that environment's plan shows the pending change: 2 to add and 2 to destroy.
+## Applied state (2026-09-26)
+
+Geovet applied it from Cloud Shell, each time from a saved plan that was checked before the apply.
+
+- **Dev:**
+  - PR #10 applied: 2 added, 0 changed, 2 destroyed.
+  - CD's first plan with the reduced role failed with 403 on `iam.workloadIdentityPools.getAttestationRules`.
+  - PR #11 added it to the role and was applied: 0 added, 1 changed, 0 destroyed.
+  - The next CD run passed: its plan with the planner reported "No changes", and the deploy, health checks and browser smoke test passed.
+- **Production:** applied: 2 added, 0 changed, 2 destroyed. A new plan afterwards reported "No changes".
+  - Production has no CD workflow, so its planner has not run a plan yet. Its role is the dev role minus the Cloud Run, Firestore and Identity Platform permissions, which production does not use.
+- **In both:**
+  - the planner holds only `melonofficeTerraformPlanner`, as `gcloud projects get-iam-policy` confirmed;
+  - `roles/viewer` and `roles/iam.securityReviewer` were removed;
+  - read access to the state bucket is unchanged.
+- **Staging:** not applied yet. Its planner does not exist until staging's first apply, which needs Geovet's approval.
