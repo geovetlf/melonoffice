@@ -31,3 +31,17 @@ Thumbs.db
 .idea/
 .vscode/*
 !.vscode/extensions.json
+
+# Terraform (the provider lock file is committed)
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+crash.log
+*.tfvars
+!*.tfvars.example
+
+# Playwright output
+test-results/
+playwright-report/

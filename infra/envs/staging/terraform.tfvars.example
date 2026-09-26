@@ -1,0 +1,14 @@
+# Copy to terraform.tfvars (ignored by Git) and replace every placeholder with a real value.
+# These are identifiers, not secrets, but they are never committed.
+
+project_id             = "<project id>"
+region                 = "<region>"
+terraform_state_bucket = "<state bucket name>"
+
+# Optional spend alert. Remove the block to skip it.
+budget = {
+  billing_account_id = "<billing account id>"
+  monthly_amount     = 0 # replace with a positive whole number
+  currency_code      = "<currency of the billing account>"
+  alert_emails       = []
+}
