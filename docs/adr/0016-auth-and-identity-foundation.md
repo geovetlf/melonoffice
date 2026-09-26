@@ -3,6 +3,7 @@
 - Status: Proposed (Phase 2A, pending Geovet's review)
 - Date: 2026-09-26
 - Builds on: [ADR-0013](0013-entitlements-core.md), [ADR-0014](0014-firestore-and-identity-platform-in-dev.md)
+- Amended by: [ADR-0018](0018-tenancy-and-memberships.md), which moves organization resolution from auth to tenancy. The organization rules below are kept for history.
 
 ## Context
 

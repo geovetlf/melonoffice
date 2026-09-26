@@ -1,16 +1,20 @@
 import type { AuthDependencies } from '@melonoffice/auth';
 import type { Logger } from '@melonoffice/observability';
+import type { TenancyStore } from '@melonoffice/tenancy';
 import { Hono } from 'hono';
 import { registerAuthRoutes, type AuthEnv } from './auth.js';
 import { registerHealth } from './health.js';
+import { registerTenancyRoutes } from './tenancy.js';
 
 export const SERVICE_NAME = 'api';
 
 export interface AppOptions {
   readonly logger: Logger;
   readonly version: string;
-  /** Token verification, users and memberships. Absent: /v1 answers 503 (fails closed). */
+  /** Token verification and users. Absent: /v1 answers 503 (fails closed). */
   readonly auth?: AuthDependencies;
+  /** Organizations and memberships. Absent: organization routes answer 503 (fails closed). */
+  readonly tenancy?: TenancyStore;
 }
 
 type Env = AuthEnv;
@@ -18,7 +22,7 @@ type Env = AuthEnv;
 const REQUEST_ID_HEADER = 'x-request-id';
 const REQUEST_ID_PATTERN = /^[\w-]{1,128}$/;
 
-export function createApp({ logger, version, auth }: AppOptions): Hono<Env> {
+export function createApp({ logger, version, auth, tenancy }: AppOptions): Hono<Env> {
   const app = new Hono<Env>();
 
   // Correlate every request with an id (reuse a well-formed incoming one) and log it.
@@ -41,6 +45,7 @@ export function createApp({ logger, version, auth }: AppOptions): Hono<Env> {
 
   registerHealth(app, { service: SERVICE_NAME, version });
   registerAuthRoutes(app, auth);
+  if (auth !== undefined) registerTenancyRoutes(app, tenancy);
 
   app.notFound((c) => c.json({ error: 'not_found' }, 404));
   app.onError((error, c) => {

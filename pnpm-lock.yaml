@@ -65,6 +65,9 @@ importers:
       '@melonoffice/observability':
         specifier: workspace:*
         version: link:../../packages/observability
+      '@melonoffice/tenancy':
+        specifier: workspace:*
+        version: link:../../packages/tenancy
       hono:
         specifier: 4.13.9
         version: 4.13.9
@@ -180,6 +183,19 @@ importers:
         version: 19.3.0(react@19.3.0)
 
   packages/observability:
+    devDependencies:
+      '@melonoffice/config':
+        specifier: workspace:*
+        version: link:../config
+
+  packages/tenancy:
+    dependencies:
+      '@melonoffice/auth':
+        specifier: workspace:*
+        version: link:../auth
+      '@melonoffice/domain':
+        specifier: workspace:*
+        version: link:../domain
     devDependencies:
       '@melonoffice/config':
         specifier: workspace:*

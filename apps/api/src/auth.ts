@@ -6,23 +6,18 @@ import {
   type AuthErrorCode,
   type AuthenticatedContext,
 } from '@melonoffice/auth';
-import type { OrganizationId, User } from '@melonoffice/domain';
+import type { User } from '@melonoffice/domain';
 import type { Logger } from '@melonoffice/observability';
 import type { Context, Hono } from 'hono';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 
 export type AuthEnv = { Variables: { logger: Logger; auth: AuthenticatedContext } };
 
-/** Header a client may send to pick one of its own organizations. It grants nothing by itself. */
-export const ORGANIZATION_HEADER = 'x-organization-id';
-
 const STATUS: Record<AuthErrorCode, ContentfulStatusCode> = {
   missing_token: 401,
   invalid_token: 401,
   token_expired: 401,
   user_not_registered: 403,
-  organization_required: 403,
-  organization_forbidden: 403,
   verifier_unavailable: 503,
 };
 
@@ -70,13 +65,7 @@ export function registerAuthRoutes(app: Hono<AuthEnv>, deps: AuthDependencies | 
   // Every other /v1 route needs a registered user.
   app.use('/v1/*', async (c, next) => {
     const context = await guard(c, () =>
-      authenticate(
-        {
-          authorization: c.req.header('authorization'),
-          requestedOrganization: c.req.header(ORGANIZATION_HEADER),
-        },
-        deps,
-      ),
+      authenticate({ authorization: c.req.header('authorization') }, deps),
     );
     if (context instanceof Response) return context;
     c.set('auth', context);
@@ -85,15 +74,14 @@ export function registerAuthRoutes(app: Hono<AuthEnv>, deps: AuthDependencies | 
 
   // Always the caller's own record: the id comes from the verified context, never the request.
   app.get('/v1/me', async (c) => {
-    const auth = c.get('auth');
-    const user = await deps.users.findById(auth.userId);
+    const user = await deps.users.findById(c.get('auth').userId);
     if (user === undefined) return reject(c, 'user_not_registered');
-    return c.json(toMe(user, auth.organizationId));
+    return c.json(toMe(user));
   });
 }
 
-/** The public view of the caller's own user. */
-function toMe(user: User, organizationId?: OrganizationId) {
+/** The public view of the caller's own user. Organizations are at /v1/me/organizations. */
+function toMe(user: User) {
   return {
     userId: user.id,
     email: user.email ?? null,
@@ -101,13 +89,5 @@ function toMe(user: User, organizationId?: OrganizationId) {
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
     lastLoginAt: user.lastLoginAt,
-    organizationId: organizationId ?? null,
   };
-}
-
-/** For routes that act inside an organization: refuses a request that has none. */
-export function requireOrganization(c: Context<AuthEnv>): Response | undefined {
-  return c.get('auth').organizationId === undefined
-    ? reject(c, 'organization_required')
-    : undefined;
 }

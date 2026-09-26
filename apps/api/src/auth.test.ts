@@ -1,83 +1,12 @@
-import {
-  AuthError,
-  InMemoryUserDirectory,
-  type AuthDependencies,
-  type UserDirectory,
-  type IdTokenVerifier,
-  type VerifiedIdentity,
-} from '@melonoffice/auth';
-import type { OrganizationId } from '@melonoffice/domain';
 import { createLogger } from '@melonoffice/observability';
 import { describe, expect, it } from 'vitest';
 import { createApp } from './app.js';
-import { requireOrganization } from './auth.js';
-import { emulatorFirestore, emulatorHost } from './test-firestore.js';
-import { FirestoreUserDirectory } from './users-firestore.js';
+import { setupApp, STORES } from './test-api.js';
 
-const ORG_A = 'org-a' as OrganizationId;
-const ORG_B = 'org-b' as OrganizationId;
+const ORG_A = '00000000-0000-4000-8000-00000000000a';
 
-/**
- * Stands in for Identity Platform. Real signature, issuer and expiry checks are tested in
- * @melonoffice/auth; here each fixed token maps to an outcome.
- */
-const IDENTITIES: Record<string, VerifiedIdentity> = {
-  'token-alice': { subject: 'uid-alice', email: 'alice@example.com', emailVerified: true },
-  'token-bob': { subject: 'uid-bob', email: 'bob@example.com', emailVerified: false },
-};
-const verifier: IdTokenVerifier = {
-  async verify(token) {
-    if (token === 'token-expired') throw new AuthError('token_expired');
-    if (token === 'token-keys-down') throw new AuthError('verifier_unavailable');
-    const identity = IDENTITIES[token];
-    if (identity === undefined) throw new AuthError('invalid_token');
-    return identity;
-  },
-};
-
-/** Every API test runs against memory and, where the emulator runs, against Firestore. */
-const DIRECTORIES: [string, () => UserDirectory][] = [
-  ['memory', () => new InMemoryUserDirectory()],
-  ...(emulatorHost
-    ? [
-        ['firestore', () => new FirestoreUserDirectory(emulatorFirestore())] as [
-          string,
-          () => UserDirectory,
-        ],
-      ]
-    : []),
-];
-
-describe.each(DIRECTORIES)('with users in %s', (_name, createUsers) => {
-  function setup(options: { memberships?: Record<string, OrganizationId[]> } = {}) {
-    const lines: string[] = [];
-    const logger = createLogger({ service: 'api', sink: (line) => lines.push(line) });
-    const users = createUsers();
-    const memberships = options.memberships ?? {};
-    const auth: AuthDependencies = {
-      verifier,
-      users,
-      memberships: { organizationsOf: async (userId) => memberships[userId] ?? [] },
-    };
-    const app = createApp({ logger, version: 'test', auth });
-    // A route that works inside an organization, like the ones tenancy will add.
-    app.get('/v1/org-probe', (c) => {
-      const refused = requireOrganization(c);
-      if (refused) return refused;
-      return c.json({ organizationId: c.get('auth').organizationId });
-    });
-    const as = (token: string, init: RequestInit = {}) => ({
-      ...init,
-      headers: { authorization: `Bearer ${token}`, ...(init.headers as Record<string, string>) },
-    });
-    const register = async (token: string) =>
-      (
-        (await (await app.request('/v1/me', as(token, { method: 'POST' }))).json()) as {
-          userId: string;
-        }
-      ).userId;
-    return { app, users, lines, memberships, as, register };
-  }
+describe.each(STORES)('with users in %s', (_name, createStores) => {
+  const setup = () => setupApp(createStores());
 
   describe('POST /v1/me (registration)', () => {
     it('creates the user from a valid token, once', async () => {
@@ -92,7 +21,6 @@ describe.each(DIRECTORIES)('with users in %s', (_name, createUsers) => {
         createdAt: expect.any(String),
         updatedAt: expect.any(String),
         lastLoginAt: expect.any(String),
-        organizationId: null,
       });
       const again = await app.request('/v1/me', as('token-alice', { method: 'POST' }));
       expect(again.status).toBe(200);
@@ -121,7 +49,7 @@ describe.each(DIRECTORIES)('with users in %s', (_name, createUsers) => {
       const body = (await response.json()) as { userId: string; email: string };
       expect(body.userId).not.toBe(bobId);
       expect(body.email).toBe('alice@example.com');
-      expect(body).toMatchObject({ organizationId: null });
+      expect(body).not.toHaveProperty('organizationId');
       const stored = await users.findBySubject('uid-alice');
       expect(stored?.id).toBe(body.userId);
       expect(stored?.email).toBe('alice@example.com');
@@ -148,7 +76,6 @@ describe.each(DIRECTORIES)('with users in %s', (_name, createUsers) => {
         createdAt: expect.any(String),
         updatedAt: expect.any(String),
         lastLoginAt: expect.any(String),
-        organizationId: null,
       });
     });
 
@@ -186,35 +113,6 @@ describe.each(DIRECTORIES)('with users in %s', (_name, createUsers) => {
       await app.request('/v1/me', as('token-expired'));
       expect(lines.join('\n')).not.toMatch(/token-alice|token-expired/);
       expect(lines.join('\n')).toContain('"code":"token_expired"');
-    });
-  });
-
-  describe('organizations', () => {
-    it('a route that needs an organization refuses a user without one', async () => {
-      const { app, as, register } = setup();
-      await register('token-alice');
-      const response = await app.request('/v1/org-probe', as('token-alice'));
-      expect(response.status).toBe(403);
-      expect(await response.json()).toEqual({ error: 'organization_required' });
-    });
-
-    it("a client-sent organization id cannot reach another user's organization", async () => {
-      const { app, as, register, memberships } = setup();
-      memberships[await register('token-alice')] = [ORG_A];
-      memberships[await register('token-bob')] = [ORG_B];
-      const own = await app.request('/v1/org-probe', as('token-alice'));
-      expect(await own.json()).toEqual({ organizationId: ORG_A });
-      const other = await app.request(
-        '/v1/org-probe',
-        as('token-alice', { headers: { 'x-organization-id': ORG_B } }),
-      );
-      expect(other.status).toBe(403);
-      expect(await other.json()).toEqual({ error: 'organization_forbidden' });
-      const missing = await app.request(
-        '/v1/org-probe',
-        as('token-alice', { headers: { 'x-organization-id': 'org-does-not-exist' } }),
-      );
-      expect(await missing.json()).toEqual({ error: 'organization_forbidden' });
     });
   });
 });
