@@ -117,7 +117,11 @@ resource "google_service_account_iam_member" "planner_federation" {
 }
 
 resource "google_project_iam_member" "planner" {
-  for_each = toset(["roles/viewer", "roles/iam.securityReviewer"])
+  # With a budget, the provider bills API quota to the project, which needs serviceusage.services.use.
+  for_each = toset(concat(
+    ["roles/viewer", "roles/iam.securityReviewer"],
+    local.budget_enabled ? ["roles/serviceusage.serviceUsageConsumer"] : [],
+  ))
 
   project = var.project_id
   role    = each.value

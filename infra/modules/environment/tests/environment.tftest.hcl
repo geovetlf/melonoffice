@@ -57,6 +57,11 @@ run "dev_deploys_three_apps" {
     condition     = length(module.budget) == 0
     error_message = "No budget is created unless one is configured."
   }
+
+  assert {
+    condition     = !contains(keys(google_project_iam_member.planner), "roles/serviceusage.serviceUsageConsumer")
+    error_message = "Without a budget, the planner must not get serviceusage.services.use."
+  }
 }
 
 run "staging_and_prod_deploy_nothing" {
@@ -110,6 +115,11 @@ run "dev_with_budget_applies" {
   assert {
     condition     = length(module.budget) == 1
     error_message = "A configured budget must be created."
+  }
+
+  assert {
+    condition     = contains(keys(google_project_iam_member.planner), "roles/serviceusage.serviceUsageConsumer")
+    error_message = "With a budget, the planner needs serviceusage.services.use for the quota project."
   }
 }
 

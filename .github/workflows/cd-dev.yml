@@ -102,6 +102,11 @@ jobs:
           for name in GCP_PROJECT_ID GCP_REGION GCP_WORKLOAD_IDENTITY_PROVIDER GCP_DEPLOYER_SERVICE_ACCOUNT; do
             if [ -z "${!name}" ]; then echo "::error::GitHub variable $name is not set on the dev environment"; exit 1; fi
           done
+          # A stray character pasted into the variable makes Google report the account as not found.
+          if ! [[ "$GCP_DEPLOYER_SERVICE_ACCOUNT" =~ ^[a-z0-9-]+@[a-z0-9-]+\.iam\.gserviceaccount\.com$ ]]; then
+            echo "::error::GCP_DEPLOYER_SERVICE_ACCOUNT is not a plain service account email; check it for extra characters or spaces"
+            exit 1
+          fi
         env:
           GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
           GCP_REGION: ${{ vars.GCP_REGION }}
