@@ -34,6 +34,29 @@ jobs:
       - run: pnpm test
       - run: pnpm build
 
+  terraform:
+    name: Terraform format, validate, test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.16.4
+          terraform_wrapper: false
+      - run: terraform fmt -check -recursive infra
+      # No credentials and no backend: validation and the mocked module tests are offline.
+      - name: Validate environments
+        run: |
+          for env in dev staging prod; do
+            terraform -chdir="infra/envs/${env}" init -backend=false -input=false
+            terraform -chdir="infra/envs/${env}" validate
+          done
+      - name: Test the environment module
+        run: |
+          terraform -chdir=infra/modules/environment init -input=false
+          terraform -chdir=infra/modules/environment test
+
   secret-scan:
     name: Secret scan
     runs-on: ubuntu-latest
