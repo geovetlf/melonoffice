@@ -125,6 +125,16 @@ importers:
         specifier: workspace:*
         version: link:../config
 
+  packages/entitlements:
+    dependencies:
+      '@melonoffice/domain':
+        specifier: workspace:*
+        version: link:../domain
+    devDependencies:
+      '@melonoffice/config':
+        specifier: workspace:*
+        version: link:../config
+
   packages/i18n:
     dependencies:
       react-intl:
