@@ -1,6 +1,6 @@
 # Infrastructure
 
-This document covers the Phase 1B cloud environments and the dev deployment. The decisions are in [ADR-0012](../adr/0012-dev-deployment-on-cloud-run.md).
+This document covers the cloud environments and the dev deployment. The decisions are in [ADR-0012](../adr/0012-dev-deployment-on-cloud-run.md) and, for Firestore and Identity Platform in dev, [ADR-0014](../adr/0014-firestore-and-identity-platform-in-dev.md).
 
 | Environment | Terraform      | Cloud Run services     | Deployed by              |
 | ----------- | -------------- | ---------------------- | ------------------------ |

@@ -128,6 +128,16 @@ run "staging_is_isolated_and_minimal" {
   }
 
   assert {
+    condition     = length(google_firestore_database.default) == 0 && length(google_identity_platform_config.default) == 0 && length(google_project_iam_member.api_firestore) == 0
+    error_message = "Firestore and Identity Platform are dev only."
+  }
+
+  assert {
+    condition     = !contains(module.services.services, "firestore.googleapis.com") && !contains(module.services.services, "identitytoolkit.googleapis.com")
+    error_message = "Firestore and Identity Platform APIs are dev only."
+  }
+
+  assert {
     condition     = output.service_urls == {}
     error_message = "Staging must not expose any service URL."
   }
@@ -156,6 +166,16 @@ run "prod_is_isolated_and_minimal" {
     condition     = length(module.app) == 0
     error_message = "Production creates no Cloud Run service in Phase 1B."
   }
+
+  assert {
+    condition     = length(google_firestore_database.default) == 0 && length(google_identity_platform_config.default) == 0 && length(google_project_iam_member.api_firestore) == 0
+    error_message = "Firestore and Identity Platform are dev only."
+  }
+
+  assert {
+    condition     = !contains(module.services.services, "firestore.googleapis.com") && !contains(module.services.services, "identitytoolkit.googleapis.com")
+    error_message = "Firestore and Identity Platform APIs are dev only."
+  }
 }
 
 # A full mocked apply of dev with a budget exercises every resource's argument validation.
@@ -182,6 +202,48 @@ run "dev_with_budget_applies" {
   assert {
     condition     = contains(keys(google_project_iam_member.planner), "roles/serviceusage.serviceUsageConsumer")
     error_message = "With a budget, the planner needs serviceusage.services.use for the quota project."
+  }
+}
+
+# Dev gets the Firestore database and Identity Platform (D-6), and only the api may use Firestore.
+run "dev_gets_firestore_and_auth" {
+  command = apply
+
+  variables {
+    environment         = "dev"
+    deploy_apps         = true
+    deletion_protection = false
+    firestore_and_auth  = true
+  }
+
+  assert {
+    condition     = contains(module.services.services, "firestore.googleapis.com") && contains(module.services.services, "identitytoolkit.googleapis.com")
+    error_message = "Dev must enable the Firestore and Identity Platform APIs."
+  }
+
+  assert {
+    condition     = google_firestore_database.default[0].name == "(default)" && google_firestore_database.default[0].type == "FIRESTORE_NATIVE" && google_firestore_database.default[0].location_id == "test-region"
+    error_message = "Dev must have the default Firestore database in Native mode, in the environment's region."
+  }
+
+  assert {
+    condition     = google_firestore_database.default[0].deletion_policy == "ABANDON"
+    error_message = "Terraform must never delete the Firestore database."
+  }
+
+  assert {
+    condition     = google_identity_platform_config.default[0].sign_in[0].email[0].enabled && google_identity_platform_config.default[0].sign_in[0].email[0].password_required && !google_identity_platform_config.default[0].sign_in[0].allow_duplicate_emails
+    error_message = "Identity Platform must allow email and password sign-in only, with unique emails."
+  }
+
+  assert {
+    condition     = google_project_iam_member.api_firestore[0].role == "roles/datastore.user" && google_project_iam_member.api_firestore[0].member == "serviceAccount:${module.app["api"].runtime_service_account}"
+    error_message = "Only the api runtime identity may read and write Firestore."
+  }
+
+  assert {
+    condition     = toset(keys(google_project_iam_member.planner)) == toset(["roles/viewer", "roles/iam.securityReviewer"])
+    error_message = "Firestore and Identity Platform must not widen the planner's roles."
   }
 }
 
