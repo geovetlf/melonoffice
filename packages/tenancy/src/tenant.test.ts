@@ -1,3 +1,4 @@
+import { buildAuditEvent, InMemoryAuditStore } from '@melonoffice/audit';
 import { actAsGia, type AuthenticatedContext } from '@melonoffice/auth';
 import type { Membership, Organization, OrganizationId, UserId } from '@melonoffice/domain';
 import { describe, expect, it } from 'vitest';
@@ -256,5 +257,42 @@ describe('listMyOrganizations', () => {
   it('is empty for a user without memberships', async () => {
     const store = new InMemoryTenancyStore();
     expect(await listMyOrganizations(userContext(ALICE), store)).toEqual([]);
+  });
+});
+
+describe('creation audit (atomic)', () => {
+  it('stores the creation events together with the organization', async () => {
+    const audit = new InMemoryAuditStore();
+    const store = new InMemoryTenancyStore(() => NOW, audit);
+    const { organization } = await createOrganization(userContext(ALICE), { name: 'Acme' }, store, {
+      audit: ({ organization: created }) => [
+        buildAuditEvent(
+          {
+            action: 'organization.create',
+            result: 'success',
+            actor: { type: 'user', userId: ALICE, via: 'direct' },
+            organizationId: created.id,
+            source: 'api',
+          },
+          NOW,
+        ),
+      ],
+    });
+    expect(audit.events().map((e) => e.organizationId)).toEqual([organization.id]);
+  });
+
+  it('creates nothing when the events cannot be built', async () => {
+    const audit = new InMemoryAuditStore();
+    const store = new InMemoryTenancyStore(() => NOW, audit);
+    const failing = createOrganization(userContext(ALICE), { name: 'Acme' }, store, {
+      audit: () => {
+        throw new Error('audit unavailable');
+      },
+    });
+    await expect(failing).rejects.toThrow('audit unavailable');
+    expect(await store.membershipsOfUser(ALICE)).toEqual([]);
+    expect(audit.events()).toEqual([]);
+    // The user was not marked as a creator, so a later attempt still works.
+    await createOrganization(userContext(ALICE), { name: 'Acme' }, store);
   });
 });

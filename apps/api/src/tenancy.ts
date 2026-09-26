@@ -1,3 +1,4 @@
+import { actorOf, buildAuditEvent, type AuditService } from '@melonoffice/audit';
 import type { AuthorizationService } from '@melonoffice/rbac';
 import {
   createOrganization,
@@ -7,9 +8,10 @@ import {
   type TenancyStore,
 } from '@melonoffice/tenancy';
 import type { Membership, Organization } from '@melonoffice/domain';
-import type { Context, Hono } from 'hono';
+import type { Hono } from 'hono';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import type { AuthEnv } from './auth.js';
+import { recordOutcome, requestFields } from './audit.js';
 import { withPermission } from './authorization.js';
 
 const STATUS: Record<TenancyErrorCode, ContentfulStatusCode> = {
@@ -20,16 +22,6 @@ const STATUS: Record<TenancyErrorCode, ContentfulStatusCode> = {
   requires_user: 403,
 };
 
-async function guard<T>(c: Context<AuthEnv>, run: () => Promise<T>): Promise<T | Response> {
-  try {
-    return await run();
-  } catch (error) {
-    if (!isTenancyError(error)) throw error;
-    c.get('logger').warn('tenancy rejected', { code: error.code });
-    return c.json({ error: error.code }, STATUS[error.code]);
-  }
-}
-
 /**
  * Organization routes under /v1 (ADR-0018). They run after authentication, so `auth` is always
  * the verified caller; the user id is never read from the request. Routes inside an organization
@@ -39,6 +31,7 @@ export function registerTenancyRoutes(
   app: Hono<AuthEnv>,
   store: TenancyStore | undefined,
   authorization: AuthorizationService,
+  audit: AuditService,
 ): void {
   if (store === undefined) {
     app.all('/v1/organizations', (c) => c.json({ error: 'tenancy_not_configured' }, 503));
@@ -52,8 +45,61 @@ export function registerTenancyRoutes(
     const body: unknown = await c.req.json().catch(() => undefined);
     const name =
       typeof body === 'object' && body !== null ? (body as { name?: unknown }).name : undefined;
-    const result = await guard(c, () => createOrganization(c.get('auth'), { name }, store));
-    if (result instanceof Response) return result;
+    const auth = c.get('auth');
+    const actor = actorOf(auth);
+    let result;
+    try {
+      // The creation's events are stored in the same write as the organization (ADR-0020).
+      result = await createOrganization(auth, { name }, store, {
+        audit: ({ organization, membership }) => {
+          const at = new Date(organization.createdAt);
+          const common = { result: 'success', actor, organizationId: organization.id } as const;
+          return [
+            buildAuditEvent(
+              {
+                action: 'organization.create',
+                ...common,
+                target: { type: 'organization', id: organization.id },
+                ...requestFields(c),
+              },
+              at,
+            ),
+            buildAuditEvent(
+              {
+                action: 'membership.create',
+                ...common,
+                target: { type: 'membership', id: membership.id },
+                ...requestFields(c),
+              },
+              at,
+            ),
+          ];
+        },
+      });
+    } catch (error) {
+      if (isTenancyError(error)) {
+        // A refused creation is a denial worth keeping; a malformed name is only bad input.
+        if (error.code !== 'invalid_organization_name') {
+          await recordOutcome(c, audit, {
+            action: 'organization.create',
+            result: 'denied',
+            actor,
+            reason: error.code,
+            ...requestFields(c),
+          });
+        }
+        c.get('logger').warn('tenancy rejected', { code: error.code });
+        return c.json({ error: error.code }, STATUS[error.code]);
+      }
+      await recordOutcome(c, audit, {
+        action: 'organization.create',
+        result: 'failure',
+        actor,
+        reason: 'storage_error',
+        ...requestFields(c),
+      });
+      throw error;
+    }
     return c.json(toView(result.organization, result.membership), 201);
   });
 
@@ -67,7 +113,7 @@ export function registerTenancyRoutes(
   // The path id only selects; the tenant comes from an active membership and RBAC decides.
   app.get(
     '/v1/organizations/:organizationId',
-    withPermission('organization.read', { store, authorization }, async (c, tenant) => {
+    withPermission('organization.read', { store, authorization, audit }, async (c, tenant) => {
       const organization = await store.findOrganization(tenant.organizationId);
       const membership = await store.findMembership(tenant.organizationId, tenant.userId);
       if (organization === undefined || membership === undefined) {

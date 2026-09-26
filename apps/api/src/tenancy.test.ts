@@ -1,3 +1,4 @@
+import { createAuditService, InMemoryAuditStore } from '@melonoffice/audit';
 import { InMemoryUserDirectory } from '@melonoffice/auth';
 import type { OrganizationId, UserId } from '@melonoffice/domain';
 import { createLogger } from '@melonoffice/observability';
@@ -229,6 +230,7 @@ describe('regression', () => {
       logger,
       version: 'test',
       auth: { verifier, users: new InMemoryUserDirectory() },
+      audit: createAuditService(new InMemoryAuditStore()),
     });
     const headers = { authorization: 'Bearer token-alice' };
     expect((await app.request('/v1/me', { method: 'POST', headers })).status).toBe(201);
