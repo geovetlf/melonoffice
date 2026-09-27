@@ -24,6 +24,7 @@ export interface AuditDocument {
   readonly planId: string | null;
   readonly planVersion: number | null;
   readonly reason: string | null;
+  readonly reference: string | null;
   readonly requestId: string | null;
   readonly source: string;
 }
@@ -45,6 +46,7 @@ export function toAuditDocument(event: AuditEvent): AuditDocument {
     planId: event.plan?.id ?? null,
     planVersion: event.plan?.version ?? null,
     reason: event.reason ?? null,
+    reference: event.reference ?? null,
     requestId: event.requestId ?? null,
     source: event.source,
   };

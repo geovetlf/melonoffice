@@ -1,5 +1,6 @@
 import type { AuditEvent } from '@melonoffice/audit';
 import type {
+  CreditWallet,
   InitialBilling,
   Membership,
   Organization,
@@ -18,6 +19,11 @@ export interface NewOrganization {
    */
   readonly billing: (organization: Organization) => InitialBilling;
   /**
+   * The organization's credit wallet (ADR-0023), built by credits with a balance of 0 and stored
+   * with the organization in the same write. No credits come with a plan.
+   */
+  readonly credits: (organization: Organization) => CreditWallet;
+  /**
    * Audit events for the creation (ADR-0020). The store writes them together with the
    * organization, so the organization never exists without its record. If building them throws,
    * nothing is created.
@@ -30,12 +36,19 @@ export interface CreatedOrganization {
   /** The creator's membership: active, role `owner`. */
   readonly membership: Membership;
   readonly billing: InitialBilling;
+  readonly wallet: CreditWallet;
 }
 
 /**
  * Checks that the billing built for a new organization belongs to it, so a store never writes an
  * account or subscription for another organization.
  */
+export function checkInitialWallet(organization: Organization, wallet: CreditWallet): void {
+  if (wallet.organizationId !== organization.id || wallet.balance !== 0) {
+    throw new Error('initial wallet does not belong to the new organization or is not empty');
+  }
+}
+
 export function checkInitialBilling(organization: Organization, billing: InitialBilling): void {
   const { account, subscription } = billing;
   if (

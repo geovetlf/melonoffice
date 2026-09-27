@@ -68,6 +68,9 @@ importers:
       '@melonoffice/billing':
         specifier: workspace:*
         version: link:../../packages/billing
+      '@melonoffice/credits':
+        specifier: workspace:*
+        version: link:../../packages/credits
       '@melonoffice/entitlements':
         specifier: workspace:*
         version: link:../../packages/entitlements
@@ -184,6 +187,25 @@ importers:
         version: link:../config
 
   packages/config: {}
+
+  packages/credits:
+    dependencies:
+      '@melonoffice/audit':
+        specifier: workspace:*
+        version: link:../audit
+      '@melonoffice/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@melonoffice/tenancy':
+        specifier: workspace:*
+        version: link:../tenancy
+    devDependencies:
+      '@melonoffice/auth':
+        specifier: workspace:*
+        version: link:../auth
+      '@melonoffice/config':
+        specifier: workspace:*
+        version: link:../config
 
   packages/domain:
     devDependencies:

@@ -18,6 +18,7 @@
     "@melonoffice/audit": "workspace:*",
     "@melonoffice/auth": "workspace:*",
     "@melonoffice/billing": "workspace:*",
+    "@melonoffice/credits": "workspace:*",
     "@melonoffice/entitlements": "workspace:*",
     "@melonoffice/observability": "workspace:*",
     "@melonoffice/rbac": "workspace:*",

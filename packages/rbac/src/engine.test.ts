@@ -1,5 +1,7 @@
 import { actAsGia, type AuthenticatedContext } from '@melonoffice/auth';
 import type {
+  CreditWallet,
+  CreditWalletId,
   InitialBilling,
   MembershipStatus,
   Organization,
@@ -42,14 +44,29 @@ const BILLING = (organization: Organization): InitialBilling => {
   };
 };
 
+/** An empty wallet, as the credits package opens one (ADR-0023); its contents do not matter here. */
+const CREDITS = (organization: Organization): CreditWallet => ({
+  id: `wallet-${organization.id}` as CreditWalletId,
+  organizationId: organization.id,
+  balance: 0,
+  createdAt: organization.createdAt,
+  updatedAt: organization.createdAt,
+});
+
 const as = (userId: UserId): AuthenticatedContext =>
   Object.freeze({ actor: 'user', userId, emailVerified: true });
 
 /** Alice owns A, Bob owns B, Carol has no membership anywhere. */
 async function world() {
   const store = new InMemoryTenancyStore();
-  const a = await createOrganization(as(ALICE), { name: 'A' }, store, { billing: BILLING });
-  const b = await createOrganization(as(BOB), { name: 'B' }, store, { billing: BILLING });
+  const a = await createOrganization(as(ALICE), { name: 'A' }, store, {
+    billing: BILLING,
+    credits: CREDITS,
+  });
+  const b = await createOrganization(as(BOB), { name: 'B' }, store, {
+    billing: BILLING,
+    credits: CREDITS,
+  });
   return { store, a, b, orgA: a.organization.id, orgB: b.organization.id };
 }
 
@@ -85,7 +102,12 @@ describe('catalogue', () => {
   });
 
   it('lists exactly what owner may do: no wildcard, only catalogue permissions', () => {
-    expect(ROLES.owner).toEqual(['organization.read', 'entitlement.read', 'billing.read']);
+    expect(ROLES.owner).toEqual([
+      'organization.read',
+      'entitlement.read',
+      'billing.read',
+      'credits.read',
+    ]);
     for (const permissions of Object.values(ROLES)) {
       for (const permission of permissions) expect(isPermission(permission)).toBe(true);
     }

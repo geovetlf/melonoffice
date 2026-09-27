@@ -14,6 +14,7 @@ import {
   type AuditStore,
 } from '@melonoffice/audit';
 import { InMemoryBillingStore, type BillingStore } from '@melonoffice/billing';
+import { InMemoryCreditStore, type CreditStore } from '@melonoffice/credits';
 import type {
   BillingAccount,
   Membership,
@@ -34,6 +35,7 @@ import {
   toAccountDocument,
   toSubscriptionDocument,
 } from './billing-firestore.js';
+import { CREDIT_WALLETS, FirestoreCreditStore } from './credits-firestore.js';
 import { FirestoreTenancyStore, MEMBERSHIPS, ORGANIZATIONS } from './tenancy-firestore.js';
 import { emulatorFirestore, emulatorHost } from './test-firestore.js';
 import { FirestoreUserDirectory } from './users-firestore.js';
@@ -66,6 +68,9 @@ export interface Stores {
   readonly putBilling: (record: BillingAccount | Subscription) => Promise<void>;
   /** Removes an organization's billing account, as for one created before billing existed. */
   readonly removeBilling: (organizationId: OrganizationId) => Promise<void>;
+  readonly credits: CreditStore;
+  /** Removes an organization's wallet, as for one created before credits existed. */
+  readonly removeWallet: (organizationId: OrganizationId) => Promise<void>;
   readonly audit: AuditService;
   /** Every stored audit event, oldest first, as plain data. */
   readonly auditEvents: () => Promise<readonly AuditEvent[]>;
@@ -87,7 +92,8 @@ function memoryStores(): Stores {
   const events = new InMemoryAuditStore();
   const breakable = new Breakable(events);
   const billing = new InMemoryBillingStore();
-  const tenancy = new InMemoryTenancyStore(undefined, events, billing);
+  const credits = new InMemoryCreditStore(events);
+  const tenancy = new InMemoryTenancyStore(undefined, events, billing, credits);
   return {
     users: new InMemoryUserDirectory(),
     tenancy,
@@ -95,6 +101,8 @@ function memoryStores(): Stores {
     billing,
     putBilling: async (r) => billing.put(r),
     removeBilling: async (id) => billing.removeAccount(id),
+    credits,
+    removeWallet: async (id) => credits.removeWallet(id),
     audit: createAuditService(breakable),
     auditEvents: async () => events.events(),
     breakAudit: (broken) => (breakable.broken = broken),
@@ -120,6 +128,7 @@ function fromAuditDocument(id: string, d: AuditDocument): AuditEvent {
     ...(d.permission === null ? {} : { permission: d.permission }),
     ...(d.planId === null ? {} : { plan: { id: d.planId, version: d.planVersion } }),
     ...(d.reason === null ? {} : { reason: d.reason }),
+    ...(d.reference === null ? {} : { reference: d.reference }),
     ...(d.requestId === null ? {} : { requestId: d.requestId }),
     source: d.source,
   } as unknown as AuditEvent;
@@ -144,6 +153,10 @@ function firestoreStores(): Stores {
     },
     async removeBilling(organizationId) {
       await db.collection(BILLING_ACCOUNTS).doc(organizationId).delete();
+    },
+    credits: new FirestoreCreditStore(db),
+    async removeWallet(organizationId) {
+      await db.collection(CREDIT_WALLETS).doc(organizationId).delete();
     },
     audit: createAuditService(breakable),
     breakAudit: (broken) => (breakable.broken = broken),
@@ -175,6 +188,7 @@ export function setupApp(
   stores: Stores,
   authorization?: AuthorizationService,
   entitlements?: EntitlementService,
+  credits: CreditStore = stores.credits,
 ) {
   const lines: string[] = [];
   const logger = createLogger({ service: 'api', sink: (line) => lines.push(line) });
@@ -184,6 +198,7 @@ export function setupApp(
     auth: { verifier, users: stores.users },
     tenancy: stores.tenancy,
     billing: stores.billing,
+    credits,
     audit: stores.audit,
     ...(authorization ? { authorization } : {}),
     ...(entitlements ? { entitlements } : {}),

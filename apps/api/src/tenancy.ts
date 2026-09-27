@@ -1,5 +1,6 @@
 import { actorOf, buildAuditEvent, type AuditService } from '@melonoffice/audit';
 import { openBilling } from '@melonoffice/billing';
+import { openWallet } from '@melonoffice/credits';
 import { DEFAULT_PLAN } from '@melonoffice/entitlements';
 import type { AuthorizationService } from '@melonoffice/rbac';
 import {
@@ -55,6 +56,8 @@ export function registerTenancyRoutes(
       // The creation's events are stored in the same write as the organization (ADR-0020).
       result = await createOrganization(auth, { name }, store, {
         billing: (organization) => openBilling(organization, DEFAULT_PLAN),
+        // Empty: no plan comes with credits until D-12 decides otherwise (ADR-0023).
+        credits: openWallet,
         audit: ({ organization, membership, billing: { subscription } }) => {
           const at = new Date(organization.createdAt);
           const common = { result: 'success', actor, organizationId: organization.id } as const;

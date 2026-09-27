@@ -1,6 +1,7 @@
 import type { AuditService } from '@melonoffice/audit';
 import type { AuthDependencies } from '@melonoffice/auth';
 import { createBillingService, type BillingStore } from '@melonoffice/billing';
+import { createCreditService, type CreditStore } from '@melonoffice/credits';
 import { createEntitlementService, type EntitlementService } from '@melonoffice/entitlements';
 import type { Logger } from '@melonoffice/observability';
 import { createAuthorizationService, type AuthorizationService } from '@melonoffice/rbac';
@@ -8,6 +9,7 @@ import type { TenancyStore } from '@melonoffice/tenancy';
 import { Hono, type Context } from 'hono';
 import { registerAuthRoutes, type AuthEnv } from './auth.js';
 import { registerBillingRoutes } from './billing.js';
+import { registerCreditRoutes } from './credits.js';
 import { registerEntitlementRoutes } from './entitlements.js';
 import { registerHealth } from './health.js';
 import { registerTenancyRoutes } from './tenancy.js';
@@ -35,6 +37,8 @@ export interface AppOptions {
    * plan from billing; tests may pass another catalogue.
    */
   readonly entitlements?: EntitlementService;
+  /** Credit wallets and their ledger (ADR-0023). Absent: the credits route answers 503. */
+  readonly credits?: CreditStore;
 }
 
 type Env = AuthEnv;
@@ -51,6 +55,7 @@ export function createApp({
   authorization = createAuthorizationService(),
   billing,
   entitlements,
+  credits,
 }: AppOptions): Hono<Env> {
   const app = new Hono<Env>();
 
@@ -91,6 +96,18 @@ export function createApp({
       const unavailable = (c: Context<Env>) => c.json({ error: 'billing_not_configured' }, 503);
       app.all('/v1/organizations/:organizationId/billing', unavailable);
       app.all('/v1/organizations/:organizationId/entitlements', unavailable);
+    }
+    if (tenancy !== undefined && credits !== undefined) {
+      registerCreditRoutes(app, {
+        store: tenancy,
+        authorization,
+        audit,
+        credits: createCreditService({ store: credits, organizations: tenancy }),
+      });
+    } else if (tenancy !== undefined) {
+      app.all('/v1/organizations/:organizationId/credits', (c) =>
+        c.json({ error: 'credits_not_configured' }, 503),
+      );
     }
   }
 
