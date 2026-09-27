@@ -1,5 +1,6 @@
 import type { AuditEvent } from '@melonoffice/audit';
 import type {
+  Department,
   InitialBilling,
   Membership,
   Organization,
@@ -18,6 +19,11 @@ export interface NewOrganization {
    */
   readonly billing: (organization: Organization) => InitialBilling;
   /**
+   * The organization's first departments (ADR-0025), built by the departments package from its
+   * catalogue and stored with the organization in the same write. Absent: none are created.
+   */
+  readonly departments?: (organization: Organization) => readonly Department[];
+  /**
    * Audit events for the creation (ADR-0020). The store writes them together with the
    * organization, so the organization never exists without its record. If building them throws,
    * nothing is created.
@@ -30,6 +36,7 @@ export interface CreatedOrganization {
   /** The creator's membership: active, role `owner`. */
   readonly membership: Membership;
   readonly billing: InitialBilling;
+  readonly departments: readonly Department[];
 }
 
 /**
@@ -44,6 +51,23 @@ export function checkInitialBilling(organization: Organization, billing: Initial
     account.subscriptionId !== subscription.id
   ) {
     throw new Error('initial billing does not belong to the new organization');
+  }
+}
+
+/**
+ * Checks that the departments built for a new organization all belong to it and have distinct
+ * ids, so a store never writes a department for another organization or twice.
+ */
+export function checkInitialDepartments(
+  organization: Organization,
+  departments: readonly Department[],
+): void {
+  const ids = new Set(departments.map((d) => d.id));
+  if (
+    ids.size !== departments.length ||
+    departments.some((d) => d.organizationId !== organization.id)
+  ) {
+    throw new Error('initial departments do not belong to the new organization');
   }
 }
 

@@ -68,6 +68,9 @@ importers:
       '@melonoffice/billing':
         specifier: workspace:*
         version: link:../../packages/billing
+      '@melonoffice/departments':
+        specifier: workspace:*
+        version: link:../../packages/departments
       '@melonoffice/entitlements':
         specifier: workspace:*
         version: link:../../packages/entitlements
@@ -80,6 +83,9 @@ importers:
       '@melonoffice/rbac':
         specifier: workspace:*
         version: link:../../packages/rbac
+      '@melonoffice/specialists':
+        specifier: workspace:*
+        version: link:../../packages/specialists
       '@melonoffice/tenancy':
         specifier: workspace:*
         version: link:../../packages/tenancy
@@ -188,6 +194,22 @@ importers:
 
   packages/config: {}
 
+  packages/departments:
+    dependencies:
+      '@melonoffice/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@melonoffice/tenancy':
+        specifier: workspace:*
+        version: link:../tenancy
+    devDependencies:
+      '@melonoffice/auth':
+        specifier: workspace:*
+        version: link:../auth
+      '@melonoffice/config':
+        specifier: workspace:*
+        version: link:../config
+
   packages/domain:
     devDependencies:
       '@melonoffice/config':
@@ -266,6 +288,34 @@ importers:
         specifier: workspace:*
         version: link:../tenancy
     devDependencies:
+      '@melonoffice/auth':
+        specifier: workspace:*
+        version: link:../auth
+      '@melonoffice/config':
+        specifier: workspace:*
+        version: link:../config
+
+  packages/specialists:
+    dependencies:
+      '@melonoffice/departments':
+        specifier: workspace:*
+        version: link:../departments
+      '@melonoffice/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@melonoffice/execution':
+        specifier: workspace:*
+        version: link:../execution
+      '@melonoffice/rbac':
+        specifier: workspace:*
+        version: link:../rbac
+      '@melonoffice/tenancy':
+        specifier: workspace:*
+        version: link:../tenancy
+    devDependencies:
+      '@melonoffice/audit':
+        specifier: workspace:*
+        version: link:../audit
       '@melonoffice/auth':
         specifier: workspace:*
         version: link:../auth

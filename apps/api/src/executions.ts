@@ -55,6 +55,8 @@ function toView(execution: Execution) {
     parentExecutionId: execution.parentExecutionId ?? null,
     workflowId: execution.workflowId ?? null,
     specialistId: execution.specialistId ?? null,
+    specialistVersion: execution.specialistVersion ?? null,
+    departmentId: execution.departmentId ?? null,
     versionSnapshot: {
       schemaVersion: execution.versionSnapshot.schemaVersion,
       components: execution.versionSnapshot.components.map(({ kind, id, version }) => ({

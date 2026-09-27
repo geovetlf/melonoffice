@@ -27,6 +27,7 @@ The MelonOffice architecture was defined in the **Phase 0 Architecture Plan (v0.
 | [0021](../adr/0021-entitlements-plan-and-capability-foundation.md) | Entitlements: plan and capability foundation              | D-25, D-12, D-22 |
 | [0022](../adr/0022-billing-foundation.md)                          | Billing foundation: subscription and plan authority       | D-12, D-25       |
 | [0024](../adr/0024-execution-foundation.md)                        | Execution foundation: states, graph and version snapshots | D-28, D-25       |
+| [0025](../adr/0025-departments-and-specialists.md)                 | Departments, specialists and the execution profile        | D-11, D-28, D-29 |
 
 ## Current phase
 

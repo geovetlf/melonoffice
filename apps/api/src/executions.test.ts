@@ -17,7 +17,6 @@ const MISSING = '99999999-9999-4999-8999-999999999999';
 const REQUEST: ExecutionRequest = {
   mode: 'delegate',
   input: { type: 'task', id: 'task-42' },
-  specialistId: 'spec-research',
   versionSnapshot: {
     schemaVersion: 1,
     components: [
@@ -210,7 +209,9 @@ describe.each(STORES)('executions with storage in %s', (_name, createStores) => 
         currentNodeId: null,
         parentExecutionId: null,
         workflowId: null,
-        specialistId: 'spec-research',
+        specialistId: null,
+        specialistVersion: null,
+        departmentId: null,
         versionSnapshot: REQUEST.versionSnapshot,
         nodes: [
           {

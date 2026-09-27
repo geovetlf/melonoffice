@@ -1,4 +1,5 @@
 import type {
+  DepartmentId,
   Execution,
   ExecutionFailure,
   ExecutionId,
@@ -204,8 +205,51 @@ export interface NewExecution {
   readonly nodes?: readonly NodeInput[];
   readonly parentExecutionId?: string;
   readonly workflowId?: string;
+  /** With `specialistVersion` and `departmentId`: all three or none (ADR-0025). */
   readonly specialistId?: string;
+  readonly specialistVersion?: number;
+  readonly departmentId?: string;
   readonly requestId?: string;
+}
+
+/** Who should do the work an execution records: one specialist version, in its department. */
+export interface SpecialistAssignment {
+  readonly specialistId: SpecialistId;
+  readonly specialistVersion: number;
+  readonly departmentId: DepartmentId;
+}
+
+/**
+ * The execution's assignment, when it has one. The three fields come together or not at all,
+ * and the version snapshot must record the same specialist version, so the snapshot and the
+ * assignment can never tell two different stories.
+ */
+export function assignmentOf(
+  fields: Pick<NewExecution, 'specialistId' | 'specialistVersion' | 'departmentId'>,
+  snapshot: ExecutionVersionSnapshot,
+): SpecialistAssignment | undefined {
+  const { specialistId, specialistVersion, departmentId } = fields;
+  if (specialistId === undefined && specialistVersion === undefined && departmentId === undefined) {
+    return undefined;
+  }
+  if (typeof specialistId !== 'string' || !REF_ID.test(specialistId)) invalid('specialistId');
+  if (
+    typeof specialistVersion !== 'number' ||
+    !Number.isSafeInteger(specialistVersion) ||
+    specialistVersion < 1
+  ) {
+    invalid('specialistVersion');
+  }
+  if (typeof departmentId !== 'string' || !REF_ID.test(departmentId)) invalid('departmentId');
+  const recorded = snapshot.components.find(
+    (c) => c.kind === 'specialist' && c.id === specialistId,
+  );
+  if (recorded?.version !== String(specialistVersion)) invalid('versionSnapshot.specialist');
+  return Object.freeze({
+    specialistId: specialistId as SpecialistId,
+    specialistVersion: specialistVersion as number,
+    departmentId: departmentId as DepartmentId,
+  });
 }
 
 /** Builds a new `pending` execution, checking every field. Pure apart from its random id. */
@@ -213,19 +257,15 @@ export function newExecution(request: NewExecution, at: IsoTimestamp): Execution
   if (!isExecutionMode(request.mode)) invalid('mode');
   const nodes = (request.nodes ?? []).map((node, i) => checkNodeInput(node, i));
   checkGraph(nodes);
-  const { parentExecutionId, workflowId, specialistId, requestId } = request;
+  const { parentExecutionId, workflowId, requestId } = request;
   if (parentExecutionId !== undefined && !isExecutionId(parentExecutionId)) {
     invalid('parentExecutionId');
   }
   if (workflowId !== undefined && (typeof workflowId !== 'string' || !REF_ID.test(workflowId))) {
     invalid('workflowId');
   }
-  if (
-    specialistId !== undefined &&
-    (typeof specialistId !== 'string' || !REF_ID.test(specialistId))
-  ) {
-    invalid('specialistId');
-  }
+  const versionSnapshot = checkSnapshot(request.versionSnapshot);
+  const assignment = assignmentOf(request, versionSnapshot);
   return Object.freeze({
     id: randomUUID() as ExecutionId,
     organizationId: request.organizationId,
@@ -238,10 +278,10 @@ export function newExecution(request: NewExecution, at: IsoTimestamp): Execution
       ? {}
       : { parentExecutionId: parentExecutionId as ExecutionId }),
     ...(workflowId === undefined ? {} : { workflowId: workflowId as WorkflowId }),
-    ...(specialistId === undefined ? {} : { specialistId: specialistId as SpecialistId }),
+    ...assignment,
     // A malformed request id is dropped, as in the audit log: it only correlates logs.
     ...(requestId !== undefined && REQUEST_ID.test(requestId) ? { requestId } : {}),
-    versionSnapshot: checkSnapshot(request.versionSnapshot),
+    versionSnapshot,
     revision: 1,
     createdAt: at,
     updatedAt: at,
@@ -409,7 +449,7 @@ export function checkStoredExecution(execution: Execution): Execution {
   if (!isExecutionMode(execution.mode)) invalid('mode');
   if (!isExecutionStatus(execution.status)) invalid('status');
   checkRef(execution.input, 'input');
-  checkSnapshot(execution.versionSnapshot);
+  assignmentOf(execution, checkSnapshot(execution.versionSnapshot));
   for (const node of execution.nodes) {
     if (!isNodeStatus(node.status)) invalid('nodes.status');
     if (!(NODE_TYPES as readonly string[]).includes(node.type)) invalid('nodes.type');

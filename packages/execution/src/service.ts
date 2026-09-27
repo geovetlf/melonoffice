@@ -6,11 +6,14 @@ import {
   addNodes,
   applyNodeChange,
   applyStatusChange,
+  assignmentOf,
+  checkSnapshot,
   isExecutionId,
   newExecution,
   type NewExecution,
   type NodeChange,
   type NodeInput,
+  type SpecialistAssignment,
   type StatusChange,
 } from './model.js';
 import type { ExecutionRepository } from './repository.js';
@@ -33,10 +36,24 @@ export interface ExecutionService {
   changeNode(tenant: TenantContext, id: string, change: NodeChange): Promise<Execution>;
 }
 
+/**
+ * Confirms that a tenant may give an execution to one specialist version (ADR-0025). The
+ * specialists package implements it; executions only ask. It throws
+ * `specialist_not_eligible` when the specialist cannot take the work.
+ */
+export interface AssignmentGuard {
+  confirm(tenant: TenantContext, assignment: SpecialistAssignment): Promise<void>;
+}
+
 export interface ExecutionServiceOptions {
   readonly repository: ExecutionRepository;
   /** Only `findOrganization` is used, to refuse inactive organizations. */
   readonly organizations: Pick<TenancyStore, 'findOrganization'>;
+  /**
+   * Checks an execution's specialist before it is created. Without it, an execution that names
+   * a specialist is refused: nothing is assigned unchecked.
+   */
+  readonly assignments?: AssignmentGuard;
   readonly now?: () => Date;
   /** The request that asked, to correlate audit events and logs. */
   readonly requestId?: string;
@@ -45,6 +62,7 @@ export interface ExecutionServiceOptions {
 export function createExecutionService({
   repository,
   organizations,
+  assignments,
   now = () => new Date(),
   requestId,
 }: ExecutionServiceOptions): ExecutionService {
@@ -89,6 +107,13 @@ export function createExecutionService({
   return {
     async create(tenant, request) {
       const organizationId = await organizationOf(tenant);
+      const assignment = assignmentOf(request, checkSnapshot(request.versionSnapshot));
+      if (assignment !== undefined) {
+        if (assignments === undefined) {
+          throw new ExecutionError('specialist_not_eligible', 'no_assignment_guard');
+        }
+        await assignments.confirm(tenant, assignment);
+      }
       const at = now();
       const execution = newExecution(
         {

@@ -58,6 +58,8 @@ interface ExecutionDocument {
   readonly parentExecutionId: string | null;
   readonly workflowId: string | null;
   readonly specialistId: string | null;
+  readonly specialistVersion: number | null;
+  readonly departmentId: string | null;
   readonly requestId: string | null;
   readonly versionSnapshot: { schemaVersion: number; components: readonly VersionRef[] };
   readonly result: ExecutionRef | null;
@@ -105,6 +107,8 @@ export function toExecutionDocument(execution: Execution): ExecutionDocument {
     parentExecutionId: execution.parentExecutionId ?? null,
     workflowId: execution.workflowId ?? null,
     specialistId: execution.specialistId ?? null,
+    specialistVersion: execution.specialistVersion ?? null,
+    departmentId: execution.departmentId ?? null,
     requestId: execution.requestId ?? null,
     versionSnapshot: {
       schemaVersion: execution.versionSnapshot.schemaVersion,
@@ -160,6 +164,9 @@ function toExecution(id: string, d: ExecutionDocument): Execution {
     ...(d.parentExecutionId === null ? {} : { parentExecutionId: d.parentExecutionId }),
     ...(d.workflowId === null ? {} : { workflowId: d.workflowId }),
     ...(d.specialistId === null ? {} : { specialistId: d.specialistId }),
+    // Absent in executions stored before ADR-0025: read as no assignment.
+    ...(d.specialistVersion == null ? {} : { specialistVersion: d.specialistVersion }),
+    ...(d.departmentId == null ? {} : { departmentId: d.departmentId }),
     ...(d.requestId === null ? {} : { requestId: d.requestId }),
     versionSnapshot: d.versionSnapshot,
     ...(d.result === null ? {} : { result: d.result }),

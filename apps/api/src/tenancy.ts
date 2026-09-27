@@ -1,5 +1,6 @@
 import { actorOf, buildAuditEvent, type AuditService } from '@melonoffice/audit';
 import { openBilling } from '@melonoffice/billing';
+import { DEFAULT_DEPARTMENT_CATALOGUE, provisionDepartments } from '@melonoffice/departments';
 import { DEFAULT_PLAN } from '@melonoffice/entitlements';
 import type { AuthorizationService } from '@melonoffice/rbac';
 import {
@@ -43,7 +44,8 @@ export function registerTenancyRoutes(
   }
 
   // Only `name` is read from the body. Anything else, such as an id, owner, status, plan or
-  // subscription, is ignored: billing opens every organization on the default plan (ADR-0022).
+  // subscription, is ignored: billing opens every organization on the default plan (ADR-0022),
+  // and the D-11 catalogue gives it its first departments in the same write (ADR-0025).
   app.post('/v1/organizations', async (c) => {
     const body: unknown = await c.req.json().catch(() => undefined);
     const name =
@@ -55,6 +57,8 @@ export function registerTenancyRoutes(
       // The creation's events are stored in the same write as the organization (ADR-0020).
       result = await createOrganization(auth, { name }, store, {
         billing: (organization) => openBilling(organization, DEFAULT_PLAN),
+        departments: (organization) =>
+          provisionDepartments(organization, DEFAULT_DEPARTMENT_CATALOGUE),
         audit: ({ organization, membership, billing: { subscription } }) => {
           const at = new Date(organization.createdAt);
           const common = { result: 'success', actor, organizationId: organization.id } as const;

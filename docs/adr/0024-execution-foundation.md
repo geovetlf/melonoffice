@@ -36,7 +36,7 @@ An execution has these fields:
 - `input`: a reference to the task or message;
 - `nodes`;
 - `currentNodeId`;
-- optional `parentExecutionId`, `workflowId` and `specialistId`;
+- optional `parentExecutionId`, `workflowId` and `specialistId`, the last together with `specialistVersion` and `departmentId` ([ADR-0025](0025-departments-and-specialists.md));
 - `requestId`: for correlation only;
 - `versionSnapshot`;
 - optional `result`, `failure` and `cancellation`;

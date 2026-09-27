@@ -1,4 +1,11 @@
-import type { Brand, IsoTimestamp, OrganizationId, SpecialistId, UserId } from './ids.js';
+import type {
+  Brand,
+  DepartmentId,
+  IsoTimestamp,
+  OrganizationId,
+  SpecialistId,
+  UserId,
+} from './ids.js';
 
 /** Globally unique id of one execution (a UUID). */
 export type ExecutionId = Brand<string, 'ExecutionId'>;
@@ -121,7 +128,14 @@ export interface Execution {
   readonly currentNodeId?: ExecutionNodeId;
   readonly parentExecutionId?: ExecutionId;
   readonly workflowId?: WorkflowId;
+  /**
+   * The specialist that should do the work, the version of it, and its department (ADR-0025).
+   * The three are present together or not at all, and the version snapshot holds the same
+   * `specialist` version, so the execution names exactly who was meant to run it.
+   */
   readonly specialistId?: SpecialistId;
+  readonly specialistVersion?: number;
+  readonly departmentId?: DepartmentId;
   /** The request that created it, to correlate logs. */
   readonly requestId?: string;
   readonly versionSnapshot: ExecutionVersionSnapshot;
