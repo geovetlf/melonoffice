@@ -1,3 +1,4 @@
+import { openWallet } from '@melonoffice/credits';
 import { InMemoryAuditStore } from '@melonoffice/audit';
 import type { AuthenticatedContext } from '@melonoffice/auth';
 import {
@@ -109,10 +110,12 @@ async function world(options: { roles?: Record<string, readonly string[]> } = {}
     provisionDepartments(organization, DEFAULT_DEPARTMENT_CATALOGUE);
   const a = await createOrganization(as(ALICE), { name: 'A' }, tenancy, {
     billing: BILLING,
+    credits: openWallet,
     departments: provision,
   });
   const b = await createOrganization(as(BOB), { name: 'B' }, tenancy, {
     billing: BILLING,
+    credits: openWallet,
     departments: provision,
   });
   const orgA = a.organization.id;

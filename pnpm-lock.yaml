@@ -71,6 +71,9 @@ importers:
       '@melonoffice/billing':
         specifier: workspace:*
         version: link:../../packages/billing
+      '@melonoffice/credits':
+        specifier: workspace:*
+        version: link:../../packages/credits
       '@melonoffice/departments':
         specifier: workspace:*
         version: link:../../packages/departments
@@ -195,6 +198,9 @@ importers:
       '@melonoffice/config':
         specifier: workspace:*
         version: link:../config
+      '@melonoffice/credits':
+        specifier: workspace:*
+        version: link:../credits
       '@melonoffice/departments':
         specifier: workspace:*
         version: link:../departments
@@ -223,6 +229,9 @@ importers:
       '@melonoffice/config':
         specifier: workspace:*
         version: link:../config
+      '@melonoffice/credits':
+        specifier: workspace:*
+        version: link:../credits
 
   packages/audit:
     dependencies:
@@ -268,6 +277,25 @@ importers:
 
   packages/config: {}
 
+  packages/credits:
+    dependencies:
+      '@melonoffice/audit':
+        specifier: workspace:*
+        version: link:../audit
+      '@melonoffice/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@melonoffice/tenancy':
+        specifier: workspace:*
+        version: link:../tenancy
+    devDependencies:
+      '@melonoffice/auth':
+        specifier: workspace:*
+        version: link:../auth
+      '@melonoffice/config':
+        specifier: workspace:*
+        version: link:../config
+
   packages/departments:
     dependencies:
       '@melonoffice/domain':
@@ -283,6 +311,9 @@ importers:
       '@melonoffice/config':
         specifier: workspace:*
         version: link:../config
+      '@melonoffice/credits':
+        specifier: workspace:*
+        version: link:../credits
 
   packages/domain:
     devDependencies:
@@ -324,6 +355,9 @@ importers:
       '@melonoffice/config':
         specifier: workspace:*
         version: link:../config
+      '@melonoffice/credits':
+        specifier: workspace:*
+        version: link:../credits
 
   packages/guardrails:
     dependencies:
@@ -364,6 +398,9 @@ importers:
       '@melonoffice/config':
         specifier: workspace:*
         version: link:../config
+      '@melonoffice/credits':
+        specifier: workspace:*
+        version: link:../credits
 
   packages/i18n:
     dependencies:
@@ -436,6 +473,9 @@ importers:
       '@melonoffice/config':
         specifier: workspace:*
         version: link:../config
+      '@melonoffice/credits':
+        specifier: workspace:*
+        version: link:../credits
 
   packages/tenancy:
     dependencies:

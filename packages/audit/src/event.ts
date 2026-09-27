@@ -27,7 +27,14 @@ export type AuditActor =
   | { readonly type: 'system' | 'anonymous' };
 
 export interface AuditTarget {
-  readonly type: 'user' | 'organization' | 'membership' | 'subscription' | 'execution' | 'approval';
+  readonly type:
+    | 'user'
+    | 'organization'
+    | 'membership'
+    | 'subscription'
+    | 'credit_entry'
+    | 'execution'
+    | 'approval';
   readonly id: string;
 }
 
@@ -90,9 +97,12 @@ export interface AuditEvent {
   readonly previousModel?: AuditModel;
   /**
    * A stable code saying why: for `denied` and `failure`, an error code; for a successful
-   * change, its cause (for example why an execution was cancelled). Never a message.
+   * change, its cause (for example why an execution was cancelled), or the operation's reason
+   * code for a credits movement. Never a message.
    */
   readonly reason?: string;
+  /** The caller's idempotency key of a credits operation (ADR-0023). The amounts stay in the ledger. */
+  readonly reference?: string;
   readonly requestId?: string;
   readonly source: AuditSource;
 }
@@ -110,6 +120,7 @@ const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
 const isAuditModel = (m: AuditModel): boolean =>
   PROVIDER_ID.test(m.provider) && MODEL_ID.test(m.id);
+const REFERENCE = /^[A-Za-z0-9._:-]{1,128}$/;
 
 /**
  * Builds an event, checking every field so nothing unexpected reaches storage. Untrusted parts
@@ -126,6 +137,9 @@ export function buildAuditEvent(input: AuditEventInput, at: Date): AuditEvent {
     throw new Error('invalid audit reason');
   if (input.permission !== undefined && !PERMISSION.test(input.permission)) {
     throw new Error('invalid audit permission');
+  }
+  if (input.reference !== undefined && !REFERENCE.test(input.reference)) {
+    throw new Error('invalid audit reference');
   }
   if (
     input.transition !== undefined &&
@@ -195,6 +209,7 @@ export function buildAuditEvent(input: AuditEventInput, at: Date): AuditEvent {
           }),
         }),
     ...(input.reason === undefined ? {} : { reason: input.reason }),
+    ...(input.reference === undefined ? {} : { reference: input.reference }),
     ...(input.requestId !== undefined && REQUEST_ID.test(input.requestId)
       ? { requestId: input.requestId }
       : {}),

@@ -1,5 +1,6 @@
 import type {
   Department,
+  CreditWallet,
   InitialBilling,
   IsoTimestamp,
   Membership,
@@ -13,6 +14,7 @@ import { membershipIdOf, newOrganizationId, OWNER_ROLE } from './ids.js';
 import {
   checkInitialBilling,
   checkInitialDepartments,
+  checkInitialWallet,
   type CreatedOrganization,
   type NewOrganization,
   type TenancyStore,
@@ -26,6 +28,11 @@ export interface InitialBillingSink {
 /** Where the memory store puts a new organization's departments (the departments package's memory store). */
 export interface InitialDepartmentsSink {
   openNow(departments: readonly Department[]): void;
+}
+
+/** Where the memory store puts a new organization's wallet (the credits package's memory store). */
+export interface InitialWalletSink {
+  openWalletNow(wallet: CreditWallet): void;
 }
 
 /** For tests and local runs only: everything is lost on restart and not shared between instances. */
@@ -42,6 +49,8 @@ export class InMemoryTenancyStore implements TenancyStore {
     private readonly billingSink?: InitialBillingSink,
     /** Receives the new organization's departments in the same step. Without it, they are not kept. */
     private readonly departmentsSink?: InitialDepartmentsSink,
+    /** Receives the new organization's wallet in the same step. Without it, it is not kept. */
+    private readonly walletSink?: InitialWalletSink,
   ) {}
 
   // No await before the writes, so concurrent calls cannot both pass the creator check.
@@ -50,6 +59,7 @@ export class InMemoryTenancyStore implements TenancyStore {
     creator,
     billing,
     departments,
+    credits,
     audit,
   }: NewOrganization): Promise<CreatedOrganization> {
     if (this.#creators.has(creator)) throw new TenancyError('organization_limit_reached');
@@ -75,11 +85,14 @@ export class InMemoryTenancyStore implements TenancyStore {
     checkInitialBilling(organization, initialBilling);
     const initialDepartments = departments?.(organization) ?? [];
     checkInitialDepartments(organization, initialDepartments);
+    const wallet = credits(organization);
+    checkInitialWallet(organization, wallet);
     const created = {
       organization,
       membership,
       billing: initialBilling,
       departments: initialDepartments,
+      wallet,
     };
     const events = audit?.(created) ?? [];
     if (events.length > 0) {
@@ -88,6 +101,7 @@ export class InMemoryTenancyStore implements TenancyStore {
     }
     this.billingSink?.openNow(initialBilling);
     this.departmentsSink?.openNow(initialDepartments);
+    this.walletSink?.openWalletNow(wallet);
     this.#creators.add(creator);
     this.#organizations.set(organization.id, organization);
     this.#memberships.set(membership.id, membership);

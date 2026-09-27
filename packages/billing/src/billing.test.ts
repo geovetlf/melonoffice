@@ -1,5 +1,7 @@
 import { actAsGia, type AuthenticatedContext } from '@melonoffice/auth';
 import type {
+  CreditWallet,
+  CreditWalletId,
   IsoTimestamp,
   MembershipStatus,
   Organization,
@@ -31,6 +33,15 @@ import { createBillingService } from './service.js';
 import { InMemoryBillingStore } from './store.js';
 
 const ALICE = '11111111-1111-4111-8111-111111111111' as UserId;
+
+/** An empty wallet, as the credits package opens one (ADR-0023); its contents do not matter here. */
+const CREDITS = (organization: Organization): CreditWallet => ({
+  id: `wallet-${organization.id}` as CreditWalletId,
+  organizationId: organization.id,
+  balance: 0,
+  createdAt: organization.createdAt,
+  updatedAt: organization.createdAt,
+});
 const BOB = '22222222-2222-4222-8222-222222222222' as UserId;
 const NOW = new Date('2026-09-27T12:00:00Z');
 const LATER = '2026-09-28T12:00:00.000Z' as IsoTimestamp;
@@ -74,8 +85,14 @@ async function world() {
   const billing = new InMemoryBillingStore();
   const store = new InMemoryTenancyStore(() => NOW, undefined, billing);
   const open = (organization: Organization) => openBilling(organization, PLAN);
-  const a = await createOrganization(as(ALICE), { name: 'A' }, store, { billing: open });
-  const b = await createOrganization(as(BOB), { name: 'B' }, store, { billing: open });
+  const a = await createOrganization(as(ALICE), { name: 'A' }, store, {
+    billing: open,
+    credits: CREDITS,
+  });
+  const b = await createOrganization(as(BOB), { name: 'B' }, store, {
+    billing: open,
+    credits: CREDITS,
+  });
   const service = createBillingService({ billing, organizations: store });
   const tenantA = await resolveTenant(as(ALICE), a.organization.id, store);
   const tenantB = await resolveTenant(as(BOB), b.organization.id, store);

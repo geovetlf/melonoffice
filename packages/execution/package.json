@@ -25,6 +25,7 @@
   },
   "devDependencies": {
     "@melonoffice/auth": "workspace:*",
-    "@melonoffice/config": "workspace:*"
+    "@melonoffice/config": "workspace:*",
+    "@melonoffice/credits": "workspace:*"
   }
 }

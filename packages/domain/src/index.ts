@@ -10,3 +10,4 @@ export type * from './execution.js';
 export type * from './tool.js';
 export type * from './approval.js';
 export type * from './ai.js';
+export type * from './credits.js';

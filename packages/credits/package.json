@@ -1,5 +1,5 @@
 {
-  "name": "@melonoffice/guardrails",
+  "name": "@melonoffice/credits",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -19,20 +19,12 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@melonoffice/approvals": "workspace:*",
     "@melonoffice/audit": "workspace:*",
-    "@melonoffice/departments": "workspace:*",
     "@melonoffice/domain": "workspace:*",
-    "@melonoffice/execution": "workspace:*",
-    "@melonoffice/observability": "workspace:*",
-    "@melonoffice/rbac": "workspace:*",
-    "@melonoffice/specialists": "workspace:*",
-    "@melonoffice/tenancy": "workspace:*",
-    "@melonoffice/tools": "workspace:*"
+    "@melonoffice/tenancy": "workspace:*"
   },
   "devDependencies": {
     "@melonoffice/auth": "workspace:*",
-    "@melonoffice/config": "workspace:*",
-    "@melonoffice/credits": "workspace:*"
+    "@melonoffice/config": "workspace:*"
   }
 }

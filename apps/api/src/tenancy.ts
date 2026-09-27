@@ -1,6 +1,7 @@
 import { actorOf, buildAuditEvent, type AuditService } from '@melonoffice/audit';
 import { openBilling } from '@melonoffice/billing';
 import { DEFAULT_DEPARTMENT_CATALOGUE, provisionDepartments } from '@melonoffice/departments';
+import { openWallet } from '@melonoffice/credits';
 import { DEFAULT_PLAN } from '@melonoffice/entitlements';
 import type { AuthorizationService } from '@melonoffice/rbac';
 import {
@@ -59,6 +60,8 @@ export function registerTenancyRoutes(
         billing: (organization) => openBilling(organization, DEFAULT_PLAN),
         departments: (organization) =>
           provisionDepartments(organization, DEFAULT_DEPARTMENT_CATALOGUE),
+        // Empty: no plan comes with credits until D-12 decides otherwise (ADR-0023).
+        credits: openWallet,
         audit: ({ organization, membership, billing: { subscription } }) => {
           const at = new Date(organization.createdAt);
           const common = { result: 'success', actor, organizationId: organization.id } as const;

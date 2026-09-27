@@ -18,6 +18,7 @@ import {
 import { InMemoryBillingStore, type BillingStore } from '@melonoffice/billing';
 import { InMemoryDepartmentRepository, type DepartmentRepository } from '@melonoffice/departments';
 import { InMemoryExecutionRepository, type ExecutionRepository } from '@melonoffice/execution';
+import { InMemoryCreditStore, type CreditStore } from '@melonoffice/credits';
 import type {
   BillingAccount,
   Department,
@@ -56,6 +57,7 @@ import {
   toSpecialistDocument,
   toSpecialistVersionDocument,
 } from './specialists-firestore.js';
+import { CREDIT_WALLETS, FirestoreCreditStore } from './credits-firestore.js';
 import { FirestoreTenancyStore, MEMBERSHIPS, ORGANIZATIONS } from './tenancy-firestore.js';
 import { emulatorFirestore, emulatorHost } from './test-firestore.js';
 import { FirestoreUserDirectory } from './users-firestore.js';
@@ -94,6 +96,9 @@ export interface Stores {
   readonly specialists: SpecialistRepository;
   /** Stores a department or specialist record as given, the way an operator change or bad data would. */
   readonly putStructure: (record: Department | Specialist | SpecialistVersion) => Promise<void>;
+  readonly credits: CreditStore;
+  /** Removes an organization's wallet, as for one created before credits existed. */
+  readonly removeWallet: (organizationId: OrganizationId) => Promise<void>;
   readonly audit: AuditService;
   /** Every stored audit event, oldest first, as plain data. */
   readonly auditEvents: () => Promise<readonly AuditEvent[]>;
@@ -119,7 +124,8 @@ function memoryStores(): Stores {
   const billing = new InMemoryBillingStore();
   const departments = new InMemoryDepartmentRepository();
   const specialists = new InMemorySpecialistRepository();
-  const tenancy = new InMemoryTenancyStore(undefined, events, billing, departments);
+  const credits = new InMemoryCreditStore(events);
+  const tenancy = new InMemoryTenancyStore(undefined, events, billing, departments, credits);
   return {
     users: new InMemoryUserDirectory(),
     tenancy,
@@ -135,6 +141,8 @@ function memoryStores(): Stores {
       if ('origin' in record) departments.put(record);
       else specialists.put(record);
     },
+    credits,
+    removeWallet: async (id) => credits.removeWallet(id),
     audit: createAuditService(breakable),
     auditEvents: async () => events.events(),
     breakAudit: (broken) => (breakable.broken = broken),
@@ -169,6 +177,7 @@ function fromAuditDocument(id: string, d: AuditDocument): AuditEvent {
       ? {}
       : { previousModel: { provider: d.previousModelProvider, id: d.previousModelId } }),
     ...(d.reason === null ? {} : { reason: d.reason }),
+    ...(d.reference === null ? {} : { reference: d.reference }),
     ...(d.requestId === null ? {} : { requestId: d.requestId }),
     source: d.source,
   } as unknown as AuditEvent;
@@ -210,6 +219,10 @@ function firestoreStores(): Stores {
     async removeBilling(organizationId) {
       await db.collection(BILLING_ACCOUNTS).doc(organizationId).delete();
     },
+    credits: new FirestoreCreditStore(db),
+    async removeWallet(organizationId) {
+      await db.collection(CREDIT_WALLETS).doc(organizationId).delete();
+    },
     audit: createAuditService(breakable),
     breakAudit: (broken) => (breakable.broken = broken),
     async storedAudit() {
@@ -245,6 +258,7 @@ export function setupApp(
   authorization?: AuthorizationService,
   entitlements?: EntitlementService,
   tools?: ToolRegistry,
+  credits: CreditStore = stores.credits,
 ) {
   const lines: string[] = [];
   const logger = createLogger({ service: 'api', sink: (line) => lines.push(line) });
@@ -257,6 +271,7 @@ export function setupApp(
     executions: stores.executions,
     structure: { departments: stores.departments, specialists: stores.specialists },
     approvals: stores.approvals,
+    credits,
     audit: stores.audit,
     ...(tools ? { tools } : {}),
     ...(authorization ? { authorization } : {}),

@@ -1,3 +1,4 @@
+import { openWallet } from '@melonoffice/credits';
 import type { AuthenticatedContext } from '@melonoffice/auth';
 import type {
   Department,
@@ -80,7 +81,7 @@ const must = <T>(value: T | undefined): T => {
 async function world() {
   const repository = new InMemoryDepartmentRepository();
   const tenancy = new InMemoryTenancyStore(() => NOW, undefined, undefined, repository);
-  const options = { billing: BILLING, departments: DEPARTMENTS };
+  const options = { billing: BILLING, departments: DEPARTMENTS, credits: openWallet };
   const a = await createOrganization(as(ALICE), { name: 'A' }, tenancy, options);
   const b = await createOrganization(as(BOB), { name: 'B' }, tenancy, options);
   const service = createDepartmentService({ repository, organizations: tenancy });
@@ -221,6 +222,7 @@ describe('provisioning with the organization', () => {
     await expect(
       createOrganization(as(ALICE), { name: 'A' }, tenancy, {
         billing: BILLING,
+        credits: openWallet,
         departments: foreign,
       }),
     ).rejects.toThrow(/do not belong/);
@@ -236,6 +238,7 @@ describe('provisioning with the organization', () => {
       tenancy,
       {
         billing: BILLING,
+        credits: openWallet,
       },
     );
     expect(departments).toEqual([]);

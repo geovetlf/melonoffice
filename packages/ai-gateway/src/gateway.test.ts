@@ -1,3 +1,4 @@
+import { createCreditService, InMemoryCreditStore, openWallet } from '@melonoffice/credits';
 import { createAuditService, InMemoryAuditStore } from '@melonoffice/audit';
 import type { AuthenticatedContext } from '@melonoffice/auth';
 import {
@@ -226,21 +227,27 @@ interface WorldOptions {
   readonly credits?: 'none' | 'no_rate';
   readonly providers?: AIProviderDefinition[];
   readonly models?: AIModelDefinition[];
+  /** Use the real Credits engine (PR #20) instead of the test double. */
+  readonly realCredits?: boolean;
 }
 
 async function world(options: WorldOptions = {}) {
   const now = () => T0;
   const audit = new InMemoryAuditStore();
   const departments = new InMemoryDepartmentRepository();
-  const tenancy = new InMemoryTenancyStore(now, audit, undefined, departments);
+  const creditStore = new InMemoryCreditStore(audit);
+  const tenancy = new InMemoryTenancyStore(now, audit, undefined, departments, creditStore);
+  const creditService = createCreditService({ store: creditStore, organizations: tenancy, now });
   const provision = (organization: Organization) =>
     provisionDepartments(organization, DEFAULT_DEPARTMENT_CATALOGUE);
   const a = await createOrganization(as(ALICE), { name: 'A' }, tenancy, {
     billing: BILLING,
+    credits: openWallet,
     departments: provision,
   });
   const b = await createOrganization(as(BOB), { name: 'B' }, tenancy, {
     billing: BILLING,
+    credits: openWallet,
     departments: provision,
   });
   const orgA = a.organization.id;
@@ -291,7 +298,7 @@ async function world(options: WorldOptions = {}) {
       ? {}
       : {
           credits: {
-            port: credits.port,
+            port: options.realCredits ? creditService : credits.port,
             rate: options.credits === 'no_rate' ? undefined : { microUsdPerCredit: 1_000 },
           },
         }),
@@ -370,6 +377,7 @@ async function world(options: WorldOptions = {}) {
     audit.events().filter((e) => action === undefined || e.action === action);
 
   return {
+    creditService,
     audit,
     events,
     logLines,
@@ -876,5 +884,26 @@ describe('AI gateway: authorization, policy and credits', () => {
       credits: 1,
     });
     expect(typeof line.latencyMs).toBe('number');
+  });
+});
+
+describe('AI gateway with the real Credits engine (#20)', () => {
+  it('plugs in unchanged, charges once, and refuses when the wallet is short', async () => {
+    const { w, call } = await setup({ realCredits: true });
+    // A new wallet is empty (D-12): the call is denied before any provider sees it.
+    expect(await call()).toMatchObject({ status: 'denied', code: 'credits_insufficient' });
+    expect(w.calls).toHaveLength(0);
+    await w.creditService.grant(w.tenantA, {
+      amount: 10,
+      referenceId: 'grant-1',
+      reason: 'test_grant',
+    });
+    const first = await call({ requestId: 'req-real' });
+    expect(first).toMatchObject({ status: 'completed', credits: { state: 'consumed' } });
+    const charged = first.status === 'completed' ? first.credits.consumed : -1;
+    expect(charged).toBeGreaterThan(0);
+    await call({ requestId: 'req-real' });
+    expect(await w.creditService.balanceOf(w.tenantA)).toMatchObject({ balance: 10 - charged });
+    expect(w.events('credits.consume')).toHaveLength(1);
   });
 });

@@ -3,6 +3,7 @@ import type { AuditService } from '@melonoffice/audit';
 import type { AuthDependencies } from '@melonoffice/auth';
 import { createBillingService, type BillingStore } from '@melonoffice/billing';
 import { createDepartmentService, type DepartmentRepository } from '@melonoffice/departments';
+import { createCreditService, type CreditStore } from '@melonoffice/credits';
 import { createEntitlementService, type EntitlementService } from '@melonoffice/entitlements';
 import { createExecutionService, type ExecutionRepository } from '@melonoffice/execution';
 import type { Logger } from '@melonoffice/observability';
@@ -15,6 +16,7 @@ import { registerApprovalRoutes } from './approvals.js';
 import { registerAuthRoutes, type AuthEnv } from './auth.js';
 import { registerBillingRoutes } from './billing.js';
 import { registerDepartmentRoutes } from './departments.js';
+import { registerCreditRoutes } from './credits.js';
 import { registerEntitlementRoutes } from './entitlements.js';
 import { registerExecutionRoutes } from './executions.js';
 import { registerHealth } from './health.js';
@@ -59,6 +61,8 @@ export interface AppOptions {
   readonly tools?: ToolRegistry;
   /** Tool approvals (ADR-0026). Absent: the approval routes answer 503 (fails closed). */
   readonly approvals?: ApprovalRepository;
+  /** Credit wallets and their ledger (ADR-0023). Absent: the credits route answers 503. */
+  readonly credits?: CreditStore;
 }
 
 type Env = AuthEnv;
@@ -79,6 +83,7 @@ export function createApp({
   structure,
   tools = defaultToolRegistry(),
   approvals,
+  credits,
 }: AppOptions): Hono<Env> {
   const app = new Hono<Env>();
 
@@ -182,6 +187,18 @@ export function createApp({
       const unavailable = (c: Context<Env>) => c.json({ error: 'approvals_not_configured' }, 503);
       app.all('/v1/organizations/:organizationId/approvals', unavailable);
       app.all('/v1/organizations/:organizationId/approvals/*', unavailable);
+    }
+    if (tenancy !== undefined && credits !== undefined) {
+      registerCreditRoutes(app, {
+        store: tenancy,
+        authorization,
+        audit,
+        credits: createCreditService({ store: credits, organizations: tenancy }),
+      });
+    } else if (tenancy !== undefined) {
+      app.all('/v1/organizations/:organizationId/credits', (c) =>
+        c.json({ error: 'credits_not_configured' }, 503),
+      );
     }
   }
 

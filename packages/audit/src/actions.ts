@@ -2,7 +2,15 @@ import type { AuditResult } from './event.js';
 
 export interface AuditActionDefinition {
   readonly category:
-    'auth' | 'tenancy' | 'authorization' | 'entitlements' | 'billing' | 'execution' | 'tool' | 'ai';
+    | 'auth'
+    | 'tenancy'
+    | 'authorization'
+    | 'entitlements'
+    | 'billing'
+    | 'credits'
+    | 'execution'
+    | 'tool'
+    | 'ai';
   readonly description: string;
   /** The results this action is recorded with. Anything else is a programming error. */
   readonly results: readonly AuditResult[];
@@ -124,6 +132,21 @@ export const AUDIT_ACTIONS = {
     description:
       'An AI call reached a provider and did not complete: provider error, invalid response or charge failure (ADR-0027).',
     results: ['failure'],
+  },
+  'credits.grant': {
+    category: 'credits',
+    description: "Credits were added to an organization's wallet (ADR-0023).",
+    results: ['success'],
+  },
+  'credits.consume': {
+    category: 'credits',
+    description: "Credits were spent from an organization's wallet.",
+    results: ['success'],
+  },
+  'credits.refund': {
+    category: 'credits',
+    description: 'Credits were given back for an earlier consume.',
+    results: ['success'],
   },
   'tenancy.resolve': {
     category: 'tenancy',

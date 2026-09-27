@@ -63,6 +63,11 @@ export const PERMISSIONS = {
     description:
       'Let an execution call an AI model for you. Checked by the AI Gateway, never by a client route (ADR-0027).',
   },
+  'credits.read': {
+    resource: 'credits',
+    action: 'read',
+    description: "See the organization's credit balance (ADR-0023).",
+  },
 } as const satisfies Record<string, PermissionDefinition>;
 
 export interface PermissionDefinition {

@@ -94,8 +94,9 @@ export function parseOrganizationName(value: unknown): string {
  * user; nothing in the input can name another one.
  *
  * `options.billing` builds the organization's billing account and first subscription (ADR-0022),
- * which decide its plan. It is required, so every organization starts with billing on purpose, and
- * it comes from the server, never from the client. Tenancy only stores what billing built.
+ * which decide its plan, and `options.credits` its empty credit wallet (ADR-0023). Both are
+ * required, so every organization starts with them on purpose, and they come from the server, never
+ * from the client. Tenancy only stores what billing and credits built.
  * `options.departments` likewise builds the first departments (ADR-0025) in the same write.
  */
 export async function createOrganization(
@@ -105,6 +106,7 @@ export async function createOrganization(
   options: {
     readonly billing: NewOrganization['billing'];
     readonly departments?: NewOrganization['departments'];
+    readonly credits: NewOrganization['credits'];
     readonly audit?: NewOrganization['audit'];
   },
 ): Promise<CreatedOrganization> {
@@ -115,6 +117,7 @@ export async function createOrganization(
     creator: auth.userId,
     billing: options.billing,
     ...(options.departments === undefined ? {} : { departments: options.departments }),
+    credits: options.credits,
     ...(options.audit === undefined ? {} : { audit: options.audit }),
   });
 }

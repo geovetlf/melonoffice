@@ -313,6 +313,7 @@ describe.each(STORES)('audit log with storage in %s', (_name, createStores) => {
         'plan',
         'transition',
         'reason',
+        'reference',
         'requestId',
         'source',
       ]);

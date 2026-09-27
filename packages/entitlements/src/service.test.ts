@@ -1,5 +1,7 @@
 import { actAsGia, type AuthenticatedContext } from '@melonoffice/auth';
 import type {
+  CreditWallet,
+  CreditWalletId,
   InitialBilling,
   MembershipStatus,
   Organization,
@@ -64,11 +66,26 @@ const BILLING = (organization: Organization): InitialBilling => {
   };
 };
 
+/** An empty wallet, as the credits package opens one (ADR-0023); its contents do not matter here. */
+const CREDITS = (organization: Organization): CreditWallet => ({
+  id: `wallet-${organization.id}` as CreditWalletId,
+  organizationId: organization.id,
+  balance: 0,
+  createdAt: organization.createdAt,
+  updatedAt: organization.createdAt,
+});
+
 /** Alice owns A on the default plan; Bob owns B on the fixture plan. */
 async function world() {
   const store = new InMemoryTenancyStore();
-  const a = await createOrganization(as(ALICE), { name: 'A' }, store, { billing: BILLING });
-  const b = await createOrganization(as(BOB), { name: 'B' }, store, { billing: BILLING });
+  const a = await createOrganization(as(ALICE), { name: 'A' }, store, {
+    billing: BILLING,
+    credits: CREDITS,
+  });
+  const b = await createOrganization(as(BOB), { name: 'B' }, store, {
+    billing: BILLING,
+    credits: CREDITS,
+  });
   const plans = new Plans();
   plans.byOrganization.set(a.organization.id, DEFAULT_PLAN);
   plans.byOrganization.set(b.organization.id, FIXTURE);

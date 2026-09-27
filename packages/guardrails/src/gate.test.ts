@@ -1,3 +1,4 @@
+import { openWallet } from '@melonoffice/credits';
 import {
   createApprovalService,
   InMemoryApprovalRepository,
@@ -187,10 +188,12 @@ async function world(options: WorldOptions = {}) {
     provisionDepartments(organization, DEFAULT_DEPARTMENT_CATALOGUE);
   const a = await createOrganization(as(ALICE), { name: 'A' }, tenancy, {
     billing: BILLING,
+    credits: openWallet,
     departments: provision,
   });
   const b = await createOrganization(as(BOB), { name: 'B' }, tenancy, {
     billing: BILLING,
+    credits: openWallet,
     departments: provision,
   });
   const orgA = a.organization.id;

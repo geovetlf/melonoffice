@@ -1,3 +1,4 @@
+import { openWallet } from '@melonoffice/credits';
 import { InMemoryAuditStore } from '@melonoffice/audit';
 import { actAsGia, type AuthenticatedContext } from '@melonoffice/auth';
 import type {
@@ -62,8 +63,14 @@ async function world() {
   const audit = new InMemoryAuditStore();
   const repository = new InMemoryExecutionRepository(audit);
   const tenancy = new InMemoryTenancyStore(() => NOW);
-  const a = await createOrganization(as(ALICE), { name: 'A' }, tenancy, { billing: BILLING });
-  const b = await createOrganization(as(BOB), { name: 'B' }, tenancy, { billing: BILLING });
+  const a = await createOrganization(as(ALICE), { name: 'A' }, tenancy, {
+    billing: BILLING,
+    credits: openWallet,
+  });
+  const b = await createOrganization(as(BOB), { name: 'B' }, tenancy, {
+    billing: BILLING,
+    credits: openWallet,
+  });
   const service = createExecutionService({
     repository,
     organizations: tenancy,

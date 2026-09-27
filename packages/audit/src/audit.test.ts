@@ -127,6 +127,26 @@ describe('buildAuditEvent', () => {
     expect(() => buildAuditEvent({ ...change, result: 'denied' }, NOW)).toThrow();
   });
 
+  it('records a well-formed operation reference and refuses a malformed one', () => {
+    const consume: AuditEventInput = {
+      action: 'credits.consume',
+      result: 'success',
+      actor: actorOf(alice),
+      organizationId: ORG_A,
+      target: { type: 'credit_entry', id: 'a'.repeat(64) },
+      reference: 'task:42.run-1',
+      reason: 'task_execution',
+      source: 'api',
+    };
+    expect(buildAuditEvent(consume, NOW).reference).toBe('task:42.run-1');
+    for (const reference of ['', 'a b', 'Bearer abc', 'x'.repeat(129), 'a/b']) {
+      expect(() => buildAuditEvent({ ...consume, reference }, NOW)).toThrow(
+        'invalid audit reference',
+      );
+    }
+    expect(() => buildAuditEvent({ ...consume, result: 'denied' }, NOW)).toThrow();
+  });
+
   it('copies only model fields, so extra input never reaches storage', () => {
     const input = { ...signIn, metadata: { token: 'secret' }, email: 'a@example.com' };
     const event = buildAuditEvent(input as AuditEventInput, NOW);

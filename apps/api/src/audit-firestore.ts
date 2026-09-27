@@ -32,6 +32,7 @@ export interface AuditDocument {
   readonly previousModelProvider: string | null;
   readonly previousModelId: string | null;
   readonly reason: string | null;
+  readonly reference: string | null;
   readonly requestId: string | null;
   readonly source: string;
 }
@@ -61,6 +62,7 @@ export function toAuditDocument(event: AuditEvent): AuditDocument {
     previousModelProvider: event.previousModel?.provider ?? null,
     previousModelId: event.previousModel?.id ?? null,
     reason: event.reason ?? null,
+    reference: event.reference ?? null,
     requestId: event.requestId ?? null,
     source: event.source,
   };
