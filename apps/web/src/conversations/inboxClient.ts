@@ -89,6 +89,45 @@ export class InboxError extends Error {
   }
 }
 
+/** What a person can ask the AI about a conversation (CV-4, ADR-0037). */
+export type AssistOperation = 'summary' | 'intent' | 'reply' | 'next_steps';
+
+/** The AI's answer, as the API checked it. Shown as text to review; never acted on. */
+export type AssistResult =
+  | {
+      readonly type: 'summary';
+      readonly summary: string;
+      readonly intent: string;
+      readonly customerNeed: string | null;
+      readonly keyPoints: readonly string[];
+      readonly providedData: readonly { readonly label: string; readonly value: string }[];
+      readonly actionsTaken: readonly string[];
+      readonly pendingInformation: readonly string[];
+      readonly nextSteps: readonly string[];
+    }
+  | {
+      readonly type: 'intent';
+      readonly primary: string;
+      readonly secondary: readonly string[];
+      readonly confidence: number | null;
+      readonly missingInformation: readonly string[];
+      readonly requiresHuman: boolean;
+      readonly requiresHumanReason: string | null;
+    }
+  | {
+      readonly type: 'reply';
+      readonly reply: string;
+      readonly explanation: string | null;
+      readonly warnings: readonly string[];
+    }
+  | {
+      readonly type: 'next_steps';
+      readonly nextSteps: readonly string[];
+      readonly missingInformation: readonly string[];
+      readonly departmentId: string | null;
+      readonly requiresHuman: boolean;
+    };
+
 export interface InboxClient {
   list(query: InboxQuery): Promise<readonly ConversationRow[]>;
   detail(id: string): Promise<ConversationDetail>;
@@ -107,6 +146,18 @@ export interface InboxClient {
     id: string,
     reply: { readonly clientMessageId: string; readonly text: string },
   ): Promise<ReplyOutcome>;
+  /**
+   * Asks the AI about a conversation (ADR-0037). The same `requestKey` is the same request,
+   * answered and charged once. It sends nothing and changes nothing.
+   */
+  assist(
+    id: string,
+    request: {
+      readonly operation: AssistOperation;
+      readonly requestKey: string;
+      readonly locale: 'en' | 'es';
+    },
+  ): Promise<AssistResult>;
 }
 
 export function createInboxClient(request: ReplyRequest, organizationId: string): InboxClient {
@@ -152,5 +203,8 @@ export function createInboxClient(request: ReplyRequest, organizationId: string)
     setPriority: (id, priority) => post<ConversationRow>(`${one(id)}/priority`, { priority }),
     changeTags: (id, change) => post<ConversationRow>(`${one(id)}/tags`, change),
     reply: (id, reply) => sendReply(request, organizationId, id, reply),
+    async assist(id, body) {
+      return (await post<{ result: AssistResult }>(`${one(id)}/assist`, body)).result;
+    },
   };
 }

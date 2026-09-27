@@ -295,6 +295,30 @@ export const AUDIT_ACTIONS = {
       "Whether a person's message reached the channel is not known (lost answer, timeout); it is never resent blindly (ADR-0034).",
     results: ['failure'],
   },
+  'conversation.ai_summary_requested': {
+    category: 'conversation',
+    description:
+      "A person asked the AI Gateway for a summary of a conversation; the reason is the failure code, the reference the AI call's credits reference, never the text (ADR-0037).",
+    results: ['success', 'denied', 'failure'],
+  },
+  'conversation.ai_intent_analyzed': {
+    category: 'conversation',
+    description:
+      "A person asked the AI Gateway for a conversation's intent; the reason is the failure code, the reference the AI call's credits reference, never the text (ADR-0037).",
+    results: ['success', 'denied', 'failure'],
+  },
+  'conversation.ai_reply_suggested': {
+    category: 'conversation',
+    description:
+      "A person asked the AI Gateway for a suggested reply, which is never sent by itself; the reason is the failure code, the reference the AI call's credits reference, never the text (ADR-0037).",
+    results: ['success', 'denied', 'failure'],
+  },
+  'conversation.ai_next_steps_suggested': {
+    category: 'conversation',
+    description:
+      "A person asked the AI Gateway for next steps for a conversation, which run nothing; the reason is the failure code, the reference the AI call's credits reference, never the text (ADR-0037).",
+    results: ['success', 'denied', 'failure'],
+  },
   'channel.connection_created': {
     category: 'channel',
     description:

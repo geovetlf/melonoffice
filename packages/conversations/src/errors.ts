@@ -21,7 +21,13 @@ export type ConversationErrorCode =
   | 'conversation_closed'
   | 'channel_not_available'
   | 'outside_messaging_window'
-  | 'tool_not_human_invokable';
+  | 'tool_not_human_invokable'
+  // Assisted AI on a conversation (CV-4, ADR-0037).
+  | 'ai_not_available'
+  | 'ai_unavailable'
+  | 'ai_invalid_output'
+  | 'ai_credits_insufficient'
+  | 'rate_limited';
 
 export class ConversationError extends Error {
   override readonly name = 'ConversationError';

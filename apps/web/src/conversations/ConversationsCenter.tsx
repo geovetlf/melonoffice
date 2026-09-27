@@ -13,6 +13,7 @@ import {
   type InboxClient,
   type InboxQuery,
 } from './inboxClient.js';
+import { AssistPanel } from './AssistPanel.js';
 import { ReplyComposer } from './ReplyComposer.js';
 
 export interface ConversationsCenterProps {
@@ -61,7 +62,8 @@ const KNOWN_ERRORS = new Set([
  * The Conversations Center (CV-3, ADR-0035): who wrote, what they said, and what a person can do
  * about it. Open a conversation, read it, reply (CV-2, through the tool gate), assign it to
  * yourself or a department, tag it, set its priority and close it. Everything is a person's
- * act: nothing is suggested, routed or sent by AI here.
+ * act: the AI (CV-4, ADR-0037) only answers what a person asks, as text to review, and nothing
+ * is routed, changed or sent by it.
  */
 export function ConversationsCenter({
   client,
@@ -71,6 +73,7 @@ export function ConversationsCenter({
 }: ConversationsCenterProps) {
   const canManage = can('conversation.manage');
   const canSend = can('conversation.send');
+  const canAssist = can('conversation.assist');
   const intl = useIntl();
   const searchId = useId();
   const sortId = useId();
@@ -85,6 +88,12 @@ export function ConversationsCenter({
   const [newTag, setNewTag] = useState('');
   const [error, setError] = useState<string | undefined>();
   const [loading, setLoading] = useState(true);
+  // A suggested reply the person chose to use: the reply box starts again from it (CV-4).
+  const [draft, setDraft] = useState<{
+    readonly conversationId: string | undefined;
+    readonly text: string;
+    readonly n: number;
+  }>({ conversationId: undefined, text: '', n: 0 });
 
   const fail = (e: unknown) => {
     const code = e instanceof InboxError && KNOWN_ERRORS.has(e.code) ? e.code : 'generic';
@@ -472,9 +481,31 @@ export function ConversationsCenter({
                 ))}
               </ol>
 
+              {canAssist ? (
+                <AssistPanel
+                  key={conversation.id}
+                  {...(newKey === undefined ? {} : { newKey })}
+                  departmentName={departmentName}
+                  onAssist={(operation, requestKey) =>
+                    client.assist(conversation.id, {
+                      operation,
+                      requestKey,
+                      locale: intl.locale.toLowerCase().startsWith('es') ? 'es' : 'en',
+                    })
+                  }
+                  {...(canSend
+                    ? {
+                        onUseReply: (text: string) =>
+                          setDraft((d) => ({ conversationId: conversation.id, text, n: d.n + 1 })),
+                      }
+                    : {})}
+                />
+              ) : null}
+
               {canSend ? (
                 <ReplyComposer
-                  key={conversation.id}
+                  key={`${conversation.id}:${draft.n}`}
+                  initialText={draft.conversationId === conversation.id ? draft.text : ''}
                   {...(newKey === undefined ? {} : { newKey })}
                   onSend={async (reply) => {
                     const outcome = await client.reply(conversation.id, reply);

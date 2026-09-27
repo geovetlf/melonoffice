@@ -114,6 +114,12 @@ export const PERMISSIONS = {
     description:
       "Reply in the organization's conversations as oneself, through the tool gate: one person, one message, no automation (ADR-0034).",
   },
+  'conversation.assist': {
+    resource: 'conversation',
+    action: 'assist',
+    description:
+      'Ask the AI Gateway, as oneself, about a conversation one can read: a summary, the intent, a suggested reply or next steps. It only returns text to review: it never sends, changes or runs anything (ADR-0037).',
+  },
   'contact.read': {
     resource: 'contact',
     action: 'read',

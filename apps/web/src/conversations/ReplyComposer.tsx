@@ -11,6 +11,11 @@ export interface ReplyComposerProps {
   }) => Promise<ReplyOutcome>;
   /** For tests: where new draft keys come from. */
   readonly newKey?: () => string;
+  /**
+   * The draft to start from, e.g. a suggested reply the person chose to use (CV-4). It is only a
+   * starting text: the person edits it and sends it themselves, or not at all.
+   */
+  readonly initialText?: string;
 }
 
 const MAX_LENGTH = 4096;
@@ -20,13 +25,17 @@ type State = { readonly kind: 'idle' } | { readonly kind: 'sending' } | ReplyOut
 /**
  * The reply box of a conversation (CV-2, ADR-0034). A person writes and sends, and sees what
  * happened: sent, refused (nothing went out, with the reason), or unknown (it may have gone out,
- * and is not sent again automatically). There is no AI here: no suggestion, no draft, no send on
- * anyone's behalf.
+ * and is not sent again automatically). Nothing here is sent on anyone's behalf: a suggested
+ * reply (CV-4) only fills the box, and the person decides whether to send it.
  */
-export function ReplyComposer({ onSend, newKey = newClientMessageId }: ReplyComposerProps) {
+export function ReplyComposer({
+  onSend,
+  newKey = newClientMessageId,
+  initialText = '',
+}: ReplyComposerProps) {
   const intl = useIntl();
   const id = useId();
-  const [text, setText] = useState('');
+  const [text, setText] = useState(initialText.slice(0, MAX_LENGTH));
   const [key, setKey] = useState(newKey);
   const [state, setState] = useState<State>({ kind: 'idle' });
   const sending = state.kind === 'sending';

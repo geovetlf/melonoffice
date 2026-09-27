@@ -37,6 +37,7 @@ import {
   createOrganization,
   InMemoryTenancyStore,
   membershipIdOf,
+  resolveRuntimeTenant,
   resolveTenant,
   type TenantContext,
 } from '@melonoffice/tenancy';
@@ -51,7 +52,7 @@ import type { AICreditsPort } from './credits.js';
 import { createAIGateway } from './gateway.js';
 import { createModelPolicyCatalogue, DEFAULT_MODEL_POLICY } from './policy.js';
 import { createProviderRegistry } from './registry.js';
-import type { AIRequest } from './request.js';
+import type { AIRequest, AssistedAIRequest } from './request.js';
 
 const T0 = new Date('2026-09-27T12:00:00Z');
 const AT = T0.toISOString() as IsoTimestamp;
@@ -904,5 +905,120 @@ describe('AI gateway with the real Credits engine (#20)', () => {
     await call({ requestId: 'req-real' });
     expect(await w.creditService.balanceOf(w.tenantA)).toMatchObject({ balance: 10 - charged });
     expect(w.events('credits.consume')).toHaveLength(1);
+  });
+});
+
+const CONVERSATION = '33333333-3333-4333-8333-333333333333';
+
+const assisted = (overrides: Partial<Record<string, unknown>> = {}): AssistedAIRequest =>
+  ({
+    requestId: 'assist-1',
+    subject: { type: 'conversation', id: CONVERSATION },
+    taskType: 'conversation_summary',
+    capability: 'text_generation',
+    requirements: { structuredOutput: true },
+    messages: [{ role: 'user', content: [{ type: 'text', text: 'Summarise.' }] }],
+    outputModality: 'text',
+    maxOutputTokens: 1_000,
+    sensitivity: 'confidential',
+    ...overrides,
+  }) as AssistedAIRequest;
+
+describe('AI gateway: assisted calls (ADR-0037)', () => {
+  const confidential = {
+    ...onlyModels('alpha/alpha-large'),
+    maxSensitivity: 'confidential' as const,
+  };
+
+  it('serves a person with no execution or specialist, through the same routing and credits', async () => {
+    const w = await world({ defaultPolicy: confidential });
+    const response = await w.gateway.assist(w.tenantA, assisted());
+    expect(response).toMatchObject({
+      status: 'completed',
+      requestId: 'assist-1',
+      provider: 'alpha',
+      model: 'alpha-large',
+      versions: { policy: { id: 'test_policy', version: 1 } },
+      credits: { state: 'consumed', consumed: 3 },
+    });
+    expect(w.credits.spent.get(`${w.orgA}\nai:assist-1`)).toBe(3);
+    expect(w.calls[0]).toMatchObject({ structuredOutput: true, requestId: 'assist-1' });
+    // The same request is charged once.
+    await w.gateway.assist(w.tenantA, assisted());
+    expect([...w.credits.spent.values()]).toEqual([3]);
+  });
+
+  it('charges the real Credits engine once per request', async () => {
+    const w = await world({ defaultPolicy: confidential, realCredits: true });
+    await w.creditService.grant(w.tenantA, { amount: 10, referenceId: 'g1', reason: 'test' });
+    await w.gateway.assist(w.tenantA, assisted());
+    await w.gateway.assist(w.tenantA, assisted());
+    expect(await w.creditService.balanceOf(w.tenantA)).toMatchObject({ balance: 7 });
+  });
+
+  it('refuses GIA and the runtime: only a person acting directly', async () => {
+    const w = await world({ defaultPolicy: confidential });
+    const runtime = await resolveRuntimeTenant(ALICE, w.orgA, w.tenancy);
+    for (const tenant of [w.giaA, runtime]) {
+      expect(await w.gateway.assist(tenant, assisted())).toMatchObject({
+        status: 'denied',
+        code: 'assist_requires_user',
+      });
+    }
+    expect(w.calls).toHaveLength(0);
+    expect(w.events('ai.request_denied')).toHaveLength(2);
+    expect(w.events('ai.request_denied')[0]).toMatchObject({
+      target: { type: 'conversation', id: CONVERSATION },
+      reason: 'assist_requires_user',
+    });
+  });
+
+  it("needs the subject's own permission, and ai.generate is not it", async () => {
+    const withoutAssist = ROLES.owner.filter((p) => p !== 'conversation.assist');
+    const w = await world({ defaultPolicy: confidential, roles: { owner: withoutAssist } });
+    expect(await w.gateway.assist(w.tenantA, assisted())).toMatchObject({
+      status: 'denied',
+      code: 'permission_denied',
+    });
+    expect(w.calls).toHaveLength(0);
+  });
+
+  it('refuses a malformed subject, an execution field and smuggled authority', async () => {
+    const w = await world({ defaultPolicy: confidential });
+    const cases: [Partial<Record<string, unknown>>, string][] = [
+      [{ subject: { type: 'message', id: CONVERSATION } }, 'invalid_request'],
+      [{ subject: { type: 'conversation', id: 'not-a-uuid' } }, 'invalid_request'],
+      [
+        { subject: { type: 'conversation', id: CONVERSATION, organizationId: 'x' } },
+        'authority_in_input',
+      ],
+      // Execution ids are authority for an assisted call: refused as such.
+      [{ executionId: CONVERSATION }, 'authority_in_input'],
+      [{ organizationId: 'x' }, 'authority_in_input'],
+    ];
+    for (const [overrides, code] of cases) {
+      expect(await w.gateway.assist(w.tenantA, assisted(overrides))).toMatchObject({
+        status: 'denied',
+        code,
+      });
+    }
+    expect(w.calls).toHaveLength(0);
+  });
+
+  it('follows the policy, the environment and the credit rate like any call', async () => {
+    // The default policy allows data up to internal: a customer conversation is not sent.
+    const strict = await world({ defaultPolicy: onlyModels('alpha/alpha-large') });
+    expect(await strict.gateway.assist(strict.tenantA, assisted())).toMatchObject({
+      status: 'denied',
+    });
+    const unknown = await world({ defaultPolicy: confidential, environment: undefined });
+    expect(await unknown.gateway.assist(unknown.tenantA, assisted())).toMatchObject({
+      code: 'environment_unknown',
+    });
+    const noRate = await world({ defaultPolicy: confidential, credits: 'no_rate' });
+    expect(await noRate.gateway.assist(noRate.tenantA, assisted())).toMatchObject({
+      code: 'credits_not_configured',
+    });
+    expect([...strict.calls, ...unknown.calls, ...noRate.calls]).toHaveLength(0);
   });
 });

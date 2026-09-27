@@ -94,6 +94,28 @@ export interface AIRequest {
 }
 
 /**
+ * What a model call asks for, whoever makes it: everything in `AIRequest` but who it is for.
+ * Routing, cost and credits read only this.
+ */
+export type AIModelRequest = Omit<AIRequest, 'executionId' | 'nodeId' | 'specialistId'>;
+
+/**
+ * What a person may ask the AI Gateway about directly (ADR-0037). Each type names the record the
+ * assistance is about, and the gateway knows which permission it needs.
+ */
+export const ASSIST_SUBJECT_TYPES = ['conversation'] as const;
+export type AssistSubjectType = (typeof ASSIST_SUBJECT_TYPES)[number];
+
+/**
+ * An assisted call (ADR-0037): a person asks, for themselves, about one record they can read. It
+ * is an `AIRequest` without an execution or a specialist, since none is involved: the subject says
+ * what the call is about. The organization and user still come from the tenant, never from here.
+ */
+export interface AssistedAIRequest extends AIModelRequest {
+  readonly subject: { readonly type: AssistSubjectType; readonly id: string };
+}
+
+/**
  * Why a request is refused before anything else happens. `authority_in_input` and
  * `secret_in_input` are security refusals.
  */
@@ -124,6 +146,10 @@ const REQUEST_KEYS = new Set([
   'maxOutputTokens',
   'sensitivity',
   'metadata',
+]);
+const ASSISTED_REQUEST_KEYS = new Set([
+  ...[...REQUEST_KEYS].filter((k) => !['executionId', 'nodeId', 'specialistId'].includes(k)),
+  'subject',
 ]);
 const REQUIREMENT_KEYS = new Set(['minContextTokens', 'structuredOutput', 'toolUse', 'streaming']);
 
@@ -200,23 +226,71 @@ function checkMetadata(value: unknown): void {
   }
 }
 
+/** The fields every model call shares, whoever asks: everything but who the call is for. */
+function checkCommon(request: Record<string, unknown>): void {
+  if (request.metadata !== undefined) checkMetadata(request.metadata);
+  const { messages } = request;
+  if (!Array.isArray(messages) || messages.length === 0 || messages.length > MAX_MESSAGES) {
+    return refuse('invalid_request');
+  }
+  for (const message of messages) checkMessage(message);
+  if (typeof request.requestId !== 'string' || !REQUEST_ID.test(request.requestId)) {
+    refuse('invalid_request');
+  }
+  if (typeof request.taskType !== 'string' || !CODE.test(request.taskType)) {
+    refuse('invalid_request');
+  }
+  if (!oneOf(AI_CAPABILITIES, request.capability)) refuse('invalid_request');
+  if (!oneOf(AI_MODALITIES, request.outputModality)) refuse('invalid_request');
+  if (!oneOf(SENSITIVITIES, request.sensitivity)) refuse('invalid_request');
+  if (request.quality !== undefined && !oneOf(QUALITY_TIERS, request.quality)) {
+    refuse('invalid_request');
+  }
+  if (request.latency !== undefined && !oneOf(LATENCY_TIERS, request.latency)) {
+    refuse('invalid_request');
+  }
+  if (!count(request.maxOutputTokens, 1, MAX_OUTPUT_TOKENS)) refuse('invalid_request');
+  for (const limit of [request.maxCostMicroUsd, request.maxCredits]) {
+    if (limit !== undefined && !count(limit, 0, Number.MAX_SAFE_INTEGER)) {
+      refuse('invalid_request');
+    }
+  }
+  const { requirements } = request;
+  if (requirements !== undefined) {
+    if (!isRecord(requirements)) return refuse('invalid_request');
+    closed(requirements, REQUIREMENT_KEYS);
+    if (
+      requirements.minContextTokens !== undefined &&
+      !count(requirements.minContextTokens, 1, 100_000_000)
+    ) {
+      refuse('invalid_request');
+    }
+    for (const flag of ['structuredOutput', 'toolUse', 'streaming'] as const) {
+      const v = requirements[flag];
+      if (v !== undefined && typeof v !== 'boolean') refuse('invalid_request');
+    }
+  }
+}
+
+function problemOf(check: () => void): AIRequestProblem | undefined {
+  try {
+    check();
+    return undefined;
+  } catch (error) {
+    if (error instanceof Refusal) return error.problem;
+    throw error;
+  }
+}
+
 /**
  * Checks a request and returns why it is refused, or nothing. Refusals come in a fixed order:
  * authority or secrets anywhere win over a merely malformed field, so the audit says why.
  */
 export function checkAIRequest(request: unknown): AIRequestProblem | undefined {
-  try {
+  return problemOf(() => {
     if (!isRecord(request)) return refuse('invalid_request');
     closed(request, REQUEST_KEYS);
-    if (request.metadata !== undefined) checkMetadata(request.metadata);
-    const { messages } = request;
-    if (!Array.isArray(messages) || messages.length === 0 || messages.length > MAX_MESSAGES) {
-      return refuse('invalid_request');
-    }
-    for (const message of messages) checkMessage(message);
-    if (typeof request.requestId !== 'string' || !REQUEST_ID.test(request.requestId)) {
-      refuse('invalid_request');
-    }
+    checkCommon(request);
     if (typeof request.executionId !== 'string' || !UUID.test(request.executionId)) {
       refuse('invalid_request');
     }
@@ -229,48 +303,25 @@ export function checkAIRequest(request: unknown): AIRequestProblem | undefined {
     ) {
       refuse('invalid_request');
     }
-    if (typeof request.taskType !== 'string' || !CODE.test(request.taskType)) {
-      refuse('invalid_request');
-    }
-    if (!oneOf(AI_CAPABILITIES, request.capability)) refuse('invalid_request');
-    if (!oneOf(AI_MODALITIES, request.outputModality)) refuse('invalid_request');
-    if (!oneOf(SENSITIVITIES, request.sensitivity)) refuse('invalid_request');
-    if (request.quality !== undefined && !oneOf(QUALITY_TIERS, request.quality)) {
-      refuse('invalid_request');
-    }
-    if (request.latency !== undefined && !oneOf(LATENCY_TIERS, request.latency)) {
-      refuse('invalid_request');
-    }
-    if (!count(request.maxOutputTokens, 1, MAX_OUTPUT_TOKENS)) refuse('invalid_request');
-    for (const limit of [request.maxCostMicroUsd, request.maxCredits]) {
-      if (limit !== undefined && !count(limit, 0, Number.MAX_SAFE_INTEGER)) {
-        refuse('invalid_request');
-      }
-    }
-    const { requirements } = request;
-    if (requirements !== undefined) {
-      if (!isRecord(requirements)) return refuse('invalid_request');
-      closed(requirements, REQUIREMENT_KEYS);
-      if (
-        requirements.minContextTokens !== undefined &&
-        !count(requirements.minContextTokens, 1, 100_000_000)
-      ) {
-        refuse('invalid_request');
-      }
-      for (const flag of ['structuredOutput', 'toolUse', 'streaming'] as const) {
-        const v = requirements[flag];
-        if (v !== undefined && typeof v !== 'boolean') refuse('invalid_request');
-      }
-    }
-    return undefined;
-  } catch (error) {
-    if (error instanceof Refusal) return error.problem;
-    throw error;
-  }
+  });
+}
+
+/** Checks an assisted request (ADR-0037) the same way, with its subject instead of an execution. */
+export function checkAssistedAIRequest(request: unknown): AIRequestProblem | undefined {
+  return problemOf(() => {
+    if (!isRecord(request)) return refuse('invalid_request');
+    closed(request, ASSISTED_REQUEST_KEYS);
+    checkCommon(request);
+    const { subject } = request;
+    if (!isRecord(subject)) return refuse('invalid_request');
+    closed(subject, new Set(['type', 'id']));
+    if (!oneOf(ASSIST_SUBJECT_TYPES, subject.type)) refuse('invalid_request');
+    if (typeof subject.id !== 'string' || !UUID.test(subject.id)) refuse('invalid_request');
+  });
 }
 
 /** The modalities a request's messages carry. */
-export function inputModalitiesOf(request: AIRequest): readonly AIModality[] {
+export function inputModalitiesOf(request: Pick<AIRequest, 'messages'>): readonly AIModality[] {
   const found = new Set<AIModality>();
   for (const message of request.messages) {
     for (const part of message.content) found.add(part.type);
@@ -283,7 +334,7 @@ export function inputModalitiesOf(request: AIRequest): readonly AIModality[] {
  * token, rounded up, plus a fixed allowance per media part. The provider's reported usage is
  * what is charged.
  */
-export function estimateInputTokens(request: AIRequest): number {
+export function estimateInputTokens(request: Pick<AIRequest, 'messages'>): number {
   let tokens = 0;
   for (const message of request.messages) {
     for (const part of message.content) {

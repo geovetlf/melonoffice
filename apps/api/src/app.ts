@@ -1,9 +1,22 @@
+import {
+  createAIGateway,
+  createModelPolicyCatalogue,
+  defaultProviderRegistry,
+  type AICreditsPort,
+  type CreditRate,
+  type ModelPolicyCatalogue,
+  type ProviderRegistry,
+} from '@melonoffice/ai-gateway';
 import { createApprovalService, type ApprovalRepository } from '@melonoffice/approvals';
 import type { AuditService } from '@melonoffice/audit';
 import type { AuthDependencies } from '@melonoffice/auth';
 import { createBillingService, type BillingStore } from '@melonoffice/billing';
 import { createDepartmentService, type DepartmentRepository } from '@melonoffice/departments';
-import { createConversationService, type ConversationRepository } from '@melonoffice/conversations';
+import {
+  createConversationAssistant,
+  createConversationService,
+  type ConversationRepository,
+} from '@melonoffice/conversations';
 import { createCreditService, type CreditStore } from '@melonoffice/credits';
 import { createEntitlementService, type EntitlementService } from '@melonoffice/entitlements';
 import { createExecutionService, type ExecutionRepository } from '@melonoffice/execution';
@@ -112,6 +125,19 @@ export interface AppOptions {
       readonly environment: DeploymentEnvironment;
     };
   };
+  /**
+   * The AI Gateway's configuration (ADR-0027), used today by assisted AI on conversations
+   * (ADR-0037). Every part fails closed: no environment, no registered provider (D-7) or no
+   * credit rate (D-12) and every call is denied before any provider is reached. Credits default
+   * to the credits engine (`credits`); tests may pass their own registry, policies and rate.
+   */
+  readonly ai?: {
+    readonly environment?: DeploymentEnvironment;
+    readonly registry?: ProviderRegistry;
+    readonly policies?: ModelPolicyCatalogue;
+    readonly creditRate?: CreditRate;
+    readonly credits?: AICreditsPort;
+  };
   /** Channel webhooks (ADR-0033). Absent: `/webhooks/*` answers 503. */
   readonly webhooks?: WebhookIngress;
   /**
@@ -143,6 +169,7 @@ export function createApp({
   plans,
   workflows,
   conversations,
+  ai = {},
   webhooks,
   webOrigins = [],
 }: AppOptions): Hono<Env> {
@@ -372,17 +399,51 @@ export function createApp({
               logger: logger.child({ component: 'outbound' }),
             })
           : undefined;
+      const conversationService = createConversationService({
+        repository: conversations.repository,
+        organizations: tenancy,
+        departments: structure.departments,
+        authorization,
+      });
+      // Assisted AI (CV-4, ADR-0037): the one AI Gateway, in its assisted mode. The execution and
+      // specialist stores are there because the gateway is built whole; an assisted call reads
+      // neither. The credits engine accounts for every call; with no rate (D-12) it denies all.
+      const aiCredits =
+        ai.credits ??
+        (credits === undefined
+          ? undefined
+          : createCreditService({ store: credits, organizations: tenancy }));
+      const assistant =
+        executions !== undefined && specialists !== undefined
+          ? createConversationAssistant({
+              conversations: conversationService,
+              departments: structure.departments,
+              gateway: createAIGateway({
+                executions,
+                organizations: tenancy,
+                specialists,
+                authorization,
+                registry: ai.registry ?? defaultProviderRegistry(),
+                policies: ai.policies ?? createModelPolicyCatalogue([]),
+                environment: ai.environment,
+                ...(aiCredits === undefined
+                  ? {}
+                  : { credits: { port: aiCredits, rate: ai.creditRate } }),
+                audit,
+                logger: logger.child({ component: 'ai-gateway' }),
+              }),
+              authorization,
+              audit,
+              logger: logger.child({ component: 'conversation-assist' }),
+            })
+          : undefined;
       registerConversationRoutes(app, {
         store: tenancy,
         authorization,
         audit,
         ...(sender === undefined ? {} : { sender }),
-        conversations: createConversationService({
-          repository: conversations.repository,
-          organizations: tenancy,
-          departments: structure.departments,
-          authorization,
-        }),
+        ...(assistant === undefined ? {} : { assistant }),
+        conversations: conversationService,
         connections: createChannelConnectionService({
           repository: conversations.connections,
           organizations: tenancy,

@@ -51,7 +51,7 @@ import type { EntitlementService } from '@melonoffice/entitlements';
 import type { AuthorizationService } from '@melonoffice/rbac';
 import { InMemorySpecialistRepository, type SpecialistRepository } from '@melonoffice/specialists';
 import { InMemoryTenancyStore, type TenancyStore } from '@melonoffice/tenancy';
-import { createApp } from './app.js';
+import { createApp, type AppOptions } from './app.js';
 import {
   AUDIT_LOGS,
   FirestoreAuditStore,
@@ -325,7 +325,12 @@ export function setupApp(
   {
     sending = true,
     webOrigins,
-  }: { readonly sending?: boolean; readonly webOrigins?: readonly string[] } = {},
+    ai,
+  }: {
+    readonly sending?: boolean;
+    readonly webOrigins?: readonly string[];
+    readonly ai?: AppOptions['ai'];
+  } = {},
 ) {
   const lines: string[] = [];
   const logger = createLogger({ service: 'api', sink: (line) => lines.push(line) });
@@ -373,6 +378,7 @@ export function setupApp(
     }),
     ...(tools ? { tools } : {}),
     ...(webOrigins ? { webOrigins } : {}),
+    ...(ai ? { ai } : {}),
     ...(authorization ? { authorization } : {}),
     ...(entitlements ? { entitlements } : {}),
   });

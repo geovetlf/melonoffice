@@ -212,3 +212,25 @@
 .inbox__readonly {
   color: var(--mo-color-text-secondary);
 }
+
+/* Assisted AI on a conversation (CV-4): clearly marked, never mistaken for a sent message. */
+.assist {
+  margin-block: 1rem;
+  padding: 0.75rem;
+  border: 1px dashed currentColor;
+  border-radius: 0.5rem;
+}
+.assist__buttons,
+.assist__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.assist__badge {
+  font-size: 0.85em;
+  font-style: italic;
+}
+.assist textarea {
+  width: 100%;
+  min-height: 6rem;
+}

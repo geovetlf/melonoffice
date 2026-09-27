@@ -137,7 +137,8 @@ export interface AuditEvent {
   readonly reason?: string;
   /**
    * The caller's idempotency key of a credits operation (ADR-0023); the amounts stay in the
-   * ledger. For `conversation.message_*` events, the message's conversation (ADR-0034).
+   * ledger. For `conversation.message_*` events, the message's conversation (ADR-0034). For
+   * `conversation.ai_*` events, the AI call's credits reference (ADR-0037).
    */
   readonly reference?: string;
   readonly requestId?: string;
