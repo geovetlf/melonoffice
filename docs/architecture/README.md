@@ -38,6 +38,7 @@ The MelonOffice architecture was defined in the **Phase 0 Architecture Plan (v0.
 | [0032](../adr/0032-worker-and-job-transport.md)                    | Worker and job transport (Cloud Tasks)                    | D-X6-JOB, D-7    |
 | [0033](../adr/0033-conversations-foundation.md)                    | Conversations foundation and human inbox API              | DG-1, DG-2       |
 | [0034](../adr/0034-human-tool-invocation.md)                       | Human tool invocation through the Tool Gate (CV-2)        | DG/CV-2 (B)      |
+| [0035](../adr/0035-conversations-inbox.md)                         | The Conversations Center inbox (CV-3)                     | CV-3             |
 
 ## Current phase
 
