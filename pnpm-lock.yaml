@@ -89,6 +89,9 @@ importers:
       '@melonoffice/firestore':
         specifier: workspace:*
         version: link:../../packages/firestore
+      '@melonoffice/guardrails':
+        specifier: workspace:*
+        version: link:../../packages/guardrails
       '@melonoffice/integrations':
         specifier: workspace:*
         version: link:../../packages/integrations
@@ -126,9 +129,6 @@ importers:
       '@melonoffice/domain':
         specifier: workspace:*
         version: link:../../packages/domain
-      '@melonoffice/guardrails':
-        specifier: workspace:*
-        version: link:../../packages/guardrails
 
   apps/web:
     dependencies:
@@ -605,6 +605,9 @@ importers:
       '@melonoffice/entitlements':
         specifier: workspace:*
         version: link:../entitlements
+      '@melonoffice/execution':
+        specifier: workspace:*
+        version: link:../execution
       '@melonoffice/observability':
         specifier: workspace:*
         version: link:../observability
@@ -614,6 +617,9 @@ importers:
       '@melonoffice/tenancy':
         specifier: workspace:*
         version: link:../tenancy
+      '@melonoffice/tools':
+        specifier: workspace:*
+        version: link:../tools
     devDependencies:
       '@melonoffice/auth':
         specifier: workspace:*

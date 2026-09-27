@@ -4,3 +4,4 @@ export * from './errors.js';
 export * from './ingress.js';
 export * from './secrets.js';
 export * from './whatsapp.js';
+export * from './outbound.js';

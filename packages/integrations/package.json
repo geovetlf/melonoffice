@@ -23,9 +23,11 @@
     "@melonoffice/conversations": "workspace:*",
     "@melonoffice/domain": "workspace:*",
     "@melonoffice/entitlements": "workspace:*",
+    "@melonoffice/execution": "workspace:*",
     "@melonoffice/observability": "workspace:*",
     "@melonoffice/rbac": "workspace:*",
-    "@melonoffice/tenancy": "workspace:*"
+    "@melonoffice/tenancy": "workspace:*",
+    "@melonoffice/tools": "workspace:*"
   },
   "devDependencies": {
     "@melonoffice/auth": "workspace:*",

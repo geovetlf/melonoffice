@@ -33,6 +33,11 @@ export interface OutboundText {
 export interface ChannelAdapter {
   readonly channel: ChannelType;
   /**
+   * How long after the contact's last message a free-form reply may be sent, when the channel
+   * limits it (WhatsApp: 24 hours). Absent: no such window.
+   */
+  readonly serviceWindowMs?: number;
+  /**
    * Whether a delivery really comes from the provider: the provider's signature over the exact
    * raw body, with the connection's secret. Constant-time.
    */
@@ -44,7 +49,12 @@ export interface ChannelAdapter {
   handshake(query: URLSearchParams, verifyToken: string): string | undefined;
   /** The deliveries in a verified body. Throws `invalid_payload` on anything malformed. */
   parse(rawBody: string): readonly NormalizedDelivery[];
-  /** Sends a text through the official API. Returns the provider's message id. */
+  /**
+   * Sends a text through the official API. Returns the provider's message id. Throws
+   * `provider_rejected` (the provider refused: nothing was sent; the detail is a stable code) or
+   * `provider_unavailable` (the detail says whether it may have been sent: `no_answer`,
+   * `server_error` and `response` may; `rate_limited` and `graph_api_version` did not).
+   */
   send(
     connection: ChannelConnection,
     accessToken: string,

@@ -139,6 +139,48 @@ function parseStatus(raw: unknown): ParsedStatus | undefined {
   });
 }
 
+/**
+ * WhatsApp's customer service window: a business may send a free-form message only within 24
+ * hours of the contact's last message; outside it, only an approved template (Meta, "Send
+ * messages" and "Templates"). CV-2 sends no templates, so outside it nothing is sent.
+ */
+export const WHATSAPP_SERVICE_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Meta's documented error codes, as stable MelonOffice codes (Meta, "Error codes"). Anything
+ * not listed stays `provider_rejected`. Only the numeric code is read: never the message.
+ */
+const META_ERRORS: Readonly<Record<number, string>> = Object.freeze({
+  131047: 'outside_messaging_window',
+  130429: 'rate_limited',
+  131056: 'rate_limited',
+  4: 'rate_limited',
+  80007: 'rate_limited',
+  131026: 'invalid_destination',
+  131051: 'unsupported_message',
+  0: 'channel_unauthorized',
+  190: 'channel_unauthorized',
+  10: 'channel_unauthorized',
+  368: 'policy_restricted',
+  131031: 'policy_restricted',
+  131000: 'temporary_provider_error',
+  131016: 'temporary_provider_error',
+  2: 'temporary_provider_error',
+});
+
+/** The stable code for a rejected send, from the numeric `error.code` of Meta's answer. */
+async function rejectionOf(answer: Response): Promise<string> {
+  try {
+    const parsed = (await answer.json()) as { error?: { code?: unknown } };
+    const code = parsed.error?.code;
+    return typeof code === 'number' && Object.hasOwn(META_ERRORS, code)
+      ? (META_ERRORS[code] as string)
+      : 'provider_rejected';
+  } catch {
+    return 'provider_rejected';
+  }
+}
+
 export interface WhatsAppAdapterOptions {
   /** The Graph API version to send with, e.g. `v23.0`: set by configuration, never guessed. */
   readonly graphApiVersion?: string;
@@ -152,6 +194,7 @@ export function createWhatsAppAdapter(options: WhatsAppAdapterOptions = {}): Cha
 
   return {
     channel: 'whatsapp',
+    serviceWindowMs: WHATSAPP_SERVICE_WINDOW_MS,
 
     verifySignature(rawBody, headers, appSecret) {
       const header = headers.get(SIGNATURE_HEADER) ?? '';
@@ -275,12 +318,13 @@ export function createWhatsAppAdapter(options: WhatsAppAdapterOptions = {}): Cha
           },
         );
       } catch {
-        throw new IntegrationError('provider_unavailable');
+        // No answer (network, timeout): the request may have been accepted all the same.
+        throw new IntegrationError('provider_unavailable', 'no_answer');
       }
-      if (answer.status >= 500 || answer.status === 429) {
-        throw new IntegrationError('provider_unavailable');
-      }
-      if (!answer.ok) throw new IntegrationError('provider_rejected');
+      if (answer.status === 429) throw new IntegrationError('provider_unavailable', 'rate_limited');
+      // A server error does not say whether the message went out.
+      if (answer.status >= 500) throw new IntegrationError('provider_unavailable', 'server_error');
+      if (!answer.ok) throw new IntegrationError('provider_rejected', await rejectionOf(answer));
       let id: unknown;
       try {
         const parsed = (await answer.json()) as { messages?: { id?: unknown }[] };
