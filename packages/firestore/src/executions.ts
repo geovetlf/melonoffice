@@ -25,7 +25,7 @@ import type {
   VersionRef,
 } from '@melonoffice/domain';
 import { isOrganizationId } from '@melonoffice/tenancy';
-import { AUDIT_LOGS, toAuditDocument } from './audit-firestore.js';
+import { AUDIT_LOGS, toAuditDocument } from './audit.js';
 
 /**
  * `executions/{executionId}` (ADR-0024). The id is a random UUID, globally unique; the

@@ -38,34 +38,36 @@ import type { AuthorizationService } from '@melonoffice/rbac';
 import { InMemorySpecialistRepository, type SpecialistRepository } from '@melonoffice/specialists';
 import { InMemoryTenancyStore, type TenancyStore } from '@melonoffice/tenancy';
 import { createApp } from './app.js';
-import { AUDIT_LOGS, FirestoreAuditStore, type AuditDocument } from './audit-firestore.js';
 import {
+  AUDIT_LOGS,
+  FirestoreAuditStore,
+  type AuditDocument,
   BILLING_ACCOUNTS,
   FirestoreBillingStore,
   SUBSCRIPTIONS,
   toAccountDocument,
   toSubscriptionDocument,
-} from './billing-firestore.js';
-import {
   DEPARTMENTS,
   FirestoreDepartmentRepository,
   toDepartmentDocument,
-} from './departments-firestore.js';
-import { FirestoreExecutionRepository } from './executions-firestore.js';
-import { FirestoreApprovalRepository } from './approvals-firestore.js';
-import {
+  FirestoreExecutionRepository,
+  FirestoreApprovalRepository,
   FirestoreSpecialistRepository,
   SPECIALISTS,
   SPECIALIST_VERSIONS,
   toSpecialistDocument,
   toSpecialistVersionDocument,
-} from './specialists-firestore.js';
-import { CREDIT_WALLETS, FirestoreCreditStore } from './credits-firestore.js';
-import { FirestorePlanRepository, PLAN_VERSIONS } from './plans-firestore.js';
-import { FirestoreWorkflowRepository } from './workflows-firestore.js';
-import { FirestoreTenancyStore, MEMBERSHIPS, ORGANIZATIONS } from './tenancy-firestore.js';
-import { emulatorFirestore, emulatorHost } from './test-firestore.js';
-import { FirestoreUserDirectory } from './users-firestore.js';
+  CREDIT_WALLETS,
+  FirestoreCreditStore,
+  FirestorePlanRepository,
+  PLAN_VERSIONS,
+  FirestoreWorkflowRepository,
+  FirestoreTenancyStore,
+  MEMBERSHIPS,
+  ORGANIZATIONS,
+  FirestoreUserDirectory,
+} from '@melonoffice/firestore';
+import { emulatorFirestore, emulatorHost } from '@melonoffice/firestore/testing';
 
 /**
  * Stands in for Identity Platform. Real signature, issuer and expiry checks are tested in

@@ -24,15 +24,15 @@ import {
   type NewOrganization,
   type TenancyStore,
 } from '@melonoffice/tenancy';
-import { AUDIT_LOGS, toAuditDocument } from './audit-firestore.js';
+import { AUDIT_LOGS, toAuditDocument } from './audit.js';
 import {
   BILLING_ACCOUNTS,
   SUBSCRIPTIONS,
   toAccountDocument,
   toSubscriptionDocument,
-} from './billing-firestore.js';
-import { DEPARTMENTS, toDepartmentDocument } from './departments-firestore.js';
-import { CREDIT_WALLETS, toWalletDocument } from './credits-firestore.js';
+} from './billing.js';
+import { DEPARTMENTS, toDepartmentDocument } from './departments.js';
+import { CREDIT_WALLETS, toWalletDocument } from './credits.js';
 
 /** Collections (ADR-0018). Read and written only by the API, never by clients. */
 export const ORGANIZATIONS = 'organizations';

@@ -10,16 +10,16 @@ import {
   MEMBERSHIPS,
   ORGANIZATION_CREATORS,
   ORGANIZATIONS,
-} from './tenancy-firestore.js';
-import { AUDIT_LOGS, FirestoreAuditStore } from './audit-firestore.js';
+} from './tenancy.js';
+import { AUDIT_LOGS, FirestoreAuditStore } from './audit.js';
 import {
   BILLING_ACCOUNTS,
   FirestoreBillingStore,
   SUBSCRIPTIONS,
   toAccountDocument,
-} from './billing-firestore.js';
-import { CREDIT_WALLETS, FirestoreCreditStore } from './credits-firestore.js';
-import { emulatorFirestore, emulatorHost } from './test-firestore.js';
+} from './billing.js';
+import { CREDIT_WALLETS, FirestoreCreditStore } from './credits.js';
+import { emulatorFirestore, emulatorHost } from './testing.js';
 
 const NOW = new Date('2026-09-26T12:00:00Z');
 const ALICE = '11111111-1111-4111-8111-111111111111' as UserId;

@@ -83,6 +83,9 @@ importers:
       '@melonoffice/execution':
         specifier: workspace:*
         version: link:../../packages/execution
+      '@melonoffice/firestore':
+        specifier: workspace:*
+        version: link:../../packages/firestore
       '@melonoffice/observability':
         specifier: workspace:*
         version: link:../../packages/observability
@@ -367,6 +370,55 @@ importers:
       '@melonoffice/rbac':
         specifier: workspace:*
         version: link:../rbac
+
+  packages/firestore:
+    dependencies:
+      '@google-cloud/firestore':
+        specifier: 8.7.1
+        version: 8.7.1
+      '@melonoffice/approvals':
+        specifier: workspace:*
+        version: link:../approvals
+      '@melonoffice/audit':
+        specifier: workspace:*
+        version: link:../audit
+      '@melonoffice/auth':
+        specifier: workspace:*
+        version: link:../auth
+      '@melonoffice/billing':
+        specifier: workspace:*
+        version: link:../billing
+      '@melonoffice/credits':
+        specifier: workspace:*
+        version: link:../credits
+      '@melonoffice/departments':
+        specifier: workspace:*
+        version: link:../departments
+      '@melonoffice/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@melonoffice/execution':
+        specifier: workspace:*
+        version: link:../execution
+      '@melonoffice/planning':
+        specifier: workspace:*
+        version: link:../planning
+      '@melonoffice/specialists':
+        specifier: workspace:*
+        version: link:../specialists
+      '@melonoffice/tenancy':
+        specifier: workspace:*
+        version: link:../tenancy
+      '@melonoffice/tools':
+        specifier: workspace:*
+        version: link:../tools
+      '@melonoffice/workflows':
+        specifier: workspace:*
+        version: link:../workflows
+    devDependencies:
+      '@melonoffice/config':
+        specifier: workspace:*
+        version: link:../config
 
   packages/guardrails:
     dependencies:

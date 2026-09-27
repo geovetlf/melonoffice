@@ -26,7 +26,7 @@ import {
 } from '@melonoffice/planning';
 import { isOrganizationId } from '@melonoffice/tenancy';
 import { canonicalJson } from '@melonoffice/tools';
-import { AUDIT_LOGS, toAuditDocument } from './audit-firestore.js';
+import { AUDIT_LOGS, toAuditDocument } from './audit.js';
 
 /**
  * `plans/{planId}` holds each plan's status, current version, delegations and decision
