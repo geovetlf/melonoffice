@@ -140,7 +140,7 @@ describe('createOrganization', () => {
 
   it('stores an empty wallet with the new organization, and refuses any other wallet', async () => {
     const opened: CreditWallet[] = [];
-    const store = new InMemoryTenancyStore(() => NOW, undefined, undefined, {
+    const store = new InMemoryTenancyStore(() => NOW, undefined, undefined, undefined, {
       openWalletNow: (wallet) => opened.push(wallet),
     });
     const created = await createOrganization(userContext(ALICE), { name: 'Acme' }, store, {

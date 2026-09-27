@@ -4,9 +4,13 @@ import { createAuditService } from '@melonoffice/audit';
 import { createIdentityPlatformVerifier } from '@melonoffice/auth';
 import { createLogger } from '@melonoffice/observability';
 import { createApp, SERVICE_NAME } from './app.js';
+import { FirestoreApprovalRepository } from './approvals-firestore.js';
 import { loadConfig } from './config.js';
 import { FirestoreAuditStore } from './audit-firestore.js';
 import { FirestoreBillingStore } from './billing-firestore.js';
+import { FirestoreDepartmentRepository } from './departments-firestore.js';
+import { FirestoreExecutionRepository } from './executions-firestore.js';
+import { FirestoreSpecialistRepository } from './specialists-firestore.js';
 import { FirestoreCreditStore } from './credits-firestore.js';
 import { FirestoreTenancyStore } from './tenancy-firestore.js';
 import { FirestoreUserDirectory } from './users-firestore.js';
@@ -26,6 +30,12 @@ function services(projectId: string) {
     },
     tenancy: new FirestoreTenancyStore(firestore),
     billing: new FirestoreBillingStore(firestore),
+    executions: new FirestoreExecutionRepository(firestore),
+    approvals: new FirestoreApprovalRepository(firestore),
+    structure: {
+      departments: new FirestoreDepartmentRepository(firestore),
+      specialists: new FirestoreSpecialistRepository(firestore),
+    },
     credits: new FirestoreCreditStore(firestore),
     audit: createAuditService(new FirestoreAuditStore(firestore)),
   };

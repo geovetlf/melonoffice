@@ -62,7 +62,7 @@ async function codeOf(promise: Promise<unknown>): Promise<string> {
 async function world(wrap: (store: CreditStore) => CreditStore = (s) => s) {
   const audit = new InMemoryAuditStore();
   const credits = new InMemoryCreditStore(audit);
-  const tenancy = new InMemoryTenancyStore(() => NOW, audit, undefined, credits);
+  const tenancy = new InMemoryTenancyStore(() => NOW, audit, undefined, undefined, credits);
   const options = { billing: BILLING, credits: openWallet };
   const a = await createOrganization(as(ALICE), { name: 'A' }, tenancy, options);
   const b = await createOrganization(as(BOB), { name: 'B' }, tenancy, options);
@@ -319,7 +319,7 @@ describe('atomicity', () => {
   it('writes nothing when the audit event cannot be stored', async () => {
     const audit = new InMemoryAuditStore();
     const credits = new InMemoryCreditStore(audit);
-    const tenancy = new InMemoryTenancyStore(() => NOW, audit, undefined, credits);
+    const tenancy = new InMemoryTenancyStore(() => NOW, audit, undefined, undefined, credits);
     const { organization } = await createOrganization(as(ALICE), { name: 'A' }, tenancy, {
       billing: BILLING,
       credits: openWallet,
@@ -338,7 +338,7 @@ describe('atomicity', () => {
 
   it('refuses a store without an audit log rather than skip the event', async () => {
     const credits = new InMemoryCreditStore();
-    const tenancy = new InMemoryTenancyStore(() => NOW, undefined, undefined, credits);
+    const tenancy = new InMemoryTenancyStore(() => NOW, undefined, undefined, undefined, credits);
     const { organization } = await createOrganization(as(ALICE), { name: 'A' }, tenancy, {
       billing: BILLING,
       credits: openWallet,

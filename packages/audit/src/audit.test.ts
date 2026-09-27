@@ -101,6 +101,32 @@ describe('buildAuditEvent', () => {
     expect(() => buildAuditEvent({ ...assign, result: 'denied' }, NOW)).toThrow();
   });
 
+  it('records a well-formed status transition and refuses a malformed one', () => {
+    const change: AuditEventInput = {
+      action: 'execution.state_changed',
+      result: 'success',
+      actor: actorOf(alice),
+      organizationId: ORG_A,
+      target: { type: 'execution', id: '0b6f7c1e-8a0e-4d5a-9f0e-1c2d3e4f5a6b' },
+      transition: { from: 'running', to: 'cancelled' },
+      reason: 'director_request',
+      source: 'api',
+    };
+    const event = buildAuditEvent(change, NOW);
+    expect(event.transition).toEqual({ from: 'running', to: 'cancelled' });
+    expect(Object.isFrozen(event.transition)).toBe(true);
+    for (const transition of [
+      { from: 'Running', to: 'cancelled' },
+      { from: 'running', to: 'cancelled; drop' },
+      { from: '', to: 'x' },
+    ]) {
+      expect(() => buildAuditEvent({ ...change, transition }, NOW)).toThrow(
+        'invalid audit transition',
+      );
+    }
+    expect(() => buildAuditEvent({ ...change, result: 'denied' }, NOW)).toThrow();
+  });
+
   it('records a well-formed operation reference and refuses a malformed one', () => {
     const consume: AuditEventInput = {
       action: 'credits.consume',

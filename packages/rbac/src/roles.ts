@@ -9,7 +9,20 @@ export type RoleCatalogue = Readonly<Record<string, readonly Permission[]>>;
  * member are added here, as data, when something needs them.
  */
 export const ROLES = {
-  owner: ['organization.read', 'entitlement.read', 'billing.read', 'credits.read'],
+  owner: [
+    'organization.read',
+    'entitlement.read',
+    'billing.read',
+    'execution.read',
+    'department.read',
+    'specialist.read',
+    'tool.read',
+    'tool.execute',
+    'approval.read',
+    'approval.approve',
+    'ai.generate',
+    'credits.read',
+  ],
 } as const satisfies RoleCatalogue;
 
 export type Role = keyof typeof ROLES;

@@ -27,7 +27,14 @@ export type AuditActor =
   | { readonly type: 'system' | 'anonymous' };
 
 export interface AuditTarget {
-  readonly type: 'user' | 'organization' | 'membership' | 'subscription' | 'credit_entry';
+  readonly type:
+    | 'user'
+    | 'organization'
+    | 'membership'
+    | 'subscription'
+    | 'credit_entry'
+    | 'execution'
+    | 'approval';
   readonly id: string;
 }
 
@@ -35,6 +42,24 @@ export interface AuditTarget {
 export interface AuditPlan {
   readonly id: string;
   readonly version: number;
+}
+
+/** A status change, for `execution.state_changed` (ADR-0024): stable status codes only. */
+export interface AuditTransition {
+  readonly from: string;
+  readonly to: string;
+}
+
+/** A tool version as recorded, for `tool.*` events (ADR-0026). Never its input or output. */
+export interface AuditTool {
+  readonly id: string;
+  readonly version: number;
+}
+
+/** An AI model as recorded, for `ai.*` events (ADR-0027). Never a prompt or an output. */
+export interface AuditModel {
+  readonly provider: string;
+  readonly id: string;
 }
 
 /** The component that recorded the event. */
@@ -62,9 +87,18 @@ export interface AuditEvent {
   readonly permission?: string;
   /** The plan assigned, for `plan.assign` (ADR-0021) and `billing.subscription_created` (ADR-0022). */
   readonly plan?: AuditPlan;
+  /** The status change, for `execution.state_changed`. */
+  readonly transition?: AuditTransition;
+  /** The tool version, for `tool.*` events. */
+  readonly tool?: AuditTool;
+  /** The model, for `ai.*` events. */
+  readonly model?: AuditModel;
+  /** The model that could not answer, for `ai.provider_fallback`. */
+  readonly previousModel?: AuditModel;
   /**
-   * A stable code saying why: the error code for `denied` and `failure`, or the operation's
-   * reason code for a credits movement. Never a message.
+   * A stable code saying why: for `denied` and `failure`, an error code; for a successful
+   * change, its cause (for example why an execution was cancelled), or the operation's reason
+   * code for a credits movement. Never a message.
    */
   readonly reason?: string;
   /** The caller's idempotency key of a credits operation (ADR-0023). The amounts stay in the ledger. */
@@ -80,6 +114,12 @@ const CODE = /^[a-z][a-z_]{0,63}$/;
 const PERMISSION = /^[a-z][a-z_]*\.[a-z][a-z_]*$/;
 const REQUEST_ID = /^[\w-]{1,128}$/;
 const PLAN_ID = /^[a-z][a-z0-9_-]{0,63}$/;
+const TOOL_ID = /^[a-z][a-z0-9_]{0,63}$/;
+const PROVIDER_ID = /^[a-z][a-z0-9_-]{0,63}$/;
+const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+
+const isAuditModel = (m: AuditModel): boolean =>
+  PROVIDER_ID.test(m.provider) && MODEL_ID.test(m.id);
 const REFERENCE = /^[A-Za-z0-9._:-]{1,128}$/;
 
 /**
@@ -100,6 +140,26 @@ export function buildAuditEvent(input: AuditEventInput, at: Date): AuditEvent {
   }
   if (input.reference !== undefined && !REFERENCE.test(input.reference)) {
     throw new Error('invalid audit reference');
+  }
+  if (
+    input.transition !== undefined &&
+    (!CODE.test(input.transition.from) || !CODE.test(input.transition.to))
+  ) {
+    throw new Error('invalid audit transition');
+  }
+  if (
+    input.tool !== undefined &&
+    (!TOOL_ID.test(input.tool.id) ||
+      !Number.isSafeInteger(input.tool.version) ||
+      input.tool.version < 1)
+  ) {
+    throw new Error('invalid audit tool');
+  }
+  if (
+    (input.model !== undefined && !isAuditModel(input.model)) ||
+    (input.previousModel !== undefined && !isAuditModel(input.previousModel))
+  ) {
+    throw new Error('invalid audit model');
   }
   if (
     input.plan !== undefined &&
@@ -131,6 +191,23 @@ export function buildAuditEvent(input: AuditEventInput, at: Date): AuditEvent {
     ...(input.plan === undefined
       ? {}
       : { plan: Object.freeze({ id: input.plan.id, version: input.plan.version }) }),
+    ...(input.transition === undefined
+      ? {}
+      : { transition: Object.freeze({ from: input.transition.from, to: input.transition.to }) }),
+    ...(input.tool === undefined
+      ? {}
+      : { tool: Object.freeze({ id: input.tool.id, version: input.tool.version }) }),
+    ...(input.model === undefined
+      ? {}
+      : { model: Object.freeze({ provider: input.model.provider, id: input.model.id }) }),
+    ...(input.previousModel === undefined
+      ? {}
+      : {
+          previousModel: Object.freeze({
+            provider: input.previousModel.provider,
+            id: input.previousModel.id,
+          }),
+        }),
     ...(input.reason === undefined ? {} : { reason: input.reason }),
     ...(input.reference === undefined ? {} : { reference: input.reference }),
     ...(input.requestId !== undefined && REQUEST_ID.test(input.requestId)

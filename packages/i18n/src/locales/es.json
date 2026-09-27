@@ -4,5 +4,19 @@
   "foundation.status": "Estamos construyendo la base de tu oficina virtual.",
   "language.label": "Idioma",
   "language.name.en": "English",
-  "language.name.es": "Español"
+  "language.name.es": "Español",
+  "department.leadership.name": "Consejo y Dirección",
+  "department.leadership.short": "Dirección",
+  "department.operations.name": "Operaciones",
+  "department.operations.short": "Operaciones",
+  "department.sales.name": "Comercial y Ventas",
+  "department.sales.short": "Comercial",
+  "department.marketing.name": "Marketing",
+  "department.marketing.short": "Marketing",
+  "department.design_video.name": "Diseño y Video",
+  "department.design_video.short": "Diseño",
+  "department.research.name": "Investigación",
+  "department.research.short": "Investigación",
+  "department.finance.name": "Finanzas",
+  "department.finance.short": "Finanzas"
 }

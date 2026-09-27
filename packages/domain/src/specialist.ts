@@ -2,9 +2,12 @@ import type {
   DepartmentId,
   HistoryEventId,
   IsoTimestamp,
+  OrganizationId,
+  PolicyId,
   RoleId,
   SkillId,
   SpecialistId,
+  ToolId,
   UserId,
 } from './ids.js';
 
@@ -12,30 +15,85 @@ import type {
 export interface SpecialistIdentity {
   readonly id: SpecialistId;
   readonly displayName: string;
-  readonly avatar: string;
+  readonly avatar?: string;
   readonly createdAt: IsoTimestamp;
   readonly createdBy: UserId;
 }
 
-export type SpecialistState = 'active' | 'paused' | 'archived';
+/**
+ * Where a specialist is in its life (ADR-0025). Only `active` specialists are eligible for new
+ * executions. `draft` is being prepared, `paused` and `disabled` are stopped (paused for a
+ * while, disabled until someone turns it back on), and `archived` is history and final. A
+ * specialist with history is never deleted.
+ */
+export type SpecialistStatus = 'draft' | 'active' | 'paused' | 'disabled' | 'archived';
 
-/** Current configuration of a specialist. It changes over time; history records each change. */
+/** A pointer to one version of a definition kept elsewhere: a skill, a tool or a policy. */
+export interface DefinitionRef<Id extends string = string> {
+  readonly id: Id;
+  readonly version: number;
+}
+
+/**
+ * The policies a specialist runs under. X2 only references them; the engines that apply them
+ * (model routing, context, budget, approval, verification) come in later phases.
+ */
+export type SpecialistPolicyKind = 'model' | 'context' | 'budget' | 'approval' | 'verification';
+
+export type SpecialistPolicies = Readonly<
+  Partial<Record<SpecialistPolicyKind, DefinitionRef<PolicyId>>>
+>;
+
+/**
+ * What a specialist is and may use: its execution profile. Every change creates a new version,
+ * so the configuration an execution used is never changed afterwards (ADR-0025).
+ */
 export interface SpecialistConfiguration {
   readonly departmentId: DepartmentId;
   /** Exactly one main specialty per specialist (D-29). */
   readonly mainRoleId: RoleId;
   readonly roleVersion: number;
-  readonly enabledSkillIds: readonly SkillId[];
-  readonly state: SpecialistState;
+  /** The company's own words for why this specialist exists and what it does. */
+  readonly purpose?: string;
+  readonly description?: string;
+  /** Stable codes for what the specialist can do, e.g. `draft_documents`. */
+  readonly capabilities: readonly string[];
+  readonly skills: readonly DefinitionRef<SkillId>[];
+  readonly tools: readonly DefinitionRef<ToolId>[];
+  /**
+   * RBAC permissions the specialist's work needs. A specialist never holds permissions of its
+   * own: it acts for a user and is eligible only when that user holds all of these (D-25).
+   */
+  readonly permissions: readonly string[];
+  readonly policies: SpecialistPolicies;
+}
+
+/** One version of a specialist's configuration. Written once and never changed. */
+export interface SpecialistVersion {
+  readonly specialistId: SpecialistId;
+  readonly organizationId: OrganizationId;
+  /** 1, 2, 3…: each new version is the previous one plus one. */
+  readonly version: number;
+  readonly configuration: SpecialistConfiguration;
+  readonly createdAt: IsoTimestamp;
+  readonly createdBy: UserId;
 }
 
 /**
- * A working instance with its own identity inside a department.
- * SPECIALIST ≠ DEPARTMENT and SPECIALIST ≠ SKILL (D-28).
+ * A working instance with its own identity inside a department: the agent of MelonOffice.
+ * SPECIALIST = AGENT, SPECIALIST ≠ DEPARTMENT and SPECIALIST ≠ SKILL (D-28). It is a record,
+ * not a running AI: work happens in executions that reference one of its versions.
  */
 export interface Specialist {
   readonly identity: SpecialistIdentity;
+  readonly organizationId: OrganizationId;
+  readonly status: SpecialistStatus;
+  /** The current version and its configuration. */
+  readonly version: number;
   readonly configuration: SpecialistConfiguration;
+  /** Increases with every change; a write expecting an older revision is refused. */
+  readonly revision: number;
+  readonly updatedAt: IsoTimestamp;
 }
 
 /**
@@ -77,7 +135,9 @@ export type SpecialistHistoryEvent = HistoryEventBase &
         readonly fromDepartmentId: DepartmentId;
         readonly toDepartmentId: DepartmentId;
       }
+    | { readonly type: 'activated' }
     | { readonly type: 'paused' }
+    | { readonly type: 'disabled' }
     | { readonly type: 'reactivated' }
     | { readonly type: 'archived' }
   );

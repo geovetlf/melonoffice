@@ -106,6 +106,14 @@ describe('catalogue', () => {
       'organization.read',
       'entitlement.read',
       'billing.read',
+      'execution.read',
+      'department.read',
+      'specialist.read',
+      'tool.read',
+      'tool.execute',
+      'approval.read',
+      'approval.approve',
+      'ai.generate',
       'credits.read',
     ]);
     for (const permissions of Object.values(ROLES)) {

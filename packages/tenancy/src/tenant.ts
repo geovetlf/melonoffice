@@ -97,6 +97,7 @@ export function parseOrganizationName(value: unknown): string {
  * which decide its plan, and `options.credits` its empty credit wallet (ADR-0023). Both are
  * required, so every organization starts with them on purpose, and they come from the server, never
  * from the client. Tenancy only stores what billing and credits built.
+ * `options.departments` likewise builds the first departments (ADR-0025) in the same write.
  */
 export async function createOrganization(
   auth: AuthenticatedContext,
@@ -104,6 +105,7 @@ export async function createOrganization(
   store: TenancyStore,
   options: {
     readonly billing: NewOrganization['billing'];
+    readonly departments?: NewOrganization['departments'];
     readonly credits: NewOrganization['credits'];
     readonly audit?: NewOrganization['audit'];
   },
@@ -114,6 +116,7 @@ export async function createOrganization(
     name,
     creator: auth.userId,
     billing: options.billing,
+    ...(options.departments === undefined ? {} : { departments: options.departments }),
     credits: options.credits,
     ...(options.audit === undefined ? {} : { audit: options.audit }),
   });

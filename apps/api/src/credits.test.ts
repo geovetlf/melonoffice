@@ -48,7 +48,7 @@ describe.each(STORES)('credits with storage in %s', (_name, createStores) => {
   ) {
     const stores: Stores = createStores();
     const store = options.wrap?.(stores.credits) ?? stores.credits;
-    const ctx = setupApp(stores, options.authorization, undefined, store);
+    const ctx = setupApp(stores, options.authorization, undefined, undefined, store);
     const aliceId = (await ctx.register('token-alice')) as UserId;
     const bobId = (await ctx.register('token-bob')) as UserId;
     const create = async (token: string, body: unknown) =>
