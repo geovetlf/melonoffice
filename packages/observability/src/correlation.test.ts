@@ -62,4 +62,25 @@ describe('withCorrelation', () => {
     expect(lines[1]).not.toHaveProperty('provider');
     expect(lines[1]).not.toHaveProperty('model');
   });
+
+  it('adds the plan and the workflow version it came from', () => {
+    const lines: Record<string, unknown>[] = [];
+    const logger = createLogger({
+      service: 'api',
+      sink: (line) => lines.push(JSON.parse(line) as Record<string, unknown>),
+    });
+    withCorrelation(logger, {
+      planId: '44444444-4444-4444-8444-444444444444',
+      workflowId: 'weekly_report',
+      workflowVersion: 3,
+    }).info('plan');
+    withCorrelation(logger, { planId: 'bad id', workflowVersion: 0 }).info('bad');
+    expect(lines[0]).toMatchObject({
+      planId: '44444444-4444-4444-8444-444444444444',
+      workflowId: 'weekly_report',
+      workflowVersion: 3,
+    });
+    expect(lines[1]).not.toHaveProperty('planId');
+    expect(lines[1]).not.toHaveProperty('workflowVersion');
+  });
 });

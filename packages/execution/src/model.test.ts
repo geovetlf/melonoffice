@@ -22,6 +22,8 @@ import {
   applyStatusChange,
   checkSnapshot,
   checkStoredExecution,
+  executionIdFor,
+  isExecutionId,
   MAX_NODES,
   newExecution,
   type NewExecution,
@@ -643,6 +645,35 @@ describe('specialist assignment (ADR-0025)', () => {
     const partial = { ...execution } as Record<string, unknown>;
     delete partial.departmentId;
     expect(codeOf(() => checkStoredExecution(partial as unknown as Execution))).toBe(
+      'invalid_execution',
+    );
+  });
+});
+
+describe('idempotent execution ids', () => {
+  const OTHER = '33333333-3333-4333-8333-333333333333' as OrganizationId;
+
+  it('gives one key in one organization always the same id', () => {
+    const a = newExecution(request({ idempotencyKey: 'plan:p1:step:research' }), T0);
+    const b = newExecution(request({ idempotencyKey: 'plan:p1:step:research' }), T1);
+    expect(a.id).toBe(b.id);
+    expect(a.id).toBe(executionIdFor(ORG, 'plan:p1:step:research'));
+    expect(isExecutionId(a.id)).toBe(true);
+    expect(a.id[14]).toBe('8');
+  });
+
+  it('gives another key or another organization another id', () => {
+    const id = executionIdFor(ORG, 'plan:p1:step:research');
+    expect(executionIdFor(ORG, 'plan:p1:step:campaign')).not.toBe(id);
+    expect(executionIdFor(OTHER, 'plan:p1:step:research')).not.toBe(id);
+  });
+
+  it('keeps random ids without a key', () => {
+    expect(newExecution(request(), T0).id).not.toBe(newExecution(request(), T0).id);
+  });
+
+  it.each(['', 'has space', 'x'.repeat(201), 'slash/no'])('refuses the key %j', (key) => {
+    expect(codeOf(() => newExecution(request({ idempotencyKey: key }), T0))).toBe(
       'invalid_execution',
     );
   });

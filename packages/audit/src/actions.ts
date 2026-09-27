@@ -10,7 +10,9 @@ export interface AuditActionDefinition {
     | 'credits'
     | 'execution'
     | 'tool'
-    | 'ai';
+    | 'ai'
+    | 'planning'
+    | 'workflow';
   readonly description: string;
   /** The results this action is recorded with. Anything else is a programming error. */
   readonly results: readonly AuditResult[];
@@ -132,6 +134,58 @@ export const AUDIT_ACTIONS = {
     description:
       'An AI call reached a provider and did not complete: provider error, invalid response or charge failure (ADR-0027).',
     results: ['failure'],
+  },
+  'plan.created': {
+    category: 'planning',
+    description:
+      'A plan version passed validation and was stored for an execution; it runs nothing (ADR-0028).',
+    results: ['success'],
+  },
+  'plan.proposal_refused': {
+    category: 'planning',
+    description:
+      'A planner or workflow proposal failed validation and no plan was stored; the reason is the first check it failed (ADR-0028).',
+    results: ['denied'],
+  },
+  'plan.approved': {
+    category: 'planning',
+    description:
+      'A user approved one exact plan version, directly and never through GIA, or was refused trying (ADR-0028).',
+    results: ['success', 'denied'],
+  },
+  'plan.rejected': {
+    category: 'planning',
+    description:
+      'A user rejected one exact plan version, directly and never through GIA, or was refused trying (ADR-0028).',
+    results: ['success', 'denied'],
+  },
+  'plan.state_changed': {
+    category: 'planning',
+    description: "A plan's status changed; the event records from and to (ADR-0028).",
+    results: ['success'],
+  },
+  'delegation.created': {
+    category: 'planning',
+    description:
+      "A plan step was handed to an eligible specialist's own child execution; nothing ran (ADR-0028).",
+    results: ['success'],
+  },
+  'workflow.created': {
+    category: 'workflow',
+    description: 'A workflow was created in draft, with its first version (ADR-0028).',
+    results: ['success'],
+  },
+  'workflow.version_created': {
+    category: 'workflow',
+    description:
+      'A new write-once version of a workflow was stored; earlier versions stay as they were (ADR-0028).',
+    results: ['success'],
+  },
+  'workflow.state_changed': {
+    category: 'workflow',
+    description:
+      "A workflow's status changed (activated, paused, archived); the event records from and to (ADR-0028).",
+    results: ['success'],
   },
   'credits.grant': {
     category: 'credits',

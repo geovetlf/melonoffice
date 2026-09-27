@@ -11,3 +11,4 @@ export type * from './tool.js';
 export type * from './approval.js';
 export type * from './ai.js';
 export type * from './credits.js';
+export type * from './plan.js';

@@ -19,6 +19,7 @@ export interface AuditDocument {
   readonly organizationId: string | null;
   readonly targetType: string | null;
   readonly targetId: string | null;
+  readonly targetVersion: number | null;
   readonly requestedOrganizationId: string | null;
   readonly permission: string | null;
   readonly planId: string | null;
@@ -49,6 +50,7 @@ export function toAuditDocument(event: AuditEvent): AuditDocument {
     organizationId: event.organizationId ?? null,
     targetType: event.target?.type ?? null,
     targetId: event.target?.id ?? null,
+    targetVersion: event.targetVersion ?? null,
     requestedOrganizationId: event.requestedOrganizationId ?? null,
     permission: event.permission ?? null,
     planId: event.plan?.id ?? null,

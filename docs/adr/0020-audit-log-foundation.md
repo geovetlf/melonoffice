@@ -73,6 +73,15 @@ Only actions the code performs today:
 | `ai.request_denied`            | ai            | denied                   | The AI Gateway refused a call before any provider saw it (added by ADR-0027) |
 | `ai.provider_fallback`         | ai            | success                  | Another compatible model answered an AI call (added by ADR-0027)             |
 | `ai.request_failed`            | ai            | failure                  | An AI call reached a provider and did not complete (added by ADR-0027)       |
+| `plan.created`                 | planning      | success                  | A validated plan version was stored (added by ADR-0028)                      |
+| `plan.proposal_refused`        | planning      | denied                   | A plan proposal failed validation (added by ADR-0028)                        |
+| `plan.approved`                | planning      | success, denied          | A user approved a plan version, or was refused (added by ADR-0028)           |
+| `plan.rejected`                | planning      | success, denied          | A user rejected a plan version, or was refused (added by ADR-0028)           |
+| `plan.state_changed`           | planning      | success                  | A plan's status changed, with from and to (added by ADR-0028)                |
+| `delegation.created`           | planning      | success                  | A plan step was handed to a child execution (added by ADR-0028)              |
+| `workflow.created`             | workflow      | success                  | A workflow was created in draft, with version 1 (added by ADR-0028)          |
+| `workflow.version_created`     | workflow      | success                  | A new write-once workflow version was stored (added by ADR-0028)             |
+| `workflow.state_changed`       | workflow      | success                  | A workflow was activated, paused or archived, with from and to (ADR-0028)    |
 | `tenancy.resolve`              | tenancy       | denied                   | A request inside an organization is refused by tenancy                       |
 | `authorization.check`          | authorization | denied                   | RBAC refuses a permission                                                    |
 
@@ -85,7 +94,7 @@ Only actions the code performs today:
 
 ### Persistence and immutability
 
-- The Firestore collection is `auditLogs/{eventId}`, with flat fields: `occurredAt`, `action`, `result`, `actorType`, `actorUserId`, `actorVia`, `organizationId`, `targetType`, `targetId`, `requestedOrganizationId`, `permission`, `planId`, `planVersion` (added by ADR-0021), `transitionFrom` and `transitionTo` (added by ADR-0024), `toolId` and `toolVersion` (added by ADR-0026), `modelProvider`, `modelId`, `previousModelProvider` and `previousModelId` (added by ADR-0027), `reason`, `reference` (the operation's reference id, added by ADR-0023), `requestId` and `source`. Absent values are stored as `null`.
+- The Firestore collection is `auditLogs/{eventId}`, with flat fields: `occurredAt`, `action`, `result`, `actorType`, `actorUserId`, `actorVia`, `organizationId`, `targetType`, `targetId`, `targetVersion` (the target's version, added by ADR-0028), `requestedOrganizationId`, `permission`, `planId`, `planVersion` (added by ADR-0021), `transitionFrom` and `transitionTo` (added by ADR-0024), `toolId` and `toolVersion` (added by ADR-0026), `modelProvider`, `modelId`, `previousModelProvider` and `previousModelId` (added by ADR-0027), `reason`, `reference` (the operation's reference id, added by ADR-0023), `requestId` and `source`. Absent values are stored as `null`.
 - The `AuditStore` port has only `append`. The Firestore store writes with `create` in a batch, so an event is never overwritten and a batch is all or nothing. There is no update or delete in the application.
 - **No endpoint** reads or writes audit events. `POST /v1/audit-logs` and similar paths are `404`.
 - IAM cannot make one collection append-only. The API's service account (`roles/datastore.user`) could technically change documents, and only the code prevents it. See the risks.

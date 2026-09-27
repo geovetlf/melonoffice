@@ -19,4 +19,4 @@
 - Identity, tasks, conversations, memory, results and traceability survive role changes, deactivation, reactivation, logical deletion and new skills.
 - Specialists are records, not running AI instances; AI runs only when there is work.
 
-The types stating this model live in `packages/domain`. Departments, specialists, their versions and eligibility are stored and read as of [ADR-0025](0025-departments-and-specialists.md). Tools, their approvals and guardrails are defined in [ADR-0026](0026-tools-approvals-and-guardrails.md). How a specialist calls an AI model is defined in [ADR-0027](0027-ai-gateway-and-provider-registry.md).
+The types stating this model live in `packages/domain`. Departments, specialists, their versions and eligibility are stored and read as of [ADR-0025](0025-departments-and-specialists.md). Tools, their approvals and guardrails are defined in [ADR-0026](0026-tools-approvals-and-guardrails.md). How a specialist calls an AI model is defined in [ADR-0027](0027-ai-gateway-and-provider-registry.md). How work is planned for several specialists, delegated and reused as workflows is defined in [ADR-0028](0028-planner-delegation-and-workflows.md).

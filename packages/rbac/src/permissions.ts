@@ -63,6 +63,28 @@ export const PERMISSIONS = {
     description:
       'Let an execution call an AI model for you. Checked by the AI Gateway, never by a client route (ADR-0027).',
   },
+  'plan.read': {
+    resource: 'plan',
+    action: 'read',
+    description: "See the organization's plans: steps, specialists, risk and status (ADR-0028).",
+  },
+  'plan.create': {
+    resource: 'plan',
+    action: 'create',
+    description:
+      'Let the planner make a plan for you. Checked by the planner on the server, never by a client route (ADR-0028).',
+  },
+  'workflow.read': {
+    resource: 'workflow',
+    action: 'read',
+    description: "See the organization's workflows and their versions (ADR-0028).",
+  },
+  'workflow.manage': {
+    resource: 'workflow',
+    action: 'manage',
+    description:
+      "Create, version and activate the organization's workflows. Server side only: no client route yet (ADR-0028).",
+  },
   'credits.read': {
     resource: 'credits',
     action: 'read',
