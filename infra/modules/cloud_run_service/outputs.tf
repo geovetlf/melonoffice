@@ -22,3 +22,8 @@ output "env" {
   description = "Environment variables set on the container."
   value       = var.env
 }
+
+output "timeout" {
+  description = "Longest time one request may take."
+  value       = google_cloud_run_v2_service.this.template[0].timeout
+}

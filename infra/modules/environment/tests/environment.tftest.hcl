@@ -263,7 +263,7 @@ run "dev_gets_firestore_and_auth" {
 
   assert {
     condition     = google_project_iam_member.api_firestore[0].role == "roles/datastore.user" && google_project_iam_member.api_firestore[0].member == "serviceAccount:${module.app["api"].runtime_service_account}"
-    error_message = "Only the api runtime identity may read and write Firestore."
+    error_message = "The api runtime identity reads and writes Firestore with datastore.user."
   }
 
   assert {
@@ -275,6 +275,103 @@ run "dev_gets_firestore_and_auth" {
     condition = alltrue([for p in ["datastore.databases.get", "datastore.databases.getMetadata", "firebaseauth.configs.get", "run.services.get", "run.services.getIamPolicy"] :
     contains(google_project_iam_custom_role.planner.permissions, p)])
     error_message = "The planner must be able to read the Firestore database, Identity Platform config and Cloud Run metadata."
+  }
+}
+
+# The execution runtime (ADR-0032): Cloud Tasks delivers jobs to the private worker, which alone
+# of the new identities reads and writes Firestore. Only where the apps and Firestore exist.
+run "dev_runs_the_execution_runtime" {
+  command = apply
+
+  variables {
+    environment         = "dev"
+    deploy_apps         = true
+    deletion_protection = false
+    firestore_and_auth  = true
+  }
+
+  assert {
+    condition     = contains(module.services.services, "cloudtasks.googleapis.com")
+    error_message = "Dev must enable the Cloud Tasks API."
+  }
+
+  assert {
+    condition     = google_cloud_tasks_queue.execution_jobs[0].name == "execution-jobs" && google_cloud_tasks_queue.execution_jobs[0].location == "test-region"
+    error_message = "Dev must have one execution jobs queue in the environment's region."
+  }
+
+  assert {
+    condition     = google_cloud_tasks_queue.execution_jobs[0].retry_config[0].max_attempts == 10 && google_cloud_tasks_queue.execution_jobs[0].rate_limits[0].max_concurrent_dispatches == 10
+    error_message = "Queue retries and concurrency must stay bounded."
+  }
+
+  assert {
+    condition     = length(module.app["worker"].invoker_members) == 2 && contains(module.app["worker"].invoker_members, "serviceAccount:${google_service_account.job_dispatch[0].email}") && !contains(module.app["worker"].invoker_members, "allUsers")
+    error_message = "The worker must stay private: only the deployer and the job dispatch identity may call it."
+  }
+
+  assert {
+    condition     = google_cloud_tasks_queue_iam_member.worker_enqueuer[0].role == "roles/cloudtasks.enqueuer" && google_cloud_tasks_queue_iam_member.worker_enqueuer[0].name == "execution-jobs"
+    error_message = "The worker may only enqueue, and only on the execution jobs queue."
+  }
+
+  assert {
+    condition     = google_service_account_iam_member.worker_acts_as_job_dispatch[0].role == "roles/iam.serviceAccountUser" && google_service_account_iam_member.worker_acts_as_job_dispatch[0].service_account_id == google_service_account.job_dispatch[0].name
+    error_message = "The worker may act only as the job dispatch identity, to sign tasks' tokens."
+  }
+
+  assert {
+    condition     = google_project_iam_member.worker_firestore[0].role == "roles/datastore.user" && google_project_iam_member.worker_firestore[0].member == "serviceAccount:${module.app["worker"].runtime_service_account}"
+    error_message = "The worker reads and writes Firestore with datastore.user only."
+  }
+
+  assert {
+    condition = alltrue([for k in ["FIRESTORE_PROJECT_ID", "DEPLOYMENT_ENVIRONMENT", "JOB_LEASE_MS", "JOB_QUEUE", "WORKER_URL", "JOB_INVOKER_EMAIL", "LOG_LEVEL"] :
+    contains(keys(module.app["worker"].env), k)]) && length(module.app["worker"].env) == 7
+    error_message = "The worker must get exactly its runtime settings."
+  }
+
+  assert {
+    condition     = module.app["worker"].env["JOB_LEASE_MS"] == "900000" && module.app["worker"].env["DEPLOYMENT_ENVIRONMENT"] == "dev" && module.app["worker"].env["JOB_QUEUE"] == "projects/test-project/locations/test-region/queues/execution-jobs"
+    error_message = "The worker's lease, environment and queue must come from this environment."
+  }
+
+  assert {
+    condition     = module.app["worker"].env["WORKER_URL"] == "https://worker-123456789012.test-region.run.app"
+    error_message = "The worker's URL must be its deterministic run.app URL."
+  }
+
+  assert {
+    condition     = module.app["worker"].timeout == "900s" && module.app["api"].timeout == "30s" && module.app["web"].timeout == "30s"
+    error_message = "Only the worker's requests may last as long as a lease."
+  }
+
+  assert {
+    condition     = !anytrue([for m in [google_project_iam_member.worker_firestore[0].role, google_cloud_tasks_queue_iam_member.worker_enqueuer[0].role, google_service_account_iam_member.worker_acts_as_job_dispatch[0].role] : contains(["roles/owner", "roles/editor", "roles/datastore.owner", "roles/cloudtasks.admin", "roles/iam.serviceAccountAdmin"], m)])
+    error_message = "No broad role for the runtime identities."
+  }
+
+  assert {
+    condition     = contains(google_project_iam_custom_role.planner.permissions, "cloudtasks.queues.get") && contains(google_project_iam_custom_role.planner.permissions, "cloudtasks.queues.getIamPolicy")
+    error_message = "The planner must be able to read the queue's metadata and IAM policy."
+  }
+}
+
+run "no_runtime_without_firestore_or_apps" {
+  command = plan
+
+  variables {
+    environment = "prod"
+  }
+
+  assert {
+    condition     = length(google_cloud_tasks_queue.execution_jobs) == 0 && length(google_service_account.job_dispatch) == 0 && length(google_project_iam_member.worker_firestore) == 0
+    error_message = "Staging and prod get no queue, dispatch identity or worker Firestore access."
+  }
+
+  assert {
+    condition     = !contains(module.services.services, "cloudtasks.googleapis.com") && length([for p in google_project_iam_custom_role.planner.permissions : p if startswith(p, "cloudtasks.")]) == 0
+    error_message = "Without the runtime, no Cloud Tasks API or planner permission."
   }
 }
 

@@ -4,6 +4,7 @@
 - Date: 2026-09-27
 - Builds on: [ADR-0020](0020-audit-log-foundation.md), [ADR-0024](0024-execution-foundation.md), [ADR-0026](0026-tools-approvals-and-guardrails.md), [ADR-0027](0027-ai-gateway-and-provider-registry.md), [ADR-0029](0029-runtime-guards.md) and [ADR-0030](0030-execution-jobs-and-lease.md)
 - Decisions it applies: D-X6-ACTOR, D-X6-START, D-X6-CANCEL, D-X6-VERIFY, D-X6-ATTEMPT, D-X6-JOB (Geovet, 2026-09-27) and the X6c authorization
+- Transport: [ADR-0032](0032-worker-and-job-transport.md) delivers jobs to `advance()` through the worker and Cloud Tasks.
 - Open decisions it respects: D-7, D-12, D-27, credit reservation, CONFIDENTIAL/RESTRICTED data, sweeper, scheduler, heartbeat, human review, specialist review, refunds, retention, Company Context
 
 ## Context

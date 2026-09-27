@@ -54,6 +54,12 @@ variable "env" {
   default     = {}
 }
 
+variable "timeout" {
+  description = "Longest time one request may take, as a duration (\"30s\"). Null keeps the default."
+  type        = string
+  default     = null
+}
+
 variable "cpu" {
   description = "CPU limit per instance."
   type        = string

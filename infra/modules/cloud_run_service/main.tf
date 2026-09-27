@@ -20,7 +20,7 @@ resource "google_cloud_run_v2_service" "this" {
   template {
     service_account                  = google_service_account.runtime.email
     max_instance_request_concurrency = var.concurrency
-    timeout                          = "30s"
+    timeout                          = coalesce(var.timeout, "30s")
 
     scaling {
       min_instance_count = var.min_instances

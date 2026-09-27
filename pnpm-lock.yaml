@@ -160,12 +160,60 @@ importers:
 
   apps/worker:
     dependencies:
+      '@google-cloud/firestore':
+        specifier: 8.7.1
+        version: 8.7.1
       '@hono/node-server':
         specifier: 2.1.1
         version: 2.1.1(hono@4.13.9)
+      '@melonoffice/ai-gateway':
+        specifier: workspace:*
+        version: link:../../packages/ai-gateway
+      '@melonoffice/approvals':
+        specifier: workspace:*
+        version: link:../../packages/approvals
+      '@melonoffice/audit':
+        specifier: workspace:*
+        version: link:../../packages/audit
+      '@melonoffice/auth':
+        specifier: workspace:*
+        version: link:../../packages/auth
+      '@melonoffice/departments':
+        specifier: workspace:*
+        version: link:../../packages/departments
+      '@melonoffice/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      '@melonoffice/execution':
+        specifier: workspace:*
+        version: link:../../packages/execution
+      '@melonoffice/firestore':
+        specifier: workspace:*
+        version: link:../../packages/firestore
+      '@melonoffice/guardrails':
+        specifier: workspace:*
+        version: link:../../packages/guardrails
+      '@melonoffice/jobs':
+        specifier: workspace:*
+        version: link:../../packages/jobs
       '@melonoffice/observability':
         specifier: workspace:*
         version: link:../../packages/observability
+      '@melonoffice/rbac':
+        specifier: workspace:*
+        version: link:../../packages/rbac
+      '@melonoffice/runtime':
+        specifier: workspace:*
+        version: link:../../packages/runtime
+      '@melonoffice/specialists':
+        specifier: workspace:*
+        version: link:../../packages/specialists
+      '@melonoffice/tenancy':
+        specifier: workspace:*
+        version: link:../../packages/tenancy
+      '@melonoffice/tools':
+        specifier: workspace:*
+        version: link:../../packages/tools
       hono:
         specifier: 4.13.9
         version: 4.13.9
@@ -173,6 +221,12 @@ importers:
       '@melonoffice/config':
         specifier: workspace:*
         version: link:../../packages/config
+      '@melonoffice/credits':
+        specifier: workspace:*
+        version: link:../../packages/credits
+      jose:
+        specifier: 6.2.12
+        version: 6.2.12
 
   packages/ai-gateway:
     dependencies:
