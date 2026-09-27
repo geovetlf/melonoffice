@@ -121,6 +121,11 @@ describe('catalogue', () => {
       'plan.create',
       'workflow.read',
       'workflow.manage',
+      'conversation.read',
+      'conversation.manage',
+      'contact.read',
+      'channel.read',
+      'channel.manage',
     ]);
     for (const permissions of Object.values(ROLES)) {
       for (const permission of permissions) expect(isPermission(permission)).toBe(true);

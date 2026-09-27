@@ -28,6 +28,11 @@ export const ROLES = {
     'plan.create',
     'workflow.read',
     'workflow.manage',
+    'conversation.read',
+    'conversation.manage',
+    'contact.read',
+    'channel.read',
+    'channel.manage',
   ],
 } as const satisfies RoleCatalogue;
 
