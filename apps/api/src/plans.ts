@@ -102,6 +102,8 @@ export function toPlanView(plan: Plan) {
     status: plan.status,
     version: plan.version,
     delegations: plan.delegations.map((d) => ({ stepId: d.stepId, executionId: d.executionId })),
+    delegationState: plan.delegationState ?? null,
+    delegationFailure: plan.delegationFailure ?? null,
     decision:
       plan.decision === undefined
         ? null

@@ -157,7 +157,7 @@ function memoryStores(): Stores {
     },
     credits,
     plans,
-    workflows: new InMemoryWorkflowRepository(),
+    workflows: new InMemoryWorkflowRepository(events),
     async tamperPlanVersion(organizationId, planId, version) {
       // Memory stores what it is given; the repository checks the digest when it reads.
       const found = await plans.findVersion(organizationId, planId, version);
@@ -186,6 +186,7 @@ function fromAuditDocument(id: string, d: AuditDocument): AuditEvent {
         : { type: d.actorType },
     ...(d.organizationId === null ? {} : { organizationId: d.organizationId }),
     ...(d.targetType === null ? {} : { target: { type: d.targetType, id: d.targetId } }),
+    ...(d.targetVersion == null ? {} : { targetVersion: d.targetVersion }),
     ...(d.requestedOrganizationId === null
       ? {}
       : { requestedOrganizationId: d.requestedOrganizationId }),

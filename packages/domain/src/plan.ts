@@ -160,6 +160,19 @@ export interface PlanDelegation {
   readonly executionId: ExecutionId;
 }
 
+/**
+ * Where a plan's delegation is (ADR-0028). No state: not delegated yet (pending).
+ *
+ * - `creating`: the delegation set is recorded (one deterministic child id per specialist step)
+ *   and its children are being created. Recoverable: delegating again resumes it.
+ * - `created`: every child exists and the plan is `executing`; the planning execution may still
+ *   be moving to `running`. Recoverable the same way.
+ * - `completed`: the planning execution is `running`. Delegating again changes nothing.
+ * - `failed`: a specialist could no longer take its step; the plan failed and the children that
+ *   were created are cancelled. Final.
+ */
+export type PlanDelegationState = 'creating' | 'created' | 'completed' | 'failed';
+
 /** A human decision on one plan version. Never GIA's, never the model's. */
 export interface PlanDecision {
   readonly decision: 'approved' | 'rejected';
@@ -177,7 +190,11 @@ export interface Plan {
   readonly status: PlanStatus;
   /** The current version. */
   readonly version: number;
+  /** From `creating` on: one entry per specialist step, with its deterministic child id. */
   readonly delegations: readonly PlanDelegation[];
+  readonly delegationState?: PlanDelegationState;
+  /** Why a `failed` delegation failed: a stable code. */
+  readonly delegationFailure?: string;
   readonly decision?: PlanDecision;
   readonly revision: number;
   readonly createdAt: IsoTimestamp;

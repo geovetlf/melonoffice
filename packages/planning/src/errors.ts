@@ -14,7 +14,9 @@ export type PlanningErrorCode =
   | 'gia_cannot_decide'
   | 'execution_not_plannable'
   | 'specialist_not_eligible'
-  | 'delegation_conflict';
+  | 'delegation_conflict'
+  | 'delegation_in_progress'
+  | 'delegation_failed';
 
 export class PlanningError extends Error {
   override readonly name = 'PlanningError';

@@ -11,7 +11,8 @@ export interface AuditActionDefinition {
     | 'execution'
     | 'tool'
     | 'ai'
-    | 'planning';
+    | 'planning'
+    | 'workflow';
   readonly description: string;
   /** The results this action is recorded with. Anything else is a programming error. */
   readonly results: readonly AuditResult[];
@@ -167,6 +168,23 @@ export const AUDIT_ACTIONS = {
     category: 'planning',
     description:
       "A plan step was handed to an eligible specialist's own child execution; nothing ran (ADR-0028).",
+    results: ['success'],
+  },
+  'workflow.created': {
+    category: 'workflow',
+    description: 'A workflow was created in draft, with its first version (ADR-0028).',
+    results: ['success'],
+  },
+  'workflow.version_created': {
+    category: 'workflow',
+    description:
+      'A new write-once version of a workflow was stored; earlier versions stay as they were (ADR-0028).',
+    results: ['success'],
+  },
+  'workflow.state_changed': {
+    category: 'workflow',
+    description:
+      "A workflow's status changed (activated, paused, archived); the event records from and to (ADR-0028).",
     results: ['success'],
   },
   'credits.grant': {

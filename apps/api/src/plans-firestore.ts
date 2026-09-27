@@ -44,6 +44,9 @@ interface PlanDocument {
   readonly status: string;
   readonly version: number;
   readonly delegations: readonly { stepId: string; executionId: string }[];
+  /** Absent in plans written before delegation states existed: read as not delegated. */
+  readonly delegationState?: string | null;
+  readonly delegationFailure?: string | null;
   readonly decision: {
     decision: string;
     version: number;
@@ -79,6 +82,8 @@ export function toPlanDocument(plan: Plan): PlanDocument {
     status: plan.status,
     version: plan.version,
     delegations: plan.delegations.map((d) => ({ stepId: d.stepId, executionId: d.executionId })),
+    delegationState: plan.delegationState ?? null,
+    delegationFailure: plan.delegationFailure ?? null,
     decision:
       plan.decision === undefined
         ? null
@@ -104,6 +109,12 @@ function toPlan(id: string, d: PlanDocument): Plan {
     status: d.status,
     version: d.version,
     delegations: d.delegations.map((x) => ({ stepId: x.stepId, executionId: x.executionId })),
+    ...(d.delegationState === undefined || d.delegationState === null
+      ? {}
+      : { delegationState: d.delegationState }),
+    ...(d.delegationFailure === undefined || d.delegationFailure === null
+      ? {}
+      : { delegationFailure: d.delegationFailure }),
     ...(d.decision === null
       ? {}
       : {

@@ -681,7 +681,11 @@ describe('delegation', () => {
     // Nothing ran: no tool was invoked and no AI was called.
     expect(w.calls).toHaveLength(0);
     expect(w.events().filter((e) => e.action.startsWith('tool.'))).toHaveLength(0);
-    expect(await codeOf(w.delegation.delegate(w.tenantA, plan.id))).toBe('invalid_plan_transition');
+    expect(delegated.delegationState).toBe('completed');
+    // Delegating again changes nothing and returns the same children.
+    const again = await w.delegation.delegate(w.tenantA, plan.id);
+    expect(again.children.map((c) => c.id)).toEqual(children.map((c) => c.id));
+    expect(w.events('delegation.created')).toHaveLength(2);
   });
 
   it('delegates a plan that needs approval only after a user approved it', async () => {

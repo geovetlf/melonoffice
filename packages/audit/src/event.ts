@@ -80,6 +80,8 @@ export interface AuditEvent {
   /** The organization the actor was authorized to act in, from a resolved tenant. Never client input. */
   readonly organizationId?: OrganizationId;
   readonly target?: AuditTarget;
+  /** The target's version the event is about, for `workflow.*` events (ADR-0028). */
+  readonly targetVersion?: number;
   /**
    * The organization the client asked for, kept apart from `organizationId` because it is
    * untrusted. Only recorded when well-formed; it never means the actor had access to it.
@@ -164,6 +166,14 @@ export function buildAuditEvent(input: AuditEventInput, at: Date): AuditEvent {
     throw new Error('invalid audit model');
   }
   if (
+    input.targetVersion !== undefined &&
+    (input.target === undefined ||
+      !Number.isSafeInteger(input.targetVersion) ||
+      input.targetVersion < 1)
+  ) {
+    throw new Error('invalid audit target version');
+  }
+  if (
     input.plan !== undefined &&
     (!PLAN_ID.test(input.plan.id) ||
       !Number.isInteger(input.plan.version) ||
@@ -186,6 +196,7 @@ export function buildAuditEvent(input: AuditEventInput, at: Date): AuditEvent {
     ...(input.target === undefined
       ? {}
       : { target: Object.freeze({ type: input.target.type, id: input.target.id }) }),
+    ...(input.targetVersion === undefined ? {} : { targetVersion: input.targetVersion }),
     ...(requested !== undefined && UUID.test(requested)
       ? { requestedOrganizationId: requested }
       : {}),

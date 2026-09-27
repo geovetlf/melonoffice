@@ -17,15 +17,16 @@ export const PLAN_STATUSES = [
  *
  * - a validated plan is `ready`, or `approval_required` when any step or its risk needs a human;
  * - only a user acting directly moves `approval_required` to `approved` or `rejected`;
- * - only delegation moves a `ready` or `approved` plan to `executing`;
+ * - only delegation moves a `ready` or `approved` plan to `executing`, or to `failed` when a
+ *   specialist can no longer take its step while the delegation is being created;
  * - `rejected`, `completed`, `failed` and `cancelled` are terminal; `cancelled` is reachable from
  *   every other status.
  */
 export const PLAN_TRANSITIONS: Readonly<Record<PlanStatus, readonly PlanStatus[]>> = {
   draft: ['ready', 'approval_required', 'cancelled'],
-  ready: ['executing', 'cancelled'],
+  ready: ['executing', 'failed', 'cancelled'],
   approval_required: ['approved', 'rejected', 'cancelled'],
-  approved: ['executing', 'cancelled'],
+  approved: ['executing', 'failed', 'cancelled'],
   executing: ['completed', 'failed', 'cancelled'],
   rejected: [],
   completed: [],

@@ -578,6 +578,9 @@ importers:
 
   packages/workflows:
     dependencies:
+      '@melonoffice/audit':
+        specifier: workspace:*
+        version: link:../audit
       '@melonoffice/departments':
         specifier: workspace:*
         version: link:../departments
@@ -603,9 +606,6 @@ importers:
         specifier: workspace:*
         version: link:../tools
     devDependencies:
-      '@melonoffice/audit':
-        specifier: workspace:*
-        version: link:../audit
       '@melonoffice/auth':
         specifier: workspace:*
         version: link:../auth

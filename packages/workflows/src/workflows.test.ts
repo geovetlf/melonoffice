@@ -1,3 +1,4 @@
+import { InMemoryAuditStore, type AuditEvent } from '@melonoffice/audit';
 import type { Execution, Specialist, Workflow } from '@melonoffice/domain';
 import { createAuthorizationService, ROLES } from '@melonoffice/rbac';
 import type { TenantContext } from '@melonoffice/tenancy';
@@ -52,12 +53,22 @@ const STEPS = [
   },
 ];
 
+/** An audit store that can be made to fail, to prove a workflow change is stored with it or not at all. */
+class BreakableAuditStore extends InMemoryAuditStore {
+  broken = false;
+  override appendNow(events: readonly AuditEvent[]): void {
+    if (this.broken) throw new Error('audit store unavailable');
+    super.appendNow(events);
+  }
+}
+
 async function setup(options: WorldOptions = {}) {
   const w = await world(options);
+  const workflowAudit = new BreakableAuditStore();
   const owner = await w.seed(w.orgA, ALICE, { type: 'leadership', role: 'chief_of_staff' });
   const researcher = await w.seed(w.orgA, ALICE, { toolIds: ['lookup'] });
   const marketer = await w.seed(w.orgA, ALICE, { type: 'marketing', role: 'campaign_manager' });
-  const repository = new InMemoryWorkflowRepository();
+  const repository = new InMemoryWorkflowRepository(workflowAudit);
   const workflows = createWorkflowService({
     repository,
     plans: w.plans,
@@ -65,7 +76,9 @@ async function setup(options: WorldOptions = {}) {
     departments: w.departments,
     organizations: w.tenancy,
     authorization: createAuthorizationService((options.roles ?? ROLES) as never),
+    requestId: 'req-workflows-1',
   });
+  const workflowEvents = () => workflowAudit.events();
   /** A planning execution that recorded this workflow version. */
   async function planningFor(
     tenant: TenantContext,
@@ -90,7 +103,17 @@ async function setup(options: WorldOptions = {}) {
     });
     return w.executions.changeStatus(tenant, execution.id, { from: 'pending', to: 'planning' });
   }
-  return { ...w, owner, researcher, marketer, repository, workflows, planningFor };
+  return {
+    ...w,
+    owner,
+    researcher,
+    marketer,
+    repository,
+    workflows,
+    planningFor,
+    workflowAudit,
+    workflowEvents,
+  };
 }
 
 describe('workflow lifecycle and versions', () => {
@@ -147,6 +170,119 @@ describe('workflow lifecycle and versions', () => {
     expect(
       await codeOf(readOnly.workflows.create(readOnly.tenantA, { name: 'Launch', steps: STEPS })),
     ).toBe('permission_denied');
+  });
+});
+
+describe('workflow audit', () => {
+  const recorded = (e: AuditEvent) => ({
+    action: e.action,
+    result: e.result,
+    actor: e.actor,
+    organizationId: e.organizationId,
+    target: e.target,
+    targetVersion: e.targetVersion,
+    transition: e.transition,
+    requestId: e.requestId,
+    source: e.source,
+  });
+
+  it('records create, new version, activate, pause and archive with actor, version and transition', async () => {
+    const w = await setup();
+    const created = await w.workflows.create(w.tenantA, { name: 'Launch', steps: STEPS });
+    await w.workflows.publishVersion(w.tenantA, created.id, { steps: STEPS.slice(0, 1) });
+    await w.workflows.changeStatus(w.tenantA, created.id, { from: 'draft', to: 'active' });
+    await w.workflows.changeStatus(w.tenantA, created.id, { from: 'active', to: 'paused' });
+    await w.workflows.changeStatus(w.tenantA, created.id, { from: 'paused', to: 'active' });
+    await w.workflows.changeStatus(w.tenantA, created.id, { from: 'active', to: 'archived' });
+    const base = {
+      result: 'success',
+      actor: { type: 'user', userId: ALICE, via: 'direct' },
+      organizationId: w.orgA,
+      target: { type: 'workflow', id: created.id },
+      requestId: 'req-workflows-1',
+      source: 'api',
+    };
+    expect(w.workflowEvents().map(recorded)).toEqual([
+      { ...base, action: 'workflow.created', targetVersion: 1, transition: undefined },
+      { ...base, action: 'workflow.version_created', targetVersion: 2, transition: undefined },
+      {
+        ...base,
+        action: 'workflow.state_changed',
+        targetVersion: 2,
+        transition: { from: 'draft', to: 'active' },
+      },
+      {
+        ...base,
+        action: 'workflow.state_changed',
+        targetVersion: 2,
+        transition: { from: 'active', to: 'paused' },
+      },
+      {
+        ...base,
+        action: 'workflow.state_changed',
+        targetVersion: 2,
+        transition: { from: 'paused', to: 'active' },
+      },
+      {
+        ...base,
+        action: 'workflow.state_changed',
+        targetVersion: 2,
+        transition: { from: 'active', to: 'archived' },
+      },
+    ]);
+    // Each event carries its own time, and nothing of the steps or the name.
+    for (const e of w.workflowEvents()) expect(e.occurredAt).toBeTruthy();
+    expect(JSON.stringify(w.workflowEvents())).not.toMatch(/Launch|Research the market/);
+  });
+
+  it('records GIA as the channel and the user as the actor', async () => {
+    const w = await setup();
+    await w.workflows.create(w.giaA, { name: 'Launch', steps: STEPS });
+    expect(w.workflowEvents()[0]?.actor).toEqual({ type: 'user', userId: ALICE, via: 'gia' });
+  });
+
+  it('applies nothing when the audit event cannot be stored', async () => {
+    const w = await setup();
+    w.workflowAudit.broken = true;
+    await expect(w.workflows.create(w.tenantA, { name: 'Launch', steps: STEPS })).rejects.toThrow(
+      'audit store unavailable',
+    );
+    expect(await w.workflows.list(w.tenantA)).toEqual([]);
+
+    w.workflowAudit.broken = false;
+    const created = await w.workflows.create(w.tenantA, { name: 'Launch', steps: STEPS });
+    w.workflowAudit.broken = true;
+    await expect(
+      w.workflows.publishVersion(w.tenantA, created.id, { steps: STEPS.slice(0, 1) }),
+    ).rejects.toThrow('audit store unavailable');
+    await expect(
+      w.workflows.changeStatus(w.tenantA, created.id, { from: 'draft', to: 'active' }),
+    ).rejects.toThrow('audit store unavailable');
+    w.workflowAudit.broken = false;
+    const after = await w.workflows.get(w.tenantA, created.id);
+    expect(after).toEqual(created);
+    expect(await codeOf(w.workflows.getVersion(w.tenantA, created.id, 2))).toBe(
+      'workflow_not_found',
+    );
+    expect(w.workflowEvents().map((e) => e.action)).toEqual(['workflow.created']);
+  });
+
+  it('refuses a workflow change with no audit event, and keeps tenants apart', async () => {
+    const w = await setup();
+    const created = await w.workflows.create(w.tenantA, { name: 'Launch', steps: STEPS });
+    await expect(
+      w.repository.update(w.orgA, created.id, (current) => ({
+        workflow: { ...current, revision: current.revision + 1 },
+        events: [],
+      })),
+    ).rejects.toThrow('audit events');
+    expect(
+      await codeOf(
+        w.workflows.changeStatus(w.tenantB, created.id, { from: 'draft', to: 'active' }),
+      ),
+    ).toBe('workflow_not_found');
+    expect(w.workflowEvents().filter((e) => e.organizationId === w.orgB)).toEqual([]);
+    expect(w.workflowEvents()).toHaveLength(1);
   });
 });
 

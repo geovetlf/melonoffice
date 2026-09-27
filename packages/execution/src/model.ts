@@ -21,7 +21,7 @@ import type {
   VersionRef,
   WorkflowId,
 } from '@melonoffice/domain';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { ExecutionError } from './errors.js';
 import {
   canTransition,
@@ -68,6 +68,32 @@ export const isExecutionId = (value: unknown): value is ExecutionId =>
 const invalid = (detail: string): never => {
   throw new ExecutionError('invalid_execution', detail);
 };
+
+const IDEMPOTENCY_KEY = /^[A-Za-z0-9._:-]{1,200}$/;
+
+export const isIdempotencyKey = (value: unknown): value is string =>
+  typeof value === 'string' && IDEMPOTENCY_KEY.test(value);
+
+/**
+ * The one execution id an organization's idempotency key can ever have (ADR-0028): a name-based
+ * UUID (version 8) from SHA-256 of the organization and the key. The same key in the same
+ * organization always names the same execution, so creating it twice is refused by the store
+ * instead of making a duplicate; another organization's key names another execution.
+ */
+export function executionIdFor(organizationId: OrganizationId, key: string): ExecutionId {
+  if (!isIdempotencyKey(key)) invalid('idempotencyKey');
+  const hex = createHash('sha256')
+    .update(`melonoffice.execution\u0000${organizationId}\u0000${key}`)
+    .digest('hex');
+  const variant = ((parseInt(hex[16] as string, 16) & 0x3) | 0x8).toString(16);
+  return [
+    hex.slice(0, 8),
+    hex.slice(8, 12),
+    `8${hex.slice(13, 16)}`,
+    `${variant}${hex.slice(17, 20)}`,
+    hex.slice(20, 32),
+  ].join('-') as ExecutionId;
+}
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -235,6 +261,11 @@ export interface NewExecution {
   readonly specialistVersion?: number;
   readonly departmentId?: string;
   readonly requestId?: string;
+  /**
+   * Makes the id deterministic: `executionIdFor(organizationId, idempotencyKey)`. A second
+   * create with the same key is refused by the repository, never stored twice.
+   */
+  readonly idempotencyKey?: string;
 }
 
 /** Who should do the work an execution records: one specialist version, in its department. */
@@ -277,7 +308,10 @@ export function assignmentOf(
   });
 }
 
-/** Builds a new `pending` execution, checking every field. Pure apart from its random id. */
+/**
+ * Builds a new `pending` execution, checking every field. Pure apart from its random id; with an
+ * idempotency key, pure.
+ */
 export function newExecution(request: NewExecution, at: IsoTimestamp): Execution {
   if (!isExecutionMode(request.mode)) invalid('mode');
   const nodes = (request.nodes ?? []).map((node, i) => checkNodeInput(node, i));
@@ -292,7 +326,10 @@ export function newExecution(request: NewExecution, at: IsoTimestamp): Execution
   const versionSnapshot = checkSnapshot(request.versionSnapshot);
   const assignment = assignmentOf(request, versionSnapshot);
   return Object.freeze({
-    id: randomUUID() as ExecutionId,
+    id:
+      request.idempotencyKey === undefined
+        ? (randomUUID() as ExecutionId)
+        : executionIdFor(request.organizationId, request.idempotencyKey),
     organizationId: request.organizationId,
     userId: request.userId,
     mode: request.mode,

@@ -44,7 +44,8 @@ What the proposal cannot decide, the system does: department, specialist version
 
 ```
 draft → ready | approval_required → approved | rejected → executing → completed | failed
-cancelled from any non-terminal status
+ready | approved → failed   (only a delegation that failed while being created)
+cancelled from any non-terminal status (not while a delegation is being created)
 ```
 
 Only validated plans are stored, so a new plan starts `ready` or `approval_required` (any step needing approval, or the plan's risk resolving to `approval_required`). `draft` is kept for a later editor.
@@ -75,13 +76,34 @@ With empty provider catalogues (D-7) every planning call is denied today, by des
 
 ### Delegation
 
-`createDelegation().delegate(tenant, planId)`, server side only, needs `plan.create` and a plan that is `ready` (execution `planning`) or `approved` (execution `waiting_approval`, decision matching the stored version and digest):
+`createDelegation().delegate(tenant, planId)`, server side only, needs `plan.create` and a plan that is `ready` (execution `planning`) or `approved` (execution `waiting_approval`, decision matching the stored version and digest).
 
-1. Every specialist step is checked with X2 eligibility again, at the version the plan names. One ineligible specialist stops everything before any write.
-2. The plan's non-tool steps become nodes of the planning execution (`addNodes`); this also locks the plan against a second delegation.
-3. Each specialist step gets its own child execution: mode `execute`, `parentExecutionId`, the step's specialist assignment (checked again by X1's `AssignmentGuard`), a snapshot with the specialist's components plus `plan` (and `workflow`) versions, and a graph of its agent node plus its tool nodes. Children stay `pending`.
-4. The plan becomes `executing` with its delegations; `delegation.created` per child and `plan.state_changed`.
-5. The planning execution moves to `running`.
+Delegation writes several documents (the plan, its planning execution, one child per specialist step), more than one Firestore transaction should hold and across two repositories. It is therefore an explicit saga of idempotent steps, recorded on the plan, that any later call resumes:
+
+| Plan `delegationState` | Meaning                                                                  | Delegating again                       |
+| ---------------------- | ------------------------------------------------------------------------ | -------------------------------------- |
+| none                   | Pending: not delegated                                                   | Starts it                              |
+| `creating`             | The delegation set is recorded; children are being created (recoverable) | Resumes: creates only missing children |
+| `created`              | Every child exists, the plan is `executing` (recoverable)                | Moves the planning execution only      |
+| `completed`            | The planning execution is `running`                                      | Changes nothing, returns the result    |
+| `failed`               | A specialist could no longer take its step; final                        | Re-runs the cleanup, refuses           |
+
+A child that exists or not is the per-child state (pending or created); it is read from the store, never guessed.
+
+**Identity.** Each child's id is `executionIdFor(organizationId, "plan:{planId}:step:{stepId}")`: a name-based UUID (version 8) from SHA-256, through the new optional `idempotencyKey` of an X1 execution request. The same organization, plan and step always name the same child, and the execution store's `create` refuses an id that exists (Firestore `create` in a transaction). So a step can never get two children, whatever the retries or concurrency: a retry, or an attempt that loses a race, finds the child and checks it is exactly the one it would have created (parent, input, specialist and version), or refuses (`delegation_conflict`).
+
+**Steps**, each safe to repeat:
+
+1. Eligibility: every specialist step is checked with X2 eligibility again, at the version the plan names. Before the claim, one ineligible specialist stops everything with nothing written.
+2. Claim: the plan gets its delegation set (each step with its deterministic child id) and `creating`, in one revision-checked transaction. Concurrent attempts: one wins, the others go on from its claim.
+3. The plan's non-tool steps become nodes of the planning execution (`addNodes`, one transaction), unless they are already there exactly.
+4. Each specialist step's child is created unless it exists: mode `execute`, `parentExecutionId`, the step's specialist assignment (checked again by X1's `AssignmentGuard`), a snapshot with the specialist's components plus `plan` (and `workflow`) versions, and a graph of its agent node plus its tool nodes. Children stay `pending`.
+5. The plan becomes `executing` (`created`), with `delegation.created` per child and `plan.state_changed`, in one transaction: recorded once, by the attempt that makes the change.
+6. The planning execution moves to `running`; then the delegation is `completed`.
+
+A permanent refusal while `creating` (a specialist no longer eligible, the planning execution no longer waiting, a conflicting graph or child) fails the delegation: the plan becomes `failed` with the reason (`plan.state_changed`), every child already created is cancelled (`delegation_failed`) and the planning execution fails. Any attempt that finds the delegation failed runs that cleanup again, so a child a concurrent attempt created is cancelled too. A plan cannot be cancelled while its delegation is `creating` (`delegation_in_progress`): it is finished or failed by delegating again, never left half-made.
+
+There is no background sweeper (that would be a scheduler, not in X5): a delegation left `creating` or `created` by a crash is resumed by the next `delegate` call.
 
 Nothing runs: children are pending, and each tool node will still pass the X3 gate. Creating, validating, approving or delegating a plan consumes no credits.
 
@@ -109,16 +131,21 @@ New permissions, all for `owner` only (no new role, D-27): `plan.read`, `plan.cr
 
 Six actions, category `planning`, and targets `plan` and `workflow`:
 
-| Action                  | Results         | When                                                          |
-| ----------------------- | --------------- | ------------------------------------------------------------- |
-| `plan.created`          | success         | A validated plan version is stored                            |
-| `plan.proposal_refused` | denied          | A proposal failed the pipeline; the reason is the first check |
-| `plan.approved`         | success, denied | A user approved a version, or was refused                     |
-| `plan.rejected`         | success, denied | A user rejected a version, or was refused                     |
-| `plan.state_changed`    | success         | Another status change, with from and to                       |
-| `delegation.created`    | success         | A step was handed to a child execution                        |
+| Action                     | Results         | When                                                           |
+| -------------------------- | --------------- | -------------------------------------------------------------- |
+| `plan.created`             | success         | A validated plan version is stored                             |
+| `plan.proposal_refused`    | denied          | A proposal failed the pipeline; the reason is the first check  |
+| `plan.approved`            | success, denied | A user approved a version, or was refused                      |
+| `plan.rejected`            | success, denied | A user rejected a version, or was refused                      |
+| `plan.state_changed`       | success         | Another status change, with from and to                        |
+| `delegation.created`       | success         | A step was handed to a child execution                         |
+| `workflow.created`         | success         | A workflow was created (draft, version 1)                      |
+| `workflow.version_created` | success         | A new write-once workflow version was stored                   |
+| `workflow.state_changed`   | success         | A workflow was activated, paused or archived, with from and to |
 
-A plan is recorded as the event's target (`plan`, its id); the audit `planId` and `planVersion` fields stay the billing plan of ADR-0021. No prompt, objective text, model output or step content is audited. Workflow definition changes are recorded on the workflow itself (who, when, version), not as audit events.
+A plan is recorded as the event's target (`plan`, its id); the audit `planId` and `planVersion` fields stay the billing plan of ADR-0021. No prompt, objective text, model output or step content is audited.
+
+Workflow events (category `workflow`) follow the execution and plan convention: a creation event, and `state_changed` with from and to for every status change (activate, pause, archive). Each records the actor (GIA only as the channel), the organization, the workflow as target, its version in the new audit field `targetVersion`, the request id and the source; never the name or steps. Each is written in the same transaction as the workflow change (Firestore) or before it in memory: if the event cannot be stored, the change is not applied, and a workflow change without an event is refused by the repository.
 
 ### Observability
 
@@ -136,8 +163,8 @@ There is no route that creates, runs, delegates or instantiates a plan or workfl
 
 ## Consequences
 
-- Plans, delegation and workflows reuse X1–X4 without changing them; the X1 execution machine, X2 eligibility, X3 guardrails and X4 gateway are untouched.
-- Delegation writes several documents in sequence (parent nodes, children, plan, parent status). A crash in between can leave pending children with no plan pointing at them; they run nothing, and the plan write is last and revision-checked. A saga or outbox belongs to the phase that runs work.
+- Plans, delegation and workflows reuse X1–X4. X1 gains one additive field, the optional `idempotencyKey` (and `executionIdFor`); its state machine, X2 eligibility, X3 guardrails and X4 gateway are untouched. The audit event gains `targetVersion`.
+- Delegation is a saga, not one transaction: a crash leaves it `creating` or `created`, which the next `delegate` call resumes; nothing resumes it by itself until a later phase adds a scheduler. The children it left run nothing meanwhile.
 - Workflow binding picks the first eligible specialist by id: deterministic but simple; a smarter choice is a product decision.
 - Plan approval is recorded on the plan, not as an X3 `Approval` document, because X3 approvals bind one tool call. The rules are the same.
 

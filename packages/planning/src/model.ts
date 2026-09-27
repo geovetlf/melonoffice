@@ -5,6 +5,7 @@ import type {
   Plan,
   PlanDecision,
   PlanDelegation,
+  PlanDelegationState,
   PlanId,
   PlanSource,
   PlanStatus,
@@ -169,8 +170,22 @@ export function decidePlan(
   });
 }
 
-/** A `ready` or `approved` plan handed to its child executions: now `executing`. */
-export function recordDelegations(
+const DELEGATION_STATES: readonly PlanDelegationState[] = [
+  'creating',
+  'created',
+  'completed',
+  'failed',
+];
+
+const nextRevision = (plan: Plan, at: IsoTimestamp): Plan =>
+  Object.freeze({ ...plan, revision: plan.revision + 1, updatedAt: later(plan, at) });
+
+/**
+ * Records a delegation set before any child exists (ADR-0028): one entry per specialist step,
+ * each with its deterministic child id. From here the delegation is `creating`, and every retry
+ * resumes this exact set. The plan keeps its status until every child exists.
+ */
+export function beginDelegation(
   plan: Plan,
   delegations: readonly PlanDelegation[],
   at: IsoTimestamp,
@@ -178,11 +193,39 @@ export function recordDelegations(
   if (plan.status !== 'ready' && plan.status !== 'approved') {
     throw new PlanningError('invalid_plan_transition');
   }
-  if (plan.delegations.length > 0) throw new PlanningError('delegation_conflict');
-  const next = applyPlanStatus(plan, plan.status, 'executing', at);
+  if (plan.delegationState !== undefined || plan.delegations.length > 0) {
+    throw new PlanningError('delegation_conflict');
+  }
   return Object.freeze({
-    ...next,
+    ...nextRevision(plan, at),
     delegations: Object.freeze(delegations.map((d) => Object.freeze({ ...d }))),
+    delegationState: 'creating',
+  });
+}
+
+/** Every child of a `creating` delegation exists: the plan is now `executing`. */
+export function markDelegated(plan: Plan, at: IsoTimestamp): Plan {
+  if (plan.delegationState !== 'creating') throw new PlanningError('plan_concurrency_conflict');
+  return Object.freeze({
+    ...applyPlanStatus(plan, plan.status, 'executing', at),
+    delegationState: 'created',
+  });
+}
+
+/** The planning execution of a `created` delegation is `running`: nothing is left to do. */
+export function completeDelegation(plan: Plan, at: IsoTimestamp): Plan {
+  if (plan.delegationState !== 'created') throw new PlanningError('plan_concurrency_conflict');
+  return Object.freeze({ ...nextRevision(plan, at), delegationState: 'completed' });
+}
+
+/** A `creating` delegation that cannot finish: the plan fails, with a stable code saying why. */
+export function failDelegation(plan: Plan, reason: string, at: IsoTimestamp): Plan {
+  if (plan.delegationState !== 'creating') throw new PlanningError('plan_concurrency_conflict');
+  if (!isPlanReason(reason)) invalid('delegationFailure');
+  return Object.freeze({
+    ...applyPlanStatus(plan, plan.status, 'failed', at),
+    delegationState: 'failed',
+    delegationFailure: reason,
   });
 }
 
@@ -199,6 +242,10 @@ export function checkStoredPlan(plan: Plan): Plan {
   for (const d of plan.delegations) {
     if (typeof d.stepId !== 'string' || !isExecutionId(d.executionId)) invalid('delegations');
   }
+  if (new Set(plan.delegations.map((d) => d.stepId)).size !== plan.delegations.length) {
+    invalid('delegations');
+  }
+  checkDelegationState(plan);
   const { decision } = plan;
   if (decision !== undefined) {
     if (decision.decision !== 'approved' && decision.decision !== 'rejected') invalid('decision');
@@ -232,6 +279,33 @@ export function checkStoredPlanVersion(version: PlanVersion): PlanVersion {
   });
   if (!request.ok) invalid('request');
   return version;
+}
+
+/**
+ * A delegation's state must agree with the plan: nothing delegated before `creating`; a
+ * `creating` plan still `ready` or `approved` (it cannot be cancelled mid-way); a `created` or `completed` one `executing` or
+ * ended after it; a `failed` one `failed`, with its reason.
+ */
+function checkDelegationState(plan: Plan): void {
+  const state = plan.delegationState;
+  if (state === undefined) {
+    if (plan.delegations.length > 0 || plan.delegationFailure !== undefined) invalid('delegations');
+    return;
+  }
+  if (!DELEGATION_STATES.includes(state)) invalid('delegationState');
+  if ((state === 'failed') !== (plan.delegationFailure !== undefined)) {
+    invalid('delegationFailure');
+  }
+  if (plan.delegationFailure !== undefined && !isPlanReason(plan.delegationFailure)) {
+    invalid('delegationFailure');
+  }
+  const allowed: Readonly<Record<PlanDelegationState, readonly PlanStatus[]>> = {
+    creating: ['ready', 'approved'],
+    created: ['executing', 'completed', 'failed', 'cancelled'],
+    completed: ['executing', 'completed', 'failed', 'cancelled'],
+    failed: ['failed'],
+  };
+  if (!allowed[state].includes(plan.status)) invalid('delegationState');
 }
 
 /** A cancellation or failure code, as the audit log stores it. */

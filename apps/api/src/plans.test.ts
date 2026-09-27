@@ -7,8 +7,15 @@ import type {
   Specialist,
   UserId,
 } from '@melonoffice/domain';
-import { createExecutionService } from '@melonoffice/execution';
-import { createPlanService, createPlanValidator } from '@melonoffice/planning';
+import { createExecutionService, executionIdFor } from '@melonoffice/execution';
+import {
+  createDelegation,
+  createPlanService,
+  createPlanValidator,
+  delegationKey,
+  type PlanRepository,
+} from '@melonoffice/planning';
+import { buildAuditEvent } from '@melonoffice/audit';
 import { createAuthorizationService, ROLES } from '@melonoffice/rbac';
 import {
   applySpecialistStatus,
@@ -126,6 +133,15 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
     }
     const owner = await seed('leadership', 'chief_of_staff');
     const researcher = await seed('research', 'market_researcher');
+    const marketer = await seed('marketing', 'campaign_manager');
+    const delegationWith = (repository: PlanRepository = stores.plans) =>
+      createDelegation({
+        plans: repository,
+        executions,
+        specialists,
+        organizations: stores.tenancy,
+        authorization,
+      });
 
     async function planning(t: TenantContext) {
       const created = await executions.create(t, {
@@ -183,7 +199,51 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
           ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         }),
       );
-    return { ...ctx, stores, orgA, orgB, tenant, workflows, propose, get, post };
+    /** A ready plan with two specialist steps, for delegation. */
+    async function proposeWork() {
+      const execution = await planning(tenant);
+      const step = (id: string, s: Specialist, dependsOn: string[] = []) => ({
+        id,
+        kind: 'specialist',
+        label: `Work ${id}`,
+        dependsOn,
+        specialistId: s.identity.id,
+        verification: { policy: 'checks', expectedOutput: 'report', requiredChecks: [] },
+      });
+      const outcome = await plans.propose(tenant, {
+        executionId: execution.id,
+        proposal: {
+          summary: 'Market study',
+          objective: 'Study the melon market.',
+          steps: [step('research', researcher), step('campaign', marketer, ['research'])],
+        },
+        source: {
+          kind: 'planner',
+          model: { provider: 'alpha', id: 'alpha-large', version: '2026-09-01' },
+          policy: { id: 'default_model', version: 1 },
+        },
+      });
+      if (outcome.status !== 'planned') throw new Error(outcome.reason);
+      const ids = ['research', 'campaign'].map((stepId) =>
+        executionIdFor(orgA, delegationKey(outcome.plan.id, stepId)),
+      );
+      return { execution, plan: outcome.plan, ids };
+    }
+
+    return {
+      ...ctx,
+      stores,
+      orgA,
+      orgB,
+      tenant,
+      workflows,
+      executions,
+      propose,
+      proposeWork,
+      delegationWith,
+      get,
+      post,
+    };
   }
 
   it('lists and shows plans with the digest a user approves, and nothing internal', async () => {
@@ -350,5 +410,145 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
       t.as('token-bob'),
     );
     expect(fromB.status).toBe(404);
+  });
+
+  describe('delegation', () => {
+    /** One plan, one delegation set, one child per specialist step, recorded once. */
+    async function expectDelegated(
+      t: Awaited<ReturnType<typeof setup>>,
+      work: Awaited<ReturnType<Awaited<ReturnType<typeof setup>>['proposeWork']>>,
+    ) {
+      const plan = must(await t.stores.plans.find(t.orgA, work.plan.id));
+      expect(plan.status).toBe('executing');
+      expect(plan.delegationState).toBe('completed');
+      expect(plan.delegations.map((d) => d.executionId)).toEqual(work.ids);
+      const events = await t.stores.auditEvents();
+      const created = events
+        .filter((e) => e.action === 'execution.created')
+        .map((e) => e.target?.id)
+        .filter((id) => id !== work.execution.id);
+      expect(created.sort()).toEqual([...work.ids].sort());
+      // Events of one transaction share a time, so their stored order is not meaningful.
+      expect(
+        events
+          .filter((e) => e.action === 'delegation.created')
+          .map((e) => e.target?.id)
+          .sort(),
+      ).toEqual([...work.ids].sort());
+      expect(
+        events.filter((e) => e.action === 'plan.state_changed' && e.target?.id === plan.id),
+      ).toHaveLength(1);
+      for (const id of work.ids) {
+        const child = await t.executions.get(t.tenant, must(id));
+        expect(child.parentExecutionId).toBe(work.execution.id);
+        expect(child.status).toBe('pending');
+      }
+      expect((await t.executions.get(t.tenant, work.execution.id)).status).toBe('running');
+    }
+
+    it('converges concurrent attempts on one child per step', async () => {
+      const t = await setup();
+      const work = await t.proposeWork();
+      const delegation = t.delegationWith();
+      const results = await Promise.all(
+        Array.from({ length: 4 }, () => delegation.delegate(t.tenant, work.plan.id)),
+      );
+      for (const r of results) expect(r.children.map((c) => c.id)).toEqual(work.ids);
+      await expectDelegated(t, work);
+    });
+
+    it('resumes a delegation that failed after its children, without duplicating them', async () => {
+      const t = await setup();
+      const work = await t.proposeWork();
+      let updates = 0;
+      const failing: PlanRepository = {
+        find: (org, id) => t.stores.plans.find(org, id),
+        findVersion: (org, id, v) => t.stores.plans.findVersion(org, id, v),
+        list: (org, limit) => t.stores.plans.list(org, limit),
+        create: (write) => t.stores.plans.create(write),
+        async update(org, id, change) {
+          updates += 1;
+          // Update 1 claims the delegation; update 2 would mark the plan `executing`.
+          if (updates === 2) throw new Error('storage unavailable');
+          return t.stores.plans.update(org, id, change);
+        },
+      };
+      await expect(t.delegationWith(failing).delegate(t.tenant, work.plan.id)).rejects.toThrow(
+        'storage unavailable',
+      );
+      const halfway = must(await t.stores.plans.find(t.orgA, work.plan.id));
+      expect(halfway.delegationState).toBe('creating');
+      expect(halfway.status).toBe('ready');
+      await Promise.all([
+        t.delegationWith().delegate(t.tenant, work.plan.id),
+        t.delegationWith().delegate(t.tenant, work.plan.id),
+      ]);
+      await expectDelegated(t, work);
+    });
+  });
+
+  describe('workflow audit', () => {
+    const steps = [
+      {
+        id: 'research',
+        kind: 'specialist',
+        label: 'Research',
+        dependsOn: [],
+        assignee: { departmentTypeId: 'research', roleId: 'market_researcher' },
+        verification: { policy: 'checks', expectedOutput: 'report', requiredChecks: [] },
+      },
+    ];
+
+    it('stores each workflow change with its audit event', async () => {
+      const t = await setup();
+      const workflow = await t.workflows.create(t.tenant, { name: 'Market study', steps });
+      await t.workflows.publishVersion(t.tenant, workflow.id, { steps });
+      await t.workflows.changeStatus(t.tenant, workflow.id, { from: 'draft', to: 'active' });
+      const events = (await t.stores.auditEvents()).filter((e) => e.action.startsWith('workflow.'));
+      expect(
+        events.map((e) => [e.action, e.targetVersion, e.transition?.from, e.transition?.to]),
+      ).toEqual([
+        ['workflow.created', 1, undefined, undefined],
+        ['workflow.version_created', 2, undefined, undefined],
+        ['workflow.state_changed', 2, 'draft', 'active'],
+      ]);
+      for (const e of events) {
+        expect(e.organizationId).toBe(t.orgA);
+        expect(e.target).toEqual({ type: 'workflow', id: workflow.id });
+        expect(e.actor).toEqual(expect.objectContaining({ type: 'user', via: 'direct' }));
+      }
+    });
+
+    it('rolls a workflow change back when its audit event cannot be written', async () => {
+      const t = await setup();
+      const workflow = await t.workflows.create(t.tenant, { name: 'Market study', steps });
+      const [recorded] = (await t.stores.auditEvents()).filter(
+        (e) => e.action === 'workflow.created',
+      );
+      // An event whose id is already stored: the audit write fails inside the transaction.
+      const clash = {
+        ...buildAuditEvent(
+          {
+            action: 'workflow.state_changed',
+            result: 'success',
+            actor: { type: 'user', userId: workflow.createdBy, via: 'direct' },
+            organizationId: t.orgA,
+            target: { type: 'workflow', id: workflow.id },
+            targetVersion: 1,
+            transition: { from: 'draft', to: 'active' },
+            source: 'api',
+          },
+          new Date(),
+        ),
+        id: must(recorded).id,
+      };
+      await expect(
+        t.stores.workflows.update(t.orgA, workflow.id, (current) => ({
+          workflow: { ...current, status: 'active', revision: current.revision + 1 },
+          events: [clash],
+        })),
+      ).rejects.toThrow();
+      expect(await t.workflows.get(t.tenant, workflow.id)).toEqual(workflow);
+    });
   });
 });

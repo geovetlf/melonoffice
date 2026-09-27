@@ -320,6 +320,11 @@ export function createPlanService({
       if (!isPlanReason(reason)) throw new PlanningError('invalid_plan', 'reason');
       const at = now();
       return repository.update(organizationId, idOf(id), (current) => {
+        // A delegation being created is finished or failed by delegating again, never left
+        // half-made under a cancelled plan.
+        if (current.delegationState === 'creating') {
+          throw new PlanningError('delegation_in_progress');
+        }
         const next = applyPlanStatus(
           current,
           current.status,

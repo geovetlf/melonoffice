@@ -10,5 +10,5 @@ Plans, the planner and delegation ([ADR-0028](../../docs/adr/0028-planner-delega
 - `repository.ts`: `PlanRepository` and the in-memory one (Firestore lives in the API).
 - `service.ts`: `createPlanService()`: read, `propose` (server side), approve and reject (a user directly, never GIA).
 - `planner.ts`: `createPlanner()`: objective → AI Gateway → proposal → plan.
-- `delegation.ts`: `createDelegation()`: one pending child execution per specialist step.
+- `delegation.ts`: `createDelegation()`: one pending child execution per specialist step, as an idempotent saga recorded on the plan (`delegationState`). Each child's id is deterministic per organization, plan and step, so a retry or a concurrent attempt never creates a second one.
 - `testkit.ts`: test fixtures only, excluded from the build.

@@ -1,4 +1,8 @@
-import type { Firestore, Timestamp as FirestoreTimestamp } from '@google-cloud/firestore';
+import type {
+  Firestore,
+  Timestamp as FirestoreTimestamp,
+  Transaction,
+} from '@google-cloud/firestore';
 import { Timestamp } from '@google-cloud/firestore';
 import type {
   IsoTimestamp,
@@ -11,20 +15,24 @@ import { isOrganizationId } from '@melonoffice/tenancy';
 import { canonicalJson } from '@melonoffice/tools';
 import {
   checkNextWorkflow,
+  checkWorkflowEvents,
   checkStoredWorkflow,
   checkStoredWorkflowVersion,
   isWorkflowId,
   WorkflowError,
   workflowVersionKey,
+  type WorkflowChange,
   type WorkflowRepository,
-  type WorkflowWrite,
 } from '@melonoffice/workflows';
+import type { AuditEvent } from '@melonoffice/audit';
+import { AUDIT_LOGS, toAuditDocument } from './audit-firestore.js';
 
 /**
  * `workflows/{workflowId}` holds each workflow's status and current version, and
  * `workflowVersions/{workflowId}_{version}` each version, written once with `create` and never
  * updated (ADR-0028). Steps are stored as canonical JSON next to the version's digest, which is
- * checked when read. The organization is a field every read checks.
+ * checked when read. The organization is a field every read checks. Every change is written in
+ * one transaction with its audit events: if an event cannot be stored, nothing is.
  */
 export const WORKFLOWS = 'workflows';
 export const WORKFLOW_VERSIONS = 'workflowVersions';
@@ -153,8 +161,11 @@ export class FirestoreWorkflowRepository implements WorkflowRepository {
       .slice(0, limit);
   }
 
-  async create({ workflow, version }: Required<WorkflowWrite>): Promise<void> {
+  async create(write: Required<WorkflowChange>): Promise<void> {
+    const { workflow, version } = write;
+    checkWorkflowEvents(write);
     await this.db.runTransaction(async (t) => {
+      this.#audit(t, write.events);
       t.create(this.db.collection(WORKFLOWS).doc(workflow.id), toWorkflowDocument(workflow));
       t.create(
         this.db.collection(WORKFLOW_VERSIONS).doc(workflowVersionKey(workflow.id, version.version)),
@@ -166,7 +177,7 @@ export class FirestoreWorkflowRepository implements WorkflowRepository {
   async update(
     organizationId: OrganizationId,
     id: WorkflowId,
-    change: (current: Workflow) => WorkflowWrite,
+    change: (current: Workflow) => WorkflowChange,
   ): Promise<Workflow> {
     if (!isOrganizationId(organizationId) || !isWorkflowId(id)) {
       throw new WorkflowError('workflow_not_found');
@@ -179,7 +190,9 @@ export class FirestoreWorkflowRepository implements WorkflowRepository {
       const current = toWorkflow(snapshot.id, data);
       const write = change(current);
       checkNextWorkflow(current, write);
+      checkWorkflowEvents(write);
       t.set(doc, toWorkflowDocument(write.workflow));
+      this.#audit(t, write.events);
       if (write.version !== undefined) {
         // `create` fails if the version exists: a version is never overwritten.
         t.create(
@@ -189,5 +202,10 @@ export class FirestoreWorkflowRepository implements WorkflowRepository {
       }
       return write.workflow;
     });
+  }
+
+  #audit(t: Transaction, events: readonly AuditEvent[]): void {
+    // `create` fails if the event exists: a recorded fact is never overwritten.
+    for (const e of events) t.create(this.db.collection(AUDIT_LOGS).doc(e.id), toAuditDocument(e));
   }
 }

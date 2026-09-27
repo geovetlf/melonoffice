@@ -1,3 +1,4 @@
+import { actorOf, buildAuditEvent, type AuditEvent } from '@melonoffice/audit';
 import type { DepartmentRepository } from '@melonoffice/departments';
 import type {
   IsoTimestamp,
@@ -61,6 +62,8 @@ export interface WorkflowServiceOptions {
   readonly organizations: Pick<TenancyStore, 'findOrganization'>;
   readonly authorization: Pick<AuthorizationService, 'authorize'>;
   readonly now?: () => Date;
+  /** The request that asked, to correlate audit events and logs. */
+  readonly requestId?: string;
 }
 
 export function createWorkflowService({
@@ -71,6 +74,7 @@ export function createWorkflowService({
   organizations,
   authorization,
   now = () => new Date(),
+  requestId,
 }: WorkflowServiceOptions): WorkflowService {
   async function organizationOf(
     tenant: TenantContext,
@@ -92,7 +96,33 @@ export function createWorkflowService({
     return id;
   };
 
-  const at = (): IsoTimestamp => now().toISOString() as IsoTimestamp;
+  /**
+   * The audit event of a workflow change (ADR-0028): who, in which organization, which workflow
+   * and version, and the status change when there is one. Never the steps or names.
+   */
+  const event = (
+    tenant: TenantContext,
+    workflow: Workflow,
+    action: 'workflow.created' | 'workflow.version_created' | 'workflow.state_changed',
+    at: Date,
+    transition?: { from: WorkflowStatus; to: WorkflowStatus },
+  ): AuditEvent =>
+    buildAuditEvent(
+      {
+        action,
+        result: 'success',
+        actor: actorOf(tenant),
+        organizationId: workflow.organizationId,
+        target: { type: 'workflow', id: workflow.id },
+        targetVersion: workflow.version,
+        ...(transition === undefined ? {} : { transition }),
+        ...(requestId === undefined ? {} : { requestId }),
+        source: 'api',
+      },
+      at,
+    );
+
+  const iso = (at: Date): IsoTimestamp => at.toISOString() as IsoTimestamp;
 
   async function find(organizationId: OrganizationId, id: string): Promise<Workflow> {
     const workflow = await repository.find(organizationId, idOf(id));
@@ -153,8 +183,12 @@ export function createWorkflowService({
 
     async create(tenant: TenantContext, input: { name: string; steps: unknown }) {
       const organizationId = await organizationOf(tenant, 'workflow.manage');
-      const write = newWorkflow({ organizationId, ...input }, tenant.userId, at());
-      await repository.create(write);
+      const when = now();
+      const write = newWorkflow({ organizationId, ...input }, tenant.userId, iso(when));
+      await repository.create({
+        ...write,
+        events: [event(tenant, write.workflow, 'workflow.created', when)],
+      });
       return write.workflow;
     },
 
@@ -164,10 +198,14 @@ export function createWorkflowService({
       input: { name?: string; steps: unknown },
     ) {
       const organizationId = await organizationOf(tenant, 'workflow.manage');
-      const when = at();
-      return repository.update(organizationId, idOf(id), (current) =>
-        newWorkflowVersion(current, input, tenant.userId, when),
-      );
+      const when = now();
+      return repository.update(organizationId, idOf(id), (current) => {
+        const write = newWorkflowVersion(current, input, tenant.userId, iso(when));
+        return {
+          ...write,
+          events: [event(tenant, write.workflow, 'workflow.version_created', when)],
+        };
+      });
     },
 
     async changeStatus(
@@ -176,10 +214,19 @@ export function createWorkflowService({
       change: { from: WorkflowStatus; to: WorkflowStatus },
     ) {
       const organizationId = await organizationOf(tenant, 'workflow.manage');
-      const when = at();
-      return repository.update(organizationId, idOf(id), (current) => ({
-        workflow: applyWorkflowStatus(current, change.from, change.to, when),
-      }));
+      const when = now();
+      return repository.update(organizationId, idOf(id), (current) => {
+        const workflow = applyWorkflowStatus(current, change.from, change.to, iso(when));
+        return {
+          workflow,
+          events: [
+            event(tenant, workflow, 'workflow.state_changed', when, {
+              from: current.status,
+              to: workflow.status,
+            }),
+          ],
+        };
+      });
     },
 
     async instantiate(tenant: TenantContext, id: string, input: { executionId: string }) {

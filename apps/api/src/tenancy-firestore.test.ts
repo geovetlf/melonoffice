@@ -366,6 +366,7 @@ describe.runIf(emulatorHost)('FirestoreAuditStore (emulator)', () => {
       organizationId: null,
       targetType: null,
       targetId: null,
+      targetVersion: null,
       requestedOrganizationId: null,
       permission: null,
       planId: null,

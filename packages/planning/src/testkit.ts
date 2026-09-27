@@ -411,6 +411,7 @@ export async function world(options: WorldOptions = {}) {
     tenantB,
     giaA,
     tenancy,
+    authorization,
     departments,
     specialists,
     executions,
