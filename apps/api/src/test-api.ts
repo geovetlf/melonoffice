@@ -15,6 +15,7 @@ import {
 } from '@melonoffice/audit';
 import type { Membership, Organization } from '@melonoffice/domain';
 import { createLogger } from '@melonoffice/observability';
+import type { EntitlementService } from '@melonoffice/entitlements';
 import type { AuthorizationService } from '@melonoffice/rbac';
 import { InMemoryTenancyStore, type TenancyStore } from '@melonoffice/tenancy';
 import { createApp } from './app.js';
@@ -94,6 +95,7 @@ function fromAuditDocument(id: string, d: AuditDocument): AuditEvent {
       ? {}
       : { requestedOrganizationId: d.requestedOrganizationId }),
     ...(d.permission === null ? {} : { permission: d.permission }),
+    ...(d.planId === null ? {} : { plan: { id: d.planId, version: d.planVersion } }),
     ...(d.reason === null ? {} : { reason: d.reason }),
     ...(d.requestId === null ? {} : { requestId: d.requestId }),
     source: d.source,
@@ -132,7 +134,11 @@ export const STORES: [string, () => Stores][] = [
   ...(emulatorHost ? [['firestore', firestoreStores] as [string, () => Stores]] : []),
 ];
 
-export function setupApp(stores: Stores, authorization?: AuthorizationService) {
+export function setupApp(
+  stores: Stores,
+  authorization?: AuthorizationService,
+  entitlements?: EntitlementService,
+) {
   const lines: string[] = [];
   const logger = createLogger({ service: 'api', sink: (line) => lines.push(line) });
   const app = createApp({
@@ -142,6 +148,7 @@ export function setupApp(stores: Stores, authorization?: AuthorizationService) {
     tenancy: stores.tenancy,
     audit: stores.audit,
     ...(authorization ? { authorization } : {}),
+    ...(entitlements ? { entitlements } : {}),
   });
   const as = (token: string, init: RequestInit = {}): RequestInit => ({
     ...init,

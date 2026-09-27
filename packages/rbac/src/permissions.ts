@@ -8,6 +8,11 @@ export const PERMISSIONS = {
     action: 'read',
     description: 'See the organization and your own membership in it.',
   },
+  'entitlement.read': {
+    resource: 'entitlement',
+    action: 'read',
+    description: "See the organization's plan, capabilities and limits (ADR-0021).",
+  },
 } as const satisfies Record<string, PermissionDefinition>;
 
 export interface PermissionDefinition {

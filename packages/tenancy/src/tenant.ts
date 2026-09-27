@@ -5,6 +5,7 @@ import type {
   MembershipRole,
   Organization,
   OrganizationId,
+  PlanRef,
   UserId,
 } from '@melonoffice/domain';
 import { TenancyError } from './errors.js';
@@ -88,22 +89,39 @@ export function parseOrganizationName(value: unknown): string {
   return name;
 }
 
+const PLAN_ID = /^[a-z][a-z0-9_-]{0,63}$/;
+
+/** Whether a value has the shape of a plan reference. Whether the plan exists is not checked here. */
+export const isPlanRef = (value: unknown): value is PlanRef =>
+  typeof value === 'object' &&
+  value !== null &&
+  typeof (value as PlanRef).id === 'string' &&
+  PLAN_ID.test((value as PlanRef).id) &&
+  Number.isInteger((value as PlanRef).version) &&
+  (value as PlanRef).version >= 1;
+
 /**
  * Creates an organization with the caller as its active owner. Only a user acting for themselves
  * may do it: GIA cannot create organizations (ADR-0018). The creator is always the authenticated
  * user; nothing in the input can name another one.
+ *
+ * `options.plan` is the plan it starts on (ADR-0021). It is required, so every organization gets
+ * one on purpose, and comes from the server's configuration, never from the client. Tenancy only
+ * stores the reference; what a plan grants is decided by entitlements.
  */
 export async function createOrganization(
   auth: AuthenticatedContext,
   input: { readonly name: unknown },
   store: TenancyStore,
-  options: { readonly audit?: NewOrganization['audit'] } = {},
+  options: { readonly plan: PlanRef; readonly audit?: NewOrganization['audit'] },
 ): Promise<CreatedOrganization> {
   if (auth.actor !== 'user') throw new TenancyError('requires_user');
+  if (!isPlanRef(options.plan)) throw new Error('invalid plan reference');
   const name = parseOrganizationName(input.name);
   return store.createOrganization({
     name,
     creator: auth.userId,
+    plan: Object.freeze({ id: options.plan.id, version: options.plan.version }),
     ...(options.audit === undefined ? {} : { audit: options.audit }),
   });
 }

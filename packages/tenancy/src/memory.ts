@@ -26,6 +26,7 @@ export class InMemoryTenancyStore implements TenancyStore {
   async createOrganization({
     name,
     creator,
+    plan,
     audit,
   }: NewOrganization): Promise<CreatedOrganization> {
     if (this.#creators.has(creator)) throw new TenancyError('organization_limit_reached');
@@ -35,6 +36,7 @@ export class InMemoryTenancyStore implements TenancyStore {
       name,
       status: 'active',
       createdBy: creator,
+      plan: Object.freeze({ id: plan.id, version: plan.version }),
       createdAt: at,
       updatedAt: at,
     });

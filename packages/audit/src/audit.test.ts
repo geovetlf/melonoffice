@@ -78,6 +78,29 @@ describe('buildAuditEvent', () => {
     );
   });
 
+  it('records a well-formed plan reference and refuses a malformed one', () => {
+    const assign: AuditEventInput = {
+      action: 'plan.assign',
+      result: 'success',
+      actor: actorOf(alice),
+      organizationId: ORG_A,
+      target: { type: 'organization', id: ORG_A },
+      plan: { id: 'entrepreneur', version: 1 },
+      source: 'api',
+    };
+    const event = buildAuditEvent(assign, NOW);
+    expect(event.plan).toEqual({ id: 'entrepreneur', version: 1 });
+    expect(Object.isFrozen(event.plan)).toBe(true);
+    for (const plan of [
+      { id: 'Entrepreneur', version: 1 },
+      { id: 'entrepreneur', version: 0 },
+      { id: 'a b', version: 1 },
+    ]) {
+      expect(() => buildAuditEvent({ ...assign, plan }, NOW)).toThrow('invalid audit plan');
+    }
+    expect(() => buildAuditEvent({ ...assign, result: 'denied' }, NOW)).toThrow();
+  });
+
   it('copies only model fields, so extra input never reaches storage', () => {
     const input = { ...signIn, metadata: { token: 'secret' }, email: 'a@example.com' };
     const event = buildAuditEvent(input as AuditEventInput, NOW);

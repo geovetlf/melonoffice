@@ -1,4 +1,4 @@
-import { Timestamp } from '@google-cloud/firestore';
+import { FieldValue, Timestamp } from '@google-cloud/firestore';
 import type { OrganizationId, UserId } from '@melonoffice/domain';
 import { buildAuditEvent } from '@melonoffice/audit';
 import { TenancyError } from '@melonoffice/tenancy';
@@ -15,6 +15,7 @@ import { emulatorFirestore, emulatorHost } from './test-firestore.js';
 const NOW = new Date('2026-09-26T12:00:00Z');
 const ALICE = '11111111-1111-4111-8111-111111111111' as UserId;
 const BOB = '22222222-2222-4222-8222-222222222222' as UserId;
+const PLAN = { id: 'entrepreneur', version: 1 } as const;
 
 describe.runIf(emulatorHost)('FirestoreTenancyStore (emulator)', () => {
   function setup() {
@@ -27,12 +28,14 @@ describe.runIf(emulatorHost)('FirestoreTenancyStore (emulator)', () => {
     const { organization, membership } = await store.createOrganization({
       name: 'Acme',
       creator: ALICE,
+      plan: PLAN,
     });
     const at = Timestamp.fromDate(NOW);
     expect((await db.collection(ORGANIZATIONS).doc(organization.id).get()).data()).toEqual({
       name: 'Acme',
       status: 'active',
       createdBy: ALICE,
+      plan: { id: 'entrepreneur', version: 1 },
       createdAt: at,
       updatedAt: at,
     });
@@ -60,7 +63,9 @@ describe.runIf(emulatorHost)('FirestoreTenancyStore (emulator)', () => {
     async () => {
       const { db, store } = setup();
       const outcomes = await Promise.allSettled(
-        Array.from({ length: 8 }, () => store.createOrganization({ name: 'Acme', creator: ALICE })),
+        Array.from({ length: 8 }, () =>
+          store.createOrganization({ name: 'Acme', creator: ALICE, plan: PLAN }),
+        ),
       );
       expect(outcomes.filter((o) => o.status === 'fulfilled')).toHaveLength(1);
       for (const outcome of outcomes) {
@@ -80,6 +85,7 @@ describe.runIf(emulatorHost)('FirestoreTenancyStore (emulator)', () => {
     const { organization, membership } = await store.createOrganization({
       name: 'Acme',
       creator: ALICE,
+      plan: PLAN,
     });
     const duplicate = db.collection(MEMBERSHIPS).doc(`${organization.id}_${ALICE}`);
     await expect(
@@ -90,8 +96,8 @@ describe.runIf(emulatorHost)('FirestoreTenancyStore (emulator)', () => {
 
   it('keeps users apart', async () => {
     const { store } = setup();
-    const a = await store.createOrganization({ name: 'A', creator: ALICE });
-    const b = await store.createOrganization({ name: 'B', creator: BOB });
+    const a = await store.createOrganization({ name: 'A', creator: ALICE, plan: PLAN });
+    const b = await store.createOrganization({ name: 'B', creator: BOB, plan: PLAN });
     expect(await store.findMembership(b.organization.id, ALICE)).toBeUndefined();
     expect(await store.findMembership(a.organization.id, BOB)).toBeUndefined();
     expect((await store.membershipsOfUser(ALICE)).map((m) => m.organizationId)).toEqual([
@@ -109,7 +115,11 @@ describe.runIf(emulatorHost)('FirestoreTenancyStore (emulator)', () => {
 
   it('refuses stored records with an unknown status instead of trusting them', async () => {
     const { db, store } = setup();
-    const { organization } = await store.createOrganization({ name: 'Acme', creator: ALICE });
+    const { organization } = await store.createOrganization({
+      name: 'Acme',
+      creator: ALICE,
+      plan: PLAN,
+    });
     const ref = db.collection(MEMBERSHIPS).doc(`${organization.id}_${ALICE}`);
     await ref.update({ status: 'owner' });
     await expect(store.findMembership(organization.id, ALICE)).rejects.toThrow(
@@ -125,13 +135,39 @@ describe.runIf(emulatorHost)('FirestoreTenancyStore (emulator)', () => {
       'invalid organization record',
     );
   });
+
+  it('refuses a malformed plan reference, and reads a missing one as no plan', async () => {
+    const { db, store } = setup();
+    const { organization } = await store.createOrganization({
+      name: 'Acme',
+      creator: ALICE,
+      plan: PLAN,
+    });
+    const ref = db.collection(ORGANIZATIONS).doc(organization.id);
+    for (const plan of [
+      { id: 'entrepreneur' },
+      { id: 'Entrepreneur!', version: 1 },
+      'entrepreneur',
+    ]) {
+      await ref.update({ plan });
+      await expect(store.findOrganization(organization.id)).rejects.toThrow(
+        'invalid organization record',
+      );
+    }
+    await ref.update({ plan: FieldValue.delete() });
+    expect((await store.findOrganization(organization.id))?.plan).toBeUndefined();
+  });
 });
 
 describe.runIf(emulatorHost)('FirestoreTenancyStore roles (emulator)', () => {
   it('passes an unknown role on as a name, for RBAC to deny', async () => {
     const db = emulatorFirestore();
     const store = new FirestoreTenancyStore(db, () => NOW);
-    const { organization } = await store.createOrganization({ name: 'Acme', creator: ALICE });
+    const { organization } = await store.createOrganization({
+      name: 'Acme',
+      creator: ALICE,
+      plan: PLAN,
+    });
     await db.collection(MEMBERSHIPS).doc(`${organization.id}_${ALICE}`).update({ role: 'admin' });
     expect((await store.findMembership(organization.id, ALICE))?.role).toBe('admin');
   });
@@ -157,6 +193,7 @@ describe.runIf(emulatorHost)('FirestoreTenancyStore creation audit (emulator)', 
     const { organization } = await store.createOrganization({
       name: 'Acme',
       creator: ALICE,
+      plan: PLAN,
       audit: ({ organization: created }) => {
         const built = event(created.id);
         id = built.id;
@@ -178,6 +215,7 @@ describe.runIf(emulatorHost)('FirestoreTenancyStore creation audit (emulator)', 
       store.createOrganization({
         name: 'Acme',
         creator: ALICE,
+        plan: PLAN,
         audit: () => {
           throw new Error('audit unavailable');
         },
@@ -217,6 +255,8 @@ describe.runIf(emulatorHost)('FirestoreAuditStore (emulator)', () => {
       targetId: null,
       requestedOrganizationId: null,
       permission: null,
+      planId: null,
+      planVersion: null,
       reason: null,
       requestId: null,
       source: 'api',

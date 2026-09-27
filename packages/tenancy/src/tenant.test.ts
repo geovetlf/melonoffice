@@ -17,6 +17,8 @@ const NOW = new Date('2026-09-26T12:00:00Z');
 const ALICE = '11111111-1111-4111-8111-111111111111' as UserId;
 const BOB = '22222222-2222-4222-8222-222222222222' as UserId;
 const MISSING_ORG = '99999999-9999-4999-8999-999999999999';
+/** Tenancy stores the plan reference as given; which plans exist is entitlements' business. */
+const PLAN = { id: 'test-plan', version: 1 } as const;
 
 const userContext = (userId: UserId): AuthenticatedContext =>
   Object.freeze({ actor: 'user', userId, emailVerified: true });
@@ -36,8 +38,8 @@ async function setup() {
   const store = new InMemoryTenancyStore(() => NOW);
   const alice = userContext(ALICE);
   const bob = userContext(BOB);
-  const a = await createOrganization(alice, { name: 'Org A' }, store);
-  const b = await createOrganization(bob, { name: 'Org B' }, store);
+  const a = await createOrganization(alice, { name: 'Org A' }, store, { plan: PLAN });
+  const b = await createOrganization(bob, { name: 'Org B' }, store, { plan: PLAN });
   return { store, alice, bob, orgA: a.organization.id, orgB: b.organization.id, a, b };
 }
 
@@ -48,12 +50,14 @@ describe('createOrganization', () => {
       userContext(ALICE),
       { name: '  Acme  ' },
       store,
+      { plan: PLAN },
     );
     expect(organization).toEqual({
       id: expect.stringMatching(/^[0-9a-f-]{36}$/),
       name: 'Acme',
       status: 'active',
       createdBy: ALICE,
+      plan: { id: 'test-plan', version: 1 },
       createdAt: NOW.toISOString(),
       updatedAt: NOW.toISOString(),
     });
@@ -70,9 +74,29 @@ describe('createOrganization', () => {
     expect(await store.findMembership(organization.id, ALICE)).toEqual(membership);
   });
 
+  it('requires a well-formed plan reference, chosen by the server', async () => {
+    const store = new InMemoryTenancyStore(() => NOW);
+    for (const plan of [
+      undefined,
+      { id: '', version: 1 },
+      { id: 'Entrepreneur', version: 1 },
+      { id: 'entrepreneur', version: 0 },
+      { id: 'entrepreneur', version: 1.5 },
+    ]) {
+      await expect(
+        createOrganization(userContext(ALICE), { name: 'Acme' }, store, {
+          plan: plan as unknown as { id: string; version: number },
+        }),
+      ).rejects.toThrow('invalid plan reference');
+    }
+    expect(await store.membershipsOfUser(ALICE)).toEqual([]);
+  });
+
   it('never derives the id from the name or the user', async () => {
     const store = new InMemoryTenancyStore();
-    const { organization } = await createOrganization(userContext(ALICE), { name: 'acme' }, store);
+    const { organization } = await createOrganization(userContext(ALICE), { name: 'acme' }, store, {
+      plan: PLAN,
+    });
     expect(organization.id).not.toContain('acme');
     expect(organization.id).not.toContain(ALICE);
     expect(isOrganizationId(organization.id)).toBe(true);
@@ -80,8 +104,8 @@ describe('createOrganization', () => {
 
   it('allows the same name in different organizations', async () => {
     const store = new InMemoryTenancyStore();
-    const a = await createOrganization(userContext(ALICE), { name: 'Acme' }, store);
-    const b = await createOrganization(userContext(BOB), { name: 'Acme' }, store);
+    const a = await createOrganization(userContext(ALICE), { name: 'Acme' }, store, { plan: PLAN });
+    const b = await createOrganization(userContext(BOB), { name: 'Acme' }, store, { plan: PLAN });
     expect(a.organization.id).not.toBe(b.organization.id);
   });
 
@@ -89,7 +113,9 @@ describe('createOrganization', () => {
     const store = new InMemoryTenancyStore();
     const alice = userContext(ALICE);
     const results = await Promise.all(
-      Array.from({ length: 5 }, () => codeOf(createOrganization(alice, { name: 'Acme' }, store))),
+      Array.from({ length: 5 }, () =>
+        codeOf(createOrganization(alice, { name: 'Acme' }, store, { plan: PLAN })),
+      ),
     );
     expect(results.filter((r) => r === 'accepted')).toHaveLength(1);
     expect(results.filter((r) => r === 'organization_limit_reached')).toHaveLength(4);
@@ -99,7 +125,9 @@ describe('createOrganization', () => {
   it('refuses GIA: only the user may create an organization', async () => {
     const store = new InMemoryTenancyStore();
     expect(
-      await codeOf(createOrganization(actAsGia(userContext(ALICE)), { name: 'Acme' }, store)),
+      await codeOf(
+        createOrganization(actAsGia(userContext(ALICE)), { name: 'Acme' }, store, { plan: PLAN }),
+      ),
     ).toBe('requires_user');
     expect(await store.membershipsOfUser(ALICE)).toHaveLength(0);
   });
@@ -107,7 +135,12 @@ describe('createOrganization', () => {
   it('takes the creator from the context only, never from the input', async () => {
     const store = new InMemoryTenancyStore();
     const input = { name: 'Acme', creator: BOB, userId: BOB, organizationId: MISSING_ORG };
-    const { organization, membership } = await createOrganization(userContext(ALICE), input, store);
+    const { organization, membership } = await createOrganization(
+      userContext(ALICE),
+      input,
+      store,
+      { plan: PLAN },
+    );
     expect(organization.createdBy).toBe(ALICE);
     expect(membership.userId).toBe(ALICE);
     expect(organization.id).not.toBe(MISSING_ORG);
@@ -265,6 +298,7 @@ describe('creation audit (atomic)', () => {
     const audit = new InMemoryAuditStore();
     const store = new InMemoryTenancyStore(() => NOW, audit);
     const { organization } = await createOrganization(userContext(ALICE), { name: 'Acme' }, store, {
+      plan: PLAN,
       audit: ({ organization: created }) => [
         buildAuditEvent(
           {
@@ -285,6 +319,7 @@ describe('creation audit (atomic)', () => {
     const audit = new InMemoryAuditStore();
     const store = new InMemoryTenancyStore(() => NOW, audit);
     const failing = createOrganization(userContext(ALICE), { name: 'Acme' }, store, {
+      plan: PLAN,
       audit: () => {
         throw new Error('audit unavailable');
       },
@@ -293,6 +328,6 @@ describe('creation audit (atomic)', () => {
     expect(await store.membershipsOfUser(ALICE)).toEqual([]);
     expect(audit.events()).toEqual([]);
     // The user was not marked as a creator, so a later attempt still works.
-    await createOrganization(userContext(ALICE), { name: 'Acme' }, store);
+    await createOrganization(userContext(ALICE), { name: 'Acme' }, store, { plan: PLAN });
   });
 });

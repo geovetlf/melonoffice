@@ -31,6 +31,12 @@ export interface AuditTarget {
   readonly id: string;
 }
 
+/** A plan reference as recorded: which plan and which exact version. */
+export interface AuditPlan {
+  readonly id: string;
+  readonly version: number;
+}
+
 /** The component that recorded the event. */
 export type AuditSource = 'api';
 
@@ -54,6 +60,8 @@ export interface AuditEvent {
   readonly requestedOrganizationId?: string;
   /** The permission RBAC checked, for `authorization.check`. */
   readonly permission?: string;
+  /** The plan assigned, for `plan.assign` (ADR-0021). */
+  readonly plan?: AuditPlan;
   /** A stable code saying why, for `denied` and `failure` (an error code, never a message). */
   readonly reason?: string;
   readonly requestId?: string;
@@ -66,6 +74,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const CODE = /^[a-z][a-z_]{0,63}$/;
 const PERMISSION = /^[a-z][a-z_]*\.[a-z][a-z_]*$/;
 const REQUEST_ID = /^[\w-]{1,128}$/;
+const PLAN_ID = /^[a-z][a-z0-9_-]{0,63}$/;
 
 /**
  * Builds an event, checking every field so nothing unexpected reaches storage. Untrusted parts
@@ -82,6 +91,14 @@ export function buildAuditEvent(input: AuditEventInput, at: Date): AuditEvent {
     throw new Error('invalid audit reason');
   if (input.permission !== undefined && !PERMISSION.test(input.permission)) {
     throw new Error('invalid audit permission');
+  }
+  if (
+    input.plan !== undefined &&
+    (!PLAN_ID.test(input.plan.id) ||
+      !Number.isInteger(input.plan.version) ||
+      input.plan.version < 1)
+  ) {
+    throw new Error('invalid audit plan');
   }
   const actor: AuditActor =
     input.actor.type === 'user'
@@ -102,6 +119,9 @@ export function buildAuditEvent(input: AuditEventInput, at: Date): AuditEvent {
       ? { requestedOrganizationId: requested }
       : {}),
     ...(input.permission === undefined ? {} : { permission: input.permission }),
+    ...(input.plan === undefined
+      ? {}
+      : { plan: Object.freeze({ id: input.plan.id, version: input.plan.version }) }),
     ...(input.reason === undefined ? {} : { reason: input.reason }),
     ...(input.requestId !== undefined && REQUEST_ID.test(input.requestId)
       ? { requestId: input.requestId }

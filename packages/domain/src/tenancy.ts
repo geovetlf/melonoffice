@@ -10,8 +10,23 @@ export interface Organization {
   readonly status: OrganizationStatus;
   /** The user who created it. Kept for history; it grants nothing by itself. */
   readonly createdBy: UserId;
+  /**
+   * The plan the organization is on (ADR-0021), assigned explicitly when it is created. Absent
+   * only on records written before plans were assigned: such an organization is entitled to
+   * nothing, and no plan is ever inferred for it.
+   */
+  readonly plan?: PlanRef;
   readonly createdAt: IsoTimestamp;
   readonly updatedAt: IsoTimestamp;
+}
+
+/**
+ * A reference to one exact version of a plan in the entitlements catalogue (ADR-0013, ADR-0021).
+ * Only the reference is stored with the organization; what the plan grants lives in code.
+ */
+export interface PlanRef {
+  readonly id: string;
+  readonly version: number;
 }
 
 /** `active`: usable. `suspended`: nobody can act in it until reactivated. */
