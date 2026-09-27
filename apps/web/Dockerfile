@@ -10,6 +10,11 @@ RUN pnpm install --frozen-lockfile \
 
 # Static files only: an unprivileged nginx listening on 8080, as Cloud Run expects.
 FROM nginxinc/nginx-unprivileged:1.29-alpine
-COPY apps/web/nginx.conf /etc/nginx/conf.d/default.conf
+# The image's entrypoint renders the template into conf.d at start-up, substituting only the
+# MELONOFFICE_* variables (never nginx's own $uri and the like). Unset means empty: not configured.
+ENV MELONOFFICE_API_URL="" \
+  MELONOFFICE_IDENTITY_API_KEY="" \
+  NGINX_ENVSUBST_FILTER="^MELONOFFICE_"
+COPY apps/web/nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=build /repo/apps/web/dist /usr/share/nginx/html
 EXPOSE 8080

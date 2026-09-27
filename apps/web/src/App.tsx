@@ -1,43 +1,46 @@
-import { FormattedMessage, SUPPORTED_LOCALES, type Locale } from '@melonoffice/i18n';
-import { Button } from '@melonoffice/ui';
+import { AuthProvider } from './identity/AuthProvider.js';
+import {
+  Loading,
+  LoginPage,
+  NotConfigured,
+  ProtectedRoute,
+  PublicFrame,
+  type LocaleProps,
+} from './identity/pages.js';
+import { usePath } from './identity/router.js';
+import type { IdentityServices } from './identity/services.js';
+import { AppShell } from './shell/AppShell.js';
 
-export interface AppProps {
-  readonly locale: Locale;
-  readonly onLocaleChange: (locale: Locale) => void;
+export interface AppProps extends LocaleProps {
+  /** The sign-in services: still loading, ready, or `undefined` when this site has none set up. */
+  readonly identity: 'loading' | IdentityServices | undefined;
 }
 
 /**
- * Phase 1A placeholder page. It proves the design tokens and i18n wiring;
- * the application shell and both Home modes arrive in later phases.
+ * The web app (ADR-0036): `/login` is public, every other path is behind `ProtectedRoute`.
  */
-export function App({ locale, onLocaleChange }: AppProps) {
+export function App({ identity, ...locale }: AppProps) {
+  if (identity === 'loading') {
+    return (
+      <PublicFrame {...locale}>
+        <Loading />
+      </PublicFrame>
+    );
+  }
+  if (identity === undefined) return <NotConfigured {...locale} />;
   return (
-    <main className="placeholder">
-      <h1>
-        <FormattedMessage id="app.name" />
-      </h1>
-      <p className="placeholder__tagline">
-        <FormattedMessage id="app.tagline" />
-      </p>
-      <p>
-        <FormattedMessage id="foundation.status" />
-      </p>
-      <nav aria-labelledby="language-label" className="placeholder__languages">
-        <span id="language-label">
-          <FormattedMessage id="language.label" />
-        </span>
-        {SUPPORTED_LOCALES.map((option) => (
-          <Button
-            key={option}
-            variant="secondary"
-            lang={option}
-            aria-pressed={option === locale}
-            onClick={() => onLocaleChange(option)}
-          >
-            <FormattedMessage id={`language.name.${option}`} />
-          </Button>
-        ))}
-      </nav>
-    </main>
+    <AuthProvider services={identity}>
+      <Pages {...locale} />
+    </AuthProvider>
+  );
+}
+
+function Pages(locale: LocaleProps) {
+  const path = usePath();
+  if (path === '/login') return <LoginPage {...locale} />;
+  return (
+    <ProtectedRoute {...locale}>
+      <AppShell {...locale} />
+    </ProtectedRoute>
   );
 }

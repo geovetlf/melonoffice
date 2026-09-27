@@ -552,6 +552,144 @@ describe('human inbox service', () => {
   });
 });
 
+describe('inbox (CV-3)', () => {
+  async function three() {
+    const w = await world();
+    const ana = await w.ingress.receive(inbound(w.orgA));
+    w.advance(60);
+    const jose = await w.ingress.receive(
+      inbound(w.orgA, {
+        externalMessageId: 'wamid.jose',
+        from: { externalId: '5215512345678', displayName: 'José Pérez', phone: '+5215512345678' },
+        sentAt: '2026-09-27T12:05:00.000Z' as IsoTimestamp,
+      }),
+    );
+    w.advance(60);
+    const luis = await w.ingress.receive(
+      inbound(w.orgA, {
+        externalMessageId: 'wamid.luis',
+        from: { externalId: '34600111222', displayName: 'Luis' },
+        sentAt: '2026-09-27T12:01:00.000Z' as IsoTimestamp,
+      }),
+    );
+    return { w, ana: ana.conversation, jose: jose.conversation, luis: luis.conversation };
+  }
+
+  it('lists with each contact, filters by priority and orders by activity, creation or priority', async () => {
+    const { w, ana, jose, luis } = await three();
+    await w.service.changePriority(w.tenantA, luis.id, 'urgent');
+    await w.service.changePriority(w.tenantA, ana.id, 'high');
+    const entries = await w.service.inbox(w.tenantA);
+    expect(entries.map((e) => e.conversation.id)).toEqual([jose.id, luis.id, ana.id]);
+    expect(entries.map((e) => e.contact?.displayName)).toEqual(['José Pérez', 'Luis', 'Ana']);
+    const ids = async (filter: Parameters<typeof w.service.inbox>[1]) =>
+      (await w.service.inbox(w.tenantA, filter)).map((e) => e.conversation.id);
+    expect(await ids({ sort: 'created' })).toEqual([luis.id, jose.id, ana.id]);
+    expect(await ids({ sort: 'priority' })).toEqual([luis.id, ana.id, jose.id]);
+    expect(await ids({ priority: 'urgent' })).toEqual([luis.id]);
+    expect(await codeOf(w.service.inbox(w.tenantA, { sort: 'random' as never }))).toBe(
+      'invalid_request',
+    );
+    expect(await codeOf(w.service.inbox(w.tenantA, { priority: 'asap' as never }))).toBe(
+      'invalid_request',
+    );
+  });
+
+  it('searches names without accents or case, phones by their digits, never message text', async () => {
+    const { w, ana, jose, luis } = await three();
+    const found = async (q: string) =>
+      (await w.service.inbox(w.tenantA, { q })).map((e) => e.conversation.id);
+    expect(await found('jose perez')).toEqual([jose.id]);
+    expect(await found('PÉR')).toEqual([jose.id]);
+    expect(await found('+52 1 55')).toEqual([jose.id]);
+    // The WhatsApp id of an identity, with no phone on the contact.
+    expect(await found('600 111')).toEqual([luis.id]);
+    expect(await found('an')).toEqual([ana.id]);
+    // Message text is not searched.
+    expect(await found('información')).toEqual([]);
+    for (const q of ['a', ' ', 'x'.repeat(101), 'a\u0000b']) {
+      expect(await codeOf(w.service.inbox(w.tenantA, { q }))).toBe('invalid_request');
+    }
+  });
+
+  it('never finds, lists or opens another organization’s conversations or contacts', async () => {
+    const { w } = await three();
+    const theirs = await w.ingress.receive(
+      inbound(w.orgB, { from: { externalId: '15550001111', displayName: 'Bea' } }),
+    );
+    expect(await w.service.inbox(w.tenantA, { q: 'bea' })).toEqual([]);
+    expect(await w.service.inbox(w.tenantA, { q: '1555000' })).toEqual([]);
+    expect((await w.service.inbox(w.tenantB)).map((e) => e.contact?.displayName)).toEqual(['Bea']);
+    expect(await codeOf(w.service.detail(w.tenantA, theirs.conversation.id))).toBe(
+      'conversation_not_found',
+    );
+    expect(await codeOf(w.service.changePriority(w.tenantA, theirs.conversation.id, 'high'))).toBe(
+      'conversation_not_found',
+    );
+  });
+
+  it('opens a conversation with its contact, identity and latest messages, and no secret', async () => {
+    const { w, jose } = await three();
+    await w.ingress.receive(
+      inbound(w.orgA, {
+        externalMessageId: 'wamid.jose2',
+        from: { externalId: '5215512345678' },
+        text: '¿Tienen envío?',
+        sentAt: '2026-09-27T12:06:00.000Z' as IsoTimestamp,
+      }),
+    );
+    const detail = await w.service.detail(w.tenantA, jose.id);
+    expect(detail.conversation.id).toBe(jose.id);
+    expect(detail.contact.displayName).toBe('José Pérez');
+    expect(detail.identity.externalId).toBe('5215512345678');
+    expect(detail.messages.map((m) => m.text)).toEqual([
+      'Hola, quiero información',
+      '¿Tienen envío?',
+    ]);
+    expect((await w.service.detail(w.tenantA, jose.id, { limit: 1 })).messages).toHaveLength(1);
+    expect(JSON.stringify(detail)).not.toMatch(/secret|token/i);
+    expect(await codeOf(w.service.detail(w.tenantA, 'not-an-id'))).toBe('conversation_not_found');
+  });
+
+  it('changes priority by a person only, audited from and to, and refuses a no-op', async () => {
+    const { w, ana } = await three();
+    const changed = await w.service.changePriority(w.tenantA, ana.id, 'urgent');
+    expect(changed.priority).toBe('urgent');
+    expect(changed.revision).toBe(ana.revision + 1);
+    const [event] = w.events('conversation.priority_changed');
+    expect(event?.transition).toEqual({ from: 'normal', to: 'urgent' });
+    expect(event?.actor).toMatchObject({ type: 'user', userId: ALICE });
+    expect(await codeOf(w.service.changePriority(w.tenantA, ana.id, 'urgent'))).toBe(
+      'invalid_transition',
+    );
+    expect(await codeOf(w.service.changePriority(w.tenantA, ana.id, 'critical'))).toBe(
+      'invalid_request',
+    );
+    const gia = await resolveTenant(as(ALICE, 'gia'), w.orgA, w.tenancy);
+    expect(await codeOf(w.service.changePriority(gia, ana.id, 'low'))).toBe('requires_user');
+    const runtime = await resolveRuntimeTenant(ALICE, w.orgA, w.tenancy);
+    expect(await codeOf(w.service.changePriority(runtime, ana.id, 'low'))).toBe('requires_user');
+  });
+
+  it('needs contact.read to see contacts, search or open a conversation', async () => {
+    const { w, ana } = await three();
+    const readerOnly = createConversationService({
+      repository: w.repository,
+      organizations: w.tenancy,
+      departments: new InMemoryDepartmentRepository(),
+      authorization: createAuthorizationService({ owner: ['conversation.read'] } as never),
+    });
+    const entries = await readerOnly.inbox(w.tenantA);
+    expect(entries).toHaveLength(3);
+    expect(entries.every((e) => e.contact === undefined)).toBe(true);
+    expect(await codeOf(readerOnly.inbox(w.tenantA, { q: 'ana' }))).toBe('permission_denied');
+    expect(await codeOf(readerOnly.detail(w.tenantA, ana.id))).toBe('permission_denied');
+    expect(await codeOf(readerOnly.changePriority(w.tenantA, ana.id, 'high'))).toBe(
+      'permission_denied',
+    );
+  });
+});
+
 describe('outbound (CV-2, ADR-0034)', () => {
   async function withConversation() {
     const w = await world();

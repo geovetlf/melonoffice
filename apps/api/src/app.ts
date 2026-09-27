@@ -33,6 +33,7 @@ import { createWorkflowService, type WorkflowRepository } from '@melonoffice/wor
 import { Hono, type Context } from 'hono';
 import { registerApprovalRoutes } from './approvals.js';
 import { registerAuthRoutes, type AuthEnv } from './auth.js';
+import { registerCors } from './cors.js';
 import { registerBillingRoutes } from './billing.js';
 import { registerDepartmentRoutes } from './departments.js';
 import { registerConversationRoutes } from './conversations.js';
@@ -113,6 +114,11 @@ export interface AppOptions {
   };
   /** Channel webhooks (ADR-0033). Absent: `/webhooks/*` answers 503. */
   readonly webhooks?: WebhookIngress;
+  /**
+   * The web app's exact origins, allowed to call `/v1` from a browser (ADR-0036). Empty or
+   * absent: no CORS header is ever sent.
+   */
+  readonly webOrigins?: readonly string[];
 }
 
 type Env = AuthEnv;
@@ -138,6 +144,7 @@ export function createApp({
   workflows,
   conversations,
   webhooks,
+  webOrigins = [],
 }: AppOptions): Hono<Env> {
   const app = new Hono<Env>();
 
@@ -161,6 +168,8 @@ export function createApp({
   });
 
   registerHealth(app, { service: SERVICE_NAME, version });
+  // Before authentication, so a browser's preflight (which has no token) is answered.
+  registerCors(app, webOrigins);
   // Outside /v1: providers sign deliveries, they have no user token.
   registerWebhookRoutes(app, webhooks);
   registerAuthRoutes(app, auth, audit);

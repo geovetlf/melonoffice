@@ -15,6 +15,12 @@ mock_provider "google" {
     }
   }
 
+  mock_resource "google_apikeys_key" {
+    defaults = {
+      key_string = "mock-browser-key-not-a-real-one"
+    }
+  }
+
   mock_resource "google_iam_workload_identity_pool" {
     defaults = {
       name = "projects/123456789012/locations/global/workloadIdentityPools/github-actions"
@@ -252,8 +258,8 @@ run "dev_gets_firestore_and_auth" {
   }
 
   assert {
-    condition     = length(module.app["api"].env) == 2 && module.app["api"].env["IDENTITY_PLATFORM_PROJECT_ID"] == "test-project" && contains(keys(module.app["api"].env), "LOG_LEVEL")
-    error_message = "The api must get this environment's project for auth and Firestore, and nothing else new."
+    condition     = length(module.app["api"].env) == 3 && module.app["api"].env["IDENTITY_PLATFORM_PROJECT_ID"] == "test-project" && contains(keys(module.app["api"].env), "LOG_LEVEL") && contains(keys(module.app["api"].env), "WEB_ORIGINS")
+    error_message = "The api must get this environment's project for auth and Firestore, the web origin, and nothing else new."
   }
 
   assert {
@@ -357,6 +363,62 @@ run "dev_runs_the_execution_runtime" {
   }
 }
 
+# Web sign-in (ADR-0036): the browser signs in with Identity Platform using a restricted browser
+# key, and the API answers CORS for the web's origin only.
+run "dev_signs_in_on_the_web" {
+  command = apply
+
+  variables {
+    environment         = "dev"
+    deploy_apps         = true
+    deletion_protection = false
+    firestore_and_auth  = true
+  }
+
+  assert {
+    condition     = contains(module.services.services, "apikeys.googleapis.com") && contains(module.services.services, "securetoken.googleapis.com")
+    error_message = "Dev must enable the API Keys and token refresh APIs."
+  }
+
+  assert {
+    condition     = toset([for t in google_apikeys_key.web_sign_in[0].restrictions[0].api_targets : t.service]) == toset(["identitytoolkit.googleapis.com", "securetoken.googleapis.com"])
+    error_message = "The browser key may call Identity Platform sign-in and token refresh only."
+  }
+
+  assert {
+    condition     = length(google_apikeys_key.web_sign_in[0].restrictions[0].browser_key_restrictions[0].allowed_referrers) == 1 && google_apikeys_key.web_sign_in[0].restrictions[0].browser_key_restrictions[0].allowed_referrers[0] == "https://web-123456789012.test-region.run.app/*"
+    error_message = "The browser key must only work from this environment's web app."
+  }
+
+  assert {
+    condition     = length(module.app["web"].env) == 2 && module.app["web"].env["MELONOFFICE_API_URL"] == "https://api-123456789012.test-region.run.app" && module.app["web"].env["MELONOFFICE_IDENTITY_API_KEY"] == "mock-browser-key-not-a-real-one"
+    error_message = "The web must get the API URL and the browser key, and nothing else."
+  }
+
+  assert {
+    condition     = module.app["api"].env["WEB_ORIGINS"] == "https://web-123456789012.test-region.run.app" && !contains(keys(module.app["worker"].env), "WEB_ORIGINS")
+    error_message = "Only the api allows the web's exact origin."
+  }
+
+  assert {
+    condition     = contains(google_project_iam_custom_role.planner.permissions, "apikeys.keys.get") && contains(google_project_iam_custom_role.planner.permissions, "apikeys.keys.getKeyString")
+    error_message = "The planner must be able to read the browser key it plans."
+  }
+}
+
+run "no_web_sign_in_without_firestore_or_apps" {
+  command = plan
+
+  variables {
+    environment = "prod"
+  }
+
+  assert {
+    condition     = length(google_apikeys_key.web_sign_in) == 0 && !contains(module.services.services, "apikeys.googleapis.com") && length([for p in google_project_iam_custom_role.planner.permissions : p if startswith(p, "apikeys.")]) == 0
+    error_message = "Staging and prod get no browser key, API or planner permission."
+  }
+}
+
 run "no_runtime_without_firestore_or_apps" {
   command = plan
 
@@ -400,7 +462,7 @@ run "planner_is_least_privilege" {
   }
 
   assert {
-    condition     = alltrue([for p in google_project_iam_custom_role.planner.permissions : can(regex("\\.(get|list|getIamPolicy|getMetadata|getAttestationRules)$", p))])
+    condition     = alltrue([for p in google_project_iam_custom_role.planner.permissions : can(regex("\\.(get|list|getIamPolicy|getMetadata|getAttestationRules|getKeyString)$", p))])
     error_message = "Every planner permission must be a read of metadata or IAM policy: no create, update, delete, setIamPolicy, use or download."
   }
 

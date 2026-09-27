@@ -20,8 +20,9 @@ import type { AuthEnv } from './auth.js';
 import { withPermission, type AuthorizationDependencies } from './authorization.js';
 
 /**
- * Human inbox routes (ADR-0033). A person reads conversations, messages and contacts, assigns a
- * conversation to a member or a department, moves its status and edits its tags, and replies
+ * Human inbox routes (ADR-0033). A person reads conversations, messages and contacts, searches
+ * and sorts the inbox and opens one conversation whole (CV-3, ADR-0035), assigns a conversation
+ * to a member or a department, moves its status and priority and edits its tags, and replies
  * (CV-2, ADR-0034): one text, as themselves, through the tool gate, synchronously. Nothing here
  * runs a model, routes by AI or sends on its own: messages arrive only through the verified
  * channel webhook, and leave only when a person sends them. Channel connections are listed
@@ -48,7 +49,13 @@ export function registerConversationRoutes(
       const filter = filterOf(new URL(c.req.url).searchParams);
       if (filter === undefined) return c.json({ error: 'invalid_request' }, 400);
       return answer(c, async () => ({
-        conversations: (await conversations.list(tenant, filter)).map(toConversationView),
+        conversations: (await conversations.inbox(tenant, filter)).map(
+          ({ conversation, contact }) => ({
+            ...toConversationView(conversation),
+            // Who it is with, for a reader of contacts (CV-3); null otherwise.
+            contact: contact === undefined ? null : toContactSummary(contact),
+          }),
+        ),
       }));
     }),
   );
@@ -58,6 +65,36 @@ export function registerConversationRoutes(
     withPermission('conversation.read', dependencies, (c, tenant) =>
       answer(c, async () => toConversationView(await conversations.get(tenant, idOf(c)))),
     ),
+  );
+
+  /**
+   * One conversation opened in the inbox (CV-3): the conversation, its contact, the channel
+   * identity it speaks through and its latest messages, in one answer. Never the connection's
+   * secret references or anything read from them.
+   */
+  app.get(
+    `${one}/detail`,
+    withPermission('conversation.read', dependencies, async (c, tenant) => {
+      const query = new URL(c.req.url).searchParams;
+      if ([...query.keys()].some((k) => k !== 'limit') || query.getAll('limit').length > 1) {
+        return c.json({ error: 'invalid_request' }, 400);
+      }
+      const limit = limitOf(query.get('limit') ?? undefined);
+      if (limit === null) return c.json({ error: 'invalid_request' }, 400);
+      return answer(c, async () => {
+        const detail = await conversations.detail(
+          tenant,
+          idOf(c),
+          limit === undefined ? {} : { limit },
+        );
+        return {
+          conversation: toConversationView(detail.conversation),
+          contact: toContactView(detail.contact),
+          identity: toIdentityView(detail.identity),
+          messages: detail.messages.map(toMessageView),
+        };
+      });
+    }),
   );
 
   app.get(
@@ -150,6 +187,19 @@ export function registerConversationRoutes(
   );
 
   app.post(
+    `${one}/priority`,
+    withPermission('conversation.manage', dependencies, async (c, tenant) => {
+      const body = await bodyOf(c, ['priority']);
+      if (body === undefined || body.priority === undefined) {
+        return c.json({ error: 'invalid_request' }, 400);
+      }
+      return answer(c, async () =>
+        toConversationView(await conversations.changePriority(tenant, idOf(c), body.priority)),
+      );
+    }),
+  );
+
+  app.post(
     `${one}/tags`,
     withPermission('conversation.manage', dependencies, async (c, tenant) => {
       const body = await bodyOf(c, ['add', 'remove']);
@@ -207,6 +257,9 @@ const FILTER_KEYS = new Set([
   'departmentId',
   'contactId',
   'tag',
+  'priority',
+  'q',
+  'sort',
   'since',
   'until',
   'limit',
@@ -370,6 +423,15 @@ export function toContactView(c: Contact) {
         : { kind: 'user', userId: c.origin.userId },
     createdAt: c.createdAt,
     updatedAt: c.updatedAt,
+  };
+}
+
+/** The few contact fields an inbox row shows. */
+export function toContactSummary(c: Contact) {
+  return {
+    id: c.id,
+    displayName: c.displayName ?? null,
+    phone: c.phone ?? null,
   };
 }
 

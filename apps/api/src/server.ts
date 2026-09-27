@@ -102,7 +102,14 @@ logger.info('channels', {
     config.deploymentEnvironment !== undefined,
 });
 
-const app = createApp({ logger, version: config.version, ...configured });
+logger.info('web origins', { count: config.webOrigins?.length ?? 0 });
+
+const app = createApp({
+  logger,
+  version: config.version,
+  webOrigins: config.webOrigins ?? [],
+  ...configured,
+});
 
 const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
   logger.info('listening', { port: info.port, version: config.version });

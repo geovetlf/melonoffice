@@ -1,6 +1,6 @@
 # Infrastructure
 
-This document covers the cloud environments and the dev deployment. The decisions are in [ADR-0012](../adr/0012-dev-deployment-on-cloud-run.md) and, for Firestore and Identity Platform in dev, [ADR-0014](../adr/0014-firestore-and-identity-platform-in-dev.md). Where Firestore and Identity Platform are on, Terraform also sets `IDENTITY_PLATFORM_PROJECT_ID` on the `api` service, which turns auth on ([ADR-0017](../adr/0017-user-persistence-in-firestore.md)).
+This document covers the cloud environments and the dev deployment. The decisions are in [ADR-0012](../adr/0012-dev-deployment-on-cloud-run.md) and, for Firestore and Identity Platform in dev, [ADR-0014](../adr/0014-firestore-and-identity-platform-in-dev.md). Where Firestore and Identity Platform are on, Terraform also sets `IDENTITY_PLATFORM_PROJECT_ID` on the `api` service, which turns auth on ([ADR-0017](../adr/0017-user-persistence-in-firestore.md)). Where the apps also run, it prepares web sign-in ([ADR-0036](../adr/0036-web-identity-foundation.md)): a browser key restricted to Identity Platform sign-in and token refresh and to the web's `https://web-<project number>.<region>.run.app` URL, `MELONOFFICE_API_URL` and `MELONOFFICE_IDENTITY_API_KEY` on `web` (served to the browser as `/config.json`), and `WEB_ORIGINS` on `api`. Sign-in works from that deterministic web URL.
 
 | Environment | Terraform      | Cloud Run services     | Deployed by              |
 | ----------- | -------------- | ---------------------- | ------------------------ |

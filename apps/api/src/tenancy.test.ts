@@ -165,6 +165,15 @@ describe.each(STORES)('organizations with storage in %s', (_name, createStores) 
       expect(body.membership).toMatchObject({ id: `${orgA}_${aliceId}`, status: 'active' });
     });
 
+    it('tells the caller what they may do there, from their role (a hint for the web app)', async () => {
+      const { get, orgA } = await withTwoOrganizations();
+      const body = (await (await get('token-alice', orgA)).json()) as { permissions: string[] };
+      expect(body.permissions).toEqual([...body.permissions].sort());
+      expect(body.permissions).toEqual(
+        expect.arrayContaining(['organization.read', 'conversation.read', 'conversation.send']),
+      );
+    });
+
     it('user A cannot read organization B', async () => {
       const { get, orgB } = await withTwoOrganizations();
       const response = await get('token-alice', orgB);

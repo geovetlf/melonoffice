@@ -16,7 +16,7 @@
   - Identity safe by default: never merged by name, username, photo or text.
   - Specialist = Agent; no Task entity; no new global actor; no Activity collection.
 - Open decisions it respects: DG-3 (ingress location), DG-5 (retention), the human send path (CV-2), D-12 (connection limit value), D-27 (roles).
-- Followed by: [ADR-0034](0034-human-tool-invocation.md) decides the human send path (CV-2).
+- Followed by: [ADR-0034](0034-human-tool-invocation.md) decides the human send path (CV-2); [ADR-0035](0035-conversations-inbox.md) makes the inbox usable (CV-3).
 
 ## Context
 
