@@ -1,6 +1,6 @@
 # ADR-0029: Runtime guards: actor, start, cancellation, verification and attempts
 
-- Status: Proposed (Phase X6a, pending Geovet's review)
+- Status: Accepted (Phase X6a, approved by Geovet on 2026-09-27)
 - Date: 2026-09-27
 - Builds on: [ADR-0019](0019-rbac-foundation.md), [ADR-0020](0020-audit-log-foundation.md), [ADR-0024](0024-execution-foundation.md), [ADR-0026](0026-tools-approvals-and-guardrails.md) and [ADR-0028](0028-planner-delegation-and-workflows.md)
 - Decisions it applies: D-X6-ACTOR, D-X6-START, D-X6-CANCEL, D-X6-VERIFY, D-X6-ATTEMPT (Geovet, 2026-09-27)

@@ -15,7 +15,7 @@ import {
 import type { AuditEvent } from '@melonoffice/audit';
 import type { Approval, ApprovalId, IsoTimestamp, OrganizationId } from '@melonoffice/domain';
 import { isOrganizationId } from '@melonoffice/tenancy';
-import { AUDIT_LOGS, toAuditDocument } from './audit-firestore.js';
+import { AUDIT_LOGS, toAuditDocument } from './audit.js';
 
 /**
  * `approvals/{approvalId}` holds each tool approval (ADR-0026): the operation it is bound to,

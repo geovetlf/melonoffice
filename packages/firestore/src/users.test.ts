@@ -1,8 +1,8 @@
 import { Timestamp } from '@google-cloud/firestore';
 import type { UserId } from '@melonoffice/domain';
 import { describe, expect, it } from 'vitest';
-import { emulatorFirestore, emulatorHost, emulatorRequired } from './test-firestore.js';
-import { FirestoreUserDirectory, IDENTITIES, identityKey, USERS } from './users-firestore.js';
+import { emulatorFirestore, emulatorHost, emulatorRequired } from './testing.js';
+import { FirestoreUserDirectory, IDENTITIES, identityKey, USERS } from './users.js';
 
 const NOW = new Date('2026-09-26T12:00:00Z');
 const LATER = new Date('2026-09-26T12:05:00Z');

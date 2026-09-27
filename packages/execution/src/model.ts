@@ -112,8 +112,16 @@ export const isIdempotencyKey = (value: unknown): value is string =>
  */
 export function executionIdFor(organizationId: OrganizationId, key: string): ExecutionId {
   if (!isIdempotencyKey(key)) invalid('idempotencyKey');
+  return nameBasedUuid('melonoffice.execution', [organizationId, key]) as ExecutionId;
+}
+
+/**
+ * A name-based UUID (version 8) from SHA-256 of a namespace and its parts: the same names always
+ * give the same id, and any other name another id. Execution jobs (ADR-0030) use it too.
+ */
+export function nameBasedUuid(namespace: string, parts: readonly string[]): string {
   const hex = createHash('sha256')
-    .update(`melonoffice.execution\u0000${organizationId}\u0000${key}`)
+    .update([namespace, ...parts].join('\u0000'))
     .digest('hex');
   const variant = ((parseInt(hex[16] as string, 16) & 0x3) | 0x8).toString(16);
   return [
@@ -122,7 +130,7 @@ export function executionIdFor(organizationId: OrganizationId, key: string): Exe
     `8${hex.slice(13, 16)}`,
     `${variant}${hex.slice(17, 20)}`,
     hex.slice(20, 32),
-  ].join('-') as ExecutionId;
+  ].join('-');
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>

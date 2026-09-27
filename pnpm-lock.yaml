@@ -83,6 +83,9 @@ importers:
       '@melonoffice/execution':
         specifier: workspace:*
         version: link:../../packages/execution
+      '@melonoffice/firestore':
+        specifier: workspace:*
+        version: link:../../packages/firestore
       '@melonoffice/observability':
         specifier: workspace:*
         version: link:../../packages/observability
@@ -368,6 +371,64 @@ importers:
         specifier: workspace:*
         version: link:../rbac
 
+  packages/firestore:
+    dependencies:
+      '@google-cloud/firestore':
+        specifier: 8.7.1
+        version: 8.7.1
+      '@melonoffice/approvals':
+        specifier: workspace:*
+        version: link:../approvals
+      '@melonoffice/audit':
+        specifier: workspace:*
+        version: link:../audit
+      '@melonoffice/auth':
+        specifier: workspace:*
+        version: link:../auth
+      '@melonoffice/billing':
+        specifier: workspace:*
+        version: link:../billing
+      '@melonoffice/credits':
+        specifier: workspace:*
+        version: link:../credits
+      '@melonoffice/departments':
+        specifier: workspace:*
+        version: link:../departments
+      '@melonoffice/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@melonoffice/execution':
+        specifier: workspace:*
+        version: link:../execution
+      '@melonoffice/jobs':
+        specifier: workspace:*
+        version: link:../jobs
+      '@melonoffice/planning':
+        specifier: workspace:*
+        version: link:../planning
+      '@melonoffice/specialists':
+        specifier: workspace:*
+        version: link:../specialists
+      '@melonoffice/tenancy':
+        specifier: workspace:*
+        version: link:../tenancy
+      '@melonoffice/tools':
+        specifier: workspace:*
+        version: link:../tools
+      '@melonoffice/workflows':
+        specifier: workspace:*
+        version: link:../workflows
+    devDependencies:
+      '@melonoffice/config':
+        specifier: workspace:*
+        version: link:../config
+      '@melonoffice/observability':
+        specifier: workspace:*
+        version: link:../observability
+      '@melonoffice/rbac':
+        specifier: workspace:*
+        version: link:../rbac
+
   packages/guardrails:
     dependencies:
       '@melonoffice/approvals':
@@ -432,6 +493,37 @@ importers:
       react-dom:
         specifier: 19.3.0
         version: 19.3.0(react@19.3.0)
+
+  packages/jobs:
+    dependencies:
+      '@melonoffice/audit':
+        specifier: workspace:*
+        version: link:../audit
+      '@melonoffice/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@melonoffice/execution':
+        specifier: workspace:*
+        version: link:../execution
+      '@melonoffice/observability':
+        specifier: workspace:*
+        version: link:../observability
+      '@melonoffice/tenancy':
+        specifier: workspace:*
+        version: link:../tenancy
+    devDependencies:
+      '@melonoffice/auth':
+        specifier: workspace:*
+        version: link:../auth
+      '@melonoffice/config':
+        specifier: workspace:*
+        version: link:../config
+      '@melonoffice/credits':
+        specifier: workspace:*
+        version: link:../credits
+      '@melonoffice/rbac':
+        specifier: workspace:*
+        version: link:../rbac
 
   packages/observability:
     devDependencies:

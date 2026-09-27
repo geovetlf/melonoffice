@@ -83,4 +83,28 @@ describe('withCorrelation', () => {
     expect(lines[1]).not.toHaveProperty('planId');
     expect(lines[1]).not.toHaveProperty('workflowVersion');
   });
+
+  it('adds the job, its attempt, lease, worker and correlation id (ADR-0030)', () => {
+    const lines: Record<string, unknown>[] = [];
+    const logger = createLogger({
+      service: 'worker',
+      sink: (line) => lines.push(JSON.parse(line) as Record<string, unknown>),
+    });
+    withCorrelation(logger, {
+      jobId: '55555555-5555-4555-8555-555555555555',
+      attempt: 2,
+      leaseId: '66666666-6666-4666-8666-666666666666',
+      workerId: 'worker-1',
+      correlationId: 'req-7',
+    }).info('job');
+    withCorrelation(logger, { jobId: 'bad id', attempt: 0, leaseId: 'x\ny' }).info('bad');
+    expect(lines[0]).toMatchObject({
+      jobId: '55555555-5555-4555-8555-555555555555',
+      attempt: 2,
+      leaseId: '66666666-6666-4666-8666-666666666666',
+      workerId: 'worker-1',
+      correlationId: 'req-7',
+    });
+    for (const key of ['jobId', 'attempt', 'leaseId']) expect(lines[1]).not.toHaveProperty(key);
+  });
 });

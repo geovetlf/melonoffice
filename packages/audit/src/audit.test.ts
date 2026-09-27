@@ -59,6 +59,30 @@ describe('buildAuditEvent', () => {
     expect(() => buildAuditEvent(input as AuditEventInput, NOW)).toThrow(message);
   });
 
+  it('records an execution job by id, node, attempt and lease, and refuses anything malformed', () => {
+    const JOB = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    const LEASE = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+    const leased: AuditEventInput = {
+      action: 'execution.job_leased',
+      result: 'success',
+      actor: actorOf({ actor: 'runtime', userId: ALICE }),
+      organizationId: ORG_A,
+      job: { id: JOB, nodeId: 'n0', attempt: 1, leaseId: LEASE },
+      source: 'api',
+    };
+    const event = buildAuditEvent(leased, NOW);
+    expect(event.job).toEqual({ id: JOB, nodeId: 'n0', attempt: 1, leaseId: LEASE });
+    expect(Object.isFrozen(event.job)).toBe(true);
+    for (const job of [
+      { id: 'job-1', nodeId: 'n0', attempt: 1 },
+      { id: JOB, nodeId: 'n 0', attempt: 1 },
+      { id: JOB, nodeId: 'n0', attempt: 0 },
+      { id: JOB, nodeId: 'n0', attempt: 1, leaseId: 'lease' },
+    ]) {
+      expect(() => buildAuditEvent({ ...leased, job }, NOW)).toThrow('invalid audit job');
+    }
+  });
+
   it('keeps a well-formed requested organization and drops anything else', () => {
     const denied = { ...signIn, action: 'tenancy.resolve', result: 'denied' } as const;
     expect(

@@ -19,6 +19,13 @@ export interface Correlation {
   readonly planId?: string;
   readonly workflowId?: string;
   readonly workflowVersion?: number;
+  /** An execution job, its attempt, and the lease and worker that hold it (ADR-0030). */
+  readonly jobId?: string;
+  readonly attempt?: number;
+  readonly leaseId?: string;
+  readonly workerId?: string;
+  /** The id that ties a job back to the request that created it. */
+  readonly correlationId?: string;
 }
 
 const KEYS = [
@@ -31,6 +38,10 @@ const KEYS = [
   'provider',
   'planId',
   'workflowId',
+  'jobId',
+  'leaseId',
+  'workerId',
+  'correlationId',
 ] as const;
 
 const ID = /^[\w-]{1,128}$/;
@@ -48,7 +59,7 @@ export function withCorrelation(logger: Logger, correlation: Correlation): Logge
   // Model ids may carry dots and colons (e.g. versions); nothing else.
   const { model } = correlation;
   if (model !== undefined && /^[\w.:/-]{1,160}$/.test(model)) bindings.model = model;
-  for (const key of ['toolVersion', 'workflowVersion'] as const) {
+  for (const key of ['toolVersion', 'workflowVersion', 'attempt'] as const) {
     const version = correlation[key];
     if (version !== undefined && Number.isSafeInteger(version) && version >= 1) {
       bindings[key] = version;
