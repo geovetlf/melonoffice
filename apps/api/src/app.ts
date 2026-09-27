@@ -9,8 +9,10 @@ import { createExecutionService, type ExecutionRepository } from '@melonoffice/e
 import type { Logger } from '@melonoffice/observability';
 import { createAuthorizationService, type AuthorizationService } from '@melonoffice/rbac';
 import { createSpecialistService, type SpecialistRepository } from '@melonoffice/specialists';
+import { createPlanService, createPlanValidator, type PlanRepository } from '@melonoffice/planning';
 import type { TenancyStore } from '@melonoffice/tenancy';
 import { defaultToolRegistry, type ToolRegistry } from '@melonoffice/tools';
+import { createWorkflowService, type WorkflowRepository } from '@melonoffice/workflows';
 import { Hono, type Context } from 'hono';
 import { registerApprovalRoutes } from './approvals.js';
 import { registerAuthRoutes, type AuthEnv } from './auth.js';
@@ -20,9 +22,11 @@ import { registerCreditRoutes } from './credits.js';
 import { registerEntitlementRoutes } from './entitlements.js';
 import { registerExecutionRoutes } from './executions.js';
 import { registerHealth } from './health.js';
+import { registerPlanRoutes } from './plans.js';
 import { registerSpecialistRoutes } from './specialists.js';
 import { registerTenancyRoutes } from './tenancy.js';
 import { registerToolRoutes } from './tools.js';
+import { registerWorkflowRoutes } from './workflows.js';
 
 export const SERVICE_NAME = 'api';
 
@@ -63,6 +67,10 @@ export interface AppOptions {
   readonly approvals?: ApprovalRepository;
   /** Credit wallets and their ledger (ADR-0023). Absent: the credits route answers 503. */
   readonly credits?: CreditStore;
+  /** Plans (ADR-0028). Absent: the plan routes answer 503 (fails closed). */
+  readonly plans?: PlanRepository;
+  /** Workflows (ADR-0028). Absent: the workflow routes answer 503 (fails closed). */
+  readonly workflows?: WorkflowRepository;
 }
 
 type Env = AuthEnv;
@@ -84,6 +92,8 @@ export function createApp({
   tools = defaultToolRegistry(),
   approvals,
   credits,
+  plans,
+  workflows,
 }: AppOptions): Hono<Env> {
   const app = new Hono<Env>();
 
@@ -151,16 +161,20 @@ export function createApp({
       app.all('/v1/organizations/:organizationId/specialists', unavailable);
       app.all('/v1/organizations/:organizationId/specialists/*', unavailable);
     }
-    if (tenancy !== undefined && executions !== undefined) {
+    const executionService =
+      tenancy !== undefined && executions !== undefined
+        ? createExecutionService({
+            repository: executions,
+            organizations: tenancy,
+            ...(specialists === undefined ? {} : { assignments: specialists.assignments }),
+          })
+        : undefined;
+    if (tenancy !== undefined && executionService !== undefined) {
       registerExecutionRoutes(app, {
         store: tenancy,
         authorization,
         audit,
-        executions: createExecutionService({
-          repository: executions,
-          organizations: tenancy,
-          ...(specialists === undefined ? {} : { assignments: specialists.assignments }),
-        }),
+        executions: executionService,
       });
     } else if (tenancy !== undefined) {
       app.all('/v1/organizations/:organizationId/executions/*', (c) =>
@@ -187,6 +201,60 @@ export function createApp({
       const unavailable = (c: Context<Env>) => c.json({ error: 'approvals_not_configured' }, 503);
       app.all('/v1/organizations/:organizationId/approvals', unavailable);
       app.all('/v1/organizations/:organizationId/approvals/*', unavailable);
+    }
+    // Plans are read and decided over HTTP, never made, run or delegated: only the server-side
+    // planner and workflows propose them, so this validator is never reached from a route and
+    // fails closed on every tool (no environment).
+    if (
+      tenancy !== undefined &&
+      executionService !== undefined &&
+      specialists !== undefined &&
+      structure !== undefined &&
+      plans !== undefined
+    ) {
+      const dependencies = { store: tenancy, authorization, audit };
+      const planService = createPlanService({
+        repository: plans,
+        executions: executionService,
+        validator: createPlanValidator({
+          specialists,
+          departments: structure.departments,
+          tools,
+          authorization,
+          environment: undefined,
+        }),
+        organizations: tenancy,
+        authorization,
+        audit,
+      });
+      registerPlanRoutes(app, { ...dependencies, plans: planService });
+      if (workflows !== undefined) {
+        registerWorkflowRoutes(app, {
+          ...dependencies,
+          workflows: createWorkflowService({
+            repository: workflows,
+            plans: planService,
+            specialists,
+            departments: structure.departments,
+            organizations: tenancy,
+            authorization,
+          }),
+        });
+      }
+    }
+    if (tenancy !== undefined) {
+      const unavailable = (what: string) => (c: Context<Env>) =>
+        c.json({ error: `${what}_not_configured` }, 503);
+      const plansReady =
+        executionService !== undefined && specialists !== undefined && plans !== undefined;
+      if (!plansReady) {
+        app.all('/v1/organizations/:organizationId/plans', unavailable('plans'));
+        app.all('/v1/organizations/:organizationId/plans/*', unavailable('plans'));
+      }
+      if (!plansReady || workflows === undefined) {
+        app.all('/v1/organizations/:organizationId/workflows', unavailable('workflows'));
+        app.all('/v1/organizations/:organizationId/workflows/*', unavailable('workflows'));
+      }
     }
     if (tenancy !== undefined && credits !== undefined) {
       registerCreditRoutes(app, {

@@ -1,0 +1,239 @@
+import type {
+  ExecutionId,
+  IsoTimestamp,
+  OrganizationId,
+  Plan,
+  PlanDecision,
+  PlanDelegation,
+  PlanId,
+  PlanSource,
+  PlanStatus,
+  PlanVersion,
+  UserId,
+} from '@melonoffice/domain';
+import { isExecutionId } from '@melonoffice/execution';
+import { digestOf, isDigest, sameDigest } from '@melonoffice/tools';
+import { PlanningError } from './errors.js';
+import { canChangePlanStatus, isPlanStatus, isPlanTerminal } from './lifecycle.js';
+import { checkProposal } from './proposal.js';
+import type { ValidatedPlan } from './validate.js';
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const CODE = /^[a-z][a-z_]{0,63}$/;
+
+export const isPlanId = (value: unknown): value is PlanId =>
+  typeof value === 'string' && UUID.test(value);
+
+const invalid = (detail: string): never => {
+  throw new PlanningError('invalid_plan', detail);
+};
+
+/** What a plan version's digest covers: everything it says, nothing about when or who. */
+const contentOf = (v: Omit<PlanVersion, 'digest' | 'createdAt' | 'createdBy'>) => ({
+  planId: v.planId,
+  organizationId: v.organizationId,
+  version: v.version,
+  request: v.request,
+  steps: v.steps,
+  riskLevel: v.riskLevel,
+  approvalRequired: v.approvalRequired,
+  estimate: v.estimate,
+  source: v.source,
+});
+
+const deepFreeze = <T>(value: T): T => {
+  if (typeof value === 'object' && value !== null && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    for (const item of Object.values(value)) deepFreeze(item);
+  }
+  return value;
+};
+
+/** A new plan and its first version, as the pipeline validated it. */
+export interface PlanWrite {
+  readonly plan: Plan;
+  readonly version: PlanVersion;
+}
+
+export interface NewPlan {
+  readonly organizationId: OrganizationId;
+  readonly executionId: ExecutionId;
+  readonly validated: ValidatedPlan;
+  readonly source: PlanSource;
+}
+
+/**
+ * Builds a plan at version 1 from a validated plan (ADR-0028). It starts `approval_required`
+ * when any step or its risk needs a human, and `ready` otherwise: only validated plans are ever
+ * stored, so none is kept in `draft`.
+ *
+ * A plan's id is its planning execution's id: one execution has at most one plan, and storing a
+ * second one for it is refused as a conflict. A changed plan is a new version of the same plan.
+ */
+export function newPlan(request: NewPlan, by: UserId, at: IsoTimestamp): PlanWrite {
+  const id = request.executionId as string as PlanId;
+  const { validated } = request;
+  const content = {
+    planId: id,
+    organizationId: request.organizationId,
+    version: 1,
+    request: validated.request,
+    steps: validated.steps,
+    riskLevel: validated.riskLevel,
+    approvalRequired: validated.approvalRequired,
+    estimate: validated.estimate,
+    source: request.source,
+  };
+  const version: PlanVersion = deepFreeze(
+    structuredClone({
+      ...content,
+      digest: digestOf(contentOf(content)),
+      createdAt: at,
+      createdBy: by,
+    }),
+  );
+  const plan: Plan = Object.freeze({
+    id,
+    organizationId: request.organizationId,
+    executionId: request.executionId,
+    status: validated.approvalRequired ? 'approval_required' : 'ready',
+    version: 1,
+    delegations: Object.freeze([]),
+    revision: 1,
+    createdAt: at,
+    createdBy: by,
+    updatedAt: at,
+  });
+  return { plan, version };
+}
+
+const later = (plan: Plan, at: IsoTimestamp): IsoTimestamp =>
+  Date.parse(at) >= Date.parse(plan.updatedAt) ? at : plan.updatedAt;
+
+/**
+ * Moves a plan to another status, or refuses without changing anything: the plan must still be
+ * in `from`, and the table must allow the move.
+ */
+export function applyPlanStatus(
+  plan: Plan,
+  from: PlanStatus,
+  to: PlanStatus,
+  at: IsoTimestamp,
+): Plan {
+  if (plan.status !== from) throw new PlanningError('plan_concurrency_conflict');
+  if (!canChangePlanStatus(from, to)) throw new PlanningError('invalid_plan_transition');
+  return Object.freeze({
+    ...plan,
+    status: to,
+    revision: plan.revision + 1,
+    updatedAt: later(plan, at),
+  });
+}
+
+/**
+ * Records a user's decision on exactly one version (ADR-0028). The decision names the version
+ * and digest the user saw: a plan that changed since is `plan_version_mismatch`, so an approval
+ * can never cover content nobody looked at.
+ */
+export function decidePlan(
+  plan: Plan,
+  current: PlanVersion,
+  decision: PlanDecision['decision'],
+  seen: { readonly version: number; readonly digest: string },
+  by: UserId,
+  at: IsoTimestamp,
+): Plan {
+  if (plan.status !== 'approval_required') {
+    throw new PlanningError(
+      isPlanTerminal(plan.status) ? 'invalid_plan_transition' : 'plan_concurrency_conflict',
+    );
+  }
+  if (
+    current.planId !== plan.id ||
+    current.version !== plan.version ||
+    seen.version !== plan.version ||
+    !sameDigest(seen.digest, current.digest)
+  ) {
+    throw new PlanningError('plan_version_mismatch');
+  }
+  const next = applyPlanStatus(plan, 'approval_required', decision, at);
+  return Object.freeze({
+    ...next,
+    decision: Object.freeze({
+      decision,
+      version: current.version,
+      digest: current.digest,
+      decidedBy: by,
+      decidedAt: next.updatedAt,
+    }),
+  });
+}
+
+/** A `ready` or `approved` plan handed to its child executions: now `executing`. */
+export function recordDelegations(
+  plan: Plan,
+  delegations: readonly PlanDelegation[],
+  at: IsoTimestamp,
+): Plan {
+  if (plan.status !== 'ready' && plan.status !== 'approved') {
+    throw new PlanningError('invalid_plan_transition');
+  }
+  if (plan.delegations.length > 0) throw new PlanningError('delegation_conflict');
+  const next = applyPlanStatus(plan, plan.status, 'executing', at);
+  return Object.freeze({
+    ...next,
+    delegations: Object.freeze(delegations.map((d) => Object.freeze({ ...d }))),
+  });
+}
+
+/**
+ * Checks a stored plan before it is trusted: a record that fails is refused, never repaired.
+ */
+export function checkStoredPlan(plan: Plan): Plan {
+  if (!isPlanId(plan.id)) invalid('id');
+  if (!isExecutionId(plan.executionId)) invalid('executionId');
+  if (!isPlanStatus(plan.status)) invalid('status');
+  if (!Number.isSafeInteger(plan.version) || plan.version < 1) invalid('version');
+  if (!Number.isSafeInteger(plan.revision) || plan.revision < 1) invalid('revision');
+  if (!Array.isArray(plan.delegations)) invalid('delegations');
+  for (const d of plan.delegations) {
+    if (typeof d.stepId !== 'string' || !isExecutionId(d.executionId)) invalid('delegations');
+  }
+  const { decision } = plan;
+  if (decision !== undefined) {
+    if (decision.decision !== 'approved' && decision.decision !== 'rejected') invalid('decision');
+    if (!isDigest(decision.digest)) invalid('decision.digest');
+  }
+  // An approved plan, and every plan that ran after one, carries the decision it ran under.
+  if (plan.status === 'approved' && decision?.decision !== 'approved') invalid('decision');
+  if (plan.status === 'rejected' && decision?.decision !== 'rejected') invalid('decision');
+  return plan;
+}
+
+/**
+ * Checks a stored plan version: its digest must still match its content, and its steps must
+ * still pass the proposal schema. A version whose content changed after it was written is
+ * refused: it is never shown, approved or delegated.
+ */
+export function checkStoredPlanVersion(version: PlanVersion): PlanVersion {
+  if (!isPlanId(version.planId)) invalid('planId');
+  if (!Number.isSafeInteger(version.version) || version.version < 1) invalid('version');
+  if (!isDigest(version.digest) || !sameDigest(digestOf(contentOf(version)), version.digest)) {
+    invalid('digest');
+  }
+  if (!Array.isArray(version.steps) || version.steps.length === 0) invalid('steps');
+  // Stored steps carry system fields (specialist, estimate…) a proposal cannot; check the ids.
+  const ids = new Set(version.steps.map((s) => s.id));
+  if (ids.size !== version.steps.length) invalid('steps');
+  const request = checkProposal({
+    summary: version.request.summary,
+    objective: version.request.objective,
+    steps: [{ id: 'check', kind: 'parallel', label: 'check', dependsOn: [] }],
+  });
+  if (!request.ok) invalid('request');
+  return version;
+}
+
+/** A cancellation or failure code, as the audit log stores it. */
+export const isPlanReason = (value: unknown): value is string =>
+  typeof value === 'string' && CODE.test(value);

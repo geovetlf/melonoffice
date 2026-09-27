@@ -15,6 +15,10 @@ export interface Correlation {
   /** The AI provider and model of an AI call (ADR-0027). */
   readonly provider?: string;
   readonly model?: string;
+  /** The plan, and the workflow version it came from (ADR-0028). */
+  readonly planId?: string;
+  readonly workflowId?: string;
+  readonly workflowVersion?: number;
 }
 
 const KEYS = [
@@ -25,6 +29,8 @@ const KEYS = [
   'specialistId',
   'toolId',
   'provider',
+  'planId',
+  'workflowId',
 ] as const;
 
 const ID = /^[\w-]{1,128}$/;
@@ -42,9 +48,11 @@ export function withCorrelation(logger: Logger, correlation: Correlation): Logge
   // Model ids may carry dots and colons (e.g. versions); nothing else.
   const { model } = correlation;
   if (model !== undefined && /^[\w.:/-]{1,160}$/.test(model)) bindings.model = model;
-  const { toolVersion } = correlation;
-  if (toolVersion !== undefined && Number.isSafeInteger(toolVersion) && toolVersion >= 1) {
-    bindings.toolVersion = toolVersion;
+  for (const key of ['toolVersion', 'workflowVersion'] as const) {
+    const version = correlation[key];
+    if (version !== undefined && Number.isSafeInteger(version) && version >= 1) {
+      bindings[key] = version;
+    }
   }
   return logger.child(bindings);
 }

@@ -12,8 +12,10 @@ import { FirestoreDepartmentRepository } from './departments-firestore.js';
 import { FirestoreExecutionRepository } from './executions-firestore.js';
 import { FirestoreSpecialistRepository } from './specialists-firestore.js';
 import { FirestoreCreditStore } from './credits-firestore.js';
+import { FirestorePlanRepository } from './plans-firestore.js';
 import { FirestoreTenancyStore } from './tenancy-firestore.js';
 import { FirestoreUserDirectory } from './users-firestore.js';
+import { FirestoreWorkflowRepository } from './workflows-firestore.js';
 
 const config = loadConfig(process.env);
 const logger = createLogger({ service: SERVICE_NAME, level: config.logLevel });
@@ -37,6 +39,8 @@ function services(projectId: string) {
       specialists: new FirestoreSpecialistRepository(firestore),
     },
     credits: new FirestoreCreditStore(firestore),
+    plans: new FirestorePlanRepository(firestore),
+    workflows: new FirestoreWorkflowRepository(firestore),
     audit: createAuditService(new FirestoreAuditStore(firestore)),
   };
 }

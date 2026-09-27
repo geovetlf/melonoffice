@@ -22,6 +22,10 @@ export const ROLES = {
     'approval.approve',
     'ai.generate',
     'credits.read',
+    'plan.read',
+    'plan.create',
+    'workflow.read',
+    'workflow.manage',
   ],
 } as const satisfies RoleCatalogue;
 

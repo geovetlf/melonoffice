@@ -34,7 +34,9 @@ export interface AuditTarget {
     | 'subscription'
     | 'credit_entry'
     | 'execution'
-    | 'approval';
+    | 'approval'
+    | 'plan'
+    | 'workflow';
   readonly id: string;
 }
 

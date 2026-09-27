@@ -115,6 +115,10 @@ describe('catalogue', () => {
       'approval.approve',
       'ai.generate',
       'credits.read',
+      'plan.read',
+      'plan.create',
+      'workflow.read',
+      'workflow.manage',
     ]);
     for (const permissions of Object.values(ROLES)) {
       for (const permission of permissions) expect(isPermission(permission)).toBe(true);

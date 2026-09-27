@@ -19,15 +19,17 @@
     "@melonoffice/audit": "workspace:*",
     "@melonoffice/auth": "workspace:*",
     "@melonoffice/billing": "workspace:*",
-    "@melonoffice/departments": "workspace:*",
     "@melonoffice/credits": "workspace:*",
+    "@melonoffice/departments": "workspace:*",
     "@melonoffice/entitlements": "workspace:*",
     "@melonoffice/execution": "workspace:*",
     "@melonoffice/observability": "workspace:*",
+    "@melonoffice/planning": "workspace:*",
     "@melonoffice/rbac": "workspace:*",
     "@melonoffice/specialists": "workspace:*",
     "@melonoffice/tenancy": "workspace:*",
     "@melonoffice/tools": "workspace:*",
+    "@melonoffice/workflows": "workspace:*",
     "hono": "4.13.9"
   },
   "devDependencies": {

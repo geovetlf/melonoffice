@@ -19,12 +19,15 @@ import { InMemoryBillingStore, type BillingStore } from '@melonoffice/billing';
 import { InMemoryDepartmentRepository, type DepartmentRepository } from '@melonoffice/departments';
 import { InMemoryExecutionRepository, type ExecutionRepository } from '@melonoffice/execution';
 import { InMemoryCreditStore, type CreditStore } from '@melonoffice/credits';
+import { InMemoryPlanRepository, type PlanRepository } from '@melonoffice/planning';
+import { InMemoryWorkflowRepository, type WorkflowRepository } from '@melonoffice/workflows';
 import type {
   BillingAccount,
   Department,
   Membership,
   Organization,
   OrganizationId,
+  PlanId,
   Specialist,
   SpecialistVersion,
   Subscription,
@@ -58,6 +61,8 @@ import {
   toSpecialistVersionDocument,
 } from './specialists-firestore.js';
 import { CREDIT_WALLETS, FirestoreCreditStore } from './credits-firestore.js';
+import { FirestorePlanRepository, PLAN_VERSIONS } from './plans-firestore.js';
+import { FirestoreWorkflowRepository } from './workflows-firestore.js';
 import { FirestoreTenancyStore, MEMBERSHIPS, ORGANIZATIONS } from './tenancy-firestore.js';
 import { emulatorFirestore, emulatorHost } from './test-firestore.js';
 import { FirestoreUserDirectory } from './users-firestore.js';
@@ -97,6 +102,14 @@ export interface Stores {
   /** Stores a department or specialist record as given, the way an operator change or bad data would. */
   readonly putStructure: (record: Department | Specialist | SpecialistVersion) => Promise<void>;
   readonly credits: CreditStore;
+  readonly plans: PlanRepository;
+  readonly workflows: WorkflowRepository;
+  /** Changes a stored plan version's label behind the digest's back, as corrupted data would. */
+  readonly tamperPlanVersion: (
+    organizationId: OrganizationId,
+    planId: PlanId,
+    version: number,
+  ) => Promise<void>;
   /** Removes an organization's wallet, as for one created before credits existed. */
   readonly removeWallet: (organizationId: OrganizationId) => Promise<void>;
   readonly audit: AuditService;
@@ -126,6 +139,7 @@ function memoryStores(): Stores {
   const specialists = new InMemorySpecialistRepository();
   const credits = new InMemoryCreditStore(events);
   const tenancy = new InMemoryTenancyStore(undefined, events, billing, departments, credits);
+  const plans = new InMemoryPlanRepository(events);
   return {
     users: new InMemoryUserDirectory(),
     tenancy,
@@ -142,6 +156,15 @@ function memoryStores(): Stores {
       else specialists.put(record);
     },
     credits,
+    plans,
+    workflows: new InMemoryWorkflowRepository(),
+    async tamperPlanVersion(organizationId, planId, version) {
+      // Memory stores what it is given; the repository checks the digest when it reads.
+      const found = await plans.findVersion(organizationId, planId, version);
+      const [first, ...rest] = found?.steps ?? [];
+      if (found === undefined || first === undefined) throw new Error('no such plan version');
+      plans.putVersion({ ...found, steps: [{ ...first, label: 'Tampered' }, ...rest] });
+    },
     removeWallet: async (id) => credits.removeWallet(id),
     audit: createAuditService(breakable),
     auditEvents: async () => events.events(),
@@ -220,6 +243,15 @@ function firestoreStores(): Stores {
       await db.collection(BILLING_ACCOUNTS).doc(organizationId).delete();
     },
     credits: new FirestoreCreditStore(db),
+    plans: new FirestorePlanRepository(db),
+    workflows: new FirestoreWorkflowRepository(db),
+    async tamperPlanVersion(organizationId, planId, version) {
+      const doc = db.collection(PLAN_VERSIONS).doc(`${planId}_${version}`);
+      const stored = await doc.get();
+      if (stored.get('organizationId') !== organizationId) throw new Error('no such plan version');
+      const content = stored.get('content') as string;
+      await doc.update({ content: content.replace(/"label":"[^"]*"/, '"label":"Tampered"') });
+    },
     async removeWallet(organizationId) {
       await db.collection(CREDIT_WALLETS).doc(organizationId).delete();
     },
@@ -272,6 +304,8 @@ export function setupApp(
     structure: { departments: stores.departments, specialists: stores.specialists },
     approvals: stores.approvals,
     credits,
+    plans: stores.plans,
+    workflows: stores.workflows,
     audit: stores.audit,
     ...(tools ? { tools } : {}),
     ...(authorization ? { authorization } : {}),
