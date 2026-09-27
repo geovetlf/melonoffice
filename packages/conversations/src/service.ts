@@ -602,7 +602,11 @@ export function createConversationService({
       const iso = at.toISOString() as IsoTimestamp;
       return repository.updateConversation(organizationId, conversationId, (current) => {
         const control = controlOf(current);
-        if (control.handledBy !== 'human' || current.status === 'closed') {
+        if (
+          control.handledBy !== 'human' ||
+          control.aiState !== 'paused' ||
+          current.status === 'closed'
+        ) {
           throw new ConversationError('invalid_transition');
         }
         // The handoff is answered: the person decided AI may continue.

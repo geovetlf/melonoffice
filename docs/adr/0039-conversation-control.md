@@ -77,17 +77,18 @@ A message arriving never changes control: the inbound path keeps it as it is.
 
 ### 3. Three operations, all audited
 
-| Operation  | Who                                                                                                           | From → to                                                   | Audit                                                           |
-| ---------- | ------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- | --------------------------------------------------------------- |
-| `takeOver` | a person with `conversation.manage`                                                                           | `active` or `escalated` → `human` / `paused`                | `conversation.ai_human_takeover`                                |
-| `handBack` | a person with `conversation.manage`, where the level is `supervised` or `autonomous`, conversation not closed | `human` (any state) → `ai` / `active`; clears the handoff   | `conversation.ai_handed_back` (reason = the handoff it answers) |
-| `escalate` | the runtime only, for a user holding `conversation.manage`                                                    | `ai` / `active` → `human` / `escalated`, with a reason code | `conversation.ai_escalated` (reason, reference = execution)     |
+| Operation  | Who                                                                                                           | From → to                                                     | Audit                                                           |
+| ---------- | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- | --------------------------------------------------------------- |
+| `takeOver` | a person with `conversation.manage`                                                                           | `active` or `escalated` → `human` / `paused`                  | `conversation.ai_human_takeover`                                |
+| `handBack` | a person with `conversation.manage`, where the level is `supervised` or `autonomous`, conversation not closed | `human` / `paused` only → `ai` / `active`; clears the handoff | `conversation.ai_handed_back` (reason = the handoff it answers) |
+| `escalate` | the runtime only, for a user holding `conversation.manage`                                                    | `ai` / `active` → `human` / `escalated`, with a reason code   | `conversation.ai_escalated` (reason, reference = execution)     |
 
 How the operations are made:
 
 - Each is one transaction of the conversation (its revision), together with its audit event.
 - Each moves the control `epoch` by one.
 - `takeOver` and `handBack` have HTTP routes with an empty body. `escalate` has no route: it is the runtime's.
+- `handBack` is strict: it only resumes a conversation a person paused. It never puts AI in charge of one AI never handled (`human` / `off`), and an escalation is accepted with `takeOver` first (`escalated` → `paused` → `active`). Anything else is `invalid_transition`. Putting an agent in charge of a new conversation is a later phase's.
 
 ### 4. The epoch: no race between an agent and a person
 

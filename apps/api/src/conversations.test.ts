@@ -177,9 +177,29 @@ describe.each(STORES)('conversations with storage in %s', (_name, createStores) 
       if (first === undefined) throw new Error('no conversation');
       return first;
     };
+    /**
+     * An agent handles the conversation. Nothing in CV-6A puts one in charge (hand-back only
+     * resumes a conversation a person paused), so the test records it in the store the way a later
+     * phase's assignment will.
+     */
+    const aiHandles = (org: OrganizationId, id: string) =>
+      stores.conversations.updateConversation(org, id as ConversationId, (current) => ({
+        conversation: {
+          ...current,
+          control: {
+            handledBy: 'ai',
+            aiState: 'active',
+            epoch: 1,
+            changedAt: '2026-09-27T12:00:00.000Z' as IsoTimestamp,
+          },
+          revision: current.revision + 1,
+        },
+        events: [],
+      }));
     return {
       ...ctx,
       stores,
+      aiHandles,
       connect,
       aliceId,
       bobId,
@@ -216,11 +236,10 @@ describe.each(STORES)('conversations with storage in %s', (_name, createStores) 
         autonomy: 'autonomous',
       });
       expect(changed).toMatchObject({ status: 200, body: { autonomy: 'autonomous' } });
-      const handed = await t.post('token-alice', `${one}/handback`, {});
-      expect(handed).toMatchObject({
-        status: 200,
-        body: { control: { handledBy: 'ai', aiState: 'active' } },
-      });
+      // Hand-back only resumes a conversation a person paused: never one AI never handled.
+      const never = await t.post('token-alice', `${one}/handback`, {});
+      expect(never).toMatchObject({ status: 409, body: { error: 'invalid_transition' } });
+      await t.aiHandles(t.orgA, conversation.id);
 
       // While AI handles it, a person's reply is refused and nothing is sent.
       const blocked = await t.post('token-alice', `${one}/messages`, {
@@ -240,6 +259,11 @@ describe.each(STORES)('conversations with storage in %s', (_name, createStores) 
         text: 'Hola',
       });
       expect(sent.status).toBe(201);
+      const handed = await t.post('token-alice', `${one}/handback`, {});
+      expect(handed).toMatchObject({
+        status: 200,
+        body: { control: { handledBy: 'ai', aiState: 'active' } },
+      });
 
       const actions = (await t.stores.auditEvents()).map((e) => e.action);
       expect(actions).toEqual(
@@ -290,11 +314,7 @@ describe.each(STORES)('conversations with storage in %s', (_name, createStores) 
       await t.post('token-alice', `${t.base(t.orgA)}/conversation-settings/autonomy`, {
         autonomy: 'autonomous',
       });
-      await t.post(
-        'token-alice',
-        `${t.base(t.orgA)}/conversations/${conversation.id}/handback`,
-        {},
-      );
+      await t.aiHandles(t.orgA, conversation.id);
       // Bob in his own organization, naming Alice's conversation: missing.
       await t.post('token-bob', `${t.base(t.orgB)}/conversation-settings/autonomy`, {
         autonomy: 'autonomous',
