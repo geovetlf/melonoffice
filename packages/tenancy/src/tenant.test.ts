@@ -1,6 +1,13 @@
 import { buildAuditEvent, InMemoryAuditStore } from '@melonoffice/audit';
 import { actAsGia, type AuthenticatedContext } from '@melonoffice/auth';
-import type { Membership, Organization, OrganizationId, UserId } from '@melonoffice/domain';
+import type {
+  InitialBilling,
+  Membership,
+  Organization,
+  OrganizationId,
+  SubscriptionId,
+  UserId,
+} from '@melonoffice/domain';
 import { describe, expect, it } from 'vitest';
 import { TenancyError } from './errors.js';
 import { isOrganizationId, membershipIdOf } from './ids.js';
@@ -17,8 +24,26 @@ const NOW = new Date('2026-09-26T12:00:00Z');
 const ALICE = '11111111-1111-4111-8111-111111111111' as UserId;
 const BOB = '22222222-2222-4222-8222-222222222222' as UserId;
 const MISSING_ORG = '99999999-9999-4999-8999-999999999999';
-/** Tenancy stores the plan reference as given; which plans exist is entitlements' business. */
-const PLAN = { id: 'test-plan', version: 1 } as const;
+/** Billing as the billing package would build it; tenancy only stores it with the organization. */
+const BILLING = (organization: Organization): InitialBilling => {
+  const subscriptionId = `sub-${organization.id}` as SubscriptionId;
+  return {
+    account: {
+      organizationId: organization.id,
+      subscriptionId,
+      createdAt: organization.createdAt,
+      updatedAt: organization.createdAt,
+    },
+    subscription: {
+      id: subscriptionId,
+      organizationId: organization.id,
+      plan: { id: 'test-plan', version: 1 },
+      status: 'active',
+      createdAt: organization.createdAt,
+      updatedAt: organization.createdAt,
+    },
+  };
+};
 
 const userContext = (userId: UserId): AuthenticatedContext =>
   Object.freeze({ actor: 'user', userId, emailVerified: true });
@@ -38,8 +63,8 @@ async function setup() {
   const store = new InMemoryTenancyStore(() => NOW);
   const alice = userContext(ALICE);
   const bob = userContext(BOB);
-  const a = await createOrganization(alice, { name: 'Org A' }, store, { plan: PLAN });
-  const b = await createOrganization(bob, { name: 'Org B' }, store, { plan: PLAN });
+  const a = await createOrganization(alice, { name: 'Org A' }, store, { billing: BILLING });
+  const b = await createOrganization(bob, { name: 'Org B' }, store, { billing: BILLING });
   return { store, alice, bob, orgA: a.organization.id, orgB: b.organization.id, a, b };
 }
 
@@ -50,14 +75,13 @@ describe('createOrganization', () => {
       userContext(ALICE),
       { name: '  Acme  ' },
       store,
-      { plan: PLAN },
+      { billing: BILLING },
     );
     expect(organization).toEqual({
       id: expect.stringMatching(/^[0-9a-f-]{36}$/),
       name: 'Acme',
       status: 'active',
       createdBy: ALICE,
-      plan: { id: 'test-plan', version: 1 },
       createdAt: NOW.toISOString(),
       updatedAt: NOW.toISOString(),
     });
@@ -74,28 +98,29 @@ describe('createOrganization', () => {
     expect(await store.findMembership(organization.id, ALICE)).toEqual(membership);
   });
 
-  it('requires a well-formed plan reference, chosen by the server', async () => {
+  it('stores the billing built for the new organization, and refuses billing for another one', async () => {
     const store = new InMemoryTenancyStore(() => NOW);
-    for (const plan of [
-      undefined,
-      { id: '', version: 1 },
-      { id: 'Entrepreneur', version: 1 },
-      { id: 'entrepreneur', version: 0 },
-      { id: 'entrepreneur', version: 1.5 },
+    const created = await createOrganization(userContext(ALICE), { name: 'Acme' }, store, {
+      billing: BILLING,
+    });
+    expect(created.billing).toEqual(BILLING(created.organization));
+    const other = { ...created.organization, id: MISSING_ORG as OrganizationId };
+    for (const wrong of [
+      () => BILLING(other),
+      (o: Organization) => ({ ...BILLING(o), account: BILLING(other).account }),
+      (o: Organization) => ({ ...BILLING(o), subscription: BILLING(other).subscription }),
     ]) {
       await expect(
-        createOrganization(userContext(ALICE), { name: 'Acme' }, store, {
-          plan: plan as unknown as { id: string; version: number },
-        }),
-      ).rejects.toThrow('invalid plan reference');
+        createOrganization(userContext(BOB), { name: 'Acme' }, store, { billing: wrong }),
+      ).rejects.toThrow('initial billing does not belong to the new organization');
     }
-    expect(await store.membershipsOfUser(ALICE)).toEqual([]);
+    expect(await store.membershipsOfUser(BOB)).toEqual([]);
   });
 
   it('never derives the id from the name or the user', async () => {
     const store = new InMemoryTenancyStore();
     const { organization } = await createOrganization(userContext(ALICE), { name: 'acme' }, store, {
-      plan: PLAN,
+      billing: BILLING,
     });
     expect(organization.id).not.toContain('acme');
     expect(organization.id).not.toContain(ALICE);
@@ -104,8 +129,12 @@ describe('createOrganization', () => {
 
   it('allows the same name in different organizations', async () => {
     const store = new InMemoryTenancyStore();
-    const a = await createOrganization(userContext(ALICE), { name: 'Acme' }, store, { plan: PLAN });
-    const b = await createOrganization(userContext(BOB), { name: 'Acme' }, store, { plan: PLAN });
+    const a = await createOrganization(userContext(ALICE), { name: 'Acme' }, store, {
+      billing: BILLING,
+    });
+    const b = await createOrganization(userContext(BOB), { name: 'Acme' }, store, {
+      billing: BILLING,
+    });
     expect(a.organization.id).not.toBe(b.organization.id);
   });
 
@@ -114,7 +143,7 @@ describe('createOrganization', () => {
     const alice = userContext(ALICE);
     const results = await Promise.all(
       Array.from({ length: 5 }, () =>
-        codeOf(createOrganization(alice, { name: 'Acme' }, store, { plan: PLAN })),
+        codeOf(createOrganization(alice, { name: 'Acme' }, store, { billing: BILLING })),
       ),
     );
     expect(results.filter((r) => r === 'accepted')).toHaveLength(1);
@@ -126,7 +155,9 @@ describe('createOrganization', () => {
     const store = new InMemoryTenancyStore();
     expect(
       await codeOf(
-        createOrganization(actAsGia(userContext(ALICE)), { name: 'Acme' }, store, { plan: PLAN }),
+        createOrganization(actAsGia(userContext(ALICE)), { name: 'Acme' }, store, {
+          billing: BILLING,
+        }),
       ),
     ).toBe('requires_user');
     expect(await store.membershipsOfUser(ALICE)).toHaveLength(0);
@@ -139,7 +170,7 @@ describe('createOrganization', () => {
       userContext(ALICE),
       input,
       store,
-      { plan: PLAN },
+      { billing: BILLING },
     );
     expect(organization.createdBy).toBe(ALICE);
     expect(membership.userId).toBe(ALICE);
@@ -298,7 +329,7 @@ describe('creation audit (atomic)', () => {
     const audit = new InMemoryAuditStore();
     const store = new InMemoryTenancyStore(() => NOW, audit);
     const { organization } = await createOrganization(userContext(ALICE), { name: 'Acme' }, store, {
-      plan: PLAN,
+      billing: BILLING,
       audit: ({ organization: created }) => [
         buildAuditEvent(
           {
@@ -319,7 +350,7 @@ describe('creation audit (atomic)', () => {
     const audit = new InMemoryAuditStore();
     const store = new InMemoryTenancyStore(() => NOW, audit);
     const failing = createOrganization(userContext(ALICE), { name: 'Acme' }, store, {
-      plan: PLAN,
+      billing: BILLING,
       audit: () => {
         throw new Error('audit unavailable');
       },
@@ -328,6 +359,6 @@ describe('creation audit (atomic)', () => {
     expect(await store.membershipsOfUser(ALICE)).toEqual([]);
     expect(audit.events()).toEqual([]);
     // The user was not marked as a creator, so a later attempt still works.
-    await createOrganization(userContext(ALICE), { name: 'Acme' }, store, { plan: PLAN });
+    await createOrganization(userContext(ALICE), { name: 'Acme' }, store, { billing: BILLING });
   });
 });

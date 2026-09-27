@@ -18,7 +18,8 @@ import { resolveEntitlements } from './resolve.js';
  *
  * - `unresolved_tenant`: the context did not come from `resolveTenant()`.
  * - `organization_inactive`: the organization is missing or not active.
- * - `plan_missing`: the organization has no plan reference.
+ * - `plan_missing`: no plan is in force for the organization: it has no billing, or its
+ *   subscription is not `trialing` or `active` (ADR-0022).
  * - `plan_unknown`: its plan reference is not in the catalogue.
  * - `plan_inactive`: the plan exists but is not active (for example Empresa, `prepared`).
  */
@@ -66,9 +67,19 @@ export interface EntitlementService {
   getLimit(tenant: TenantContext, limit: string): Promise<LimitResult>;
 }
 
+/**
+ * Where the plan in force comes from. Billing is the authority (ADR-0022); entitlements only
+ * resolves the reference it gets, and never picks a plan itself.
+ */
+export interface PlanSource {
+  currentPlan(organizationId: OrganizationId): Promise<PlanRef | undefined>;
+}
+
 export interface EntitlementServiceOptions {
-  /** Where the organization and its plan reference are read. Only `findOrganization` is used. */
+  /** Only `findOrganization` is used, to refuse inactive organizations. */
   readonly organizations: Pick<TenancyStore, 'findOrganization'>;
+  /** The plan in force for an organization: billing's current subscription. */
+  readonly plans: PlanSource;
   /** The plan catalogue. Defaults to the one in code; tests may pass their own. */
   readonly catalog?: readonly PlanConfig[];
   readonly now?: () => Date;
@@ -93,6 +104,7 @@ const unavailable = (reason: EntitlementsUnavailableReason): OrganizationEntitle
 
 export function createEntitlementService({
   organizations,
+  plans,
   catalog = PLAN_CATALOG,
   now = () => new Date(),
 }: EntitlementServiceOptions): EntitlementService {
@@ -102,8 +114,9 @@ export function createEntitlementService({
     if (organization?.id !== tenant.organizationId || organization.status !== 'active') {
       return unavailable('organization_inactive');
     }
-    if (organization.plan === undefined) return unavailable('plan_missing');
-    const plan = findPlan(catalog, organization.plan.id as PlanId, organization.plan.version);
+    const reference = await plans.currentPlan(organization.id);
+    if (reference === undefined) return unavailable('plan_missing');
+    const plan = findPlan(catalog, reference.id as PlanId, reference.version);
     if (plan === undefined) return unavailable('plan_unknown');
     if (plan.status !== 'active') return unavailable('plan_inactive');
     const resolved = resolveEntitlements({

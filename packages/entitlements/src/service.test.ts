@@ -1,5 +1,13 @@
 import { actAsGia, type AuthenticatedContext } from '@melonoffice/auth';
-import type { MembershipStatus, Organization, PlanRef, UserId } from '@melonoffice/domain';
+import type {
+  InitialBilling,
+  MembershipStatus,
+  Organization,
+  OrganizationId,
+  PlanRef,
+  SubscriptionId,
+  UserId,
+} from '@melonoffice/domain';
 import {
   createOrganization,
   InMemoryTenancyStore,
@@ -15,6 +23,7 @@ import {
   createEntitlementService,
   LIMIT_KEYS,
   type EntitlementService,
+  type PlanSource,
 } from './service.js';
 import { fixturePlan } from './test-fixtures.js';
 
@@ -27,26 +36,54 @@ const CATALOG = createPlanCatalog([...PLAN_CATALOG, fixturePlan]);
 const as = (userId: UserId): AuthenticatedContext =>
   Object.freeze({ actor: 'user', userId, emailVerified: true });
 
+/**
+ * Stands in for billing (ADR-0022), which says which plan is in force for each organization.
+ * Entitlements only resolves the reference; it never picks one.
+ */
+class Plans implements PlanSource {
+  readonly byOrganization = new Map<string, PlanRef>();
+  async currentPlan(organizationId: OrganizationId): Promise<PlanRef | undefined> {
+    return this.byOrganization.get(organizationId);
+  }
+}
+
+/** Tenancy needs billing to create an organization; its contents do not matter here. */
+const BILLING = (organization: Organization): InitialBilling => {
+  const subscriptionId = `sub-${organization.id}` as SubscriptionId;
+  const at = organization.createdAt;
+  return {
+    account: { organizationId: organization.id, subscriptionId, createdAt: at, updatedAt: at },
+    subscription: {
+      id: subscriptionId,
+      organizationId: organization.id,
+      plan: DEFAULT_PLAN,
+      status: 'active',
+      createdAt: at,
+      updatedAt: at,
+    },
+  };
+};
+
 /** Alice owns A on the default plan; Bob owns B on the fixture plan. */
 async function world() {
   const store = new InMemoryTenancyStore();
-  const a = await createOrganization(as(ALICE), { name: 'A' }, store, { plan: DEFAULT_PLAN });
-  const b = await createOrganization(as(BOB), { name: 'B' }, store, { plan: FIXTURE });
-  const service = createEntitlementService({ organizations: store, catalog: CATALOG });
+  const a = await createOrganization(as(ALICE), { name: 'A' }, store, { billing: BILLING });
+  const b = await createOrganization(as(BOB), { name: 'B' }, store, { billing: BILLING });
+  const plans = new Plans();
+  plans.byOrganization.set(a.organization.id, DEFAULT_PLAN);
+  plans.byOrganization.set(b.organization.id, FIXTURE);
+  const service = createEntitlementService({ organizations: store, plans, catalog: CATALOG });
   const tenantA = await resolveTenant(as(ALICE), a.organization.id, store);
   const tenantB = await resolveTenant(as(BOB), b.organization.id, store);
-  return { store, a, b, service, tenantA, tenantB };
+  return { store, plans, a, b, service, tenantA, tenantB };
 }
 
-/** Re-plans organization A as an operator change would, and resolves Alice again. */
+/** Puts organization A on another plan, or none, as billing would. */
 async function withPlanOfA(plan: PlanRef | undefined) {
   const w = await world();
-  const withoutPlan = Object.fromEntries(
-    Object.entries(w.a.organization).filter(([key]) => key !== 'plan'),
-  ) as unknown as Organization;
-  const organization: Organization = plan === undefined ? withoutPlan : { ...withoutPlan, plan };
-  w.store.put(organization);
-  return { ...w, tenantA: await resolveTenant(as(ALICE), organization.id, w.store) };
+  if (plan === undefined) w.plans.byOrganization.delete(w.a.organization.id);
+  else w.plans.byOrganization.set(w.a.organization.id, plan);
+  return w;
 }
 
 async function everyAnswer(service: EntitlementService, tenant: TenantContext) {
@@ -187,7 +224,7 @@ describe('EntitlementService', () => {
     ['plan_inactive', { id: 'business', version: 1 }],
     ['plan_inactive', { id: 'corporate', version: 1 }],
   ] as const)(
-    'denies everything with %s, never falling back to a default',
+    'denies everything with %s, never falling back to a default plan',
     async (reason, plan) => {
       const { service, tenantA } = await withPlanOfA(plan);
       expect(await everyAnswer(service, tenantA)).toEqual({
@@ -227,9 +264,9 @@ describe('EntitlementService', () => {
   });
 
   it('reads the plan at each call, so a later plan change applies without restarting', async () => {
-    const { store, service, tenantA, a } = await world();
+    const { plans, service, tenantA, a } = await world();
     expect(await service.hasCapability(tenantA, 'gia.text')).toMatchObject({ enabled: false });
-    store.put({ ...a.organization, plan: FIXTURE });
+    plans.byOrganization.set(a.organization.id, FIXTURE);
     expect(await service.hasCapability(tenantA, 'gia.text')).toMatchObject({ enabled: true });
   });
 });

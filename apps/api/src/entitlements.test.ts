@@ -1,4 +1,4 @@
-import type { Organization, OrganizationId, PlanRef, UserId } from '@melonoffice/domain';
+import type { OrganizationId, PlanRef, UserId } from '@melonoffice/domain';
 import {
   createEntitlementService,
   createPlanCatalog,
@@ -13,6 +13,7 @@ import {
   type Permission,
 } from '@melonoffice/rbac';
 import { resolveTenant } from '@melonoffice/tenancy';
+import { changePlan, createBillingService } from '@melonoffice/billing';
 import { describe, expect, it } from 'vitest';
 import { setupApp, STORES, type Stores } from './test-api.js';
 
@@ -35,6 +36,24 @@ const TEST_PLAN: PlanConfig = {
 const TEST_PLAN_REF: PlanRef = { id: TEST_PLAN.id, version: TEST_PLAN.version };
 const CATALOG = createPlanCatalog([...PLAN_CATALOG, TEST_PLAN]);
 
+/** The entitlement service as the app builds it, with the test catalogue and billing's plan. */
+const entitlementsFor = (stores: Stores) =>
+  createEntitlementService({
+    organizations: stores.tenancy,
+    plans: createBillingService({ billing: stores.billing, organizations: stores.tenancy }),
+    catalog: CATALOG,
+  });
+
+async function subscriptionOf(stores: Stores, organizationId: OrganizationId) {
+  const account = await stores.billing.findAccount(organizationId);
+  const subscription =
+    account === undefined
+      ? undefined
+      : await stores.billing.findSubscription(account.subscriptionId);
+  if (subscription === undefined) throw new Error('missing subscription');
+  return subscription;
+}
+
 describe.each(STORES)('entitlements with storage in %s', (_name, createStores) => {
   async function setup(
     options: {
@@ -45,11 +64,7 @@ describe.each(STORES)('entitlements with storage in %s', (_name, createStores) =
     } = {},
   ) {
     const stores = options.stores ?? createStores();
-    const ctx = setupApp(
-      stores,
-      options.authorization,
-      createEntitlementService({ organizations: stores.tenancy, catalog: CATALOG }),
-    );
+    const ctx = setupApp(stores, options.authorization, entitlementsFor(stores));
     const aliceId = (await ctx.register('token-alice')) as UserId;
     const bobId = (await ctx.register('token-bob')) as UserId;
     const create = async (token: string, body: unknown) =>
@@ -73,14 +88,14 @@ describe.each(STORES)('entitlements with storage in %s', (_name, createStores) =
       );
       return { status: response.status, body: (await response.json()) as Record<string, unknown> };
     };
-    /** Changes organization A's plan the way an operator would (there is no API for it). */
+    /**
+     * Changes organization A's plan in billing, the way a provider sync would (there is no API
+     * for it). `undefined` removes A's billing, as for an organization created before billing.
+     */
     const setPlanOfA = async (plan: PlanRef | undefined) => {
-      const organization = await stores.tenancy.findOrganization(orgA);
-      if (organization === undefined) throw new Error('missing organization');
-      const rest = Object.fromEntries(
-        Object.entries(organization).filter(([key]) => key !== 'plan'),
-      ) as unknown as Organization;
-      await stores.put(plan === undefined ? rest : { ...rest, plan });
+      if (plan === undefined) return stores.removeBilling(orgA);
+      const subscription = await subscriptionOf(stores, orgA);
+      await stores.putBilling(changePlan(subscription, plan, subscription.updatedAt));
     };
     const events = async (action: string) =>
       (await stores.auditEvents()).filter((e) => e.action === action);
@@ -88,14 +103,14 @@ describe.each(STORES)('entitlements with storage in %s', (_name, createStores) =
   }
 
   describe('plan assignment at creation', () => {
-    it('gives every new organization the default plan, stored with it', async () => {
-      const { tenancy, orgA, orgB } = await setup();
-      expect((await tenancy.findOrganization(orgA))?.plan).toEqual(DEFAULT_PLAN);
-      expect((await tenancy.findOrganization(orgB))?.plan).toEqual(DEFAULT_PLAN);
+    it('opens every new organization on the default plan, in billing', async () => {
+      const { stores, orgA, orgB } = await setup();
+      expect((await subscriptionOf(stores, orgA)).plan).toEqual(DEFAULT_PLAN);
+      expect((await subscriptionOf(stores, orgB)).plan).toEqual(DEFAULT_PLAN);
     });
 
     it('ignores any plan, capability or limit the client sends', async () => {
-      const { tenancy, orgA, events } = await setup({
+      const { stores, orgA, events } = await setup({
         createBody: {
           plan: TEST_PLAN_REF,
           planId: 'corporate',
@@ -105,7 +120,7 @@ describe.each(STORES)('entitlements with storage in %s', (_name, createStores) =
           limits: { 'users.max': 'unlimited' },
         },
       });
-      expect((await tenancy.findOrganization(orgA))?.plan).toEqual(DEFAULT_PLAN);
+      expect((await subscriptionOf(stores, orgA)).plan).toEqual(DEFAULT_PLAN);
       expect((await events('plan.assign')).map((e) => e.plan)).toEqual([
         DEFAULT_PLAN,
         DEFAULT_PLAN,
@@ -268,7 +283,7 @@ describe.each(STORES)('entitlements with storage in %s', (_name, createStores) =
     });
 
     it('offers no way to change a plan, capability or limit', async () => {
-      const { app, as, orgA, tenancy } = await setup();
+      const { app, as, orgA, stores } = await setup();
       const change = { plan: TEST_PLAN_REF, capabilities: { 'automations.enabled': true } };
       for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
         for (const path of [
@@ -287,7 +302,7 @@ describe.each(STORES)('entitlements with storage in %s', (_name, createStores) =
           expect(response.status).toBe(404);
         }
       }
-      expect((await tenancy.findOrganization(orgA))?.plan).toEqual(DEFAULT_PLAN);
+      expect((await subscriptionOf(stores, orgA)).plan).toEqual(DEFAULT_PLAN);
     });
   });
 
@@ -299,10 +314,7 @@ describe.each(STORES)('entitlements with storage in %s', (_name, createStores) =
       await setPlanOfA(entitled ? TEST_PLAN_REF : DEFAULT_PLAN);
       const permissions: Permission[] = permitted ? ['entitlement.read'] : [];
       const rbac = createAuthorizationService({ owner: permissions });
-      const entitlements = createEntitlementService({
-        organizations: stores.tenancy,
-        catalog: CATALOG,
-      });
+      const entitlements = entitlementsFor(stores);
       const tenant = await resolveTenant(
         { actor: 'user', userId: aliceId, emailVerified: true },
         orgA,

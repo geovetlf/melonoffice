@@ -6,6 +6,7 @@ import { createLogger } from '@melonoffice/observability';
 import { createApp, SERVICE_NAME } from './app.js';
 import { loadConfig } from './config.js';
 import { FirestoreAuditStore } from './audit-firestore.js';
+import { FirestoreBillingStore } from './billing-firestore.js';
 import { FirestoreTenancyStore } from './tenancy-firestore.js';
 import { FirestoreUserDirectory } from './users-firestore.js';
 
@@ -23,6 +24,7 @@ function services(projectId: string) {
       users: new FirestoreUserDirectory(firestore),
     },
     tenancy: new FirestoreTenancyStore(firestore),
+    billing: new FirestoreBillingStore(firestore),
     audit: createAuditService(new FirestoreAuditStore(firestore)),
   };
 }

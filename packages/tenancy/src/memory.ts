@@ -1,4 +1,5 @@
 import type {
+  InitialBilling,
   IsoTimestamp,
   Membership,
   Organization,
@@ -8,7 +9,17 @@ import type {
 import type { InMemoryAuditStore } from '@melonoffice/audit';
 import { TenancyError } from './errors.js';
 import { membershipIdOf, newOrganizationId, OWNER_ROLE } from './ids.js';
-import type { CreatedOrganization, NewOrganization, TenancyStore } from './store.js';
+import {
+  checkInitialBilling,
+  type CreatedOrganization,
+  type NewOrganization,
+  type TenancyStore,
+} from './store.js';
+
+/** Where the memory store puts a new organization's billing (the billing package's memory store). */
+export interface InitialBillingSink {
+  openNow(billing: InitialBilling): void;
+}
 
 /** For tests and local runs only: everything is lost on restart and not shared between instances. */
 export class InMemoryTenancyStore implements TenancyStore {
@@ -20,13 +31,15 @@ export class InMemoryTenancyStore implements TenancyStore {
     private readonly now: () => Date = () => new Date(),
     /** Receives creation audit events in the same step as the data. */
     private readonly audit?: InMemoryAuditStore,
+    /** Receives the new organization's billing in the same step. Without it, billing is not kept. */
+    private readonly billingSink?: InitialBillingSink,
   ) {}
 
   // No await before the writes, so concurrent calls cannot both pass the creator check.
   async createOrganization({
     name,
     creator,
-    plan,
+    billing,
     audit,
   }: NewOrganization): Promise<CreatedOrganization> {
     if (this.#creators.has(creator)) throw new TenancyError('organization_limit_reached');
@@ -36,7 +49,6 @@ export class InMemoryTenancyStore implements TenancyStore {
       name,
       status: 'active',
       createdBy: creator,
-      plan: Object.freeze({ id: plan.id, version: plan.version }),
       createdAt: at,
       updatedAt: at,
     });
@@ -49,15 +61,19 @@ export class InMemoryTenancyStore implements TenancyStore {
       createdAt: at,
       updatedAt: at,
     });
-    const events = audit?.({ organization, membership }) ?? [];
+    const initialBilling = billing(organization);
+    checkInitialBilling(organization, initialBilling);
+    const created = { organization, membership, billing: initialBilling };
+    const events = audit?.(created) ?? [];
     if (events.length > 0) {
       if (this.audit === undefined) throw new Error('no audit store for creation events');
       this.audit.appendNow(events);
     }
+    this.billingSink?.openNow(initialBilling);
     this.#creators.add(creator);
     this.#organizations.set(organization.id, organization);
     this.#memberships.set(membership.id, membership);
-    return { organization, membership };
+    return created;
   }
 
   async findOrganization(id: OrganizationId): Promise<Organization | undefined> {

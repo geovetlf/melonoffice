@@ -27,7 +27,7 @@ export type AuditActor =
   | { readonly type: 'system' | 'anonymous' };
 
 export interface AuditTarget {
-  readonly type: 'user' | 'organization' | 'membership';
+  readonly type: 'user' | 'organization' | 'membership' | 'subscription';
   readonly id: string;
 }
 
@@ -60,7 +60,7 @@ export interface AuditEvent {
   readonly requestedOrganizationId?: string;
   /** The permission RBAC checked, for `authorization.check`. */
   readonly permission?: string;
-  /** The plan assigned, for `plan.assign` (ADR-0021). */
+  /** The plan assigned, for `plan.assign` (ADR-0021) and `billing.subscription_created` (ADR-0022). */
   readonly plan?: AuditPlan;
   /** A stable code saying why, for `denied` and `failure` (an error code, never a message). */
   readonly reason?: string;

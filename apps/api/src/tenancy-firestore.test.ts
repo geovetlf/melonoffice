@@ -1,6 +1,7 @@
-import { FieldValue, Timestamp } from '@google-cloud/firestore';
-import type { OrganizationId, UserId } from '@melonoffice/domain';
+import { Timestamp } from '@google-cloud/firestore';
+import type { Organization, OrganizationId, UserId } from '@melonoffice/domain';
 import { buildAuditEvent } from '@melonoffice/audit';
+import { openBilling } from '@melonoffice/billing';
 import { TenancyError } from '@melonoffice/tenancy';
 import { describe, expect, it } from 'vitest';
 import {
@@ -10,12 +11,19 @@ import {
   ORGANIZATIONS,
 } from './tenancy-firestore.js';
 import { AUDIT_LOGS, FirestoreAuditStore } from './audit-firestore.js';
+import {
+  BILLING_ACCOUNTS,
+  FirestoreBillingStore,
+  SUBSCRIPTIONS,
+  toAccountDocument,
+} from './billing-firestore.js';
 import { emulatorFirestore, emulatorHost } from './test-firestore.js';
 
 const NOW = new Date('2026-09-26T12:00:00Z');
 const ALICE = '11111111-1111-4111-8111-111111111111' as UserId;
 const BOB = '22222222-2222-4222-8222-222222222222' as UserId;
 const PLAN = { id: 'entrepreneur', version: 1 } as const;
+const BILLING = (organization: Organization) => openBilling(organization, PLAN);
 
 describe.runIf(emulatorHost)('FirestoreTenancyStore (emulator)', () => {
   function setup() {
@@ -23,19 +31,18 @@ describe.runIf(emulatorHost)('FirestoreTenancyStore (emulator)', () => {
     return { db, store: new FirestoreTenancyStore(db, () => NOW) };
   }
 
-  it('writes the organization, the owner membership and the creator record together', async () => {
+  it('writes the organization, the owner membership, the creator record and billing together', async () => {
     const { db, store } = setup();
-    const { organization, membership } = await store.createOrganization({
+    const { organization, membership, billing } = await store.createOrganization({
       name: 'Acme',
       creator: ALICE,
-      plan: PLAN,
+      billing: BILLING,
     });
     const at = Timestamp.fromDate(NOW);
     expect((await db.collection(ORGANIZATIONS).doc(organization.id).get()).data()).toEqual({
       name: 'Acme',
       status: 'active',
       createdBy: ALICE,
-      plan: { id: 'entrepreneur', version: 1 },
       createdAt: at,
       updatedAt: at,
     });
@@ -52,9 +59,26 @@ describe.runIf(emulatorHost)('FirestoreTenancyStore (emulator)', () => {
       organizationId: organization.id,
       createdAt: at,
     });
+    expect((await db.collection(BILLING_ACCOUNTS).doc(organization.id).get()).data()).toEqual({
+      subscriptionId: billing.subscription.id,
+      createdAt: at,
+      updatedAt: at,
+    });
+    expect((await db.collection(SUBSCRIPTIONS).doc(billing.subscription.id).get()).data()).toEqual({
+      organizationId: organization.id,
+      plan: { id: 'entrepreneur', version: 1 },
+      status: 'active',
+      createdAt: at,
+      updatedAt: at,
+    });
     expect(await store.findOrganization(organization.id)).toEqual(organization);
     expect(await store.findMembership(organization.id, ALICE)).toEqual(membership);
     expect(await store.membershipsOfUser(ALICE)).toEqual([membership]);
+    const billingStore = new FirestoreBillingStore(db);
+    expect(await billingStore.findAccount(organization.id)).toEqual(billing.account);
+    expect(await billingStore.findSubscription(billing.subscription.id)).toEqual(
+      billing.subscription,
+    );
   });
 
   it(
@@ -64,7 +88,7 @@ describe.runIf(emulatorHost)('FirestoreTenancyStore (emulator)', () => {
       const { db, store } = setup();
       const outcomes = await Promise.allSettled(
         Array.from({ length: 8 }, () =>
-          store.createOrganization({ name: 'Acme', creator: ALICE, plan: PLAN }),
+          store.createOrganization({ name: 'Acme', creator: ALICE, billing: BILLING }),
         ),
       );
       expect(outcomes.filter((o) => o.status === 'fulfilled')).toHaveLength(1);
@@ -85,7 +109,7 @@ describe.runIf(emulatorHost)('FirestoreTenancyStore (emulator)', () => {
     const { organization, membership } = await store.createOrganization({
       name: 'Acme',
       creator: ALICE,
-      plan: PLAN,
+      billing: BILLING,
     });
     const duplicate = db.collection(MEMBERSHIPS).doc(`${organization.id}_${ALICE}`);
     await expect(
@@ -96,8 +120,8 @@ describe.runIf(emulatorHost)('FirestoreTenancyStore (emulator)', () => {
 
   it('keeps users apart', async () => {
     const { store } = setup();
-    const a = await store.createOrganization({ name: 'A', creator: ALICE, plan: PLAN });
-    const b = await store.createOrganization({ name: 'B', creator: BOB, plan: PLAN });
+    const a = await store.createOrganization({ name: 'A', creator: ALICE, billing: BILLING });
+    const b = await store.createOrganization({ name: 'B', creator: BOB, billing: BILLING });
     expect(await store.findMembership(b.organization.id, ALICE)).toBeUndefined();
     expect(await store.findMembership(a.organization.id, BOB)).toBeUndefined();
     expect((await store.membershipsOfUser(ALICE)).map((m) => m.organizationId)).toEqual([
@@ -118,7 +142,7 @@ describe.runIf(emulatorHost)('FirestoreTenancyStore (emulator)', () => {
     const { organization } = await store.createOrganization({
       name: 'Acme',
       creator: ALICE,
-      plan: PLAN,
+      billing: BILLING,
     });
     const ref = db.collection(MEMBERSHIPS).doc(`${organization.id}_${ALICE}`);
     await ref.update({ status: 'owner' });
@@ -136,26 +160,59 @@ describe.runIf(emulatorHost)('FirestoreTenancyStore (emulator)', () => {
     );
   });
 
-  it('refuses a malformed plan reference, and reads a missing one as no plan', async () => {
+  it('does not read a plan field left on the organization: billing is the only source', async () => {
     const { db, store } = setup();
     const { organization } = await store.createOrganization({
       name: 'Acme',
       creator: ALICE,
-      plan: PLAN,
+      billing: BILLING,
     });
-    const ref = db.collection(ORGANIZATIONS).doc(organization.id);
-    for (const plan of [
-      { id: 'entrepreneur' },
-      { id: 'Entrepreneur!', version: 1 },
-      'entrepreneur',
+    await db
+      .collection(ORGANIZATIONS)
+      .doc(organization.id)
+      .update({ plan: { id: 'corporate', version: 1 } });
+    expect(await store.findOrganization(organization.id)).toEqual(organization);
+  });
+
+  it('refuses stored subscriptions with an unknown status or a malformed plan', async () => {
+    const { db, store } = setup();
+    const { billing } = await store.createOrganization({
+      name: 'Acme',
+      creator: ALICE,
+      billing: BILLING,
+    });
+    const billingStore = new FirestoreBillingStore(db);
+    const ref = db.collection(SUBSCRIPTIONS).doc(billing.subscription.id);
+    for (const change of [
+      { status: 'free' },
+      { status: 'active', plan: { id: 'entrepreneur' } },
+      { plan: 'entrepreneur' },
     ]) {
-      await ref.update({ plan });
-      await expect(store.findOrganization(organization.id)).rejects.toThrow(
-        'invalid organization record',
+      await ref.update(change);
+      await expect(billingStore.findSubscription(billing.subscription.id)).rejects.toThrow(
+        'invalid subscription record',
       );
     }
-    await ref.update({ plan: FieldValue.delete() });
-    expect((await store.findOrganization(organization.id))?.plan).toBeUndefined();
+    expect(await billingStore.findSubscription('not-a-uuid' as never)).toBeUndefined();
+    expect(await billingStore.findAccount('org-a' as OrganizationId)).toBeUndefined();
+  });
+
+  it('never creates a second account for an organization', async () => {
+    const { db, store } = setup();
+    const { organization } = await store.createOrganization({
+      name: 'Acme',
+      creator: ALICE,
+      billing: BILLING,
+    });
+    const again = BILLING(organization);
+    await expect(
+      db.runTransaction(async (tx) => {
+        tx.create(
+          db.collection(BILLING_ACCOUNTS).doc(organization.id),
+          toAccountDocument(again.account),
+        );
+      }),
+    ).rejects.toThrow();
   });
 });
 
@@ -166,7 +223,7 @@ describe.runIf(emulatorHost)('FirestoreTenancyStore roles (emulator)', () => {
     const { organization } = await store.createOrganization({
       name: 'Acme',
       creator: ALICE,
-      plan: PLAN,
+      billing: BILLING,
     });
     await db.collection(MEMBERSHIPS).doc(`${organization.id}_${ALICE}`).update({ role: 'admin' });
     expect((await store.findMembership(organization.id, ALICE))?.role).toBe('admin');
@@ -193,7 +250,7 @@ describe.runIf(emulatorHost)('FirestoreTenancyStore creation audit (emulator)', 
     const { organization } = await store.createOrganization({
       name: 'Acme',
       creator: ALICE,
-      plan: PLAN,
+      billing: BILLING,
       audit: ({ organization: created }) => {
         const built = event(created.id);
         id = built.id;
@@ -215,7 +272,7 @@ describe.runIf(emulatorHost)('FirestoreTenancyStore creation audit (emulator)', 
       store.createOrganization({
         name: 'Acme',
         creator: ALICE,
-        plan: PLAN,
+        billing: BILLING,
         audit: () => {
           throw new Error('audit unavailable');
         },

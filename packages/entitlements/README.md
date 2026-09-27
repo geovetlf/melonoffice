@@ -6,7 +6,7 @@ The entitlements core ([ADR-0013](../../docs/adr/0013-entitlements-core.md)) and
 - `plans.ts`: the versioned plan catalogue and `DEFAULT_PLAN` (Emprendedor v1), the plan new organizations start on. Only Emprendedor is active; its commercial values are pending (D-12) and resolve to deny or zero.
 - `resolve.ts`: `resolveEntitlements()`, which applies the plan, add-ons, audited overrides and company caps, in that order.
 - `limits.ts`: `checkLimit()` and `checkScopedLimit()`.
-- `service.ts`: `createEntitlementService()`, with `entitlementsOf()`, `hasCapability()` and `getLimit()` for a resolved `TenantContext`. It reads the organization's plan reference and answers from the catalogue in code. It is separate from RBAC: a caller that needs both asks both.
+- `service.ts`: `createEntitlementService()`, with `entitlementsOf()`, `hasCapability()` and `getLimit()` for a resolved `TenantContext`. It gets the plan in force from a `PlanSource` (billing, ADR-0022) and answers from the catalogue in code. It is separate from RBAC: a caller that needs both asks both.
 - `authorize.ts`: `authorize()` from ADR-0013. No route uses it; RBAC (ADR-0019) and the entitlement service are asked separately instead (ADR-0021).
 
 Code asks this package for a capability or a limit. It never compares plan names.
