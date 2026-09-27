@@ -22,6 +22,11 @@ export interface ServiceConfig {
    * only where its version allows. Unset: a person's send is not wired at all (fails closed).
    */
   readonly deploymentEnvironment?: DeploymentEnvironment;
+  /**
+   * The web app's origins, comma-separated in `WEB_ORIGINS`, allowed to call `/v1` from a browser
+   * (ADR-0036). Unset: none.
+   */
+  readonly webOrigins?: readonly string[];
 }
 
 const ENVIRONMENTS: readonly string[] = ['dev', 'staging', 'prod'];
@@ -30,6 +35,10 @@ const ENVIRONMENTS: readonly string[] = ['dev', 'staging', 'prod'];
 const PROJECT_ID = /^[a-z][a-z0-9-]{4,28}[a-z0-9]$/;
 
 const GRAPH_VERSION = /^v[0-9]{1,3}\.[0-9]$/;
+
+/** An exact origin: https, or http only for a local development host. No path, no wildcard. */
+const ORIGIN =
+  /^(https:\/\/[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+|http:\/\/(localhost|127\.0\.0\.1))(:[0-9]{1,5})?$/;
 
 /** Reads configuration from environment variables only; nothing is hard-coded per environment. */
 export function loadConfig(env: Readonly<Record<string, string | undefined>>): ServiceConfig {
@@ -55,6 +64,13 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): S
   if (deploymentEnvironment !== undefined && !ENVIRONMENTS.includes(deploymentEnvironment)) {
     throw new Error(`Invalid DEPLOYMENT_ENVIRONMENT: ${deploymentEnvironment}`);
   }
+  const webOrigins = (env.WEB_ORIGINS ?? '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter((origin) => origin !== '');
+  for (const origin of webOrigins) {
+    if (!ORIGIN.test(origin)) throw new Error(`Invalid WEB_ORIGINS entry: ${origin}`);
+  }
   return {
     port,
     logLevel: level,
@@ -65,5 +81,6 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): S
     ...(deploymentEnvironment === undefined
       ? {}
       : { deploymentEnvironment: deploymentEnvironment as DeploymentEnvironment }),
+    ...(webOrigins.length === 0 ? {} : { webOrigins }),
   };
 }

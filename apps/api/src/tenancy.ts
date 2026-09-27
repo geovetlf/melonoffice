@@ -150,7 +150,12 @@ export function registerTenancyRoutes(
       if (organization === undefined || membership === undefined) {
         throw new Error('resolved tenant is missing its records');
       }
-      return c.json(toView(organization, membership));
+      // What the caller may do here, for the web app to show or hide actions (ADR-0036). A hint
+      // only: every route checks its permission again.
+      return c.json({
+        ...toView(organization, membership),
+        permissions: [...authorization.permissionsOf(tenant)].sort(),
+      });
     }),
   );
 }

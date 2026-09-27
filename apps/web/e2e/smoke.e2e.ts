@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-test('the placeholder page renders and switches between English and Spanish', async ({ page }) => {
+test('the public page renders and switches between English and Spanish', async ({ page }) => {
   const problems: string[] = [];
   page.on('pageerror', (error) => problems.push(error.message));
   page.on('console', (message) => {
@@ -30,4 +30,11 @@ test('the health endpoint answers', async ({ request }) => {
   const response = await request.get('/health');
   expect(response.status()).toBe(200);
   expect(await response.json()).toMatchObject({ status: 'ok' });
+});
+
+test('the runtime configuration is served, never cached (ADR-0036)', async ({ request }) => {
+  const response = await request.get('/config.json');
+  expect(response.status()).toBe(200);
+  expect(response.headers()['cache-control']).toBe('no-store');
+  expect(Object.keys(await response.json()).sort()).toEqual(['apiUrl', 'identityApiKey']);
 });

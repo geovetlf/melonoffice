@@ -20,6 +20,13 @@ locals {
   # their target. Known before the service exists, so the worker's own settings can name it.
   worker_url = local.runtime_enabled ? "https://worker-${data.google_project.this[0].number}.${var.region}.run.app" : null
 
+  # Web sign-in (ADR-0036): the browser signs in with Identity Platform and calls the API, which
+  # accepts calls from the web's origin only. Both URLs are the deterministic run.app ones, known
+  # before the services exist, so neither service has to wait for the other.
+  web_sign_in_enabled = var.deploy_apps && var.firestore_and_auth
+  web_url             = local.web_sign_in_enabled ? "https://web-${data.google_project.this[0].number}.${var.region}.run.app" : null
+  api_url             = local.web_sign_in_enabled ? "https://api-${data.google_project.this[0].number}.${var.region}.run.app" : null
+
   base_services = [
     "artifactregistry.googleapis.com",
     "cloudresourcemanager.googleapis.com",
@@ -34,6 +41,10 @@ locals {
   firestore_and_auth_services = [
     "firestore.googleapis.com",
     "identitytoolkit.googleapis.com",
+  ]
+  web_sign_in_services = [
+    "apikeys.googleapis.com",     # the web's browser key
+    "securetoken.googleapis.com", # token refresh, which the key may call
   ]
   runtime_services = [
     "cloudtasks.googleapis.com",
@@ -80,15 +91,24 @@ locals {
       "cloudtasks.queues.get",          # the execution jobs queue
       "cloudtasks.queues.getIamPolicy", # its enqueuer binding
     ]
+    web_sign_in = [
+      "apikeys.keys.get",          # the web's browser key and its restrictions
+      "apikeys.keys.getKeyString", # its value, which the web serves to browsers anyway
+    ]
   }
 
   # The deployable applications of the repository. Only the web and API are public; the worker
   # accepts requests from the deployer alone, which it needs for health checks.
   apps = {
     web = {
-      public  = true
-      memory  = "256Mi"
-      env     = {}
+      public = true
+      memory = "256Mi"
+      # What /config.json tells the browser (ADR-0036). Neither is a secret: the API's public URL
+      # and a browser key restricted to the sign-in APIs and this site.
+      env = local.web_sign_in_enabled ? {
+        MELONOFFICE_API_URL          = local.api_url
+        MELONOFFICE_IDENTITY_API_KEY = nonsensitive(google_apikeys_key.web_sign_in[0].key_string)
+      } : {}
       timeout = null
     }
     api = {
@@ -99,6 +119,9 @@ locals {
       env = merge(
         { LOG_LEVEL = var.log_level },
         var.firestore_and_auth ? { IDENTITY_PLATFORM_PROJECT_ID = var.project_id } : {},
+        # The one origin whose browser calls get CORS headers (ADR-0036). Authentication and
+        # RBAC still decide every call.
+        local.web_sign_in_enabled ? { WEB_ORIGINS = local.web_url } : {},
       )
       timeout = null
     }
@@ -132,11 +155,12 @@ module "services" {
     var.firestore_and_auth ? local.firestore_and_auth_services : [],
     local.budget_enabled ? local.budget_services : [],
     local.runtime_enabled ? local.runtime_services : [],
+    local.web_sign_in_enabled ? local.web_sign_in_services : [],
   )
 }
 
 data "google_project" "this" {
-  count = local.runtime_enabled ? 1 : 0
+  count = local.runtime_enabled || local.web_sign_in_enabled ? 1 : 0
 
   project_id = var.project_id
 }
@@ -215,6 +239,7 @@ resource "google_project_iam_custom_role" "planner" {
     var.firestore_and_auth ? local.planner_permissions.firestore_and_auth : [],
     local.budget_enabled ? local.planner_permissions.budget : [],
     local.runtime_enabled ? local.planner_permissions.runtime : [],
+    local.web_sign_in_enabled ? local.planner_permissions.web_sign_in : [],
   ))
 
   depends_on = [module.services]
@@ -311,6 +336,31 @@ resource "google_identity_platform_config" "default" {
     phone_number {
       enabled            = false
       test_phone_numbers = {}
+    }
+  }
+
+  depends_on = [module.services]
+}
+
+# The browser key the web app signs in with (ADR-0036). A browser key is public by design: it
+# only names the project. It is restricted to Identity Platform sign-in and token refresh, and
+# to pages of this environment's web app.
+resource "google_apikeys_key" "web_sign_in" {
+  count = local.web_sign_in_enabled ? 1 : 0
+
+  project      = var.project_id
+  name         = "web-sign-in"
+  display_name = "MelonOffice web sign-in"
+
+  restrictions {
+    browser_key_restrictions {
+      allowed_referrers = ["${local.web_url}/*"]
+    }
+    api_targets {
+      service = "identitytoolkit.googleapis.com"
+    }
+    api_targets {
+      service = "securetoken.googleapis.com"
     }
   }
 

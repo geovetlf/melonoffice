@@ -322,7 +322,10 @@ export function setupApp(
   entitlements?: EntitlementService,
   tools?: ToolRegistry,
   credits: CreditStore = stores.credits,
-  { sending = true }: { readonly sending?: boolean } = {},
+  {
+    sending = true,
+    webOrigins,
+  }: { readonly sending?: boolean; readonly webOrigins?: readonly string[] } = {},
 ) {
   const lines: string[] = [];
   const logger = createLogger({ service: 'api', sink: (line) => lines.push(line) });
@@ -369,6 +372,7 @@ export function setupApp(
       logger,
     }),
     ...(tools ? { tools } : {}),
+    ...(webOrigins ? { webOrigins } : {}),
     ...(authorization ? { authorization } : {}),
     ...(entitlements ? { entitlements } : {}),
   });
