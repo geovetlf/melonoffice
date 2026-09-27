@@ -271,6 +271,24 @@ export const AUDIT_ACTIONS = {
     description: "A person added or removed a conversation's tags (ADR-0033).",
     results: ['success'],
   },
+  'conversation.message_sent': {
+    category: 'conversation',
+    description:
+      'A person sent a message in a conversation through the tool gate and the channel accepted it; the target is the message, the reference its conversation, the reason the channel (ADR-0034).',
+    results: ['success'],
+  },
+  'conversation.message_send_failed': {
+    category: 'conversation',
+    description:
+      "A person's message was not sent: refused before sending, or rejected by the channel; the reason is the stable code (ADR-0034).",
+    results: ['failure', 'denied'],
+  },
+  'conversation.message_send_unknown': {
+    category: 'conversation',
+    description:
+      "Whether a person's message reached the channel is not known (lost answer, timeout); it is never resent blindly (ADR-0034).",
+    results: ['failure'],
+  },
   'channel.connection_created': {
     category: 'channel',
     description:

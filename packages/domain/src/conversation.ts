@@ -147,9 +147,12 @@ export type MessageType =
 
 /**
  * Where a message is. Inbound messages are `received`. Outbound ones go `queued` → `sent` →
- * `delivered` → `read`, or `failed`; a status never moves backwards.
+ * `delivered` → `read`, or `failed`; a status never moves backwards. `unknown` (CV-2, ADR-0034):
+ * the provider may have accepted it but MelonOffice never learned whether; it is final until a
+ * person or a later reconciliation resolves it, and it is never sent again blindly.
  */
-export type MessageStatus = 'received' | 'queued' | 'sent' | 'delivered' | 'read' | 'failed';
+export type MessageStatus =
+  'received' | 'queued' | 'sent' | 'delivered' | 'read' | 'failed' | 'unknown';
 
 /** Who wrote a message: the external contact, a person of the organization, or a specialist (later). */
 export type MessageSender =
@@ -185,7 +188,7 @@ export interface Message {
   /** The external id of the message this one answers, when the channel says so. */
   readonly replyToExternalId?: string;
   readonly status: MessageStatus;
-  /** A stable code, for `failed`. */
+  /** A stable code, for `failed` and `unknown`. */
   readonly failureCode?: string;
   /** When it was sent, by the provider's clock for inbound messages. */
   readonly sentAt: IsoTimestamp;

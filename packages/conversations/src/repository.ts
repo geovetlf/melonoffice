@@ -1,6 +1,7 @@
 import type { AuditEvent, InMemoryAuditStore } from '@melonoffice/audit';
 import type {
   ChannelIdentity,
+  ChannelIdentityId,
   Contact,
   ContactId,
   Conversation,
@@ -12,6 +13,7 @@ import type {
 import { ConversationError } from './errors.js';
 import {
   applyInbound,
+  applyOutbound,
   applyStatus,
   byConversationOrder,
   byLatestActivity,
@@ -22,9 +24,11 @@ import {
   conversationIdFor,
   inboundMessageIdFor,
   messageRefKeyFor,
+  settleOutbound,
   type DeliveryStatusUpdate,
   type InboundMessage,
   type InboundRecords,
+  type OutboundSettlement,
 } from './model.js';
 
 /** What storing one inbound message did. A repeat of an already stored message changes nothing. */
@@ -34,6 +38,19 @@ export interface ReceiveResult {
   readonly conversation: Conversation;
   /** A new contact and identity were created for an address seen for the first time. */
   readonly newContact: boolean;
+}
+
+/** What reserving an outbound message did: stored it now, or found it already there. */
+export interface ReserveResult {
+  readonly created: boolean;
+  readonly message: Message;
+}
+
+/** What settling an outbound message did. Only a `queued` message settles, once. */
+export interface SettleResult {
+  readonly applied: boolean;
+  /** The message as it is now; absent when it does not exist in the organization. */
+  readonly message?: Message;
 }
 
 /** The new state of a conversation and the audit events that record the change. */
@@ -85,6 +102,31 @@ export interface ConversationRepository {
     organizationId: OrganizationId,
     contactId: ContactId,
   ): Promise<readonly ChannelIdentity[]>;
+  /** One identity, or undefined when it is absent or another organization's. */
+  findIdentity(
+    organizationId: OrganizationId,
+    id: ChannelIdentityId,
+  ): Promise<ChannelIdentity | undefined>;
+  /** One message, or undefined when it is absent or another organization's. */
+  findMessage(organizationId: OrganizationId, id: MessageId): Promise<Message | undefined>;
+  /**
+   * Stores a person's `queued` outbound message before anything is sent (ADR-0034), if its id is
+   * not stored yet; otherwise returns the stored one unchanged. The conversation must exist in
+   * the message's organization (`conversation_not_found`).
+   */
+  reserveOutbound(message: Message): Promise<ReserveResult>;
+  /**
+   * Settles a `queued` outbound message, with its audit events, in one transaction. `sent` also
+   * records the provider's id (for delivery reports) and the conversation's last outbound
+   * activity. A message that is not `queued` changes nothing, and its events are not recorded.
+   */
+  settleOutbound(
+    organizationId: OrganizationId,
+    id: MessageId,
+    settlement: OutboundSettlement,
+    events: readonly AuditEvent[],
+    at: Date,
+  ): Promise<SettleResult>;
 }
 
 export function checkNextConversation(current: Conversation, next: Conversation): void {
@@ -224,6 +266,64 @@ export class InMemoryConversationRepository implements ConversationRepository {
     return [...this.#identities.values()].filter(
       (i) => i.organizationId === organizationId && i.contactId === contactId,
     );
+  }
+
+  async findIdentity(
+    organizationId: OrganizationId,
+    id: ChannelIdentityId,
+  ): Promise<ChannelIdentity | undefined> {
+    const i = this.#identities.get(id);
+    return i?.organizationId === organizationId ? i : undefined;
+  }
+
+  async findMessage(organizationId: OrganizationId, id: MessageId): Promise<Message | undefined> {
+    const m = this.#messages.get(id);
+    return m?.organizationId === organizationId ? m : undefined;
+  }
+
+  async reserveOutbound(message: Message): Promise<ReserveResult> {
+    const conversation = await this.findConversation(
+      message.organizationId,
+      message.conversationId,
+    );
+    if (conversation === undefined) throw new ConversationError('conversation_not_found');
+    const stored = this.#messages.get(message.id);
+    if (stored !== undefined) {
+      if (stored.organizationId !== message.organizationId) throw new Error('message id collision');
+      return { created: false, message: stored };
+    }
+    if (message.direction !== 'outbound' || message.status !== 'queued') {
+      throw new ConversationError('invalid_request', 'outbound');
+    }
+    this.#messages.set(message.id, message);
+    return { created: true, message };
+  }
+
+  async settleOutbound(
+    organizationId: OrganizationId,
+    id: MessageId,
+    settlement: OutboundSettlement,
+    events: readonly AuditEvent[],
+    at: Date,
+  ): Promise<SettleResult> {
+    const message = await this.findMessage(organizationId, id);
+    if (message === undefined) return { applied: false };
+    const next = settleOutbound(message, settlement);
+    if (next === undefined) return { applied: false, message };
+    if (next.status === 'sent' && next.externalMessageId !== undefined) {
+      // A provider id names one message: a second one under it is refused, as in Firestore.
+      if (this.#refs.has(messageRefKeyFor(organizationId, next.channel, next.externalMessageId))) {
+        throw new Error('message reference collision');
+      }
+      const conversation = await this.findConversation(organizationId, next.conversationId);
+      if (conversation === undefined) throw new ConversationError('conversation_not_found');
+      const updated = applyOutbound(conversation, next, at);
+      checkNextConversation(conversation, updated);
+      this.#conversations.set(updated.id, updated);
+    }
+    this.audit?.append(events);
+    this.putOutbound(next);
+    return { applied: true, message: next };
   }
 
   /** Test helper: stores an outbound message as a sender would, with its provider id. */

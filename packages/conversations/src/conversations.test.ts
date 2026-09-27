@@ -29,6 +29,7 @@ import { describe, expect, it } from 'vitest';
 import { ConversationError } from './errors.js';
 import {
   applyInbound,
+  applyOutbound,
   applyStatus,
   channelIdentityIdFor,
   checkInbound,
@@ -36,7 +37,9 @@ import {
   conversationIdFor,
   inboundMessageIdFor,
   normalizeTags,
+  newOutboundMessage,
   outboundMessageIdFor,
+  settleOutbound,
   type InboundMessage,
 } from './model.js';
 import { InMemoryConversationRepository } from './repository.js';
@@ -546,5 +549,180 @@ describe('human inbox service', () => {
     );
     // Reading stays open to them: nothing is changed.
     expect(await w.service.list(gia)).toHaveLength(1);
+  });
+});
+
+describe('outbound (CV-2, ADR-0034)', () => {
+  async function withConversation() {
+    const w = await world();
+    const { conversation } = await w.ingress.receive(inbound(w.orgA));
+    const reserve = (clientMessageId = 'reply-1', text = 'Hola Ana') =>
+      newOutboundMessage(
+        { organizationId: w.orgA, conversation, userId: ALICE, clientMessageId, text },
+        T0,
+      );
+    return { w, conversation, reserve };
+  }
+
+  it('reserves a queued text from the person, with an id from the sender’s key', async () => {
+    const { w, conversation, reserve } = await withConversation();
+    const message = reserve();
+    expect(message).toMatchObject({
+      id: outboundMessageIdFor(w.orgA, conversation.id, 'reply-1'),
+      organizationId: w.orgA,
+      conversationId: conversation.id,
+      connectionId: conversation.connectionId,
+      channel: 'whatsapp',
+      direction: 'outbound',
+      sender: { kind: 'user', userId: ALICE },
+      status: 'queued',
+      text: 'Hola Ana',
+    });
+    expect(reserve().id).toBe(message.id);
+    expect(reserve('reply-2').id).not.toBe(message.id);
+  });
+
+  it('refuses an empty, too long, control-character or foreign message', async () => {
+    const { w, conversation, reserve } = await withConversation();
+    for (const text of ['', '   ', 'x'.repeat(4097), 'a\u0000b']) {
+      expect(await codeOf(() => reserve('reply-1', text))).toBe('invalid_request');
+    }
+    expect(await codeOf(() => reserve('bad key'))).toBe('invalid_request');
+    expect(
+      await codeOf(() =>
+        newOutboundMessage(
+          { organizationId: w.orgB, conversation, userId: ALICE, clientMessageId: 'x', text: 'y' },
+          T0,
+        ),
+      ),
+    ).toBe('invalid_request');
+    // A line break is text, not a control character.
+    expect(reserve('reply-1', 'Hola\nAna').text).toBe('Hola\nAna');
+  });
+
+  it('settles a queued message once: sent, failed or unknown, never twice', async () => {
+    const { reserve } = await withConversation();
+    const queued = reserve();
+    const sent = settleOutbound(queued, { status: 'sent', externalMessageId: 'wamid.sent' });
+    expect(sent).toMatchObject({ status: 'sent', externalMessageId: 'wamid.sent' });
+    expect(settleOutbound(queued, { status: 'failed', failureCode: 'rate_limited' })).toMatchObject(
+      { status: 'failed', failureCode: 'rate_limited' },
+    );
+    expect(
+      settleOutbound(queued, { status: 'unknown', failureCode: 'outcome_unknown' }),
+    ).toMatchObject({ status: 'unknown', failureCode: 'outcome_unknown' });
+    for (const done of [sent as Message]) {
+      expect(settleOutbound(done, { status: 'failed', failureCode: 'x' })).toBeUndefined();
+    }
+    expect(
+      await codeOf(() => settleOutbound(queued, { status: 'failed', failureCode: 'Not A Code' })),
+    ).toBe('invalid_request');
+    expect(
+      await codeOf(() => settleOutbound(queued, { status: 'sent', externalMessageId: 'a b' })),
+    ).toBe('invalid_request');
+  });
+
+  it('an unknown message takes no delivery report: nothing can name it', () => {
+    const unknown = {
+      ...newOutboundMessage(
+        {
+          organizationId: ORG,
+          conversation: {
+            id: conversationIdFor(ORG, CONNECTION_A, channelIdentityIdFor(ORG, 'whatsapp', '1')),
+            organizationId: ORG,
+            channel: 'whatsapp',
+            connectionId: CONNECTION_A,
+          } as never,
+          userId: ALICE,
+          clientMessageId: 'k',
+          text: 'Hola',
+        },
+        T0,
+      ),
+      status: 'unknown' as const,
+    };
+    expect(
+      applyStatus(unknown, {
+        organizationId: ORG,
+        connectionId: CONNECTION_A,
+        channel: 'whatsapp',
+        externalMessageId: 'wamid.x',
+        status: 'delivered',
+        at: T0.toISOString() as IsoTimestamp,
+      }),
+    ).toBeUndefined();
+  });
+
+  it('records a sent message as the conversation’s last outbound activity', async () => {
+    const { conversation, reserve } = await withConversation();
+    const sent = settleOutbound(reserve(), {
+      status: 'sent',
+      externalMessageId: 'wamid.sent',
+    }) as Message;
+    const next = applyOutbound(conversation, sent, T0);
+    expect(next).toMatchObject({
+      revision: conversation.revision + 1,
+      lastOutboundAt: sent.sentAt,
+      lastMessage: { id: sent.id, direction: 'outbound', preview: 'Hola Ana' },
+    });
+    expect(await codeOf(() => applyOutbound(conversation, reserve(), T0))).toBe('invalid_request');
+  });
+
+  it('stores a reservation once, settles it once, and keeps organizations apart', async () => {
+    const { w, conversation, reserve } = await withConversation();
+    const repository = w.repository;
+    const first = await repository.reserveOutbound(reserve());
+    const again = await repository.reserveOutbound(reserve());
+    expect([first.created, again.created]).toEqual([true, false]);
+    expect(again.message.id).toBe(first.message.id);
+    expect(await repository.findMessage(w.orgB, first.message.id)).toBeUndefined();
+    expect(
+      await repository.settleOutbound(
+        w.orgB,
+        first.message.id,
+        { status: 'failed', failureCode: 'x' },
+        [],
+        T0,
+      ),
+    ).toEqual({ applied: false });
+    const settled = await repository.settleOutbound(
+      w.orgA,
+      first.message.id,
+      { status: 'sent', externalMessageId: 'wamid.one' },
+      [],
+      T0,
+    );
+    expect(settled).toMatchObject({ applied: true, message: { status: 'sent' } });
+    expect(
+      await repository.settleOutbound(
+        w.orgA,
+        first.message.id,
+        { status: 'unknown', failureCode: 'outcome_unknown' },
+        [],
+        T0,
+      ),
+    ).toMatchObject({ applied: false, message: { status: 'sent' } });
+    expect((await repository.findConversation(w.orgA, conversation.id))?.lastOutboundAt).toBe(
+      T0.toISOString(),
+    );
+    // Delivery reports now reach it by the provider's id.
+    expect(
+      await repository.applyStatus({
+        organizationId: w.orgA,
+        connectionId: CONNECTION_A,
+        channel: 'whatsapp',
+        externalMessageId: 'wamid.one',
+        status: 'delivered',
+        at: T0.toISOString() as IsoTimestamp,
+      }),
+    ).toEqual({ applied: true });
+    // Reserving in a conversation that is not the organization's is refused.
+    await expect(
+      repository.reserveOutbound({ ...reserve('other'), organizationId: w.orgB }),
+    ).rejects.toMatchObject({ code: 'conversation_not_found' });
+    expect(await repository.findIdentity(w.orgB, conversation.channelIdentityId)).toBeUndefined();
+    expect((await repository.findIdentity(w.orgA, conversation.channelIdentityId))?.id).toBe(
+      conversation.channelIdentityId,
+    );
   });
 });

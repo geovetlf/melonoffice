@@ -15,7 +15,13 @@ export type ConversationErrorCode =
   | 'assignee_not_member'
   | 'department_not_found'
   | 'invalid_transition'
-  | 'conversation_concurrency_conflict';
+  | 'conversation_concurrency_conflict'
+  // A person's send (CV-2, ADR-0034).
+  | 'duplicate_request'
+  | 'conversation_closed'
+  | 'channel_not_available'
+  | 'outside_messaging_window'
+  | 'tool_not_human_invokable';
 
 export class ConversationError extends Error {
   override readonly name = 'ConversationError';

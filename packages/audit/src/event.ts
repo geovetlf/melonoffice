@@ -50,7 +50,8 @@ export interface AuditTarget {
     | 'plan'
     | 'workflow'
     | 'conversation'
-    | 'channel_connection';
+    | 'channel_connection'
+    | 'message';
   readonly id: string;
 }
 
@@ -134,7 +135,10 @@ export interface AuditEvent {
    * code for a credits movement. Never a message.
    */
   readonly reason?: string;
-  /** The caller's idempotency key of a credits operation (ADR-0023). The amounts stay in the ledger. */
+  /**
+   * The caller's idempotency key of a credits operation (ADR-0023); the amounts stay in the
+   * ledger. For `conversation.message_*` events, the message's conversation (ADR-0034).
+   */
   readonly reference?: string;
   readonly requestId?: string;
   readonly source: AuditSource;
