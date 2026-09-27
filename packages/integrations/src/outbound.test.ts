@@ -319,6 +319,29 @@ describe('message_send executor', () => {
     expect(w.calls).toHaveLength(1);
   });
 
+  it('does not send a reserved message once AI took the conversation meanwhile (CV-6A)', async () => {
+    const w = await world();
+    const conversation = await w.receive(w.orgA, CONNECTION_A);
+    const message = await w.reserve(conversation);
+    await w.conversations.updateConversation(w.orgA, conversation.id, (current) => ({
+      conversation: {
+        ...current,
+        control: { handledBy: 'ai', aiState: 'active', epoch: 1, changedAt: current.updatedAt },
+        revision: current.revision + 1,
+      },
+      events: [],
+    }));
+    expect(await w.run(message)).toEqual({
+      status: 'failure',
+      code: 'conversation_handled_by_ai',
+    });
+    expect(w.calls).toHaveLength(0);
+    expect(await w.conversations.findMessage(w.orgA, message.id)).toMatchObject({
+      status: 'failed',
+      failureCode: 'conversation_handled_by_ai',
+    });
+  });
+
   it('never acts on another organization’s message, whatever ids it is given', async () => {
     const w = await world();
     const mine = await w.reserve(await w.receive(w.orgA, CONNECTION_A));
@@ -487,6 +510,26 @@ describe('message send service', () => {
     // The same key again: the stored message, no second gate call.
     expect(await s.send()).toMatchObject({ created: false, message: { id: message.id } });
     expect(s.invocations).toHaveLength(1);
+  });
+
+  it('refuses a person’s send while AI handles the conversation, before anything is reserved (CV-6A)', async () => {
+    const s = await service();
+    await s.w.conversations.updateConversation(s.w.orgA, s.conversation.id, (current) => ({
+      conversation: {
+        ...current,
+        control: { handledBy: 'ai', aiState: 'active', epoch: 1, changedAt: current.updatedAt },
+        revision: current.revision + 1,
+      },
+      events: [],
+    }));
+    await expect(s.send()).rejects.toMatchObject({ code: 'conversation_handled_by_ai' });
+    expect(s.invocations).toHaveLength(0);
+    expect(s.w.calls).toHaveLength(0);
+    expect(await s.w.conversations.listMessages(s.w.orgA, s.conversation.id)).toHaveLength(1);
+    const [event] = s.w.audit
+      .events()
+      .filter((e) => e.action === 'conversation.message_send_failed');
+    expect(event).toMatchObject({ result: 'denied', reason: 'conversation_handled_by_ai' });
   });
 
   it('refuses GIA, the runtime, and another organization’s conversation', async () => {

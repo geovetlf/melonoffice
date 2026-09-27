@@ -56,14 +56,51 @@ const KNOWN_ERRORS = new Set([
   'conversation_not_found',
   'assignee_not_member',
   'department_not_found',
+  'autonomy_not_enabled',
 ]);
+
+/** The reasons the server may give (ADR-0039); any other shows as "could not resolve". */
+const HANDOFF_REASONS = new Set([
+  'customer_requested_human',
+  'low_confidence',
+  'tool_failed',
+  'not_permitted',
+  'sensitive_operation',
+  'conflict',
+  'too_many_attempts',
+  'autonomy_limit',
+  'credits_exhausted',
+  'business_rule',
+  'workflow',
+  'outside_business_hours',
+  'unresolved',
+  'invalid_ai_output',
+  'ai_unavailable',
+  'channel_unavailable',
+]);
+const handoffKey = (reason: string) =>
+  `conversations.handoff.${HANDOFF_REASONS.has(reason) ? reason : 'unresolved'}`;
+
+/** A conversation's control as the screen shows it; a row without one is a person's. */
+const controlOf = (row: ConversationRow) =>
+  row.control ?? { handledBy: 'human' as const, aiState: 'off' as const, changedAt: null };
+
+/** The label for who handles a conversation, or undefined when AI never did. */
+const controlLabel = (row: ConversationRow): string | undefined => {
+  const { handledBy, aiState } = controlOf(row);
+  if (handledBy === 'ai') return 'conversations.control.ai';
+  if (aiState === 'escalated') return 'conversations.control.escalated';
+  if (aiState === 'paused') return 'conversations.control.paused';
+  return undefined;
+};
 
 /**
  * The Conversations Center (CV-3, ADR-0035): who wrote, what they said, and what a person can do
  * about it. Open a conversation, read it, reply (CV-2, through the tool gate), assign it to
  * yourself or a department, tag it, set its priority and close it. Everything is a person's
  * act: the AI (CV-4, ADR-0037) only answers what a person asks, as text to review, and nothing
- * is routed, changed or sent by it.
+ * is routed, changed or sent by it. Who handles a conversation is always shown (CV-6A,
+ * ADR-0039): a person can take control from AI, and cannot reply while AI handles it.
  */
 export function ConversationsCenter({
   client,
@@ -271,6 +308,11 @@ export function ConversationsCenter({
                     }
                   />
                 </span>
+                {controlLabel(row) === undefined ? null : (
+                  <span className="inbox__control">
+                    <FormattedMessage id={controlLabel(row) as string} />
+                  </span>
+                )}
               </button>
             </li>
           ))}
@@ -317,6 +359,32 @@ export function ConversationsCenter({
                 </dt>
                 <dd>{when(conversation.lastMessageAt)}</dd>
               </dl>
+
+              <div className="inbox__actions" role="status" aria-live="polite">
+                <span>
+                  <FormattedMessage
+                    id={controlLabel(conversation) ?? 'conversations.control.human'}
+                  />
+                </span>
+                {conversation.handoff === null || conversation.handoff === undefined ? null : (
+                  <span>
+                    <FormattedMessage id="conversations.control.reason" />{' '}
+                    <FormattedMessage id={handoffKey(conversation.handoff.reason)} />
+                  </span>
+                )}
+                {canManage &&
+                (controlOf(conversation).aiState === 'active' ||
+                  controlOf(conversation).aiState === 'escalated') ? (
+                  <Button onClick={() => void act((id) => client.takeOver(id))}>
+                    <FormattedMessage id="conversations.control.takeOver" />
+                  </Button>
+                ) : null}
+                {canManage && controlOf(conversation).aiState === 'paused' ? (
+                  <Button variant="secondary" onClick={() => void act((id) => client.handBack(id))}>
+                    <FormattedMessage id="conversations.control.handBack" />
+                  </Button>
+                ) : null}
+              </div>
 
               {canManage ? (
                 <>
@@ -502,7 +570,13 @@ export function ConversationsCenter({
                 />
               ) : null}
 
-              {canSend ? (
+              {canSend && controlOf(conversation).handledBy === 'ai' ? (
+                <p className="inbox__readonly">
+                  <FormattedMessage id="conversations.control.composerLocked" />
+                </p>
+              ) : null}
+
+              {canSend && controlOf(conversation).handledBy === 'human' ? (
                 <ReplyComposer
                   key={`${conversation.id}:${draft.n}`}
                   initialText={draft.conversationId === conversation.id ? draft.text : ''}

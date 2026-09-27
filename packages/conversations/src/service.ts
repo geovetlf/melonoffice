@@ -14,8 +14,11 @@ import type {
   Conversation,
   ConversationId,
   ConversationPriority,
+  ConversationSettings,
   ConversationStatus,
   DepartmentId,
+  ExecutionId,
+  IsoTimestamp,
   Message,
   OrganizationId,
   UserId,
@@ -23,6 +26,13 @@ import type {
 import type { AuthorizationService } from '@melonoffice/rbac';
 import { isResolvedTenant, type TenancyStore, type TenantContext } from '@melonoffice/tenancy';
 import { randomUUID } from 'node:crypto';
+import {
+  allowsAIHandling,
+  controlOf,
+  defaultSettings,
+  isAutonomyLevel,
+  isHandoffReason,
+} from './control.js';
 import { ConversationError } from './errors.js';
 import {
   checkSearch,
@@ -142,6 +152,35 @@ export interface ConversationService {
   /** Sets how urgent a conversation is (CV-3), by a person; audited from and to. */
   changePriority(tenant: TenantContext, id: string, priority: unknown): Promise<Conversation>;
   contacts(tenant: TenantContext): Promise<readonly Contact[]>;
+  /**
+   * The organization's conversation settings (CV-6A): `manual` until a person changes them. Needs
+   * `conversation.read`.
+   */
+  settings(tenant: TenantContext): Promise<ConversationSettings>;
+  /**
+   * Sets how far AI may act on the organization's conversations (CV-6A). A person acting directly
+   * with `conversation.manage`; audited from and to. A restriction only: it grants nothing.
+   */
+  changeAutonomy(tenant: TenantContext, autonomy: unknown): Promise<ConversationSettings>;
+  /**
+   * A person takes control of a conversation an agent handles or escalated (CV-6A): AI pauses and
+   * the control epoch moves, so a send prepared before cannot go out. Needs `conversation.manage`.
+   */
+  takeOver(tenant: TenantContext, id: string): Promise<Conversation>;
+  /**
+   * A person hands a conversation back to AI (CV-6A). Only where the organization allows AI
+   * handling (`supervised` or `autonomous`), and never for a closed conversation.
+   */
+  handBack(tenant: TenantContext, id: string): Promise<Conversation>;
+  /**
+   * The runtime hands a conversation an agent handles to a person, with a reason code (CV-6A).
+   * Only the runtime, for a user who holds `conversation.manage`; a person takes control instead.
+   */
+  escalate(
+    tenant: TenantContext,
+    id: string,
+    request: { readonly reason: unknown; readonly executionId?: unknown },
+  ): Promise<Conversation>;
   contact(
     tenant: TenantContext,
     id: string,
@@ -201,10 +240,15 @@ export function createConversationService({
 
   const event = (
     tenant: TenantContext,
-    conversation: Conversation,
+    conversation: { readonly organizationId: OrganizationId; readonly id: string },
     action: ConversationAction,
     at: Date,
-    fields: { readonly transition?: AuditTransition; readonly reason?: string } = {},
+    fields: {
+      readonly transition?: AuditTransition;
+      readonly reason?: string;
+      readonly reference?: string;
+      readonly target?: 'conversation' | 'organization';
+    } = {},
   ): AuditEvent =>
     buildAuditEvent(
       {
@@ -212,9 +256,10 @@ export function createConversationService({
         result: 'success',
         actor: actorOf(tenant),
         organizationId: conversation.organizationId,
-        target: { type: 'conversation', id: conversation.id },
+        target: { type: fields.target ?? 'conversation', id: conversation.id },
         ...(fields.transition === undefined ? {} : { transition: fields.transition }),
         ...(fields.reason === undefined ? {} : { reason: fields.reason }),
+        ...(fields.reference === undefined ? {} : { reference: fields.reference }),
         ...(requestId === undefined ? {} : { requestId }),
         source: 'api',
       },
@@ -467,6 +512,166 @@ export function createConversationService({
           events: [
             event(tenant, conversation, 'conversation.priority_changed', at, {
               transition: { from: current.priority, to: priority },
+            }),
+          ],
+        };
+      });
+    },
+
+    async settings(tenant) {
+      const organizationId = await organizationOf(tenant, 'conversation.read');
+      const stored = await repository.findSettings(organizationId);
+      return stored ?? defaultSettings(organizationId, now().toISOString() as IsoTimestamp);
+    },
+
+    async changeAutonomy(tenant, autonomy) {
+      const organizationId = await managerOf(tenant);
+      if (!isAutonomyLevel(autonomy)) throw new ConversationError('invalid_request', 'autonomy');
+      const at = now();
+      const iso = at.toISOString() as IsoTimestamp;
+      return repository.updateSettings(organizationId, (stored) => {
+        const current = stored ?? defaultSettings(organizationId, iso);
+        if (current.autonomy === autonomy) throw new ConversationError('invalid_transition');
+        const settings: ConversationSettings = Object.freeze({
+          organizationId,
+          autonomy,
+          updatedAt: iso,
+          updatedBy: tenant.userId,
+          revision: current.revision + 1,
+        });
+        return {
+          settings,
+          events: [
+            event(
+              tenant,
+              { organizationId, id: organizationId },
+              'conversation.autonomy_changed',
+              at,
+              {
+                target: 'organization',
+                transition: { from: current.autonomy, to: autonomy },
+              },
+            ),
+          ],
+        };
+      });
+    },
+
+    async takeOver(tenant, id) {
+      const organizationId = await managerOf(tenant);
+      const conversationId = idOf(id);
+      const at = now();
+      const iso = at.toISOString() as IsoTimestamp;
+      return repository.updateConversation(organizationId, conversationId, (current) => {
+        const control = controlOf(current);
+        // Only a conversation AI handles, or one it escalated, can be taken over.
+        if (control.aiState !== 'active' && control.aiState !== 'escalated') {
+          throw new ConversationError('invalid_transition');
+        }
+        const conversation: Conversation = Object.freeze({
+          ...current,
+          control: Object.freeze({
+            handledBy: 'human',
+            aiState: 'paused',
+            epoch: control.epoch + 1,
+            changedAt: iso,
+            changedBy: tenant.userId,
+          }),
+          updatedAt: iso,
+          revision: current.revision + 1,
+        });
+        return {
+          conversation,
+          events: [
+            event(tenant, conversation, 'conversation.ai_human_takeover', at, {
+              transition: { from: control.aiState, to: 'paused' },
+            }),
+          ],
+        };
+      });
+    },
+
+    async handBack(tenant, id) {
+      const organizationId = await managerOf(tenant);
+      const conversationId = idOf(id);
+      const settings = await repository.findSettings(organizationId);
+      if (settings === undefined || !allowsAIHandling(settings.autonomy)) {
+        throw new ConversationError('autonomy_not_enabled');
+      }
+      const at = now();
+      const iso = at.toISOString() as IsoTimestamp;
+      return repository.updateConversation(organizationId, conversationId, (current) => {
+        const control = controlOf(current);
+        if (control.handledBy !== 'human' || current.status === 'closed') {
+          throw new ConversationError('invalid_transition');
+        }
+        // The handoff is answered: the person decided AI may continue.
+        const { handoff, ...rest } = current;
+        const conversation: Conversation = Object.freeze({
+          ...rest,
+          control: Object.freeze({
+            handledBy: 'ai',
+            aiState: 'active',
+            epoch: control.epoch + 1,
+            changedAt: iso,
+            changedBy: tenant.userId,
+          }),
+          updatedAt: iso,
+          revision: current.revision + 1,
+        });
+        return {
+          conversation,
+          events: [
+            event(tenant, conversation, 'conversation.ai_handed_back', at, {
+              transition: { from: control.aiState, to: 'active' },
+              // The escalation this answers, if any.
+              ...(handoff === undefined ? {} : { reason: handoff.reason }),
+            }),
+          ],
+        };
+      });
+    },
+
+    async escalate(tenant, id, request) {
+      const organizationId = await organizationOf(tenant, 'conversation.manage');
+      // Escalation is the agent stepping back, reported by the runtime. A person takes control
+      // instead, and GIA cannot do either.
+      if (tenant.actor !== 'runtime') throw new ConversationError('permission_denied');
+      const conversationId = idOf(id);
+      const { reason, executionId } = request;
+      if (!isHandoffReason(reason)) throw new ConversationError('invalid_request', 'reason');
+      if (executionId !== undefined && !isUuid(executionId)) {
+        throw new ConversationError('invalid_request', 'executionId');
+      }
+      const at = now();
+      const iso = at.toISOString() as IsoTimestamp;
+      return repository.updateConversation(organizationId, conversationId, (current) => {
+        const control = controlOf(current);
+        if (control.handledBy !== 'ai' || control.aiState !== 'active') {
+          throw new ConversationError('invalid_transition');
+        }
+        const conversation: Conversation = Object.freeze({
+          ...current,
+          control: Object.freeze({
+            handledBy: 'human',
+            aiState: 'escalated',
+            epoch: control.epoch + 1,
+            changedAt: iso,
+          }),
+          handoff: Object.freeze({
+            reason,
+            requestedAt: iso,
+            ...(executionId === undefined ? {} : { executionId: executionId as ExecutionId }),
+          }),
+          updatedAt: iso,
+          revision: current.revision + 1,
+        });
+        return {
+          conversation,
+          events: [
+            event(tenant, conversation, 'conversation.ai_escalated', at, {
+              reason,
+              ...(executionId === undefined ? {} : { reference: executionId as string }),
             }),
           ],
         };

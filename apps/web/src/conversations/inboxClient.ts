@@ -14,6 +14,15 @@ export type ConversationSort = 'last_activity' | 'created' | 'priority';
 export const STATUSES: readonly ConversationStatus[] = ['open', 'pending', 'closed'];
 export const PRIORITIES: readonly ConversationPriority[] = ['low', 'normal', 'high', 'urgent'];
 
+/** Who handles a conversation (CV-6A, ADR-0039), as the server decided it. */
+export type ConversationAIState = 'off' | 'active' | 'paused' | 'escalated';
+
+export interface ConversationControlView {
+  readonly handledBy: 'human' | 'ai';
+  readonly aiState: ConversationAIState;
+  readonly changedAt: string | null;
+}
+
 export interface ContactSummary {
   readonly id: string;
   readonly displayName: string | null;
@@ -36,6 +45,10 @@ export interface ConversationRow {
   } | null;
   readonly lastMessageAt: string;
   readonly createdAt: string;
+  /** Who handles it (CV-6A). Absent from older answers: a person. */
+  readonly control?: ConversationControlView;
+  /** Why an agent handed it to a person, as a stable code. */
+  readonly handoff?: { readonly reason: string; readonly requestedAt: string } | null;
   /** Null for a reader without `contact.read`. */
   readonly contact?: ContactSummary | null;
 }
@@ -146,6 +159,10 @@ export interface InboxClient {
     id: string,
     reply: { readonly clientMessageId: string; readonly text: string },
   ): Promise<ReplyOutcome>;
+  /** A person takes control from AI (CV-6A): AI pauses and sends nothing more. */
+  takeOver(id: string): Promise<ConversationRow>;
+  /** A person hands the conversation back to AI, where the organization allows it. */
+  handBack(id: string): Promise<ConversationRow>;
   /**
    * Asks the AI about a conversation (ADR-0037). The same `requestKey` is the same request,
    * answered and charged once. It sends nothing and changes nothing.
@@ -203,6 +220,8 @@ export function createInboxClient(request: ReplyRequest, organizationId: string)
     setPriority: (id, priority) => post<ConversationRow>(`${one(id)}/priority`, { priority }),
     changeTags: (id, change) => post<ConversationRow>(`${one(id)}/tags`, change),
     reply: (id, reply) => sendReply(request, organizationId, id, reply),
+    takeOver: (id) => post<ConversationRow>(`${one(id)}/takeover`, {}),
+    handBack: (id) => post<ConversationRow>(`${one(id)}/handback`, {}),
     async assist(id, body) {
       return (await post<{ result: AssistResult }>(`${one(id)}/assist`, body)).result;
     },

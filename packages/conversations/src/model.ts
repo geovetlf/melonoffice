@@ -19,6 +19,7 @@ import type {
   UserId,
 } from '@melonoffice/domain';
 import { nameBasedUuid } from '@melonoffice/execution';
+import { isHandoffReason, isValidControl } from './control.js';
 import { ConversationError } from './errors.js';
 
 export const CHANNEL_TYPES = ['whatsapp'] as const satisfies readonly ChannelType[];
@@ -444,7 +445,9 @@ export function checkStoredConversation(c: Conversation): Conversation {
     !Array.isArray(c.tags) ||
     !c.tags.every(isTag) ||
     !Number.isSafeInteger(c.revision) ||
-    c.revision < 1
+    c.revision < 1 ||
+    (c.control !== undefined && !isValidControl(c.control)) ||
+    (c.handoff !== undefined && !isHandoffReason(c.handoff.reason))
   ) {
     throw new ConversationError('invalid_request', 'stored_conversation');
   }

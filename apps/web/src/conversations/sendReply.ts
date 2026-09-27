@@ -17,6 +17,7 @@ export type ReplyOutcome =
 export const REPLY_ERROR_CODES = [
   'outside_messaging_window',
   'conversation_closed',
+  'conversation_handled_by_ai',
   'channel_not_available',
   'permission_denied',
   'duplicate_request',

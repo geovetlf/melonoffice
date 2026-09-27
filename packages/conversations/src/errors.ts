@@ -30,7 +30,11 @@ export type ConversationErrorCode =
   // Activation (CV-5, ADR-0038): the model policy refused, or the provider did not answer in time.
   | 'ai_policy_denied'
   | 'ai_timeout'
-  | 'rate_limited';
+  | 'rate_limited'
+  // Human control (CV-6A, ADR-0039).
+  | 'autonomy_not_enabled'
+  | 'conversation_handled_by_ai'
+  | 'settings_concurrency_conflict';
 
 export class ConversationError extends Error {
   override readonly name = 'ConversationError';

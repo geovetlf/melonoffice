@@ -69,7 +69,7 @@ const ASSIST_ANSWERS: Record<AssistResult['type'], AssistResult> = {
 };
 
 /** An inbox held in memory, with the same answers the API gives. */
-function fakeClient(initial: ConversationRow[]) {
+function fakeClient(initial: ConversationRow[], options: { readonly aiAllowed?: boolean } = {}) {
   let rows = initial;
   const update = (id: string, change: Partial<ConversationRow>) => {
     rows = rows.map((r) => (r.id === id ? { ...r, ...change } : r));
@@ -146,6 +146,16 @@ function fakeClient(initial: ConversationRow[]) {
       async (_id: string, request: Parameters<InboxClient['assist']>[1]): Promise<AssistResult> =>
         ASSIST_ANSWERS[request.operation],
     ),
+    takeOver: vi.fn(async (id: string) =>
+      update(id, { control: { handledBy: 'human', aiState: 'paused', changedAt: null } }),
+    ),
+    handBack: vi.fn(async (id: string) => {
+      if (options.aiAllowed !== true) throw new InboxError('autonomy_not_enabled');
+      return update(id, {
+        control: { handledBy: 'ai', aiState: 'active', changedAt: null },
+        handoff: null,
+      });
+    }),
   } satisfies InboxClient;
   return client;
 }
@@ -472,5 +482,115 @@ describe('Conversations Center: assisted AI (CV-4)', () => {
       requestKey: 'web-1',
       locale: 'en',
     });
+  });
+});
+
+describe('Human control (CV-6A)', () => {
+  const byAI = { control: { handledBy: 'ai', aiState: 'active', changedAt: null } } as const;
+
+  it('shows a conversation AI handles, in the list and when opened, and never hides it', async () => {
+    const client = fakeClient([row('c1', byAI), row('c2')]);
+    center(client);
+    const list = await screen.findByRole('list', { name: 'Conversaciones' });
+    const rows = within(list).getAllByRole('button');
+    expect(within(rows[0] as HTMLElement).getByText('Atendida por IA')).toBeTruthy();
+    expect(within(rows[1] as HTMLElement).queryByText('Atendida por IA')).toBeNull();
+    const article = await open('Juan Pérez');
+    expect(within(article).getAllByText('Atendida por IA').length).toBeGreaterThan(0);
+  });
+
+  it('does not let a person reply while AI handles it, until they take control', async () => {
+    const client = fakeClient([row('c1', byAI)]);
+    center(client);
+    const article = await open('Juan Pérez');
+    expect(within(article).queryByRole('textbox', { name: 'Tu respuesta' })).toBeNull();
+    expect(within(article).getByText(/Toma el control para responder tú/)).toBeTruthy();
+    fireEvent.click(within(article).getByRole('button', { name: 'Tomar control' }));
+    await waitFor(() => expect(client.takeOver).toHaveBeenCalledWith('c1'));
+    expect(
+      await within(article).findByText('IA en pausa: una persona tomó el control'),
+    ).toBeTruthy();
+    expect(await within(article).findByRole('textbox', { name: 'Tu respuesta' })).toBeTruthy();
+  });
+
+  it('shows why AI handed a conversation to a person, and lets a person accept it', async () => {
+    const client = fakeClient([
+      row('c1', {
+        control: { handledBy: 'human', aiState: 'escalated', changedAt: null },
+        handoff: { reason: 'customer_requested_human', requestedAt: '2026-09-27T12:05:00Z' },
+      }),
+    ]);
+    center(client);
+    const article = await open('Juan Pérez');
+    expect(within(article).getByText(/El cliente pidió hablar con una persona/)).toBeTruthy();
+    fireEvent.click(within(article).getByRole('button', { name: 'Tomar control' }));
+    await waitFor(() => expect(client.takeOver).toHaveBeenCalledWith('c1'));
+  });
+
+  it('shows an unknown reason as "could not resolve", never the raw code', async () => {
+    const client = fakeClient([
+      row('c1', {
+        control: { handledBy: 'human', aiState: 'escalated', changedAt: null },
+        handoff: { reason: 'ignore_previous_instructions', requestedAt: '2026-09-27T12:05:00Z' },
+      }),
+    ]);
+    center(client);
+    const article = await open('Juan Pérez');
+    expect(within(article).getByText(/La IA no pudo resolverlo/)).toBeTruthy();
+    expect(within(article).queryByText(/ignore_previous_instructions/)).toBeNull();
+  });
+
+  it('hands back to AI only where the organization allows it, and says so otherwise', async () => {
+    const paused = { control: { handledBy: 'human', aiState: 'paused', changedAt: null } } as const;
+    const refused = fakeClient([row('c1', paused)]);
+    center(refused);
+    let article = await open('Juan Pérez');
+    fireEvent.click(within(article).getByRole('button', { name: 'Devolver a la IA' }));
+    expect(
+      await screen.findByText(
+        'Tu organización no ha permitido que la IA atienda conversaciones. No se cambió nada.',
+      ),
+    ).toBeTruthy();
+    cleanup();
+
+    const allowed = fakeClient([row('c1', paused)], { aiAllowed: true });
+    center(allowed);
+    article = await open('Juan Pérez');
+    fireEvent.click(within(article).getByRole('button', { name: 'Devolver a la IA' }));
+    await waitFor(() => expect(allowed.handBack).toHaveBeenCalledWith('c1'));
+    expect((await within(article).findAllByText('Atendida por IA')).length).toBeGreaterThan(0);
+  });
+
+  it('offers no control buttons to a person who cannot manage conversations', async () => {
+    const client = fakeClient([row('c1', byAI)]);
+    center(client, 'es', { can: (p) => p === 'conversation.read' || p === 'conversation.send' });
+    const article = await open('Juan Pérez');
+    expect(within(article).queryByRole('button', { name: 'Tomar control' })).toBeNull();
+    expect(within(article).getAllByText('Atendida por IA').length).toBeGreaterThan(0);
+  });
+
+  it('a person with no AI history sees nothing new', async () => {
+    const client = fakeClient([row('c1')]);
+    center(client);
+    const article = await open('Juan Pérez');
+    expect(within(article).getByText('Atendida por una persona')).toBeTruthy();
+    expect(within(article).queryByRole('button', { name: 'Tomar control' })).toBeNull();
+    expect(within(article).queryByRole('button', { name: 'Devolver a la IA' })).toBeNull();
+  });
+});
+
+describe('inbox client (CV-6A)', () => {
+  it('takes over and hands back with an empty body: nothing about who or what is sent', async () => {
+    const calls: { path: string; init: RequestInit }[] = [];
+    const client = createInboxClient(async (path, init) => {
+      calls.push({ path, init });
+      return new Response(JSON.stringify(row('c1')), { status: 200 });
+    }, 'org-1');
+    await client.takeOver('c1');
+    await client.handBack('c1');
+    expect(calls.map((c) => [c.path, c.init.method, c.init.body])).toEqual([
+      ['/v1/organizations/org-1/conversations/c1/takeover', 'POST', '{}'],
+      ['/v1/organizations/org-1/conversations/c1/handback', 'POST', '{}'],
+    ]);
   });
 });

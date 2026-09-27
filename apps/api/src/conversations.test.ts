@@ -194,6 +194,132 @@ describe.each(STORES)('conversations with storage in %s', (_name, createStores) 
     };
   }
 
+  describe('human control (CV-6A)', () => {
+    it('keeps AI off until a person allows it, then lets a person take control and hand back', async () => {
+      const t = await setup();
+      await t.deliver(CONNECTION_A, whatsapp(PHONE_A), APP_SECRET_A);
+      const conversation = await t.firstConversation();
+      const one = `${t.base(t.orgA)}/conversations/${conversation.id}`;
+      const settings = `${t.base(t.orgA)}/conversation-settings`;
+      expect(conversation).toMatchObject({
+        control: { handledBy: 'human', aiState: 'off', changedAt: null },
+        handoff: null,
+      });
+      expect(JSON.stringify(conversation)).not.toMatch(/epoch|revision/);
+      expect((await t.request('token-alice', settings)).body).toMatchObject({ autonomy: 'manual' });
+
+      // Manual: nothing can be handed to AI.
+      const refused = await t.post('token-alice', `${one}/handback`, {});
+      expect(refused).toMatchObject({ status: 409, body: { error: 'autonomy_not_enabled' } });
+
+      const changed = await t.post('token-alice', `${settings}/autonomy`, {
+        autonomy: 'autonomous',
+      });
+      expect(changed).toMatchObject({ status: 200, body: { autonomy: 'autonomous' } });
+      const handed = await t.post('token-alice', `${one}/handback`, {});
+      expect(handed).toMatchObject({
+        status: 200,
+        body: { control: { handledBy: 'ai', aiState: 'active' } },
+      });
+
+      // While AI handles it, a person's reply is refused and nothing is sent.
+      const blocked = await t.post('token-alice', `${one}/messages`, {
+        clientMessageId: 'web-1',
+        text: 'Hola',
+      });
+      expect(blocked).toMatchObject({ status: 409, body: { error: 'conversation_handled_by_ai' } });
+
+      const taken = await t.post('token-alice', `${one}/takeover`, {});
+      expect(taken).toMatchObject({
+        status: 200,
+        body: { control: { handledBy: 'human', aiState: 'paused' } },
+      });
+      expect((await t.post('token-alice', `${one}/takeover`, {})).status).toBe(409);
+      const sent = await t.post('token-alice', `${one}/messages`, {
+        clientMessageId: 'web-2',
+        text: 'Hola',
+      });
+      expect(sent.status).toBe(201);
+
+      const actions = (await t.stores.auditEvents()).map((e) => e.action);
+      expect(actions).toEqual(
+        expect.arrayContaining([
+          'conversation.autonomy_changed',
+          'conversation.ai_handed_back',
+          'conversation.ai_human_takeover',
+        ]),
+      );
+    });
+
+    it('takes nothing from the browser: no organization, state, reason or level it invents', async () => {
+      const t = await setup();
+      await t.deliver(CONNECTION_A, whatsapp(PHONE_A), APP_SECRET_A);
+      const conversation = await t.firstConversation();
+      const one = `${t.base(t.orgA)}/conversations/${conversation.id}`;
+      const settings = `${t.base(t.orgA)}/conversation-settings/autonomy`;
+      for (const body of [
+        { handledBy: 'ai' },
+        { aiState: 'active' },
+        { organizationId: t.orgB },
+        { reason: 'customer_requested_human' },
+      ]) {
+        expect((await t.post('token-alice', `${one}/takeover`, body)).status).toBe(400);
+        expect((await t.post('token-alice', `${one}/handback`, body)).status).toBe(400);
+      }
+      expect((await t.post('token-alice', settings, { autonomy: 'unlimited' })).status).toBe(400);
+      expect(
+        (await t.post('token-alice', settings, { autonomy: 'autonomous', organizationId: t.orgB }))
+          .status,
+      ).toBe(400);
+      expect((await t.post('token-alice', settings, {})).status).toBe(400);
+      // No route lets anyone escalate: that is the runtime's, never a request's.
+      expect(
+        (await t.post('token-alice', `${one}/escalate`, { reason: 'unresolved' })).status,
+      ).toBe(404);
+      expect(
+        (await t.request('token-alice', `${t.base(t.orgA)}/conversation-settings`)).body,
+      ).toMatchObject({
+        autonomy: 'manual',
+      });
+    });
+
+    it("never lets another organization read or change a conversation's control or settings", async () => {
+      const t = await setup();
+      await t.deliver(CONNECTION_A, whatsapp(PHONE_A), APP_SECRET_A);
+      const conversation = await t.firstConversation();
+      await t.post('token-alice', `${t.base(t.orgA)}/conversation-settings/autonomy`, {
+        autonomy: 'autonomous',
+      });
+      await t.post(
+        'token-alice',
+        `${t.base(t.orgA)}/conversations/${conversation.id}/handback`,
+        {},
+      );
+      // Bob in his own organization, naming Alice's conversation: missing.
+      await t.post('token-bob', `${t.base(t.orgB)}/conversation-settings/autonomy`, {
+        autonomy: 'autonomous',
+      });
+      const inB = `${t.base(t.orgB)}/conversations/${conversation.id}`;
+      expect((await t.post('token-bob', `${inB}/takeover`, {})).status).toBe(404);
+      expect((await t.post('token-bob', `${inB}/handback`, {})).status).toBe(404);
+      // Bob naming Alice's organization: not a member.
+      const inA = `${t.base(t.orgA)}/conversations/${conversation.id}`;
+      expect((await t.post('token-bob', `${inA}/takeover`, {})).status).toBe(403);
+      expect(
+        (
+          await t.post('token-bob', `${t.base(t.orgA)}/conversation-settings/autonomy`, {
+            autonomy: 'manual',
+          })
+        ).status,
+      ).toBe(403);
+      expect((await t.request('token-bob', `${t.base(t.orgA)}/conversation-settings`)).status).toBe(
+        403,
+      );
+      const still = await t.request('token-alice', inA);
+      expect(still.body).toMatchObject({ control: { handledBy: 'ai', aiState: 'active' } });
+    });
+  });
+
   describe('webhook', () => {
     it('stores a signed WhatsApp message in the organization of the connection', async () => {
       const t = await setup();

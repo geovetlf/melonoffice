@@ -4,6 +4,7 @@ import {
   isClientMessageId,
   isConversationId,
   newOutboundMessage,
+  personMaySend,
   type ConversationRepository,
   type OutboundSettlement,
 } from '@melonoffice/conversations';
@@ -183,6 +184,8 @@ export function createChannelMessageExecutor(options: ChannelMessageExecutorOpti
         return refuse('conversation_not_found');
       }
       if (conversation.status === 'closed') return refuse('conversation_closed');
+      // An agent took the conversation while the person's message waited (CV-6A): not sent.
+      if (!personMaySend(conversation)) return refuse('conversation_handled_by_ai');
       const adapter = adapters[conversation.channel];
       if (adapter === undefined) return refuse('channel_not_available');
       if (!withinServiceWindow(conversation, adapter, now())) {
@@ -460,11 +463,13 @@ export function createMessageSendService(options: MessageSendServiceOptions): Me
         const refusal =
           conversation.status === 'closed'
             ? 'conversation_closed'
-            : adapter === undefined
-              ? 'channel_not_available'
-              : !withinServiceWindow(conversation, adapter, now())
-                ? 'outside_messaging_window'
-                : undefined;
+            : !personMaySend(conversation)
+              ? 'conversation_handled_by_ai'
+              : adapter === undefined
+                ? 'channel_not_available'
+                : !withinServiceWindow(conversation, adapter, now())
+                  ? 'outside_messaging_window'
+                  : undefined;
         if (refusal !== undefined) {
           await audit.record(
             messageEventOf(

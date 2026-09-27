@@ -5,3 +5,4 @@ export * from './service.js';
 export * from './assist-context.js';
 export * from './assist-output.js';
 export * from './assist.js';
+export * from './control.js';
