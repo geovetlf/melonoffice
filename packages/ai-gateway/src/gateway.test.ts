@@ -784,11 +784,8 @@ describe('AI gateway: authorization, policy and credits', () => {
 
   it('refuses a call outside a working execution', async () => {
     const { w, execution, call } = await setup();
-    await w.executions.changeStatus(w.tenantA, execution.id, {
-      from: 'running',
-      to: 'cancelled',
-      reason: 'user_cancelled',
-    });
+    // Cancelling is the owner's own act (ADR-0029); running work is never moved by changeStatus.
+    await w.executions.cancel(w.tenantA, execution.id, 'user_cancelled');
     expect(await call()).toMatchObject({ code: 'execution_not_running' });
   });
 

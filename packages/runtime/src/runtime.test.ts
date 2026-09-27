@@ -1145,9 +1145,10 @@ describe.each(STORES)('runtime advance() with storage in %s', (storage, createSt
     expect(await w.jobs.get(w.tenantA, jobOf('n1'))).toMatchObject({ state: 'succeeded' });
   });
 
-  it.runIf(storage === 'memory')(
-    '25. makes no transition when its audit cannot be written: nothing runs',
-    async () => {
+  // Memory only: its audit store can be made to fail on demand. The emulator store writes the
+  // same events in the same transaction (packages/firestore), so a failed write aborts both.
+  if (storage === 'memory')
+    it('25. makes no transition when its audit cannot be written: nothing runs', async () => {
       const w = await world();
       const execution = await w.started([{ id: 'n0', tool: 'update_record' }, { id: 'n1' }]);
       const claim = await firstClaim(w, execution);
@@ -1172,8 +1173,7 @@ describe.each(STORES)('runtime advance() with storage in %s', (storage, createSt
       audit.appendNow = original;
       expect(await w.nodeOf(agent.id, 'n0')).toMatchObject({ status: 'pending' });
       expect(w.providerCalls).toHaveLength(0);
-    },
-  );
+    });
 
   it('26. stops processing a cancelled execution: late results are discarded, nothing is queued', async () => {
     const w = await world();
