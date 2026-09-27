@@ -348,6 +348,9 @@ importers:
 
   packages/conversations:
     dependencies:
+      '@melonoffice/ai-gateway':
+        specifier: workspace:*
+        version: link:../ai-gateway
       '@melonoffice/audit':
         specifier: workspace:*
         version: link:../audit
@@ -360,6 +363,9 @@ importers:
       '@melonoffice/execution':
         specifier: workspace:*
         version: link:../execution
+      '@melonoffice/observability':
+        specifier: workspace:*
+        version: link:../observability
       '@melonoffice/rbac':
         specifier: workspace:*
         version: link:../rbac

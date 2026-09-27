@@ -1,4 +1,4 @@
-import { InMemoryAuditStore } from '@melonoffice/audit';
+import { createAuditService, InMemoryAuditStore } from '@melonoffice/audit';
 import type { AuthenticatedContext } from '@melonoffice/auth';
 import { openWallet } from '@melonoffice/credits';
 import {
@@ -43,6 +43,7 @@ import {
   type InboundMessage,
 } from './model.js';
 import { InMemoryConversationRepository } from './repository.js';
+import { createConversationAssistant } from './assist.js';
 import { createConversationIngress, createConversationService } from './service.js';
 
 const T0 = new Date('2026-09-27T12:00:00Z');
@@ -862,5 +863,104 @@ describe('outbound (CV-2, ADR-0034)', () => {
     expect((await repository.findIdentity(w.orgA, conversation.channelIdentityId))?.id).toBe(
       conversation.channelIdentityId,
     );
+  });
+});
+
+describe('assisted AI (ADR-0037)', () => {
+  const completed = (structured: unknown) =>
+    ({
+      status: 'completed',
+      requestId: 'r',
+      provider: 'alpha',
+      model: 'alpha-ok',
+      versions: { adapter: '1', model: '1', policy: { id: 'p', version: 1 } },
+      output: { structured },
+      usage: { inputTokens: 1, outputTokens: 1 },
+      latencyMs: 1,
+      finishReason: 'stop',
+      cost: { estimatedMicroUsd: 1, actualMicroUsd: 1 },
+      credits: { state: 'consumed', estimated: 1, consumed: 1 },
+      providerRequestId: null,
+      attempts: 1,
+      fallbackFrom: null,
+    }) as const;
+
+  async function assistWorld(rateLimits?: { perUserOperation: number }) {
+    const w = await world();
+    const seen: unknown[] = [];
+    const assistant = createConversationAssistant({
+      conversations: w.service,
+      departments: { list: async () => [] },
+      gateway: {
+        assist: async (_tenant, request) => {
+          seen.push(request);
+          return completed({ reply: 'Hola Ana', explanation: null, warnings: [] });
+        },
+      },
+      authorization: createAuthorizationService(),
+      audit: createAuditService(w.audit),
+      ...(rateLimits === undefined
+        ? {}
+        : {
+            rateLimits: {
+              windowMs: 60_000,
+              perUser: 100,
+              perOrganization: 100,
+              ...rateLimits,
+            },
+          }),
+      now: () => new Date(T0.getTime()),
+    });
+    const { conversation } = await w.ingress.receive(inbound(w.orgA));
+    return { w, assistant, seen, conversation };
+  }
+
+  it('answers a person with a reply to review, and sends or stores nothing', async () => {
+    const { w, assistant, seen, conversation } = await assistWorld();
+    const outcome = await assistant.assist(w.tenantA, conversation.id, {
+      operation: 'reply',
+      requestKey: 'click-0001',
+    });
+    expect(outcome).toMatchObject({
+      operation: 'reply',
+      replayed: false,
+      result: { type: 'reply', reply: 'Hola Ana' },
+    });
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatchObject({
+      subject: { type: 'conversation', id: conversation.id },
+      sensitivity: 'confidential',
+    });
+    expect(await w.repository.listMessages(w.orgA, conversation.id)).toHaveLength(1);
+    expect(w.events('conversation.ai_reply_suggested')).toMatchObject([{ result: 'success' }]);
+  });
+
+  it('refuses GIA and the runtime, and another organization reads as missing', async () => {
+    const { w, assistant, seen, conversation } = await assistWorld();
+    const input = { operation: 'summary', requestKey: 'click-0001' };
+    const gia = await resolveTenant(as(ALICE, 'gia'), w.orgA, w.tenancy);
+    const runtime = await resolveRuntimeTenant(ALICE, w.orgA, w.tenancy);
+    expect(await codeOf(assistant.assist(gia, conversation.id, input))).toBe('requires_user');
+    expect(await codeOf(assistant.assist(runtime, conversation.id, input))).toBe('requires_user');
+    expect(await codeOf(assistant.assist(w.tenantB, conversation.id, input))).toBe(
+      'conversation_not_found',
+    );
+    expect(seen).toHaveLength(0);
+  });
+
+  it('limits repeated requests, and a repeated click is answered without counting', async () => {
+    const { w, assistant, seen, conversation } = await assistWorld({ perUserOperation: 2 });
+    const ask = (requestKey: string) =>
+      assistant.assist(w.tenantA, conversation.id, { operation: 'reply', requestKey });
+    await ask('click-0001');
+    expect((await ask('click-0001')).replayed).toBe(true);
+    await ask('click-0002');
+    expect(await codeOf(ask('click-0003'))).toBe('rate_limited');
+    expect(seen).toHaveLength(2);
+    expect(w.events('conversation.ai_reply_suggested').map((e) => e.result)).toEqual([
+      'success',
+      'success',
+      'denied',
+    ]);
   });
 });

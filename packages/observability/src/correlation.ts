@@ -26,6 +26,8 @@ export interface Correlation {
   readonly workerId?: string;
   /** The id that ties a job back to the request that created it. */
   readonly correlationId?: string;
+  /** The conversation an assisted AI call is about (ADR-0037). */
+  readonly conversationId?: string;
 }
 
 const KEYS = [
@@ -42,6 +44,7 @@ const KEYS = [
   'leaseId',
   'workerId',
   'correlationId',
+  'conversationId',
 ] as const;
 
 const ID = /^[\w-]{1,128}$/;

@@ -40,6 +40,7 @@ The MelonOffice architecture was defined in the **Phase 0 Architecture Plan (v0.
 | [0034](../adr/0034-human-tool-invocation.md)                       | Human tool invocation through the Tool Gate (CV-2)        | DG/CV-2 (B)      |
 | [0035](../adr/0035-conversations-inbox.md)                         | The Conversations Center inbox (CV-3)                     | CV-3             |
 | [0036](../adr/0036-web-identity-foundation.md)                     | Web identity foundation: sign-in, session, API client     | D-6, D-4         |
+| [0037](../adr/0037-assisted-conversation-intelligence.md)          | Assisted AI on conversations (CV-4)                       | CV-4, D-7, D-12  |
 
 ## Current phase
 

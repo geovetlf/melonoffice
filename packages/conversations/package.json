@@ -19,10 +19,12 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@melonoffice/ai-gateway": "workspace:*",
     "@melonoffice/audit": "workspace:*",
     "@melonoffice/departments": "workspace:*",
     "@melonoffice/domain": "workspace:*",
     "@melonoffice/execution": "workspace:*",
+    "@melonoffice/observability": "workspace:*",
     "@melonoffice/rbac": "workspace:*",
     "@melonoffice/tenancy": "workspace:*"
   },

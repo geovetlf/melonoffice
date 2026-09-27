@@ -108,6 +108,10 @@ const app = createApp({
   logger,
   version: config.version,
   webOrigins: config.webOrigins ?? [],
+  // The AI Gateway (ADR-0027, ADR-0037): no provider is registered (D-7) and no credit rate is
+  // set (D-12), so every AI call is denied before reaching any provider, wherever this runs.
+  ai:
+    config.deploymentEnvironment === undefined ? {} : { environment: config.deploymentEnvironment },
   ...configured,
 });
 

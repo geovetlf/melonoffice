@@ -31,6 +31,7 @@ export const ROLES = {
     'conversation.read',
     'conversation.manage',
     'conversation.send',
+    'conversation.assist',
     'contact.read',
     'channel.read',
     'channel.manage',
