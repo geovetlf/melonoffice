@@ -41,6 +41,7 @@ async function setup(options: WorldOptions = {}) {
       'billing_lookup',
       'staging_only',
       'retired',
+      'person_only',
     ],
   });
   const marketer = await w.seed(w.orgA, ALICE, { type: 'marketing', role: 'campaign_manager' });
@@ -275,6 +276,7 @@ describe('plan validation pipeline', () => {
     expect(await refusal(w, withTool('wipe_data'))).toBe('policy:tool_denied_by_policy');
     expect(await refusal(w, withTool('finance_report'))).toBe('policy:department_not_allowed');
     expect(await refusal(w, withTool('staging_only'))).toBe('policy:environment_not_allowed');
+    expect(await refusal(w, withTool('person_only'))).toBe('policy:tool_not_runtime_invocable');
     const version2 = proposal([
       specialistStep('work', r),
       toolStep('use', 'work', 'lookup', { tool: { id: 'lookup', version: 2 } }),

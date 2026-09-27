@@ -135,6 +135,8 @@ export const TOOLS: readonly ToolDefinition[] = [
   tool('billing_lookup', { permissions: ['billing.read'] }),
   tool('staging_only', { environments: ['staging'] }),
   tool('retired', {}, 'disabled'),
+  // ADR-0034: a tool only a person may invoke is never planned for the runtime.
+  tool('person_only', { invocationModes: ['human'] }),
 ];
 
 /** Model fixture only: MelonOffice's real catalogue is empty until the launch provider (D-7). */
