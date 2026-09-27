@@ -27,7 +27,7 @@ export type AuditActor =
   | { readonly type: 'system' | 'anonymous' };
 
 export interface AuditTarget {
-  readonly type: 'user' | 'organization' | 'membership' | 'subscription';
+  readonly type: 'user' | 'organization' | 'membership' | 'subscription' | 'execution';
   readonly id: string;
 }
 
@@ -35,6 +35,12 @@ export interface AuditTarget {
 export interface AuditPlan {
   readonly id: string;
   readonly version: number;
+}
+
+/** A status change, for `execution.state_changed` (ADR-0024): stable status codes only. */
+export interface AuditTransition {
+  readonly from: string;
+  readonly to: string;
 }
 
 /** The component that recorded the event. */
@@ -62,7 +68,12 @@ export interface AuditEvent {
   readonly permission?: string;
   /** The plan assigned, for `plan.assign` (ADR-0021) and `billing.subscription_created` (ADR-0022). */
   readonly plan?: AuditPlan;
-  /** A stable code saying why, for `denied` and `failure` (an error code, never a message). */
+  /** The status change, for `execution.state_changed`. */
+  readonly transition?: AuditTransition;
+  /**
+   * A stable code saying why: for `denied` and `failure`, an error code; for a successful
+   * change, its cause (for example why an execution was cancelled). Never a message.
+   */
   readonly reason?: string;
   readonly requestId?: string;
   readonly source: AuditSource;
@@ -91,6 +102,12 @@ export function buildAuditEvent(input: AuditEventInput, at: Date): AuditEvent {
     throw new Error('invalid audit reason');
   if (input.permission !== undefined && !PERMISSION.test(input.permission)) {
     throw new Error('invalid audit permission');
+  }
+  if (
+    input.transition !== undefined &&
+    (!CODE.test(input.transition.from) || !CODE.test(input.transition.to))
+  ) {
+    throw new Error('invalid audit transition');
   }
   if (
     input.plan !== undefined &&
@@ -122,6 +139,9 @@ export function buildAuditEvent(input: AuditEventInput, at: Date): AuditEvent {
     ...(input.plan === undefined
       ? {}
       : { plan: Object.freeze({ id: input.plan.id, version: input.plan.version }) }),
+    ...(input.transition === undefined
+      ? {}
+      : { transition: Object.freeze({ from: input.transition.from, to: input.transition.to }) }),
     ...(input.reason === undefined ? {} : { reason: input.reason }),
     ...(input.requestId !== undefined && REQUEST_ID.test(input.requestId)
       ? { requestId: input.requestId }

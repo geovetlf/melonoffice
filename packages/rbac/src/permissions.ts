@@ -18,6 +18,11 @@ export const PERMISSIONS = {
     action: 'read',
     description: "See the organization's subscription: its plan and status (ADR-0022).",
   },
+  'execution.read': {
+    resource: 'execution',
+    action: 'read',
+    description: "See one of the organization's executions: status, graph and versions (ADR-0024).",
+  },
 } as const satisfies Record<string, PermissionDefinition>;
 
 export interface PermissionDefinition {

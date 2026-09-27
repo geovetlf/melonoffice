@@ -14,6 +14,7 @@ import {
   type AuditStore,
 } from '@melonoffice/audit';
 import { InMemoryBillingStore, type BillingStore } from '@melonoffice/billing';
+import { InMemoryExecutionRepository, type ExecutionRepository } from '@melonoffice/execution';
 import type {
   BillingAccount,
   Membership,
@@ -34,6 +35,7 @@ import {
   toAccountDocument,
   toSubscriptionDocument,
 } from './billing-firestore.js';
+import { FirestoreExecutionRepository } from './executions-firestore.js';
 import { FirestoreTenancyStore, MEMBERSHIPS, ORGANIZATIONS } from './tenancy-firestore.js';
 import { emulatorFirestore, emulatorHost } from './test-firestore.js';
 import { FirestoreUserDirectory } from './users-firestore.js';
@@ -66,6 +68,7 @@ export interface Stores {
   readonly putBilling: (record: BillingAccount | Subscription) => Promise<void>;
   /** Removes an organization's billing account, as for one created before billing existed. */
   readonly removeBilling: (organizationId: OrganizationId) => Promise<void>;
+  readonly executions: ExecutionRepository;
   readonly audit: AuditService;
   /** Every stored audit event, oldest first, as plain data. */
   readonly auditEvents: () => Promise<readonly AuditEvent[]>;
@@ -95,6 +98,7 @@ function memoryStores(): Stores {
     billing,
     putBilling: async (r) => billing.put(r),
     removeBilling: async (id) => billing.removeAccount(id),
+    executions: new InMemoryExecutionRepository(events),
     audit: createAuditService(breakable),
     auditEvents: async () => events.events(),
     breakAudit: (broken) => (breakable.broken = broken),
@@ -119,6 +123,9 @@ function fromAuditDocument(id: string, d: AuditDocument): AuditEvent {
       : { requestedOrganizationId: d.requestedOrganizationId }),
     ...(d.permission === null ? {} : { permission: d.permission }),
     ...(d.planId === null ? {} : { plan: { id: d.planId, version: d.planVersion } }),
+    ...(d.transitionFrom === null
+      ? {}
+      : { transition: { from: d.transitionFrom, to: d.transitionTo } }),
     ...(d.reason === null ? {} : { reason: d.reason }),
     ...(d.requestId === null ? {} : { requestId: d.requestId }),
     source: d.source,
@@ -142,6 +149,7 @@ function firestoreStores(): Stores {
           .set(toAccountDocument(record));
       }
     },
+    executions: new FirestoreExecutionRepository(db),
     async removeBilling(organizationId) {
       await db.collection(BILLING_ACCOUNTS).doc(organizationId).delete();
     },
@@ -184,6 +192,7 @@ export function setupApp(
     auth: { verifier, users: stores.users },
     tenancy: stores.tenancy,
     billing: stores.billing,
+    executions: stores.executions,
     audit: stores.audit,
     ...(authorization ? { authorization } : {}),
     ...(entitlements ? { entitlements } : {}),

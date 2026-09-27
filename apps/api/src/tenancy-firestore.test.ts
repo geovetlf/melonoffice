@@ -314,6 +314,8 @@ describe.runIf(emulatorHost)('FirestoreAuditStore (emulator)', () => {
       permission: null,
       planId: null,
       planVersion: null,
+      transitionFrom: null,
+      transitionTo: null,
       reason: null,
       requestId: null,
       source: 'api',
