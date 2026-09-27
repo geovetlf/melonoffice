@@ -1,0 +1,484 @@
+import { useId, type ReactNode } from 'react';
+import type { RoomMotif } from './departments.js';
+
+/**
+ * A department's room, drawn in SVG (ADR-0040): a lit back wall with the department's big screen,
+ * shelves, lamps, plants and desks. The people at the desks are the department's real agents
+ * (ADR-0006), never extras, and nothing drawn says what an agent is doing. Hidden from assistive
+ * technology; the room's name and its agents are given by the element around it.
+ */
+export interface RoomArtProps {
+  readonly motif: RoomMotif;
+  readonly hue: string;
+  /** `zone`: a room seen from the Home; `office`: the same room, entered. */
+  readonly variant?: 'zone' | 'office';
+  /**
+   * The department's real agents (ADR-0006): one person per agent at a desk, paused ones dimmed,
+   * as many as the room has desks. The other desks stay empty.
+   */
+  readonly agents?: { readonly active: number; readonly paused: number };
+}
+
+const SIZES = {
+  zone: { width: 360, height: 200, desks: 3 },
+  office: { width: 720, height: 300, desks: 5 },
+} as const;
+
+export function RoomArt({
+  motif,
+  hue,
+  variant = 'zone',
+  agents = { active: 0, paused: 0 },
+}: RoomArtProps) {
+  const id = useId().replace(/[^a-zA-Z0-9_-]/g, '');
+  const { active, paused } = agents;
+  const { width: w, height: h, desks } = SIZES[variant];
+  const wall = `wall-${id}`;
+  const glow = `glow-${id}`;
+  const floor = `floor-${id}`;
+  const screenW = variant === 'office' ? 168 : 120;
+  const screenH = variant === 'office' ? 78 : 56;
+  const screenCount = variant === 'office' ? 3 : 1;
+  const gap = 22;
+  const firstScreen = (w - screenCount * screenW - (screenCount - 1) * gap) / 2;
+  const screens = Array.from({ length: screenCount }, (_, i) => firstScreen + i * (screenW + gap));
+  const lamps = variant === 'office' ? [0.2, 0.4, 0.6, 0.8] : [0.28, 0.72];
+  const deskXs = Array.from({ length: desks }, (_, i) => ((i + 0.5) * w) / desks);
+  return (
+    <svg
+      className={`room room--${variant}`}
+      viewBox={`0 0 ${w} ${h}`}
+      preserveAspectRatio="xMidYMid slice"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <defs>
+        <linearGradient id={wall} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor={hue} stopOpacity="0.55" />
+          <stop offset="0.55" stopColor="#5a2c1d" stopOpacity="0.95" />
+          <stop offset="1" stopColor="#2b1711" />
+        </linearGradient>
+        <radialGradient id={glow} cx="0.5" cy="0.25" r="0.7">
+          <stop offset="0" stopColor={hue} stopOpacity="0.55" />
+          <stop offset="1" stopColor={hue} stopOpacity="0" />
+        </radialGradient>
+        <linearGradient id={floor} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#7a4330" />
+          <stop offset="1" stopColor="#3a2019" />
+        </linearGradient>
+      </defs>
+      {/* Back wall, arched like the reference's pods, and the warm light of the room. */}
+      <path
+        d={`M0 ${h * 0.62} V${h * 0.2} Q0 6 ${w * 0.12} 6 H${w * 0.88} Q${w} 6 ${w} ${h * 0.2} V${h * 0.62} Z`}
+        fill={`url(#${wall})`}
+      />
+      <rect width={w} height={h * 0.7} fill={`url(#${glow})`} />
+      <path
+        d={`M${w * 0.1} 14 H${w * 0.9}`}
+        stroke={hue}
+        strokeWidth="3"
+        strokeLinecap="round"
+        className="room__light"
+      />
+      {lamps.map((f) => (
+        <g key={f} className="room__lamp">
+          <line x1={w * f} y1="16" x2={w * f} y2={h * 0.1} stroke="#1c110d" strokeWidth="1" />
+          <circle cx={w * f} cy={h * 0.1 + 3} r="9" fill="#ffd08a" opacity="0.18" />
+          <path
+            d={`M${w * f - 5} ${h * 0.1 + 3} Q${w * f} ${h * 0.1 - 4} ${w * f + 5} ${h * 0.1 + 3} Z`}
+            fill="#ffd08a"
+          />
+        </g>
+      ))}
+      <Shelf x={10} y={h * 0.22} height={h * 0.36} hue={hue} />
+      <Shelf x={w - 46} y={h * 0.22} height={h * 0.36} hue={hue} />
+      {screens.map((x, i) => (
+        <g key={x} transform={`translate(${x} ${h * 0.14})`}>
+          <rect
+            width={screenW}
+            height={screenH}
+            rx="5"
+            fill="#221410"
+            stroke={hue}
+            strokeOpacity="0.8"
+            strokeWidth="1.5"
+          />
+          <g className="room__screen" style={{ animationDelay: `${i * 1.3}s` }}>
+            <Motif motif={motif} hue={hue} width={screenW} height={screenH} />
+          </g>
+        </g>
+      ))}
+      {/* Floor. */}
+      <path d={`M0 ${h * 0.62} H${w} V${h} H0 Z`} fill={`url(#${floor})`} />
+      <ellipse cx={w / 2} cy={h * 0.64} rx={w * 0.46} ry={h * 0.05} fill={hue} opacity="0.18" />
+      {deskXs.map((x, i) => (
+        <Desk
+          key={x}
+          x={x}
+          y={h * 0.62}
+          hue={hue}
+          delay={i * 0.9}
+          look={i}
+          occupant={i < active ? 'active' : i < active + paused ? 'paused' : undefined}
+          scale={variant === 'office' ? 1.35 : 1.1}
+        />
+      ))}
+      <Plant x={18} y={h - 4} scale={variant === 'office' ? 1.4 : 1} />
+      <Plant x={w - 18} y={h - 4} scale={variant === 'office' ? 1.4 : 1} />
+    </svg>
+  );
+}
+
+function Shelf({ x, y, height, hue }: { x: number; y: number; height: number; hue: string }) {
+  const rows = [0.3, 0.62, 0.94].map((r) => y + height * r);
+  return (
+    <g opacity="0.85">
+      <rect x={x} y={y} width="36" height={height} rx="3" fill="#3b2019" />
+      {rows.map((ry, i) => (
+        <g key={ry}>
+          <rect x={x + 2} y={ry} width="32" height="2" fill="#6b3a2a" />
+          {[0, 1, 2, 3].map((b) => (
+            <rect
+              key={b}
+              x={x + 4 + b * 7}
+              y={ry - 9 + ((b + i) % 2)}
+              width="5"
+              height={8 - ((b + i) % 2)}
+              rx="1"
+              fill={b % 2 === 0 ? hue : '#f3d6c2'}
+              opacity={b % 2 === 0 ? 0.8 : 0.55}
+            />
+          ))}
+        </g>
+      ))}
+    </g>
+  );
+}
+
+/** A few looks for the people drawn at the desks, so a room does not look cloned. */
+const PEOPLE = [
+  { hair: '#3a2019', shirt: '#2f2a3a', skin: '#f1c7a8' },
+  { hair: '#8a4b2a', shirt: '#f4e3d6', skin: '#e0a98a' },
+  { hair: '#1d1310', shirt: '#6b3a2a', skin: '#c98d6b' },
+  { hair: '#d9a066', shirt: '#3b2a4a', skin: '#f3d0b5' },
+  { hair: '#2b1a14', shirt: '#9a4a32', skin: '#b87a5a' },
+] as const;
+
+function Desk({
+  x,
+  y,
+  hue,
+  delay,
+  look,
+  occupant,
+  scale,
+}: {
+  x: number;
+  y: number;
+  hue: string;
+  delay: number;
+  look: number;
+  occupant: 'active' | 'paused' | undefined;
+  scale: number;
+}) {
+  const person = PEOPLE[look % PEOPLE.length] ?? PEOPLE[0];
+  return (
+    <g transform={`translate(${x} ${y + 30 * scale}) scale(${scale})`}>
+      {/* A person at work, seen over the monitor. */}
+      {occupant === undefined ? null : (
+        <g
+          className={occupant === 'active' ? 'room__agent' : 'room__agent room__agent--paused'}
+          style={{ animationDelay: `${delay}s` }}
+          opacity={occupant === 'paused' ? 0.45 : 1}
+        >
+          <path d="M-15 -4 Q-15 -24 0 -24 Q15 -24 15 -4 Z" fill={person.shirt} />
+          <rect x="-2.5" y="-28" width="5" height="5" fill={person.skin} />
+          <circle cx="0" cy="-33" r="7" fill={person.skin} />
+          <path
+            d="M-7.2 -33 Q-7 -42 0 -42 Q7 -42 7.2 -33 Q4 -37.5 0 -37.5 Q-4 -37.5 -7.2 -33Z"
+            fill={person.hair}
+          />
+        </g>
+      )}
+      {/* Monitor, lit by the department's light. */}
+      <rect
+        x="-10"
+        y="-17"
+        width="20"
+        height="12"
+        rx="1.5"
+        fill="#1c110d"
+        stroke={hue}
+        strokeWidth="0.8"
+      />
+      <rect
+        x="-8.5"
+        y="-15.5"
+        width="17"
+        height="9"
+        rx="1"
+        fill={hue}
+        opacity="0.45"
+        className="room__monitor"
+        style={{ animationDelay: `${delay + 0.4}s` }}
+      />
+      <rect x="-1.5" y="-5" width="3" height="3" fill="#1c110d" />
+      {/* Desk. */}
+      <path d="M-30 -2 H30 L26 4 H-26 Z" fill="#f4e3d6" />
+      <rect x="-24" y="4" width="3" height="12" fill="#c9ad9b" />
+      <rect x="21" y="4" width="3" height="12" fill="#c9ad9b" />
+    </g>
+  );
+}
+
+function Plant({ x, y, scale }: { x: number; y: number; scale: number }) {
+  return (
+    <g transform={`translate(${x} ${y}) scale(${scale})`}>
+      <ellipse cx="-6" cy="-24" rx="5" ry="12" fill="#5f7a4c" transform="rotate(-25 -6 -24)" />
+      <ellipse cx="6" cy="-26" rx="5" ry="13" fill="#6f8b5a" transform="rotate(20 6 -26)" />
+      <ellipse cx="0" cy="-30" rx="4.5" ry="13" fill="#57714a" />
+      <path d="M-8 -12 H8 L6 0 H-6 Z" fill="#e9d5c6" />
+    </g>
+  );
+}
+
+/** What the big screen shows: a sign of the department's work, drawn, not data. */
+function Motif({
+  motif,
+  hue,
+  width: w,
+  height: h,
+}: {
+  motif: RoomMotif;
+  hue: string;
+  width: number;
+  height: number;
+}): ReactNode {
+  const soft = '#ffd9c2';
+  const pad = 8;
+  switch (motif) {
+    case 'map':
+      return (
+        <g opacity="0.9">
+          <path
+            d={`M${w * 0.12} ${h * 0.45} q${w * 0.08} -${h * 0.25} ${w * 0.2} -${h * 0.1} t${w * 0.1} ${h * 0.25} q-${w * 0.12} ${h * 0.2} -${w * 0.3} -${h * 0.15}Z`}
+            fill={hue}
+            opacity="0.5"
+          />
+          <path
+            d={`M${w * 0.5} ${h * 0.3} q${w * 0.15} -${h * 0.12} ${w * 0.35} ${h * 0.05} q-${w * 0.05} ${h * 0.35} -${w * 0.2} ${h * 0.4} q-${w * 0.1} -${h * 0.1} -${w * 0.15} -${h * 0.45}Z`}
+            fill={hue}
+            opacity="0.5"
+          />
+          {[0.25, 0.42, 0.62, 0.78].map((fx, i) => (
+            <circle key={fx} cx={w * fx} cy={h * (0.35 + (i % 2) * 0.2)} r="2.2" fill={soft} />
+          ))}
+        </g>
+      );
+    case 'dashboard':
+      return (
+        <g>
+          {[0, 1, 2, 3].map((i) => {
+            const cw = (w - pad * 3) / 2;
+            const ch = (h - pad * 3) / 2;
+            const x = pad + (i % 2) * (cw + pad);
+            const y = pad + Math.floor(i / 2) * (ch + pad);
+            return (
+              <g key={i}>
+                <rect x={x} y={y} width={cw} height={ch} rx="2" fill={hue} opacity="0.18" />
+                {[0, 1, 2, 3].map((b) => (
+                  <rect
+                    key={b}
+                    x={x + 4 + b * (cw / 5)}
+                    y={y + ch - 3 - (((b + i) % 3) + 1) * (ch / 5)}
+                    width={cw / 8}
+                    height={(((b + i) % 3) + 1) * (ch / 5)}
+                    fill={b % 2 === 0 ? hue : soft}
+                    opacity="0.85"
+                  />
+                ))}
+              </g>
+            );
+          })}
+        </g>
+      );
+    case 'growth':
+      return (
+        <g>
+          {[0.25, 0.4, 0.55, 0.75, 0.9].map((f, i) => (
+            <rect
+              key={f}
+              x={pad + i * ((w - pad * 2) / 5) + 2}
+              y={h - pad - (h - pad * 2) * f}
+              width={(w - pad * 2) / 5 - 6}
+              height={(h - pad * 2) * f}
+              rx="1.5"
+              fill={hue}
+              opacity={0.45 + i * 0.1}
+            />
+          ))}
+          <path
+            d={`M${pad} ${h * 0.75} L${w * 0.35} ${h * 0.55} L${w * 0.55} ${h * 0.6} L${w - pad} ${h * 0.18}`}
+            stroke={soft}
+            strokeWidth="1.8"
+            fill="none"
+          />
+        </g>
+      );
+    case 'social':
+      return (
+        <g>
+          {[0, 1, 2].map((i) => {
+            const cw = (w - pad * 4) / 3;
+            const x = pad + i * (cw + pad);
+            return (
+              <g key={i}>
+                <rect
+                  x={x}
+                  y={pad}
+                  width={cw}
+                  height={h - pad * 2}
+                  rx="3"
+                  fill={soft}
+                  opacity="0.15"
+                />
+                <rect
+                  x={x + 3}
+                  y={pad + 3}
+                  width={cw - 6}
+                  height={(h - pad * 2) * 0.5}
+                  rx="2"
+                  fill={hue}
+                  opacity="0.7"
+                />
+                <rect
+                  x={x + 3}
+                  y={pad + (h - pad * 2) * 0.62}
+                  width={cw * 0.7}
+                  height="3"
+                  fill={soft}
+                  opacity="0.7"
+                />
+                <circle cx={x + cw - 7} cy={h - pad - 6} r="2.5" fill={hue} />
+              </g>
+            );
+          })}
+        </g>
+      );
+    case 'video':
+      return (
+        <g>
+          <rect
+            x={pad}
+            y={pad}
+            width={w - pad * 2}
+            height={h * 0.52}
+            rx="2"
+            fill={hue}
+            opacity="0.3"
+          />
+          <path
+            d={`M${w / 2 - 6} ${pad + h * 0.12} L${w / 2 + 8} ${pad + h * 0.26} L${w / 2 - 6} ${pad + h * 0.4} Z`}
+            fill={soft}
+          />
+          {[0, 1, 2, 3].map((i) => (
+            <rect
+              key={i}
+              x={pad + i * ((w - pad * 2) / 4) + 1}
+              y={h * 0.72}
+              width={(w - pad * 2) / 4 - 3}
+              height={h * 0.14}
+              rx="1.5"
+              fill={i % 2 === 0 ? hue : soft}
+              opacity="0.7"
+            />
+          ))}
+        </g>
+      );
+    case 'network': {
+      const nodes = [
+        [0.15, 0.3],
+        [0.35, 0.7],
+        [0.5, 0.35],
+        [0.7, 0.65],
+        [0.85, 0.3],
+      ] as const;
+      return (
+        <g>
+          {nodes.slice(1).map(([fx, fy], i) => {
+            const [px, py] = nodes[i] ?? nodes[0];
+            return (
+              <line
+                key={fx}
+                x1={w * px}
+                y1={h * py}
+                x2={w * fx}
+                y2={h * fy}
+                stroke={hue}
+                strokeWidth="1.2"
+                opacity="0.8"
+              />
+            );
+          })}
+          <line
+            x1={w * 0.5}
+            y1={h * 0.35}
+            x2={w * 0.85}
+            y2={h * 0.3}
+            stroke={hue}
+            strokeWidth="1.2"
+            opacity="0.8"
+          />
+          {nodes.map(([fx, fy], i) => (
+            <circle
+              key={fx}
+              cx={w * fx}
+              cy={h * fy}
+              r={i === 2 ? 5 : 3.5}
+              fill={i === 2 ? soft : hue}
+            />
+          ))}
+        </g>
+      );
+    }
+    case 'finance':
+      return (
+        <g>
+          <circle cx={w * 0.27} cy={h / 2} r={h * 0.32} fill={soft} opacity="0.25" />
+          <path
+            d={`M${w * 0.27} ${h / 2} V${h / 2 - h * 0.32} A${h * 0.32} ${h * 0.32} 0 0 1 ${w * 0.27 + h * 0.3} ${h / 2 + h * 0.1} Z`}
+            fill={hue}
+          />
+          {[0, 1, 2].map((i) => (
+            <rect
+              key={i}
+              x={w * 0.55}
+              y={h * (0.25 + i * 0.2)}
+              width={w * (0.35 - i * 0.08)}
+              height={h * 0.1}
+              rx="1.5"
+              fill={i === 0 ? hue : soft}
+              opacity="0.75"
+            />
+          ))}
+        </g>
+      );
+    default:
+      return (
+        <g>
+          {[0.25, 0.45, 0.65].map((f) => (
+            <rect
+              key={f}
+              x={pad}
+              y={h * f}
+              width={(w - pad * 2) * (1.2 - f)}
+              height="4"
+              rx="2"
+              fill={soft}
+              opacity="0.6"
+            />
+          ))}
+        </g>
+      );
+  }
+}

@@ -69,47 +69,6 @@
   color: var(--mo-color-danger);
 }
 
-.shell__header {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--mo-space-4);
-  padding: var(--mo-space-3) var(--mo-space-6);
-  background: var(--mo-color-sidebar-background);
-  color: var(--mo-color-sidebar-text);
-}
-
-.shell__brand {
-  margin: 0;
-  font-weight: var(--mo-font-weight-bold);
-  color: var(--mo-color-accent-decorative);
-}
-
-.shell__who {
-  display: flex;
-  flex-direction: column;
-  margin-left: auto;
-  font-size: var(--mo-font-size-sm);
-  text-align: right;
-}
-
-.shell__organization {
-  font-weight: var(--mo-font-weight-medium);
-}
-
-.shell__main {
-  max-width: 60rem;
-  margin: 0 auto;
-  padding: var(--mo-space-8) var(--mo-space-4);
-}
-
-@media (max-width: 30rem) {
-  .shell__who {
-    margin-left: 0;
-    text-align: left;
-  }
-}
-
 /* Conversations Center (CV-3): a list beside the open conversation; stacked on a phone. */
 .inbox {
   padding: var(--mo-space-4);
@@ -189,16 +148,6 @@
 .inbox__message--outbound {
   margin-left: auto;
   background: var(--mo-color-surface-subtle);
-}
-
-.shell__nav a {
-  color: var(--mo-color-sidebar-text);
-  font-weight: var(--mo-font-weight-medium);
-  text-decoration: none;
-}
-
-.shell__nav a[aria-current='page'] {
-  border-bottom: 2px solid var(--mo-color-accent-decorative);
 }
 
 .inbox__error {

@@ -2,7 +2,8 @@ import { useSyncExternalStore } from 'react';
 
 /**
  * The web app's navigation, on the browser's history API (ADR-0036). A router library is not an
- * approved dependency, and the app has two kinds of pages so far: sign-in and the protected area.
+ * approved dependency: `/login` is public, and the signed-in pages are named in `shell/routes.ts`
+ * (ADR-0040).
  */
 
 const listeners = new Set<() => void>();

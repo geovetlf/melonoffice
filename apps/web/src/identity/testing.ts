@@ -31,6 +31,10 @@ export interface FakeBackend {
     organizations: { id: string; name: string; role: string }[];
     permissions: string[];
     idTokenSeconds: number;
+    /** Each organization's agents (specialist records), by department type. */
+    specialists: Record<string, { id: string; name: string; type: string; status: string }[]>;
+    /** Each organization's credit balance, if it has a wallet. */
+    credits: Record<string, number>;
     /** Each organization's conversations: only its members can read them. */
     conversations: Record<string, { id: string; name: string; priority: string }[]>;
     organizationLimitReached?: boolean;
@@ -50,13 +54,19 @@ export function fakeBackend(): FakeBackend {
     registered: true,
     organizations: [{ id: 'org_1', name: 'Acme', role: 'owner' }],
     permissions: [
+      'billing.read',
       'contact.read',
+      'credits.read',
+      'department.read',
+      'specialist.read',
       'conversation.manage',
       'conversation.read',
       'conversation.send',
       'organization.read',
     ],
     idTokenSeconds: 3600,
+    specialists: { org_1: [] },
+    credits: { org_1: 498 },
     conversations: {
       org_1: [{ id: 'c1', name: 'Juan Pérez', priority: 'normal' }],
       org_other: [{ id: 'c9', name: 'Another company’s customer', priority: 'normal' }],
@@ -147,6 +157,28 @@ export function fakeBackend(): FakeBackend {
     return json(404, { error: 'organization_not_found' });
   };
 
+  /** The D-11 catalogue, as the departments route answers it for a new organization. */
+  const DEPARTMENT_TYPES = [
+    'leadership',
+    'operations',
+    'sales',
+    'marketing',
+    'design_video',
+    'research',
+    'finance',
+  ];
+  const department = (organizationId: string, type: string) => ({
+    id: `${organizationId}_${type}`,
+    origin: 'catalog',
+    typeId: type,
+    nameKey: `department.${type}.name`,
+    shortNameKey: `department.${type}.short`,
+    name: null,
+    status: 'active',
+    purpose: null,
+    description: null,
+  });
+
   /** The inbox routes, as the API answers them: membership first, then the role's permission. */
   function inboxAnswer(organizationId: string, rest: string, method: string, body?: string) {
     if (!options.organizations.some((o) => o.id === organizationId)) {
@@ -172,7 +204,48 @@ export function fakeBackend(): FakeBackend {
       contact: { id: `contact-${c.id}`, displayName: c.name, phone: null },
     });
     const [route, query = ''] = rest.split('?');
-    if (route === 'departments') return json(200, { departments: [] });
+    if (route === 'departments') {
+      return (
+        needs('department.read') ??
+        json(200, { departments: DEPARTMENT_TYPES.map((type) => department(organizationId, type)) })
+      );
+    }
+    if (route === 'specialists') {
+      return (
+        needs('specialist.read') ??
+        json(200, {
+          specialists: (options.specialists[organizationId] ?? []).map((s) => ({
+            id: s.id,
+            departmentId: `${organizationId}_${s.type}`,
+            displayName: s.name,
+            status: s.status,
+          })),
+        })
+      );
+    }
+    if (route === 'credits') {
+      const balance = options.credits[organizationId];
+      return (
+        needs('credits.read') ??
+        json(
+          200,
+          balance === undefined
+            ? { organizationId, status: 'absent', reason: 'no_wallet' }
+            : { organizationId, status: 'present', balance, updatedAt: '2026-09-27T12:00:00Z' },
+        )
+      );
+    }
+    if (route === 'billing') {
+      return (
+        needs('billing.read') ??
+        json(200, {
+          organizationId,
+          status: 'present',
+          subscription: { id: 's1', plan: { id: 'entrepreneur', version: 1 }, status: 'active' },
+          planInForce: true,
+        })
+      );
+    }
     if (route === 'conversations' && method === 'GET') {
       const q = new URLSearchParams(query).get('q')?.toLowerCase();
       return (
