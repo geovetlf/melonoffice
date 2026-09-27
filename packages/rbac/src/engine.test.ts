@@ -123,6 +123,7 @@ describe('catalogue', () => {
       'workflow.manage',
       'conversation.read',
       'conversation.manage',
+      'conversation.send',
       'contact.read',
       'channel.read',
       'channel.manage',

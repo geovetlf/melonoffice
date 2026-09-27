@@ -18,5 +18,18 @@
   "department.research.name": "Investigación",
   "department.research.short": "Investigación",
   "department.finance.name": "Finanzas",
-  "department.finance.short": "Finanzas"
+  "department.finance.short": "Finanzas",
+  "conversation.reply.label": "Tu respuesta",
+  "conversation.reply.byPerson": "Respondes tú, en tu nombre. Ninguna IA escribe ni envía nada.",
+  "conversation.reply.send": "Enviar",
+  "conversation.reply.sending": "Enviando…",
+  "conversation.reply.sent": "Enviado.",
+  "conversation.reply.unknown": "No pudimos confirmar si WhatsApp lo recibió. No se volverá a enviar automáticamente.",
+  "conversation.reply.error.outside_messaging_window": "Pasaron más de 24 horas desde el último mensaje del contacto. WhatsApp ahora solo permite plantillas aprobadas, que aún no están disponibles.",
+  "conversation.reply.error.conversation_closed": "Esta conversación está cerrada. Reábrela para responder.",
+  "conversation.reply.error.channel_not_available": "El canal no está disponible ahora. No se envió nada.",
+  "conversation.reply.error.permission_denied": "No tienes permiso para responder en conversaciones.",
+  "conversation.reply.error.duplicate_request": "Este mensaje ya se está enviando.",
+  "conversation.reply.error.external_send_failed": "WhatsApp no aceptó el mensaje. No se envió nada.",
+  "conversation.reply.error.generic": "No se pudo enviar el mensaje. No se envió nada."
 }

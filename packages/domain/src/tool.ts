@@ -57,6 +57,13 @@ export interface ToolProvider {
   readonly id: string;
 }
 
+/**
+ * Who may invoke a tool through the gate (ADR-0034). `runtime`: the execution runtime, for a
+ * specialist (ADR-0031). `human`: the authenticated user acting directly, synchronously, for a
+ * tool built for it. Each mode is explicit: allowing one never implies the other.
+ */
+export type ToolInvocationMode = 'runtime' | 'human';
+
 export interface ToolRetryPolicy {
   /** 1 means no retry. */
   readonly maxAttempts: number;
@@ -97,6 +104,11 @@ export interface ToolVersion {
    * finance-only tool stays out of Marketing without a hard-coded matrix.
    */
   readonly departmentTypes?: readonly DepartmentTypeId[];
+  /**
+   * Who may invoke it (ADR-0034). Absent: `['runtime']` only, as before, so a person can never
+   * invoke a tool that does not say so explicitly.
+   */
+  readonly invocationModes?: readonly ToolInvocationMode[];
 }
 
 /** A tool: a stable id, a status, and every version it ever had. */

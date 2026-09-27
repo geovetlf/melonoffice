@@ -67,9 +67,59 @@ export function createToolRegistry(
 }
 
 /**
- * MelonOffice's tool catalogue. Empty: no real tool exists yet, and none is invented. The first
- * tools arrive with their executors in a later phase.
+ * `message_send` (CV-2, ADR-0034): a person replies, as themselves, in one of their
+ * organization's conversations. It is the only tool a person may invoke directly, and only the
+ * runtime can never invoke it: it names `human` alone. Its input names the conversation and the
+ * already reserved message, nothing else: the recipient, the channel account and the credentials
+ * are derived on the server from the conversation, never taken from a caller.
  */
-export const TOOL_CATALOGUE: readonly ToolDefinition[] = Object.freeze([]);
+export const MESSAGE_SEND_TOOL: ToolDefinition = {
+  id: 'message_send' as ToolDefinition['id'],
+  status: 'active',
+  versions: [
+    {
+      toolId: 'message_send' as ToolVersion['toolId'],
+      version: 1,
+      nameKey: 'tools.message_send.name' as ToolVersion['nameKey'],
+      descriptionKey: 'tools.message_send.description' as ToolVersion['descriptionKey'],
+      category: 'communication',
+      action: 'send',
+      mutating: true,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          conversationId: { type: 'string', minLength: 36, maxLength: 36 },
+          messageId: { type: 'string', minLength: 36, maxLength: 36 },
+        },
+        required: ['conversationId', 'messageId'],
+      },
+      outputSchema: {
+        type: 'object',
+        properties: {
+          messageId: { type: 'string', minLength: 36, maxLength: 36 },
+          status: { type: 'string', maxLength: 16, enum: ['sent'] },
+        },
+        required: ['messageId', 'status'],
+      },
+      permissions: ['conversation.send'],
+      credentials: [{ provider: 'whatsapp', scopes: ['whatsapp_business_messaging'] }],
+      riskLevel: 'medium',
+      approvalPolicy: 'auto',
+      approvalTtlSeconds: 600,
+      timeoutMs: 15_000,
+      // Never retried: a second call could send the message twice (the Cloud API has no key).
+      retryPolicy: { maxAttempts: 1, backoffMs: 0 },
+      provider: { kind: 'external', id: 'channel' },
+      environments: ['dev'],
+      invocationModes: ['human'],
+    },
+  ],
+};
+
+/**
+ * MelonOffice's tool catalogue. Only what exists, with its executor: tools are never invented.
+ * Today, `message_send` (CV-2), which only a person can invoke.
+ */
+export const TOOL_CATALOGUE: readonly ToolDefinition[] = Object.freeze([MESSAGE_SEND_TOOL]);
 
 export const defaultToolRegistry = (): ToolRegistry => createToolRegistry(TOOL_CATALOGUE);

@@ -3,8 +3,21 @@ import { describe, expect, it } from 'vitest';
 import { canonicalJson, digestOf, sameDigest } from './canonical.js';
 import { ToolError } from './errors.js';
 import { idempotencyKeyOf } from './executor.js';
-import { checkToolDefinition, checkToolVersion, toolCanRun, TOOL_TRANSITIONS } from './model.js';
-import { createToolRegistry, defaultToolRegistry, TOOL_CATALOGUE } from './registry.js';
+import {
+  checkToolDefinition,
+  checkToolVersion,
+  invocationModesOf,
+  isHumanInvocable,
+  isRuntimeInvocable,
+  toolCanRun,
+  TOOL_TRANSITIONS,
+} from './model.js';
+import {
+  createToolRegistry,
+  defaultToolRegistry,
+  MESSAGE_SEND_TOOL,
+  TOOL_CATALOGUE,
+} from './registry.js';
 import { isForbiddenField, looksLikeCredential, schemaProblem, validate } from './schema.js';
 
 const INPUT: ToolSchema = {
@@ -168,9 +181,64 @@ describe('tool registry', () => {
     expect(codeOf(() => createToolRegistry([definition()], [version()]))).toBe('accepted');
   });
 
-  it('ships with no tools: none is invented before its phase', () => {
-    expect(TOOL_CATALOGUE).toEqual([]);
-    expect(defaultToolRegistry().list()).toEqual([]);
+  it('ships only message_send (CV-2): a real tool with its executor, none invented', () => {
+    expect(TOOL_CATALOGUE.map((t) => t.id)).toEqual(['message_send']);
+    expect(defaultToolRegistry().list()).toEqual([MESSAGE_SEND_TOOL]);
+    const v = defaultToolRegistry().resolve('message_send', 1)?.version;
+    expect(v).toMatchObject({
+      action: 'send',
+      mutating: true,
+      permissions: ['conversation.send'],
+      approvalPolicy: 'auto',
+      retryPolicy: { maxAttempts: 1, backoffMs: 0 },
+      provider: { kind: 'external', id: 'channel' },
+      environments: ['dev'],
+      invocationModes: ['human'],
+    });
+    // Its input names the conversation and the reserved message: no recipient, account or token.
+    expect(Object.keys((v?.inputSchema as { properties: object }).properties)).toEqual([
+      'conversationId',
+      'messageId',
+    ]);
+  });
+});
+
+describe('invocation modes (ADR-0034)', () => {
+  it('defaults to the runtime only: a person never invokes a tool that does not say so', () => {
+    expect(invocationModesOf(version())).toEqual(['runtime']);
+    expect(isRuntimeInvocable(version())).toBe(true);
+    expect(isHumanInvocable(version())).toBe(false);
+    const human = version({ invocationModes: ['human'] });
+    expect(isHumanInvocable(human)).toBe(true);
+    // Saying `human` does not keep `runtime`: each mode is explicit.
+    expect(isRuntimeInvocable(human)).toBe(false);
+    const both = version({ invocationModes: ['runtime', 'human'] });
+    expect([isRuntimeInvocable(both), isHumanInvocable(both)]).toEqual([true, true]);
+  });
+
+  it('refuses unknown, empty or duplicate modes', () => {
+    for (const invocationModes of [[], ['gia'], ['human', 'human'], ['Human'], [1]]) {
+      expect(codeOf(() => checkToolVersion(version({ invocationModes } as never)))).toMatch(
+        /^invocationModes/,
+      );
+    }
+  });
+
+  it('never lets a human tool need an approval or belong to a department', () => {
+    expect(
+      codeOf(() =>
+        checkToolVersion(
+          version({ invocationModes: ['human'], approvalPolicy: 'approval_required' }),
+        ),
+      ),
+    ).toBe('invocationModes.human_approval');
+    expect(
+      codeOf(() =>
+        checkToolVersion(
+          version({ invocationModes: ['human'], departmentTypes: ['finance' as never] }),
+        ),
+      ),
+    ).toBe('invocationModes.human_department');
   });
 });
 

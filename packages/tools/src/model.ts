@@ -3,6 +3,7 @@ import type {
   ToolApprovalPolicy,
   ToolDefinition,
   ToolRiskLevel,
+  ToolInvocationMode,
   ToolStatus,
   ToolVersion,
 } from '@melonoffice/domain';
@@ -43,6 +44,22 @@ export const ENVIRONMENTS = [
   'staging',
   'prod',
 ] as const satisfies readonly DeploymentEnvironment[];
+
+export const INVOCATION_MODES = [
+  'runtime',
+  'human',
+] as const satisfies readonly ToolInvocationMode[];
+
+/** Who may invoke a tool version (ADR-0034). Unset means the runtime only. */
+export const invocationModesOf = (v: ToolVersion): readonly ToolInvocationMode[] =>
+  v.invocationModes ?? ['runtime'];
+
+/** Whether a person acting directly may invoke this version: only when it says so. */
+export const isHumanInvocable = (v: ToolVersion): boolean => invocationModesOf(v).includes('human');
+
+/** Whether the runtime may invoke this version: unless it names its modes without `runtime`. */
+export const isRuntimeInvocable = (v: ToolVersion): boolean =>
+  invocationModesOf(v).includes('runtime');
 
 export const isDeploymentEnvironment = (value: unknown): value is DeploymentEnvironment =>
   typeof value === 'string' && (ENVIRONMENTS as readonly string[]).includes(value);
@@ -119,6 +136,21 @@ export function checkToolVersion(v: ToolVersion): ToolVersion {
   if (v.departmentTypes !== undefined) {
     codes(v.departmentTypes, 'departmentTypes');
     if (v.departmentTypes.length === 0) invalid('departmentTypes');
+  }
+  if (v.invocationModes !== undefined) {
+    codes(v.invocationModes, 'invocationModes');
+    if (
+      v.invocationModes.length === 0 ||
+      !v.invocationModes.every((m) => (INVOCATION_MODES as readonly string[]).includes(m))
+    ) {
+      invalid('invocationModes');
+    }
+    // A person's call runs now, with nobody else to decide: it is never one that needs an
+    // approval, and it acts for the person only, never for a specialist's department.
+    if (v.invocationModes.includes('human')) {
+      if (v.approvalPolicy !== 'auto') invalid('invocationModes.human_approval');
+      if (v.departmentTypes !== undefined) invalid('invocationModes.human_department');
+    }
   }
   return v;
 }

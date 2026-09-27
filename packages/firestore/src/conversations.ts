@@ -7,6 +7,7 @@ import { Timestamp } from '@google-cloud/firestore';
 import type { AuditEvent } from '@melonoffice/audit';
 import {
   applyInbound,
+  applyOutbound,
   applyStatus,
   byConversationOrder,
   byLatestActivity,
@@ -20,15 +21,21 @@ import {
   inboundMessageIdFor,
   isContactId,
   isConversationId,
+  isUuid,
   messageRefKeyFor,
+  settleOutbound,
   type ConversationRepository,
   type ConversationWrite,
   type DeliveryStatusUpdate,
   type InboundMessage,
+  type OutboundSettlement,
   type ReceiveResult,
+  type ReserveResult,
+  type SettleResult,
 } from '@melonoffice/conversations';
 import type {
   ChannelIdentity,
+  ChannelIdentityId,
   Contact,
   ContactId,
   Conversation,
@@ -483,6 +490,91 @@ export class FirestoreConversationRepository implements ConversationRepository {
     return snapshot.docs
       .map((doc) => toIdentity(doc.id, doc.data()))
       .filter((i) => i.organizationId === organizationId);
+  }
+
+  async findIdentity(
+    organizationId: OrganizationId,
+    id: ChannelIdentityId,
+  ): Promise<ChannelIdentity | undefined> {
+    if (!isOrganizationId(organizationId) || !isUuid(id)) return undefined;
+    const snapshot = await this.db.collection(CHANNEL_IDENTITIES).doc(id).get();
+    const data = snapshot.data();
+    if (data?.organizationId !== organizationId) return undefined;
+    return toIdentity(snapshot.id, data);
+  }
+
+  async findMessage(organizationId: OrganizationId, id: MessageId): Promise<Message | undefined> {
+    if (!isOrganizationId(organizationId) || !isUuid(id)) return undefined;
+    const snapshot = await this.db.collection(MESSAGES).doc(id).get();
+    const data = snapshot.data();
+    if (data?.organizationId !== organizationId) return undefined;
+    return toMessage(snapshot.id, data);
+  }
+
+  async reserveOutbound(message: Message): Promise<ReserveResult> {
+    const { organizationId } = message;
+    if (!isOrganizationId(organizationId) || !isConversationId(message.conversationId)) {
+      throw new ConversationError('conversation_not_found');
+    }
+    if (message.direction !== 'outbound' || message.status !== 'queued') {
+      throw new ConversationError('invalid_request', 'outbound');
+    }
+    const conversationDoc = this.db.collection(CONVERSATIONS).doc(message.conversationId);
+    const messageDoc = this.db.collection(MESSAGES).doc(message.id);
+    // One transaction: two concurrent sends of the same key store one message.
+    return this.db.runTransaction(async (t) => {
+      const conversation = await t.get(conversationDoc);
+      if (conversation.get('organizationId') !== organizationId) {
+        throw new ConversationError('conversation_not_found');
+      }
+      const stored = await t.get(messageDoc);
+      if (stored.exists) {
+        const found = toMessage(stored.id, stored.data() as Doc);
+        if (found.organizationId !== organizationId) throw new Error('message id collision');
+        return { created: false, message: found };
+      }
+      t.create(messageDoc, toMessageDocument(message));
+      return { created: true, message };
+    });
+  }
+
+  async settleOutbound(
+    organizationId: OrganizationId,
+    id: MessageId,
+    settlement: OutboundSettlement,
+    events: readonly AuditEvent[],
+    at: Date,
+  ): Promise<SettleResult> {
+    if (!isOrganizationId(organizationId) || !isUuid(id)) return { applied: false };
+    const messageDoc = this.db.collection(MESSAGES).doc(id);
+    return this.db.runTransaction(async (t) => {
+      const snapshot = await t.get(messageDoc);
+      const data = snapshot.data();
+      if (data?.organizationId !== organizationId) return { applied: false };
+      const message = toMessage(snapshot.id, data);
+      const next = settleOutbound(message, settlement);
+      if (next === undefined) return { applied: false, message };
+      if (next.status === 'sent' && next.externalMessageId !== undefined) {
+        const conversationDoc = this.db.collection(CONVERSATIONS).doc(next.conversationId);
+        const stored = await t.get(conversationDoc);
+        if (stored.get('organizationId') !== organizationId) {
+          throw new ConversationError('conversation_not_found');
+        }
+        const conversation = toConversation(stored.id, stored.data() as Doc);
+        const updated = applyOutbound(conversation, next, at);
+        checkNextConversation(conversation, updated);
+        t.set(conversationDoc, toConversationDocument(updated));
+        t.create(
+          this.db
+            .collection(MESSAGE_REFS)
+            .doc(messageRefKeyFor(organizationId, next.channel, next.externalMessageId)),
+          { organizationId, messageId: next.id },
+        );
+      }
+      t.set(messageDoc, toMessageDocument(next));
+      this.#append(t, events);
+      return { applied: true, message: next };
+    });
   }
 
   #append(t: Transaction, events: readonly AuditEvent[]): void {

@@ -10,27 +10,34 @@ import {
   type ConversationFilter,
   type ConversationService,
 } from '@melonoffice/conversations';
-import { isIntegrationError, type ChannelConnectionService } from '@melonoffice/integrations';
+import {
+  isIntegrationError,
+  type ChannelConnectionService,
+  type MessageSendService,
+} from '@melonoffice/integrations';
 import type { Context, Hono } from 'hono';
 import type { AuthEnv } from './auth.js';
 import { withPermission, type AuthorizationDependencies } from './authorization.js';
 
 /**
  * Human inbox routes (ADR-0033). A person reads conversations, messages and contacts, assigns a
- * conversation to a member or a department, moves its status and edits its tags. Nothing here
- * sends a message, runs a model or routes by AI: messages arrive only through the verified
- * channel webhook, and sending is decided later through the tool gate (CV-2). Channel
- * connections are listed without their secret references; they are configured on the server.
- * Another organization's conversation or contact answers exactly like a missing one.
+ * conversation to a member or a department, moves its status and edits its tags, and replies
+ * (CV-2, ADR-0034): one text, as themselves, through the tool gate, synchronously. Nothing here
+ * runs a model, routes by AI or sends on its own: messages arrive only through the verified
+ * channel webhook, and leave only when a person sends them. Channel connections are listed
+ * without their secret references; they are configured on the server. Another organization's
+ * conversation or contact answers exactly like a missing one.
  */
 export function registerConversationRoutes(
   app: Hono<AuthEnv>,
   dependencies: AuthorizationDependencies & {
     readonly conversations: ConversationService;
     readonly connections: ChannelConnectionService;
+    /** A person's replies (ADR-0034). Absent: the send route answers 503. */
+    readonly sender?: MessageSendService;
   },
 ): void {
-  const { conversations, connections } = dependencies;
+  const { conversations, connections, sender } = dependencies;
   const base = '/v1/organizations/:organizationId';
   const one = `${base}/conversations/:conversationId`;
   const idOf = (c: Context<AuthEnv>) => c.req.param('conversationId') ?? '';
@@ -63,6 +70,48 @@ export function registerConversationRoutes(
           await conversations.messages(tenant, idOf(c), limit === undefined ? {} : { limit })
         ).map(toMessageView),
       }));
+    }),
+  );
+
+  /**
+   * A person's reply. The body is exactly `{ clientMessageId, text }`: the organization, the
+   * sender, the recipient, the channel account and its credentials all come from the token and
+   * the stored conversation. The same `clientMessageId` is the same message: a repeat answers
+   * with it as it is and never sends it twice.
+   */
+  app.post(
+    `${one}/messages`,
+    withPermission('conversation.send', dependencies, async (c, tenant) => {
+      if (sender === undefined) return c.json({ error: 'sending_not_configured' }, 503);
+      const body = await bodyOf(c, ['clientMessageId', 'text']);
+      if (body === undefined) return c.json({ error: 'invalid_request' }, 400);
+      try {
+        const { message, created } = await sender.send(tenant, idOf(c), {
+          clientMessageId: body.clientMessageId,
+          text: body.text,
+        });
+        const view = toMessageView(message);
+        if (message.status === 'unknown') {
+          // Accepted by nobody we know of: it may have gone out, and is not sent again.
+          return c.json({ error: 'external_send_unknown', message: view }, 202);
+        }
+        if (message.status === 'failed') {
+          const code = message.failureCode ?? 'external_send_failed';
+          return Object.hasOwn(SEND_REFUSALS, code)
+            ? c.json(
+                { error: code, message: view },
+                SEND_REFUSALS[code as keyof typeof SEND_REFUSALS],
+              )
+            : c.json({ error: 'external_send_failed', reason: code, message: view }, 502);
+        }
+        return c.json({ message: view }, created ? 201 : 200);
+      } catch (error) {
+        if (isConversationError(error) && Object.hasOwn(STATUS, error.code)) {
+          const code = error.code as keyof typeof STATUS;
+          return c.json({ error: code }, STATUS[code]);
+        }
+        throw error;
+      }
     }),
   );
 
@@ -213,6 +262,21 @@ const STATUS = {
   assignee_not_member: 409,
   invalid_transition: 409,
   conversation_concurrency_conflict: 409,
+  duplicate_request: 409,
+  conversation_closed: 409,
+  outside_messaging_window: 409,
+  tool_not_human_invokable: 403,
+  channel_not_available: 503,
+} as const;
+
+/** A send refused before anything left MelonOffice, found once the message was reserved. */
+const SEND_REFUSALS = {
+  conversation_closed: 409,
+  outside_messaging_window: 409,
+  tool_not_human_invokable: 403,
+  permission_not_held: 403,
+  channel_not_available: 503,
+  environment_not_allowed: 503,
 } as const;
 
 async function answer(c: Context<AuthEnv>, work: () => Promise<unknown>): Promise<Response> {

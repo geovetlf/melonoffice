@@ -18,7 +18,12 @@ import { DEFAULT_RISK_POLICY, effectivePolicy, type RiskPolicy } from '@melonoff
 import type { AuthorizationService } from '@melonoffice/rbac';
 import { isSpecialistError, type SpecialistService } from '@melonoffice/specialists';
 import type { TenantContext } from '@melonoffice/tenancy';
-import { toolCanRun, type ResolvedTool, type ToolRegistry } from '@melonoffice/tools';
+import {
+  isRuntimeInvocable,
+  toolCanRun,
+  type ResolvedTool,
+  type ToolRegistry,
+} from '@melonoffice/tools';
 import { totalEstimate, UNKNOWN_ESTIMATE, type PlanEstimator } from './estimate.js';
 import { checkProposal, type PlanProposal, type ProposalStep } from './proposal.js';
 
@@ -192,6 +197,8 @@ export function createPlanValidator(options: PlanValidatorOptions): PlanValidato
     const tool = tools.resolve(ref.id, ref.version);
     if (tool === undefined) return refuse('policy', 'tool_not_found', field);
     if (!toolCanRun(tool.definition.status)) refuse('policy', 'tool_not_active', field);
+    // A plan's steps run on the runtime: a tool only a person may invoke is never planned (ADR-0034).
+    if (!isRuntimeInvocable(tool.version)) refuse('policy', 'tool_not_runtime_invocable', field);
     if (environment === undefined || !tool.version.environments.includes(environment)) {
       refuse('policy', 'environment_not_allowed', field);
     }

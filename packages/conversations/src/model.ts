@@ -16,6 +16,7 @@ import type {
   MessageStatus,
   MessageType,
   OrganizationId,
+  UserId,
 } from '@melonoffice/domain';
 import { nameBasedUuid } from '@melonoffice/execution';
 import { ConversationError } from './errors.js';
@@ -63,6 +64,8 @@ const STATUS_RANK: Readonly<Record<MessageStatus, number>> = Object.freeze({
   delivered: 3,
   read: 4,
   failed: 5,
+  // Not a step on the way: no provider report moves it, since none can name it (ADR-0034).
+  unknown: 5,
 });
 
 export const MAX_TEXT_LENGTH = 4096;
@@ -408,7 +411,7 @@ export function applyStatus(message: Message, update: DeliveryStatusUpdate): Mes
   if (message.direction !== 'outbound') return undefined;
   const from = STATUS_RANK[message.status];
   const to = STATUS_RANK[update.status];
-  if (message.status === 'failed' || to <= from) return undefined;
+  if (message.status === 'failed' || message.status === 'unknown' || to <= from) return undefined;
   return Object.freeze({
     ...message,
     status: update.status,
@@ -469,3 +472,114 @@ export const byConversationOrder = (a: Message, b: Message): number =>
         : a.id < b.id
           ? -1
           : 1;
+
+// Outbound (CV-2, ADR-0034) ----------------------------------------------------------------------
+
+/** What a person asks to send: text only. The organization and sender come from the tenant. */
+export interface OutboundRequest {
+  readonly organizationId: OrganizationId;
+  readonly conversation: Conversation;
+  readonly userId: UserId;
+  /** The sender's own key: the same key is the same message, however often it is sent. */
+  readonly clientMessageId: string;
+  readonly text: string;
+}
+
+/**
+ * The outbound message a person's send reserves before anything leaves MelonOffice: `queued`,
+ * with an id derived from the organization, the conversation and the sender's key, so a repeat
+ * finds it instead of creating a second one.
+ */
+export function newOutboundMessage(request: OutboundRequest, at: Date): Message {
+  const { organizationId, conversation, userId, clientMessageId, text } = request;
+  if (conversation.organizationId !== organizationId) invalid('conversation');
+  if (typeof text !== 'string' || text.trim().length === 0) invalid('text');
+  if (text.length > MAX_TEXT_LENGTH) invalid('text.max');
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(text)) invalid('text.control');
+  const now = at.toISOString() as IsoTimestamp;
+  return Object.freeze({
+    id: outboundMessageIdFor(organizationId, conversation.id, clientMessageId),
+    organizationId,
+    conversationId: conversation.id,
+    channel: conversation.channel,
+    connectionId: conversation.connectionId,
+    direction: 'outbound',
+    clientMessageId,
+    sender: Object.freeze({ kind: 'user', userId }),
+    type: 'text',
+    text,
+    attachments: Object.freeze([]),
+    status: 'queued',
+    sentAt: now,
+    createdAt: now,
+  });
+}
+
+/** How a reserved outbound message ended: sent, refused, or not known. */
+export type OutboundSettlement =
+  | { readonly status: 'sent'; readonly externalMessageId: string }
+  | { readonly status: 'failed'; readonly failureCode: string }
+  | { readonly status: 'unknown'; readonly failureCode: string };
+
+const FAILURE_CODE = /^[a-z][a-z0-9_]{0,63}$/;
+
+/**
+ * The next state of a reserved message, or `undefined` when it was already settled: only a
+ * `queued` message settles, once. A second settlement, whatever it says, changes nothing.
+ */
+export function settleOutbound(
+  message: Message,
+  settlement: OutboundSettlement,
+): Message | undefined {
+  if (message.direction !== 'outbound' || message.status !== 'queued') return undefined;
+  if (settlement.status === 'sent') {
+    if (!isExternalId(settlement.externalMessageId)) invalid('externalMessageId');
+    return Object.freeze({
+      ...message,
+      status: 'sent',
+      externalMessageId: settlement.externalMessageId,
+    });
+  }
+  if (!FAILURE_CODE.test(settlement.failureCode)) invalid('failureCode');
+  return Object.freeze({
+    ...message,
+    status: settlement.status,
+    failureCode: settlement.failureCode,
+  });
+}
+
+/** The conversation after one of its outbound messages was sent: last message and activity. */
+export function applyOutbound(
+  conversation: Conversation,
+  message: Message,
+  at: Date,
+): Conversation {
+  if (message.conversationId !== conversation.id || message.status !== 'sent') {
+    invalid('outbound');
+  }
+  const now = at.toISOString() as IsoTimestamp;
+  const isLatest = message.sentAt >= conversation.lastMessageAt;
+  const preview = previewOf(message);
+  return Object.freeze({
+    ...conversation,
+    ...(isLatest
+      ? {
+          lastMessage: Object.freeze({
+            id: message.id,
+            direction: 'outbound' as const,
+            type: message.type,
+            ...(preview === undefined ? {} : { preview }),
+            at: message.sentAt,
+          }),
+          lastMessageAt: message.sentAt,
+        }
+      : {}),
+    lastOutboundAt:
+      conversation.lastOutboundAt === undefined || message.sentAt > conversation.lastOutboundAt
+        ? message.sentAt
+        : conversation.lastOutboundAt,
+    updatedAt: now,
+    revision: conversation.revision + 1,
+  });
+}

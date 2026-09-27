@@ -2,6 +2,7 @@ import type { Firestore } from '@google-cloud/firestore';
 import { buildAuditEvent, InMemoryAuditStore } from '@melonoffice/audit';
 import {
   InMemoryConversationRepository,
+  newOutboundMessage,
   type ConversationRepository,
   type InboundMessage,
 } from '@melonoffice/conversations';
@@ -256,6 +257,108 @@ describe.each(STORES)('conversation storage in %s', (name, create) => {
         events: [],
       })),
     ).rejects.toMatchObject({ code: 'conversation_concurrency_conflict' });
+  });
+
+  it('reserves a person’s outbound message once, even concurrently (CV-2)', async () => {
+    const s = create();
+    const { conversation } = await s.conversations.receive(inbound(ORG_A), contactId(1), T0);
+    const message = newOutboundMessage(
+      { organizationId: ORG_A, conversation, userId: ALICE, clientMessageId: 'r-1', text: 'Hola' },
+      T0,
+    );
+    const results = await Promise.all([
+      s.conversations.reserveOutbound(message),
+      s.conversations.reserveOutbound(message),
+    ]);
+    expect(results.filter((r) => r.created)).toHaveLength(1);
+    expect(await s.conversations.findMessage(ORG_A, message.id)).toEqual(message);
+    expect(await s.conversations.findMessage(ORG_B, message.id)).toBeUndefined();
+    // Another organization naming this conversation reserves nothing.
+    await expect(
+      s.conversations.reserveOutbound({ ...message, organizationId: ORG_B }),
+    ).rejects.toMatchObject({ code: 'conversation_not_found' });
+    expect((await s.conversations.listMessages(ORG_A, conversation.id)).length).toBe(2);
+  });
+
+  it('settles an outbound message once, with its events and provider reference (CV-2)', async () => {
+    const s = create();
+    const { conversation } = await s.conversations.receive(inbound(ORG_A), contactId(1), T0);
+    const message = newOutboundMessage(
+      { organizationId: ORG_A, conversation, userId: ALICE, clientMessageId: 'r-1', text: 'Hola' },
+      T0,
+    );
+    await s.conversations.reserveOutbound(message);
+    const event = buildAuditEvent(
+      {
+        action: 'conversation.message_sent',
+        result: 'success',
+        actor: { type: 'user', userId: ALICE, via: 'direct' },
+        organizationId: ORG_A,
+        target: { type: 'message', id: message.id },
+        reference: `conversation:${conversation.id}`,
+        reason: 'whatsapp',
+        source: 'api',
+      },
+      T0,
+    );
+    const sent = { status: 'sent', externalMessageId: 'wamid.out-1' } as const;
+    expect(await s.conversations.settleOutbound(ORG_B, message.id, sent, [event], T0)).toEqual({
+      applied: false,
+    });
+    const settled = await s.conversations.settleOutbound(ORG_A, message.id, sent, [event], T0);
+    expect(settled).toMatchObject({ applied: true, message: { status: 'sent' } });
+    const again = await s.conversations.settleOutbound(
+      ORG_A,
+      message.id,
+      { status: 'unknown', failureCode: 'outcome_unknown' },
+      [event],
+      T0,
+    );
+    expect(again).toMatchObject({ applied: false, message: { status: 'sent' } });
+    expect(await s.auditActions()).toEqual(['conversation.message_sent']);
+    const after = await s.conversations.findConversation(ORG_A, conversation.id);
+    expect(after).toMatchObject({
+      revision: conversation.revision + 1,
+      lastOutboundAt: T0.toISOString(),
+      lastMessage: { id: message.id, direction: 'outbound' },
+    });
+    // The provider's delivery report now finds it.
+    expect(
+      await s.conversations.applyStatus({
+        organizationId: ORG_A,
+        connectionId: CONNECTION_A,
+        channel: 'whatsapp',
+        externalMessageId: 'wamid.out-1',
+        status: 'delivered',
+        at: T0.toISOString() as IsoTimestamp,
+      }),
+    ).toEqual({ applied: true });
+    // Failed and unknown settle too, without touching the conversation.
+    const failed = newOutboundMessage(
+      { organizationId: ORG_A, conversation, userId: ALICE, clientMessageId: 'r-2', text: 'Otra' },
+      T0,
+    );
+    await s.conversations.reserveOutbound(failed);
+    await s.conversations.settleOutbound(
+      ORG_A,
+      failed.id,
+      { status: 'failed', failureCode: 'rate_limited' },
+      [],
+      T0,
+    );
+    expect(await s.conversations.findMessage(ORG_A, failed.id)).toMatchObject({
+      status: 'failed',
+      failureCode: 'rate_limited',
+    });
+    expect((await s.conversations.findConversation(ORG_A, conversation.id))?.revision).toBe(
+      conversation.revision + 1,
+    );
+    expect(
+      (await s.conversations.findIdentity(ORG_A, conversation.channelIdentityId))?.externalId,
+    ).toBe('15551234567');
+    expect(
+      await s.conversations.findIdentity(ORG_B, conversation.channelIdentityId),
+    ).toBeUndefined();
   });
 
   it('stores channel connections with references only, and finds them for delivery', async () => {

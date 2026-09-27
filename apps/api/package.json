@@ -25,6 +25,7 @@
     "@melonoffice/entitlements": "workspace:*",
     "@melonoffice/execution": "workspace:*",
     "@melonoffice/firestore": "workspace:*",
+    "@melonoffice/guardrails": "workspace:*",
     "@melonoffice/integrations": "workspace:*",
     "@melonoffice/observability": "workspace:*",
     "@melonoffice/planning": "workspace:*",
@@ -38,7 +39,6 @@
   "devDependencies": {
     "@melonoffice/ai-gateway": "workspace:*",
     "@melonoffice/config": "workspace:*",
-    "@melonoffice/domain": "workspace:*",
-    "@melonoffice/guardrails": "workspace:*"
+    "@melonoffice/domain": "workspace:*"
   }
 }

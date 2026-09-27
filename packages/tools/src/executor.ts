@@ -22,8 +22,12 @@ export interface ToolExecutionContext {
   readonly organizationId: OrganizationId;
   readonly executionId: ExecutionId;
   readonly nodeId: ExecutionNodeId;
-  readonly specialistId: SpecialistId;
-  readonly specialistVersion: number;
+  /**
+   * The specialist the work is for, on the runtime's path. Absent on a person's own call
+   * (ADR-0034): there is no specialist then, and none is invented.
+   */
+  readonly specialistId?: SpecialistId;
+  readonly specialistVersion?: number;
   readonly toolId: ToolId;
   readonly toolVersion: number;
   readonly action: string;

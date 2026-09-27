@@ -58,7 +58,12 @@ import {
 } from '@melonoffice/tools';
 import { describe, expect, it } from 'vitest';
 import { createToolGate } from './gate.js';
-import { DEFAULT_RISK_POLICY, effectivePolicy, evaluatePostExecution } from './rules.js';
+import {
+  DEFAULT_RISK_POLICY,
+  effectivePolicy,
+  evaluateHumanPreExecution,
+  evaluatePostExecution,
+} from './rules.js';
 
 const T0 = new Date('2026-09-27T12:00:00Z');
 const AT = T0.toISOString() as IsoTimestamp;
@@ -154,6 +159,17 @@ const TOOLS: readonly ToolDefinition[] = [
   tool('slow', { timeoutMs: 20 }),
   tool('update_record', { mutating: true }),
   tool('retired', {}, 'disabled'),
+  // ADR-0034 fixtures: tools a person may invoke directly, and only because they say so.
+  tool('human_note', {
+    invocationModes: ['human'],
+    mutating: true,
+    action: 'send',
+    riskLevel: 'medium',
+  }),
+  tool('shared_lookup', { invocationModes: ['runtime', 'human'] }),
+  tool('human_risky', { invocationModes: ['human'], riskLevel: 'high' }),
+  tool('human_slow', { invocationModes: ['human'], timeoutMs: 20 }),
+  tool('human_retired', { invocationModes: ['human'] }, 'paused'),
 ];
 
 const ASSIGNED = TOOLS.map((t) => ({ id: t.id, version: 1 }));
@@ -334,6 +350,22 @@ async function world(options: WorldOptions = {}) {
     return executions.start(tenant, execution.id);
   }
 
+  /** A person's own execution (ADR-0034): no specialist, one tool node per tool, started. */
+  async function mine(tenant: TenantContext, tools: readonly string[], start = true) {
+    const execution = await executions.create(tenant, {
+      mode: 'execute',
+      input: { type: 'message', id: 'message-1' },
+      versionSnapshot: { schemaVersion: 1, components: [] },
+      nodes: tools.map((id, i) => ({
+        id: `n${i}`,
+        type: 'tool' as const,
+        label: id,
+        tool: { id, version: 1 },
+      })),
+    });
+    return start ? executions.start(tenant, execution.id) : execution;
+  }
+
   const events = (action?: string) =>
     audit.events().filter((e) => action === undefined || e.action === action);
 
@@ -358,6 +390,7 @@ async function world(options: WorldOptions = {}) {
     calls,
     seed,
     running,
+    mine,
     advance: (seconds: number) => {
       clock = new Date(clock.getTime() + seconds * 1000);
     },
@@ -950,5 +983,268 @@ describe('X6a: attempts through the tool gate (ADR-0029)', () => {
       code: 'retry_not_allowed',
       detail: 'external_effect',
     });
+  });
+});
+
+describe('ADR-0034: a person invoking a human tool through the same gate', () => {
+  const human = async (tools: readonly string[], options: WorldOptions = {}) => {
+    const w = await world(options);
+    const execution = await w.mine(w.tenantA, tools);
+    const invoke = (tenant: TenantContext = w.tenantA, input: unknown = INPUT, nodeId = 'n0') =>
+      w.gate.invoke(tenant, { executionId: execution.id, nodeId, input });
+    return { w, execution, invoke };
+  };
+
+  it('runs it for the person, with no specialist, and finishes the execution verified', async () => {
+    const { w, execution, invoke } = await human(['human_note']);
+    const result = await invoke();
+    expect(result).toMatchObject({ status: 'success', output: { count: 3 } });
+    const [call] = w.calls;
+    expect(call?.context).toMatchObject({
+      organizationId: w.orgA,
+      executionId: execution.id,
+      actor: { userId: ALICE, via: 'direct' },
+      toolId: 'human_note',
+    });
+    // No specialist is invented: the context simply has none.
+    expect(call?.context).not.toHaveProperty('specialistId');
+    expect(call?.context).not.toHaveProperty('specialistVersion');
+    expect(call?.context.idempotencyKey).toMatch(/^[0-9a-f]{64}$/);
+    const done = await w.executions.get(w.tenantA, execution.id);
+    expect(done).toMatchObject({
+      status: 'completed',
+      verification: { result: 'passed', nodes: [{ nodeId: 'n0', policy: 'output_schema' }] },
+    });
+    expect(done.nodes[0]).toMatchObject({ status: 'completed' });
+    expect(done.specialistId).toBeUndefined();
+    const transitions = w
+      .events('execution.state_changed')
+      .map((e) => `${e.transition?.from}>${e.transition?.to}`);
+    expect(transitions).toEqual(['pending>running', 'running>verifying', 'verifying>completed']);
+    // The person is the actor, acting directly: no runtime, no specialist, no invented actor.
+    for (const e of w.events().filter((e) => e.action.startsWith('tool.'))) {
+      expect(e.actor).toEqual({ type: 'user', userId: ALICE, via: 'direct' });
+    }
+    expect(w.events('execution.verification_recorded')).toHaveLength(1);
+  });
+
+  it('ends a two-node execution only when its last node is done', async () => {
+    const { w, execution, invoke } = await human(['human_note', 'shared_lookup']);
+    expect((await invoke()).status).toBe('success');
+    expect((await w.executions.get(w.tenantA, execution.id)).status).toBe('running');
+    expect((await invoke(w.tenantA, INPUT, 'n1')).status).toBe('success');
+    expect(await w.executions.get(w.tenantA, execution.id)).toMatchObject({
+      status: 'completed',
+      verification: { result: 'passed', nodes: [{ nodeId: 'n0' }, { nodeId: 'n1' }] },
+    });
+  });
+
+  it('fails the execution when the tool fails, and never runs it twice', async () => {
+    const { w, execution, invoke } = await human(['human_note'], {
+      answers: { human_note: async () => ({ status: 'failure', code: 'provider_rejected' }) },
+    });
+    expect(await invoke()).toMatchObject({ status: 'failure', code: 'provider_rejected' });
+    expect(await w.executions.get(w.tenantA, execution.id)).toMatchObject({
+      status: 'failed',
+      failure: { code: 'provider_rejected' },
+    });
+    expect(await invoke()).toEqual({ status: 'denied', code: 'execution_not_running' });
+    expect(w.calls).toHaveLength(1);
+  });
+
+  it('a timeout fails it as an unknown outcome, and it is never re-run', async () => {
+    const { w, execution, invoke } = await human(['human_slow'], {
+      answers: { human_slow: () => new Promise(() => undefined) },
+    });
+    expect((await invoke()).status).toBe('timeout');
+    expect(await w.executions.get(w.tenantA, execution.id)).toMatchObject({
+      status: 'failed',
+      failure: { code: 'timeout' },
+    });
+    expect(await invoke()).toEqual({ status: 'denied', code: 'execution_not_running' });
+    expect(w.calls).toHaveLength(1);
+  });
+
+  it('refuses a person invoking a tool that does not say human: runtime_only, as before', async () => {
+    const { w, invoke } = await human(['lookup']);
+    expect(await invoke()).toEqual({ status: 'denied', code: 'runtime_only' });
+    expect(await invoke(w.giaA)).toEqual({ status: 'denied', code: 'runtime_only' });
+    expect(w.events('tool.execution_denied').map((e) => e.reason)).toEqual([
+      'runtime_only',
+      'runtime_only',
+    ]);
+    expect(w.calls).toHaveLength(0);
+  });
+
+  it('never lets GIA invoke a human tool: a person acting directly only', async () => {
+    const { w, invoke } = await human(['human_note']);
+    expect(await invoke(w.giaA)).toEqual({ status: 'denied', code: 'runtime_only' });
+    expect(w.calls).toHaveLength(0);
+  });
+
+  it("refuses another person's execution and another organization's", async () => {
+    const { w, invoke, execution } = await human(['human_note']);
+    // Bob is not a member of A: his tenant is B, where the execution does not exist.
+    expect(await invoke(w.tenantB)).toEqual({ status: 'denied', code: 'runtime_only' });
+    expect(
+      await w.gate.invoke(w.tenantB, { executionId: execution.id, nodeId: 'n0', input: INPUT }),
+    ).toEqual({ status: 'denied', code: 'runtime_only' });
+    expect(w.calls).toHaveLength(0);
+    expect((await w.executions.get(w.tenantA, execution.id)).nodes[0]?.status).toBe('pending');
+  });
+
+  it('refuses an execution that belongs to a specialist: that work is the runtime’s', async () => {
+    const w = await world();
+    const specialist = await w.seed(w.orgA);
+    const execution = await w.running(w.tenantA, specialist, ['shared_lookup']);
+    expect(
+      await w.gate.invoke(w.tenantA, { executionId: execution.id, nodeId: 'n0', input: INPUT }),
+    ).toEqual({ status: 'denied', code: 'specialist_execution' });
+    expect(w.calls).toHaveLength(0);
+  });
+
+  it('refuses a policy that needs an approval, a paused tool, a bad input and a pending execution', async () => {
+    const risky = await human(['human_risky']);
+    expect(await risky.invoke()).toEqual({ status: 'denied', code: 'approval_unavailable' });
+    const paused = await human(['human_retired']);
+    expect(await paused.invoke()).toEqual({ status: 'denied', code: 'tool_not_active' });
+    const bad = await human(['human_note']);
+    for (const input of [
+      { subject: 'x', organizationId: bad.w.orgB },
+      { subject: 'x', token: 'y' },
+    ]) {
+      expect(await bad.invoke(bad.w.tenantA, input)).toEqual({
+        status: 'denied',
+        code: 'invalid_input',
+      });
+    }
+    const w = await world();
+    const pending = await w.mine(w.tenantA, ['human_note'], false);
+    expect(
+      await w.gate.invoke(w.tenantA, { executionId: pending.id, nodeId: 'n0', input: INPUT }),
+    ).toEqual({ status: 'denied', code: 'execution_not_running' });
+    expect([risky, paused, bad].flatMap((h) => h.w.calls)).toHaveLength(0);
+  });
+
+  it("refuses a member invoking someone else's execution in the same organization", async () => {
+    const w = await world();
+    const execution = await w.mine(w.tenantA, ['human_note']);
+    const facts = {
+      execution,
+      nodeId: 'n0',
+      tool: createToolRegistry(TOOLS).resolve('human_note', 1),
+      permissions: new Set(OWNER_ALL),
+      environment: 'dev' as const,
+      executors: { fixture: fixtureExecutor().executor },
+      riskPolicy: DEFAULT_RISK_POLICY,
+      input: INPUT,
+    };
+    expect(evaluateHumanPreExecution({ ...facts, userId: ALICE })).toEqual({ decision: 'allow' });
+    expect(evaluateHumanPreExecution({ ...facts, userId: BOB })).toEqual({
+      decision: 'deny',
+      reason: 'execution_not_owned',
+    });
+  });
+
+  it('refuses a person without the tool permissions, and an unknown environment', async () => {
+    const noTool = await human(['human_note'], {
+      roles: { owner: OWNER_ALL.filter((p) => p !== 'tool.execute') },
+    });
+    expect(await noTool.invoke()).toEqual({ status: 'denied', code: 'permission_not_held' });
+    const nowhere = await human(['human_note'], { environment: undefined });
+    expect(await nowhere.invoke()).toEqual({ status: 'denied', code: 'environment_not_allowed' });
+    expect(noTool.w.calls).toHaveLength(0);
+    expect(nowhere.w.calls).toHaveLength(0);
+  });
+});
+
+describe('ADR-0034 non-regression: the runtime path is unchanged', () => {
+  it('still runs a runtime tool for an eligible specialist, and completes nothing', async () => {
+    const { w, execution, invoke } = await setup(['lookup']);
+    expect(await invoke(w.runtimeA)).toMatchObject({ status: 'success' });
+    expect((await w.executions.get(w.tenantA, execution.id)).status).toBe('running');
+    expect(w.calls[0]?.context).toMatchObject({ specialistVersion: 1, actor: { via: 'runtime' } });
+  });
+
+  it('still requires a specialist on the runtime path: no specialist, no tool', async () => {
+    const w = await world();
+    const execution = await w.mine(w.tenantA, ['lookup']);
+    expect(
+      await w.gate.invoke(w.runtimeA, { executionId: execution.id, nodeId: 'n0', input: INPUT }),
+    ).toEqual({ status: 'denied', code: 'no_specialist' });
+    expect(w.calls).toHaveLength(0);
+  });
+
+  it('never runs a human-only tool on the runtime path, even when a specialist lists it', async () => {
+    const { w, invoke } = await setup(['human_note']);
+    expect(await invoke(w.runtimeA)).toEqual({
+      status: 'denied',
+      code: 'tool_not_runtime_invocable',
+    });
+    expect(w.calls).toHaveLength(0);
+  });
+
+  it('runs a tool that names both modes on the runtime path as any runtime tool', async () => {
+    const { w, invoke } = await setup(['shared_lookup']);
+    expect(await invoke(w.runtimeA)).toMatchObject({ status: 'success' });
+  });
+
+  it('keeps permissions, the policy and the audit actor on the runtime path', async () => {
+    const noTool = await setup(['lookup'], {
+      roles: { owner: OWNER_ALL.filter((p) => p !== 'tool.execute') },
+    });
+    expect(await noTool.invoke(noTool.w.runtimeA)).toEqual({
+      status: 'denied',
+      code: 'permission_not_held',
+    });
+    const critical = await setup(['wipe_data']);
+    expect(await critical.invoke(critical.w.runtimeA)).toEqual({
+      status: 'denied',
+      code: 'tool_denied_by_policy',
+    });
+    const ok = await setup(['lookup']);
+    await ok.invoke(ok.w.runtimeA);
+    for (const e of ok.w.events().filter((e) => e.action.startsWith('tool.'))) {
+      expect(e.actor).toEqual({
+        type: 'system',
+        id: 'runtime',
+        initiatedBy: ALICE,
+        via: 'runtime',
+      });
+    }
+    expect([...noTool.w.calls, ...critical.w.calls]).toHaveLength(0);
+  });
+
+  it('keeps the tool allowlist: a specialist runs only the versions it lists', async () => {
+    const w = await world();
+    const specialist = await w.seed(w.orgA);
+    const execution = await w.executions.create(w.tenantA, {
+      mode: 'execute',
+      input: { type: 'task', id: 'task-1' },
+      specialistId: specialist.identity.id,
+      specialistVersion: 1,
+      departmentId: specialist.configuration.departmentId,
+      versionSnapshot: {
+        schemaVersion: 1,
+        components: [{ kind: 'specialist', id: specialist.identity.id, version: '1' }],
+      },
+      nodes: [{ id: 'n0', type: 'tool', label: 'x', tool: { id: 'message_send', version: 1 } }],
+    });
+    await w.executions.start(w.tenantA, execution.id);
+    // A tool the gate's registry does not hold is never run, by the runtime or a person.
+    for (const tenant of [w.runtimeA, w.tenantA]) {
+      expect(
+        (await w.gate.invoke(tenant, { executionId: execution.id, nodeId: 'n0', input: INPUT }))
+          .status,
+      ).toBe('denied');
+    }
+    expect(w.calls).toHaveLength(0);
+  });
+
+  it('keeps tenant isolation and approvals on the runtime path', async () => {
+    const { w, invoke } = await setup(['send_email']);
+    expect(await invoke(w.runtimeB)).toEqual({ status: 'denied', code: 'execution_not_found' });
+    expect((await invoke(w.runtimeA)).status).toBe('requires_approval');
+    expect(w.calls).toHaveLength(0);
   });
 });

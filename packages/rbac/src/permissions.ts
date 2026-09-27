@@ -108,6 +108,12 @@ export const PERMISSIONS = {
     description:
       "Assign the organization's conversations, change their status and tags (ADR-0033). Not sending.",
   },
+  'conversation.send': {
+    resource: 'conversation',
+    action: 'send',
+    description:
+      "Reply in the organization's conversations as oneself, through the tool gate: one person, one message, no automation (ADR-0034).",
+  },
   'contact.read': {
     resource: 'contact',
     action: 'read',

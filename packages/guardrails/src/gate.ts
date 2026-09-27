@@ -29,6 +29,7 @@ import {
   applyNodeChange,
   applyStatusChange,
   attachApproval,
+  recordVerification,
   isExecutionError,
   isExecutionId,
   type ExecutionRepository,
@@ -40,6 +41,7 @@ import { isResolvedTenant, type TenancyStore, type TenantContext } from '@melono
 import {
   digestOf,
   idempotencyKeyOf,
+  isHumanInvocable,
   type ToolExecutionContext,
   type ToolExecutorOutcome,
   type ToolExecutors,
@@ -49,6 +51,7 @@ import {
 import {
   DEFAULT_RISK_POLICY,
   evaluatePostExecution,
+  evaluateHumanPreExecution,
   evaluatePreExecution,
   nodeOf,
   type RiskPolicy,
@@ -72,6 +75,12 @@ export interface ToolInvocation {
  *
  * There is no client route to it: planners, workflows and GIA call it on the server, with the
  * tenant of the user the work is for. GIA goes through exactly the same checks.
+ *
+ * Two callers reach it (ADR-0034). The runtime, for a specialist's execution (ADR-0031), with
+ * every check that path always had. And a person acting directly, synchronously, for a tool
+ * whose version says `human` explicitly, in an execution of their own with no specialist: the
+ * human guardrails, no approval, and the execution finished in the same write as the node, since
+ * no runtime will come back to it. Anyone else, and any other tool, is refused `runtime_only`.
  */
 export interface ToolGate {
   invoke(tenant: TenantContext, invocation: ToolInvocation): Promise<ToolResult>;
@@ -215,6 +224,22 @@ export function createToolGate(options: ToolGateOptions): ToolGate {
     };
   }
 
+  /**
+   * Whether this is a person's own call to a tool built for it (ADR-0034): a user acting directly
+   * (never GIA, never the runtime), on a node whose exact tool version says `human`. Reads only.
+   */
+  async function isHumanCall(
+    tenant: TenantContext,
+    organizationId: OrganizationId,
+    invocation: ToolInvocation,
+  ): Promise<boolean> {
+    if (tenant.actor !== 'user' || !isExecutionId(invocation.executionId)) return false;
+    const execution = await executions.find(organizationId, invocation.executionId);
+    const ref = nodeOf(execution, invocation.nodeId)?.tool;
+    const tool = ref === undefined ? undefined : registry.resolve(ref.id, ref.version);
+    return tool !== undefined && isHumanInvocable(tool.version);
+  }
+
   return Object.freeze({
     async invoke(tenant: TenantContext, invocation: ToolInvocation): Promise<ToolResult> {
       const organizationId = await organizationOf(tenant);
@@ -223,7 +248,10 @@ export function createToolGate(options: ToolGateOptions): ToolGate {
       }
       // Tools run inside executions, and executions are driven by the runtime (ADR-0031): a
       // person or GIA reaches a tool through a plan or an execution, never by calling the gate.
-      if (tenant.actor !== 'runtime') {
+      // The one addition (ADR-0034): a person's own call to a tool that says `human`.
+      const human =
+        tenant.actor !== 'runtime' && (await isHumanCall(tenant, organizationId, invocation));
+      if (tenant.actor !== 'runtime' && !human) {
         await audit.record(
           eventOf(
             tenant,
@@ -248,7 +276,7 @@ export function createToolGate(options: ToolGateOptions): ToolGate {
       const node = nodeOf(execution, nodeId);
       const ref = node?.tool;
       const tool = ref === undefined ? undefined : registry.resolve(ref.id, ref.version);
-      const facts = await specialistFacts(tenant, organizationId, execution);
+      const facts = human ? {} : await specialistFacts(tenant, organizationId, execution);
       const log = withCorrelation(options.logger ?? silent, {
         ...(requestId === undefined ? {} : { requestId }),
         organizationId,
@@ -258,19 +286,31 @@ export function createToolGate(options: ToolGateOptions): ToolGate {
         ...(ref === undefined ? {} : { toolId: ref.id, toolVersion: ref.version }),
       });
 
-      const decision = evaluatePreExecution({
-        execution,
-        nodeId,
-        eligibility: facts.eligibility,
-        specialistVersion: facts.version,
-        department: facts.department,
-        tool,
-        permissions: authorization.permissionsOf(tenant),
-        environment,
-        executors,
-        riskPolicy,
-        input,
-      });
+      const decision = human
+        ? evaluateHumanPreExecution({
+            execution,
+            nodeId,
+            userId: tenant.userId,
+            tool,
+            permissions: authorization.permissionsOf(tenant),
+            environment,
+            executors,
+            riskPolicy,
+            input,
+          })
+        : evaluatePreExecution({
+            execution,
+            nodeId,
+            eligibility: facts.eligibility,
+            specialistVersion: facts.version,
+            department: facts.department,
+            tool,
+            permissions: authorization.permissionsOf(tenant),
+            environment,
+            executors,
+            riskPolicy,
+            input,
+          });
 
       const deny = async (reason: string): Promise<ToolResult> => {
         const at = now();
@@ -305,112 +345,116 @@ export function createToolGate(options: ToolGateOptions): ToolGate {
         execution === undefined ||
         node === undefined ||
         ref === undefined ||
-        tool === undefined ||
-        execution.specialistId === undefined ||
-        execution.specialistVersion === undefined
+        tool === undefined
       ) {
         return deny('execution_not_found');
       }
       const executionId: ExecutionId = execution.id;
       const toolRef = { id: ref.id, version: ref.version };
 
-      // The exact operation, rebuilt from verified context. An approval covers this and nothing else.
-      const operation: ApprovalOperation = {
-        organizationId,
-        executionId,
-        nodeId: node.id,
-        specialistId: execution.specialistId,
-        specialistVersion: execution.specialistVersion,
-        toolId: ref.id,
-        toolVersion: ref.version,
-        action: tool.version.action,
-        inputDigest: digestOf(input),
-      };
-
       let approvalId: ApprovalId | undefined;
-      if (node.approvalId !== undefined) {
-        // An attached approval must cover this call, whatever the policy says now.
-        let approval: Approval | undefined;
-        try {
-          approval = await approvals.get(tenant, node.approvalId);
-        } catch (error) {
-          if (!isApprovalError(error)) throw error;
+      // A person's call has no approval: its guardrails allowed only `auto` (ADR-0034).
+      if (!human) {
+        if (execution.specialistId === undefined || execution.specialistVersion === undefined) {
+          return deny('execution_not_found');
         }
-        const problem: ApprovalUseProblem | undefined =
-          approval === undefined
-            ? 'approval_mismatch'
-            : checkApprovalUse(approval, operation, now());
-        if (problem === 'approval_pending') {
-          return Object.freeze({ status: 'requires_approval', approvalId: node.approvalId });
-        }
-        if (problem === 'approval_expired' && approval?.status === 'pending') {
+        // The exact operation, rebuilt from verified context. An approval covers this and nothing else.
+        const operation: ApprovalOperation = {
+          organizationId,
+          executionId,
+          nodeId: node.id,
+          specialistId: execution.specialistId,
+          specialistVersion: execution.specialistVersion,
+          toolId: ref.id,
+          toolVersion: ref.version,
+          action: tool.version.action,
+          inputDigest: digestOf(input),
+        };
+
+        if (node.approvalId !== undefined) {
+          // An attached approval must cover this call, whatever the policy says now.
+          let approval: Approval | undefined;
           try {
-            await approvals.expire(tenant, approval.id);
+            approval = await approvals.get(tenant, node.approvalId);
           } catch (error) {
-            // Decided concurrently: the refusal below stands either way.
             if (!isApprovalError(error)) throw error;
           }
-        }
-        if (problem !== undefined) return deny(problem);
-        approvalId = node.approvalId;
-      } else if (decision.decision === 'require_approval') {
-        const approval = await approvals.request(tenant, {
-          operation,
-          riskLevel: tool.version.riskLevel,
-          reason: 'approval_required',
-          impact: tool.version.mutating ? 'changes_data' : 'reads_data',
-          ttlSeconds: tool.version.approvalTtlSeconds,
-        });
-        const at = now();
-        const iso = at.toISOString() as IsoTimestamp;
-        try {
-          await executions.update(organizationId, executionId, (current) => {
-            let next = attachApproval(current, nodeId, approval.id, iso);
-            const events = [
-              eventOf(
-                tenant,
-                organizationId,
-                {
-                  action: 'tool.authorization_checked',
-                  result: 'success',
-                  executionId,
-                  tool: toolRef,
-                  reason: 'approval_required',
-                },
-                at,
-              ),
-            ];
-            if (current.status === 'running') {
-              next = applyStatusChange(
-                next,
-                { from: 'running', to: 'waiting_approval' },
-                tenant.userId,
-                iso,
-              );
-              events.push(
+          const problem: ApprovalUseProblem | undefined =
+            approval === undefined
+              ? 'approval_mismatch'
+              : checkApprovalUse(approval, operation, now());
+          if (problem === 'approval_pending') {
+            return Object.freeze({ status: 'requires_approval', approvalId: node.approvalId });
+          }
+          if (problem === 'approval_expired' && approval?.status === 'pending') {
+            try {
+              await approvals.expire(tenant, approval.id);
+            } catch (error) {
+              // Decided concurrently: the refusal below stands either way.
+              if (!isApprovalError(error)) throw error;
+            }
+          }
+          if (problem !== undefined) return deny(problem);
+          approvalId = node.approvalId;
+        } else if (decision.decision === 'require_approval') {
+          const approval = await approvals.request(tenant, {
+            operation,
+            riskLevel: tool.version.riskLevel,
+            reason: 'approval_required',
+            impact: tool.version.mutating ? 'changes_data' : 'reads_data',
+            ttlSeconds: tool.version.approvalTtlSeconds,
+          });
+          const at = now();
+          const iso = at.toISOString() as IsoTimestamp;
+          try {
+            await executions.update(organizationId, executionId, (current) => {
+              let next = attachApproval(current, nodeId, approval.id, iso);
+              const events = [
                 eventOf(
                   tenant,
                   organizationId,
                   {
-                    action: 'execution.state_changed',
+                    action: 'tool.authorization_checked',
                     result: 'success',
                     executionId,
-                    transition: { from: 'running', to: 'waiting_approval' },
+                    tool: toolRef,
+                    reason: 'approval_required',
                   },
                   at,
                 ),
-              );
-            }
-            return { execution: { ...next, revision: current.revision + 1 }, events };
-          });
-        } catch (error) {
-          // Another call attached first, or the execution ended: withdraw this approval.
-          await approvals.cancel(tenant, approval.id, 'not_attached').catch(() => undefined);
-          if (isExecutionError(error)) return deny('node_not_pending');
-          throw error;
+              ];
+              if (current.status === 'running') {
+                next = applyStatusChange(
+                  next,
+                  { from: 'running', to: 'waiting_approval' },
+                  tenant.userId,
+                  iso,
+                );
+                events.push(
+                  eventOf(
+                    tenant,
+                    organizationId,
+                    {
+                      action: 'execution.state_changed',
+                      result: 'success',
+                      executionId,
+                      transition: { from: 'running', to: 'waiting_approval' },
+                    },
+                    at,
+                  ),
+                );
+              }
+              return { execution: { ...next, revision: current.revision + 1 }, events };
+            });
+          } catch (error) {
+            // Another call attached first, or the execution ended: withdraw this approval.
+            await approvals.cancel(tenant, approval.id, 'not_attached').catch(() => undefined);
+            if (isExecutionError(error)) return deny('node_not_pending');
+            throw error;
+          }
+          log.info('tool requires approval');
+          return Object.freeze({ status: 'requires_approval', approvalId: approval.id });
         }
-        log.info('tool requires approval');
-        return Object.freeze({ status: 'requires_approval', approvalId: approval.id });
       }
 
       // Start: only one caller moves the node from pending to running (idempotency).
@@ -500,8 +544,12 @@ export function createToolGate(options: ToolGateOptions): ToolGate {
         organizationId,
         executionId,
         nodeId: node.id,
-        specialistId: execution.specialistId,
-        specialistVersion: execution.specialistVersion,
+        ...(execution.specialistId === undefined || execution.specialistVersion === undefined
+          ? {}
+          : {
+              specialistId: execution.specialistId,
+              specialistVersion: execution.specialistVersion,
+            }),
         toolId: ref.id,
         toolVersion: ref.version,
         action: tool.version.action,
@@ -558,12 +606,14 @@ export function createToolGate(options: ToolGateOptions): ToolGate {
         }
       }
 
-      // Finish the node. A failure never completes the execution; nothing here completes it.
+      // Finish the node. A failure never completes the execution; on the runtime's path nothing
+      // here completes it. A person's call is finished here too (ADR-0034), since no runtime will
+      // come back to it: its one node's output is verified against the schema just checked.
       const endAt = now();
       const endIso = endAt.toISOString() as IsoTimestamp;
       try {
-        await executions.update(organizationId, executionId, (current) => ({
-          execution: applyNodeChange(
+        await executions.update(organizationId, executionId, (current) => {
+          const finished = applyNodeChange(
             current,
             failure === undefined
               ? {
@@ -576,8 +626,8 @@ export function createToolGate(options: ToolGateOptions): ToolGate {
                 }
               : { nodeId, from: 'running', to: 'failed', error: { code: failure } },
             endIso,
-          ),
-          events: [
+          );
+          const events: AuditEvent[] = [
             eventOf(
               tenant,
               organizationId,
@@ -610,8 +660,41 @@ export function createToolGate(options: ToolGateOptions): ToolGate {
                   },
               endAt,
             ),
-          ],
-        }));
+          ];
+          if (!human) return { execution: finished, events };
+          const ended = finishHumanExecution(finished, failure, tenant.userId, endIso);
+          for (const [index, transition] of ended.transitions.entries()) {
+            if (index === 1) {
+              events.push(
+                eventOf(
+                  tenant,
+                  organizationId,
+                  {
+                    action: 'execution.verification_recorded',
+                    result: 'success',
+                    executionId,
+                    reason: 'verification_passed',
+                  },
+                  endAt,
+                ),
+              );
+            }
+            events.push(
+              eventOf(
+                tenant,
+                organizationId,
+                {
+                  action: 'execution.state_changed',
+                  result: 'success',
+                  executionId,
+                  transition,
+                },
+                endAt,
+              ),
+            );
+          }
+          return { execution: { ...ended.execution, revision: current.revision + 1 }, events };
+        });
       } catch (error) {
         if (!isExecutionError(error)) throw error;
         // The execution ended (e.g. was cancelled) while the tool ran: its output is not passed on.
@@ -622,6 +705,67 @@ export function createToolGate(options: ToolGateOptions): ToolGate {
       return result;
     },
   });
+}
+
+/**
+ * Ends a person's one-node execution with its node (ADR-0034), with the model's own rules: a
+ * failed node fails it; a completed one is verified against the output schema the gate has just
+ * checked, recorded as evidence, and only then completes it. There is no shortcut.
+ */
+function finishHumanExecution(
+  execution: Execution,
+  failure: string | undefined,
+  by: TenantContext['userId'],
+  iso: IsoTimestamp,
+): {
+  readonly execution: Execution;
+  readonly transitions: readonly { readonly from: string; readonly to: string }[];
+} {
+  if (failure !== undefined) {
+    return {
+      execution: applyStatusChange(
+        execution,
+        { from: 'running', to: 'failed', failure: { code: failure } },
+        by,
+        iso,
+      ),
+      transitions: [{ from: 'running', to: 'failed' }],
+    };
+  }
+  // Another node still to run: the execution goes on, and a later call of the person ends it.
+  const finished = (status: string) => status === 'completed' || status === 'skipped';
+  if (!execution.nodes.every((n) => finished(n.status))) {
+    return { execution, transitions: [] };
+  }
+  const verifying = applyStatusChange(execution, { from: 'running', to: 'verifying' }, by, iso);
+  // Every completed node ran through this gate, whose output schema check it passed.
+  const verified = recordVerification(
+    verifying,
+    {
+      correlationId: `human-${execution.id}`,
+      nodes: execution.nodes
+        .filter((n) => n.status === 'completed')
+        .map((n) => ({
+          nodeId: n.id,
+          policy: 'output_schema',
+          checks: [
+            {
+              code: 'output_schema_valid',
+              result: 'passed',
+              evidence: { type: 'tool_output', id: n.id },
+            },
+          ],
+        })),
+    },
+    iso,
+  );
+  return {
+    execution: applyStatusChange(verified, { from: 'verifying', to: 'completed' }, by, iso),
+    transitions: [
+      { from: 'running', to: 'verifying' },
+      { from: 'verifying', to: 'completed' },
+    ],
+  };
 }
 
 const silent: Logger = {

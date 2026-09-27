@@ -90,6 +90,20 @@ describe('loadConfig', () => {
     );
   });
 
+  it('knows its deployment environment only when it is set, and never guesses one (ADR-0034)', () => {
+    expect(loadConfig({}).deploymentEnvironment).toBeUndefined();
+    for (const environment of ['dev', 'staging', 'prod'] as const) {
+      expect(loadConfig({ DEPLOYMENT_ENVIRONMENT: environment }).deploymentEnvironment).toBe(
+        environment,
+      );
+    }
+    for (const bad of ['production', 'DEV', '']) {
+      expect(() => loadConfig({ DEPLOYMENT_ENVIRONMENT: bad })).toThrow(
+        'Invalid DEPLOYMENT_ENVIRONMENT',
+      );
+    }
+  });
+
   it('rejects invalid values', () => {
     expect(() => loadConfig({ PORT: 'x' })).toThrow('Invalid PORT');
     expect(() => loadConfig({ LOG_LEVEL: 'loud' })).toThrow('Invalid LOG_LEVEL');
