@@ -12,3 +12,5 @@ export type * from './approval.js';
 export type * from './ai.js';
 export type * from './credits.js';
 export type * from './plan.js';
+export type * from './context.js';
+export type * from './job.js';

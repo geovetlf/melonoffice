@@ -1,6 +1,6 @@
 # ADR-0025: Departments, specialists and the execution profile
 
-- Status: Proposed (Phase X2, pending Geovet's review)
+- Status: Accepted (Phase X2; accepted by Geovet, 2026-09-27)
 - Date: 2026-09-27
 - Builds on: [ADR-0005](0005-initial-departments.md) (D-11), [ADR-0006](0006-no-fixed-specialist-quantity.md) (D-12a), [ADR-0008](0008-entity-model.md) (D-28), [ADR-0009](0009-one-main-specialty-per-specialist.md) (D-29), [ADR-0018](0018-tenancy-and-memberships.md), [ADR-0019](0019-rbac-foundation.md) and [ADR-0024](0024-execution-foundation.md)
 

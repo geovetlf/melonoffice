@@ -32,6 +32,8 @@ The MelonOffice architecture was defined in the **Phase 0 Architecture Plan (v0.
 | [0026](../adr/0026-tools-approvals-and-guardrails.md)              | Tools, approvals and guardrails                           | D-28, D-25       |
 | [0027](../adr/0027-ai-gateway-and-provider-registry.md)            | AI Gateway and provider registry                          | D-7, D-12, D-28  |
 | [0028](../adr/0028-planner-delegation-and-workflows.md)            | Planner, delegation and workflow foundation               | D-7, D-12, D-27  |
+| [0029](../adr/0029-runtime-guards.md)                              | Runtime guards: actor, start, cancellation, verification  | D-7, D-12, D-27  |
+| [0030](../adr/0030-execution-jobs-and-lease.md)                    | Execution jobs with lease; shared Firestore repositories  | D-7, D-12, D-27  |
 
 ## Current phase
 

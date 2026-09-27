@@ -15,7 +15,12 @@ import type {
   UserId,
 } from '@melonoffice/domain';
 import { createAuthorizationService } from '@melonoffice/rbac';
-import { createOrganization, InMemoryTenancyStore, resolveTenant } from '@melonoffice/tenancy';
+import {
+  createOrganization,
+  InMemoryTenancyStore,
+  resolveRuntimeTenant,
+  resolveTenant,
+} from '@melonoffice/tenancy';
 import { digestOf } from '@melonoffice/tools';
 import { describe, expect, it } from 'vitest';
 import { ApprovalError } from './errors.js';
@@ -107,6 +112,7 @@ async function world(roles?: Record<string, readonly string[]>) {
   const tenantA = await resolveTenant(as(ALICE), orgA, tenancy);
   const tenantB = await resolveTenant(as(BOB), orgB, tenancy);
   const giaA = await resolveTenant(as(ALICE, 'gia'), orgA, tenancy);
+  const runtimeA = await resolveRuntimeTenant(ALICE, orgA, tenancy);
   const request = (overrides: Partial<ApprovalOperation> = {}) =>
     service.request(tenantA, {
       operation: operation(orgA, overrides),
@@ -126,6 +132,7 @@ async function world(roles?: Record<string, readonly string[]>) {
     tenantA,
     tenantB,
     giaA,
+    runtimeA,
     request,
     advance: (seconds: number) => {
       clock = new Date(clock.getTime() + seconds * 1000);
@@ -270,6 +277,49 @@ describe('approval service', () => {
       }),
     ]);
     expect((await w.service.get(w.tenantA, approval.id)).status).toBe('pending');
+  });
+
+  describe('X6a: no self-approval (ADR-0029)', () => {
+    it('1. the runtime cannot approve, even for the user who started it', async () => {
+      const w = await world();
+      const approval = await w.request();
+      expect(await codeOf(w.service.approve(w.runtimeA, approval.id))).toBe('approval_forbidden');
+      expect(await w.events('tool.approval_approved')).toEqual([
+        expect.objectContaining({
+          result: 'denied',
+          reason: 'runtime_cannot_decide',
+          actor: { type: 'system', id: 'runtime', initiatedBy: ALICE, via: 'runtime' },
+        }),
+      ]);
+      expect((await w.service.get(w.tenantA, approval.id)).status).toBe('pending');
+    });
+
+    it('2. the runtime cannot reject an approval', async () => {
+      const w = await world();
+      const approval = await w.request();
+      expect(await codeOf(w.service.reject(w.runtimeA, approval.id))).toBe('approval_forbidden');
+      expect(await w.events('tool.approval_rejected')).toEqual([
+        expect.objectContaining({ result: 'denied', reason: 'runtime_cannot_decide' }),
+      ]);
+      expect((await w.service.get(w.tenantA, approval.id)).status).toBe('pending');
+      // The user, acting directly, still decides.
+      expect((await w.service.approve(w.tenantA, approval.id)).status).toBe('approved');
+    });
+
+    it('4. GIA cannot approve, and is told apart from the runtime', async () => {
+      const w = await world();
+      const approval = await w.request();
+      await codeOf(w.service.approve(w.giaA, approval.id));
+      await codeOf(w.service.approve(w.runtimeA, approval.id));
+      expect((await w.events('tool.approval_approved')).map((e) => [e.reason, e.actor])).toEqual([
+        ['gia_cannot_decide', { type: 'user', userId: ALICE, via: 'gia' }],
+        [
+          'runtime_cannot_decide',
+          { type: 'system', id: 'runtime', initiatedBy: ALICE, via: 'runtime' },
+        ],
+      ]);
+      expect((await w.service.get(w.tenantA, approval.id)).status).toBe('pending');
+    });
   });
 
   it("answers another organization's approval exactly like a missing one", async () => {

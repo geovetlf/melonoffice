@@ -23,6 +23,7 @@
     "@melonoffice/departments": "workspace:*",
     "@melonoffice/entitlements": "workspace:*",
     "@melonoffice/execution": "workspace:*",
+    "@melonoffice/firestore": "workspace:*",
     "@melonoffice/observability": "workspace:*",
     "@melonoffice/planning": "workspace:*",
     "@melonoffice/rbac": "workspace:*",

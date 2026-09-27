@@ -580,6 +580,20 @@ describe('plan approval', () => {
     expect((await w.plans.get(w.tenantA, plan.id)).status).toBe('approval_required');
   });
 
+  it('3. never lets the runtime take a human decision on a plan (ADR-0029)', async () => {
+    const { w, plan, seen } = await needsApproval();
+    expect(await codeOf(w.plans.approve(w.runtimeA, plan.id, seen))).toBe('runtime_cannot_decide');
+    expect(await codeOf(w.plans.reject(w.runtimeA, plan.id, seen))).toBe('runtime_cannot_decide');
+    expect(w.events('plan.approved')).toEqual([
+      expect.objectContaining({
+        result: 'denied',
+        reason: 'runtime_cannot_decide',
+        actor: { type: 'system', id: 'runtime', initiatedBy: ALICE, via: 'runtime' },
+      }),
+    ]);
+    expect((await w.plans.get(w.tenantA, plan.id)).status).toBe('approval_required');
+  });
+
   it('requires approval.approve', async () => {
     const { w, plan, seen } = await needsApproval({
       roles: { owner: ROLES.owner.filter((p) => p !== 'approval.approve') },

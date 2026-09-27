@@ -16,6 +16,10 @@ export interface AuditDocument {
   readonly actorType: string;
   readonly actorUserId: string | null;
   readonly actorVia: string | null;
+  /** For the system actor: which one (`runtime`, ADR-0029). */
+  readonly actorId: string | null;
+  /** For the system actor: the user who started the work it did. */
+  readonly actorInitiatedBy: string | null;
   readonly organizationId: string | null;
   readonly targetType: string | null;
   readonly targetId: string | null;
@@ -28,6 +32,11 @@ export interface AuditDocument {
   readonly transitionTo: string | null;
   readonly toolId: string | null;
   readonly toolVersion: number | null;
+  /** The job of an `execution.job_*` event (ADR-0030). */
+  readonly jobId?: string | null;
+  readonly jobNodeId?: string | null;
+  readonly jobAttempt?: number | null;
+  readonly jobLeaseId?: string | null;
   readonly modelProvider: string | null;
   readonly modelId: string | null;
   readonly previousModelProvider: string | null;
@@ -40,13 +49,16 @@ export interface AuditDocument {
 
 export function toAuditDocument(event: AuditEvent): AuditDocument {
   const user = event.actor.type === 'user' ? event.actor : undefined;
+  const system = event.actor.type === 'system' ? event.actor : undefined;
   return {
     occurredAt: Timestamp.fromDate(new Date(event.occurredAt)),
     action: event.action,
     result: event.result,
     actorType: event.actor.type,
     actorUserId: user?.userId ?? null,
-    actorVia: user?.via ?? null,
+    actorVia: user?.via ?? system?.via ?? null,
+    actorId: system?.id ?? null,
+    actorInitiatedBy: system?.initiatedBy ?? null,
     organizationId: event.organizationId ?? null,
     targetType: event.target?.type ?? null,
     targetId: event.target?.id ?? null,
@@ -59,6 +71,10 @@ export function toAuditDocument(event: AuditEvent): AuditDocument {
     transitionTo: event.transition?.to ?? null,
     toolId: event.tool?.id ?? null,
     toolVersion: event.tool?.version ?? null,
+    jobId: event.job?.id ?? null,
+    jobNodeId: event.job?.nodeId ?? null,
+    jobAttempt: event.job?.attempt ?? null,
+    jobLeaseId: event.job?.leaseId ?? null,
     modelProvider: event.model?.provider ?? null,
     modelId: event.model?.id ?? null,
     previousModelProvider: event.previousModel?.provider ?? null,
@@ -84,4 +100,50 @@ export class FirestoreAuditStore implements AuditStore {
     }
     await batch.commit();
   }
+}
+
+/** Reads a stored event back as the event it records, for reconstruction and tests. */
+export function fromAuditDocument(id: string, d: AuditDocument): AuditEvent {
+  return {
+    id,
+    occurredAt: d.occurredAt.toDate().toISOString(),
+    action: d.action,
+    result: d.result,
+    actor:
+      d.actorType === 'user'
+        ? { type: 'user', userId: d.actorUserId, via: d.actorVia }
+        : d.actorType === 'system'
+          ? { type: 'system', id: d.actorId, initiatedBy: d.actorInitiatedBy, via: d.actorVia }
+          : { type: d.actorType },
+    ...(d.organizationId === null ? {} : { organizationId: d.organizationId }),
+    ...(d.targetType === null ? {} : { target: { type: d.targetType, id: d.targetId } }),
+    ...(d.targetVersion == null ? {} : { targetVersion: d.targetVersion }),
+    ...(d.requestedOrganizationId === null
+      ? {}
+      : { requestedOrganizationId: d.requestedOrganizationId }),
+    ...(d.permission === null ? {} : { permission: d.permission }),
+    ...(d.planId === null ? {} : { plan: { id: d.planId, version: d.planVersion } }),
+    ...(d.transitionFrom === null
+      ? {}
+      : { transition: { from: d.transitionFrom, to: d.transitionTo } }),
+    ...(d.toolId == null ? {} : { tool: { id: d.toolId, version: d.toolVersion } }),
+    ...(d.jobId == null
+      ? {}
+      : {
+          job: {
+            id: d.jobId,
+            nodeId: d.jobNodeId,
+            attempt: d.jobAttempt,
+            ...(d.jobLeaseId == null ? {} : { leaseId: d.jobLeaseId }),
+          },
+        }),
+    ...(d.modelId == null ? {} : { model: { provider: d.modelProvider, id: d.modelId } }),
+    ...(d.previousModelId == null
+      ? {}
+      : { previousModel: { provider: d.previousModelProvider, id: d.previousModelId } }),
+    ...(d.reason === null ? {} : { reason: d.reason }),
+    ...(d.reference === null ? {} : { reference: d.reference }),
+    ...(d.requestId === null ? {} : { requestId: d.requestId }),
+    source: d.source,
+  } as unknown as AuditEvent;
 }

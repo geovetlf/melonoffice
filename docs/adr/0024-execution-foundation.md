@@ -1,6 +1,6 @@
 # ADR-0024: Execution foundation
 
-- Status: Proposed (Phase X1, pending Geovet's review)
+- Status: Accepted (Phase X1; accepted by Geovet, 2026-09-27)
 - Date: 2026-09-27
 - Builds on: [ADR-0018](0018-tenancy-and-memberships.md), [ADR-0019](0019-rbac-foundation.md), [ADR-0020](0020-audit-log-foundation.md), and D-28 (a specialist is the agent)
 - Numbering: ADR-0023 is taken by the credits foundation (PR #20).
@@ -22,7 +22,7 @@ X1 builds only that contract. It runs no AI, tool, job or workflow.
 - `repository.ts` has the `ExecutionRepository` port and a memory implementation;
 - `service.ts` has `createExecutionService`.
 
-The Firestore implementation of the port lives in `apps/api`, like every other store. The types are in `@melonoffice/domain`.
+The Firestore implementation of the port lives in `apps/api`, like every other store (moved to the shared `packages/firestore` by [ADR-0030](0030-execution-jobs-and-lease.md)). The types are in `@melonoffice/domain`.
 
 There is **no Agent entity**. Per D-28, the specialist is the agent. An execution only references it (`specialistId`, a node `owner`, and the version snapshot).
 
@@ -148,6 +148,14 @@ Node changes are not audited: they are operational detail kept in the execution 
 ### Observability
 
 `withCorrelation(logger, { requestId, executionId, nodeId })` in `packages/observability` binds well-formed ids to every log line. Malformed ids are dropped. No second telemetry stack is added, and there are no dashboards or metrics yet.
+
+### Amended by ADR-0029
+
+- An execution first reaches `running` only through a user's start (`execution.start`), except a planning execution delegated from `planning` or `waiting_approval`.
+- `running → verifying` needs every node completed or skipped; `verifying → completed` needs a recorded, passing verification covering every completed node.
+- Nodes record their `attempt` and, for external effects, their `idempotencyKey`; a failed node is retried only under ADR-0029's rules, never when its outcome is unknown.
+- Cancellation by a person (`execution.cancel`) reaches the children of a planning execution.
+- New audit actions: `execution.start_denied`, `execution.cancel_denied`, `execution.verification_recorded`, `execution.node_retried`, `execution.node_outcome_unknown`.
 
 ## Not in this change
 

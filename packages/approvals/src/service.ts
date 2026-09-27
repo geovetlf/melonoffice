@@ -148,7 +148,9 @@ export function createApprovalService({
       });
       throw new ApprovalError('approval_forbidden', reason);
     };
-    // GIA never decides: a user approves or rejects, directly (ADR-0026).
+    // Only a user acting directly decides (ADR-0026, ADR-0029). The runtime acts for a user but is
+    // never that user: it can not approve or reject, not even what the user who started it asked for.
+    if (tenant.actor === 'runtime') return refuse('runtime_cannot_decide');
     if (tenant.actor !== 'user') return refuse('gia_cannot_decide');
     const decision = authorization.authorize(tenant, 'approval.approve', { organizationId });
     if (!decision.allowed) return refuse(decision.reason);

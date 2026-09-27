@@ -17,8 +17,12 @@ import type { CreatedOrganization, NewOrganization, TenancyStore } from './store
  * membership; nothing in it comes from the client except the choice of organization.
  */
 export interface TenantContext {
-  /** `gia` when GIA acts for the user; it resolves through the same membership, never around it. */
-  readonly actor: AuthenticatedContext['actor'];
+  /**
+   * `gia` when GIA acts for the user; it resolves through the same membership, never around it.
+   * `runtime` when the execution runtime acts for the user who started the work (ADR-0029): the
+   * user's own membership and permissions, never more, and never a human decision.
+   */
+  readonly actor: TenantActor;
   readonly userId: UserId;
   readonly organizationId: OrganizationId;
   readonly membershipId: MembershipId;
@@ -27,6 +31,9 @@ export interface TenantContext {
   /** A name only; what it allows is decided by RBAC (ADR-0019). */
   readonly role: MembershipRole;
 }
+
+/** Who acts: the user directly, GIA for the user, or the runtime for the user who started the work. */
+export type TenantActor = AuthenticatedContext['actor'] | 'runtime';
 
 // Every context resolveTenant returns, and nothing else. A copy, an edited context or one built by
 // hand is not in it, so it cannot pass as resolved. Weak, so contexts are still garbage collected.
@@ -71,6 +78,32 @@ export async function resolveTenant(
   });
   issued.add(tenant);
   return tenant;
+}
+
+/**
+ * The context the execution runtime works in (ADR-0029): the user who started the work, in the
+ * organization of the stored execution, checked again against that user's current membership,
+ * so a user who left or was suspended stops the work. `actor` is `runtime`: every human-only
+ * decision (approvals, plan decisions, human review) refuses it, and audit records it as the
+ * system actor `runtime` initiated by that user.
+ *
+ * Server side only: `initiatedBy` and `organizationId` come from a stored execution, never from
+ * a client, a job payload or a model.
+ */
+export async function resolveRuntimeTenant(
+  initiatedBy: UserId,
+  organizationId: string,
+  store: TenancyStore,
+): Promise<TenantContext> {
+  const tenant = await resolveTenant(
+    { actor: 'user', userId: initiatedBy, emailVerified: false },
+    organizationId,
+    store,
+  );
+  issued.delete(tenant);
+  const runtime: TenantContext = Object.freeze({ ...tenant, actor: 'runtime' });
+  issued.add(runtime);
+  return runtime;
 }
 
 export const ORGANIZATION_NAME_MAX_LENGTH = 100;

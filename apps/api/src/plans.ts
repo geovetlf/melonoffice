@@ -76,6 +76,7 @@ async function decisionOf(
 const STATUS = {
   plan_not_found: 404,
   gia_cannot_decide: 403,
+  runtime_cannot_decide: 403,
   permission_denied: 403,
   plan_version_mismatch: 409,
   plan_concurrency_conflict: 409,

@@ -25,7 +25,7 @@ import {
   type WorkflowRepository,
 } from '@melonoffice/workflows';
 import type { AuditEvent } from '@melonoffice/audit';
-import { AUDIT_LOGS, toAuditDocument } from './audit-firestore.js';
+import { AUDIT_LOGS, toAuditDocument } from './audit.js';
 
 /**
  * `workflows/{workflowId}` holds each workflow's status and current version, and

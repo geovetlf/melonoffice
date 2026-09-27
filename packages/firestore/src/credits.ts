@@ -16,7 +16,7 @@ import type {
   OrganizationId,
 } from '@melonoffice/domain';
 import { isOrganizationId } from '@melonoffice/tenancy';
-import { AUDIT_LOGS, toAuditDocument } from './audit-firestore.js';
+import { AUDIT_LOGS, toAuditDocument } from './audit.js';
 
 /**
  * Collections (ADR-0023). Read and written only by the API, never by clients.

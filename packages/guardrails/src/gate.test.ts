@@ -45,6 +45,7 @@ import {
 import {
   createOrganization,
   InMemoryTenancyStore,
+  resolveRuntimeTenant,
   resolveTenant,
   type TenantContext,
 } from '@melonoffice/tenancy';
@@ -213,6 +214,9 @@ async function world(options: WorldOptions = {}) {
     repository: executionRepository,
     organizations: tenancy,
     assignments: specialists.assignments,
+    // Starting is the owner's (ADR-0029), whatever roles a test gives the gate.
+    authorization: createAuthorizationService(),
+    audit: createAuditService(audit, now),
     now,
   });
   const approvalRepository = new InMemoryApprovalRepository(audit);
@@ -260,6 +264,7 @@ async function world(options: WorldOptions = {}) {
   const tenantA = await resolveTenant(as(ALICE), orgA, tenancy);
   const tenantB = await resolveTenant(as(BOB), orgB, tenancy);
   const giaA = await resolveTenant(as(ALICE, 'gia'), orgA, tenancy);
+  const runtimeA = await resolveRuntimeTenant(ALICE, orgA, tenancy);
 
   async function seed(
     org: OrganizationId,
@@ -325,7 +330,7 @@ async function world(options: WorldOptions = {}) {
         tool: { id, version: 1 },
       })),
     });
-    return executions.changeStatus(tenant, execution.id, { from: 'pending', to: 'running' });
+    return executions.start(tenant, execution.id);
   }
 
   const events = (action?: string) =>
@@ -340,6 +345,7 @@ async function world(options: WorldOptions = {}) {
     tenantA,
     tenantB,
     giaA,
+    runtimeA,
     tenancy,
     a,
     gate,
@@ -777,7 +783,7 @@ describe('tool gate: execution integration', () => {
       },
       nodes: [{ id: 'n0', type: 'tool', label: 'x', tool: { id: 'lookup', version: 2 } }],
     });
-    await w.executions.changeStatus(w.tenantA, execution.id, { from: 'pending', to: 'running' });
+    await w.executions.start(w.tenantA, execution.id);
     expect(
       await w.gate.invoke(w.tenantA, { executionId: execution.id, nodeId: 'n0', input: INPUT }),
     ).toEqual({ status: 'denied', code: 'tool_not_found' });
@@ -805,7 +811,7 @@ describe('tool gate: execution integration', () => {
     const call = (nodeId: string) =>
       w.gate.invoke(w.tenantA, { executionId: bare.id, nodeId, input: INPUT });
     expect(await call('n0')).toEqual({ status: 'denied', code: 'execution_not_running' });
-    await w.executions.changeStatus(w.tenantA, bare.id, { from: 'pending', to: 'running' });
+    await w.executions.start(w.tenantA, bare.id);
     expect(await call('n0')).toEqual({ status: 'denied', code: 'no_specialist' });
     expect(await call('n1')).toEqual({ status: 'denied', code: 'node_not_tool' });
     expect(await call('missing')).toEqual({ status: 'denied', code: 'node_not_found' });
@@ -879,6 +885,75 @@ describe('tool gate: execution integration', () => {
       specialistId: specialist.identity.id,
       toolId: 'lookup',
       toolVersion: 1,
+    });
+  });
+});
+
+describe('X6a: attempts through the tool gate (ADR-0029)', () => {
+  it('17. a retried node repeats the same idempotency key, so its effect happens once', async () => {
+    // A provider that applies each key once, and loses its answer the first time.
+    const applied = new Map<string, number>();
+    let calls = 0;
+    const provider = async (): Promise<ToolExecutorOutcome> => {
+      calls += 1;
+      return calls === 1
+        ? { status: 'failure', code: 'connection_reset' }
+        : { status: 'success', output: { count: 1 } };
+    };
+    const { w, execution, invoke, node } = await setup(['update_record'], {
+      answers: { update_record: provider },
+    });
+    const run = async () => {
+      const result = await invoke(w.runtimeA);
+      const key = w.calls.at(-1)?.context.idempotencyKey as string;
+      applied.set(key, (applied.get(key) ?? 0) + 1);
+      return result;
+    };
+    expect((await run()).status).toBe('failure');
+    const failed = await node();
+    expect(failed.status).toBe('failed');
+    expect(failed.attempt).toBeUndefined();
+    expect(failed.idempotencyKey).toBe(w.calls[0]?.context.idempotencyKey);
+    const retried = await w.executions.retryNode(w.runtimeA, execution.id, 'n0');
+    expect(retried.nodes[0]).toMatchObject({ status: 'pending', attempt: 2 });
+    expect((await run()).status).toBe('success');
+    // Two calls, one key: the provider changes the record once.
+    expect(w.calls).toHaveLength(2);
+    expect(applied.size).toBe(1);
+    expect(w.calls.map((c) => c.context.actor)).toEqual([
+      { userId: ALICE, via: 'runtime' },
+      { userId: ALICE, via: 'runtime' },
+    ]);
+    expect(await node()).toMatchObject({ status: 'completed', attempt: 2 });
+    // A node that completed is never re-run.
+    await expect(w.executions.retryNode(w.runtimeA, execution.id, 'n0')).rejects.toMatchObject({
+      code: 'retry_not_allowed',
+      detail: 'not_failed',
+    });
+  });
+
+  it('18. a timed-out tool call has an unknown outcome and is never re-run', async () => {
+    const { w, execution, invoke, node } = await setup(['slow'], {
+      answers: { slow: () => new Promise(() => undefined) },
+    });
+    expect((await invoke(w.runtimeA)).status).toBe('timeout');
+    expect(await node()).toMatchObject({ status: 'failed', error: { code: 'timeout' } });
+    await expect(w.executions.retryNode(w.runtimeA, execution.id, 'n0')).rejects.toMatchObject({
+      code: 'retry_not_allowed',
+      detail: 'outcome_unknown',
+    });
+    expect(w.calls).toHaveLength(1);
+  });
+
+  it('a read-only tool has no idempotency key and is not retried automatically', async () => {
+    const { w, execution, invoke, node } = await setup(['lookup'], {
+      answers: { lookup: async () => ({ status: 'failure', code: 'connection_reset' }) },
+    });
+    await invoke(w.runtimeA);
+    expect((await node()).idempotencyKey).toBeUndefined();
+    await expect(w.executions.retryNode(w.runtimeA, execution.id, 'n0')).rejects.toMatchObject({
+      code: 'retry_not_allowed',
+      detail: 'external_effect',
     });
   });
 });

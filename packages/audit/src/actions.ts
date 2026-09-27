@@ -64,6 +64,58 @@ export const AUDIT_ACTIONS = {
     description: "An execution's status changed; the event records from and to (ADR-0024).",
     results: ['success'],
   },
+  'execution.start_denied': {
+    category: 'execution',
+    description:
+      'A start was refused: not a user acting directly, or no execution.start (ADR-0029).',
+    results: ['denied'],
+  },
+  'execution.cancel_denied': {
+    category: 'execution',
+    description:
+      'A cancellation was refused: not a user acting directly, or no execution.cancel (ADR-0029).',
+    results: ['denied'],
+  },
+  'execution.verification_recorded': {
+    category: 'execution',
+    description:
+      "The runtime recorded a verifier's evidence; the reason says passed or failed (ADR-0029).",
+    results: ['success'],
+  },
+  'execution.node_retried': {
+    category: 'execution',
+    description:
+      'The runtime re-ran a failed node; the reason names the attempt rule that allowed it (ADR-0029).',
+    results: ['success'],
+  },
+  'execution.job_enqueued': {
+    category: 'execution',
+    description:
+      'A job to run one node at one attempt was created, once; the job field names it (ADR-0030).',
+    results: ['success'],
+  },
+  'execution.job_leased': {
+    category: 'execution',
+    description: 'A worker took the lease of a job, or was refused it with the reason (ADR-0030).',
+    results: ['success', 'denied'],
+  },
+  'execution.job_finished': {
+    category: 'execution',
+    description:
+      "A job's lease holder recorded how it ended (success, or failure with its code), or its write was refused with the reason (ADR-0030).",
+    results: ['success', 'failure', 'denied'],
+  },
+  'execution.job_cancelled': {
+    category: 'execution',
+    description: 'A job was cancelled because its execution ended (ADR-0030).',
+    results: ['success'],
+  },
+  'execution.node_outcome_unknown': {
+    category: 'execution',
+    description:
+      "The runtime recorded that a running node's outcome is unknown; it is never re-run (ADR-0029).",
+    results: ['success'],
+  },
   'tool.authorization_checked': {
     category: 'tool',
     description:

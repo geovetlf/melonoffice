@@ -107,6 +107,8 @@ describe('catalogue', () => {
       'entitlement.read',
       'billing.read',
       'execution.read',
+      'execution.start',
+      'execution.cancel',
       'department.read',
       'specialist.read',
       'tool.read',

@@ -5,7 +5,7 @@ import {
   type ExecutionService,
 } from '@melonoffice/execution';
 import { createAuthorizationService, type AuthorizationService } from '@melonoffice/rbac';
-import { resolveTenant, type TenantContext } from '@melonoffice/tenancy';
+import { resolveRuntimeTenant, resolveTenant, type TenantContext } from '@melonoffice/tenancy';
 import { describe, expect, it } from 'vitest';
 import { setupApp, STORES, type Stores } from './test-api.js';
 
@@ -77,6 +77,8 @@ describe.each(STORES)('executions with storage in %s', (_name, createStores) => 
     const service: ExecutionService = createExecutionService({
       repository: stores.executions,
       organizations: stores.tenancy,
+      authorization: createAuthorizationService(),
+      audit: stores.audit,
       requestId: 'req-test',
     });
     const tenantOf = (userId: UserId, org: OrganizationId): Promise<TenantContext> =>
@@ -142,7 +144,11 @@ describe.each(STORES)('executions with storage in %s', (_name, createStores) => 
       async () => {
         const { service, tenantA, events } = await setup();
         const { id } = await service.create(tenantA, REQUEST);
-        await service.changeStatus(tenantA, id, { from: 'pending', to: 'running' });
+        await service.start(tenantA, id);
+        for (const nodeId of ['research', 'verify']) {
+          await service.changeNode(tenantA, id, { nodeId, from: 'pending', to: 'running' });
+          await service.changeNode(tenantA, id, { nodeId, from: 'running', to: 'completed' });
+        }
         const results = await Promise.all([
           codeOf(service.changeStatus(tenantA, id, { from: 'running', to: 'verifying' })),
           codeOf(
@@ -155,11 +161,50 @@ describe.each(STORES)('executions with storage in %s', (_name, createStores) => 
         ]);
         expect(results.sort()).toEqual(['accepted', 'execution_concurrency_conflict']);
         const final = await service.get(tenantA, id);
-        expect(final.revision).toBe(3);
+        expect(final.revision).toBe(7);
         const changes = (await events('execution.state_changed')).map((e) => e.transition?.to);
         expect(changes).toEqual(['running', final.status]);
       },
     );
+
+    it('stores attempts, idempotency keys and verification evidence exactly (ADR-0029)', async () => {
+      const { service, tenantA, aliceId, orgA, stores } = await setup();
+      const runtime = await resolveRuntimeTenant(aliceId, orgA, stores.tenancy);
+      const { id } = await service.create(tenantA, {
+        ...REQUEST,
+        nodes: [{ id: 'decide', type: 'condition', label: 'Decide' }],
+      });
+      await service.start(tenantA, id);
+      const key = 'a'.repeat(64);
+      await service.changeNode(runtime, id, {
+        nodeId: 'decide',
+        from: 'pending',
+        to: 'running',
+        idempotencyKey: key,
+      });
+      await service.changeNode(runtime, id, {
+        nodeId: 'decide',
+        from: 'running',
+        to: 'failed',
+        error: { code: 'check_failed' },
+      });
+      await service.retryNode(runtime, id, 'decide');
+      await service.changeNode(runtime, id, { nodeId: 'decide', from: 'pending', to: 'running' });
+      await service.changeNode(runtime, id, { nodeId: 'decide', from: 'running', to: 'completed' });
+      await service.changeStatus(runtime, id, { from: 'running', to: 'verifying' });
+      const verified = await service.recordVerification(runtime, id, {
+        correlationId: 'req-verify-2',
+        nodes: [
+          {
+            nodeId: 'decide',
+            policy: 'checks',
+            checks: [{ code: 'rule_met', result: 'passed', evidence: { type: 'check', id: 'c1' } }],
+          },
+        ],
+      });
+      expect(verified.nodes[0]).toMatchObject({ attempt: 2, idempotencyKey: key });
+      expect(await stores.executions.find(orgA, id)).toEqual(verified);
+    });
 
     it('writes nothing when the transition fails partway', async () => {
       const { service, tenantA, stores, orgA, events } = await setup();
@@ -228,12 +273,14 @@ describe.each(STORES)('executions with storage in %s', (_name, createStores) => 
             error: null,
             startedAt: null,
             completedAt: null,
+            attempt: 1,
           },
           expect.objectContaining({ id: 'verify', dependsOn: ['research'] }),
         ],
         result: null,
         failure: null,
         cancellation: null,
+        verification: null,
         createdAt: created.createdAt,
         updatedAt: created.updatedAt,
         startedAt: null,
@@ -280,7 +327,7 @@ describe.each(STORES)('executions with storage in %s', (_name, createStores) => 
       expect((await service.get(tenantA, ofA.id)).status).toBe('pending');
     });
 
-    it('offers clients no way to create, change or cancel an execution', async () => {
+    it('offers clients no way to create or change an execution, other than start and cancel', async () => {
       const { request, service, tenantA, orgA } = await setup();
       const { id } = await service.create(tenantA, REQUEST);
       const init = (method: string): RequestInit => ({
@@ -294,7 +341,9 @@ describe.each(STORES)('executions with storage in %s', (_name, createStores) => 
         ['PUT', `/v1/organizations/${orgA}/executions/${id}`],
         ['PATCH', `/v1/organizations/${orgA}/executions/${id}`],
         ['DELETE', `/v1/organizations/${orgA}/executions/${id}`],
-        ['POST', `/v1/organizations/${orgA}/executions/${id}/cancel`],
+        ['POST', `/v1/organizations/${orgA}/executions/${id}/complete`],
+        ['POST', `/v1/organizations/${orgA}/executions/${id}/verify`],
+        ['POST', `/v1/organizations/${orgA}/executions/${id}/retry`],
         ['POST', '/v1/executions'],
       ] as const) {
         expect([404, 405]).toContain((await request('token-alice', path, init(method))).status);
@@ -352,11 +401,111 @@ describe.each(STORES)('executions with storage in %s', (_name, createStores) => 
     });
   });
 
+  describe('POST start and cancel (ADR-0029)', () => {
+    const post = (body?: unknown): RequestInit => ({
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+    const path = (org: string, id: string, action: 'start' | 'cancel') =>
+      `/v1/organizations/${org}/executions/${encodeURIComponent(id)}/${action}`;
+
+    it('lets the owner start a pending execution once, and shows it running', async () => {
+      const { request, service, tenantA, orgA, events } = await setup();
+      const { id } = await service.create(tenantA, REQUEST);
+      const first = await request('token-alice', path(orgA, id, 'start'), post());
+      expect(first.status).toBe(200);
+      expect(first.body).toMatchObject({ id, status: 'running', startedAt: expect.any(String) });
+      const again = await request('token-alice', path(orgA, id, 'start'), post());
+      expect(again).toEqual(first);
+      expect(
+        (await events('execution.state_changed')).filter((e) => e.transition?.to === 'running'),
+      ).toHaveLength(1);
+    });
+
+    it('refuses a member without execution.start or execution.cancel, and audits it', async () => {
+      const { request, service, tenantA, orgA, events } = await setup({
+        authorization: createAuthorizationService({ owner: ['execution.read'] }),
+      });
+      const { id } = await service.create(tenantA, REQUEST);
+      for (const action of ['start', 'cancel'] as const) {
+        const response = await request(
+          'token-alice',
+          path(orgA, id, action),
+          post(action === 'cancel' ? { reason: 'director_request' } : undefined),
+        );
+        expect(response).toEqual({ status: 403, body: { error: 'permission_denied' } });
+      }
+      expect((await events('authorization.check')).map((e) => e.permission)).toEqual([
+        'execution.start',
+        'execution.cancel',
+      ]);
+      expect((await service.get(tenantA, id)).status).toBe('pending');
+    });
+
+    it("never starts or cancels another organization's execution, whatever ids are forged", async () => {
+      const { request, service, tenantA, orgA, orgB } = await setup();
+      const { id } = await service.create(tenantA, REQUEST);
+      for (const action of ['start', 'cancel'] as const) {
+        const body = action === 'cancel' ? { reason: 'director_request' } : undefined;
+        // Bob, in his own organization, naming Alice's execution: unknown.
+        expect(await request('token-bob', path(orgB, id, action), post(body))).toEqual({
+          status: 404,
+          body: { error: 'execution_not_found' },
+        });
+        // Bob naming Alice's organization: not a member.
+        expect((await request('token-bob', path(orgA, id, action), post(body))).status).toBe(403);
+        // Forged execution ids.
+        for (const forged of [MISSING, 'not-an-id', '..%2F..%2Fx']) {
+          expect(
+            (await request('token-alice', path(orgA, forged, action), post(body))).status,
+          ).toBe(404);
+        }
+        // An organization in the headers, query or body changes nothing.
+        const smuggled = await request(
+          'token-bob',
+          `${path(orgB, id, action)}?organizationId=${orgA}`,
+          {
+            ...post(body),
+            headers: { 'content-type': 'application/json', 'x-organization-id': orgA },
+          },
+        );
+        expect(smuggled.status).toBe(404);
+      }
+      expect((await service.get(tenantA, id)).status).toBe('pending');
+    });
+
+    it('cancels with a stable reason code only, and refuses anything else in the body', async () => {
+      const { request, service, tenantA, orgA } = await setup();
+      const { id } = await service.create(tenantA, REQUEST);
+      for (const body of [undefined, {}, { reason: 'Free text' }, { reason: 'ok', status: 'x' }]) {
+        expect(await request('token-alice', path(orgA, id, 'cancel'), post(body))).toEqual({
+          status: 400,
+          body: { error: 'invalid_request' },
+        });
+      }
+      const cancelled = await request(
+        'token-alice',
+        path(orgA, id, 'cancel'),
+        post({ reason: 'director_request' }),
+      );
+      expect(cancelled.status).toBe(200);
+      expect(cancelled.body).toMatchObject({
+        status: 'cancelled',
+        cancellation: { reason: 'director_request' },
+      });
+      expect(await request('token-alice', path(orgA, id, 'start'), post())).toEqual({
+        status: 409,
+        body: { error: 'execution_already_terminal' },
+      });
+    });
+  });
+
   describe('audit and reconstruction', () => {
     it('records created and state_changed with the execution id and no payloads', async () => {
       const { service, tenantA, aliceId, orgA, events } = await setup();
       const { id } = await service.create(tenantA, REQUEST);
-      await service.changeStatus(tenantA, id, { from: 'pending', to: 'running' });
+      await service.start(tenantA, id);
       const recorded = await events('execution.');
       expect(recorded).toEqual([
         expect.objectContaining({
@@ -371,6 +520,7 @@ describe.each(STORES)('executions with storage in %s', (_name, createStores) => 
           action: 'execution.state_changed',
           target: { type: 'execution', id },
           transition: { from: 'pending', to: 'running' },
+          reason: 'user_started',
         }),
       ]);
       for (const event of recorded) {
@@ -381,20 +531,35 @@ describe.each(STORES)('executions with storage in %s', (_name, createStores) => 
     });
 
     it('rebuilds who, what, when, why, agent, plan and result from the records', async () => {
-      const { service, tenantA, aliceId, events } = await setup();
+      const { service, tenantA, aliceId, orgA, stores, events } = await setup();
+      const runtime = await resolveRuntimeTenant(aliceId, orgA, stores.tenancy);
       const { id } = await service.create(tenantA, REQUEST);
-      await service.changeStatus(tenantA, id, { from: 'pending', to: 'running' });
-      await service.changeNode(tenantA, id, { nodeId: 'research', from: 'pending', to: 'running' });
-      await service.changeNode(tenantA, id, {
+      await service.start(tenantA, id);
+      await service.changeNode(runtime, id, { nodeId: 'research', from: 'pending', to: 'running' });
+      await service.changeNode(runtime, id, {
         nodeId: 'research',
         from: 'running',
         to: 'completed',
         output: { type: 'report', id: 'rep-1' },
       });
-      await service.changeStatus(tenantA, id, { from: 'running', to: 'verifying' });
-      await service.changeNode(tenantA, id, { nodeId: 'verify', from: 'pending', to: 'running' });
-      await service.changeNode(tenantA, id, { nodeId: 'verify', from: 'running', to: 'completed' });
-      await service.changeStatus(tenantA, id, {
+      await service.changeNode(runtime, id, { nodeId: 'verify', from: 'pending', to: 'running' });
+      await service.changeNode(runtime, id, { nodeId: 'verify', from: 'running', to: 'completed' });
+      await service.changeStatus(runtime, id, { from: 'running', to: 'verifying' });
+      await service.recordVerification(runtime, id, {
+        correlationId: 'req-verify-1',
+        nodes: ['research', 'verify'].map((nodeId) => ({
+          nodeId,
+          policy: 'output_schema',
+          checks: [
+            {
+              code: 'schema_valid',
+              result: 'passed',
+              evidence: { type: 'check', id: `${nodeId}-1` },
+            },
+          ],
+        })),
+      });
+      await service.changeStatus(runtime, id, {
         from: 'verifying',
         to: 'completed',
         result: { type: 'report', id: 'rep-1' },
@@ -411,7 +576,8 @@ describe.each(STORES)('executions with storage in %s', (_name, createStores) => 
         versions: execution.versionSnapshot.components.map((c) => `${c.kind}:${c.id}@${c.version}`),
         result: execution.result,
         verification: execution.nodes.find((n) => n.type === 'verification')?.status,
-        path: history.map((e) => e.transition?.to ?? 'created'),
+        path: history.map((e) => e.transition?.to ?? e.action.slice('execution.'.length)),
+        verifiedBy: history.find((e) => e.action === 'execution.verification_recorded')?.actor,
       };
       expect(story).toEqual({
         who: aliceId,
@@ -426,7 +592,8 @@ describe.each(STORES)('executions with storage in %s', (_name, createStores) => 
         versions: ['specialist:spec-research@3', 'role:researcher@2', 'skill:web_research@5'],
         result: { type: 'report', id: 'rep-1' },
         verification: 'completed',
-        path: ['created', 'running', 'verifying', 'completed'],
+        path: ['created', 'running', 'verifying', 'verification_recorded', 'completed'],
+        verifiedBy: { type: 'system', id: 'runtime', initiatedBy: aliceId, via: 'runtime' },
       });
     });
   });

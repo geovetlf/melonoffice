@@ -38,34 +38,37 @@ import type { AuthorizationService } from '@melonoffice/rbac';
 import { InMemorySpecialistRepository, type SpecialistRepository } from '@melonoffice/specialists';
 import { InMemoryTenancyStore, type TenancyStore } from '@melonoffice/tenancy';
 import { createApp } from './app.js';
-import { AUDIT_LOGS, FirestoreAuditStore, type AuditDocument } from './audit-firestore.js';
 import {
+  AUDIT_LOGS,
+  FirestoreAuditStore,
+  type AuditDocument,
+  fromAuditDocument,
   BILLING_ACCOUNTS,
   FirestoreBillingStore,
   SUBSCRIPTIONS,
   toAccountDocument,
   toSubscriptionDocument,
-} from './billing-firestore.js';
-import {
   DEPARTMENTS,
   FirestoreDepartmentRepository,
   toDepartmentDocument,
-} from './departments-firestore.js';
-import { FirestoreExecutionRepository } from './executions-firestore.js';
-import { FirestoreApprovalRepository } from './approvals-firestore.js';
-import {
+  FirestoreExecutionRepository,
+  FirestoreApprovalRepository,
   FirestoreSpecialistRepository,
   SPECIALISTS,
   SPECIALIST_VERSIONS,
   toSpecialistDocument,
   toSpecialistVersionDocument,
-} from './specialists-firestore.js';
-import { CREDIT_WALLETS, FirestoreCreditStore } from './credits-firestore.js';
-import { FirestorePlanRepository, PLAN_VERSIONS } from './plans-firestore.js';
-import { FirestoreWorkflowRepository } from './workflows-firestore.js';
-import { FirestoreTenancyStore, MEMBERSHIPS, ORGANIZATIONS } from './tenancy-firestore.js';
-import { emulatorFirestore, emulatorHost } from './test-firestore.js';
-import { FirestoreUserDirectory } from './users-firestore.js';
+  CREDIT_WALLETS,
+  FirestoreCreditStore,
+  FirestorePlanRepository,
+  PLAN_VERSIONS,
+  FirestoreWorkflowRepository,
+  FirestoreTenancyStore,
+  MEMBERSHIPS,
+  ORGANIZATIONS,
+  FirestoreUserDirectory,
+} from '@melonoffice/firestore';
+import { emulatorFirestore, emulatorHost } from '@melonoffice/firestore/testing';
 
 /**
  * Stands in for Identity Platform. Real signature, issuer and expiry checks are tested in
@@ -171,40 +174,6 @@ function memoryStores(): Stores {
     breakAudit: (broken) => (breakable.broken = broken),
     storedAudit: async () => JSON.stringify(events.events()),
   };
-}
-
-/** Reads a stored document back into an event, the inverse of toAuditDocument. */
-function fromAuditDocument(id: string, d: AuditDocument): AuditEvent {
-  return {
-    id,
-    occurredAt: d.occurredAt.toDate().toISOString(),
-    action: d.action,
-    result: d.result,
-    actor:
-      d.actorType === 'user'
-        ? { type: 'user', userId: d.actorUserId, via: d.actorVia }
-        : { type: d.actorType },
-    ...(d.organizationId === null ? {} : { organizationId: d.organizationId }),
-    ...(d.targetType === null ? {} : { target: { type: d.targetType, id: d.targetId } }),
-    ...(d.targetVersion == null ? {} : { targetVersion: d.targetVersion }),
-    ...(d.requestedOrganizationId === null
-      ? {}
-      : { requestedOrganizationId: d.requestedOrganizationId }),
-    ...(d.permission === null ? {} : { permission: d.permission }),
-    ...(d.planId === null ? {} : { plan: { id: d.planId, version: d.planVersion } }),
-    ...(d.transitionFrom === null
-      ? {}
-      : { transition: { from: d.transitionFrom, to: d.transitionTo } }),
-    ...(d.toolId == null ? {} : { tool: { id: d.toolId, version: d.toolVersion } }),
-    ...(d.modelId == null ? {} : { model: { provider: d.modelProvider, id: d.modelId } }),
-    ...(d.previousModelId == null
-      ? {}
-      : { previousModel: { provider: d.previousModelProvider, id: d.previousModelId } }),
-    ...(d.reason === null ? {} : { reason: d.reason }),
-    ...(d.reference === null ? {} : { reference: d.reference }),
-    ...(d.requestId === null ? {} : { requestId: d.requestId }),
-    source: d.source,
-  } as unknown as AuditEvent;
 }
 
 function firestoreStores(): Stores {

@@ -141,6 +141,8 @@ describe.each(STORES)('AI gateway with storage in %s', (_name, createStores) => 
       repository: stores.executions,
       organizations: stores.tenancy,
       assignments: specialists.assignments,
+      authorization: createAuthorizationService(),
+      audit: stores.audit,
     });
     const department = must(
       await stores.departments.find(orgA, departmentIdOf(orgA, 'research' as DepartmentTypeId)),
@@ -180,10 +182,7 @@ describe.each(STORES)('AI gateway with storage in %s', (_name, createStores) => 
       },
       nodes: [{ id: 'n0', type: 'agent', label: 'Think' }],
     });
-    const execution = await executions.changeStatus(tenant, created.id, {
-      from: 'pending',
-      to: 'running',
-    });
+    const execution = await executions.start(tenant, created.id);
 
     const calls: ProviderCall[] = [];
     const logLines: string[] = [];

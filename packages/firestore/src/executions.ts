@@ -19,12 +19,13 @@ import type {
   ExecutionId,
   ExecutionNode,
   ExecutionRef,
+  ExecutionVerification,
   IsoTimestamp,
   OrganizationId,
   VersionRef,
 } from '@melonoffice/domain';
 import { isOrganizationId } from '@melonoffice/tenancy';
-import { AUDIT_LOGS, toAuditDocument } from './audit-firestore.js';
+import { AUDIT_LOGS, toAuditDocument } from './audit.js';
 
 /**
  * `executions/{executionId}` (ADR-0024). The id is a random UUID, globally unique; the
@@ -48,6 +49,23 @@ interface NodeDocument {
   readonly error: { code: string; ref: ExecutionRef | null } | null;
   readonly startedAt: FirestoreTimestamp | null;
   readonly completedAt: FirestoreTimestamp | null;
+  /** Absent in nodes stored before ADR-0029: read as the first attempt, no key. */
+  readonly attempt?: number | null;
+  readonly idempotencyKey?: string | null;
+}
+
+interface VerificationDocument {
+  readonly schemaVersion: number;
+  readonly executionId: string;
+  readonly result: string;
+  readonly verifiedAt: FirestoreTimestamp;
+  readonly correlationId: string;
+  readonly nodes: readonly {
+    nodeId: string;
+    policy: string;
+    result: string;
+    checks: readonly { code: string; result: string; evidence: ExecutionRef }[];
+  }[];
 }
 
 interface ExecutionDocument {
@@ -68,6 +86,8 @@ interface ExecutionDocument {
   readonly result: ExecutionRef | null;
   readonly failure: { code: string; ref: ExecutionRef | null } | null;
   readonly cancellation: { at: FirestoreTimestamp; by: string; reason: string } | null;
+  /** Absent in executions stored before ADR-0029: read as none. */
+  readonly verification?: VerificationDocument | null;
   readonly revision: number;
   readonly createdAt: FirestoreTimestamp;
   readonly updatedAt: FirestoreTimestamp;
@@ -85,6 +105,23 @@ const failureDocument = (failure: ExecutionFailure | undefined) =>
   failure === undefined
     ? null
     : { code: failure.code, ref: failure.ref === undefined ? null : ref(failure.ref) };
+
+function verificationDocument(v: ExecutionVerification | undefined): VerificationDocument | null {
+  if (v === undefined) return null;
+  return {
+    schemaVersion: v.schemaVersion,
+    executionId: v.executionId,
+    result: v.result,
+    verifiedAt: at(v.verifiedAt),
+    correlationId: v.correlationId,
+    nodes: v.nodes.map((n) => ({
+      nodeId: n.nodeId,
+      policy: n.policy,
+      result: n.result,
+      checks: n.checks.map((c) => ({ code: c.code, result: c.result, evidence: ref(c.evidence) })),
+    })),
+  };
+}
 
 export function toExecutionDocument(execution: Execution): ExecutionDocument {
   return {
@@ -107,6 +144,8 @@ export function toExecutionDocument(execution: Execution): ExecutionDocument {
       error: failureDocument(node.error),
       startedAt: atOrNull(node.startedAt),
       completedAt: atOrNull(node.completedAt),
+      attempt: node.attempt ?? null,
+      idempotencyKey: node.idempotencyKey ?? null,
     })),
     currentNodeId: execution.currentNodeId ?? null,
     parentExecutionId: execution.parentExecutionId ?? null,
@@ -129,6 +168,7 @@ export function toExecutionDocument(execution: Execution): ExecutionDocument {
             by: execution.cancellation.by,
             reason: execution.cancellation.reason,
           },
+    verification: verificationDocument(execution.verification),
     revision: execution.revision,
     createdAt: at(execution.createdAt),
     updatedAt: at(execution.updatedAt),
@@ -158,6 +198,8 @@ function toExecution(id: string, d: ExecutionDocument): Execution {
     ...(n.error === null ? {} : { error: fromFailure(n.error) }),
     ...(n.startedAt === null ? {} : { startedAt: iso(n.startedAt) }),
     ...(n.completedAt === null ? {} : { completedAt: iso(n.completedAt) }),
+    ...(n.attempt == null ? {} : { attempt: n.attempt }),
+    ...(n.idempotencyKey == null ? {} : { idempotencyKey: n.idempotencyKey }),
   })) as ExecutionNode[];
   const execution = {
     id,
@@ -187,6 +229,9 @@ function toExecution(id: string, d: ExecutionDocument): Execution {
             reason: d.cancellation.reason,
           },
         }),
+    ...(d.verification == null
+      ? {}
+      : { verification: { ...d.verification, verifiedAt: iso(d.verification.verifiedAt) } }),
     revision: d.revision,
     createdAt: iso(d.createdAt),
     updatedAt: iso(d.updatedAt),

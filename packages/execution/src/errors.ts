@@ -11,7 +11,14 @@ export type ExecutionErrorCode =
   | 'invalid_execution_transition'
   | 'execution_already_terminal'
   | 'execution_concurrency_conflict'
-  | 'specialist_not_eligible';
+  | 'specialist_not_eligible'
+  | 'permission_denied'
+  | 'actor_not_allowed'
+  | 'execution_not_started'
+  | 'execution_parent_ended'
+  | 'verification_required'
+  | 'verification_policy_not_available'
+  | 'retry_not_allowed';
 
 export class ExecutionError extends Error {
   override readonly name = 'ExecutionError';

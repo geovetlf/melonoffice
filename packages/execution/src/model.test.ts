@@ -26,6 +26,8 @@ import {
   isExecutionId,
   MAX_NODES,
   newExecution,
+  recordVerification,
+  startExecution,
   type NewExecution,
   type NodeInput,
 } from './model.js';
@@ -62,10 +64,56 @@ function codeOf(run: () => unknown): string {
   return 'accepted';
 }
 
-/** Moves a new execution through the given statuses. */
+/** Runs every pending node to completion, as work that finished would. */
+function finishNodes(execution: Execution): Execution {
+  let next = execution;
+  for (const node of execution.nodes.filter((n) => n.status === 'pending')) {
+    next = applyNodeChange(next, { nodeId: node.id, from: 'pending', to: 'running' }, T1);
+    next = applyNodeChange(next, { nodeId: node.id, from: 'running', to: 'completed' }, T1);
+  }
+  return next;
+}
+
+/** Records a passing verification of every completed node. */
+function verified(execution: Execution): Execution {
+  return recordVerification(
+    execution,
+    {
+      correlationId: 'req-verify',
+      nodes: execution.nodes
+        .filter((n) => n.status === 'completed')
+        .map((n) => ({
+          nodeId: n.id,
+          policy: 'checks',
+          checks: [
+            { code: 'output_present', result: 'passed', evidence: { type: 'check', id: 'e1' } },
+          ],
+        })),
+    },
+    T1,
+  );
+}
+
+/**
+ * Moves a new execution through the given statuses, as its callers would: a user starts it, its
+ * work finishes before `verifying`, and a verification passes before `completed`. A path that
+ * does not start with `running` reaches it as a planning execution, through its plan.
+ */
 function through(...statuses: ExecutionStatus[]): Execution {
-  let execution = newExecution(request(), T0);
+  let execution = newExecution(
+    request({
+      mode: statuses[0] === 'running' ? 'execute' : 'plan',
+      nodes: [{ id: 'n', type: 'condition', label: 'Check' }],
+    }),
+    T0,
+  );
   for (const to of statuses) {
+    if (to === 'running' && execution.status === 'pending') {
+      execution = startExecution(execution, T1);
+      continue;
+    }
+    if (to === 'verifying') execution = finishNodes(execution);
+    if (to === 'completed') execution = verified(execution);
     execution = applyStatusChange(
       execution,
       {
@@ -175,8 +223,8 @@ describe('state machine', () => {
       cancelled: ['cancelled'],
     };
     for (const from of EXECUTION_STATUSES) {
-      const before = through(...paths[from]);
-      expect(before.status).toBe(from);
+      const reached = through(...paths[from]);
+      expect(reached.status).toBe(from);
       for (const to of EXECUTION_STATUSES) {
         const change = {
           from,
@@ -184,8 +232,20 @@ describe('state machine', () => {
           ...(to === 'failed' ? { failure: { code: 'tool_error' } } : {}),
           ...(to === 'cancelled' ? { reason: 'director_request' } : {}),
         };
+        // What each caller does first: work finishes before verifying, a verifier passes before
+        // completing. Neither changes the status.
+        const before =
+          to === 'verifying' && !isTerminal(from)
+            ? finishNodes(reached)
+            : to === 'completed' && from === 'verifying'
+              ? verified(reached)
+              : reached;
         const code = codeOf(() => applyStatusChange(before, change, ALICE, T1));
-        if (canTransition(from, to)) {
+        if (from === 'pending' && to === 'running') {
+          // Allowed by the table, but only a user's start takes it (ADR-0029).
+          expect(code).toBe('execution_not_started');
+          refused += 1;
+        } else if (canTransition(from, to)) {
           expect(code).toBe('accepted');
           allowed += 1;
         } else {
@@ -207,7 +267,8 @@ describe('state machine', () => {
 
   it('records start and end times, and bumps the revision on every change', () => {
     const done = through('planning', 'running', 'verifying', 'completed');
-    expect(done).toMatchObject({ startedAt: T1, completedAt: T1, revision: 5 });
+    // Created, planning, running, the node's two changes, verifying, verified, completed.
+    expect(done).toMatchObject({ startedAt: T1, completedAt: T1, revision: 8 });
     const paused = through('running', 'paused', 'running');
     expect(paused.startedAt).toBe(T1);
     expect(paused).not.toHaveProperty('completedAt');
@@ -221,7 +282,7 @@ describe('state machine', () => {
   });
 
   it('requires a failure for failed and a reason code for cancelled, and nothing else', () => {
-    const running = through('running');
+    const running = finishNodes(through('running'));
     const refuse = (change: object) =>
       codeOf(() => applyStatusChange(running, { from: 'running', ...change } as never, ALICE, T1));
     expect(refuse({ to: 'failed' })).toBe('invalid_execution');
@@ -233,7 +294,7 @@ describe('state machine', () => {
       'invalid_execution',
     );
     const done = applyStatusChange(
-      through('running', 'verifying'),
+      verified(through('running', 'verifying')),
       { from: 'verifying', to: 'completed', result: { type: 'document', id: 'd1' } },
       ALICE,
       T1,
@@ -281,7 +342,7 @@ describe('cancellation', () => {
       }),
       T0,
     );
-    execution = applyStatusChange(execution, { from: 'pending', to: 'running' }, ALICE, T1);
+    execution = startExecution(execution, T1);
     execution = applyNodeChange(execution, { nodeId: 'a', from: 'pending', to: 'running' }, T1);
     execution = applyNodeChange(execution, { nodeId: 'a', from: 'running', to: 'completed' }, T1);
     execution = applyNodeChange(execution, { nodeId: 'b', from: 'pending', to: 'running' }, T1);
@@ -676,5 +737,27 @@ describe('idempotent execution ids', () => {
     expect(codeOf(() => newExecution(request({ idempotencyKey: key }), T0))).toBe(
       'invalid_execution',
     );
+  });
+});
+
+describe('company context (ADR-0029)', () => {
+  it('lets an execution carry one Company Context version, never two', () => {
+    const one = {
+      schemaVersion: 1,
+      components: [
+        ...SNAPSHOT.components,
+        { kind: 'company_context', id: 'ctx-acme', version: '3' },
+      ],
+    };
+    expect(checkSnapshot(one).components.at(-1)).toEqual({
+      kind: 'company_context',
+      id: 'ctx-acme',
+      version: '3',
+    });
+    const two = {
+      ...one,
+      components: [...one.components, { kind: 'company_context', id: 'ctx-other', version: '1' }],
+    };
+    expect(codeOf(() => checkSnapshot(two))).toBe('invalid_execution');
   });
 });

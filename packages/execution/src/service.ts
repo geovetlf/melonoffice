@@ -1,7 +1,15 @@
 import { actorOf, buildAuditEvent, type AuditEvent } from '@melonoffice/audit';
-import type { Execution, ExecutionId, IsoTimestamp, OrganizationId } from '@melonoffice/domain';
+import type {
+  Execution,
+  ExecutionId,
+  ExecutionNode,
+  IsoTimestamp,
+  OrganizationId,
+  UserId,
+} from '@melonoffice/domain';
 import { isResolvedTenant, type TenancyStore, type TenantContext } from '@melonoffice/tenancy';
-import { ExecutionError } from './errors.js';
+import { ExecutionError, isExecutionError } from './errors.js';
+import { isTerminal } from './lifecycle.js';
 import {
   addNodes,
   applyNodeChange,
@@ -9,12 +17,18 @@ import {
   assignmentOf,
   checkSnapshot,
   isExecutionId,
+  markOutcomeUnknown,
   newExecution,
+  recordVerification,
+  retryNode,
+  retryRuleOf,
+  startExecution,
   type NewExecution,
   type NodeChange,
   type NodeInput,
   type SpecialistAssignment,
   type StatusChange,
+  type VerificationInput,
 } from './model.js';
 import type { ExecutionRepository } from './repository.js';
 
@@ -34,6 +48,56 @@ export interface ExecutionService {
   changeStatus(tenant: TenantContext, id: string, change: StatusChange): Promise<Execution>;
   addNodes(tenant: TenantContext, id: string, nodes: readonly NodeInput[]): Promise<Execution>;
   changeNode(tenant: TenantContext, id: string, change: NodeChange): Promise<Execution>;
+  /**
+   * A user's start (ADR-0029): `pending → running`. Only a user acting directly, with
+   * `execution.start`; GIA, the planner, delegation and the runtime never start anything. A
+   * second start, or a concurrent one, returns the execution already started and changes nothing.
+   */
+  start(tenant: TenantContext, id: string): Promise<Execution>;
+  /**
+   * A user's cancellation (ADR-0029), cooperative: the execution is marked `cancelled` and every
+   * child its delegation created is cancelled with it. Nothing is killed; work still running
+   * finds the execution ended and its late result is discarded. Cancelling again changes nothing
+   * but reaches any child created since.
+   */
+  cancel(tenant: TenantContext, id: string, reason: string): Promise<Execution>;
+  /** The runtime records a verifier's evidence for the current `verifying` pass (ADR-0029). */
+  recordVerification(
+    tenant: TenantContext,
+    id: string,
+    verification: VerificationInput,
+  ): Promise<Execution>;
+  /** The runtime re-runs a failed node, when the attempt rules allow it (ADR-0029). */
+  retryNode(tenant: TenantContext, id: string, nodeId: string): Promise<Execution>;
+  /** The runtime records that a running node's outcome is unknown; it is never re-run. */
+  markOutcomeUnknown(tenant: TenantContext, id: string, nodeId: string): Promise<Execution>;
+}
+
+/**
+ * Finds the children an execution's delegation created, so a cancellation reaches them
+ * (ADR-0029). Planning implements it from the plan's delegations and cancels the plan itself;
+ * executions only ask. It returns child ids, never changes an execution.
+ */
+export interface CancellationCascade {
+  cancelled(
+    tenant: TenantContext,
+    execution: Execution,
+    reason: string,
+  ): Promise<readonly ExecutionId[]>;
+}
+
+/** The part of RBAC this service asks (ADR-0019). */
+export interface ExecutionAuthorization {
+  authorize(
+    tenant: TenantContext,
+    permission: 'execution.start' | 'execution.cancel',
+    resource: { readonly organizationId: OrganizationId },
+  ): { readonly allowed: boolean; readonly reason?: string };
+}
+
+/** Where refusals are recorded. Successful changes are written with the execution instead. */
+export interface ExecutionAuditLog {
+  record(input: Parameters<typeof buildAuditEvent>[0]): Promise<unknown>;
 }
 
 /**
@@ -54,15 +118,28 @@ export interface ExecutionServiceOptions {
    * a specialist is refused: nothing is assigned unchecked.
    */
   readonly assignments?: AssignmentGuard;
+  /** Checks `execution.start` and `execution.cancel`. Without it, both are refused. */
+  readonly authorization?: ExecutionAuthorization;
+  /** Records refused starts and cancellations. Without it, both are refused. */
+  readonly audit?: ExecutionAuditLog;
+  /** Reaches the children of a cancelled execution. Without it, only the execution is cancelled. */
+  readonly cascade?: CancellationCascade;
   readonly now?: () => Date;
   /** The request that asked, to correlate audit events and logs. */
   readonly requestId?: string;
 }
 
+/** A cancellation reaches children, and their children, this deep at most. */
+const MAX_CASCADE_DEPTH = 4;
+const CODE = /^[a-z][a-z_]{0,63}$/;
+
 export function createExecutionService({
   repository,
   organizations,
   assignments,
+  authorization,
+  audit,
+  cascade,
   now = () => new Date(),
   requestId,
 }: ExecutionServiceOptions): ExecutionService {
@@ -85,7 +162,12 @@ export function createExecutionService({
     tenant: TenantContext,
     execution: Execution,
     fields: Partial<Pick<AuditEvent, 'transition' | 'reason'>> & {
-      action: 'execution.created' | 'execution.state_changed';
+      action:
+        | 'execution.created'
+        | 'execution.state_changed'
+        | 'execution.verification_recorded'
+        | 'execution.node_retried'
+        | 'execution.node_outcome_unknown';
     },
     at: Date,
   ): AuditEvent =>
@@ -103,6 +185,133 @@ export function createExecutionService({
       },
       at,
     );
+
+  /**
+   * Who may control an execution: a user acting directly, holding the permission. GIA and the
+   * runtime are refused before RBAC is asked, and every refusal is recorded.
+   */
+  async function authorizeControl(
+    tenant: TenantContext,
+    organizationId: OrganizationId,
+    id: ExecutionId,
+    kind: 'start' | 'cancel',
+  ): Promise<void> {
+    const reason =
+      tenant.actor === 'runtime'
+        ? `runtime_cannot_${kind}`
+        : tenant.actor !== 'user'
+          ? `gia_cannot_${kind}`
+          : authorization === undefined || audit === undefined
+            ? 'not_configured'
+            : (() => {
+                const decision = authorization.authorize(tenant, `execution.${kind}`, {
+                  organizationId,
+                });
+                return decision.allowed ? undefined : (decision.reason ?? 'permission_denied');
+              })();
+    if (reason === undefined) return;
+    if (audit !== undefined) {
+      await audit.record({
+        action: kind === 'start' ? 'execution.start_denied' : 'execution.cancel_denied',
+        result: 'denied',
+        actor: actorOf(tenant),
+        organizationId,
+        target: { type: 'execution', id },
+        reason,
+        ...(requestId === undefined ? {} : { requestId }),
+        source: 'api',
+      });
+    }
+    if (reason.endsWith(`_cannot_${kind}`)) throw new ExecutionError('actor_not_allowed', reason);
+    throw new ExecutionError('permission_denied', reason);
+  }
+
+  /** Runtime-only operations: the runtime records evidence and retries; people and GIA do not. */
+  function requireRuntime(tenant: TenantContext): void {
+    if (tenant.actor !== 'runtime') throw new ExecutionError('actor_not_allowed', 'runtime_only');
+  }
+
+  /** Cancels one execution, as `userId` asked, unless it already ended. Returns its state. */
+  async function cancelOne(
+    tenant: TenantContext,
+    organizationId: OrganizationId,
+    id: ExecutionId,
+    reason: string,
+  ): Promise<Execution> {
+    const at = now();
+    try {
+      return await repository.update(organizationId, id, (current) => {
+        const next = applyStatusChange(
+          current,
+          { from: current.status, to: 'cancelled', reason },
+          tenant.userId as UserId,
+          at.toISOString() as IsoTimestamp,
+        );
+        return {
+          execution: next,
+          events: [
+            event(
+              tenant,
+              next,
+              {
+                action: 'execution.state_changed',
+                transition: { from: current.status, to: 'cancelled' },
+                reason,
+              },
+              at,
+            ),
+          ],
+        };
+      });
+    } catch (error) {
+      if (!isExecutionError(error) || error.code !== 'execution_already_terminal') throw error;
+      const ended = await repository.find(organizationId, id);
+      if (ended === undefined) throw new ExecutionError('execution_not_found');
+      return ended;
+    }
+  }
+
+  /** Cancels an execution's children, and theirs, through the cascade. Idempotent. */
+  async function cascadeFrom(
+    tenant: TenantContext,
+    organizationId: OrganizationId,
+    parent: Execution,
+    reason: string,
+    depth: number,
+  ): Promise<void> {
+    if (cascade === undefined || depth > MAX_CASCADE_DEPTH) return;
+    const children = await cascade.cancelled(tenant, parent, reason);
+    for (const childId of children) {
+      const child = await repository.find(organizationId, childId);
+      // A child the delegation has not created yet can never start: its parent has ended.
+      if (child === undefined || child.parentExecutionId !== parent.id) continue;
+      const ended = isTerminal(child.status)
+        ? child
+        : await cancelOne(tenant, organizationId, child.id, 'parent_cancelled');
+      if (ended.status === 'cancelled') {
+        await cascadeFrom(tenant, organizationId, ended, 'parent_cancelled', depth + 1);
+      }
+    }
+  }
+
+  /** A runtime change to one execution, recorded with one audit event. */
+  async function runtimeChange(
+    tenant: TenantContext,
+    id: string,
+    action:
+      | 'execution.verification_recorded'
+      | 'execution.node_retried'
+      | 'execution.node_outcome_unknown',
+    apply: (current: Execution, at: IsoTimestamp) => { next: Execution; reason: string },
+  ): Promise<Execution> {
+    requireRuntime(tenant);
+    const organizationId = await organizationOf(tenant);
+    const at = now();
+    return repository.update(organizationId, idOf(id), (current) => {
+      const { next, reason } = apply(current, at.toISOString() as IsoTimestamp);
+      return { execution: next, events: [event(tenant, next, { action, reason }, at)] };
+    });
+  }
 
   return {
     async create(tenant, request) {
@@ -139,6 +348,11 @@ export function createExecutionService({
     },
 
     async changeStatus(tenant, id, change) {
+      // Cancelling is a person's call: the runtime finds an execution cancelled, it never
+      // cancels one (ADR-0029).
+      if (tenant.actor === 'runtime' && change.to === 'cancelled') {
+        throw new ExecutionError('actor_not_allowed', 'runtime_cannot_cancel');
+      }
       const organizationId = await organizationOf(tenant);
       const at = now();
       return repository.update(organizationId, idOf(id), (current) => {
@@ -186,5 +400,93 @@ export function createExecutionService({
         events: [],
       }));
     },
+
+    async start(tenant, id) {
+      const organizationId = await organizationOf(tenant);
+      const executionId = idOf(id);
+      // A forged or foreign id is unknown before anyone is asked about permissions.
+      const found = await repository.find(organizationId, executionId);
+      if (found === undefined) throw new ExecutionError('execution_not_found');
+      await authorizeControl(tenant, organizationId, executionId, 'start');
+      const started = (execution: Execution): boolean =>
+        execution.startedAt !== undefined && !isTerminal(execution.status);
+      if (started(found)) return found;
+      if (isTerminal(found.status)) throw new ExecutionError('execution_already_terminal');
+      if (found.parentExecutionId !== undefined) {
+        const parent = await repository.find(organizationId, found.parentExecutionId);
+        if (parent === undefined || isTerminal(parent.status)) {
+          throw new ExecutionError('execution_parent_ended');
+        }
+      }
+      const at = now();
+      try {
+        return await repository.update(organizationId, executionId, (current) => {
+          const next = startExecution(current, at.toISOString() as IsoTimestamp);
+          return {
+            execution: next,
+            events: [
+              event(
+                tenant,
+                next,
+                {
+                  action: 'execution.state_changed',
+                  transition: { from: current.status, to: next.status },
+                  reason: 'user_started',
+                },
+                at,
+              ),
+            ],
+          };
+        });
+      } catch (error) {
+        // Another start won: the execution runs once, and this caller sees it running.
+        if (!isExecutionError(error) || error.code !== 'execution_concurrency_conflict')
+          throw error;
+        const fresh = await repository.find(organizationId, executionId);
+        if (fresh !== undefined && started(fresh)) return fresh;
+        throw error;
+      }
+    },
+
+    async cancel(tenant, id, reason) {
+      const organizationId = await organizationOf(tenant);
+      const executionId = idOf(id);
+      const found = await repository.find(organizationId, executionId);
+      if (found === undefined) throw new ExecutionError('execution_not_found');
+      await authorizeControl(tenant, organizationId, executionId, 'cancel');
+      if (typeof reason !== 'string' || !CODE.test(reason)) {
+        throw new ExecutionError('invalid_execution', 'reason');
+      }
+      if (isTerminal(found.status) && found.status !== 'cancelled') {
+        throw new ExecutionError('execution_already_terminal');
+      }
+      const cancelled =
+        found.status === 'cancelled'
+          ? found
+          : await cancelOne(tenant, organizationId, executionId, reason);
+      if (cancelled.status !== 'cancelled') throw new ExecutionError('execution_already_terminal');
+      await cascadeFrom(tenant, organizationId, cancelled, reason, 1);
+      return cancelled;
+    },
+
+    recordVerification: (tenant, id, verification) =>
+      runtimeChange(tenant, id, 'execution.verification_recorded', (current, at) => {
+        const next = recordVerification(current, verification, at);
+        return { next, reason: `verification_${next.verification?.result ?? 'failed'}` };
+      }),
+
+    retryNode: (tenant, id, nodeId) =>
+      runtimeChange(tenant, id, 'execution.node_retried', (current, at) => {
+        const next = retryNode(current, nodeId, at);
+        // retryNode accepted it, so the node exists and was failed: name the rule that allowed it.
+        const node = current.nodes.find((n) => n.id === nodeId) as ExecutionNode;
+        return { next, reason: retryRuleOf(node) };
+      }),
+
+    markOutcomeUnknown: (tenant, id, nodeId) =>
+      runtimeChange(tenant, id, 'execution.node_outcome_unknown', (current, at) => ({
+        next: markOutcomeUnknown(current, nodeId, at),
+        reason: 'outcome_unknown',
+      })),
   };
 }

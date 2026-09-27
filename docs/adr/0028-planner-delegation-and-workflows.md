@@ -1,6 +1,6 @@
 # ADR-0028: Planner, delegation and workflow foundation
 
-- Status: Proposed (Phase X5, pending Geovet's review)
+- Status: Accepted (Phase X5; accepted by Geovet, 2026-09-27)
 - Date: 2026-09-27
 - Builds on: [ADR-0019](0019-rbac-foundation.md), [ADR-0020](0020-audit-log-foundation.md), [ADR-0023](0023-credits-foundation.md), [ADR-0024](0024-execution-foundation.md), [ADR-0025](0025-departments-and-specialists.md), [ADR-0026](0026-tools-approvals-and-guardrails.md) and [ADR-0027](0027-ai-gateway-and-provider-registry.md)
 - Open decisions it respects: D-7 (launch AI provider), D-12 (credit values), D-27 (role catalogue)

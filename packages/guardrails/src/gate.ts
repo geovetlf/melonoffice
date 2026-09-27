@@ -419,7 +419,19 @@ export function createToolGate(options: ToolGateOptions): ToolGate {
               ),
             );
           }
-          next = applyNodeChange(next, { nodeId, from: 'pending', to: 'running' }, startIso);
+          // The key is recorded before the effect, so a retry of this node repeats it (ADR-0029).
+          next = applyNodeChange(
+            next,
+            {
+              nodeId,
+              from: 'pending',
+              to: 'running',
+              ...(tool.version.mutating
+                ? { idempotencyKey: idempotencyKeyOf(executionId, nodeId, ref.id, ref.version) }
+                : {}),
+            },
+            startIso,
+          );
           events.push(
             eventOf(
               tenant,
@@ -448,6 +460,8 @@ export function createToolGate(options: ToolGateOptions): ToolGate {
       }
 
       const deadline = new Date(startAt.getTime() + tool.version.timeoutMs);
+      const viaOf = (t: TenantContext): ToolExecutionContext['actor']['via'] =>
+        t.actor === 'runtime' ? 'runtime' : t.actor === 'gia' ? 'gia' : 'direct';
       const context: ToolExecutionContext = Object.freeze({
         organizationId,
         executionId,
@@ -457,7 +471,10 @@ export function createToolGate(options: ToolGateOptions): ToolGate {
         toolId: ref.id,
         toolVersion: ref.version,
         action: tool.version.action,
-        actor: actorOf(tenant) as ToolExecutionContext['actor'],
+        actor: {
+          userId: tenant.userId,
+          via: viaOf(tenant),
+        },
         riskLevel: tool.version.riskLevel,
         ...(approvalId === undefined ? {} : { approvalId }),
         ...(tool.version.mutating

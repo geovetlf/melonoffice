@@ -27,8 +27,8 @@ export interface ToolExecutionContext {
   readonly toolId: ToolId;
   readonly toolVersion: number;
   readonly action: string;
-  /** The user the work is for, and whether GIA was the channel. */
-  readonly actor: { readonly userId: UserId; readonly via: 'direct' | 'gia' };
+  /** The user the work is for, and the channel: directly, through GIA, or the runtime (ADR-0029). */
+  readonly actor: { readonly userId: UserId; readonly via: 'direct' | 'gia' | 'runtime' };
   readonly riskLevel: ToolRiskLevel;
   /** The approval the call runs under, when its policy needed one. */
   readonly approvalId?: ApprovalId;

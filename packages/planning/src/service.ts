@@ -171,7 +171,10 @@ export function createPlanService({
     const plan = await repository.find(organizationId, idOf(id));
     if (plan === undefined) throw new PlanningError('plan_not_found');
     const action = to === 'approved' ? 'plan.approved' : 'plan.rejected';
-    const refuse = async (code: 'gia_cannot_decide' | 'permission_denied', reason: string) => {
+    const refuse = async (
+      code: 'gia_cannot_decide' | 'runtime_cannot_decide' | 'permission_denied',
+      reason: string,
+    ) => {
       await audit.record({
         action,
         result: 'denied',
@@ -184,7 +187,9 @@ export function createPlanService({
       });
       throw new PlanningError(code, reason);
     };
-    // A user decides, directly. GIA may show a plan; it never approves or rejects one.
+    // A user decides, directly. GIA may show a plan; it never approves or rejects one. The runtime
+    // never takes a human decision either (ADR-0029).
+    if (tenant.actor === 'runtime') return refuse('runtime_cannot_decide', 'runtime_cannot_decide');
     if (tenant.actor !== 'user') return refuse('gia_cannot_decide', 'gia_cannot_decide');
     const decision = authorization.authorize(tenant, 'approval.approve', { organizationId });
     if (!decision.allowed) return refuse('permission_denied', decision.reason);

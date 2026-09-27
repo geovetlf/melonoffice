@@ -1,0 +1,48 @@
+{
+  "name": "@melonoffice/firestore",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "@melonoffice/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./testing": {
+      "@melonoffice/source": "./src/testing.ts",
+      "types": "./dist/testing.d.ts",
+      "default": "./dist/testing.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@google-cloud/firestore": "8.7.1",
+    "@melonoffice/approvals": "workspace:*",
+    "@melonoffice/audit": "workspace:*",
+    "@melonoffice/auth": "workspace:*",
+    "@melonoffice/billing": "workspace:*",
+    "@melonoffice/credits": "workspace:*",
+    "@melonoffice/departments": "workspace:*",
+    "@melonoffice/domain": "workspace:*",
+    "@melonoffice/execution": "workspace:*",
+    "@melonoffice/jobs": "workspace:*",
+    "@melonoffice/planning": "workspace:*",
+    "@melonoffice/specialists": "workspace:*",
+    "@melonoffice/tenancy": "workspace:*",
+    "@melonoffice/tools": "workspace:*",
+    "@melonoffice/workflows": "workspace:*"
+  },
+  "devDependencies": {
+    "@melonoffice/config": "workspace:*",
+    "@melonoffice/observability": "workspace:*",
+    "@melonoffice/rbac": "workspace:*"
+  }
+}

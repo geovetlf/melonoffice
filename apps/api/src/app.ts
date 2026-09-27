@@ -9,7 +9,12 @@ import { createExecutionService, type ExecutionRepository } from '@melonoffice/e
 import type { Logger } from '@melonoffice/observability';
 import { createAuthorizationService, type AuthorizationService } from '@melonoffice/rbac';
 import { createSpecialistService, type SpecialistRepository } from '@melonoffice/specialists';
-import { createPlanService, createPlanValidator, type PlanRepository } from '@melonoffice/planning';
+import {
+  createPlanCancellationCascade,
+  createPlanService,
+  createPlanValidator,
+  type PlanRepository,
+} from '@melonoffice/planning';
 import type { TenancyStore } from '@melonoffice/tenancy';
 import { defaultToolRegistry, type ToolRegistry } from '@melonoffice/tools';
 import { createWorkflowService, type WorkflowRepository } from '@melonoffice/workflows';
@@ -167,6 +172,12 @@ export function createApp({
             repository: executions,
             organizations: tenancy,
             ...(specialists === undefined ? {} : { assignments: specialists.assignments }),
+            authorization,
+            audit,
+            // A cancelled planning execution reaches the children its plan delegated.
+            ...(plans === undefined
+              ? {}
+              : { cascade: createPlanCancellationCascade({ repository: plans }) }),
           })
         : undefined;
     if (tenancy !== undefined && executionService !== undefined) {

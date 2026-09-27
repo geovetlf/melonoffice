@@ -1,6 +1,6 @@
 # ADR-0027: AI Gateway and provider registry
 
-- Status: Proposed (Phase X4, pending Geovet's review)
+- Status: Accepted (Phase X4; accepted by Geovet, 2026-09-27)
 - Date: 2026-09-27
 - Builds on: [ADR-0008](0008-entity-model.md) (D-28), [ADR-0019](0019-rbac-foundation.md), [ADR-0020](0020-audit-log-foundation.md), ADR-0023 (credits foundation, PR #20), [ADR-0024](0024-execution-foundation.md), [ADR-0025](0025-departments-and-specialists.md) and [ADR-0026](0026-tools-approvals-and-guardrails.md)
 - Open decisions it respects: D-7 (launch AI provider), D-12 (credit values)

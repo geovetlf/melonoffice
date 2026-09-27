@@ -4,18 +4,20 @@ import { createAuditService } from '@melonoffice/audit';
 import { createIdentityPlatformVerifier } from '@melonoffice/auth';
 import { createLogger } from '@melonoffice/observability';
 import { createApp, SERVICE_NAME } from './app.js';
-import { FirestoreApprovalRepository } from './approvals-firestore.js';
 import { loadConfig } from './config.js';
-import { FirestoreAuditStore } from './audit-firestore.js';
-import { FirestoreBillingStore } from './billing-firestore.js';
-import { FirestoreDepartmentRepository } from './departments-firestore.js';
-import { FirestoreExecutionRepository } from './executions-firestore.js';
-import { FirestoreSpecialistRepository } from './specialists-firestore.js';
-import { FirestoreCreditStore } from './credits-firestore.js';
-import { FirestorePlanRepository } from './plans-firestore.js';
-import { FirestoreTenancyStore } from './tenancy-firestore.js';
-import { FirestoreUserDirectory } from './users-firestore.js';
-import { FirestoreWorkflowRepository } from './workflows-firestore.js';
+import {
+  FirestoreApprovalRepository,
+  FirestoreAuditStore,
+  FirestoreBillingStore,
+  FirestoreDepartmentRepository,
+  FirestoreExecutionRepository,
+  FirestoreSpecialistRepository,
+  FirestoreCreditStore,
+  FirestorePlanRepository,
+  FirestoreTenancyStore,
+  FirestoreUserDirectory,
+  FirestoreWorkflowRepository,
+} from '@melonoffice/firestore';
 
 const config = loadConfig(process.env);
 const logger = createLogger({ service: SERVICE_NAME, level: config.logLevel });
