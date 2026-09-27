@@ -14,7 +14,9 @@ import {
   channelIdentityIdFor,
   checkInbound,
   checkNextConversation,
+  checkNextSettings,
   checkStatusUpdate,
+  checkStoredSettings,
   checkStoredConversation,
   conversationIdFor,
   ConversationError,
@@ -31,6 +33,7 @@ import {
   type OutboundSettlement,
   type ReceiveResult,
   type ReserveResult,
+  type SettingsWrite,
   type SettleResult,
 } from '@melonoffice/conversations';
 import type {
@@ -40,6 +43,7 @@ import type {
   ContactId,
   Conversation,
   ConversationId,
+  ConversationSettings,
   IsoTimestamp,
   Message,
   MessageId,
@@ -58,6 +62,7 @@ import { AUDIT_LOGS, toAuditDocument } from './audit.js';
  * - `messages/{id}`: inbound id from organization + channel + provider message id, so a
  *   repeated webhook finds the message already there and stores nothing.
  * - `messageRefs/{key}`: provider message id → our outbound message, for delivery reports.
+ * - `conversationSettings/{organizationId}`: how far AI may act (CV-6A).
  *
  * Lists use the automatic single-field index on `organizationId` (or `conversationId`) and sort
  * here, like the rest of the repository: no composite index is needed.
@@ -67,6 +72,8 @@ export const CHANNEL_IDENTITIES = 'channelIdentities';
 export const CONVERSATIONS = 'conversations';
 export const MESSAGES = 'messages';
 export const MESSAGE_REFS = 'messageRefs';
+/** `conversationSettings/{organizationId}`: one per organization (CV-6A, ADR-0039). */
+export const CONVERSATION_SETTINGS = 'conversationSettings';
 
 const ts = (value: IsoTimestamp): FirestoreTimestamp => Timestamp.fromDate(new Date(value));
 const iso = (value: FirestoreTimestamp): IsoTimestamp =>
@@ -173,6 +180,16 @@ export function toConversationDocument(c: Conversation): Doc {
             summary: c.handoff.summary ?? null,
             executionId: c.handoff.executionId ?? null,
           },
+    control:
+      c.control === undefined
+        ? null
+        : {
+            handledBy: c.control.handledBy,
+            aiState: c.control.aiState,
+            epoch: c.control.epoch,
+            changedAt: ts(c.control.changedAt),
+            changedBy: c.control.changedBy ?? null,
+          },
     createdAt: ts(c.createdAt),
     updatedAt: ts(c.updatedAt),
     revision: c.revision,
@@ -182,6 +199,8 @@ export function toConversationDocument(c: Conversation): Doc {
 function toConversation(id: string, d: Doc): Conversation {
   const last = d.lastMessage as Doc | null;
   const handoff = d.handoff as Doc | null;
+  // Absent in records written before CV-6A: a person handles them.
+  const control = d.control as Doc | null | undefined;
   const conversation = {
     id,
     organizationId: d.organizationId,
@@ -218,6 +237,17 @@ function toConversation(id: string, d: Doc): Conversation {
             ...orAbsent('executionId', handoff.executionId),
           }),
         }),
+    ...(control == null
+      ? {}
+      : {
+          control: Object.freeze({
+            handledBy: control.handledBy,
+            aiState: control.aiState,
+            epoch: control.epoch,
+            changedAt: iso(control.changedAt as FirestoreTimestamp),
+            ...orAbsent('changedBy', control.changedBy),
+          }),
+        }),
     createdAt: iso(d.createdAt as FirestoreTimestamp),
     updatedAt: iso(d.updatedAt as FirestoreTimestamp),
     revision: d.revision,
@@ -226,6 +256,33 @@ function toConversation(id: string, d: Doc): Conversation {
     return Object.freeze(checkStoredConversation(conversation));
   } catch {
     throw new Error('invalid conversation record');
+  }
+}
+
+// Settings (CV-6A) ----------------------------------------------------------------------------
+
+function toSettingsDocument(s: ConversationSettings): Doc {
+  return {
+    organizationId: s.organizationId,
+    autonomy: s.autonomy,
+    updatedAt: ts(s.updatedAt),
+    updatedBy: s.updatedBy ?? null,
+    revision: s.revision,
+  };
+}
+
+function toSettings(d: Doc): ConversationSettings {
+  const settings = {
+    organizationId: d.organizationId,
+    autonomy: d.autonomy,
+    updatedAt: iso(d.updatedAt as FirestoreTimestamp),
+    ...orAbsent('updatedBy', d.updatedBy),
+    revision: d.revision,
+  } as unknown as ConversationSettings;
+  try {
+    return Object.freeze(checkStoredSettings(settings));
+  } catch {
+    throw new Error('invalid conversation settings record');
   }
 }
 
@@ -585,6 +642,35 @@ export class FirestoreConversationRepository implements ConversationRepository {
       t.set(messageDoc, toMessageDocument(next));
       this.#append(t, events);
       return { applied: true, message: next };
+    });
+  }
+
+  async findSettings(organizationId: OrganizationId): Promise<ConversationSettings | undefined> {
+    if (!isOrganizationId(organizationId)) return undefined;
+    const snapshot = await this.db.collection(CONVERSATION_SETTINGS).doc(organizationId).get();
+    const data = snapshot.data();
+    if (data?.organizationId !== organizationId) return undefined;
+    return toSettings(data);
+  }
+
+  async updateSettings(
+    organizationId: OrganizationId,
+    change: (current: ConversationSettings | undefined) => SettingsWrite,
+  ): Promise<ConversationSettings> {
+    if (!isOrganizationId(organizationId)) throw new ConversationError('organization_inactive');
+    const doc = this.db.collection(CONVERSATION_SETTINGS).doc(organizationId);
+    return this.db.runTransaction(async (t) => {
+      const snapshot = await t.get(doc);
+      const data = snapshot.data();
+      if (data !== undefined && data.organizationId !== organizationId) {
+        throw new Error('invalid conversation settings record');
+      }
+      const current = data === undefined ? undefined : toSettings(data);
+      const { settings, events } = change(current);
+      checkNextSettings(organizationId, current, settings);
+      t.set(doc, toSettingsDocument(settings));
+      this.#append(t, events);
+      return settings;
     });
   }
 

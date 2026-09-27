@@ -3,9 +3,11 @@ import type {
   ChannelIdentity,
   Contact,
   Conversation,
+  ConversationSettings,
   Message,
 } from '@melonoffice/domain';
 import {
+  controlOf,
   isConversationError,
   type ConversationAssistant,
   type ConversationFilter,
@@ -27,7 +29,9 @@ import { withPermission, type AuthorizationDependencies } from './authorization.
  * (CV-2, ADR-0034): one text, as themselves, through the tool gate, synchronously. A person may
  * also ask the AI Gateway about a conversation (CV-4, ADR-0037) and gets text to review; nothing
  * here routes by AI or sends on its own: messages arrive only through the verified
- * channel webhook, and leave only when a person sends them. Channel connections are listed
+ * channel webhook, and leave only when a person sends them. A person can take control of a
+ * conversation from AI and hand it back (CV-6A, ADR-0039); while AI handles one, a person's send
+ * is refused, so the two never answer at once. Channel connections are listed
  * without their secret references; they are configured on the server. Another organization's
  * conversation or contact answers exactly like a missing one.
  */
@@ -252,6 +256,60 @@ export function registerConversationRoutes(
     }),
   );
 
+  /**
+   * Human control (CV-6A, ADR-0039). A person takes control of a conversation an agent handles
+   * or escalated, or hands it back where the organization allows AI handling. The body is an
+   * empty object: the organization, the person and the conversation come from the token and the
+   * path, never from the browser.
+   */
+  app.post(
+    `${one}/takeover`,
+    withPermission('conversation.manage', dependencies, async (c, tenant) => {
+      const body = await bodyOf(c, []);
+      if (body === undefined) return c.json({ error: 'invalid_request' }, 400);
+      return answer(c, async () => {
+        const conversation = await conversations.takeOver(tenant, idOf(c));
+        c.get('logger').info('conversation taken over', { conversationId: conversation.id });
+        return toConversationView(conversation);
+      });
+    }),
+  );
+
+  app.post(
+    `${one}/handback`,
+    withPermission('conversation.manage', dependencies, async (c, tenant) => {
+      const body = await bodyOf(c, []);
+      if (body === undefined) return c.json({ error: 'invalid_request' }, 400);
+      return answer(c, async () => {
+        const conversation = await conversations.handBack(tenant, idOf(c));
+        c.get('logger').info('conversation handed back', { conversationId: conversation.id });
+        return toConversationView(conversation);
+      });
+    }),
+  );
+
+  /** How far AI may act on the organization's conversations (CV-6A): `manual` by default. */
+  app.get(
+    `${base}/conversation-settings`,
+    withPermission('conversation.read', dependencies, (c, tenant) =>
+      answer(c, async () => toSettingsView(await conversations.settings(tenant))),
+    ),
+  );
+
+  /** A person sets the level, exactly `{ autonomy }`. A restriction only: it grants nothing. */
+  app.post(
+    `${base}/conversation-settings/autonomy`,
+    withPermission('conversation.manage', dependencies, async (c, tenant) => {
+      const body = await bodyOf(c, ['autonomy']);
+      if (body === undefined || body.autonomy === undefined) {
+        return c.json({ error: 'invalid_request' }, 400);
+      }
+      return answer(c, async () =>
+        toSettingsView(await conversations.changeAutonomy(tenant, body.autonomy)),
+      );
+    }),
+  );
+
   app.get(
     `${base}/contacts`,
     withPermission('contact.read', dependencies, (c, tenant) =>
@@ -363,11 +421,16 @@ const STATUS = {
   ai_policy_denied: 403,
   ai_timeout: 504,
   rate_limited: 429,
+  // Human control (CV-6A, ADR-0039).
+  autonomy_not_enabled: 409,
+  conversation_handled_by_ai: 409,
+  settings_concurrency_conflict: 409,
 } as const;
 
 /** A send refused before anything left MelonOffice, found once the message was reserved. */
 const SEND_REFUSALS = {
   conversation_closed: 409,
+  conversation_handled_by_ai: 409,
   outside_messaging_window: 409,
   tool_not_human_invokable: 403,
   permission_not_held: 403,
@@ -390,7 +453,10 @@ async function answer(c: Context<AuthEnv>, work: () => Promise<unknown>): Promis
   }
 }
 
-/** The inbox view of a conversation. The revision and the reserved handoff are internal. */
+/**
+ * The inbox view of a conversation. The revision, the control epoch and the handoff's execution
+ * are internal; who handles it and why it was escalated are shown to the operator (CV-6A).
+ */
 export function toConversationView(c: Conversation) {
   return {
     id: c.id,
@@ -416,9 +482,22 @@ export function toConversationView(c: Conversation) {
     lastMessageAt: c.lastMessageAt,
     lastInboundAt: c.lastInboundAt ?? null,
     lastOutboundAt: c.lastOutboundAt ?? null,
+    control: {
+      handledBy: controlOf(c).handledBy,
+      aiState: controlOf(c).aiState,
+      changedAt: c.control?.changedAt ?? null,
+    },
+    handoff:
+      c.handoff === undefined
+        ? null
+        : { reason: c.handoff.reason, requestedAt: c.handoff.requestedAt },
     createdAt: c.createdAt,
     updatedAt: c.updatedAt,
   };
+}
+
+export function toSettingsView(s: ConversationSettings) {
+  return { autonomy: s.autonomy, updatedAt: s.updatedAt };
 }
 
 export function toMessageView(m: Message) {

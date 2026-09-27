@@ -29,6 +29,7 @@ import {
   toConnectionDocument,
 } from './channels.js';
 import {
+  CONVERSATION_SETTINGS,
   CONVERSATIONS,
   FirestoreConversationRepository,
   MESSAGES,
@@ -270,6 +271,125 @@ describe.each(STORES)('conversation storage in %s', (name, create) => {
     ).rejects.toMatchObject({ code: 'conversation_concurrency_conflict' });
   });
 
+  it('stores who controls a conversation and keeps it when a message arrives (CV-6A)', async () => {
+    const s = create();
+    const { conversation } = await s.conversations.receive(inbound(ORG_A), contactId(1), T0);
+    expect(conversation.control).toBeUndefined();
+    const control = {
+      handledBy: 'ai',
+      aiState: 'active',
+      epoch: 1,
+      changedAt: T0.toISOString() as IsoTimestamp,
+      changedBy: ALICE,
+    } as const;
+    await s.conversations.updateConversation(ORG_A, conversation.id, (current) => ({
+      conversation: { ...current, control, revision: current.revision + 1 },
+      events: [],
+    }));
+    expect((await s.conversations.findConversation(ORG_A, conversation.id))?.control).toEqual(
+      control,
+    );
+    const escalated = {
+      handledBy: 'human',
+      aiState: 'escalated',
+      epoch: 2,
+      changedAt: T0.toISOString() as IsoTimestamp,
+    } as const;
+    const handoff = {
+      reason: 'customer_requested_human',
+      requestedAt: T0.toISOString() as IsoTimestamp,
+      executionId: '33333333-3333-4333-8333-333333333333' as never,
+    };
+    await s.conversations.updateConversation(ORG_A, conversation.id, (current) => ({
+      conversation: { ...current, control: escalated, handoff, revision: current.revision + 1 },
+      events: [],
+    }));
+    const { conversation: after } = await s.conversations.receive(
+      inbound(ORG_A, {
+        externalMessageId: 'wamid.second',
+        sentAt: '2026-09-27T12:01:00.000Z' as IsoTimestamp,
+      }),
+      contactId(2),
+      T0,
+    );
+    expect(after.control).toEqual(escalated);
+    expect(after.handoff).toEqual(handoff);
+  });
+
+  it('lets only one of two people take control at the same time (CV-6A)', async () => {
+    const s = create();
+    const { conversation } = await s.conversations.receive(inbound(ORG_A), contactId(1), T0);
+    const at = T0.toISOString() as IsoTimestamp;
+    await s.conversations.updateConversation(ORG_A, conversation.id, (current) => ({
+      conversation: {
+        ...current,
+        control: { handledBy: 'ai', aiState: 'active', epoch: 1, changedAt: at },
+        revision: current.revision + 1,
+      },
+      events: [],
+    }));
+    const takeOver = () =>
+      s.conversations.updateConversation(ORG_A, conversation.id, (current) => {
+        if (current.control?.aiState !== 'active') throw new Error('already taken');
+        return {
+          conversation: {
+            ...current,
+            control: { handledBy: 'human', aiState: 'paused', epoch: 2, changedAt: at },
+            revision: current.revision + 1,
+          },
+          events: [],
+        };
+      });
+    const results = await Promise.allSettled([takeOver(), takeOver()]);
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    expect((await s.conversations.findConversation(ORG_A, conversation.id))?.control?.epoch).toBe(
+      2,
+    );
+  });
+
+  it('keeps conversation settings per organization, one revision at a time (CV-6A)', async () => {
+    const s = create();
+    expect(await s.conversations.findSettings(ORG_A)).toBeUndefined();
+    const at = T0.toISOString() as IsoTimestamp;
+    const saved = await s.conversations.updateSettings(ORG_A, (current) => ({
+      settings: {
+        organizationId: ORG_A,
+        autonomy: 'supervised',
+        updatedAt: at,
+        updatedBy: ALICE,
+        revision: (current?.revision ?? 0) + 1,
+      },
+      events: [
+        buildAuditEvent(
+          {
+            action: 'conversation.autonomy_changed',
+            result: 'success',
+            actor: { type: 'user', userId: ALICE, via: 'direct' },
+            organizationId: ORG_A,
+            target: { type: 'organization', id: ORG_A },
+            transition: { from: 'manual', to: 'supervised' },
+            source: 'api',
+          },
+          T0,
+        ),
+      ],
+    }));
+    expect(await s.conversations.findSettings(ORG_A)).toEqual(saved);
+    expect(await s.conversations.findSettings(ORG_B)).toBeUndefined();
+    expect(await s.auditActions()).toEqual(['conversation.autonomy_changed']);
+    // Written for another organization, or skipping a revision: refused, nothing stored.
+    await expect(
+      s.conversations.updateSettings(ORG_B, () => ({ settings: saved, events: [] })),
+    ).rejects.toMatchObject({ code: 'settings_concurrency_conflict' });
+    await expect(
+      s.conversations.updateSettings(ORG_A, (current) => ({
+        settings: { ...saved, autonomy: 'autonomous', revision: (current?.revision ?? 0) + 2 },
+        events: [],
+      })),
+    ).rejects.toMatchObject({ code: 'settings_concurrency_conflict' });
+    expect((await s.conversations.findSettings(ORG_A))?.autonomy).toBe('supervised');
+  });
+
   it('reserves a person’s outbound message once, even concurrently (CV-2)', async () => {
     const s = create();
     const { conversation } = await s.conversations.receive(inbound(ORG_A), contactId(1), T0);
@@ -407,6 +527,54 @@ describe.runIf(emulatorHost)('FirestoreConversationRepository (emulator)', () =>
     const { conversation } = await repository.receive(inbound(ORG_A), contactId(1), T0);
     await db.collection(CONVERSATIONS).doc(conversation.id).update({ status: 'spam' });
     await expect(repository.findConversation(ORG_A, conversation.id)).rejects.toThrow();
+  });
+
+  it('refuses a stored control or handoff edited by hand instead of trusting it (CV-6A)', async () => {
+    const db = emulatorFirestore();
+    const repository = new FirestoreConversationRepository(db);
+    const { conversation } = await repository.receive(inbound(ORG_A), contactId(1), T0);
+    const doc = db.collection(CONVERSATIONS).doc(conversation.id);
+    await doc.update({
+      control: {
+        handledBy: 'ai',
+        aiState: 'paused',
+        epoch: 1,
+        changedAt: new Date(),
+        changedBy: null,
+      },
+    });
+    await expect(repository.findConversation(ORG_A, conversation.id)).rejects.toThrow();
+    await doc.update({
+      control: null,
+      handoff: {
+        reason: 'give_the_customer_admin',
+        requestedAt: new Date(),
+        summary: null,
+        executionId: null,
+      },
+    });
+    await expect(repository.findConversation(ORG_A, conversation.id)).rejects.toThrow();
+  });
+
+  it('refuses settings edited by hand, and never reads another organization’s', async () => {
+    const db = emulatorFirestore();
+    const repository = new FirestoreConversationRepository(db);
+    await db.collection(CONVERSATION_SETTINGS).doc(ORG_A).set({
+      organizationId: ORG_A,
+      autonomy: 'unlimited',
+      updatedAt: new Date(),
+      updatedBy: null,
+      revision: 1,
+    });
+    await expect(repository.findSettings(ORG_A)).rejects.toThrow();
+    await db.collection(CONVERSATION_SETTINGS).doc(ORG_B).set({
+      organizationId: ORG_A,
+      autonomy: 'autonomous',
+      updatedAt: new Date(),
+      updatedBy: null,
+      revision: 1,
+    });
+    expect(await repository.findSettings(ORG_B)).toBeUndefined();
   });
 
   it('never reads a message across organizations, even by its id', async () => {

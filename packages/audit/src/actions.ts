@@ -319,6 +319,30 @@ export const AUDIT_ACTIONS = {
       "A person asked the AI Gateway for next steps for a conversation, which run nothing; the reason is the failure code, the reference the AI call's credits reference, never the text (ADR-0037).",
     results: ['success', 'denied', 'failure'],
   },
+  'conversation.autonomy_changed': {
+    category: 'conversation',
+    description:
+      "A person changed how far AI may act on the organization's conversations (manual, assisted, supervised, autonomous); the event records from and to. A restriction only, never a permission (ADR-0039).",
+    results: ['success'],
+  },
+  'conversation.ai_human_takeover': {
+    category: 'conversation',
+    description:
+      'A person took control of a conversation an agent handled or escalated; AI is paused and any automatic send of the turn in progress is refused (ADR-0039).',
+    results: ['success'],
+  },
+  'conversation.ai_handed_back': {
+    category: 'conversation',
+    description:
+      'A person handed a conversation back to AI, where the organization allows AI handling (ADR-0039).',
+    results: ['success'],
+  },
+  'conversation.ai_escalated': {
+    category: 'conversation',
+    description:
+      'The runtime handed a conversation an agent handled to a person; the reason is the handoff code, the reference the execution when there is one (ADR-0039).',
+    results: ['success'],
+  },
   'channel.connection_created': {
     category: 'channel',
     description:

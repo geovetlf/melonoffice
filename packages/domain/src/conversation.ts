@@ -99,8 +99,63 @@ export interface ConversationLastMessage {
 }
 
 /**
- * Reserved for the future AI → human handoff (CV-5): why a conversation needs a person, with
- * pointers to what was gathered. Nothing sets it in CV-1, where the AI never acts on its own.
+ * How far an organization lets AI act on its conversations (CV-6, ADR-0039). A restriction only:
+ * it never grants a permission, a tool, a channel or credits (V3).
+ *
+ * - `manual`: AI does nothing on its own.
+ * - `assisted`: AI analyses, summarizes and suggests when a person asks; the person decides (CV-4).
+ * - `supervised`: an agent may prepare replies; a person approves each one before it is sent.
+ * - `autonomous`: an agent may handle a conversation on its own, within its limits.
+ *
+ * `manual` is the default: an organization turns AI handling on explicitly.
+ */
+export type AutonomyLevel = 'manual' | 'assisted' | 'supervised' | 'autonomous';
+
+/** The organization's own conversation settings (CV-6). One per organization. */
+export interface ConversationSettings {
+  readonly organizationId: OrganizationId;
+  readonly autonomy: AutonomyLevel;
+  readonly updatedAt: IsoTimestamp;
+  /** The person who last changed it; absent while nobody has. */
+  readonly updatedBy?: UserId;
+  /** 0 while nobody has changed it, +1 on every change. */
+  readonly revision: number;
+}
+
+/** Who handles a conversation right now: a person, or an agent within its limits (CV-6). */
+export type ConversationHandler = 'human' | 'ai';
+
+/**
+ * Where AI handling of one conversation is (CV-6):
+ *
+ * - `off`: AI never handled it.
+ * - `active`: an agent handles it (`handledBy: 'ai'`).
+ * - `paused`: a person took control; AI stays out until a person hands it back.
+ * - `escalated`: the agent handed it to a person, with a reason (`handoff`).
+ */
+export type ConversationAIState = 'off' | 'active' | 'paused' | 'escalated';
+
+/**
+ * Who controls a conversation (CV-6, ADR-0039). Absent on a conversation means a person handles
+ * it and AI never did: `{ handledBy: 'human', aiState: 'off', epoch: 0 }`.
+ */
+export interface ConversationControl {
+  readonly handledBy: ConversationHandler;
+  readonly aiState: ConversationAIState;
+  /**
+   * +1 on every change of control. An agent's turn records the epoch it started under, and any
+   * automatic send is refused once it moved: a person who took control is never overtaken.
+   */
+  readonly epoch: number;
+  readonly changedAt: IsoTimestamp;
+  /** The person who changed it; absent when the runtime escalated. */
+  readonly changedBy?: UserId;
+}
+
+/**
+ * Why a conversation needs a person, with pointers to what was gathered (CV-6, ADR-0039). Set
+ * when an agent escalates; the reason is a stable code from the conversations package, never
+ * free text from a model or a contact.
  */
 export interface ConversationHandoff {
   readonly reason: string;
@@ -133,6 +188,8 @@ export interface Conversation {
   readonly lastInboundAt?: IsoTimestamp;
   readonly lastOutboundAt?: IsoTimestamp;
   readonly handoff?: ConversationHandoff;
+  /** Who controls it (CV-6). Absent: a person, and AI never handled it. */
+  readonly control?: ConversationControl;
   readonly createdAt: IsoTimestamp;
   readonly updatedAt: IsoTimestamp;
   /** 1 on creation, +1 on every change: concurrent changes never overwrite each other. */

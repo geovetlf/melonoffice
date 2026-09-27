@@ -6,10 +6,12 @@ import type {
   ContactId,
   Conversation,
   ConversationId,
+  ConversationSettings,
   Message,
   MessageId,
   OrganizationId,
 } from '@melonoffice/domain';
+import { isAutonomyLevel } from './control.js';
 import { ConversationError } from './errors.js';
 import {
   applyInbound,
@@ -22,6 +24,7 @@ import {
   checkStatusUpdate,
   checkStoredConversation,
   conversationIdFor,
+  isUuid,
   inboundMessageIdFor,
   messageRefKeyFor,
   settleOutbound,
@@ -56,6 +59,12 @@ export interface SettleResult {
 /** The new state of a conversation and the audit events that record the change. */
 export interface ConversationWrite {
   readonly conversation: Conversation;
+  readonly events: readonly AuditEvent[];
+}
+
+/** The organization's new conversation settings and the audit events that record the change. */
+export interface SettingsWrite {
+  readonly settings: ConversationSettings;
   readonly events: readonly AuditEvent[];
 }
 
@@ -129,6 +138,39 @@ export interface ConversationRepository {
     events: readonly AuditEvent[],
     at: Date,
   ): Promise<SettleResult>;
+  /** The organization's conversation settings (CV-6A); undefined while nobody changed them. */
+  findSettings(organizationId: OrganizationId): Promise<ConversationSettings | undefined>;
+  /**
+   * Reads the settings and lets `change` decide the next ones, with their audit events, in one
+   * transaction. The next ones must be exactly one revision ahead (the first change is revision 1).
+   */
+  updateSettings(
+    organizationId: OrganizationId,
+    change: (current: ConversationSettings | undefined) => SettingsWrite,
+  ): Promise<ConversationSettings>;
+}
+
+export function checkStoredSettings(s: ConversationSettings): ConversationSettings {
+  if (
+    !isUuid(s.organizationId) ||
+    !isAutonomyLevel(s.autonomy) ||
+    !Number.isSafeInteger(s.revision) ||
+    s.revision < 0
+  ) {
+    throw new ConversationError('invalid_request', 'stored_settings');
+  }
+  return s;
+}
+
+export function checkNextSettings(
+  organizationId: OrganizationId,
+  current: ConversationSettings | undefined,
+  next: ConversationSettings,
+): void {
+  if (next.organizationId !== organizationId || next.revision !== (current?.revision ?? 0) + 1) {
+    throw new ConversationError('settings_concurrency_conflict');
+  }
+  checkStoredSettings(next);
 }
 
 export function checkNextConversation(current: Conversation, next: Conversation): void {
@@ -154,6 +196,7 @@ export class InMemoryConversationRepository implements ConversationRepository {
   readonly #messages = new Map<string, Message>();
   /** Provider message id key → our outbound message id. */
   readonly #refs = new Map<string, MessageId>();
+  readonly #settings = new Map<string, ConversationSettings>();
 
   constructor(private readonly audit?: InMemoryAuditStore) {}
 
@@ -245,6 +288,10 @@ export class InMemoryConversationRepository implements ConversationRepository {
     if (current === undefined) throw new ConversationError('conversation_not_found');
     const { conversation, events } = change(current);
     checkNextConversation(current, conversation);
+    // As in a transaction: a change made meanwhile wins, and this one is refused.
+    if (this.#conversations.get(id)?.revision !== current.revision) {
+      throw new ConversationError('conversation_concurrency_conflict');
+    }
     this.audit?.append(events);
     this.#conversations.set(id, conversation);
     return conversation;
@@ -332,6 +379,26 @@ export class InMemoryConversationRepository implements ConversationRepository {
     this.audit?.append(events);
     this.putOutbound(next);
     return { applied: true, message: next };
+  }
+
+  async findSettings(organizationId: OrganizationId): Promise<ConversationSettings | undefined> {
+    const settings = this.#settings.get(organizationId);
+    return settings === undefined ? undefined : checkStoredSettings(settings);
+  }
+
+  async updateSettings(
+    organizationId: OrganizationId,
+    change: (current: ConversationSettings | undefined) => SettingsWrite,
+  ): Promise<ConversationSettings> {
+    const current = await this.findSettings(organizationId);
+    const { settings, events } = change(current);
+    checkNextSettings(organizationId, current, settings);
+    if (this.#settings.get(organizationId)?.revision !== current?.revision) {
+      throw new ConversationError('settings_concurrency_conflict');
+    }
+    this.audit?.append(events);
+    this.#settings.set(organizationId, settings);
+    return settings;
   }
 
   /** Test helper: stores an outbound message as a sender would, with its provider id. */
