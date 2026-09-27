@@ -9,10 +9,19 @@ export interface ServiceConfig {
    * users. Unset: auth is off and every /v1 route answers 503 (ADR-0016, ADR-0017).
    */
   readonly identityProjectId?: string;
+  /**
+   * The project whose Secret Manager holds channel credentials (ADR-0033). Unset: channel
+   * webhooks answer 503 and no channel connection can be created.
+   */
+  readonly channelSecretsProjectId?: string;
+  /** Graph API version for WhatsApp sends, e.g. `v23.0`. Unset: nothing can be sent. */
+  readonly whatsappGraphApiVersion?: string;
 }
 
 /** Google Cloud project ids: 6 to 30 lowercase letters, digits and hyphens, starting with a letter. */
 const PROJECT_ID = /^[a-z][a-z0-9-]{4,28}[a-z0-9]$/;
+
+const GRAPH_VERSION = /^v[0-9]{1,3}\.[0-9]$/;
 
 /** Reads configuration from environment variables only; nothing is hard-coded per environment. */
 export function loadConfig(env: Readonly<Record<string, string | undefined>>): ServiceConfig {
@@ -26,10 +35,20 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): S
   if (identityProjectId !== undefined && !PROJECT_ID.test(identityProjectId)) {
     throw new Error(`Invalid IDENTITY_PLATFORM_PROJECT_ID: ${identityProjectId}`);
   }
+  const channelSecretsProjectId = env.CHANNEL_SECRETS_PROJECT_ID;
+  if (channelSecretsProjectId !== undefined && !PROJECT_ID.test(channelSecretsProjectId)) {
+    throw new Error(`Invalid CHANNEL_SECRETS_PROJECT_ID: ${channelSecretsProjectId}`);
+  }
+  const whatsappGraphApiVersion = env.WHATSAPP_GRAPH_API_VERSION;
+  if (whatsappGraphApiVersion !== undefined && !GRAPH_VERSION.test(whatsappGraphApiVersion)) {
+    throw new Error(`Invalid WHATSAPP_GRAPH_API_VERSION: ${whatsappGraphApiVersion}`);
+  }
   return {
     port,
     logLevel: level,
     version: env.SERVICE_VERSION ?? 'dev',
     ...(identityProjectId === undefined ? {} : { identityProjectId }),
+    ...(channelSecretsProjectId === undefined ? {} : { channelSecretsProjectId }),
+    ...(whatsappGraphApiVersion === undefined ? {} : { whatsappGraphApiVersion }),
   };
 }

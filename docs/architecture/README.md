@@ -36,6 +36,7 @@ The MelonOffice architecture was defined in the **Phase 0 Architecture Plan (v0.
 | [0030](../adr/0030-execution-jobs-and-lease.md)                    | Execution jobs with lease; shared Firestore repositories  | D-7, D-12, D-27  |
 | [0031](../adr/0031-runtime-advance.md)                             | Runtime advance(): one node at a time, runtime authority  | D-7, D-12, D-27  |
 | [0032](../adr/0032-worker-and-job-transport.md)                    | Worker and job transport (Cloud Tasks)                    | D-X6-JOB, D-7    |
+| [0033](../adr/0033-conversations-foundation.md)                    | Conversations foundation and human inbox API              | DG-1, DG-2       |
 
 ## Current phase
 

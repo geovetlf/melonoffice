@@ -2,6 +2,12 @@ import { Firestore } from '@google-cloud/firestore';
 import { serve } from '@hono/node-server';
 import { createAuditService } from '@melonoffice/audit';
 import { createIdentityPlatformVerifier } from '@melonoffice/auth';
+import { createConversationIngress } from '@melonoffice/conversations';
+import {
+  createSecretManagerStore,
+  createWebhookIngress,
+  createWhatsAppAdapter,
+} from '@melonoffice/integrations';
 import { createLogger } from '@melonoffice/observability';
 import { createApp, SERVICE_NAME } from './app.js';
 import { loadConfig } from './config.js';
@@ -9,6 +15,8 @@ import {
   FirestoreApprovalRepository,
   FirestoreAuditStore,
   FirestoreBillingStore,
+  FirestoreChannelConnectionRepository,
+  FirestoreConversationRepository,
   FirestoreDepartmentRepository,
   FirestoreExecutionRepository,
   FirestoreSpecialistRepository,
@@ -27,6 +35,9 @@ const logger = createLogger({ service: SERVICE_NAME, level: config.logLevel });
 const projectId = config.identityProjectId;
 function services(projectId: string) {
   const firestore = new Firestore({ projectId });
+  const conversations = new FirestoreConversationRepository(firestore);
+  const connections = new FirestoreChannelConnectionRepository(firestore);
+  const secretProjectId = config.channelSecretsProjectId;
   return {
     auth: {
       verifier: createIdentityPlatformVerifier({ projectId }),
@@ -44,10 +55,34 @@ function services(projectId: string) {
     plans: new FirestorePlanRepository(firestore),
     workflows: new FirestoreWorkflowRepository(firestore),
     audit: createAuditService(new FirestoreAuditStore(firestore)),
+    conversations: {
+      repository: conversations,
+      connections,
+      ...(secretProjectId === undefined ? {} : { secretProjectId }),
+    },
+    // Webhooks only where channel secrets are configured (none in Terraform yet: CV-2).
+    ...(secretProjectId === undefined
+      ? {}
+      : {
+          webhooks: createWebhookIngress({
+            connections,
+            secrets: createSecretManagerStore(),
+            adapters: [
+              createWhatsAppAdapter(
+                config.whatsappGraphApiVersion === undefined
+                  ? {}
+                  : { graphApiVersion: config.whatsappGraphApiVersion },
+              ),
+            ],
+            conversations: createConversationIngress({ repository: conversations }),
+            logger: logger.child({ component: 'webhooks' }),
+          }),
+        }),
   };
 }
 const configured = projectId === undefined ? {} : services(projectId);
 logger.info('auth', { enabled: projectId !== undefined });
+logger.info('channels', { enabled: 'webhooks' in configured });
 
 const app = createApp({ logger, version: config.version, ...configured });
 
