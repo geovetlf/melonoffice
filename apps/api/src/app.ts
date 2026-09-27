@@ -7,9 +7,15 @@ import { createConversationService, type ConversationRepository } from '@melonof
 import { createCreditService, type CreditStore } from '@melonoffice/credits';
 import { createEntitlementService, type EntitlementService } from '@melonoffice/entitlements';
 import { createExecutionService, type ExecutionRepository } from '@melonoffice/execution';
+import type { DeploymentEnvironment } from '@melonoffice/domain';
+import { createToolGate } from '@melonoffice/guardrails';
 import {
   createChannelConnectionService,
+  createChannelMessageExecutor,
+  createMessageSendService,
+  type ChannelAdapters,
   type ChannelConnectionRepository,
+  type SecretStore,
   type WebhookIngress,
 } from '@melonoffice/integrations';
 import type { Logger } from '@melonoffice/observability';
@@ -93,6 +99,17 @@ export interface AppOptions {
     readonly connections: ChannelConnectionRepository;
     /** Where channel secrets live. Unset: no connection can be created. */
     readonly secretProjectId?: string;
+    /**
+     * A person's replies (CV-2, ADR-0034), through the tool gate. Absent: the send route answers
+     * 503 (fails closed). It also needs executions, departments, specialists and approvals, which
+     * the gate is built from.
+     */
+    readonly outbound?: {
+      readonly secrets: SecretStore;
+      readonly adapters: ChannelAdapters;
+      /** Where this server runs, set explicitly: the tool runs only where its version allows. */
+      readonly environment: DeploymentEnvironment;
+    };
   };
   /** Channel webhooks (ADR-0033). Absent: `/webhooks/*` answers 503. */
   readonly webhooks?: WebhookIngress;
@@ -301,10 +318,56 @@ export function createApp({
         (billingPlans === undefined
           ? undefined
           : createEntitlementService({ organizations: tenancy, plans: billingPlans }));
+      const { outbound } = conversations;
+      // The same tool gate as the runtime's (ADR-0026, ADR-0034), with the one executor a person
+      // may reach through it. No specialist, approval or runtime is involved in a person's send,
+      // but the gate is built whole: there is no second, lighter gate.
+      const sender =
+        outbound !== undefined &&
+        executions !== undefined &&
+        executionService !== undefined &&
+        specialists !== undefined &&
+        approvals !== undefined
+          ? createMessageSendService({
+              conversations: conversations.repository,
+              organizations: tenancy,
+              authorization,
+              executions: executionService,
+              gate: createToolGate({
+                executions,
+                organizations: tenancy,
+                specialists,
+                departments: structure.departments,
+                registry: tools,
+                approvals: createApprovalService({
+                  repository: approvals,
+                  organizations: tenancy,
+                  authorization,
+                  audit,
+                }),
+                executors: {
+                  channel: createChannelMessageExecutor({
+                    conversations: conversations.repository,
+                    connections: conversations.connections,
+                    secrets: outbound.secrets,
+                    adapters: outbound.adapters,
+                  }),
+                },
+                authorization,
+                audit,
+                environment: outbound.environment,
+                logger: logger.child({ component: 'tool-gate' }),
+              }),
+              adapters: outbound.adapters,
+              audit,
+              logger: logger.child({ component: 'outbound' }),
+            })
+          : undefined;
       registerConversationRoutes(app, {
         store: tenancy,
         authorization,
         audit,
+        ...(sender === undefined ? {} : { sender }),
         conversations: createConversationService({
           repository: conversations.repository,
           organizations: tenancy,

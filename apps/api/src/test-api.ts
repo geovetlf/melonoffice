@@ -296,15 +296,44 @@ export const STORES: [string, () => Stores][] = [
   ...(emulatorHost ? [['firestore', firestoreStores] as [string, () => Stores]] : []),
 ];
 
+/**
+ * Stands in for Meta's Graph API in a person's sends (CV-2): every call is recorded, and each
+ * answers with `answer`, a successful send unless a test changes it. Nothing leaves the process.
+ */
+export interface FakeGraphApi {
+  readonly calls: { readonly url: string; readonly init: RequestInit }[];
+  answer: () => Promise<Response>;
+}
+
+/** A successful send, with a new provider id each time, as Meta answers. */
+export const graphAccepted = (): FakeGraphApi['answer'] => {
+  let sent = 0;
+  return async () => {
+    sent += 1;
+    return new Response(JSON.stringify({ messages: [{ id: `wamid.HBgLMTU1NTEyMzQ1Ng${sent}` }] }), {
+      status: 200,
+    });
+  };
+};
+
 export function setupApp(
   stores: Stores,
   authorization?: AuthorizationService,
   entitlements?: EntitlementService,
   tools?: ToolRegistry,
   credits: CreditStore = stores.credits,
+  { sending = true }: { readonly sending?: boolean } = {},
 ) {
   const lines: string[] = [];
   const logger = createLogger({ service: 'api', sink: (line) => lines.push(line) });
+  const meta: FakeGraphApi = { calls: [], answer: graphAccepted() };
+  const graph = createWhatsAppAdapter({
+    graphApiVersion: 'v23.0',
+    fetch: (async (url: string | URL | Request, init?: RequestInit) => {
+      meta.calls.push({ url: String(url), init: init ?? {} });
+      return meta.answer();
+    }) as typeof fetch,
+  });
   const app = createApp({
     logger,
     version: 'test',
@@ -322,6 +351,15 @@ export function setupApp(
       repository: stores.conversations,
       connections: stores.connections,
       secretProjectId: 'melonoffice-test',
+      ...(sending
+        ? {
+            outbound: {
+              secrets: stores.secrets,
+              adapters: { whatsapp: graph },
+              environment: 'dev' as const,
+            },
+          }
+        : {}),
     },
     webhooks: createWebhookIngress({
       connections: stores.connections,
@@ -344,5 +382,5 @@ export function setupApp(
         userId: string;
       }
     ).userId;
-  return { app, lines, as, register, ...stores };
+  return { app, lines, as, register, meta, ...stores };
 }

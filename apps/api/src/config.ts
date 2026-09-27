@@ -1,3 +1,4 @@
+import type { DeploymentEnvironment } from '@melonoffice/domain';
 import { isLogLevel, type LogLevel } from '@melonoffice/observability';
 
 export interface ServiceConfig {
@@ -16,7 +17,14 @@ export interface ServiceConfig {
   readonly channelSecretsProjectId?: string;
   /** Graph API version for WhatsApp sends, e.g. `v23.0`. Unset: nothing can be sent. */
   readonly whatsappGraphApiVersion?: string;
+  /**
+   * Where this server runs (`dev`, `staging`, `prod`), for the tool gate (ADR-0034): a tool runs
+   * only where its version allows. Unset: a person's send is not wired at all (fails closed).
+   */
+  readonly deploymentEnvironment?: DeploymentEnvironment;
 }
+
+const ENVIRONMENTS: readonly string[] = ['dev', 'staging', 'prod'];
 
 /** Google Cloud project ids: 6 to 30 lowercase letters, digits and hyphens, starting with a letter. */
 const PROJECT_ID = /^[a-z][a-z0-9-]{4,28}[a-z0-9]$/;
@@ -43,6 +51,10 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): S
   if (whatsappGraphApiVersion !== undefined && !GRAPH_VERSION.test(whatsappGraphApiVersion)) {
     throw new Error(`Invalid WHATSAPP_GRAPH_API_VERSION: ${whatsappGraphApiVersion}`);
   }
+  const deploymentEnvironment = env.DEPLOYMENT_ENVIRONMENT;
+  if (deploymentEnvironment !== undefined && !ENVIRONMENTS.includes(deploymentEnvironment)) {
+    throw new Error(`Invalid DEPLOYMENT_ENVIRONMENT: ${deploymentEnvironment}`);
+  }
   return {
     port,
     logLevel: level,
@@ -50,5 +62,8 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): S
     ...(identityProjectId === undefined ? {} : { identityProjectId }),
     ...(channelSecretsProjectId === undefined ? {} : { channelSecretsProjectId }),
     ...(whatsappGraphApiVersion === undefined ? {} : { whatsappGraphApiVersion }),
+    ...(deploymentEnvironment === undefined
+      ? {}
+      : { deploymentEnvironment: deploymentEnvironment as DeploymentEnvironment }),
   };
 }

@@ -38,6 +38,13 @@ function services(projectId: string) {
   const conversations = new FirestoreConversationRepository(firestore);
   const connections = new FirestoreChannelConnectionRepository(firestore);
   const secretProjectId = config.channelSecretsProjectId;
+  const whatsapp = createWhatsAppAdapter(
+    config.whatsappGraphApiVersion === undefined
+      ? {}
+      : { graphApiVersion: config.whatsappGraphApiVersion },
+  );
+  const environment = config.deploymentEnvironment;
+  const secrets = createSecretManagerStore();
   return {
     auth: {
       verifier: createIdentityPlatformVerifier({ projectId }),
@@ -59,6 +66,17 @@ function services(projectId: string) {
       repository: conversations,
       connections,
       ...(secretProjectId === undefined ? {} : { secretProjectId }),
+      // A person's replies (ADR-0034) only where channel secrets and the environment are both
+      // configured: neither is set in Terraform yet, so sending stays off (fails closed).
+      ...(secretProjectId === undefined || environment === undefined
+        ? {}
+        : {
+            outbound: {
+              secrets,
+              adapters: { whatsapp },
+              environment,
+            },
+          }),
     },
     // Webhooks only where channel secrets are configured (none in Terraform yet: CV-2).
     ...(secretProjectId === undefined
@@ -66,14 +84,8 @@ function services(projectId: string) {
       : {
           webhooks: createWebhookIngress({
             connections,
-            secrets: createSecretManagerStore(),
-            adapters: [
-              createWhatsAppAdapter(
-                config.whatsappGraphApiVersion === undefined
-                  ? {}
-                  : { graphApiVersion: config.whatsappGraphApiVersion },
-              ),
-            ],
+            secrets,
+            adapters: [whatsapp],
             conversations: createConversationIngress({ repository: conversations }),
             logger: logger.child({ component: 'webhooks' }),
           }),
@@ -82,7 +94,13 @@ function services(projectId: string) {
 }
 const configured = projectId === undefined ? {} : services(projectId);
 logger.info('auth', { enabled: projectId !== undefined });
-logger.info('channels', { enabled: 'webhooks' in configured });
+logger.info('channels', {
+  enabled: 'webhooks' in configured,
+  sending:
+    projectId !== undefined &&
+    config.channelSecretsProjectId !== undefined &&
+    config.deploymentEnvironment !== undefined,
+});
 
 const app = createApp({ logger, version: config.version, ...configured });
 

@@ -9,7 +9,7 @@ import type {
   UserId,
 } from '@melonoffice/domain';
 import { secretRefsFor } from '@melonoffice/integrations';
-import { createAuthorizationService, type AuthorizationService } from '@melonoffice/rbac';
+import { createAuthorizationService, ROLES, type AuthorizationService } from '@melonoffice/rbac';
 import { defaultToolRegistry } from '@melonoffice/tools';
 import { createHmac } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -17,7 +17,7 @@ import { describe, expect, it } from 'vitest';
 import { createLogger } from '@melonoffice/observability';
 import { createApp } from './app.js';
 import { MAX_WEBHOOK_BODY_BYTES } from './webhooks.js';
-import { setupApp, STORES, type Stores } from './test-api.js';
+import { graphAccepted, setupApp, STORES, type Stores } from './test-api.js';
 
 const PROJECT = 'melonoffice-test';
 const CONNECTION_A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' as ChannelConnectionId;
@@ -90,9 +90,11 @@ function whatsapp(
 }
 
 describe.each(STORES)('conversations with storage in %s', (_name, createStores) => {
-  async function setup(options: { authorization?: AuthorizationService } = {}) {
+  async function setup(options: { authorization?: AuthorizationService; sending?: boolean } = {}) {
     const stores: Stores = createStores();
-    const ctx = setupApp(stores, options.authorization);
+    const ctx = setupApp(stores, options.authorization, undefined, undefined, undefined, {
+      sending: options.sending ?? true,
+    });
     const aliceId = (await ctx.register('token-alice')) as UserId;
     const bobId = (await ctx.register('token-bob')) as UserId;
     const create = async (token: string, name: string) =>
@@ -177,6 +179,7 @@ describe.each(STORES)('conversations with storage in %s', (_name, createStores) 
     return {
       ...ctx,
       stores,
+      connect,
       aliceId,
       bobId,
       orgA,
@@ -553,13 +556,355 @@ describe.each(STORES)('conversations with storage in %s', (_name, createStores) 
       );
     });
   });
+
+  describe('send (CV-2, ADR-0034)', () => {
+    /** A Unix time a given number of seconds ago, as WhatsApp sends it. */
+    const ago = (seconds: number) => String(Math.floor(Date.now() / 1000) - seconds);
+    const HOUR = 3600;
+
+    /** A conversation of A whose contact last wrote `secondsAgo` ago. */
+    async function conversationIn(t: Awaited<ReturnType<typeof setup>>, secondsAgo = 60) {
+      await t.deliver(
+        CONNECTION_A,
+        whatsapp(PHONE_A, { timestamp: ago(secondsAgo) }),
+        APP_SECRET_A,
+      );
+      return t.firstConversation();
+    }
+    const sendPath = (t: Awaited<ReturnType<typeof setup>>, org: string, id: string) =>
+      `${t.base(org)}/conversations/${id}/messages`;
+    const send = (
+      t: Awaited<ReturnType<typeof setup>>,
+      id: string,
+      body: unknown = { clientMessageId: 'reply-1', text: 'Hola Ana, te ayudo' },
+      token = 'token-alice',
+      org: string = t.orgA,
+    ) => t.post(token, sendPath(t, org, id), body);
+    const outbound = async (t: Awaited<ReturnType<typeof setup>>, id: string) =>
+      (
+        await t.request('token-alice', `${t.base(t.orgA)}/conversations/${id}/messages`)
+      ).body.messages.filter((m: Json) => m.direction === 'outbound');
+
+    it('sends a person’s reply through the tool gate, from the conversation alone', async () => {
+      const t = await setup();
+      const conversation = await conversationIn(t);
+      const answer = await send(t, conversation.id);
+      expect(answer.status).toBe(201);
+      expect(answer.body.message).toMatchObject({
+        conversationId: conversation.id,
+        direction: 'outbound',
+        sender: { kind: 'user', userId: t.aliceId },
+        type: 'text',
+        text: 'Hola Ana, te ayudo',
+        status: 'sent',
+        failureCode: null,
+      });
+      // One call to the official Cloud API, to the contact of the conversation, with the
+      // connection's own token read from the secret store.
+      expect(t.meta.calls).toHaveLength(1);
+      const [call] = t.meta.calls;
+      expect(call?.url).toBe(`https://graph.facebook.com/v23.0/${PHONE_A}/messages`);
+      expect(call?.init.headers).toMatchObject({ authorization: `Bearer ${ACCESS_TOKEN}` });
+      expect(JSON.parse(call?.init.body as string)).toMatchObject({
+        messaging_product: 'whatsapp',
+        to: '15551234567',
+        type: 'text',
+        text: { body: 'Hola Ana, te ayudo' },
+      });
+      const after = await t.request(
+        'token-alice',
+        `${t.base(t.orgA)}/conversations/${conversation.id}`,
+      );
+      expect(after.body).toMatchObject({
+        lastMessage: { direction: 'outbound', preview: 'Hola Ana, te ayudo' },
+      });
+      expect(after.body.lastOutboundAt).not.toBeNull();
+      const events = await t.stores.auditEvents();
+      const sent = events.filter((e) => e.action === 'conversation.message_sent');
+      expect(sent).toEqual([
+        expect.objectContaining({
+          result: 'success',
+          actor: { type: 'user', userId: t.aliceId, via: 'direct' },
+          organizationId: t.orgA,
+          target: { type: 'message', id: (answer.body.message as Json).id },
+          reference: `conversation:${conversation.id}`,
+          reason: 'whatsapp',
+          tool: { id: 'message_send', version: 1 },
+        }),
+      ]);
+      // The person is the actor of every step: no runtime, no specialist, no invented actor.
+      for (const e of events.filter((e) => e.action.startsWith('tool.'))) {
+        expect(e.actor).toEqual({ type: 'user', userId: t.aliceId, via: 'direct' });
+      }
+      expect(events.map((e) => e.action)).toEqual(
+        expect.arrayContaining([
+          'execution.created',
+          'tool.authorization_checked',
+          'tool.execution_requested',
+          'tool.execution_completed',
+          'execution.verification_recorded',
+        ]),
+      );
+      // No model is ever called.
+      expect(events.filter((e) => e.action.startsWith('ai.'))).toEqual([]);
+    });
+
+    it('never sends the same message twice: the same key answers with the stored one', async () => {
+      const t = await setup();
+      const conversation = await conversationIn(t);
+      const first = await send(t, conversation.id);
+      const again = await send(t, conversation.id);
+      expect(again.status).toBe(200);
+      expect((again.body.message as Json).id).toBe((first.body.message as Json).id);
+      expect(t.meta.calls).toHaveLength(1);
+      expect(await outbound(t, conversation.id)).toHaveLength(1);
+      // The same key with another text is refused, never sent.
+      const changed = await send(t, conversation.id, { clientMessageId: 'reply-1', text: 'Otro' });
+      expect(changed).toEqual({ status: 409, body: { error: 'duplicate_request' } });
+      expect(t.meta.calls).toHaveLength(1);
+      // Another key is another message.
+      expect(
+        (await send(t, conversation.id, { clientMessageId: 'reply-2', text: 'Y otro' })).status,
+      ).toBe(201);
+      expect(t.meta.calls).toHaveLength(2);
+    });
+
+    it('takes nothing but the key and the text: no organization, recipient, account or token', async () => {
+      const t = await setup();
+      const conversation = await conversationIn(t);
+      for (const extra of [
+        { organizationId: t.orgB },
+        { tenantId: t.orgB },
+        { to: '15559999999' },
+        { channelConnectionId: CONNECTION_B },
+        { credentialId: 'x' },
+        { accessToken: 'x' },
+        { contactId: MISSING },
+        { channelIdentityId: MISSING },
+        { messageId: MISSING },
+      ]) {
+        const answer = await send(t, conversation.id, {
+          clientMessageId: 'reply-1',
+          text: 'Hola',
+          ...extra,
+        });
+        expect(answer).toEqual({ status: 400, body: { error: 'invalid_request' } });
+      }
+      for (const body of [
+        {},
+        { clientMessageId: 'reply-1' },
+        { clientMessageId: 'has spaces', text: 'Hola' },
+        { clientMessageId: 'reply-1', text: '' },
+        { clientMessageId: 'reply-1', text: 'x'.repeat(4097) },
+        { clientMessageId: 'reply-1', text: 7 },
+      ]) {
+        expect((await send(t, conversation.id, body)).status).toBe(400);
+      }
+      expect(t.meta.calls).toHaveLength(0);
+      expect(await outbound(t, conversation.id)).toEqual([]);
+    });
+
+    it("never reaches another organization's conversation, connection or credentials", async () => {
+      const t = await setup();
+      const conversation = await conversationIn(t);
+      // Bob, in B, naming A's conversation: it does not exist for him.
+      expect(await send(t, conversation.id, undefined, 'token-bob', t.orgB)).toEqual({
+        status: 404,
+        body: { error: 'conversation_not_found' },
+      });
+      // Bob naming A's organization: not his.
+      expect((await send(t, conversation.id, undefined, 'token-bob', t.orgA)).status).toBe(403);
+      expect((await send(t, MISSING)).status).toBe(404);
+      expect((await send(t, 'not-an-id')).status).toBe(404);
+      expect(t.meta.calls).toHaveLength(0);
+      // And B's own conversation is sent from B's connection, with B's token, never A's.
+      await t.deliver(CONNECTION_B, whatsapp(PHONE_B, { timestamp: ago(60) }), APP_SECRET_B);
+      const theirs = await t.firstConversation('token-bob', t.orgB);
+      t.stores.secrets.put(
+        secretRefsFor(PROJECT, CONNECTION_B).access_token,
+        'test-access-token-b',
+      );
+      expect((await send(t, theirs.id, undefined, 'token-bob', t.orgB)).status).toBe(201);
+      const [call] = t.meta.calls;
+      expect(call?.url).toContain(`/${PHONE_B}/messages`);
+      expect(call?.init.headers).toMatchObject({ authorization: 'Bearer test-access-token-b' });
+    });
+
+    it('refuses without conversation.send, and reserves nothing without every permission', async () => {
+      const without = (permission: string) =>
+        createAuthorizationService({
+          owner: ROLES.owner.filter((p) => p !== permission),
+        } as never);
+      for (const permission of ['conversation.send', 'tool.execute', 'execution.start']) {
+        const t = await setup({ authorization: without(permission) });
+        const conversation = await conversationIn(t);
+        const answer = await send(t, conversation.id);
+        expect(answer).toEqual({ status: 403, body: { error: 'permission_denied' } });
+        expect(await outbound(t, conversation.id)).toEqual([]);
+        expect(t.meta.calls).toHaveLength(0);
+      }
+    });
+
+    it('blocks a reply outside the 24h window: no template, no other channel, nothing stored', async () => {
+      const t = await setup();
+      const conversation = await conversationIn(t, 25 * HOUR);
+      expect(await send(t, conversation.id)).toEqual({
+        status: 409,
+        body: { error: 'outside_messaging_window' },
+      });
+      expect(t.meta.calls).toHaveLength(0);
+      expect(await outbound(t, conversation.id)).toEqual([]);
+      const events = await t.stores.auditEvents();
+      expect(events.filter((e) => e.action === 'conversation.message_send_failed')).toEqual([
+        expect.objectContaining({ result: 'denied', reason: 'outside_messaging_window' }),
+      ]);
+      // Just inside the window, the reply goes.
+      const inside = await setup();
+      const recent = await conversationIn(inside, 23 * HOUR);
+      expect((await send(inside, recent.id)).status).toBe(201);
+    });
+
+    it('records a refusal by Meta as failed, consistently, and never retries it', async () => {
+      const t = await setup();
+      const conversation = await conversationIn(t);
+      t.meta.answer = async () =>
+        new Response(
+          JSON.stringify({ error: { code: 131026, message: 'Message undeliverable' } }),
+          {
+            status: 400,
+          },
+        );
+      const answer = await send(t, conversation.id);
+      expect(answer.status).toBe(502);
+      expect(answer.body).toMatchObject({
+        error: 'external_send_failed',
+        reason: 'invalid_destination',
+        message: { status: 'failed', failureCode: 'invalid_destination' },
+      });
+      expect(JSON.stringify(answer.body)).not.toContain('undeliverable');
+      const again = await send(t, conversation.id);
+      expect(again.status).toBe(502);
+      expect(t.meta.calls).toHaveLength(1);
+      const after = await t.request(
+        'token-alice',
+        `${t.base(t.orgA)}/conversations/${conversation.id}`,
+      );
+      expect(after.body.lastOutboundAt).toBeNull();
+      const events = await t.stores.auditEvents();
+      expect(events.filter((e) => e.action === 'conversation.message_send_failed')).toEqual([
+        expect.objectContaining({ result: 'failure', reason: 'invalid_destination' }),
+      ]);
+      // Meta's own window refusal (131047) is the same deterministic block.
+      const late = await setup();
+      const other = await conversationIn(late);
+      late.meta.answer = async () =>
+        new Response(JSON.stringify({ error: { code: 131047 } }), { status: 400 });
+      expect(await send(late, other.id)).toMatchObject({
+        status: 409,
+        body: { error: 'outside_messaging_window', message: { status: 'failed' } },
+      });
+    });
+
+    it('marks a lost answer unknown, and never resends it blindly', async () => {
+      for (const lost of [
+        async (): Promise<Response> => {
+          throw new Error('socket hang up');
+        },
+        async () => new Response('bad gateway', { status: 502 }),
+        async () => new Response('{"messages":[]}', { status: 200 }),
+      ]) {
+        const t = await setup();
+        const conversation = await conversationIn(t);
+        t.meta.answer = lost;
+        const answer = await send(t, conversation.id);
+        expect(answer.status).toBe(202);
+        expect(answer.body).toMatchObject({
+          error: 'external_send_unknown',
+          message: { status: 'unknown', failureCode: 'outcome_unknown' },
+        });
+        t.meta.answer = graphAccepted();
+        const again = await send(t, conversation.id);
+        expect(again.status).toBe(202);
+        expect(t.meta.calls).toHaveLength(1);
+        const events = await t.stores.auditEvents();
+        expect(events.filter((e) => e.action === 'conversation.message_send_unknown')).toHaveLength(
+          1,
+        );
+      }
+    });
+
+    it('rate limiting fails it, and nothing was sent', async () => {
+      const t = await setup();
+      const conversation = await conversationIn(t);
+      t.meta.answer = async () => new Response('{}', { status: 429 });
+      expect(await send(t, conversation.id)).toMatchObject({
+        status: 502,
+        body: { error: 'external_send_failed', reason: 'rate_limited' },
+      });
+    });
+
+    it('refuses a closed conversation and a disabled or unreadable connection', async () => {
+      const t = await setup();
+      const conversation = await conversationIn(t);
+      await t.post('token-alice', `${t.base(t.orgA)}/conversations/${conversation.id}/status`, {
+        status: 'closed',
+      });
+      expect(await send(t, conversation.id)).toEqual({
+        status: 409,
+        body: { error: 'conversation_closed' },
+      });
+      const off = await setup();
+      const other = await conversationIn(off);
+      const connection = await off.connect(off.orgA, CONNECTION_A, PHONE_A, APP_SECRET_A);
+      await off.stores.putConnection({ ...connection, status: 'disabled', revision: 2 });
+      expect(await send(off, other.id)).toMatchObject({
+        status: 503,
+        body: { error: 'channel_not_available', message: { status: 'failed' } },
+      });
+      expect([...t.meta.calls, ...off.meta.calls]).toHaveLength(0);
+    });
+
+    it('keeps tokens and message text out of answers, logs and the audit trail', async () => {
+      const t = await setup();
+      const conversation = await conversationIn(t);
+      const answers = [await send(t, conversation.id)];
+      t.meta.answer = async () => new Response('{}', { status: 401 });
+      answers.push(await send(t, conversation.id, { clientMessageId: 'reply-2', text: 'Segunda' }));
+      const everything = [
+        JSON.stringify(answers),
+        t.lines.join('\n'),
+        await t.stores.storedAudit(),
+      ].join('\n');
+      expect(everything).not.toContain(ACCESS_TOKEN);
+      expect(everything).not.toContain('Bearer');
+      expect(everything).not.toContain(APP_SECRET_A);
+      const audit = await t.stores.storedAudit();
+      expect(audit).not.toContain('Hola Ana, te ayudo');
+      expect(audit).not.toContain('Segunda');
+      // Observability: the attempt and its outcome, as structured events, without the text.
+      expect(t.lines.join('\n')).toContain('human_message_send_attempt');
+      expect(t.lines.join('\n')).toContain('human_message_send_success');
+      expect(t.lines.join('\n')).toContain('human_message_send_failure');
+      expect(t.lines.join('\n')).not.toContain('Hola Ana, te ayudo');
+    });
+
+    it('answers 503 where sending is not configured, and sends nothing', async () => {
+      const t = await setup({ sending: false });
+      const conversation = await conversationIn(t);
+      expect(await send(t, conversation.id)).toEqual({
+        status: 503,
+        body: { error: 'sending_not_configured' },
+      });
+      expect(t.meta.calls).toHaveLength(0);
+    });
+  });
 });
 
-describe('no send path in CV-1', () => {
-  it('exposes no route that sends a message', async () => {
+describe('the only send path is the tool gate (CV-2)', () => {
+  it('exposes no other route that sends a message', async () => {
     const [[, memory]] = STORES as [[string, () => Stores]];
     const t = setupApp(memory());
-    for (const path of ['messages', 'send', 'reply']) {
+    for (const path of ['send', 'reply', 'messages/send', 'template']) {
       const response = await t.app.request(
         `/v1/organizations/${MISSING}/conversations/${MISSING}/${path}`,
         t.as('token-alice', { method: 'POST', body: '{}' }),
@@ -568,14 +913,20 @@ describe('no send path in CV-1', () => {
     }
   });
 
-  it('never calls an adapter send from the API, and adds no tool', () => {
+  it('never calls an adapter from the API: its one send goes through the gate', () => {
     const source = ['app.ts', 'conversations.ts', 'webhooks.ts', 'server.ts']
       .map((file) => readFileSync(new URL(`./${file}`, import.meta.url), 'utf8'))
       .join('\n');
-    // The only way out is the tool gate (CV-2): the API never reaches a provider directly.
-    expect(source).not.toMatch(/\.send\(/);
+    // The only way out is the tool gate (ADR-0034): the API never reaches a provider directly.
+    expect(source.match(/\.send\(/g)).toEqual(['.send(']);
+    expect(source).toContain('sender.send(');
+    expect(source).toContain('createToolGate(');
     expect(source).not.toContain('graph.facebook.com');
-    expect(defaultToolRegistry().list()).toEqual([]);
+    expect(
+      defaultToolRegistry()
+        .list()
+        .map((t) => t.id),
+    ).toEqual(['message_send']);
   });
 });
 
