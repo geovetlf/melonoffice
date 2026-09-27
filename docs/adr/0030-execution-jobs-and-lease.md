@@ -4,6 +4,7 @@
 - Date: 2026-09-27
 - Builds on: [ADR-0017](0017-user-persistence-in-firestore.md), [ADR-0020](0020-audit-log-foundation.md), [ADR-0024](0024-execution-foundation.md) and [ADR-0029](0029-runtime-guards.md)
 - Decisions it applies: D-X6-JOB (Geovet, 2026-09-27, X6b authorization)
+- Amended by: [ADR-0031](0031-runtime-advance.md): the lease holder's turn (`leased → leased`, same lease), `release` (`leased → queued`), and finishing the job of an execution the runtime itself completed or failed.
 - Open decisions it respects: D-7, D-12, D-27, credit reservation, CONFIDENTIAL/RESTRICTED data, sweeper, scheduler, refund policy, retention, specialist review, human review, final provider selection
 
 ## Context

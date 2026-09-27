@@ -3,6 +3,7 @@
 - Status: Accepted (Phase X3; accepted by Geovet, 2026-09-27)
 - Date: 2026-09-27
 - Builds on: [ADR-0008](0008-entity-model.md) (D-28), [ADR-0019](0019-rbac-foundation.md), [ADR-0020](0020-audit-log-foundation.md), [ADR-0024](0024-execution-foundation.md) and [ADR-0025](0025-departments-and-specialists.md)
+- Amended by: [ADR-0031](0031-runtime-advance.md): only the runtime invokes the gate; planners, workflows and GIA reach it through the runtime, never directly. The gate also audits every node change it makes.
 
 ## Context
 
