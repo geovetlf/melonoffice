@@ -64,6 +64,40 @@ export interface AIRequirements {
 }
 
 /**
+ * The shape a structured answer must have (ADR-0038): a small, closed subset of JSON Schema that
+ * every provider with structured output can be given. It says what fields the answer has, never
+ * what to do: it carries no descriptions or free text, so it is not a second prompt. The answer
+ * is still checked by the caller before anything uses it.
+ */
+export type AIOutputSchema =
+  | {
+      readonly type: 'string';
+      readonly enum?: readonly string[];
+      readonly maxLength?: number;
+      readonly nullable?: boolean;
+    }
+  | {
+      readonly type: 'number' | 'integer';
+      readonly minimum?: number;
+      readonly maximum?: number;
+      readonly nullable?: boolean;
+    }
+  | { readonly type: 'boolean'; readonly nullable?: boolean }
+  | {
+      readonly type: 'array';
+      readonly items: AIOutputSchema;
+      readonly minItems?: number;
+      readonly maxItems?: number;
+      readonly nullable?: boolean;
+    }
+  | {
+      readonly type: 'object';
+      readonly properties: Readonly<Record<string, AIOutputSchema>>;
+      readonly required?: readonly string[];
+      readonly nullable?: boolean;
+    };
+
+/**
  * One AI call, as a specialist or a future GIA asks for it (ADR-0027). There is deliberately no
  * organization, user, credential or provider key here: the organization and user come from the
  * tenant, the specialist and department from the stored execution, and credentials from secure
@@ -88,6 +122,8 @@ export interface AIRequest {
   /** The most credits this call may spend. */
   readonly maxCredits?: number;
   readonly maxOutputTokens: number;
+  /** With `requirements.structuredOutput`, the shape of the answer (ADR-0038). */
+  readonly outputSchema?: AIOutputSchema;
   readonly sensitivity: DataSensitivity;
   /** Safe, flat labels for tracing. Never authority, never a secret. */
   readonly metadata?: Readonly<Record<string, string | number | boolean>>;
@@ -144,6 +180,7 @@ const REQUEST_KEYS = new Set([
   'maxCostMicroUsd',
   'maxCredits',
   'maxOutputTokens',
+  'outputSchema',
   'sensitivity',
   'metadata',
 ]);
@@ -226,6 +263,76 @@ function checkMetadata(value: unknown): void {
   }
 }
 
+const SCHEMA_KEYS: Readonly<Record<AIOutputSchema['type'], ReadonlySet<string>>> = {
+  string: new Set(['type', 'enum', 'maxLength', 'nullable']),
+  number: new Set(['type', 'minimum', 'maximum', 'nullable']),
+  integer: new Set(['type', 'minimum', 'maximum', 'nullable']),
+  boolean: new Set(['type', 'nullable']),
+  array: new Set(['type', 'items', 'minItems', 'maxItems', 'nullable']),
+  object: new Set(['type', 'properties', 'required', 'nullable']),
+};
+const MAX_SCHEMA_DEPTH = 6;
+const MAX_SCHEMA_NODES = 200;
+const MAX_SCHEMA_PROPERTIES = 30;
+const MAX_ENUM = 50;
+
+/** A closed, bounded output schema: known keys per type, plain names, limited size and depth. */
+function checkOutputSchema(value: unknown, depth: number, nodes: { count: number }): void {
+  nodes.count += 1;
+  if (!isRecord(value) || depth > MAX_SCHEMA_DEPTH || nodes.count > MAX_SCHEMA_NODES) {
+    return refuse('invalid_request');
+  }
+  const type = value.type;
+  if (typeof type !== 'string' || !Object.hasOwn(SCHEMA_KEYS, type)) {
+    return refuse('invalid_request');
+  }
+  closed(value, SCHEMA_KEYS[type as AIOutputSchema['type']]);
+  if (value.nullable !== undefined && typeof value.nullable !== 'boolean') {
+    refuse('invalid_request');
+  }
+  for (const bound of ['maxLength', 'minItems', 'maxItems'] as const) {
+    if (value[bound] !== undefined && !count(value[bound], 0, 1_000_000)) refuse('invalid_request');
+  }
+  for (const bound of ['minimum', 'maximum'] as const) {
+    const v = value[bound];
+    if (v !== undefined && (typeof v !== 'number' || !Number.isFinite(v))) {
+      refuse('invalid_request');
+    }
+  }
+  if (value.enum !== undefined) {
+    const list = value.enum;
+    if (
+      !Array.isArray(list) ||
+      list.length === 0 ||
+      list.length > MAX_ENUM ||
+      !list.every((v) => typeof v === 'string' && CODE.test(v)) ||
+      new Set(list).size !== list.length
+    ) {
+      refuse('invalid_request');
+    }
+  }
+  if (type === 'array') checkOutputSchema(value.items, depth + 1, nodes);
+  if (type === 'object') {
+    const { properties, required } = value;
+    if (!isRecord(properties)) return refuse('invalid_request');
+    const names = Object.keys(properties);
+    if (names.length === 0 || names.length > MAX_SCHEMA_PROPERTIES) refuse('invalid_request');
+    for (const name of names) {
+      if (isForbiddenField(name)) refuse('authority_in_input');
+      if (!KEY.test(name)) refuse('invalid_request');
+      checkOutputSchema(properties[name], depth + 1, nodes);
+    }
+    if (
+      required !== undefined &&
+      (!Array.isArray(required) ||
+        !required.every((r) => typeof r === 'string' && names.includes(r)) ||
+        new Set(required).size !== required.length)
+    ) {
+      refuse('invalid_request');
+    }
+  }
+}
+
 /** The fields every model call shares, whoever asks: everything but who the call is for. */
 function checkCommon(request: Record<string, unknown>): void {
   if (request.metadata !== undefined) checkMetadata(request.metadata);
@@ -269,6 +376,14 @@ function checkCommon(request: Record<string, unknown>): void {
       const v = requirements[flag];
       if (v !== undefined && typeof v !== 'boolean') refuse('invalid_request');
     }
+  }
+  if (request.outputSchema !== undefined) {
+    // A shape only makes sense for a structured answer, and the model must be able to give one.
+    if (!isRecord(requirements) || requirements.structuredOutput !== true) {
+      refuse('invalid_request');
+    }
+    checkOutputSchema(request.outputSchema, 1, { count: 0 });
+    if ((request.outputSchema as { type?: unknown }).type !== 'object') refuse('invalid_request');
   }
 }
 

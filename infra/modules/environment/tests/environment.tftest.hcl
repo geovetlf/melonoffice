@@ -258,8 +258,13 @@ run "dev_gets_firestore_and_auth" {
   }
 
   assert {
-    condition     = length(module.app["api"].env) == 3 && module.app["api"].env["IDENTITY_PLATFORM_PROJECT_ID"] == "test-project" && contains(keys(module.app["api"].env), "LOG_LEVEL") && contains(keys(module.app["api"].env), "WEB_ORIGINS")
-    error_message = "The api must get this environment's project for auth and Firestore, the web origin, and nothing else new."
+    condition     = length(module.app["api"].env) == 4 && module.app["api"].env["IDENTITY_PLATFORM_PROJECT_ID"] == "test-project" && contains(keys(module.app["api"].env), "LOG_LEVEL") && contains(keys(module.app["api"].env), "WEB_ORIGINS") && module.app["api"].env["DEPLOYMENT_ENVIRONMENT"] == "dev"
+    error_message = "The api must get this environment's project for auth and Firestore, the web origin, its environment, and nothing else new."
+  }
+
+  assert {
+    condition     = length(google_project_iam_custom_role.vertex_ai_invoker) == 0 && length(google_project_iam_member.api_vertex_ai) == 0 && !contains(module.services.services, "aiplatform.googleapis.com") && !contains(keys(module.app["api"].env), "VERTEX_AI_PROJECT_ID")
+    error_message = "Without ai_assist nothing may reach Vertex AI."
   }
 
   assert {
@@ -489,6 +494,64 @@ run "planner_is_least_privilege" {
   assert {
     condition     = google_storage_bucket_iam_member.planner_state[0].role == "roles/storage.objectViewer"
     error_message = "The planner reads the state bucket only; it can never write or lock the state."
+  }
+}
+
+# Assisted AI (ADR-0038): the api alone may call Vertex AI models, with a custom role holding only
+# the predict permission, and learns where the model runs from two plain settings.
+run "dev_calls_vertex_ai" {
+  command = apply
+
+  variables {
+    environment         = "dev"
+    deploy_apps         = true
+    deletion_protection = false
+    firestore_and_auth  = true
+    ai_assist           = true
+  }
+
+  assert {
+    condition     = contains(module.services.services, "aiplatform.googleapis.com")
+    error_message = "Assisted AI needs the Vertex AI API."
+  }
+
+  assert {
+    condition     = google_project_iam_custom_role.vertex_ai_invoker[0].permissions == toset(["aiplatform.endpoints.predict"])
+    error_message = "The Vertex AI role must hold the predict permission only."
+  }
+
+  assert {
+    condition     = google_project_iam_member.api_vertex_ai[0].role == google_project_iam_custom_role.vertex_ai_invoker[0].id && google_project_iam_member.api_vertex_ai[0].member == "serviceAccount:${module.app["api"].runtime_service_account}"
+    error_message = "Only the api runtime identity may call Vertex AI, through the custom role."
+  }
+
+  assert {
+    condition     = module.app["api"].env["VERTEX_AI_PROJECT_ID"] == "test-project" && module.app["api"].env["VERTEX_AI_LOCATION"] == "test-region" && module.app["api"].env["DEPLOYMENT_ENVIRONMENT"] == "dev"
+    error_message = "The api must know the environment and where Vertex AI runs the model."
+  }
+
+  assert {
+    condition     = !contains(keys(module.app["worker"].env), "VERTEX_AI_PROJECT_ID") && !contains(keys(module.app["web"].env), "VERTEX_AI_PROJECT_ID")
+    error_message = "Only the api calls Vertex AI."
+  }
+
+  assert {
+    condition     = length([for m in google_project_iam_member.planner : m if can(regex("aiplatform", m.role))]) == 0 && length([for p in google_project_iam_custom_role.planner.permissions : p if startswith(p, "aiplatform.")]) == 0
+    error_message = "Assisted AI must not widen the planner."
+  }
+}
+
+run "no_vertex_ai_without_apps_and_firestore" {
+  command = plan
+
+  variables {
+    environment = "staging"
+    ai_assist   = true
+  }
+
+  assert {
+    condition     = length(google_project_iam_custom_role.vertex_ai_invoker) == 0 && length(google_project_iam_member.api_vertex_ai) == 0 && !contains(module.services.services, "aiplatform.googleapis.com")
+    error_message = "Without the apps and Firestore, ai_assist creates nothing."
   }
 }
 

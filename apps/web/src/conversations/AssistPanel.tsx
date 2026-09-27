@@ -21,6 +21,8 @@ const ERRORS = new Set([
   'ai_invalid_output',
   'ai_not_available',
   'ai_credits_insufficient',
+  'ai_policy_denied',
+  'ai_timeout',
   'rate_limited',
   'permission_denied',
 ]);
@@ -233,6 +235,7 @@ export function AssistPanel({
               <FormattedMessage id={`conversations.assist.error.${state.code}`} />
             </p>
             {state.code === 'ai_unavailable' ||
+            state.code === 'ai_timeout' ||
             state.code === 'ai_invalid_output' ||
             state.code === 'generic' ? (
               // An answer that could not be read was still a call: trying again is a new request.

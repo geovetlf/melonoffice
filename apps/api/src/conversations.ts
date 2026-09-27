@@ -360,6 +360,8 @@ const STATUS = {
   ai_unavailable: 502,
   ai_invalid_output: 502,
   ai_credits_insufficient: 409,
+  ai_policy_denied: 403,
+  ai_timeout: 504,
   rate_limited: 429,
 } as const;
 

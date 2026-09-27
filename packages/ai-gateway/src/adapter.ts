@@ -1,5 +1,5 @@
 import type { AICapability, AIModality, CredentialReference } from '@melonoffice/domain';
-import type { AIMessage } from './request.js';
+import type { AIMessage, AIOutputSchema } from './request.js';
 
 /**
  * What the gateway gives an adapter for one attempt (ADR-0027). Built only from the validated
@@ -16,6 +16,8 @@ export interface ProviderCall {
   readonly outputModality: AIModality;
   readonly maxOutputTokens: number;
   readonly structuredOutput: boolean;
+  /** The shape of a structured answer, already checked (ADR-0038). */
+  readonly outputSchema?: AIOutputSchema;
   readonly credential: CredentialReference;
   /** When the call must have finished. */
   readonly deadline: Date;
@@ -65,8 +67,8 @@ export type ProviderHealth = 'available' | 'degraded' | 'unavailable';
 
 /**
  * Translates MelonMotor's calls to one official provider API and back (ADR-0027). Nothing else
- * knows a provider's request or response format. No adapter exists yet: the first arrives with
- * the choice of provider (D-7). Tests use fake adapters.
+ * knows a provider's request or response format. Each adapter lives in its own package (the
+ * first, Vertex AI, in `@melonoffice/ai-vertex`, ADR-0038); tests use fake adapters.
  */
 export interface ProviderAdapter {
   readonly providerId: string;

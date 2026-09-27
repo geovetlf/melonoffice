@@ -1,3 +1,4 @@
+import type { AIOutputSchema } from '@melonoffice/ai-gateway';
 import type { DepartmentId } from '@melonoffice/domain';
 import type { AssistOperation } from './assist-context.js';
 import { MAX_TEXT_LENGTH } from './model.js';
@@ -62,6 +63,79 @@ export interface NextStepsResult {
 }
 
 export type AssistResult = SummaryResult | IntentResult | ReplyResult | NextStepsResult;
+
+const str = (maxLength: number, nullable = false): AIOutputSchema => ({
+  type: 'string',
+  maxLength,
+  ...(nullable ? { nullable: true } : {}),
+});
+const strs = (maxItems: number, maxLength: number): AIOutputSchema => ({
+  type: 'array',
+  items: str(maxLength),
+  maxItems,
+});
+const intent: AIOutputSchema = { type: 'string', enum: CONVERSATION_INTENTS };
+
+/**
+ * The shape each operation's answer must have, given to the model as structured output
+ * (ADR-0038). The same bounds `parseAssistOutput` checks: the schema helps the model answer in
+ * shape, the parser still decides what is shown.
+ */
+export const ASSIST_OUTPUT_SCHEMAS: Readonly<Record<AssistOperation, AIOutputSchema>> = {
+  summary: {
+    type: 'object',
+    properties: {
+      summary: str(2_000),
+      intent,
+      customerNeed: str(500, true),
+      keyPoints: strs(10, 300),
+      providedData: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: { label: str(60), value: str(300) },
+          required: ['label', 'value'],
+        },
+        maxItems: 20,
+      },
+      actionsTaken: strs(10, 300),
+      pendingInformation: strs(10, 300),
+      nextSteps: strs(10, 300),
+    },
+    required: ['summary', 'intent'],
+  },
+  intent: {
+    type: 'object',
+    properties: {
+      primary: intent,
+      secondary: { type: 'array', items: intent, maxItems: 5 },
+      confidence: { type: 'number', minimum: 0, maximum: 1, nullable: true },
+      missingInformation: strs(10, 300),
+      requiresHuman: { type: 'boolean' },
+      requiresHumanReason: str(300, true),
+    },
+    required: ['primary'],
+  },
+  reply: {
+    type: 'object',
+    properties: {
+      reply: str(MAX_TEXT_LENGTH),
+      explanation: str(500, true),
+      warnings: strs(5, 300),
+    },
+    required: ['reply'],
+  },
+  next_steps: {
+    type: 'object',
+    properties: {
+      nextSteps: { type: 'array', items: str(300), minItems: 1, maxItems: 10 },
+      missingInformation: strs(10, 300),
+      department: str(10, true),
+      requiresHuman: { type: 'boolean' },
+    },
+    required: ['nextSteps'],
+  },
+};
 
 class Invalid extends Error {}
 const invalid = (): never => {

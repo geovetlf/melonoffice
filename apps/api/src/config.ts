@@ -27,12 +27,21 @@ export interface ServiceConfig {
    * (ADR-0036). Unset: none.
    */
   readonly webOrigins?: readonly string[];
+  /**
+   * Where Vertex AI runs the approved model (D-7, ADR-0038): `VERTEX_AI_PROJECT_ID` and
+   * `VERTEX_AI_LOCATION`, both or neither. Unset: no AI provider is registered and every AI call
+   * is denied.
+   */
+  readonly vertexAI?: { readonly projectId: string; readonly location: string };
 }
 
 const ENVIRONMENTS: readonly string[] = ['dev', 'staging', 'prod'];
 
 /** Google Cloud project ids: 6 to 30 lowercase letters, digits and hyphens, starting with a letter. */
 const PROJECT_ID = /^[a-z][a-z0-9-]{4,28}[a-z0-9]$/;
+
+/** A Google Cloud region, e.g. `us-central1`. */
+const LOCATION = /^[a-z]+-[a-z]+[0-9]{1,2}$/;
 
 const GRAPH_VERSION = /^v[0-9]{1,3}\.[0-9]$/;
 
@@ -71,6 +80,17 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): S
   for (const origin of webOrigins) {
     if (!ORIGIN.test(origin)) throw new Error(`Invalid WEB_ORIGINS entry: ${origin}`);
   }
+  const vertexProjectId = env.VERTEX_AI_PROJECT_ID;
+  const vertexLocation = env.VERTEX_AI_LOCATION;
+  if ((vertexProjectId === undefined) !== (vertexLocation === undefined)) {
+    throw new Error('VERTEX_AI_PROJECT_ID and VERTEX_AI_LOCATION are set together');
+  }
+  if (vertexProjectId !== undefined && !PROJECT_ID.test(vertexProjectId)) {
+    throw new Error(`Invalid VERTEX_AI_PROJECT_ID: ${vertexProjectId}`);
+  }
+  if (vertexLocation !== undefined && !LOCATION.test(vertexLocation)) {
+    throw new Error(`Invalid VERTEX_AI_LOCATION: ${vertexLocation}`);
+  }
   return {
     port,
     logLevel: level,
@@ -82,5 +102,8 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): S
       ? {}
       : { deploymentEnvironment: deploymentEnvironment as DeploymentEnvironment }),
     ...(webOrigins.length === 0 ? {} : { webOrigins }),
+    ...(vertexProjectId === undefined || vertexLocation === undefined
+      ? {}
+      : { vertexAI: { projectId: vertexProjectId, location: vertexLocation } }),
   };
 }

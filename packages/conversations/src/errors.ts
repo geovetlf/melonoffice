@@ -27,6 +27,9 @@ export type ConversationErrorCode =
   | 'ai_unavailable'
   | 'ai_invalid_output'
   | 'ai_credits_insufficient'
+  // Activation (CV-5, ADR-0038): the model policy refused, or the provider did not answer in time.
+  | 'ai_policy_denied'
+  | 'ai_timeout'
   | 'rate_limited';
 
 export class ConversationError extends Error {

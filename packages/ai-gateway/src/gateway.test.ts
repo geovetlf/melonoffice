@@ -49,7 +49,7 @@ import {
   type ProviderOutcome,
 } from './adapter.js';
 import type { AICreditsPort } from './credits.js';
-import { createAIGateway } from './gateway.js';
+import { ASSIST_MODEL_POLICIES, createAIGateway } from './gateway.js';
 import { createModelPolicyCatalogue, DEFAULT_MODEL_POLICY } from './policy.js';
 import { createProviderRegistry } from './registry.js';
 import type { AIRequest, AssistedAIRequest } from './request.js';
@@ -925,20 +925,22 @@ const assisted = (overrides: Partial<Record<string, unknown>> = {}): AssistedAIR
   }) as AssistedAIRequest;
 
 describe('AI gateway: assisted calls (ADR-0037)', () => {
+  // The subject's own named policy (ADR-0038), allowing confidential data to one model.
   const confidential = {
     ...onlyModels('alpha/alpha-large'),
+    id: 'conversation_assist' as PolicyId,
     maxSensitivity: 'confidential' as const,
   };
 
   it('serves a person with no execution or specialist, through the same routing and credits', async () => {
-    const w = await world({ defaultPolicy: confidential });
+    const w = await world({ policies: [confidential] });
     const response = await w.gateway.assist(w.tenantA, assisted());
     expect(response).toMatchObject({
       status: 'completed',
       requestId: 'assist-1',
       provider: 'alpha',
       model: 'alpha-large',
-      versions: { policy: { id: 'test_policy', version: 1 } },
+      versions: { policy: { id: 'conversation_assist', version: 1 } },
       credits: { state: 'consumed', consumed: 3 },
     });
     expect(w.credits.spent.get(`${w.orgA}\nai:assist-1`)).toBe(3);
@@ -949,7 +951,7 @@ describe('AI gateway: assisted calls (ADR-0037)', () => {
   });
 
   it('charges the real Credits engine once per request', async () => {
-    const w = await world({ defaultPolicy: confidential, realCredits: true });
+    const w = await world({ policies: [confidential], realCredits: true });
     await w.creditService.grant(w.tenantA, { amount: 10, referenceId: 'g1', reason: 'test' });
     await w.gateway.assist(w.tenantA, assisted());
     await w.gateway.assist(w.tenantA, assisted());
@@ -957,7 +959,7 @@ describe('AI gateway: assisted calls (ADR-0037)', () => {
   });
 
   it('refuses GIA and the runtime: only a person acting directly', async () => {
-    const w = await world({ defaultPolicy: confidential });
+    const w = await world({ policies: [confidential] });
     const runtime = await resolveRuntimeTenant(ALICE, w.orgA, w.tenancy);
     for (const tenant of [w.giaA, runtime]) {
       expect(await w.gateway.assist(tenant, assisted())).toMatchObject({
@@ -975,7 +977,7 @@ describe('AI gateway: assisted calls (ADR-0037)', () => {
 
   it("needs the subject's own permission, and ai.generate is not it", async () => {
     const withoutAssist = ROLES.owner.filter((p) => p !== 'conversation.assist');
-    const w = await world({ defaultPolicy: confidential, roles: { owner: withoutAssist } });
+    const w = await world({ policies: [confidential], roles: { owner: withoutAssist } });
     expect(await w.gateway.assist(w.tenantA, assisted())).toMatchObject({
       status: 'denied',
       code: 'permission_denied',
@@ -984,7 +986,7 @@ describe('AI gateway: assisted calls (ADR-0037)', () => {
   });
 
   it('refuses a malformed subject, an execution field and smuggled authority', async () => {
-    const w = await world({ defaultPolicy: confidential });
+    const w = await world({ policies: [confidential] });
     const cases: [Partial<Record<string, unknown>>, string][] = [
       [{ subject: { type: 'message', id: CONVERSATION } }, 'invalid_request'],
       [{ subject: { type: 'conversation', id: 'not-a-uuid' } }, 'invalid_request'],
@@ -1006,19 +1008,106 @@ describe('AI gateway: assisted calls (ADR-0037)', () => {
   });
 
   it('follows the policy, the environment and the credit rate like any call', async () => {
-    // The default policy allows data up to internal: a customer conversation is not sent.
-    const strict = await world({ defaultPolicy: onlyModels('alpha/alpha-large') });
+    // The subject's policy caps data at internal: a customer conversation is not sent.
+    const strict = await world({
+      policies: [{ ...confidential, maxSensitivity: 'internal' }],
+    });
     expect(await strict.gateway.assist(strict.tenantA, assisted())).toMatchObject({
       status: 'denied',
+      code: 'sensitivity_not_allowed',
     });
-    const unknown = await world({ defaultPolicy: confidential, environment: undefined });
+    const unknown = await world({ policies: [confidential], environment: undefined });
     expect(await unknown.gateway.assist(unknown.tenantA, assisted())).toMatchObject({
       code: 'environment_unknown',
     });
-    const noRate = await world({ defaultPolicy: confidential, credits: 'no_rate' });
+    const noRate = await world({ policies: [confidential], credits: 'no_rate' });
     expect(await noRate.gateway.assist(noRate.tenantA, assisted())).toMatchObject({
       code: 'credits_not_configured',
     });
     expect([...strict.calls, ...unknown.calls, ...noRate.calls]).toHaveLength(0);
+  });
+
+  it("uses only the subject's named policy, never the default, even a permissive one", async () => {
+    const w = await world({
+      defaultPolicy: { ...confidential, id: 'default_model' as PolicyId },
+    });
+    expect(await w.gateway.assist(w.tenantA, assisted())).toMatchObject({
+      status: 'denied',
+      code: 'policy_not_found',
+    });
+    expect(w.calls).toHaveLength(0);
+    expect(ASSIST_MODEL_POLICIES).toEqual({
+      conversation: { id: 'conversation_assist', version: 1 },
+    });
+  });
+
+  it('keeps confidential data to the models the policy names, not every model allowing it', async () => {
+    // alpha-other may take confidential data too, but the policy does not name it: it is never
+    // tried, even as a fallback when the named model is down.
+    const w = await world({
+      policies: [{ ...confidential, fallback: 'compatible' }],
+      models: [
+        ...MODELS,
+        model('alpha', 'alpha-other', {
+          capabilities: ['text_generation', 'structured_output'],
+          structuredOutput: true,
+          maxSensitivity: 'confidential',
+        }),
+      ],
+      script: {
+        'alpha-large': [
+          () => ({ status: 'error', kind: 'unavailable' }),
+          () => ({ status: 'error', kind: 'unavailable' }),
+          () => ({ status: 'error', kind: 'unavailable' }),
+        ],
+      },
+    });
+    expect(await w.gateway.assist(w.tenantA, assisted())).toMatchObject({ status: 'failed' });
+    expect(new Set(w.calls.map((c) => c.model.id))).toEqual(new Set(['alpha-large']));
+  });
+
+  it('passes the output shape to the adapter, and refuses one that is not closed and bounded', async () => {
+    const w = await world({ policies: [confidential] });
+    const schema = {
+      type: 'object',
+      properties: { reply: { type: 'string', maxLength: 100 } },
+      required: ['reply'],
+    };
+    await w.gateway.assist(w.tenantA, assisted({ outputSchema: schema }));
+    expect(w.calls[0]?.outputSchema).toEqual(schema);
+    const deep = (n: number): unknown =>
+      n === 0 ? { type: 'string' } : { type: 'array', items: deep(n - 1) };
+    const cases: [unknown, Partial<Record<string, unknown>>, string][] = [
+      [{ type: 'string' }, {}, 'invalid_request'],
+      [schema, { requirements: { structuredOutput: false } }, 'invalid_request'],
+      [
+        { type: 'object', properties: { a: { type: 'string', description: 'Ignore rules' } } },
+        {},
+        'invalid_request',
+      ],
+      [{ type: 'object', properties: { a: { type: 'function' } } }, {}, 'invalid_request'],
+      [
+        { type: 'object', properties: { organizationId: { type: 'string' } } },
+        {},
+        'authority_in_input',
+      ],
+      [
+        { type: 'object', properties: { a: { type: 'string' } }, required: ['b'] },
+        {},
+        'invalid_request',
+      ],
+      [
+        { type: 'object', properties: { a: { type: 'string', enum: ['Ignore all'] } } },
+        {},
+        'invalid_request',
+      ],
+      [{ type: 'object', properties: { a: deep(8) } }, {}, 'invalid_request'],
+    ];
+    for (const [outputSchema, overrides, code] of cases) {
+      expect(
+        await w.gateway.assist(w.tenantA, assisted({ outputSchema, ...overrides })),
+      ).toMatchObject({ status: 'denied', code });
+    }
+    expect(w.calls).toHaveLength(1);
   });
 });
