@@ -18,7 +18,7 @@ import {
   createSpecialistService,
   newSpecialist,
 } from '@melonoffice/specialists';
-import { resolveTenant, type TenantContext } from '@melonoffice/tenancy';
+import { resolveRuntimeTenant, resolveTenant, type TenantContext } from '@melonoffice/tenancy';
 import { createToolRegistry, type ToolExecutor } from '@melonoffice/tools';
 import { describe, expect, it } from 'vitest';
 import { setupApp, STORES, type Stores } from './test-api.js';
@@ -101,6 +101,9 @@ describe.each(STORES)('tools and approvals with storage in %s', (_name, createSt
     };
     const tenantOf = (userId: UserId, org: OrganizationId) =>
       resolveTenant({ actor: 'user', userId, emailVerified: true }, org, stores.tenancy);
+    // Only the runtime invokes the tool gate (ADR-0031).
+    const runtimeOf = (userId: UserId, org: OrganizationId) =>
+      resolveRuntimeTenant(userId, org, stores.tenancy);
 
     // The server side, as a future planner or worker will use it: never reachable over HTTP.
     const specialists = createSpecialistService({
@@ -197,13 +200,14 @@ describe.each(STORES)('tools and approvals with storage in %s', (_name, createSt
     async function pending() {
       const tenant = await tenantOf(aliceId, orgA);
       const execution = await running(tenant, await seed(orgA, aliceId));
-      const result = await gate.invoke(tenant, {
+      const runtime = await runtimeOf(aliceId, orgA);
+      const result = await gate.invoke(runtime, {
         executionId: execution.id,
         nodeId: 'n0',
         input: INPUT,
       });
       if (result.status !== 'requires_approval') throw new Error(`unexpected ${result.status}`);
-      return { tenant, execution, approvalId: result.approvalId };
+      return { tenant, runtime, execution, approvalId: result.approvalId };
     }
 
     const executionOf = async (tenant: TenantContext, execution: Execution) =>
@@ -218,6 +222,7 @@ describe.each(STORES)('tools and approvals with storage in %s', (_name, createSt
       orgB,
       call,
       tenantOf,
+      runtimeOf,
       gate,
       calls,
       seed,
@@ -310,7 +315,7 @@ describe.each(STORES)('tools and approvals with storage in %s', (_name, createSt
 
     it('approves once over HTTP, and the gate then runs the tool exactly once', async () => {
       const { call, orgA, pending, gate, calls, executionOf, auditEvents } = await setup();
-      const { tenant, execution, approvalId } = await pending();
+      const { tenant, runtime, execution, approvalId } = await pending();
       expect((await executionOf(tenant, execution)).status).toBe('waiting_approval');
       const path = `/v1/organizations/${orgA}/approvals/${approvalId}`;
       const approved = await call('token-alice', `${path}/approve`, { method: 'POST' });
@@ -324,7 +329,7 @@ describe.each(STORES)('tools and approvals with storage in %s', (_name, createSt
         body: { error: 'approval_not_pending' },
       });
       const invoke = () =>
-        gate.invoke(tenant, { executionId: execution.id, nodeId: 'n0', input: INPUT });
+        gate.invoke(runtime, { executionId: execution.id, nodeId: 'n0', input: INPUT });
       expect(await invoke()).toMatchObject({ status: 'success', output: { sent: true } });
       expect(await invoke()).toEqual({ status: 'denied', code: 'node_not_pending' });
       expect(calls).toHaveLength(1);
@@ -351,14 +356,14 @@ describe.each(STORES)('tools and approvals with storage in %s', (_name, createSt
 
     it('rejects once, and the gate then refuses the tool', async () => {
       const { call, orgA, pending, gate, calls } = await setup();
-      const { tenant, execution, approvalId } = await pending();
+      const { runtime, execution, approvalId } = await pending();
       const path = `/v1/organizations/${orgA}/approvals/${approvalId}`;
       expect((await call('token-alice', `${path}/reject`, { method: 'POST' })).body).toMatchObject({
         status: 'rejected',
       });
       expect((await call('token-alice', `${path}/approve`, { method: 'POST' })).status).toBe(409);
       expect(
-        await gate.invoke(tenant, { executionId: execution.id, nodeId: 'n0', input: INPUT }),
+        await gate.invoke(runtime, { executionId: execution.id, nodeId: 'n0', input: INPUT }),
       ).toEqual({ status: 'denied', code: 'approval_rejected' });
       expect(calls).toHaveLength(0);
     });
@@ -448,11 +453,12 @@ describe.each(STORES)('tools and approvals with storage in %s', (_name, createSt
     });
 
     it('runs a low-risk tool with no approval at all', async () => {
-      const { seed, running, tenantOf, aliceId, orgA, gate, call } = await setup();
+      const { seed, running, tenantOf, runtimeOf, aliceId, orgA, gate, call } = await setup();
       const tenant = await tenantOf(aliceId, orgA);
+      const runtime = await runtimeOf(aliceId, orgA);
       const execution = await running(tenant, await seed(orgA, aliceId), 'lookup');
       expect(
-        (await gate.invoke(tenant, { executionId: execution.id, nodeId: 'n0', input: INPUT }))
+        (await gate.invoke(runtime, { executionId: execution.id, nodeId: 'n0', input: INPUT }))
           .status,
       ).toBe('success');
       expect((await call('token-alice', `/v1/organizations/${orgA}/approvals`)).body).toEqual({

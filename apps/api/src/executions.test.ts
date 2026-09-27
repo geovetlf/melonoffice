@@ -142,28 +142,31 @@ describe.each(STORES)('executions with storage in %s', (_name, createStores) => 
       'lets only one of two concurrent transitions win: verifying never overwrites cancelled',
       { timeout: 30_000 },
       async () => {
-        const { service, tenantA, events } = await setup();
+        const { service, tenantA, events, aliceId, orgA, stores } = await setup();
+        const runtime = await resolveRuntimeTenant(aliceId, orgA, stores.tenancy);
         const { id } = await service.create(tenantA, REQUEST);
         await service.start(tenantA, id);
         for (const nodeId of ['research', 'verify']) {
-          await service.changeNode(tenantA, id, { nodeId, from: 'pending', to: 'running' });
-          await service.changeNode(tenantA, id, { nodeId, from: 'running', to: 'completed' });
+          await service.runtimeChangeNode(runtime, id, { nodeId, from: 'pending', to: 'running' });
+          await service.runtimeChangeNode(runtime, id, {
+            nodeId,
+            from: 'running',
+            to: 'completed',
+          });
         }
         const results = await Promise.all([
-          codeOf(service.changeStatus(tenantA, id, { from: 'running', to: 'verifying' })),
-          codeOf(
-            service.changeStatus(tenantA, id, {
-              from: 'running',
-              to: 'cancelled',
-              reason: 'director_request',
-            }),
-          ),
+          codeOf(service.runtimeChangeStatus(runtime, id, { from: 'running', to: 'verifying' })),
+          codeOf(service.cancel(tenantA, id, 'director_request')),
         ]);
-        expect(results.sort()).toEqual(['accepted', 'execution_concurrency_conflict']);
+        // The person's cancellation always lands (ADR-0029); the runtime's change never
+        // overwrites it.
+        expect(results[1]).toBe('accepted');
         const final = await service.get(tenantA, id);
-        expect(final.revision).toBe(7);
+        expect(final.status).toBe('cancelled');
         const changes = (await events('execution.state_changed')).map((e) => e.transition?.to);
-        expect(changes).toEqual(['running', final.status]);
+        expect(changes.at(0)).toBe('running');
+        expect(changes.at(-1)).toBe('cancelled');
+        expect(changes.filter((to) => to === 'cancelled')).toHaveLength(1);
       },
     );
 
@@ -176,22 +179,30 @@ describe.each(STORES)('executions with storage in %s', (_name, createStores) => 
       });
       await service.start(tenantA, id);
       const key = 'a'.repeat(64);
-      await service.changeNode(runtime, id, {
+      await service.runtimeChangeNode(runtime, id, {
         nodeId: 'decide',
         from: 'pending',
         to: 'running',
         idempotencyKey: key,
       });
-      await service.changeNode(runtime, id, {
+      await service.runtimeChangeNode(runtime, id, {
         nodeId: 'decide',
         from: 'running',
         to: 'failed',
         error: { code: 'check_failed' },
       });
       await service.retryNode(runtime, id, 'decide');
-      await service.changeNode(runtime, id, { nodeId: 'decide', from: 'pending', to: 'running' });
-      await service.changeNode(runtime, id, { nodeId: 'decide', from: 'running', to: 'completed' });
-      await service.changeStatus(runtime, id, { from: 'running', to: 'verifying' });
+      await service.runtimeChangeNode(runtime, id, {
+        nodeId: 'decide',
+        from: 'pending',
+        to: 'running',
+      });
+      await service.runtimeChangeNode(runtime, id, {
+        nodeId: 'decide',
+        from: 'running',
+        to: 'completed',
+      });
+      await service.runtimeChangeStatus(runtime, id, { from: 'running', to: 'verifying' });
       const verified = await service.recordVerification(runtime, id, {
         correlationId: 'req-verify-2',
         nodes: [
@@ -220,7 +231,8 @@ describe.each(STORES)('executions with storage in %s', (_name, createStores) => 
     });
 
     it('keeps cancelled terminal in storage too', async () => {
-      const { service, tenantA } = await setup();
+      const { service, tenantA, aliceId, orgA, stores } = await setup();
+      const runtime = await resolveRuntimeTenant(aliceId, orgA, stores.tenancy);
       const { id } = await service.create(tenantA, REQUEST);
       await service.changeStatus(tenantA, id, {
         from: 'pending',
@@ -228,9 +240,9 @@ describe.each(STORES)('executions with storage in %s', (_name, createStores) => 
         reason: 'director_request',
       });
       for (const to of ['running', 'retrying', 'verifying', 'completed'] as const) {
-        expect(await codeOf(service.changeStatus(tenantA, id, { from: 'cancelled', to }))).toBe(
-          'execution_already_terminal',
-        );
+        expect(
+          await codeOf(service.runtimeChangeStatus(runtime, id, { from: 'cancelled', to })),
+        ).toBe('execution_already_terminal');
       }
       const stored = await service.get(tenantA, id);
       expect(stored.status).toBe('cancelled');
@@ -535,16 +547,28 @@ describe.each(STORES)('executions with storage in %s', (_name, createStores) => 
       const runtime = await resolveRuntimeTenant(aliceId, orgA, stores.tenancy);
       const { id } = await service.create(tenantA, REQUEST);
       await service.start(tenantA, id);
-      await service.changeNode(runtime, id, { nodeId: 'research', from: 'pending', to: 'running' });
-      await service.changeNode(runtime, id, {
+      await service.runtimeChangeNode(runtime, id, {
+        nodeId: 'research',
+        from: 'pending',
+        to: 'running',
+      });
+      await service.runtimeChangeNode(runtime, id, {
         nodeId: 'research',
         from: 'running',
         to: 'completed',
         output: { type: 'report', id: 'rep-1' },
       });
-      await service.changeNode(runtime, id, { nodeId: 'verify', from: 'pending', to: 'running' });
-      await service.changeNode(runtime, id, { nodeId: 'verify', from: 'running', to: 'completed' });
-      await service.changeStatus(runtime, id, { from: 'running', to: 'verifying' });
+      await service.runtimeChangeNode(runtime, id, {
+        nodeId: 'verify',
+        from: 'pending',
+        to: 'running',
+      });
+      await service.runtimeChangeNode(runtime, id, {
+        nodeId: 'verify',
+        from: 'running',
+        to: 'completed',
+      });
+      await service.runtimeChangeStatus(runtime, id, { from: 'running', to: 'verifying' });
       await service.recordVerification(runtime, id, {
         correlationId: 'req-verify-1',
         nodes: ['research', 'verify'].map((nodeId) => ({
@@ -559,7 +583,7 @@ describe.each(STORES)('executions with storage in %s', (_name, createStores) => 
           ],
         })),
       });
-      await service.changeStatus(runtime, id, {
+      await service.runtimeChangeStatus(runtime, id, {
         from: 'verifying',
         to: 'completed',
         result: { type: 'report', id: 'rep-1' },
@@ -576,7 +600,10 @@ describe.each(STORES)('executions with storage in %s', (_name, createStores) => 
         versions: execution.versionSnapshot.components.map((c) => `${c.kind}:${c.id}@${c.version}`),
         result: execution.result,
         verification: execution.nodes.find((n) => n.type === 'verification')?.status,
-        path: history.map((e) => e.transition?.to ?? e.action.slice('execution.'.length)),
+        path: history.map(
+          (e) =>
+            `${e.nodeId === undefined ? '' : `${e.nodeId}:`}${e.transition?.to ?? e.action.slice('execution.'.length)}`,
+        ),
         verifiedBy: history.find((e) => e.action === 'execution.verification_recorded')?.actor,
       };
       expect(story).toEqual({
@@ -592,7 +619,18 @@ describe.each(STORES)('executions with storage in %s', (_name, createStores) => 
         versions: ['specialist:spec-research@3', 'role:researcher@2', 'skill:web_research@5'],
         result: { type: 'report', id: 'rep-1' },
         verification: 'completed',
-        path: ['created', 'running', 'verifying', 'verification_recorded', 'completed'],
+        // Every node change is in the record too (ADR-0031).
+        path: [
+          'created',
+          'running',
+          'research:running',
+          'research:completed',
+          'verify:running',
+          'verify:completed',
+          'verifying',
+          'verification_recorded',
+          'completed',
+        ],
         verifiedBy: { type: 'system', id: 'runtime', initiatedBy: aliceId, via: 'runtime' },
       });
     });

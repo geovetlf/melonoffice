@@ -9,7 +9,6 @@ import type {
   Execution,
   ExecutionJob,
   IsoTimestamp,
-  JobId,
   OrganizationId,
   UserId,
 } from '@melonoffice/domain';
@@ -39,6 +38,8 @@ import {
   isWorkerId,
   jobIdFor,
   newJob,
+  releaseJob,
+  takeTurn,
   type LeaseProof,
 } from './model.js';
 import type { JobRepository } from './repository.js';
@@ -76,6 +77,18 @@ export interface JobService {
    * cancelled instead.
    */
   acquire(jobId: string, workerId: string): Promise<JobClaim>;
+  /**
+   * The lease holder takes its turn on the job (ADR-0031), with only its lease proof: the job,
+   * the execution and the runtime context are read again from storage. It moves the job one
+   * revision ahead under the same lease, so of several deliveries of one proof only one gets a
+   * claim; the others are refused (`job_revision_mismatch`) and change nothing.
+   */
+  turn(proof: unknown): Promise<JobClaim>;
+  /**
+   * The lease holder gives the job back to the queue (ADR-0031) while its node waits for a
+   * person's approval, so it can be leased again once the approval is decided.
+   */
+  release(claim: JobClaim, reason: string): Promise<ExecutionJob>;
   /** The lease holder records how the job ended, while its lease is current and live. */
   finish(claim: JobClaim, outcome: unknown): Promise<ExecutionJob>;
   /**
@@ -250,7 +263,7 @@ export function createJobService({
 
   /** Records a refused worker write, then refuses it. Never records anything the worker sent. */
   async function deny(
-    action: 'execution.job_leased' | 'execution.job_finished',
+    action: 'execution.job_leased' | 'execution.job_finished' | 'execution.job_released',
     job: ExecutionJob,
     initiatedBy: UserId | undefined,
     error: JobError,
@@ -284,6 +297,63 @@ export function createJobService({
     } catch {
       return undefined;
     }
+  }
+
+  /** A lease proof exactly: a job id, a lease id and a revision. Anything else is refused. */
+  function proofOf(value: unknown): LeaseProof {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+      throw new JobError('job_lease_mismatch');
+    }
+    const { jobId, leaseId, revision, ...rest } = value as Record<string, unknown>;
+    if (
+      Object.keys(rest).length > 0 ||
+      !isJobId(jobId) ||
+      typeof leaseId !== 'string' ||
+      typeof revision !== 'number' ||
+      !Number.isSafeInteger(revision)
+    ) {
+      throw new JobError('job_lease_mismatch');
+    }
+    return Object.freeze({ jobId, leaseId, revision });
+  }
+
+  /**
+   * The stored job, its execution and the runtime context of its user, for a lease holder's
+   * write. A missing execution, a user who can no longer act, or a claim context that is not the
+   * one issued for this job's execution is `job_forbidden`; an ended execution cancels the job.
+   */
+  async function holderOf(
+    action: 'execution.job_leased' | 'execution.job_finished' | 'execution.job_released',
+    lease: LeaseProof,
+    given?: TenantContext,
+  ): Promise<{ job: ExecutionJob; execution: Execution; tenant: TenantContext }> {
+    // Only finishing may follow the end the runtime itself recorded (completed or failed, ADR-0031):
+    // the job then says how it ended. A cancellation always cancels the job (ADR-0029).
+    const endsJob = action === 'execution.job_finished';
+    const job = await jobs.find(lease.jobId);
+    if (job === undefined) throw new JobError('job_not_found');
+    const execution = await executionOf(job);
+    const initiatedBy = execution?.userId;
+    const fields = { leaseId: lease.leaseId };
+    if (
+      execution === undefined ||
+      (given !== undefined &&
+        (!isResolvedTenant(given) ||
+          given.actor !== 'runtime' ||
+          given.organizationId !== job.organizationId ||
+          given.userId !== execution.userId))
+    ) {
+      return deny(action, job, initiatedBy, new JobError('job_forbidden'), fields);
+    }
+    const tenant = await runtimeTenantOf(execution);
+    if (tenant === undefined) {
+      return deny(action, job, initiatedBy, new JobError('job_forbidden', 'tenant'), fields);
+    }
+    if (isTerminal(execution.status) && (!endsJob || execution.status === 'cancelled')) {
+      await cancelEnded(job, runtimeActor(execution.userId));
+      return deny(action, job, initiatedBy, new JobError('job_cancelled'), fields);
+    }
+    return { job, execution, tenant };
   }
 
   const service: JobService = {
@@ -436,57 +506,93 @@ export function createJobService({
       });
     },
 
+    async turn(value) {
+      const lease = proofOf(value);
+      const { job, execution, tenant } = await holderOf('execution.job_leased', lease);
+      const at = now();
+      let turned: ExecutionJob;
+      try {
+        // No event: the turn changes no state, only which delivery may write (ADR-0031).
+        turned = await jobs.update(job.id, (current) => ({
+          job: takeTurn(current, lease, iso(at)),
+          events: [],
+        }));
+      } catch (error) {
+        if (!isJobError(error)) throw error;
+        // A second delivery of the same proof, concurrent or after the job ended, is expected,
+        // not an attack: logged, not audited, so redeliveries leave exactly one record.
+        if (error.code === 'job_revision_mismatch' || error.code === 'job_terminal') {
+          log(job, { leaseId: lease.leaseId })?.info('job turn refused', { code: error.code });
+          throw error;
+        }
+        return deny('execution.job_leased', job, execution.userId, error, {
+          leaseId: lease.leaseId,
+        });
+      }
+      return Object.freeze({
+        job: turned,
+        lease: Object.freeze({
+          jobId: turned.id,
+          leaseId: lease.leaseId,
+          revision: turned.revision,
+        }),
+        tenant,
+      });
+    },
+
+    async release(claim, reason) {
+      if (typeof reason !== 'string' || !/^[a-z][a-z_]{0,63}$/.test(reason)) {
+        throw new JobError('invalid_job', 'reason');
+      }
+      const lease = proofOf(claim?.lease);
+      const { job, execution, tenant } = await holderOf(
+        'execution.job_released',
+        lease,
+        claim.tenant,
+      );
+      const at = now();
+      let released: ExecutionJob;
+      try {
+        released = await jobs.update(job.id, (current) => {
+          const next = releaseJob(current, lease, iso(at));
+          return {
+            job: next,
+            events: [
+              jobEvent(
+                {
+                  action: 'execution.job_released',
+                  result: 'success',
+                  actor: actorOf(tenant),
+                  reason,
+                },
+                next,
+                lease.leaseId,
+                at,
+              ),
+            ],
+          };
+        });
+      } catch (error) {
+        if (!isJobError(error)) throw error;
+        return deny('execution.job_released', job, execution.userId, error, {
+          leaseId: lease.leaseId,
+        });
+      }
+      log(released, { leaseId: lease.leaseId })?.info('job released', { reason });
+      return released;
+    },
+
     async finish(claim, outcome) {
       const finish = checkFinish(outcome);
-      const proof: unknown = claim?.lease;
-      if (
-        typeof proof !== 'object' ||
-        proof === null ||
-        !isJobId((proof as LeaseProof).jobId) ||
-        typeof (proof as LeaseProof).leaseId !== 'string' ||
-        !Number.isSafeInteger((proof as LeaseProof).revision)
-      ) {
-        throw new JobError('job_lease_mismatch');
-      }
-      const lease: LeaseProof = {
-        jobId: (proof as LeaseProof).jobId as JobId,
-        leaseId: (proof as LeaseProof).leaseId,
-        revision: (proof as LeaseProof).revision,
-      };
-      const job = await jobs.find(lease.jobId);
-      if (job === undefined) throw new JobError('job_not_found');
-      const execution = await executionOf(job);
-      const initiatedBy = execution?.userId;
+      const lease = proofOf(claim?.lease);
       // The claim's context must be the one this service issued for this job's execution:
       // a context of another organization, another user, a person or GIA is refused.
-      const given = claim.tenant;
-      if (
-        execution === undefined ||
-        !isResolvedTenant(given) ||
-        given.actor !== 'runtime' ||
-        given.organizationId !== job.organizationId ||
-        given.userId !== execution.userId
-      ) {
-        return deny('execution.job_finished', job, initiatedBy, new JobError('job_forbidden'), {
-          leaseId: lease.leaseId,
-        });
-      }
-      const tenant = await runtimeTenantOf(execution);
-      if (tenant === undefined) {
-        return deny(
-          'execution.job_finished',
-          job,
-          initiatedBy,
-          new JobError('job_forbidden', 'tenant'),
-          { leaseId: lease.leaseId },
-        );
-      }
-      if (isTerminal(execution.status)) {
-        await cancelEnded(job, runtimeActor(execution.userId));
-        return deny('execution.job_finished', job, initiatedBy, new JobError('job_cancelled'), {
-          leaseId: lease.leaseId,
-        });
-      }
+      const { job, execution, tenant } = await holderOf(
+        'execution.job_finished',
+        lease,
+        claim.tenant,
+      );
+      const initiatedBy = execution.userId;
       const at = now();
       let finished: ExecutionJob;
       try {

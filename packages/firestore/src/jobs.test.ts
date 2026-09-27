@@ -390,12 +390,12 @@ describe.each(STORES)('execution jobs with storage in %s', (_name, createStores)
       executionId: execution.id,
       nodeId: 'n0',
     });
-    await w.executions.changeNode(w.runtimeA, execution.id, {
+    await w.executions.runtimeChangeNode(w.runtimeA, execution.id, {
       nodeId: 'n0',
       from: 'pending',
       to: 'running',
     });
-    await w.executions.changeNode(w.runtimeA, execution.id, {
+    await w.executions.runtimeChangeNode(w.runtimeA, execution.id, {
       nodeId: 'n0',
       from: 'running',
       to: 'failed',
@@ -660,6 +660,89 @@ describe.each(STORES)('execution jobs with storage in %s', (_name, createStores)
     });
   });
 
+  it('X6c. gives one turn per lease proof: of five concurrent deliveries only one proceeds', async () => {
+    const w = await world();
+    const execution = await w.running();
+    const job = await w.jobService.enqueue(w.tenantA, { executionId: execution.id, nodeId: 'n0' });
+    const claim = await w.jobService.acquire(job.id, 'worker-1');
+    const mine = async () => (await w.events()).filter((e) => e.target?.id === execution.id);
+    const before = (await mine()).length;
+    const results = await Promise.allSettled(
+      Array.from({ length: 5 }, () => w.jobService.turn(claim.lease)),
+    );
+    const won = results.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []));
+    const lost = results.flatMap((r) => (r.status === 'rejected' ? [r.reason] : []));
+    expect(won).toHaveLength(1);
+    expect(lost.map((e) => isJobError(e) && e.code)).toEqual(
+      Array.from({ length: 4 }, () => 'job_revision_mismatch'),
+    );
+    expect(won[0]?.lease).toEqual({
+      jobId: job.id,
+      leaseId: claim.lease.leaseId,
+      revision: claim.lease.revision + 1,
+    });
+    expect(won[0]?.tenant).toMatchObject({ actor: 'runtime', userId: ALICE });
+    // The turn changes no state: no event, and the refused deliveries leave no record either.
+    expect((await mine()).length).toBe(before);
+    // The old proof can no longer write; the new one can.
+    expect(await codeOf(w.jobService.finish(claim, { result: 'succeeded', code: 'done' }))).toBe(
+      'job_revision_mismatch',
+    );
+    expect(
+      (await w.jobService.finish(won[0] as JobClaim, { result: 'succeeded', code: 'done' })).state,
+    ).toBe('succeeded');
+  });
+
+  it('X6c. refuses a turn with a wrong, expired or malformed proof', async () => {
+    const w = await world();
+    const execution = await w.running();
+    const job = await w.jobService.enqueue(w.tenantA, { executionId: execution.id, nodeId: 'n0' });
+    const claim = await w.jobService.acquire(job.id, 'worker-1');
+    expect(await codeOf(w.jobService.turn({ ...claim.lease, leaseId: randomUUID() }))).toBe(
+      'job_lease_mismatch',
+    );
+    expect(await codeOf(w.jobService.turn({ ...claim.lease, organizationId: 'x' }))).toBe(
+      'job_lease_mismatch',
+    );
+    expect(await codeOf(w.jobService.turn(null))).toBe('job_lease_mismatch');
+    w.advance(LEASE_MS);
+    expect(await codeOf(w.jobService.turn(claim.lease))).toBe('job_lease_expired');
+    expect(await w.jobService.get(w.tenantA, job.id)).toMatchObject({
+      revision: claim.lease.revision,
+    });
+  });
+
+  it('X6c. releases a job back to the queue, audited, and leases it again under a new id', async () => {
+    const w = await world();
+    const execution = await w.running();
+    const job = await w.jobService.enqueue(w.tenantA, { executionId: execution.id, nodeId: 'n0' });
+    const claim = await w.jobService.turn((await w.jobService.acquire(job.id, 'worker-1')).lease);
+    const released = await w.jobService.release(claim, 'waiting_approval');
+    expect(released).toMatchObject({ state: 'queued', leaseCount: 1 });
+    expect(await codeOf(w.jobService.release(claim, 'waiting_approval'))).toBe(
+      'job_lease_mismatch',
+    );
+    expect(await codeOf(w.jobService.release({ ...claim, tenant: w.tenantA }, 'x'))).toBe(
+      'job_forbidden',
+    );
+    const again = await w.jobService.acquire(job.id, 'worker-2');
+    expect(again.lease.leaseId).not.toBe(claim.lease.leaseId);
+    expect(again.job).toMatchObject({ state: 'leased', leaseCount: 2 });
+    const events = (await w.jobEvents()).filter((e) => e.action === 'execution.job_released');
+    expect(events).toHaveLength(3);
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          result: 'success',
+          reason: 'waiting_approval',
+          actor: { type: 'system', id: 'runtime', initiatedBy: ALICE, via: 'runtime' },
+        }),
+        expect.objectContaining({ result: 'denied', reason: 'job_lease_mismatch' }),
+        expect.objectContaining({ result: 'denied', reason: 'job_forbidden' }),
+      ]),
+    );
+  });
+
   it('refuses jobs for executions that cannot run, and nodes that are not pending', async () => {
     const w = await world();
     const pending = await w.executions.create(w.tenantA, {
@@ -675,7 +758,7 @@ describe.each(STORES)('execution jobs with storage in %s', (_name, createStores)
     expect(
       await codeOf(w.jobService.enqueue(w.tenantA, { executionId: execution.id, nodeId: 'nx' })),
     ).toBe('node_not_runnable');
-    await w.executions.changeNode(w.runtimeA, execution.id, {
+    await w.executions.runtimeChangeNode(w.runtimeA, execution.id, {
       nodeId: 'n0',
       from: 'pending',
       to: 'running',

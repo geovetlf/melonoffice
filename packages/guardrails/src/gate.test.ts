@@ -265,6 +265,7 @@ async function world(options: WorldOptions = {}) {
   const tenantB = await resolveTenant(as(BOB), orgB, tenancy);
   const giaA = await resolveTenant(as(ALICE, 'gia'), orgA, tenancy);
   const runtimeA = await resolveRuntimeTenant(ALICE, orgA, tenancy);
+  const runtimeB = await resolveRuntimeTenant(BOB, orgB, tenancy);
 
   async function seed(
     org: OrganizationId,
@@ -346,6 +347,7 @@ async function world(options: WorldOptions = {}) {
     tenantB,
     giaA,
     runtimeA,
+    runtimeB,
     tenancy,
     a,
     gate,
@@ -370,7 +372,7 @@ async function setup(tools: readonly string[], options: WorldOptions = {}) {
   const w = await world(options);
   const specialist = await w.seed(w.orgA);
   const execution = await w.running(w.tenantA, specialist, tools);
-  const invoke = (tenant: TenantContext = w.tenantA, input: unknown = INPUT, nodeId = 'n0') =>
+  const invoke = (tenant: TenantContext = w.runtimeA, input: unknown = INPUT, nodeId = 'n0') =>
     w.gate.invoke(tenant, { executionId: execution.id, nodeId, input });
   const node = async (nodeId = 'n0') =>
     must((await w.executions.get(w.tenantA, execution.id)).nodes.find((n) => n.id === nodeId));
@@ -531,7 +533,7 @@ describe('security: the 22 cases of the X3 brief', () => {
     const execution = await w.running(w.tenantA, specialist, ['lookup']);
     // Checked again when the tool runs, not only when the execution was created.
     expect(
-      await w.gate.invoke(w.tenantA, { executionId: execution.id, nodeId: 'n0', input: INPUT }),
+      await w.gate.invoke(w.runtimeA, { executionId: execution.id, nodeId: 'n0', input: INPUT }),
     ).toEqual({ status: 'denied', code: 'specialist_not_eligible' });
     expect(w.calls).toHaveLength(0);
   });
@@ -542,7 +544,7 @@ describe('security: the 22 cases of the X3 brief', () => {
     const finance = await w.seed(w.orgA, { department: 'finance' });
     const execution = await w.running(w.tenantA, finance, ['finance_report']);
     expect(
-      (await w.gate.invoke(w.tenantA, { executionId: execution.id, nodeId: 'n0', input: INPUT }))
+      (await w.gate.invoke(w.runtimeA, { executionId: execution.id, nodeId: 'n0', input: INPUT }))
         .status,
     ).toBe('success');
   });
@@ -563,7 +565,7 @@ describe('security: the 22 cases of the X3 brief', () => {
 
   it("6. another tenant cannot run an organization's execution", async () => {
     const { w, invoke, node } = await setup(['lookup']);
-    expect(await invoke(w.tenantB)).toEqual({ status: 'denied', code: 'execution_not_found' });
+    expect(await invoke(w.runtimeB)).toEqual({ status: 'denied', code: 'execution_not_found' });
     expect((await node()).status).toBe('pending');
   });
 
@@ -645,17 +647,13 @@ describe('security: the 22 cases of the X3 brief', () => {
 
   it('14. a cancelled execution is denied', async () => {
     const { w, execution, invoke } = await setup(['lookup']);
-    await w.executions.changeStatus(w.tenantA, execution.id, {
-      from: 'running',
-      to: 'cancelled',
-      reason: 'user_cancelled',
-    });
+    await w.executions.cancel(w.tenantA, execution.id, 'user_cancelled');
     expect(await invoke()).toEqual({ status: 'denied', code: 'execution_not_running' });
   });
 
   it('15. a terminal execution is denied', async () => {
     const { w, execution, invoke } = await setup(['lookup']);
-    await w.executions.changeStatus(w.tenantA, execution.id, {
+    await w.executions.runtimeChangeStatus(w.runtimeA, execution.id, {
       from: 'running',
       to: 'failed',
       failure: { code: 'step_failed' },
@@ -667,7 +665,7 @@ describe('security: the 22 cases of the X3 brief', () => {
   it('16. invalid input is denied before anything runs', async () => {
     const { w, invoke } = await setup(['lookup']);
     for (const input of [{}, { subject: '' }, { subject: 3 }, { subject: 'x', extra: 1 }, null]) {
-      expect(await invoke(w.tenantA, input)).toEqual({ status: 'denied', code: 'invalid_input' });
+      expect(await invoke(w.runtimeA, input)).toEqual({ status: 'denied', code: 'invalid_input' });
     }
     expect(w.calls).toHaveLength(0);
   });
@@ -676,11 +674,11 @@ describe('security: the 22 cases of the X3 brief', () => {
     const { w, invoke } = await setup(['lookup']);
     // Built at run time so secret scanners do not flag a test value.
     const leaked = ['sk', '-abcdefghijklmnopqrstuvwxyz123456'].join('');
-    expect(await invoke(w.tenantA, { subject: leaked })).toEqual({
+    expect(await invoke(w.runtimeA, { subject: leaked })).toEqual({
       status: 'denied',
       code: 'invalid_input',
     });
-    expect(await invoke(w.tenantA, { subject: 'x', apiKey: 'abc' })).toEqual({
+    expect(await invoke(w.runtimeA, { subject: 'x', apiKey: 'abc' })).toEqual({
       status: 'denied',
       code: 'invalid_input',
     });
@@ -693,7 +691,7 @@ describe('security: the 22 cases of the X3 brief', () => {
     // header injection in apps/api. Here: the tool input cannot carry one either.
     const { w, invoke } = await setup(['lookup']);
     for (const field of ['organizationId', 'tenantId', 'approvalId', 'approved', 'userId']) {
-      expect(await invoke(w.tenantA, { subject: 'x', [field]: w.orgB })).toEqual({
+      expect(await invoke(w.runtimeA, { subject: 'x', [field]: w.orgB })).toEqual({
         status: 'denied',
         code: 'invalid_input',
       });
@@ -701,26 +699,23 @@ describe('security: the 22 cases of the X3 brief', () => {
     expect(w.calls).toHaveLength(0);
   });
 
-  it('21. GIA gets no privilege: same checks as the user, and never approves', async () => {
-    const withoutExecute = await setup(['lookup'], {
-      roles: { owner: OWNER_ALL.filter((p) => p !== 'tool.execute') },
-    });
-    expect(await withoutExecute.invoke(withoutExecute.w.giaA)).toEqual({
-      status: 'denied',
-      code: 'permission_not_held',
-    });
-    const { w, invoke } = await setup(['send_email']);
-    const request = await invoke(w.giaA);
+  it('21. GIA gets no privilege: it cannot run a tool, and never approves (ADR-0031: runtime only)', async () => {
+    const { w, invoke, execution } = await setup(['send_email']);
+    // Only the runtime invokes the gate; GIA and a user acting directly are refused before anything.
+    expect(await invoke(w.giaA)).toEqual({ status: 'denied', code: 'runtime_only' });
+    expect(await invoke(w.tenantA)).toEqual({ status: 'denied', code: 'runtime_only' });
+    expect(w.events('tool.execution_denied')).toEqual([
+      expect.objectContaining({ result: 'denied', reason: 'runtime_only' }),
+      expect.objectContaining({ result: 'denied', reason: 'runtime_only' }),
+    ]);
+    expect((await w.executions.get(w.tenantA, execution.id)).nodes[0]?.status).toBe('pending');
+    const request = await invoke();
     expect(request.status).toBe('requires_approval');
     const id = request.status === 'requires_approval' ? request.approvalId : '';
     await expect(w.approvals.approve(w.giaA, id)).rejects.toThrow('approval_forbidden');
-    expect(await invoke(w.giaA)).toEqual({ status: 'requires_approval', approvalId: id });
+    await expect(w.approvals.approve(w.runtimeA, id)).rejects.toThrow();
+    expect(await invoke()).toEqual({ status: 'requires_approval', approvalId: id });
     expect(w.calls).toHaveLength(0);
-    const critical = await setup(['wipe_data']);
-    expect(await critical.invoke(critical.w.giaA)).toEqual({
-      status: 'denied',
-      code: 'tool_denied_by_policy',
-    });
   });
 
   it('22. cross-tenant tool access is denied: ids from another organization resolve to nothing', async () => {
@@ -728,10 +723,10 @@ describe('security: the 22 cases of the X3 brief', () => {
     const theirs = await w.seed(w.orgB);
     const their = await w.running(w.tenantB, theirs, ['lookup']);
     expect(
-      await w.gate.invoke(w.tenantA, { executionId: their.id, nodeId: 'n0', input: INPUT }),
+      await w.gate.invoke(w.runtimeA, { executionId: their.id, nodeId: 'n0', input: INPUT }),
     ).toEqual({ status: 'denied', code: 'execution_not_found' });
     expect(
-      await w.gate.invoke(w.tenantB, { executionId: execution.id, nodeId: 'n0', input: INPUT }),
+      await w.gate.invoke(w.runtimeB, { executionId: execution.id, nodeId: 'n0', input: INPUT }),
     ).toEqual({ status: 'denied', code: 'execution_not_found' });
     expect(w.calls).toHaveLength(0);
   });
@@ -750,7 +745,7 @@ describe('tool gate: execution integration', () => {
   it('gives mutating tools a deterministic idempotency key, and a safe context', async () => {
     const { w, execution, specialist, invoke } = await setup(['update_record', 'lookup']);
     await invoke();
-    await invoke(w.tenantA, INPUT, 'n1');
+    await invoke(w.runtimeA, INPUT, 'n1');
     const [mutating, reading] = w.calls.map((c) => c.context);
     expect(mutating?.idempotencyKey).toMatch(/^[0-9a-f]{64}$/);
     expect(reading?.idempotencyKey).toBeUndefined();
@@ -762,7 +757,7 @@ describe('tool gate: execution integration', () => {
       specialistVersion: 1,
       toolId: 'update_record',
       toolVersion: 1,
-      actor: { userId: ALICE, via: 'direct' },
+      actor: { userId: ALICE, via: 'runtime' },
       environment: 'dev',
     });
     expect(Object.isFrozen(w.calls[0]?.input)).toBe(true);
@@ -785,7 +780,7 @@ describe('tool gate: execution integration', () => {
     });
     await w.executions.start(w.tenantA, execution.id);
     expect(
-      await w.gate.invoke(w.tenantA, { executionId: execution.id, nodeId: 'n0', input: INPUT }),
+      await w.gate.invoke(w.runtimeA, { executionId: execution.id, nodeId: 'n0', input: INPUT }),
     ).toEqual({ status: 'denied', code: 'tool_not_found' });
   });
 
@@ -793,7 +788,7 @@ describe('tool gate: execution integration', () => {
     const w = await world();
     const execution = await w.running(w.tenantA, await w.seed(w.orgA), ['update_record'], 'ask');
     expect(
-      await w.gate.invoke(w.tenantA, { executionId: execution.id, nodeId: 'n0', input: INPUT }),
+      await w.gate.invoke(w.runtimeA, { executionId: execution.id, nodeId: 'n0', input: INPUT }),
     ).toEqual({ status: 'denied', code: 'mode_forbids_mutation' });
   });
 
@@ -809,7 +804,7 @@ describe('tool gate: execution integration', () => {
       ],
     });
     const call = (nodeId: string) =>
-      w.gate.invoke(w.tenantA, { executionId: bare.id, nodeId, input: INPUT });
+      w.gate.invoke(w.runtimeA, { executionId: bare.id, nodeId, input: INPUT });
     expect(await call('n0')).toEqual({ status: 'denied', code: 'execution_not_running' });
     await w.executions.start(w.tenantA, bare.id);
     expect(await call('n0')).toEqual({ status: 'denied', code: 'no_specialist' });
@@ -866,7 +861,7 @@ describe('tool gate: execution integration', () => {
 
   it('refuses an unresolved tenant and a suspended organization', async () => {
     const { w, invoke } = await setup(['lookup']);
-    expect(await invoke({ ...w.tenantA } as TenantContext)).toEqual({
+    expect(await invoke({ ...w.runtimeA } as TenantContext)).toEqual({
       status: 'denied',
       code: 'unresolved_tenant',
     });

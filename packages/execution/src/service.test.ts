@@ -142,10 +142,10 @@ describe('execution service', () => {
   });
 
   it('audits every status change with from, to and the cause, never payloads', async () => {
-    const { service, tenantA, events } = await world();
+    const { service, tenantA, runtimeA, events } = await world();
     const { id } = await service.create(tenantA, REQUEST);
     await service.start(tenantA, id);
-    await service.changeStatus(tenantA, id, {
+    await service.runtimeChangeStatus(runtimeA, id, {
       from: 'running',
       to: 'failed',
       failure: { code: 'provider_timeout' },
@@ -161,31 +161,38 @@ describe('execution service', () => {
     }
   });
 
-  it('does not audit graph changes, which live in the execution', async () => {
-    const { service, tenantA, events } = await world();
+  it('does not audit adding nodes, which lives in the execution; audits every node change (ADR-0031)', async () => {
+    const { service, tenantA, runtimeA, events } = await world();
     const { id } = await service.create(tenantA, REQUEST);
     await service.addNodes(tenantA, id, [
       { id: 'check', type: 'verification', label: 'Check', dependsOn: ['work'] },
     ]);
-    const moved = await service.changeNode(tenantA, id, {
+    expect(events()).toHaveLength(1);
+    await service.start(tenantA, id);
+    const moved = await service.runtimeChangeNode(runtimeA, id, {
       nodeId: 'work',
       from: 'pending',
       to: 'running',
     });
     expect(moved.currentNodeId).toBe('work');
-    expect(moved.revision).toBe(3);
-    expect(events()).toHaveLength(1);
+    expect(moved.revision).toBe(4);
+    expect(events().at(-1)).toMatchObject({
+      action: 'execution.node_changed',
+      result: 'success',
+      actor: { type: 'system', id: 'runtime', initiatedBy: ALICE, via: 'runtime' },
+      organizationId: tenantA.organizationId,
+      target: { type: 'execution', id },
+      nodeId: 'work',
+      transition: { from: 'pending', to: 'running' },
+      requestId: 'req-1',
+    });
   });
 
   it('records a cancellation with who and why, and refuses everything after it', async () => {
-    const { service, tenantA, events } = await world();
+    const { service, tenantA, runtimeA, events } = await world();
     const { id } = await service.create(tenantA, REQUEST);
     await service.start(tenantA, id);
-    const cancelled = await service.changeStatus(tenantA, id, {
-      from: 'running',
-      to: 'cancelled',
-      reason: 'director_request',
-    });
+    const cancelled = await service.cancel(tenantA, id, 'director_request');
     expect(cancelled.cancellation).toEqual({
       at: NOW.toISOString(),
       by: ALICE,
@@ -197,13 +204,17 @@ describe('execution service', () => {
       reason: 'director_request',
     });
     for (const to of ['running', 'retrying', 'verifying', 'completed'] as const) {
-      expect(await codeOf(service.changeStatus(tenantA, id, { from: 'cancelled', to }))).toBe(
-        'execution_already_terminal',
-      );
+      expect(
+        await codeOf(service.runtimeChangeStatus(runtimeA, id, { from: 'cancelled', to })),
+      ).toBe('execution_already_terminal');
     }
     expect(
       await codeOf(
-        service.changeNode(tenantA, id, { nodeId: 'work', from: 'cancelled', to: 'running' }),
+        service.runtimeChangeNode(runtimeA, id, {
+          nodeId: 'work',
+          from: 'cancelled',
+          to: 'running',
+        }),
       ),
     ).toBe('execution_already_terminal');
     expect((await service.get(tenantA, id)).status).toBe('cancelled');
@@ -212,26 +223,32 @@ describe('execution service', () => {
 
 describe('concurrency', () => {
   it('never lets a change overwrite a concurrent cancellation', async () => {
-    const { service, tenantA } = await world();
+    const { service, tenantA, runtimeA } = await world();
     const { id } = await service.create(tenantA, REQUEST);
     await service.start(tenantA, id);
-    await service.changeNode(tenantA, id, { nodeId: 'work', from: 'pending', to: 'running' });
-    await service.changeNode(tenantA, id, { nodeId: 'work', from: 'running', to: 'completed' });
+    await service.runtimeChangeNode(runtimeA, id, {
+      nodeId: 'work',
+      from: 'pending',
+      to: 'running',
+    });
+    await service.runtimeChangeNode(runtimeA, id, {
+      nodeId: 'work',
+      from: 'running',
+      to: 'completed',
+    });
     const results = await Promise.all([
-      codeOf(service.changeStatus(tenantA, id, { from: 'running', to: 'verifying' })),
-      codeOf(
-        service.changeStatus(tenantA, id, {
-          from: 'running',
-          to: 'cancelled',
-          reason: 'director_request',
-        }),
-      ),
+      codeOf(service.runtimeChangeStatus(runtimeA, id, { from: 'running', to: 'verifying' })),
+      codeOf(service.cancel(tenantA, id, 'director_request')),
     ]);
-    expect(results.filter((r) => r === 'accepted')).toHaveLength(1);
-    expect(results.filter((r) => r === 'execution_concurrency_conflict')).toHaveLength(1);
+    // The person's cancellation always wins (ADR-0029): it re-reads and cancels whatever state it
+    // finds, while the runtime's change is refused once it finds the execution cancelled.
+    expect(results[1]).toBe('accepted');
+    expect(['accepted', 'execution_concurrency_conflict', 'execution_already_terminal']).toContain(
+      results[0],
+    );
     const final = await service.get(tenantA, id);
-    expect(final.revision).toBe(5);
-    expect(['verifying', 'cancelled']).toContain(final.status);
+    expect(final.status).toBe('cancelled');
+    expect(final.cancellation?.by).toBe(ALICE);
   });
 
   it('refuses a write built on an older revision', async () => {
@@ -315,8 +332,16 @@ describe('tenancy', () => {
 
 /** Runs the only node of REQUEST to completion, as the runtime would. */
 async function finishWork(w: Awaited<ReturnType<typeof world>>, id: string) {
-  await w.service.changeNode(w.runtimeA, id, { nodeId: 'work', from: 'pending', to: 'running' });
-  await w.service.changeNode(w.runtimeA, id, { nodeId: 'work', from: 'running', to: 'completed' });
+  await w.service.runtimeChangeNode(w.runtimeA, id, {
+    nodeId: 'work',
+    from: 'pending',
+    to: 'running',
+  });
+  await w.service.runtimeChangeNode(w.runtimeA, id, {
+    nodeId: 'work',
+    from: 'running',
+    to: 'completed',
+  });
 }
 
 const EVIDENCE = { type: 'check', id: 'evidence-1' };
@@ -414,8 +439,15 @@ describe('X6a: start (ADR-0029)', () => {
     const plan = await w.service.create(w.tenantA, { ...REQUEST, mode: 'plan' });
     expect(await codeOf(w.service.start(w.tenantA, plan.id))).toBe('invalid_execution_transition');
     const { id } = await w.service.create(w.tenantA, REQUEST);
+    // A person moves running work only through start and cancel (ADR-0031), and the runtime
+    // cannot move work into running without start.
     expect(
       await codeOf(w.service.changeStatus(w.tenantA, id, { from: 'pending', to: 'running' })),
+    ).toBe('actor_not_allowed');
+    expect(
+      await codeOf(
+        w.service.runtimeChangeStatus(w.runtimeA, id, { from: 'pending', to: 'running' }),
+      ),
     ).toBe('execution_not_started');
     await w.service.cancel(w.tenantA, id, 'director_request');
     expect(await codeOf(w.service.start(w.tenantA, id))).toBe('execution_already_terminal');
@@ -448,7 +480,7 @@ describe('X6a: cancellation (ADR-0029)', () => {
     );
     expect(
       await codeOf(
-        w.service.changeStatus(w.runtimeA, id, {
+        w.service.runtimeChangeStatus(w.runtimeA, id, {
           from: 'pending',
           to: 'cancelled',
           reason: 'director_request',
@@ -480,21 +512,29 @@ describe('X6a: cancellation (ADR-0029)', () => {
     const w = await world();
     const { id } = await w.service.create(w.tenantA, REQUEST);
     await w.service.start(w.tenantA, id);
-    await w.service.changeNode(w.runtimeA, id, { nodeId: 'work', from: 'pending', to: 'running' });
+    await w.service.runtimeChangeNode(w.runtimeA, id, {
+      nodeId: 'work',
+      from: 'pending',
+      to: 'running',
+    });
     const cancelled = await w.service.cancel(w.tenantA, id, 'director_request');
     expect(cancelled.nodes[0]?.status).toBe('cancelled');
     // The work that was running reports late: nothing it says is kept.
     for (const late of [
       () =>
-        w.service.changeNode(w.runtimeA, id, {
+        w.service.runtimeChangeNode(w.runtimeA, id, {
           nodeId: 'work',
           from: 'running',
           to: 'completed',
           output: { type: 'document', id: 'late' },
         }),
       () =>
-        w.service.changeNode(w.runtimeA, id, { nodeId: 'work', from: 'cancelled', to: 'running' }),
-      () => w.service.changeStatus(w.runtimeA, id, { from: 'cancelled', to: 'running' }),
+        w.service.runtimeChangeNode(w.runtimeA, id, {
+          nodeId: 'work',
+          from: 'cancelled',
+          to: 'running',
+        }),
+      () => w.service.runtimeChangeStatus(w.runtimeA, id, { from: 'cancelled', to: 'running' }),
       () => w.service.recordVerification(w.runtimeA, id, passing()),
       () => w.service.retryNode(w.runtimeA, id, 'work'),
       () => w.service.markOutcomeUnknown(w.runtimeA, id, 'work'),
@@ -512,11 +552,19 @@ describe('X6a: verification invariant (ADR-0029)', () => {
     const { id } = await w.service.create(w.tenantA, REQUEST);
     await w.service.start(w.tenantA, id);
     expect(
-      await codeOf(w.service.changeStatus(w.runtimeA, id, { from: 'running', to: 'verifying' })),
+      await codeOf(
+        w.service.runtimeChangeStatus(w.runtimeA, id, { from: 'running', to: 'verifying' }),
+      ),
     ).toBe('invalid_execution_transition');
-    await w.service.changeNode(w.runtimeA, id, { nodeId: 'work', from: 'pending', to: 'running' });
+    await w.service.runtimeChangeNode(w.runtimeA, id, {
+      nodeId: 'work',
+      from: 'pending',
+      to: 'running',
+    });
     expect(
-      await codeOf(w.service.changeStatus(w.runtimeA, id, { from: 'running', to: 'verifying' })),
+      await codeOf(
+        w.service.runtimeChangeStatus(w.runtimeA, id, { from: 'running', to: 'verifying' }),
+      ),
     ).toBe('invalid_execution_transition');
     expect((await w.service.get(w.tenantA, id)).status).toBe('running');
   });
@@ -525,18 +573,26 @@ describe('X6a: verification invariant (ADR-0029)', () => {
     const w = await world();
     const { id } = await w.service.create(w.tenantA, REQUEST);
     await w.service.start(w.tenantA, id);
-    await w.service.changeNode(w.runtimeA, id, { nodeId: 'work', from: 'pending', to: 'running' });
-    await w.service.changeNode(w.runtimeA, id, {
+    await w.service.runtimeChangeNode(w.runtimeA, id, {
+      nodeId: 'work',
+      from: 'pending',
+      to: 'running',
+    });
+    await w.service.runtimeChangeNode(w.runtimeA, id, {
       nodeId: 'work',
       from: 'running',
       to: 'failed',
       error: { code: 'provider_error' },
     });
     expect(
-      await codeOf(w.service.changeStatus(w.runtimeA, id, { from: 'running', to: 'verifying' })),
+      await codeOf(
+        w.service.runtimeChangeStatus(w.runtimeA, id, { from: 'running', to: 'verifying' }),
+      ),
     ).toBe('invalid_execution_transition');
     expect(
-      await codeOf(w.service.changeStatus(w.runtimeA, id, { from: 'running', to: 'completed' })),
+      await codeOf(
+        w.service.runtimeChangeStatus(w.runtimeA, id, { from: 'running', to: 'completed' }),
+      ),
     ).toBe('invalid_execution_transition');
   });
 
@@ -545,9 +601,9 @@ describe('X6a: verification invariant (ADR-0029)', () => {
     const { id } = await w.service.create(w.tenantA, REQUEST);
     await w.service.start(w.tenantA, id);
     await finishWork(w, id);
-    await w.service.changeStatus(w.runtimeA, id, { from: 'running', to: 'verifying' });
+    await w.service.runtimeChangeStatus(w.runtimeA, id, { from: 'running', to: 'verifying' });
     const complete = () =>
-      codeOf(w.service.changeStatus(w.runtimeA, id, { from: 'verifying', to: 'completed' }));
+      codeOf(w.service.runtimeChangeStatus(w.runtimeA, id, { from: 'verifying', to: 'completed' }));
     expect(await complete()).toBe('verification_required');
     // Only deterministic policies, only complete evidence, only the runtime.
     for (const policy of ['human_review', 'specialist_review']) {
@@ -595,7 +651,7 @@ describe('X6a: verification invariant (ADR-0029)', () => {
     const { id } = await w.service.create(w.tenantA, REQUEST);
     await w.service.start(w.tenantA, id);
     await finishWork(w, id);
-    await w.service.changeStatus(w.runtimeA, id, { from: 'running', to: 'verifying' });
+    await w.service.runtimeChangeStatus(w.runtimeA, id, { from: 'running', to: 'verifying' });
     const input = passing();
     const failing = {
       ...input,
@@ -612,7 +668,9 @@ describe('X6a: verification invariant (ADR-0029)', () => {
     const recorded = await w.service.recordVerification(w.runtimeA, id, failing as never);
     expect(recorded.verification?.result).toBe('failed');
     expect(
-      await codeOf(w.service.changeStatus(w.runtimeA, id, { from: 'verifying', to: 'completed' })),
+      await codeOf(
+        w.service.runtimeChangeStatus(w.runtimeA, id, { from: 'verifying', to: 'completed' }),
+      ),
     ).toBe('verification_required');
     // Written once per pass: a second verifier cannot replace the evidence.
     expect(await codeOf(w.service.recordVerification(w.runtimeA, id, passing()))).toBe(
@@ -638,8 +696,8 @@ describe('X6a: attempts (ADR-0029)', () => {
     const w = await world();
     const { id } = await w.service.create(w.tenantA, GRAPH);
     await w.service.start(w.tenantA, id);
-    await w.service.changeNode(w.runtimeA, id, { nodeId, from: 'pending', to: 'running' });
-    await w.service.changeNode(w.runtimeA, id, {
+    await w.service.runtimeChangeNode(w.runtimeA, id, { nodeId, from: 'pending', to: 'running' });
+    await w.service.runtimeChangeNode(w.runtimeA, id, {
       nodeId,
       from: 'running',
       to: 'failed',
@@ -653,12 +711,12 @@ describe('X6a: attempts (ADR-0029)', () => {
     const retried = await w.service.retryNode(w.runtimeA, id, 'decide');
     expect(retried.nodes[0]).toMatchObject({ id: 'decide', status: 'pending', attempt: 2 });
     expect(retried.nodes[0]).not.toHaveProperty('error');
-    await w.service.changeNode(w.runtimeA, id, {
+    await w.service.runtimeChangeNode(w.runtimeA, id, {
       nodeId: 'decide',
       from: 'pending',
       to: 'running',
     });
-    await w.service.changeNode(w.runtimeA, id, {
+    await w.service.runtimeChangeNode(w.runtimeA, id, {
       nodeId: 'decide',
       from: 'running',
       to: 'failed',
@@ -693,7 +751,7 @@ describe('X6a: attempts (ADR-0029)', () => {
     const w = await world();
     const { id } = await w.service.create(w.tenantA, GRAPH);
     await w.service.start(w.tenantA, id);
-    await w.service.changeNode(w.runtimeA, id, {
+    await w.service.runtimeChangeNode(w.runtimeA, id, {
       nodeId: 'decide',
       from: 'pending',
       to: 'running',
@@ -721,10 +779,12 @@ describe('X6a: actors (ADR-0029)', () => {
     const { id } = await w.service.create(w.tenantA, REQUEST);
     await w.service.start(w.tenantA, id);
     await finishWork(w, id);
-    await w.service.changeStatus(w.runtimeA, id, { from: 'running', to: 'verifying' });
+    await w.service.runtimeChangeStatus(w.runtimeA, id, { from: 'running', to: 'verifying' });
     await w.service.recordVerification(w.runtimeA, id, passing());
     const runtime = w.events().filter((e) => e.actor.type === 'system');
     expect(runtime.map((e) => e.action)).toEqual([
+      'execution.node_changed',
+      'execution.node_changed',
       'execution.state_changed',
       'execution.verification_recorded',
     ]);
@@ -754,5 +814,192 @@ describe('X6a: actors (ADR-0029)', () => {
         JSON.stringify({ type: 'system', id: 'runtime', initiatedBy: ALICE, via: 'runtime' }),
       ]),
     );
+  });
+});
+
+describe('X6c N1: only the runtime drives running work (ADR-0031)', () => {
+  const STATUSES = ['verifying', 'completed', 'failed', 'retrying', 'waiting_approval'] as const;
+
+  it('refuses a user or GIA changing the status or a node of an execution that runs', async () => {
+    const w = await world();
+    const { id } = await w.service.create(w.tenantA, REQUEST);
+    await w.service.start(w.tenantA, id);
+    for (const tenant of [w.tenantA, w.giaA]) {
+      for (const to of STATUSES) {
+        expect(
+          await codeOf(
+            w.service.changeStatus(tenant, id, {
+              from: 'running',
+              to,
+              ...(to === 'failed' ? { failure: { code: 'forced' } } : {}),
+            }),
+          ),
+        ).toBe('actor_not_allowed');
+        expect(
+          await codeOf(w.service.runtimeChangeStatus(tenant, id, { from: 'running', to })),
+        ).toBe('actor_not_allowed');
+      }
+      expect(
+        await codeOf(
+          w.service.runtimeChangeNode(tenant, id, {
+            nodeId: 'work',
+            from: 'pending',
+            to: 'running',
+          }),
+        ),
+      ).toBe('actor_not_allowed');
+      expect(await codeOf(w.service.retryNode(tenant, id, 'work'))).toBe('actor_not_allowed');
+      expect(await codeOf(w.service.markOutcomeUnknown(tenant, id, 'work'))).toBe(
+        'actor_not_allowed',
+      );
+    }
+    // A person still cancels through the owner-only cancel of X6a.
+    expect(
+      await codeOf(
+        w.service.changeStatus(w.tenantA, id, {
+          from: 'running',
+          to: 'cancelled',
+          reason: 'director_request',
+        }),
+      ),
+    ).toBe('actor_not_allowed');
+    const stored = await w.service.get(w.tenantA, id);
+    expect(stored).toMatchObject({ status: 'running', revision: 2 });
+    expect(stored.nodes[0]?.status).toBe('pending');
+    expect(w.events().filter((e) => e.action === 'execution.node_changed')).toHaveLength(0);
+  });
+
+  it('refuses a context that only claims to be the runtime', async () => {
+    const w = await world();
+    const { id } = await w.service.create(w.tenantA, REQUEST);
+    await w.service.start(w.tenantA, id);
+    const claimed = { ...w.tenantA, actor: 'runtime' } as TenantContext;
+    const copied = { ...w.runtimeA } as TenantContext;
+    for (const forged of [claimed, copied]) {
+      expect(
+        await codeOf(
+          w.service.runtimeChangeNode(forged, id, {
+            nodeId: 'work',
+            from: 'pending',
+            to: 'running',
+          }),
+        ),
+      ).toBe('unresolved_tenant');
+      expect(
+        await codeOf(
+          w.service.runtimeChangeStatus(forged, id, {
+            from: 'running',
+            to: 'failed',
+            failure: { code: 'forced' },
+          }),
+        ),
+      ).toBe('unresolved_tenant');
+    }
+    expect((await w.service.get(w.tenantA, id)).status).toBe('running');
+  });
+
+  it('keeps the runtime out of the planning lifecycle and away from cancelling', async () => {
+    const w = await world();
+    const plan = await w.service.create(w.tenantA, { ...REQUEST, mode: 'plan' });
+    expect(
+      await codeOf(
+        w.service.runtimeChangeStatus(w.runtimeA, plan.id, { from: 'pending', to: 'planning' }),
+      ),
+    ).toBe('actor_not_allowed');
+    expect(
+      await codeOf(
+        w.service.changeStatus(w.runtimeA, plan.id, { from: 'pending', to: 'planning' }),
+      ),
+    ).toBe('actor_not_allowed');
+    // The planning lifecycle stays the planner's, acting for the user.
+    expect(
+      (await w.service.changeStatus(w.tenantA, plan.id, { from: 'pending', to: 'planning' }))
+        .status,
+    ).toBe('planning');
+    const { id } = await w.service.create(w.tenantA, REQUEST);
+    await w.service.start(w.tenantA, id);
+    expect(
+      await codeOf(
+        w.service.runtimeChangeStatus(w.runtimeA, id, {
+          from: 'running',
+          to: 'cancelled',
+          reason: 'director_request',
+        }),
+      ),
+    ).toBe('actor_not_allowed');
+  });
+
+  it('lets a person withdraw work that never started, and nothing else', async () => {
+    const w = await world();
+    const { id } = await w.service.create(w.tenantA, REQUEST);
+    const withdrawn = await w.service.changeStatus(w.tenantA, id, {
+      from: 'pending',
+      to: 'cancelled',
+      reason: 'delegation_failed',
+    });
+    expect(withdrawn.status).toBe('cancelled');
+  });
+});
+
+describe('X6c N2: every node change is audited in its own write (ADR-0031)', () => {
+  it('records who, where, which node, from and to, and the failure code, never payloads', async () => {
+    const w = await world();
+    const { id } = await w.service.create(w.tenantA, REQUEST);
+    await w.service.start(w.tenantA, id);
+    await w.service.runtimeChangeNode(w.runtimeA, id, {
+      nodeId: 'work',
+      from: 'pending',
+      to: 'running',
+    });
+    await w.service.runtimeChangeNode(w.runtimeA, id, {
+      nodeId: 'work',
+      from: 'running',
+      to: 'failed',
+      error: { code: 'tool_failure' },
+    });
+    const changes = w.events().filter((e) => e.action === 'execution.node_changed');
+    expect(changes.map((e) => [e.nodeId, e.transition, e.reason])).toEqual([
+      ['work', { from: 'pending', to: 'running' }, undefined],
+      ['work', { from: 'running', to: 'failed' }, 'tool_failure'],
+    ]);
+    for (const change of changes) {
+      expect(change).toMatchObject({
+        result: 'success',
+        actor: { type: 'system', id: 'runtime', initiatedBy: ALICE, via: 'runtime' },
+        organizationId: w.a.organization.id,
+        target: { type: 'execution', id },
+        requestId: 'req-1',
+      });
+      expect(typeof change.occurredAt).toBe('string');
+      expect(JSON.stringify(change)).not.toMatch(/task-1|input|output|token|authorization/i);
+    }
+  });
+
+  it('changes no node when its audit event cannot be stored', async () => {
+    const w = await world();
+    const { id } = await w.service.create(w.tenantA, REQUEST);
+    await w.service.start(w.tenantA, id);
+    const original = w.audit.appendNow.bind(w.audit);
+    w.audit.appendNow = () => {
+      throw new Error('audit unavailable');
+    };
+    await expect(
+      w.service.runtimeChangeNode(w.runtimeA, id, {
+        nodeId: 'work',
+        from: 'pending',
+        to: 'running',
+      }),
+    ).rejects.toThrow('audit unavailable');
+    await expect(
+      w.service.runtimeChangeStatus(w.runtimeA, id, {
+        from: 'running',
+        to: 'failed',
+        failure: { code: 'forced' },
+      }),
+    ).rejects.toThrow('audit unavailable');
+    w.audit.appendNow = original;
+    const stored = await w.service.get(w.tenantA, id);
+    expect(stored).toMatchObject({ status: 'running', revision: 2 });
+    expect(stored.nodes[0]?.status).toBe('pending');
   });
 });

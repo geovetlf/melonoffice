@@ -153,6 +153,7 @@ export function createToolGate(options: ToolGateOptions): ToolGate {
       readonly tool?: { readonly id: string; readonly version: number };
       readonly reason?: string;
       readonly transition?: { readonly from: string; readonly to: string };
+      readonly nodeId?: string;
     },
     at: Date,
   ): AuditEvent =>
@@ -168,6 +169,7 @@ export function createToolGate(options: ToolGateOptions): ToolGate {
         ...(fields.tool === undefined ? {} : { tool: fields.tool }),
         ...(fields.reason === undefined ? {} : { reason: fields.reason }),
         ...(fields.transition === undefined ? {} : { transition: fields.transition }),
+        ...(fields.nodeId === undefined ? {} : { nodeId: fields.nodeId }),
         ...(requestId === undefined ? {} : { requestId }),
         source: 'api',
       },
@@ -218,6 +220,26 @@ export function createToolGate(options: ToolGateOptions): ToolGate {
       const organizationId = await organizationOf(tenant);
       if (organizationId === undefined) {
         return denied(isResolvedTenant(tenant) ? 'organization_inactive' : 'unresolved_tenant');
+      }
+      // Tools run inside executions, and executions are driven by the runtime (ADR-0031): a
+      // person or GIA reaches a tool through a plan or an execution, never by calling the gate.
+      if (tenant.actor !== 'runtime') {
+        await audit.record(
+          eventOf(
+            tenant,
+            organizationId,
+            {
+              action: 'tool.execution_denied',
+              result: 'denied',
+              ...(isExecutionId(invocation.executionId)
+                ? { executionId: invocation.executionId }
+                : {}),
+              reason: 'runtime_only',
+            },
+            now(),
+          ),
+        );
+        return denied('runtime_only');
       }
       const { nodeId, input } = invocation;
       const execution = isExecutionId(invocation.executionId)
@@ -437,6 +459,18 @@ export function createToolGate(options: ToolGateOptions): ToolGate {
               tenant,
               organizationId,
               {
+                action: 'execution.node_changed',
+                result: 'success',
+                executionId,
+                nodeId,
+                transition: { from: 'pending', to: 'running' },
+              },
+              startAt,
+            ),
+            eventOf(
+              tenant,
+              organizationId,
+              {
                 action: 'tool.authorization_checked',
                 result: 'success',
                 executionId,
@@ -544,6 +578,19 @@ export function createToolGate(options: ToolGateOptions): ToolGate {
             endIso,
           ),
           events: [
+            eventOf(
+              tenant,
+              organizationId,
+              {
+                action: 'execution.node_changed',
+                result: 'success',
+                executionId,
+                nodeId,
+                transition: { from: 'running', to: failure === undefined ? 'completed' : 'failed' },
+                ...(failure === undefined ? {} : { reason: failure }),
+              },
+              endAt,
+            ),
             eventOf(
               tenant,
               organizationId,

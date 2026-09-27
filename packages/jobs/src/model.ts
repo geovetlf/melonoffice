@@ -25,13 +25,16 @@ export const JOB_STATES = [
  *
  * - `queued → leased`: a worker takes it. `leased → leased`: another worker takes it over, only
  *   once the lease has expired, under a new lease id.
+ *   The holder's own turn (ADR-0031) is also `leased → leased`: same lease, next revision, so a
+ *   second delivery of the same proof can no longer write.
+ * - `leased → queued`: the holder releases it while its node waits for a person (ADR-0031).
  * - `leased → succeeded | failed`: only the lease holder, with a valid lease.
  * - `queued | leased → cancelled`: its execution ended. The holder's later write is refused.
  * - `succeeded`, `failed` and `cancelled` are terminal.
  */
 export const JOB_TRANSITIONS: Readonly<Record<ExecutionJobState, readonly ExecutionJobState[]>> = {
   queued: ['leased', 'cancelled'],
-  leased: ['leased', 'succeeded', 'failed', 'cancelled'],
+  leased: ['leased', 'queued', 'succeeded', 'failed', 'cancelled'],
   succeeded: [],
   failed: [],
   cancelled: [],
@@ -186,6 +189,25 @@ export function checkLeaseHolder(job: ExecutionJob, proof: LeaseProof, now: IsoT
   }
   if (job.revision !== proof.revision) throw new JobError('job_revision_mismatch');
   if (!leaseIsLive(job.lease, now)) throw new JobError('job_lease_expired');
+}
+
+/**
+ * The lease holder takes its turn to work on the job (ADR-0031): the same lease, one revision
+ * ahead. Only one of several deliveries of the same proof gets it; the others now hold an old
+ * revision and are refused (`job_revision_mismatch`) before they do anything.
+ */
+export function takeTurn(job: ExecutionJob, proof: LeaseProof, now: IsoTimestamp): ExecutionJob {
+  checkLeaseHolder(job, proof, now);
+  return Object.freeze({ ...job, revision: job.revision + 1, updatedAt: now });
+}
+
+/**
+ * The lease holder gives the job back to the queue (ADR-0031), when its node waits for a
+ * person's approval. The lease stays as history; a later lease gets a new id.
+ */
+export function releaseJob(job: ExecutionJob, proof: LeaseProof, now: IsoTimestamp): ExecutionJob {
+  checkLeaseHolder(job, proof, now);
+  return Object.freeze({ ...job, state: 'queued', revision: job.revision + 1, updatedAt: now });
 }
 
 /** How a lease holder says the job ended. */

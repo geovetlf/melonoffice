@@ -593,6 +593,64 @@ importers:
         specifier: workspace:*
         version: link:../config
 
+  packages/runtime:
+    dependencies:
+      '@melonoffice/ai-gateway':
+        specifier: workspace:*
+        version: link:../ai-gateway
+      '@melonoffice/approvals':
+        specifier: workspace:*
+        version: link:../approvals
+      '@melonoffice/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@melonoffice/execution':
+        specifier: workspace:*
+        version: link:../execution
+      '@melonoffice/guardrails':
+        specifier: workspace:*
+        version: link:../guardrails
+      '@melonoffice/jobs':
+        specifier: workspace:*
+        version: link:../jobs
+      '@melonoffice/observability':
+        specifier: workspace:*
+        version: link:../observability
+      '@melonoffice/tenancy':
+        specifier: workspace:*
+        version: link:../tenancy
+    devDependencies:
+      '@melonoffice/audit':
+        specifier: workspace:*
+        version: link:../audit
+      '@melonoffice/auth':
+        specifier: workspace:*
+        version: link:../auth
+      '@melonoffice/billing':
+        specifier: workspace:*
+        version: link:../billing
+      '@melonoffice/config':
+        specifier: workspace:*
+        version: link:../config
+      '@melonoffice/credits':
+        specifier: workspace:*
+        version: link:../credits
+      '@melonoffice/departments':
+        specifier: workspace:*
+        version: link:../departments
+      '@melonoffice/firestore':
+        specifier: workspace:*
+        version: link:../firestore
+      '@melonoffice/rbac':
+        specifier: workspace:*
+        version: link:../rbac
+      '@melonoffice/specialists':
+        specifier: workspace:*
+        version: link:../specialists
+      '@melonoffice/tools':
+        specifier: workspace:*
+        version: link:../tools
+
   packages/specialists:
     dependencies:
       '@melonoffice/departments':

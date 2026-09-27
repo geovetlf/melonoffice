@@ -120,6 +120,8 @@ export interface AuditEvent {
   readonly tool?: AuditTool;
   /** The job, for `execution.job_*` events. */
   readonly job?: AuditJob;
+  /** The node, for `execution.node_changed` and node events of the runtime (ADR-0031). */
+  readonly nodeId?: string;
   /** The model, for `ai.*` events. */
   readonly model?: AuditModel;
   /** The model that could not answer, for `ai.provider_fallback`. */
@@ -209,6 +211,9 @@ export function buildAuditEvent(input: AuditEventInput, at: Date): AuditEvent {
   ) {
     throw new Error('invalid audit job');
   }
+  if (input.nodeId !== undefined && !JOB_NODE.test(input.nodeId)) {
+    throw new Error('invalid audit node');
+  }
   if (
     input.plan !== undefined &&
     (!PLAN_ID.test(input.plan.id) ||
@@ -253,6 +258,7 @@ export function buildAuditEvent(input: AuditEventInput, at: Date): AuditEvent {
             ...(input.job.leaseId === undefined ? {} : { leaseId: input.job.leaseId }),
           }),
         }),
+    ...(input.nodeId === undefined ? {} : { nodeId: input.nodeId }),
     ...(input.model === undefined
       ? {}
       : { model: Object.freeze({ provider: input.model.provider, id: input.model.id }) }),

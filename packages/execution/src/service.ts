@@ -45,9 +45,27 @@ export interface ExecutionService {
   create(tenant: TenantContext, request: ExecutionRequest): Promise<Execution>;
   /** `execution_not_found` for an unknown id or another organization's execution alike. */
   get(tenant: TenantContext, id: string): Promise<Execution>;
+  /**
+   * The planning lifecycle (ADR-0028, ADR-0031): status changes of a planning execution
+   * (`mode: plan`), made by the planner and plan decisions for a user or GIA, and withdrawing an
+   * execution that never started (`pending → cancelled`). Everything else is refused
+   * (`actor_not_allowed`): the runtime drives executions with `runtimeChangeStatus`, and a
+   * person starts and cancels with `start` and `cancel`.
+   */
   changeStatus(tenant: TenantContext, id: string, change: StatusChange): Promise<Execution>;
   addNodes(tenant: TenantContext, id: string, nodes: readonly NodeInput[]): Promise<Execution>;
-  changeNode(tenant: TenantContext, id: string, change: NodeChange): Promise<Execution>;
+  /**
+   * The runtime moves an execution while it processes it (ADR-0031): only a `runtime` context.
+   * Cancelling is never the runtime's, and the X1/X6a model rules apply unchanged (no
+   * `verifying` with unfinished nodes, no `completed` without passing evidence).
+   */
+  runtimeChangeStatus(tenant: TenantContext, id: string, change: StatusChange): Promise<Execution>;
+  /**
+   * The runtime moves one node (ADR-0031): only a `runtime` context, recorded as
+   * `execution.node_changed` in the same write. There is no other way to change a node's status
+   * than this and the tool gate, which is itself runtime only.
+   */
+  runtimeChangeNode(tenant: TenantContext, id: string, change: NodeChange): Promise<Execution>;
   /**
    * A user's start (ADR-0029): `pending → running`. Only a user acting directly, with
    * `execution.start`; GIA, the planner, delegation and the runtime never start anything. A
@@ -161,10 +179,11 @@ export function createExecutionService({
   const event = (
     tenant: TenantContext,
     execution: Execution,
-    fields: Partial<Pick<AuditEvent, 'transition' | 'reason'>> & {
+    fields: Partial<Pick<AuditEvent, 'transition' | 'reason' | 'nodeId'>> & {
       action:
         | 'execution.created'
         | 'execution.state_changed'
+        | 'execution.node_changed'
         | 'execution.verification_recorded'
         | 'execution.node_retried'
         | 'execution.node_outcome_unknown';
@@ -180,6 +199,7 @@ export function createExecutionService({
         target: { type: 'execution', id: execution.id },
         ...(fields.transition === undefined ? {} : { transition: fields.transition }),
         ...(fields.reason === undefined ? {} : { reason: fields.reason }),
+        ...(fields.nodeId === undefined ? {} : { nodeId: fields.nodeId }),
         ...(requestId === undefined ? {} : { requestId }),
         source: 'api',
       },
@@ -303,14 +323,49 @@ export function createExecutionService({
       | 'execution.node_retried'
       | 'execution.node_outcome_unknown',
     apply: (current: Execution, at: IsoTimestamp) => { next: Execution; reason: string },
+    nodeId?: string,
   ): Promise<Execution> {
     requireRuntime(tenant);
     const organizationId = await organizationOf(tenant);
     const at = now();
     return repository.update(organizationId, idOf(id), (current) => {
       const { next, reason } = apply(current, at.toISOString() as IsoTimestamp);
-      return { execution: next, events: [event(tenant, next, { action, reason }, at)] };
+      return {
+        execution: next,
+        events: [
+          event(tenant, next, { action, reason, ...(nodeId === undefined ? {} : { nodeId }) }, at),
+        ],
+      };
     });
+  }
+
+  /** A status change and its event, in one write. The model decides whether it is allowed. */
+  function statusWrite(tenant: TenantContext, change: StatusChange, at: Date) {
+    return (current: Execution) => {
+      const next = applyStatusChange(
+        current,
+        change,
+        tenant.userId,
+        at.toISOString() as IsoTimestamp,
+      );
+      const reason =
+        next.cancellation?.reason ?? (change.to === 'failed' ? next.failure?.code : undefined);
+      return {
+        execution: next,
+        events: [
+          event(
+            tenant,
+            next,
+            {
+              action: 'execution.state_changed',
+              transition: { from: current.status, to: next.status },
+              ...(reason === undefined ? {} : { reason }),
+            },
+            at,
+          ),
+        ],
+      };
+    };
   }
 
   return {
@@ -349,36 +404,38 @@ export function createExecutionService({
 
     async changeStatus(tenant, id, change) {
       // Cancelling is a person's call: the runtime finds an execution cancelled, it never
-      // cancels one (ADR-0029).
-      if (tenant.actor === 'runtime' && change.to === 'cancelled') {
+      // cancels one (ADR-0029). And the runtime has its own, runtime-only method (ADR-0031).
+      if (tenant.actor === 'runtime') {
+        throw new ExecutionError(
+          'actor_not_allowed',
+          change.to === 'cancelled' ? 'runtime_cannot_cancel' : 'runtime_uses_runtime_change',
+        );
+      }
+      const organizationId = await organizationOf(tenant);
+      const at = now();
+      return repository.update(organizationId, idOf(id), (current) => {
+        // Only the planning lifecycle, and withdrawing work that never started. Running work is
+        // the runtime's (ADR-0031); starting and cancelling it is a person's (ADR-0029).
+        const withdrawn = change.to === 'cancelled' && current.status === 'pending';
+        if (current.mode !== 'plan' && !withdrawn) {
+          throw new ExecutionError('actor_not_allowed', 'runtime_transition');
+        }
+        return statusWrite(tenant, change, at)(current);
+      });
+    },
+
+    async runtimeChangeStatus(tenant, id, change) {
+      requireRuntime(tenant);
+      if (change.to === 'cancelled') {
         throw new ExecutionError('actor_not_allowed', 'runtime_cannot_cancel');
       }
       const organizationId = await organizationOf(tenant);
       const at = now();
       return repository.update(organizationId, idOf(id), (current) => {
-        const next = applyStatusChange(
-          current,
-          change,
-          tenant.userId,
-          at.toISOString() as IsoTimestamp,
-        );
-        const reason =
-          next.cancellation?.reason ?? (change.to === 'failed' ? next.failure?.code : undefined);
-        return {
-          execution: next,
-          events: [
-            event(
-              tenant,
-              next,
-              {
-                action: 'execution.state_changed',
-                transition: { from: current.status, to: next.status },
-                ...(reason === undefined ? {} : { reason }),
-              },
-              at,
-            ),
-          ],
-        };
+        // The runtime drives work, not plans: a planning execution runs nothing itself.
+        if (current.mode === 'plan')
+          throw new ExecutionError('actor_not_allowed', 'plan_execution');
+        return statusWrite(tenant, change, at)(current);
       });
     },
 
@@ -392,13 +449,32 @@ export function createExecutionService({
       }));
     },
 
-    async changeNode(tenant, id, change) {
+    async runtimeChangeNode(tenant, id, change) {
+      requireRuntime(tenant);
       const organizationId = await organizationOf(tenant);
-      const at = now().toISOString() as IsoTimestamp;
-      return repository.update(organizationId, idOf(id), (current) => ({
-        execution: applyNodeChange(current, change, at),
-        events: [],
-      }));
+      const at = now();
+      return repository.update(organizationId, idOf(id), (current) => {
+        if (current.mode === 'plan')
+          throw new ExecutionError('actor_not_allowed', 'plan_execution');
+        const next = applyNodeChange(current, change, at.toISOString() as IsoTimestamp);
+        const reason = change.to === 'failed' ? change.error?.code : undefined;
+        return {
+          execution: next,
+          events: [
+            event(
+              tenant,
+              next,
+              {
+                action: 'execution.node_changed',
+                nodeId: change.nodeId,
+                transition: { from: change.from, to: change.to },
+                ...(reason === undefined ? {} : { reason }),
+              },
+              at,
+            ),
+          ],
+        };
+      });
     },
 
     async start(tenant, id) {
@@ -476,17 +552,29 @@ export function createExecutionService({
       }),
 
     retryNode: (tenant, id, nodeId) =>
-      runtimeChange(tenant, id, 'execution.node_retried', (current, at) => {
-        const next = retryNode(current, nodeId, at);
-        // retryNode accepted it, so the node exists and was failed: name the rule that allowed it.
-        const node = current.nodes.find((n) => n.id === nodeId) as ExecutionNode;
-        return { next, reason: retryRuleOf(node) };
-      }),
+      runtimeChange(
+        tenant,
+        id,
+        'execution.node_retried',
+        (current, at) => {
+          const next = retryNode(current, nodeId, at);
+          // retryNode accepted it, so the node exists and was failed: name the rule that allowed it.
+          const node = current.nodes.find((n) => n.id === nodeId) as ExecutionNode;
+          return { next, reason: retryRuleOf(node) };
+        },
+        nodeId,
+      ),
 
     markOutcomeUnknown: (tenant, id, nodeId) =>
-      runtimeChange(tenant, id, 'execution.node_outcome_unknown', (current, at) => ({
-        next: markOutcomeUnknown(current, nodeId, at),
-        reason: 'outcome_unknown',
-      })),
+      runtimeChange(
+        tenant,
+        id,
+        'execution.node_outcome_unknown',
+        (current, at) => ({
+          next: markOutcomeUnknown(current, nodeId, at),
+          reason: 'outcome_unknown',
+        }),
+        nodeId,
+      ),
   };
 }
