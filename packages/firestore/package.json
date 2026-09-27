@@ -33,6 +33,7 @@
     "@melonoffice/departments": "workspace:*",
     "@melonoffice/domain": "workspace:*",
     "@melonoffice/execution": "workspace:*",
+    "@melonoffice/jobs": "workspace:*",
     "@melonoffice/planning": "workspace:*",
     "@melonoffice/specialists": "workspace:*",
     "@melonoffice/tenancy": "workspace:*",
@@ -40,6 +41,8 @@
     "@melonoffice/workflows": "workspace:*"
   },
   "devDependencies": {
-    "@melonoffice/config": "workspace:*"
+    "@melonoffice/config": "workspace:*",
+    "@melonoffice/observability": "workspace:*",
+    "@melonoffice/rbac": "workspace:*"
   }
 }

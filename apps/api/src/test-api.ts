@@ -42,6 +42,7 @@ import {
   AUDIT_LOGS,
   FirestoreAuditStore,
   type AuditDocument,
+  fromAuditDocument,
   BILLING_ACCOUNTS,
   FirestoreBillingStore,
   SUBSCRIPTIONS,
@@ -173,42 +174,6 @@ function memoryStores(): Stores {
     breakAudit: (broken) => (breakable.broken = broken),
     storedAudit: async () => JSON.stringify(events.events()),
   };
-}
-
-/** Reads a stored document back into an event, the inverse of toAuditDocument. */
-function fromAuditDocument(id: string, d: AuditDocument): AuditEvent {
-  return {
-    id,
-    occurredAt: d.occurredAt.toDate().toISOString(),
-    action: d.action,
-    result: d.result,
-    actor:
-      d.actorType === 'user'
-        ? { type: 'user', userId: d.actorUserId, via: d.actorVia }
-        : d.actorType === 'system'
-          ? { type: 'system', id: d.actorId, initiatedBy: d.actorInitiatedBy, via: d.actorVia }
-          : { type: d.actorType },
-    ...(d.organizationId === null ? {} : { organizationId: d.organizationId }),
-    ...(d.targetType === null ? {} : { target: { type: d.targetType, id: d.targetId } }),
-    ...(d.targetVersion == null ? {} : { targetVersion: d.targetVersion }),
-    ...(d.requestedOrganizationId === null
-      ? {}
-      : { requestedOrganizationId: d.requestedOrganizationId }),
-    ...(d.permission === null ? {} : { permission: d.permission }),
-    ...(d.planId === null ? {} : { plan: { id: d.planId, version: d.planVersion } }),
-    ...(d.transitionFrom === null
-      ? {}
-      : { transition: { from: d.transitionFrom, to: d.transitionTo } }),
-    ...(d.toolId == null ? {} : { tool: { id: d.toolId, version: d.toolVersion } }),
-    ...(d.modelId == null ? {} : { model: { provider: d.modelProvider, id: d.modelId } }),
-    ...(d.previousModelId == null
-      ? {}
-      : { previousModel: { provider: d.previousModelProvider, id: d.previousModelId } }),
-    ...(d.reason === null ? {} : { reason: d.reason }),
-    ...(d.reference === null ? {} : { reference: d.reference }),
-    ...(d.requestId === null ? {} : { requestId: d.requestId }),
-    source: d.source,
-  } as unknown as AuditEvent;
 }
 
 function firestoreStores(): Stores {

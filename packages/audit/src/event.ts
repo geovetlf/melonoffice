@@ -70,6 +70,17 @@ export interface AuditTool {
   readonly version: number;
 }
 
+/**
+ * An execution job as recorded, for `execution.job_*` events (ADR-0030): which unit of work and
+ * which lease. Never an input or an output.
+ */
+export interface AuditJob {
+  readonly id: string;
+  readonly nodeId: string;
+  readonly attempt: number;
+  readonly leaseId?: string;
+}
+
 /** An AI model as recorded, for `ai.*` events (ADR-0027). Never a prompt or an output. */
 export interface AuditModel {
   readonly provider: string;
@@ -107,6 +118,8 @@ export interface AuditEvent {
   readonly transition?: AuditTransition;
   /** The tool version, for `tool.*` events. */
   readonly tool?: AuditTool;
+  /** The job, for `execution.job_*` events. */
+  readonly job?: AuditJob;
   /** The model, for `ai.*` events. */
   readonly model?: AuditModel;
   /** The model that could not answer, for `ai.provider_fallback`. */
@@ -136,6 +149,7 @@ const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
 const isAuditModel = (m: AuditModel): boolean =>
   PROVIDER_ID.test(m.provider) && MODEL_ID.test(m.id);
+const JOB_NODE = /^[A-Za-z0-9_-]{1,64}$/;
 const REFERENCE = /^[A-Za-z0-9._:-]{1,128}$/;
 
 /**
@@ -186,6 +200,16 @@ export function buildAuditEvent(input: AuditEventInput, at: Date): AuditEvent {
     throw new Error('invalid audit target version');
   }
   if (
+    input.job !== undefined &&
+    (!UUID.test(input.job.id) ||
+      !JOB_NODE.test(input.job.nodeId) ||
+      !Number.isSafeInteger(input.job.attempt) ||
+      input.job.attempt < 1 ||
+      (input.job.leaseId !== undefined && !UUID.test(input.job.leaseId)))
+  ) {
+    throw new Error('invalid audit job');
+  }
+  if (
     input.plan !== undefined &&
     (!PLAN_ID.test(input.plan.id) ||
       !Number.isInteger(input.plan.version) ||
@@ -219,6 +243,16 @@ export function buildAuditEvent(input: AuditEventInput, at: Date): AuditEvent {
     ...(input.tool === undefined
       ? {}
       : { tool: Object.freeze({ id: input.tool.id, version: input.tool.version }) }),
+    ...(input.job === undefined
+      ? {}
+      : {
+          job: Object.freeze({
+            id: input.job.id,
+            nodeId: input.job.nodeId,
+            attempt: input.job.attempt,
+            ...(input.job.leaseId === undefined ? {} : { leaseId: input.job.leaseId }),
+          }),
+        }),
     ...(input.model === undefined
       ? {}
       : { model: Object.freeze({ provider: input.model.provider, id: input.model.id }) }),

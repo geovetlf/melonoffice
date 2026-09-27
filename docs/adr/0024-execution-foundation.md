@@ -22,7 +22,7 @@ X1 builds only that contract. It runs no AI, tool, job or workflow.
 - `repository.ts` has the `ExecutionRepository` port and a memory implementation;
 - `service.ts` has `createExecutionService`.
 
-The Firestore implementation of the port lives in `apps/api`, like every other store. The types are in `@melonoffice/domain`.
+The Firestore implementation of the port lives in `apps/api`, like every other store (moved to the shared `packages/firestore` by [ADR-0030](0030-execution-jobs-and-lease.md)). The types are in `@melonoffice/domain`.
 
 There is **no Agent entity**. Per D-28, the specialist is the agent. An execution only references it (`specialistId`, a node `owner`, and the version snapshot).
 

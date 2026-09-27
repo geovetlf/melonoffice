@@ -88,6 +88,28 @@ export const AUDIT_ACTIONS = {
       'The runtime re-ran a failed node; the reason names the attempt rule that allowed it (ADR-0029).',
     results: ['success'],
   },
+  'execution.job_enqueued': {
+    category: 'execution',
+    description:
+      'A job to run one node at one attempt was created, once; the job field names it (ADR-0030).',
+    results: ['success'],
+  },
+  'execution.job_leased': {
+    category: 'execution',
+    description: 'A worker took the lease of a job, or was refused it with the reason (ADR-0030).',
+    results: ['success', 'denied'],
+  },
+  'execution.job_finished': {
+    category: 'execution',
+    description:
+      "A job's lease holder recorded how it ended (success, or failure with its code), or its write was refused with the reason (ADR-0030).",
+    results: ['success', 'failure', 'denied'],
+  },
+  'execution.job_cancelled': {
+    category: 'execution',
+    description: 'A job was cancelled because its execution ended (ADR-0030).',
+    results: ['success'],
+  },
   'execution.node_outcome_unknown': {
     category: 'execution',
     description:

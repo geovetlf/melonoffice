@@ -400,6 +400,9 @@ importers:
       '@melonoffice/execution':
         specifier: workspace:*
         version: link:../execution
+      '@melonoffice/jobs':
+        specifier: workspace:*
+        version: link:../jobs
       '@melonoffice/planning':
         specifier: workspace:*
         version: link:../planning
@@ -419,6 +422,12 @@ importers:
       '@melonoffice/config':
         specifier: workspace:*
         version: link:../config
+      '@melonoffice/observability':
+        specifier: workspace:*
+        version: link:../observability
+      '@melonoffice/rbac':
+        specifier: workspace:*
+        version: link:../rbac
 
   packages/guardrails:
     dependencies:
@@ -484,6 +493,37 @@ importers:
       react-dom:
         specifier: 19.3.0
         version: 19.3.0(react@19.3.0)
+
+  packages/jobs:
+    dependencies:
+      '@melonoffice/audit':
+        specifier: workspace:*
+        version: link:../audit
+      '@melonoffice/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@melonoffice/execution':
+        specifier: workspace:*
+        version: link:../execution
+      '@melonoffice/observability':
+        specifier: workspace:*
+        version: link:../observability
+      '@melonoffice/tenancy':
+        specifier: workspace:*
+        version: link:../tenancy
+    devDependencies:
+      '@melonoffice/auth':
+        specifier: workspace:*
+        version: link:../auth
+      '@melonoffice/config':
+        specifier: workspace:*
+        version: link:../config
+      '@melonoffice/credits':
+        specifier: workspace:*
+        version: link:../credits
+      '@melonoffice/rbac':
+        specifier: workspace:*
+        version: link:../rbac
 
   packages/observability:
     devDependencies:

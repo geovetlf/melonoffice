@@ -4,6 +4,7 @@ export * from './billing.js';
 export * from './credits.js';
 export * from './departments.js';
 export * from './executions.js';
+export * from './jobs.js';
 export * from './plans.js';
 export * from './specialists.js';
 export * from './tenancy.js';
