@@ -364,6 +364,9 @@ importers:
       '@melonoffice/credits':
         specifier: workspace:*
         version: link:../credits
+      '@melonoffice/rbac':
+        specifier: workspace:*
+        version: link:../rbac
 
   packages/guardrails:
     dependencies:

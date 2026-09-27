@@ -15,9 +15,14 @@ import type {
   IsoTimestamp,
   OrganizationId,
   ExecutionToolRef,
+  ExecutionVerification,
+  NodeVerification,
   SpecialistId,
   ToolId,
   UserId,
+  VerificationCheck,
+  ExecutionVerificationPolicy,
+  VerificationResult,
   VersionRef,
   WorkflowId,
 } from '@melonoffice/domain';
@@ -38,6 +43,31 @@ export const MAX_NODES = 200;
 export const MAX_DEPENDENCIES = 50;
 export const MAX_SNAPSHOT_COMPONENTS = 100;
 export const MAX_LABEL_LENGTH = 120;
+/** A node runs at most twice: its first attempt and one automatic retry (ADR-0029). */
+export const MAX_NODE_ATTEMPTS = 2;
+export const MAX_VERIFICATION_CHECKS = 20;
+
+/** Policies a verification may use. `human_review` and `specialist_review` are not here yet. */
+export const VERIFICATION_POLICIES = [
+  'output_schema',
+  'checks',
+] as const satisfies readonly ExecutionVerificationPolicy[];
+
+/**
+ * Node types that have no external effect by construction: they only decide over data the
+ * execution already holds. Only these are retried without an idempotency key (ADR-0029, rule A).
+ */
+export const EFFECT_FREE_NODE_TYPES: readonly ExecutionNodeType[] = [
+  'condition',
+  'parallel',
+  'verification',
+];
+
+/**
+ * Node failure codes that mean nobody knows whether the work happened: a timeout, a lost worker.
+ * Such a node is never re-run automatically (ADR-0029, rule C).
+ */
+export const UNKNOWN_OUTCOME_CODES: readonly string[] = ['outcome_unknown', 'timeout'];
 
 export const NODE_TYPES = [
   'agent',
@@ -139,6 +169,10 @@ export function checkSnapshot(value: unknown): ExecutionVersionSnapshot {
   const checked = components.map((c, i) => checkVersionRef(c, `versionSnapshot.components.${i}`));
   const keys = new Set(checked.map((c) => `${c.kind}\n${c.id}`));
   if (keys.size !== checked.length) return invalid('versionSnapshot.duplicate');
+  // An execution runs with one Company Context version at most (ADR-0029).
+  if (checked.filter((c) => c.kind === 'company_context').length > 1) {
+    return invalid('versionSnapshot.company_context');
+  }
   return Object.freeze({ schemaVersion: 1, components: Object.freeze(checked) });
 }
 
@@ -390,6 +424,16 @@ export function applyStatusChange(
   }
   const at = later(execution, now);
   const { to } = change;
+  // Only a user's start moves an execution into `running` the first time (ADR-0029). A planning
+  // execution is the exception: it runs its plan's graph once delegated, and runs nothing itself.
+  if (to === 'running' && execution.startedAt === undefined) {
+    const delegated =
+      execution.mode === 'plan' &&
+      (execution.status === 'planning' || execution.status === 'waiting_approval');
+    if (!delegated) throw new ExecutionError('execution_not_started');
+  }
+  if (to === 'verifying') checkNodesFinished(execution);
+  if (to === 'completed') checkVerified(execution);
   if (change.result !== undefined && to !== 'completed') invalid('result');
   if (change.failure !== undefined && to !== 'failed') invalid('failure');
   if (change.reason !== undefined && to !== 'cancelled') invalid('reason');
@@ -405,8 +449,11 @@ export function applyStatusChange(
           : Object.freeze({ ...node, status: 'cancelled' as const, completedAt: at }),
       )
     : execution.nodes;
+  // Each verifying pass is verified anew: evidence of an earlier pass never completes a later one.
+  const { verification, ...rest } = execution;
   return Object.freeze({
-    ...execution,
+    ...rest,
+    ...(verification === undefined || to === 'verifying' ? {} : { verification }),
     status: to,
     nodes: Object.freeze(nodes),
     ...(to === 'running' && execution.startedAt === undefined ? { startedAt: at } : {}),
@@ -419,6 +466,242 @@ export function applyStatusChange(
     revision: execution.revision + 1,
     updatedAt: at,
   });
+}
+
+/**
+ * `running → verifying` needs every node finished with work done: completed or skipped. A node
+ * still pending or running, or one that failed or was cancelled, keeps the execution out of
+ * `verifying`, and so out of `completed` (ADR-0029).
+ */
+function checkNodesFinished(execution: Execution): void {
+  for (const node of execution.nodes) {
+    if (node.status === 'completed' || node.status === 'skipped') continue;
+    throw new ExecutionError(
+      'invalid_execution_transition',
+      isNodeFinal(node.status) ? 'nodes_not_successful' : 'nodes_not_finished',
+    );
+  }
+}
+
+/**
+ * `verifying → completed` needs a recorded verification of this pass that passed and covers
+ * every completed node, on a graph that is still all completed or skipped. Nothing else
+ * completes an execution: there is no bypass (ADR-0029).
+ */
+function checkVerified(execution: Execution): void {
+  checkNodesFinished(execution);
+  const { verification } = execution;
+  if (verification === undefined) throw new ExecutionError('verification_required', 'missing');
+  if (verification.executionId !== execution.id || verification.result !== 'passed') {
+    throw new ExecutionError('verification_required', 'not_passed');
+  }
+  const completed = execution.nodes.filter((n) => n.status === 'completed').map((n) => n.id);
+  const verified = new Set(
+    verification.nodes.filter((n) => n.result === 'passed').map((n) => n.nodeId),
+  );
+  if (completed.length === 0 || !completed.every((id) => verified.has(id))) {
+    throw new ExecutionError('verification_required', 'not_covered');
+  }
+}
+
+/**
+ * A user's start (ADR-0029): `pending → running`, once. It is the only way an execution that is
+ * not a planning execution first runs; the service checks who asks.
+ */
+export function startExecution(execution: Execution, now: IsoTimestamp): Execution {
+  if (isTerminal(execution.status)) throw new ExecutionError('execution_already_terminal');
+  if (execution.status !== 'pending' || execution.startedAt !== undefined) {
+    throw new ExecutionError('execution_concurrency_conflict');
+  }
+  if (execution.mode === 'plan') throw new ExecutionError('invalid_execution_transition', 'plan');
+  const at = later(execution, now);
+  return Object.freeze({
+    ...execution,
+    status: 'running',
+    startedAt: at,
+    revision: execution.revision + 1,
+    updatedAt: at,
+  });
+}
+
+/** What a verifier found, as it reports it. The results are computed, never taken as given. */
+export interface VerificationInput {
+  readonly correlationId: string;
+  readonly nodes: readonly {
+    readonly nodeId: string;
+    readonly policy: string;
+    readonly checks: readonly {
+      readonly code: string;
+      readonly result: string;
+      readonly evidence: ExecutionRef;
+    }[];
+  }[];
+}
+
+const RESULTS: readonly VerificationResult[] = ['passed', 'failed'];
+
+function checkVerificationCheck(value: unknown, field: string): VerificationCheck {
+  if (!isRecord(value)) return invalid(field);
+  const { code, result, evidence } = value;
+  if (typeof code !== 'string' || !CODE.test(code)) return invalid(`${field}.code`);
+  if (typeof result !== 'string' || !(RESULTS as readonly string[]).includes(result)) {
+    return invalid(`${field}.result`);
+  }
+  return Object.freeze({
+    code,
+    result: result as VerificationResult,
+    evidence: checkRef(evidence, `${field}.evidence`),
+  });
+}
+
+function checkNodeVerification(
+  value: unknown,
+  field: string,
+  computeResult: boolean,
+): NodeVerification {
+  if (!isRecord(value)) return invalid(field);
+  const { nodeId, policy, checks, result } = value;
+  if (typeof nodeId !== 'string' || !NODE_ID.test(nodeId)) return invalid(`${field}.nodeId`);
+  if (typeof policy !== 'string') return invalid(`${field}.policy`);
+  if (!(VERIFICATION_POLICIES as readonly string[]).includes(policy)) {
+    throw new ExecutionError('verification_policy_not_available', policy.slice(0, 32));
+  }
+  if (!Array.isArray(checks) || checks.length === 0 || checks.length > MAX_VERIFICATION_CHECKS) {
+    return invalid(`${field}.checks`);
+  }
+  const checked = checks.map((c, i) => checkVerificationCheck(c, `${field}.checks.${i}`));
+  const passed: VerificationResult = checked.every((c) => c.result === 'passed')
+    ? 'passed'
+    : 'failed';
+  if (!computeResult && result !== passed) return invalid(`${field}.result`);
+  return Object.freeze({
+    nodeId: nodeId as ExecutionNodeId,
+    policy: policy as ExecutionVerificationPolicy,
+    result: passed,
+    checks: Object.freeze(checked),
+  });
+}
+
+/**
+ * Records the verification of the current `verifying` pass (ADR-0029), once. Every completed
+ * node gets exactly one entry and no other node gets any; each entry has at least one check with
+ * its evidence. A node passes only when every check passed, and the execution only when every
+ * node passed. A failed verification is recorded too: it is evidence, and it never completes.
+ */
+export function recordVerification(
+  execution: Execution,
+  input: VerificationInput,
+  now: IsoTimestamp,
+): Execution {
+  if (isTerminal(execution.status)) throw new ExecutionError('execution_already_terminal');
+  if (execution.status !== 'verifying') throw new ExecutionError('invalid_execution_transition');
+  if (execution.verification !== undefined) {
+    throw new ExecutionError('execution_concurrency_conflict');
+  }
+  if (!isRecord(input)) return invalid('verification');
+  const { correlationId, nodes } = input;
+  if (typeof correlationId !== 'string' || !REQUEST_ID.test(correlationId)) {
+    return invalid('verification.correlationId');
+  }
+  if (!Array.isArray(nodes) || nodes.length === 0 || nodes.length > MAX_NODES) {
+    return invalid('verification.nodes');
+  }
+  const checked = nodes.map((n, i) => checkNodeVerification(n, `verification.nodes.${i}`, true));
+  const ids = checked.map((n) => n.nodeId as string);
+  const completed = execution.nodes.filter((n) => n.status === 'completed').map((n) => n.id);
+  if (
+    new Set(ids).size !== ids.length ||
+    ids.length !== completed.length ||
+    !completed.every((id) => ids.includes(id))
+  ) {
+    return invalid('verification.nodes.coverage');
+  }
+  const at = later(execution, now);
+  const verification: ExecutionVerification = Object.freeze({
+    schemaVersion: 1,
+    executionId: execution.id,
+    result: checked.every((n) => n.result === 'passed') ? 'passed' : 'failed',
+    verifiedAt: at,
+    correlationId,
+    nodes: Object.freeze(checked),
+  });
+  return Object.freeze({
+    ...execution,
+    verification,
+    revision: execution.revision + 1,
+    updatedAt: at,
+  });
+}
+
+/** Which rule allowed a retry: no effect at all, or an effect under a recorded idempotency key. */
+export type RetryRule = 'effect_free' | 'idempotent_effect';
+
+/**
+ * Whether a failed node may run again automatically (ADR-0029). Never when its outcome is
+ * unknown (rule C), never after its one retry, and only when a repeat cannot change anything
+ * twice: a node with no external effect by construction (rule A), or a tool node whose effect
+ * ran under an idempotency key recorded before it (rule B). Anything else is refused.
+ */
+export function retryRuleOf(node: ExecutionNode): RetryRule {
+  if (node.status !== 'failed') throw new ExecutionError('retry_not_allowed', 'not_failed');
+  if (node.error !== undefined && UNKNOWN_OUTCOME_CODES.includes(node.error.code)) {
+    throw new ExecutionError('retry_not_allowed', 'outcome_unknown');
+  }
+  if ((node.attempt ?? 1) >= MAX_NODE_ATTEMPTS) {
+    throw new ExecutionError('retry_not_allowed', 'attempts_exhausted');
+  }
+  if (EFFECT_FREE_NODE_TYPES.includes(node.type)) return 'effect_free';
+  if (node.type === 'tool' && node.idempotencyKey !== undefined) return 'idempotent_effect';
+  throw new ExecutionError('retry_not_allowed', 'external_effect');
+}
+
+/**
+ * Puts a failed node back to `pending` as its next attempt, keeping its idempotency key so the
+ * repeat is the same operation. The execution must be `running`.
+ */
+export function retryNode(execution: Execution, nodeId: string, now: IsoTimestamp): Execution {
+  if (isTerminal(execution.status)) throw new ExecutionError('execution_already_terminal');
+  if (execution.status !== 'running') throw new ExecutionError('invalid_execution_transition');
+  const index = execution.nodes.findIndex((n) => n.id === nodeId);
+  const node = execution.nodes[index];
+  if (node === undefined) return invalid('nodeId');
+  retryRuleOf(node);
+  // The node as it was defined, without the last attempt's output, error or times.
+  const updated: ExecutionNode = Object.freeze({
+    id: node.id,
+    type: node.type,
+    label: node.label,
+    status: 'pending',
+    dependsOn: node.dependsOn,
+    ...(node.owner === undefined ? {} : { owner: node.owner }),
+    ...(node.input === undefined ? {} : { input: node.input }),
+    ...(node.tool === undefined ? {} : { tool: node.tool }),
+    ...(node.approvalId === undefined ? {} : { approvalId: node.approvalId }),
+    ...(node.idempotencyKey === undefined ? {} : { idempotencyKey: node.idempotencyKey }),
+    attempt: (node.attempt ?? 1) + 1,
+  });
+  return Object.freeze({
+    ...execution,
+    nodes: Object.freeze(execution.nodes.map((n, i) => (i === index ? updated : n))),
+    revision: execution.revision + 1,
+    updatedAt: later(execution, now),
+  });
+}
+
+/**
+ * Records that a running node's outcome is unknown (a lost worker, a deadline passed): it fails
+ * with `outcome_unknown` and is never re-run automatically (ADR-0029, rule C).
+ */
+export function markOutcomeUnknown(
+  execution: Execution,
+  nodeId: string,
+  now: IsoTimestamp,
+): Execution {
+  return applyNodeChange(
+    execution,
+    { nodeId, from: 'running', to: 'failed', error: { code: 'outcome_unknown' } },
+    now,
+  );
 }
 
 /** Adds nodes to the graph of an execution that has not ended. */
@@ -450,6 +733,11 @@ export interface NodeChange {
   readonly output?: ExecutionRef;
   /** Required for `failed`. */
   readonly error?: ExecutionFailure;
+  /**
+   * For `running`: the idempotency key the node's external effect runs under. Once recorded it
+   * never changes; a later attempt must start under the same key.
+   */
+  readonly idempotencyKey?: string;
 }
 
 /**
@@ -473,6 +761,13 @@ export function applyNodeChange(
   if (change.output !== undefined && change.to !== 'completed') invalid('output');
   if (change.error !== undefined && change.to !== 'failed') invalid('error');
   if (change.to === 'failed' && change.error === undefined) invalid('error');
+  const { idempotencyKey } = change;
+  if (idempotencyKey !== undefined) {
+    if (change.to !== 'running' || !isIdempotencyKey(idempotencyKey)) invalid('idempotencyKey');
+    if (node.idempotencyKey !== undefined && node.idempotencyKey !== idempotencyKey) {
+      invalid('idempotencyKey');
+    }
+  }
   if (change.to === 'running') {
     const done = new Set(
       execution.nodes
@@ -491,6 +786,7 @@ export function applyNodeChange(
     ...(isNodeFinal(change.to) ? { completedAt: at } : {}),
     ...(change.output === undefined ? {} : { output: checkRef(change.output, 'output') }),
     ...(change.error === undefined ? {} : { error: checkFailure(change.error, 'error') }),
+    ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
   });
   const nodes = execution.nodes.map((n, i) => (i === index ? updated : n));
   return Object.freeze({
@@ -550,8 +846,34 @@ export function checkStoredExecution(execution: Execution): Execution {
     ) {
       invalid('nodes.approvalId');
     }
+    const { attempt, idempotencyKey } = node;
+    if (
+      attempt !== undefined &&
+      (!Number.isSafeInteger(attempt) || attempt < 1 || attempt > MAX_NODE_ATTEMPTS)
+    ) {
+      invalid('nodes.attempt');
+    }
+    if (idempotencyKey !== undefined && !isIdempotencyKey(idempotencyKey)) {
+      invalid('nodes.idempotencyKey');
+    }
   }
   checkGraph(execution.nodes);
+  if (execution.verification !== undefined) checkStoredVerification(execution);
   if (!Number.isSafeInteger(execution.revision) || execution.revision < 1) invalid('revision');
   return execution;
+}
+
+function checkStoredVerification(execution: Execution): void {
+  const v = execution.verification as ExecutionVerification;
+  if (!isRecord(v) || v.schemaVersion !== 1 || v.executionId !== execution.id) {
+    invalid('verification');
+  }
+  if (!(RESULTS as readonly string[]).includes(v.result)) invalid('verification.result');
+  if (typeof v.correlationId !== 'string' || !REQUEST_ID.test(v.correlationId)) {
+    invalid('verification.correlationId');
+  }
+  if (!Array.isArray(v.nodes) || v.nodes.length === 0) invalid('verification.nodes');
+  const nodes = v.nodes.map((n, i) => checkNodeVerification(n, `verification.nodes.${i}`, false));
+  const passed = nodes.every((n) => n.result === 'passed') ? 'passed' : 'failed';
+  if (v.result !== passed) invalid('verification.result');
 }

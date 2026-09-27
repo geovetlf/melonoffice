@@ -349,3 +349,55 @@ describe('delegation failure', () => {
     expect(w.children()).toEqual([w.expectedIds[0]]);
   });
 });
+
+describe('X6a: cooperative cancellation (ADR-0029)', () => {
+  it('12. cancelling the planning execution cancels the plan and every child it delegated', async () => {
+    const w = await setup();
+    const { children } = await w.delegation.delegate(w.tenantA, w.plan.id);
+    // One child already started by its owner, the others still pending.
+    await w.executions.start(w.tenantA, must(children[0]).id);
+    const cancelled = await w.executions.cancel(w.tenantA, w.execution.id, 'director_request');
+    expect(cancelled.status).toBe('cancelled');
+    for (const child of children) {
+      const now = await w.executions.get(w.tenantA, child.id);
+      expect(now.status).toBe('cancelled');
+      expect(now.cancellation).toMatchObject({ by: ALICE, reason: 'parent_cancelled' });
+    }
+    expect((await w.stored()).status).toBe('cancelled');
+    expect(w.events('plan.state_changed').at(-1)).toMatchObject({
+      transition: { from: 'executing', to: 'cancelled' },
+      reason: 'director_request',
+    });
+    const cascaded = w
+      .events('execution.state_changed')
+      .filter((e) => e.reason === 'parent_cancelled')
+      .map((e) => e.target?.id);
+    expect(cascaded.sort()).toEqual([...w.expectedIds].sort());
+    // Nothing of it starts again, and cancelling twice changes nothing.
+    for (const child of children) {
+      await expect(w.executions.start(w.tenantA, child.id)).rejects.toMatchObject({
+        code: 'execution_already_terminal',
+      });
+    }
+    const before = w.events('execution.state_changed').length;
+    await w.executions.cancel(w.tenantA, w.execution.id, 'director_request');
+    expect(w.events('execution.state_changed')).toHaveLength(before);
+  });
+
+  it('a delegation cancelled half-way makes nothing more, and what it made stays cancelled', async () => {
+    const w = await setup();
+    // The delegation stops after its first child, then the owner cancels the planning execution:
+    // the child that exists is cancelled; the ones not made yet have nothing to cancel.
+    expect(await codeOf(w.faulty({ op: 'create', call: 2 }).delegate(w.tenantA, w.plan.id))).toBe(
+      'injected',
+    );
+    expect(w.children()).toHaveLength(1);
+    await w.executions.cancel(w.tenantA, w.execution.id, 'director_request');
+    const first = must(w.expectedIds[0]);
+    expect((await w.executions.get(w.tenantA, first)).status).toBe('cancelled');
+    // Delegating again cannot go on under a cancelled parent: no child is added.
+    expect(await codeOf(w.delegation.delegate(w.tenantA, w.plan.id))).not.toBe('accepted');
+    expect(w.children()).toEqual([first]);
+    expect((await w.stored()).delegationState).not.toBe('completed');
+  });
+});

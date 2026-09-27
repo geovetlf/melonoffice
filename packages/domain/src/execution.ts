@@ -1,4 +1,5 @@
 import type { ApprovalId } from './approval.js';
+import type { VerificationPolicy } from './plan.js';
 import type {
   Brand,
   DepartmentId,
@@ -123,6 +124,58 @@ export interface ExecutionNode {
   readonly error?: ExecutionFailure;
   readonly startedAt?: IsoTimestamp;
   readonly completedAt?: IsoTimestamp;
+  /**
+   * Which run of the node this is, from 1 (ADR-0029). Absent means 1. It grows only through an
+   * allowed retry, at most once, and never for an outcome that is unknown.
+   */
+  readonly attempt?: number;
+  /**
+   * The idempotency key the node's external effect runs under, recorded when the node starts,
+   * before the effect (ADR-0029). It never includes the attempt, so a retry repeats the same key
+   * and the provider applies the effect once. A node with an external effect and no key is never
+   * retried automatically.
+   */
+  readonly idempotencyKey?: string;
+}
+
+/**
+ * How a node's output was checked (ADR-0029). Only deterministic policies exist: `human_review`
+ * and `specialist_review` are not policies yet and are refused, so nothing completes on a review
+ * that never happened.
+ */
+export type ExecutionVerificationPolicy = Extract<VerificationPolicy, 'output_schema' | 'checks'>;
+
+export type VerificationResult = 'passed' | 'failed';
+
+/** One deterministic check and where its evidence is. The evidence itself is kept elsewhere. */
+export interface VerificationCheck {
+  /** A stable code naming the check, e.g. `schema_valid`. */
+  readonly code: string;
+  readonly result: VerificationResult;
+  readonly evidence: ExecutionRef;
+}
+
+/** The verification of one completed node. `passed` only when every check passed. */
+export interface NodeVerification {
+  readonly nodeId: ExecutionNodeId;
+  readonly policy: ExecutionVerificationPolicy;
+  readonly result: VerificationResult;
+  readonly checks: readonly VerificationCheck[];
+}
+
+/**
+ * The evidence that an execution's work was verified (ADR-0029): one entry per completed node,
+ * recorded once while the execution is `verifying`. `verifying → completed` needs it, `passed`,
+ * covering every completed node. There is no bypass.
+ */
+export interface ExecutionVerification {
+  readonly schemaVersion: 1;
+  readonly executionId: ExecutionId;
+  readonly result: VerificationResult;
+  readonly verifiedAt: IsoTimestamp;
+  /** Correlates the verification with the logs and the audit event that recorded it. */
+  readonly correlationId: string;
+  readonly nodes: readonly NodeVerification[];
 }
 
 /**
@@ -157,6 +210,8 @@ export interface Execution {
   readonly result?: ExecutionRef;
   readonly failure?: ExecutionFailure;
   readonly cancellation?: ExecutionCancellation;
+  /** The verification of the current `verifying` pass, once recorded (ADR-0029). */
+  readonly verification?: ExecutionVerification;
   /** Increases with every change; a write expecting an older revision is refused. */
   readonly revision: number;
   readonly createdAt: IsoTimestamp;

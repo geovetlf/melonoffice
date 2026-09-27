@@ -23,6 +23,18 @@ export const PERMISSIONS = {
     action: 'read',
     description: "See one of the organization's executions: status, graph and versions (ADR-0024).",
   },
+  'execution.start': {
+    resource: 'execution',
+    action: 'start',
+    description:
+      'Start a pending execution, directly and never through GIA, the planner or the runtime (ADR-0029).',
+  },
+  'execution.cancel': {
+    resource: 'execution',
+    action: 'cancel',
+    description:
+      'Ask an execution to stop, directly. Cooperative: it reaches its children, never kills (ADR-0029).',
+  },
   'department.read': {
     resource: 'department',
     action: 'read',

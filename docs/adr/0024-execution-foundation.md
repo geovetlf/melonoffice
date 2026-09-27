@@ -149,6 +149,14 @@ Node changes are not audited: they are operational detail kept in the execution 
 
 `withCorrelation(logger, { requestId, executionId, nodeId })` in `packages/observability` binds well-formed ids to every log line. Malformed ids are dropped. No second telemetry stack is added, and there are no dashboards or metrics yet.
 
+### Amended by ADR-0029
+
+- An execution first reaches `running` only through a user's start (`execution.start`), except a planning execution delegated from `planning` or `waiting_approval`.
+- `running → verifying` needs every node completed or skipped; `verifying → completed` needs a recorded, passing verification covering every completed node.
+- Nodes record their `attempt` and, for external effects, their `idempotencyKey`; a failed node is retried only under ADR-0029's rules, never when its outcome is unknown.
+- Cancellation by a person (`execution.cancel`) reaches the children of a planning execution.
+- New audit actions: `execution.start_denied`, `execution.cancel_denied`, `execution.verification_recorded`, `execution.node_retried`, `execution.node_outcome_unknown`.
+
 ## Not in this change
 
 AI, LLM calls, the AI gateway, providers, a real planner, the Agent Engine, specialist execution, skills, tools, MCP, browser automation, workflow execution, scheduler, events, real approval, guardrails, verification, memory, credits metering, cost, billing changes, connectors, UI, Terraform and Cloud Run changes.

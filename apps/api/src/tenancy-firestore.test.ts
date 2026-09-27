@@ -363,6 +363,8 @@ describe.runIf(emulatorHost)('FirestoreAuditStore (emulator)', () => {
       actorType: 'user',
       actorUserId: ALICE,
       actorVia: 'direct',
+      actorId: null,
+      actorInitiatedBy: null,
       organizationId: null,
       targetType: null,
       targetId: null,

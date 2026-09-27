@@ -12,6 +12,7 @@ export type PlanningErrorCode =
   | 'plan_concurrency_conflict'
   | 'plan_version_mismatch'
   | 'gia_cannot_decide'
+  | 'runtime_cannot_decide'
   | 'execution_not_plannable'
   | 'specialist_not_eligible'
   | 'delegation_conflict'

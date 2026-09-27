@@ -16,6 +16,10 @@ export interface AuditDocument {
   readonly actorType: string;
   readonly actorUserId: string | null;
   readonly actorVia: string | null;
+  /** For the system actor: which one (`runtime`, ADR-0029). */
+  readonly actorId: string | null;
+  /** For the system actor: the user who started the work it did. */
+  readonly actorInitiatedBy: string | null;
   readonly organizationId: string | null;
   readonly targetType: string | null;
   readonly targetId: string | null;
@@ -40,13 +44,16 @@ export interface AuditDocument {
 
 export function toAuditDocument(event: AuditEvent): AuditDocument {
   const user = event.actor.type === 'user' ? event.actor : undefined;
+  const system = event.actor.type === 'system' ? event.actor : undefined;
   return {
     occurredAt: Timestamp.fromDate(new Date(event.occurredAt)),
     action: event.action,
     result: event.result,
     actorType: event.actor.type,
     actorUserId: user?.userId ?? null,
-    actorVia: user?.via ?? null,
+    actorVia: user?.via ?? system?.via ?? null,
+    actorId: system?.id ?? null,
+    actorInitiatedBy: system?.initiatedBy ?? null,
     organizationId: event.organizationId ?? null,
     targetType: event.target?.type ?? null,
     targetId: event.target?.id ?? null,

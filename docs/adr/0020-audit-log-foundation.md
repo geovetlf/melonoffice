@@ -12,20 +12,20 @@ Auth, tenancy and RBAC decide who may do what. Nothing records what actually hap
 
 ### Event model (`packages/audit`)
 
-| Field                     | Meaning                                                                                       |
-| ------------------------- | --------------------------------------------------------------------------------------------- |
-| `id`                      | Random UUID, assigned on the server                                                           |
-| `occurredAt`              | Server time                                                                                   |
-| `action`                  | From the action catalogue                                                                     |
-| `result`                  | `success`, `denied` or `failure`                                                              |
-| `actor`                   | `{ type: 'user', userId, via }`. `system` and `anonymous` exist in the model only             |
-| `organizationId`          | The organization the actor was **authorized** to act in, from a resolved tenant or a creation |
-| `target`                  | `{ type: 'user' \| 'organization' \| 'membership', id }`, ids only                            |
-| `requestedOrganizationId` | The organization the client **asked** for when tenancy refused it. Untrusted, kept apart      |
-| `permission`              | The permission RBAC checked, for `authorization.check`                                        |
-| `reason`                  | A stable error code (`organization_forbidden`, `permission_denied`, `storage_error`…)         |
-| `requestId`               | The request's id, as returned in `x-request-id`                                               |
-| `source`                  | The recording component. Today only `api`                                                     |
+| Field                     | Meaning                                                                                                                                                   |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`                      | Random UUID, assigned on the server                                                                                                                       |
+| `occurredAt`              | Server time                                                                                                                                               |
+| `action`                  | From the action catalogue                                                                                                                                 |
+| `result`                  | `success`, `denied` or `failure`                                                                                                                          |
+| `actor`                   | `{ type: 'user', userId, via }`; the runtime's `{ type: 'system', id: 'runtime', initiatedBy, via: 'runtime' }` (ADR-0029); `anonymous` in the model only |
+| `organizationId`          | The organization the actor was **authorized** to act in, from a resolved tenant or a creation                                                             |
+| `target`                  | `{ type: 'user' \| 'organization' \| 'membership', id }`, ids only                                                                                        |
+| `requestedOrganizationId` | The organization the client **asked** for when tenancy refused it. Untrusted, kept apart                                                                  |
+| `permission`              | The permission RBAC checked, for `authorization.check`                                                                                                    |
+| `reason`                  | A stable error code (`organization_forbidden`, `permission_denied`, `storage_error`…)                                                                     |
+| `requestId`               | The request's id, as returned in `x-request-id`                                                                                                           |
+| `source`                  | The recording component. Today only `api`                                                                                                                 |
 
 - There is **no free-form metadata**. Every field is structured, and `buildAuditEvent()` copies only these fields and checks each one:
   - Unknown actions and results an action does not allow are programming errors and throw.
@@ -94,7 +94,7 @@ Only actions the code performs today:
 
 ### Persistence and immutability
 
-- The Firestore collection is `auditLogs/{eventId}`, with flat fields: `occurredAt`, `action`, `result`, `actorType`, `actorUserId`, `actorVia`, `organizationId`, `targetType`, `targetId`, `targetVersion` (the target's version, added by ADR-0028), `requestedOrganizationId`, `permission`, `planId`, `planVersion` (added by ADR-0021), `transitionFrom` and `transitionTo` (added by ADR-0024), `toolId` and `toolVersion` (added by ADR-0026), `modelProvider`, `modelId`, `previousModelProvider` and `previousModelId` (added by ADR-0027), `reason`, `reference` (the operation's reference id, added by ADR-0023), `requestId` and `source`. Absent values are stored as `null`.
+- The Firestore collection is `auditLogs/{eventId}`, with flat fields: `occurredAt`, `action`, `result`, `actorType`, `actorUserId`, `actorVia`, `actorId` and `actorInitiatedBy` (added by ADR-0029), `organizationId`, `targetType`, `targetId`, `targetVersion` (the target's version, added by ADR-0028), `requestedOrganizationId`, `permission`, `planId`, `planVersion` (added by ADR-0021), `transitionFrom` and `transitionTo` (added by ADR-0024), `toolId` and `toolVersion` (added by ADR-0026), `modelProvider`, `modelId`, `previousModelProvider` and `previousModelId` (added by ADR-0027), `reason`, `reference` (the operation's reference id, added by ADR-0023), `requestId` and `source`. Absent values are stored as `null`.
 - The `AuditStore` port has only `append`. The Firestore store writes with `create` in a batch, so an event is never overwritten and a batch is all or nothing. There is no update or delete in the application.
 - **No endpoint** reads or writes audit events. `POST /v1/audit-logs` and similar paths are `404`.
 - IAM cannot make one collection append-only. The API's service account (`roles/datastore.user`) could technically change documents, and only the code prevents it. See the risks.
@@ -148,7 +148,7 @@ RBAC decides; the audit log records RBAC's refusals (`authorization.check`) with
 2. Who may read audit events, and through which endpoint and permission (for example `audit.read`), with its indexes.
 3. A tamper-evident store beyond application-level append-only, such as a separate project, restricted IAM or hash chaining.
 4. Whether rejected authentication should be recorded somewhere rate-limited.
-5. A system actor for jobs, when jobs exist.
+5. A system actor for jobs, when jobs exist. Done for the runtime by ADR-0029.
 
 ## Risks
 

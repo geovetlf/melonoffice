@@ -183,7 +183,9 @@ function fromAuditDocument(id: string, d: AuditDocument): AuditEvent {
     actor:
       d.actorType === 'user'
         ? { type: 'user', userId: d.actorUserId, via: d.actorVia }
-        : { type: d.actorType },
+        : d.actorType === 'system'
+          ? { type: 'system', id: d.actorId, initiatedBy: d.actorInitiatedBy, via: d.actorVia }
+          : { type: d.actorType },
     ...(d.organizationId === null ? {} : { organizationId: d.organizationId }),
     ...(d.targetType === null ? {} : { target: { type: d.targetType, id: d.targetId } }),
     ...(d.targetVersion == null ? {} : { targetVersion: d.targetVersion }),

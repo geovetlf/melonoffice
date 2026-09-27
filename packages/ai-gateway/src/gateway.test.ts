@@ -265,6 +265,8 @@ async function world(options: WorldOptions = {}) {
     repository: executionRepository,
     organizations: tenancy,
     assignments: specialists.assignments,
+    authorization,
+    audit: createAuditService(audit, now),
     now,
   });
   const calls: ProviderCall[] = [];
@@ -370,7 +372,7 @@ async function world(options: WorldOptions = {}) {
       },
       nodes: [{ id: 'n0', type: 'agent', label: 'Think' }],
     });
-    return executions.changeStatus(tenant, execution.id, { from: 'pending', to: 'running' });
+    return executions.start(tenant, execution.id);
   }
 
   const events = (action?: string) =>

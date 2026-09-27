@@ -162,6 +162,26 @@ describe('actorOf', () => {
   it('keeps the real user when GIA acts, and marks GIA only as the channel', () => {
     expect(actorOf(actAsGia(alice))).toEqual({ type: 'user', userId: ALICE, via: 'gia' });
   });
+
+  it('records the runtime as a system actor with the user who started the work (ADR-0029)', () => {
+    const runtime = { actor: 'runtime', userId: ALICE } as const;
+    expect(actorOf(runtime)).toEqual({
+      type: 'system',
+      id: 'runtime',
+      initiatedBy: ALICE,
+      via: 'runtime',
+    });
+    const event = buildAuditEvent({ ...signIn, actor: actorOf(runtime) }, NOW);
+    expect(event.actor).toEqual(actorOf(runtime));
+    for (const actor of [
+      { type: 'system', id: 'runtime', initiatedBy: 'not-a-user', via: 'runtime' },
+      { type: 'system', id: 'scheduler', initiatedBy: ALICE, via: 'runtime' },
+      { type: 'system', id: 'runtime', initiatedBy: ALICE, via: 'direct' },
+      { type: 'system' },
+    ]) {
+      expect(() => buildAuditEvent({ ...signIn, actor } as never, NOW)).toThrow();
+    }
+  });
 });
 
 describe('AuditService and InMemoryAuditStore', () => {

@@ -19,6 +19,7 @@ import {
   isResolvedTenant,
   listMyOrganizations,
   parseOrganizationName,
+  resolveRuntimeTenant,
   resolveTenant,
 } from './tenant.js';
 
@@ -256,6 +257,26 @@ describe('parseOrganizationName', () => {
     ['a bidi override', 'Acme‮proC'],
   ])('refuses %s', (_name, input) => {
     expect(() => parseOrganizationName(input)).toThrow('invalid_organization_name');
+  });
+});
+
+describe('resolveRuntimeTenant (ADR-0029)', () => {
+  it("is the initiating user's membership, marked runtime, and resolved", async () => {
+    const { store, alice, orgA } = await setup();
+    const user = await resolveTenant(alice, orgA, store);
+    const runtime = await resolveRuntimeTenant(ALICE, orgA, store);
+    expect(runtime).toEqual({ ...user, actor: 'runtime' });
+    expect(isResolvedTenant(runtime)).toBe(true);
+    expect(Object.isFrozen(runtime)).toBe(true);
+    expect(isResolvedTenant({ ...runtime, actor: 'user' })).toBe(false);
+  });
+
+  it('never reaches an organization the user is not a member of', async () => {
+    const { store, orgB } = await setup();
+    expect(await codeOf(resolveRuntimeTenant(ALICE, orgB, store))).toBe('organization_forbidden');
+    expect(await codeOf(resolveRuntimeTenant(ALICE, MISSING_ORG, store))).toBe(
+      'organization_forbidden',
+    );
   });
 });
 

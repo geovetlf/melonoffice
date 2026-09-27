@@ -45,6 +45,7 @@ import {
 import {
   createOrganization,
   InMemoryTenancyStore,
+  resolveRuntimeTenant,
   resolveTenant,
   type TenantContext,
 } from '@melonoffice/tenancy';
@@ -52,6 +53,7 @@ import { createToolRegistry } from '@melonoffice/tools';
 import { createDelegation } from './delegation.js';
 import { createPlanEstimator } from './estimate.js';
 import { createPlanner } from './planner.js';
+import { createPlanCancellationCascade } from './cascade.js';
 import { InMemoryPlanRepository } from './repository.js';
 import { createPlanService } from './service.js';
 import { createPlanValidator } from './validate.js';
@@ -212,10 +214,15 @@ export async function world(options: WorldOptions = {}) {
     authorization,
   });
   const executionRepository = new InMemoryExecutionRepository(audit);
+  const planRepository = new InMemoryPlanRepository(audit);
   const executions = createExecutionService({
     repository: executionRepository,
     organizations: tenancy,
     assignments: specialists.assignments,
+    // Starting and cancelling are the owner's (ADR-0029), whatever roles a test gives planning.
+    authorization: createAuthorizationService(),
+    audit: auditService,
+    cascade: createPlanCancellationCascade({ repository: planRepository, now }),
     now,
   });
   const environment = 'environment' in options ? options.environment : 'dev';
@@ -298,7 +305,6 @@ export async function world(options: WorldOptions = {}) {
     environment,
     estimator,
   });
-  const planRepository = new InMemoryPlanRepository(audit);
   const plans = createPlanService({
     repository: planRepository,
     executions,
@@ -327,6 +333,7 @@ export async function world(options: WorldOptions = {}) {
   const tenantA = await resolveTenant(as(ALICE), orgA, tenancy);
   const tenantB = await resolveTenant(as(BOB), orgB, tenancy);
   const giaA = await resolveTenant(as(ALICE, 'gia'), orgA, tenancy);
+  const runtimeA = await resolveRuntimeTenant(ALICE, orgA, tenancy);
 
   async function seed(
     org: OrganizationId,
@@ -410,6 +417,7 @@ export async function world(options: WorldOptions = {}) {
     tenantA,
     tenantB,
     giaA,
+    runtimeA,
     tenancy,
     authorization,
     departments,

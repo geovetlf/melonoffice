@@ -14,8 +14,13 @@ export type AuditEventId = string & { readonly __brand: 'AuditEventId' };
 export type AuditResult = 'success' | 'denied' | 'failure';
 
 /**
- * Who acted. Only `user` is recorded today; `system` and `anonymous` exist in the model for
- * future events and are not produced by any code yet.
+ * Who acted.
+ *
+ * - `user`: a person, directly or through GIA (the user stays the actor; GIA is only the channel).
+ * - `system` `runtime`: the execution runtime (ADR-0029), always for the user who started the
+ *   work (`initiatedBy`), so the chain user → runtime → operation → execution → organization is
+ *   rebuilt from the event. It never stands for a human decision.
+ * - `anonymous`: exists in the model only; nothing produces it.
  */
 export type AuditActor =
   | {
@@ -24,7 +29,14 @@ export type AuditActor =
       /** `gia` when GIA acted for the user. The user stays the actor; GIA is only the channel. */
       readonly via: 'direct' | 'gia';
     }
-  | { readonly type: 'system' | 'anonymous' };
+  | {
+      readonly type: 'system';
+      readonly id: 'runtime';
+      /** The user who started the work the runtime is doing. */
+      readonly initiatedBy: UserId;
+      readonly via: 'runtime';
+    }
+  | { readonly type: 'anonymous' };
 
 export interface AuditTarget {
   readonly type:
@@ -181,10 +193,7 @@ export function buildAuditEvent(input: AuditEventInput, at: Date): AuditEvent {
   ) {
     throw new Error('invalid audit plan');
   }
-  const actor: AuditActor =
-    input.actor.type === 'user'
-      ? Object.freeze({ type: 'user', userId: input.actor.userId, via: input.actor.via })
-      : Object.freeze({ type: input.actor.type });
+  const actor: AuditActor = copyActor(input.actor);
   const requested = input.requestedOrganizationId;
   return Object.freeze({
     id: randomUUID() as AuditEventId,
@@ -230,11 +239,48 @@ export function buildAuditEvent(input: AuditEventInput, at: Date): AuditEvent {
   });
 }
 
-/** The actor of an authenticated request: its verified user, and GIA as the channel if GIA acted. */
+const USER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/** A checked copy with only the actor's own fields. A malformed actor is a programming error. */
+function copyActor(actor: AuditActor): AuditActor {
+  switch (actor.type) {
+    case 'user':
+      if (actor.via !== 'direct' && actor.via !== 'gia') throw new Error('invalid audit actor');
+      return Object.freeze({ type: 'user', userId: actor.userId, via: actor.via });
+    case 'system':
+      if (actor.id !== 'runtime' || actor.via !== 'runtime' || !USER_ID.test(actor.initiatedBy)) {
+        throw new Error('invalid audit actor');
+      }
+      return Object.freeze({
+        type: 'system',
+        id: 'runtime',
+        initiatedBy: actor.initiatedBy,
+        via: 'runtime',
+      });
+    case 'anonymous':
+      return Object.freeze({ type: 'anonymous' });
+    default:
+      throw new Error('invalid audit actor');
+  }
+}
+
+/**
+ * The actor of a request or a tenant: the verified user, with GIA as the channel if GIA acted;
+ * or, for the runtime (ADR-0029), the system actor `runtime` initiated by that user. A runtime
+ * action is never recorded as the user's own.
+ */
 export function actorOf(auth: {
-  readonly actor: 'user' | 'gia';
+  readonly actor: 'user' | 'gia' | 'runtime';
   readonly userId: UserId;
 }): AuditActor {
+  if (auth.actor === 'runtime') {
+    return Object.freeze({
+      type: 'system',
+      id: 'runtime',
+      initiatedBy: auth.userId,
+      via: 'runtime',
+    });
+  }
   return Object.freeze({
     type: 'user',
     userId: auth.userId,

@@ -113,6 +113,8 @@ describe.each(STORES)('tools and approvals with storage in %s', (_name, createSt
       repository: stores.executions,
       organizations: stores.tenancy,
       assignments: specialists.assignments,
+      authorization: createAuthorizationService(),
+      audit: stores.audit,
     });
     // Approvals asked in the past, when a test needs one that has already run out.
     const now = () => new Date(Date.now() - (options.pastMinutes ?? 0) * 60_000);
@@ -188,7 +190,7 @@ describe.each(STORES)('tools and approvals with storage in %s', (_name, createSt
         },
         nodes: [{ id: 'n0', type: 'tool', label: 'Send', tool: { id: toolId, version: 1 } }],
       });
-      return executions.changeStatus(tenant, execution.id, { from: 'pending', to: 'running' });
+      return executions.start(tenant, execution.id);
     }
 
     /** Alice's execution, stopped on a pending approval the gate asked for. */
