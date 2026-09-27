@@ -134,11 +134,26 @@ async function world() {
     advance: (seconds: number) => {
       clock = new Date(clock.getTime() + seconds * 1000);
     },
-    /** The organization allows agents, and one handles the conversation. */
+    /**
+     * The organization allows agents, and one handles the conversation. Nothing in CV-6A puts an
+     * agent in charge of a conversation (hand-back only resumes one a person paused), so the test
+     * records it the way a later phase's assignment will.
+     */
     async aiHandles() {
       await service.changeAutonomy(tenantA, 'autonomous');
-      await service.takeOver(tenantA, conversation.id).catch(() => undefined);
-      return service.handBack(tenantA, conversation.id);
+      return repository.updateConversation(orgA, conversation.id, (current) => ({
+        conversation: Object.freeze({
+          ...current,
+          control: Object.freeze({
+            handledBy: 'ai' as const,
+            aiState: 'active' as const,
+            epoch: controlOf(current).epoch + 1,
+            changedAt: now().toISOString() as IsoTimestamp,
+          }),
+          revision: current.revision + 1,
+        }),
+        events: [],
+      }));
     },
   };
 }
@@ -205,7 +220,7 @@ describe('human control of a conversation (CV-6A)', () => {
     );
   });
 
-  it('hands a conversation to AI only where the organization allows AI handling', async () => {
+  it('never activates AI on a conversation AI never handled (human / off)', async () => {
     const w = await world();
     for (const level of ['manual', 'assisted'] as const) {
       if (level !== 'manual') await w.service.changeAutonomy(w.tenantA, level);
@@ -213,22 +228,52 @@ describe('human control of a conversation (CV-6A)', () => {
         'autonomy_not_enabled',
       );
     }
-    await w.service.changeAutonomy(w.tenantA, 'supervised');
-    const handed = await w.service.handBack(w.tenantA, w.conversation.id);
-    expect(handed.control).toMatchObject({
-      handledBy: 'ai',
-      aiState: 'active',
-      epoch: 1,
-      changedBy: ALICE,
-    });
-    expect(personMaySend(handed)).toBe(false);
-    expect(w.events('conversation.ai_handed_back')[0]).toMatchObject({
-      actor: { type: 'user', userId: ALICE },
-      target: { type: 'conversation', id: w.conversation.id },
-      transition: { from: 'off', to: 'active' },
-    });
+    for (const level of ['supervised', 'autonomous'] as const) {
+      await w.service.changeAutonomy(w.tenantA, level);
+      expect(await codeOf(w.service.handBack(w.tenantA, w.conversation.id))).toBe(
+        'invalid_transition',
+      );
+    }
+    const still = await w.service.get(w.tenantA, w.conversation.id);
+    expect(still.control).toBeUndefined();
+    expect(still.revision).toBe(w.conversation.revision);
+    expect(w.events('conversation.ai_handed_back')).toHaveLength(0);
+  });
+
+  it.each(['supervised', 'autonomous'] as const)(
+    'hands a conversation a person paused back to AI at %s',
+    async (level) => {
+      const w = await world();
+      await w.aiHandles();
+      const taken = await w.service.takeOver(w.tenantA, w.conversation.id);
+      if (level !== 'autonomous') await w.service.changeAutonomy(w.tenantA, level);
+      const handed = await w.service.handBack(w.tenantA, w.conversation.id);
+      expect(handed.control).toMatchObject({
+        handledBy: 'ai',
+        aiState: 'active',
+        epoch: (taken.control?.epoch ?? 0) + 1,
+        changedBy: ALICE,
+      });
+      expect(handed.revision).toBe(taken.revision + 1);
+      expect(personMaySend(handed)).toBe(false);
+      expect(w.events('conversation.ai_handed_back')[0]).toMatchObject({
+        actor: { type: 'user', userId: ALICE },
+        target: { type: 'conversation', id: w.conversation.id },
+        transition: { from: 'paused', to: 'active' },
+      });
+      expect(await codeOf(w.service.handBack(w.tenantA, w.conversation.id))).toBe(
+        'invalid_transition',
+      );
+    },
+  );
+
+  it('refuses hand-back while AI is paused if the organization turned AI handling off', async () => {
+    const w = await world();
+    await w.aiHandles();
+    await w.service.takeOver(w.tenantA, w.conversation.id);
+    await w.service.changeAutonomy(w.tenantA, 'assisted');
     expect(await codeOf(w.service.handBack(w.tenantA, w.conversation.id))).toBe(
-      'invalid_transition',
+      'autonomy_not_enabled',
     );
   });
 
@@ -250,9 +295,10 @@ describe('human control of a conversation (CV-6A)', () => {
     });
   });
 
-  it('refuses hand-back for a closed conversation', async () => {
+  it('refuses hand-back for a closed conversation, even one a person paused', async () => {
     const w = await world();
-    await w.service.changeAutonomy(w.tenantA, 'autonomous');
+    await w.aiHandles();
+    await w.service.takeOver(w.tenantA, w.conversation.id);
     await w.service.changeStatus(w.tenantA, w.conversation.id, 'closed');
     expect(await codeOf(w.service.handBack(w.tenantA, w.conversation.id))).toBe(
       'invalid_transition',
@@ -325,11 +371,18 @@ describe('escalation to a person (CV-6A)', () => {
       reason: 'customer_requested_human',
       reference: EXECUTION,
     });
+    // Handing an escalation straight back is refused: a person accepts it first.
+    expect(await codeOf(w.service.handBack(w.tenantA, w.conversation.id))).toBe(
+      'invalid_transition',
+    );
+    expect(controlOf(await w.service.get(w.tenantA, w.conversation.id)).aiState).toBe('escalated');
     // The person accepts it; handing it back answers the handoff.
     const taken = await w.service.takeOver(w.tenantA, w.conversation.id);
     expect(taken.control?.aiState).toBe('paused');
     expect(taken.handoff?.reason).toBe('customer_requested_human');
-    expect((await w.service.handBack(w.tenantA, w.conversation.id)).handoff).toBeUndefined();
+    const resumed = await w.service.handBack(w.tenantA, w.conversation.id);
+    expect(resumed.control).toMatchObject({ handledBy: 'ai', aiState: 'active' });
+    expect(resumed.handoff).toBeUndefined();
     expect(w.events('conversation.ai_handed_back').at(-1)?.reason).toBe('customer_requested_human');
   });
 
