@@ -38,6 +38,8 @@ async function signIn(password = 'correct-horse') {
 }
 
 const path = () => globalThis.location.pathname;
+/** The Home's heading while the office has no active agents yet (ADR-0040). */
+const HOME = { level: 1, name: 'Your office is ready to work' } as const;
 const apiPaths = (backend: FakeBackend) =>
   backend.apiCalls().map((call) => `${call.method} ${call.url.slice(API.length)}`);
 
@@ -95,7 +97,7 @@ describe('signing in (ADR-0036)', () => {
     const { services, backend, store } = start({ path: '/login' });
     renderApp(services);
     await signIn();
-    expect(await screen.findByRole('heading', { level: 1, name: 'Conversations' })).toBeTruthy();
+    expect(await screen.findByRole('heading', HOME)).toBeTruthy();
     expect(path()).toBe('/');
     expect(screen.getByText('Acme')).toBeTruthy();
     expect(screen.getByText('ana@example.com')).toBeTruthy();
@@ -131,8 +133,20 @@ describe('signing in (ADR-0036)', () => {
     await signIn();
     expect(await screen.findByText('Mine')).toBeTruthy();
     expect(apiPaths(backend)).toContain('GET /v1/organizations/org_7');
+    // No department, agent or credit is read without its permission, and no inbox link is shown.
+    expect(apiPaths(backend).some((p) => /departments|specialists|credits|billing/.test(p))).toBe(
+      false,
+    );
     expect(
-      screen.getByText('You are signed in. Your role does not include conversations.'),
+      await screen.findByText('Your role does not include seeing the departments.'),
+    ).toBeTruthy();
+    expect(screen.queryByRole('link', { name: 'Communications' })).toBeNull();
+    act(() => {
+      globalThis.history.pushState(null, '', '/conversations');
+      globalThis.dispatchEvent(new PopStateEvent('popstate'));
+    });
+    expect(
+      await screen.findByText('You are signed in. Your role does not include conversations.'),
     ).toBeTruthy();
     expect(screen.queryByRole('heading', { level: 1, name: 'Conversations' })).toBeNull();
   });
@@ -162,7 +176,7 @@ describe('a new user without an organization', () => {
       target: { value: '  Panadería Luna  ' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Create organization' }));
-    expect(await screen.findByRole('heading', { level: 1, name: 'Conversations' })).toBeTruthy();
+    expect(await screen.findByRole('heading', HOME)).toBeTruthy();
     expect(screen.getByText('Panadería Luna')).toBeTruthy();
     const create = backend.apiCalls().find((call) => call.url === `${API}/v1/organizations`);
     expect(create?.method).toBe('POST');
@@ -191,7 +205,7 @@ describe('a session', () => {
     const { services, backend } = start({ path: '/', refreshToken: 'refresh-kept' });
     renderApp(services);
     expect(screen.getByRole('status').textContent).toBe('Loading your office…');
-    expect(await screen.findByRole('heading', { level: 1, name: 'Conversations' })).toBeTruthy();
+    expect(await screen.findByRole('heading', HOME)).toBeTruthy();
     // A resumed session only reads /v1/me; it does not record a new sign-in.
     expect(apiPaths(backend)[0]).toBe('GET /v1/me');
   });
@@ -209,7 +223,7 @@ describe('a session', () => {
     const { services, backend } = start({ path: '/login' });
     renderApp(services);
     await signIn();
-    await screen.findByRole('heading', { level: 1, name: 'Conversations' });
+    await screen.findByRole('heading', HOME);
     backend.options.apiStatus = 401;
     await act(() => services.api.json('/v1/me').catch(() => undefined));
     expect(await screen.findByText('Your session has ended. Please sign in again.')).toBeTruthy();
@@ -221,7 +235,7 @@ describe('a session', () => {
     backend.options.apiStatus = 403;
     renderApp(services);
     expect(await screen.findByRole('heading', { name: 'Access denied' })).toBeTruthy();
-    expect(screen.queryByRole('heading', { level: 1, name: 'Conversations' })).toBeNull();
+    expect(screen.queryByRole('heading', HOME)).toBeNull();
   });
 
   it('when the API is down, says so and can try again', async () => {
@@ -233,7 +247,7 @@ describe('a session', () => {
     ).toBeTruthy();
     delete backend.options.apiStatus;
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
-    expect(await screen.findByRole('heading', { level: 1, name: 'Conversations' })).toBeTruthy();
+    expect(await screen.findByRole('heading', HOME)).toBeTruthy();
   });
 
   it('signs out: back to sign-in, tokens forgotten, protected pages closed', async () => {
@@ -256,7 +270,9 @@ describe('the Conversations Center, signed in (ADR-0035, ADR-0036)', () => {
     const started = start({ path: '/login' });
     renderApp(started.services);
     await signIn();
+    fireEvent.click(await screen.findByRole('link', { name: 'Communications' }));
     await screen.findByRole('heading', { level: 1, name: 'Conversations' });
+    expect(path()).toBe('/conversations');
     return started;
   }
   const inbox = () => screen.findByRole('list', { name: 'Conversations' });

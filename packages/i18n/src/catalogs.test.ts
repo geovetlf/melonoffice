@@ -4,6 +4,12 @@ import { catalogs, SOURCE_LOCALE, SUPPORTED_LOCALES, type Locale } from './catal
 import { detectLocale } from './detect.js';
 import { pseudoLocalize, pseudoLocalizeCatalog } from './pseudo.js';
 
+/** A value for each argument a message names (`{name}`, `{count, plural, …}`), to format it. */
+function argumentsOf(message: string): Record<string, number> {
+  const names = [...message.matchAll(/\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*[,}]/g)].map((m) => m[1]);
+  return Object.fromEntries(names.map((name) => [name, 1]));
+}
+
 describe('catalogs', () => {
   it('supports English and Spanish (D-17)', () => {
     expect(SUPPORTED_LOCALES).toEqual(['en', 'es']);
@@ -24,8 +30,8 @@ describe('catalogs', () => {
   it.each(SUPPORTED_LOCALES)('every %s message is valid ICU and formats', (locale: Locale) => {
     const errors: unknown[] = [];
     const intl = createIntl({ locale, messages: catalogs[locale], onError: (e) => errors.push(e) });
-    for (const id of Object.keys(catalogs[locale])) {
-      expect(intl.formatMessage({ id })).not.toBe(id);
+    for (const [id, message] of Object.entries(catalogs[locale])) {
+      expect(intl.formatMessage({ id }, argumentsOf(message))).not.toBe(id);
     }
     expect(errors).toEqual([]);
   });
@@ -64,7 +70,9 @@ describe('pseudoLocalize', () => {
     const messages = pseudoLocalizeCatalog(catalogs.en);
     const errors: unknown[] = [];
     const intl = createIntl({ locale: 'en', messages, onError: (e) => errors.push(e) });
-    for (const id of Object.keys(messages)) intl.formatMessage({ id });
+    for (const [id, message] of Object.entries(messages)) {
+      intl.formatMessage({ id }, argumentsOf(message));
+    }
     expect(errors).toEqual([]);
   });
 });
