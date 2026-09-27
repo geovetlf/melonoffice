@@ -56,6 +56,8 @@ Errors carry the API's stable code only, never a stack or a token.
 
 - User: `POST /v1/me` right after sign-in (records it, ADR-0017); `GET /v1/me` when a session
   resumes.
+- A user with no organization is asked to create one: the form sends only its name to the existing
+  `POST /v1/organizations` (ADR-0018), which makes them its owner.
 - Organization: the first one `GET /v1/me/organizations` lists. That list holds only the caller's
   active memberships. The web app has no way to name any other organization, and the API still
   resolves the tenant from the membership on every call.

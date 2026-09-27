@@ -143,9 +143,46 @@ describe('signing in (ADR-0036)', () => {
     renderApp(services);
     await signIn();
     expect(
-      await screen.findByText('Your account is not part of any organization yet.'),
+      await screen.findByText(
+        'Your account is not part of any organization yet. Create one to start.',
+      ),
     ).toBeTruthy();
     expect(apiPaths(backend)).not.toContain('GET /v1/organizations/org_1');
+  });
+});
+
+describe('a new user without an organization', () => {
+  it('creates one, becomes its owner and lands in its office', async () => {
+    const { services, backend } = start({ path: '/login' });
+    backend.options.organizations = [];
+    renderApp(services);
+    await signIn();
+    expect(await screen.findByRole('heading', { name: 'Create your organization' })).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Organization name'), {
+      target: { value: '  Panadería Luna  ' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Create organization' }));
+    expect(await screen.findByRole('heading', { level: 1, name: 'Conversations' })).toBeTruthy();
+    expect(screen.getByText('Panadería Luna')).toBeTruthy();
+    const create = backend.apiCalls().find((call) => call.url === `${API}/v1/organizations`);
+    expect(create?.method).toBe('POST');
+    expect(JSON.parse(create?.body ?? '{}')).toEqual({ name: 'Panadería Luna' });
+  });
+
+  it('shows why the API refused to create it', async () => {
+    const { services, backend } = start({ path: '/login' });
+    backend.options.organizations = [];
+    backend.options.organizationLimitReached = true;
+    renderApp(services);
+    await signIn();
+    fireEvent.change(await screen.findByLabelText('Organization name'), {
+      target: { value: 'Otra' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Create organization' }));
+    expect((await screen.findByRole('alert')).textContent).toBe(
+      'You cannot create more organizations.',
+    );
+    expect(screen.queryByRole('heading', { level: 1, name: 'Conversations' })).toBeNull();
   });
 });
 

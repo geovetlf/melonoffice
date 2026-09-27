@@ -101,7 +101,7 @@
   "auth.notConfigured": "El inicio de sesión aún no está configurado en este sitio.",
   "auth.unavailable": "No pudimos cargar tu oficina ahora. Vuelve a intentarlo.",
   "auth.retry": "Reintentar",
-  "auth.noOrganization": "Tu cuenta aún no pertenece a ninguna organización.",
+  "auth.noOrganization": "Tu cuenta aún no pertenece a ninguna organización. Crea una para empezar.",
   "auth.denied.title": "Acceso denegado",
   "auth.denied.body": "No tienes permiso para ver esto. Si crees que deberías tenerlo, pídeselo al propietario de tu organización.",
   "home.title": "Tu oficina",
@@ -110,5 +110,12 @@
   "conversations.loading": "Cargando conversaciones…",
   "conversations.sender.person": "Enviado por una persona",
   "nav.label": "Principal",
-  "nav.conversations": "Conversaciones"
+  "nav.conversations": "Conversaciones",
+  "organization.create.title": "Crea tu organización",
+  "organization.create.name": "Nombre de la organización",
+  "organization.create.submit": "Crear organización",
+  "organization.create.busy": "Creando…",
+  "organization.create.error.invalid_organization_name": "Escribe un nombre de 1 a 100 caracteres.",
+  "organization.create.error.organization_limit_reached": "No puedes crear más organizaciones.",
+  "organization.create.error.generic": "No se pudo crear la organización. Vuelve a intentarlo."
 }
