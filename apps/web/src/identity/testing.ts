@@ -31,6 +31,8 @@ export interface FakeBackend {
     organizations: { id: string; name: string; role: string }[];
     permissions: string[];
     idTokenSeconds: number;
+    /** Each organization's conversations: only its members can read them. */
+    conversations: Record<string, { id: string; name: string; priority: string }[]>;
   };
   apiCalls(): Call[];
 }
@@ -46,8 +48,18 @@ export function fakeBackend(): FakeBackend {
     validRefresh: new Set(),
     registered: true,
     organizations: [{ id: 'org_1', name: 'Acme', role: 'owner' }],
-    permissions: ['conversation.read', 'organization.read'],
+    permissions: [
+      'contact.read',
+      'conversation.manage',
+      'conversation.read',
+      'conversation.send',
+      'organization.read',
+    ],
     idTokenSeconds: 3600,
+    conversations: {
+      org_1: [{ id: 'c1', name: 'Juan Pérez', priority: 'normal' }],
+      org_other: [{ id: 'c9', name: 'Another company’s customer', priority: 'normal' }],
+    },
   };
 
   function issue() {
@@ -112,6 +124,8 @@ export function fakeBackend(): FakeBackend {
         })),
       });
     }
+    const inbox = /^\/v1\/organizations\/([^/]+)\/(.+)$/.exec(path);
+    if (inbox !== null) return inboxAnswer(inbox[1] ?? '', inbox[2] ?? '', method, body);
     const match = /^\/v1\/organizations\/([^/]+)$/.exec(path);
     const organization = options.organizations.find((o) => o.id === match?.[1]);
     if (organization !== undefined) {
@@ -119,6 +133,74 @@ export function fakeBackend(): FakeBackend {
     }
     return json(404, { error: 'organization_not_found' });
   };
+
+  /** The inbox routes, as the API answers them: membership first, then the role's permission. */
+  function inboxAnswer(organizationId: string, rest: string, method: string, body?: string) {
+    if (!options.organizations.some((o) => o.id === organizationId)) {
+      return json(403, { error: 'organization_forbidden' });
+    }
+    const needs = (permission: string) =>
+      options.permissions.includes(permission)
+        ? undefined
+        : json(403, { error: 'permission_denied' });
+    const conversations = options.conversations[organizationId] ?? [];
+    const view = (c: { id: string; name: string; priority: string }) => ({
+      id: c.id,
+      contactId: `contact-${c.id}`,
+      channel: 'whatsapp',
+      status: 'open',
+      assigneeId: null,
+      departmentId: null,
+      priority: c.priority,
+      tags: [],
+      lastMessage: { direction: 'inbound', preview: 'Hola', at: '2026-09-27T12:00:00Z' },
+      lastMessageAt: '2026-09-27T12:00:00Z',
+      createdAt: '2026-09-27T11:00:00Z',
+      contact: { id: `contact-${c.id}`, displayName: c.name, phone: null },
+    });
+    const [route, query = ''] = rest.split('?');
+    if (route === 'departments') return json(200, { departments: [] });
+    if (route === 'conversations' && method === 'GET') {
+      const q = new URLSearchParams(query).get('q')?.toLowerCase();
+      return (
+        needs('conversation.read') ??
+        json(200, {
+          conversations: conversations
+            .filter((c) => q === undefined || c.name.toLowerCase().includes(q))
+            .map(view),
+        })
+      );
+    }
+    const one = /^conversations\/([^/]+)\/(detail|priority|messages)$/.exec(route ?? '');
+    const conversation = conversations.find((c) => c.id === one?.[1]);
+    if (one === null || conversation === undefined) {
+      return json(404, { error: 'conversation_not_found' });
+    }
+    if (one[2] === 'detail') {
+      return (
+        needs('conversation.read') ??
+        json(200, {
+          conversation: view(conversation),
+          contact: {
+            id: `contact-${conversation.id}`,
+            displayName: conversation.name,
+            phone: null,
+            email: null,
+            createdAt: '2026-09-27T11:00:00Z',
+          },
+          identity: { channel: 'whatsapp', externalId: '5215500000000', displayName: null },
+          messages: [],
+        })
+      );
+    }
+    if (one[2] === 'priority') {
+      const denied = needs('conversation.manage');
+      if (denied !== undefined) return denied;
+      conversation.priority = (JSON.parse(body ?? '{}') as { priority: string }).priority;
+      return json(200, view(conversation));
+    }
+    return needs('conversation.send') ?? json(200, { message: { id: 'm1', status: 'sent' } });
+  }
 
   return {
     fetch: fetcher,

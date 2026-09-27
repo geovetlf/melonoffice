@@ -43,6 +43,7 @@ interface ConversationJson extends Json {
   readonly id: string;
   readonly contactId: string;
   readonly status: string;
+  readonly contact?: Json | null;
 }
 interface Answer {
   readonly [key: string]: unknown;
@@ -554,6 +555,220 @@ describe.each(STORES)('conversations with storage in %s', (_name, createStores) 
       expect(messages.body.messages.find((m: Json) => m.direction === 'outbound')?.status).toBe(
         'read',
       );
+    });
+  });
+
+  describe('inbox (CV-3)', () => {
+    /** Two conversations of A: Ana, then José (newest). */
+    async function two(t: Awaited<ReturnType<typeof setup>>) {
+      const now = Math.floor(Date.now() / 1000);
+      await t.deliver(
+        CONNECTION_A,
+        whatsapp(PHONE_A, { timestamp: String(now - 120) }),
+        APP_SECRET_A,
+      );
+      await t.deliver(
+        CONNECTION_A,
+        whatsapp(PHONE_A, {
+          id: 'wamid.jose',
+          from: '5215512345678',
+          text: 'Precio por favor',
+          timestamp: String(now - 60),
+        }),
+        APP_SECRET_A,
+      );
+      const [jose, ana] = (await t.conversationsOf()) as [ConversationJson, ConversationJson];
+      return { jose, ana };
+    }
+    const list = (t: Awaited<ReturnType<typeof setup>>, query = '', token = 'token-alice') =>
+      t.request(token, `${t.base(t.orgA)}/conversations${query}`);
+
+    it('lists each conversation with who it is with, searched, filtered and sorted', async () => {
+      const t = await setup();
+      const { jose, ana } = await two(t);
+      const all = await list(t);
+      expect(all.body.conversations.map((c) => c.contact)).toEqual([
+        { id: jose.contactId, displayName: 'Ana', phone: '+5215512345678' },
+        { id: ana.contactId, displayName: 'Ana', phone: '+15551234567' },
+      ]);
+      const ids = async (query: string) =>
+        (await list(t, query)).body.conversations.map((c) => c.id);
+      expect(await ids('?q=%2B52%201%2055')).toEqual([jose.id]);
+      expect(await ids('?q=ANA')).toEqual([jose.id, ana.id]);
+      expect(await ids('?q=precio')).toEqual([]);
+      await t.post('token-alice', `${t.base(t.orgA)}/conversations/${ana.id}/priority`, {
+        priority: 'urgent',
+      });
+      expect(await ids('?sort=priority')).toEqual([ana.id, jose.id]);
+      expect(await ids('?sort=created')).toEqual([jose.id, ana.id]);
+      expect(await ids('?priority=urgent')).toEqual([ana.id]);
+      expect(await ids('?status=open&unassigned=true&sort=last_activity')).toEqual([
+        jose.id,
+        ana.id,
+      ]);
+      for (const bad of ['sort=newest', 'priority=asap', 'q=a', 'q=x&q=y']) {
+        expect((await list(t, `?${bad}`)).status).toBe(400);
+      }
+    });
+
+    it('opens one conversation whole, with nothing secret in it', async () => {
+      const t = await setup();
+      const { jose } = await two(t);
+      const detail = await t.request(
+        'token-alice',
+        `${t.base(t.orgA)}/conversations/${jose.id}/detail`,
+      );
+      expect(detail.status).toBe(200);
+      expect(detail.body).toMatchObject({
+        conversation: { id: jose.id, status: 'open', priority: 'normal', tags: [] },
+        contact: { id: jose.contactId, phone: '+5215512345678' },
+        identity: { channel: 'whatsapp', externalId: '5215512345678', verification: 'provider' },
+        messages: [{ direction: 'inbound', text: 'Precio por favor' }],
+      });
+      const raw = JSON.stringify(detail.body);
+      for (const secret of [APP_SECRET_A, VERIFY_TOKEN, ACCESS_TOKEN, 'secrets/', 'revision']) {
+        expect(raw).not.toContain(secret);
+      }
+      const limited = await t.request(
+        'token-alice',
+        `${t.base(t.orgA)}/conversations/${jose.id}/detail?limit=1`,
+      );
+      expect(limited.body.messages).toHaveLength(1);
+      for (const bad of ['limit=0', 'limit=x', 'other=1']) {
+        expect(
+          (
+            await t.request(
+              'token-alice',
+              `${t.base(t.orgA)}/conversations/${jose.id}/detail?${bad}`,
+            )
+          ).status,
+        ).toBe(400);
+      }
+    });
+
+    it("never lets one organization read or change another's inbox (IDOR)", async () => {
+      const t = await setup();
+      const { jose } = await two(t);
+      const path = `/conversations/${jose.id}`;
+      // B, through its own organization, naming A's conversation: as if it did not exist.
+      for (const suffix of ['', '/detail', '/messages']) {
+        expect((await t.request('token-bob', `${t.base(t.orgB)}${path}${suffix}`)).status).toBe(
+          404,
+        );
+      }
+      expect(
+        (await t.post('token-bob', `${t.base(t.orgB)}${path}/priority`, { priority: 'high' }))
+          .status,
+      ).toBe(404);
+      expect(
+        (await t.post('token-bob', `${t.base(t.orgB)}${path}/tags`, { add: ['vip'] })).status,
+      ).toBe(404);
+      // B naming A's organization: not a member.
+      expect((await t.request('token-bob', `${t.base(t.orgA)}${path}/detail`)).status).toBe(403);
+      expect((await list(t, '', 'token-bob')).status).toBe(403);
+      // B's search never reaches A's contacts.
+      expect(
+        (await t.request('token-bob', `${t.base(t.orgB)}/conversations?q=ana`)).body.conversations,
+      ).toEqual([]);
+      const after = await t.request('token-alice', `${t.base(t.orgA)}${path}`);
+      expect(after.body).toMatchObject({ priority: 'normal', tags: [] });
+    });
+
+    it('changes priority by a person with conversation.manage, audited', async () => {
+      const t = await setup();
+      const { ana } = await two(t);
+      const path = `${t.base(t.orgA)}/conversations/${ana.id}/priority`;
+      const changed = await t.post('token-alice', path, { priority: 'high' });
+      expect(changed.status).toBe(200);
+      expect(changed.body).toMatchObject({ id: ana.id, priority: 'high' });
+      expect((await t.post('token-alice', path, { priority: 'high' })).status).toBe(409);
+      expect((await t.post('token-alice', path, { priority: 'critical' })).status).toBe(400);
+      expect((await t.post('token-alice', path, {})).status).toBe(400);
+      expect(
+        (await t.post('token-alice', path, { priority: 'low', organizationId: t.orgB })).status,
+      ).toBe(400);
+      const events = (await t.stores.auditEvents()).filter(
+        (e) => e.action === 'conversation.priority_changed',
+      );
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({
+        organizationId: t.orgA,
+        actor: { type: 'user', userId: t.aliceId },
+        target: { type: 'conversation', id: ana.id },
+        transition: { from: 'normal', to: 'high' },
+      });
+    });
+
+    it('lets a reader only read: no contacts, no search, no changes', async () => {
+      const reader = createAuthorizationService({ owner: ['conversation.read'] } as never);
+      const t = await setup({ authorization: reader });
+      await t.deliver(CONNECTION_A, whatsapp(PHONE_A), APP_SECRET_A);
+      const [one] = (await list(t)).body.conversations as [ConversationJson];
+      expect(one.contact).toBeNull();
+      expect((await list(t, '?q=ana')).status).toBe(403);
+      const path = `${t.base(t.orgA)}/conversations/${one.id}`;
+      expect((await t.request('token-alice', `${path}/detail`)).status).toBe(403);
+      expect((await t.post('token-alice', `${path}/priority`, { priority: 'high' })).status).toBe(
+        403,
+      );
+      expect((await t.post('token-alice', `${path}/status`, { status: 'closed' })).status).toBe(
+        403,
+      );
+    });
+
+    it('works a conversation end to end: assign, tag, prioritize, reply through CV-2, close', async () => {
+      const t = await setup();
+      const { ana } = await two(t);
+      const path = `${t.base(t.orgA)}/conversations/${ana.id}`;
+      const department = `${t.orgA}_${DEFAULT_DEPARTMENT_CATALOGUE.types[0]?.id}`;
+      expect(
+        (
+          await t.post('token-alice', `${path}/assign`, {
+            assigneeId: t.aliceId,
+            departmentId: department,
+          })
+        ).status,
+      ).toBe(200);
+      expect((await t.post('token-alice', `${path}/tags`, { add: ['vip'] })).status).toBe(200);
+      expect((await t.post('token-alice', `${path}/priority`, { priority: 'high' })).status).toBe(
+        200,
+      );
+      // The reply is CV-2's send: the same route, through the tool gate.
+      const reply = await t.post('token-alice', `${path}/messages`, {
+        clientMessageId: 'inbox-reply-1',
+        text: 'Hola Ana, te ayudo',
+      });
+      expect(reply.status).toBe(201);
+      expect(t.meta.calls).toHaveLength(1);
+      expect((await t.post('token-alice', `${path}/status`, { status: 'closed' })).status).toBe(
+        200,
+      );
+      const detail = await t.request('token-alice', `${path}/detail`);
+      expect(detail.body).toMatchObject({
+        conversation: {
+          status: 'closed',
+          priority: 'high',
+          tags: ['vip'],
+          assigneeId: t.aliceId,
+          departmentId: department,
+          lastMessage: { direction: 'outbound', preview: 'Hola Ana, te ayudo' },
+        },
+      });
+      const messages = detail.body.messages as Json[];
+      expect(messages.map((m) => [m.direction, m.status])).toEqual([
+        ['inbound', 'received'],
+        ['outbound', 'sent'],
+      ]);
+      const actions = (await t.stores.auditEvents())
+        .map((e) => e.action)
+        .filter((a) => a.startsWith('conversation.'));
+      expect(actions).toEqual([
+        'conversation.assigned',
+        'conversation.tags_changed',
+        'conversation.priority_changed',
+        'conversation.message_sent',
+        'conversation.status_changed',
+      ]);
     });
   });
 

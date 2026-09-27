@@ -109,3 +109,106 @@
     text-align: left;
   }
 }
+
+/* Conversations Center (CV-3): a list beside the open conversation; stacked on a phone. */
+.inbox {
+  padding: var(--mo-space-4);
+}
+
+.inbox__tools,
+.inbox__tabs,
+.inbox__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--mo-space-2);
+  margin-bottom: var(--mo-space-3);
+}
+
+.inbox__panes {
+  display: grid;
+  grid-template-columns: minmax(16rem, 1fr) 2fr;
+  gap: var(--mo-space-4);
+}
+
+@media (max-width: 48rem) {
+  .inbox__panes {
+    grid-template-columns: 1fr;
+  }
+}
+
+.inbox__list,
+.inbox__messages {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.inbox__row {
+  display: grid;
+  gap: var(--mo-space-1);
+  width: 100%;
+  min-height: var(--mo-min-target-size);
+  padding: var(--mo-space-3);
+  border: 1px solid var(--mo-color-border);
+  border-radius: var(--mo-radius-md);
+  background: var(--mo-color-surface);
+  color: var(--mo-color-text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.inbox__row[aria-current='true'] {
+  background: var(--mo-color-surface-muted);
+}
+
+.inbox__tag {
+  margin-right: var(--mo-space-1);
+  padding: 0 var(--mo-space-2);
+  border-radius: var(--mo-radius-pill);
+  background: var(--mo-color-surface-subtle);
+  font-size: var(--mo-font-size-xs);
+}
+
+.inbox__contact {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--mo-space-1) var(--mo-space-3);
+  color: var(--mo-color-text-secondary);
+}
+
+.inbox__messages li {
+  max-width: 80%;
+  margin-bottom: var(--mo-space-2);
+  padding: var(--mo-space-2) var(--mo-space-3);
+  border-radius: var(--mo-radius-md);
+  background: var(--mo-color-surface-muted);
+}
+
+.inbox__message--outbound {
+  margin-left: auto;
+  background: var(--mo-color-surface-subtle);
+}
+
+.shell__nav a {
+  color: var(--mo-color-sidebar-text);
+  font-weight: var(--mo-font-weight-medium);
+  text-decoration: none;
+}
+
+.shell__nav a[aria-current='page'] {
+  border-bottom: 2px solid var(--mo-color-accent-decorative);
+}
+
+.inbox__error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--mo-space-3);
+  color: var(--mo-color-danger);
+}
+
+.inbox__readonly {
+  color: var(--mo-color-text-secondary);
+}

@@ -492,6 +492,17 @@ export class FirestoreConversationRepository implements ConversationRepository {
       .filter((i) => i.organizationId === organizationId);
   }
 
+  async listOrganizationIdentities(
+    organizationId: OrganizationId,
+  ): Promise<readonly ChannelIdentity[]> {
+    if (!isOrganizationId(organizationId)) return [];
+    const snapshot = await this.db
+      .collection(CHANNEL_IDENTITIES)
+      .where('organizationId', '==', organizationId)
+      .get();
+    return snapshot.docs.map((doc) => toIdentity(doc.id, doc.data()));
+  }
+
   async findIdentity(
     organizationId: OrganizationId,
     id: ChannelIdentityId,

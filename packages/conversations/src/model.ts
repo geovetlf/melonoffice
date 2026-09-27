@@ -583,3 +583,88 @@ export function applyOutbound(
     revision: conversation.revision + 1,
   });
 }
+
+/** How the inbox list is ordered (CV-3). Every order breaks ties by the latest activity. */
+export const CONVERSATION_SORTS = ['last_activity', 'created', 'priority'] as const;
+export type ConversationSort = (typeof CONVERSATION_SORTS)[number];
+export const isConversationSort = (value: unknown): value is ConversationSort =>
+  typeof value === 'string' && (CONVERSATION_SORTS as readonly string[]).includes(value);
+
+/** Most urgent first. */
+const PRIORITY_RANK: Readonly<Record<ConversationPriority, number>> = Object.freeze({
+  urgent: 0,
+  high: 1,
+  normal: 2,
+  low: 3,
+});
+
+export function conversationOrder(
+  sort: ConversationSort,
+): (a: Conversation, b: Conversation) => number {
+  switch (sort) {
+    case 'created':
+      return (a, b) =>
+        a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : byLatestActivity(a, b);
+    case 'priority':
+      return (a, b) =>
+        PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority] || byLatestActivity(a, b);
+    case 'last_activity':
+      return byLatestActivity;
+  }
+}
+
+export const MIN_SEARCH_LENGTH = 2;
+// eslint-disable-next-line no-control-regex
+const CONTROL = /[\u0000-\u001f\u007f]/;
+export const MAX_SEARCH_LENGTH = 100;
+
+/** Lower case, without accents or repeated spaces: "José  Pérez" and "jose perez" match. */
+export const foldText = (value: string): string =>
+  value.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().replace(/\s+/g, ' ').trim();
+
+const digitsOf = (value: string): string => value.replace(/[^0-9]/g, '');
+
+/**
+ * A search of the inbox (CV-3): a trimmed text of 2 to 100 printable characters. Invalid is
+ * refused, never ignored.
+ */
+export function checkSearch(value: unknown): string {
+  if (typeof value !== 'string') return invalid('q');
+  const folded = foldText(value);
+  if (
+    folded.length < MIN_SEARCH_LENGTH ||
+    folded.length > MAX_SEARCH_LENGTH ||
+    CONTROL.test(value)
+  ) {
+    return invalid('q');
+  }
+  return folded;
+}
+
+/**
+ * Whether a contact matches a search: its name, email or phone, or one of its channel
+ * identities (the provider's address and name). A phone matches by its digits, however it is
+ * typed ("+1 555-123" finds "+1555123…"). Message text is not searched: see ADR-0035.
+ */
+export function contactMatches(
+  folded: string,
+  contact: Pick<Contact, 'displayName' | 'phone' | 'email'> | undefined,
+  identities: readonly Pick<ChannelIdentity, 'externalId' | 'displayName'>[],
+): boolean {
+  const texts = [
+    contact?.displayName,
+    contact?.email,
+    ...identities.map((i) => i.displayName),
+  ].filter((t): t is string => t !== undefined);
+  if (texts.some((t) => foldText(t).includes(folded))) return true;
+  const digits = digitsOf(folded);
+  if (
+    digits.length < MIN_SEARCH_LENGTH ||
+    digits.length !== folded.replace(/[\s+().-]/g, '').length
+  ) {
+    return false;
+  }
+  return [contact?.phone, ...identities.map((i) => i.externalId)]
+    .filter((t): t is string => t !== undefined)
+    .some((t) => digitsOf(t).includes(digits));
+}

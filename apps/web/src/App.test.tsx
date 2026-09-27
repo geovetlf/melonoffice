@@ -1,5 +1,5 @@
 import { catalogs, I18nProvider, pseudoLocalizeCatalog } from '@melonoffice/i18n';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from './App.js';
 import { REFRESH_KEY } from './identity/session.js';
@@ -95,14 +95,11 @@ describe('signing in (ADR-0036)', () => {
     const { services, backend, store } = start({ path: '/login' });
     renderApp(services);
     await signIn();
-    expect(await screen.findByRole('heading', { name: 'Your office' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { level: 1, name: 'Conversations' })).toBeTruthy();
     expect(path()).toBe('/');
     expect(screen.getByText('Acme')).toBeTruthy();
     expect(screen.getByText('ana@example.com')).toBeTruthy();
-    expect(
-      screen.getByText('You are signed in. The Conversations Center will open here.'),
-    ).toBeTruthy();
-    expect(apiPaths(backend)).toEqual([
+    expect(apiPaths(backend).slice(0, 3)).toEqual([
       'POST /v1/me',
       'GET /v1/me/organizations',
       'GET /v1/organizations/org_1',
@@ -137,6 +134,7 @@ describe('signing in (ADR-0036)', () => {
     expect(
       screen.getByText('You are signed in. Your role does not include conversations.'),
     ).toBeTruthy();
+    expect(screen.queryByRole('heading', { level: 1, name: 'Conversations' })).toBeNull();
   });
 
   it('a user with no organization gets no workspace', async () => {
@@ -156,7 +154,7 @@ describe('a session', () => {
     const { services, backend } = start({ path: '/', refreshToken: 'refresh-kept' });
     renderApp(services);
     expect(screen.getByRole('status').textContent).toBe('Loading your office…');
-    expect(await screen.findByRole('heading', { name: 'Your office' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { level: 1, name: 'Conversations' })).toBeTruthy();
     // A resumed session only reads /v1/me; it does not record a new sign-in.
     expect(apiPaths(backend)[0]).toBe('GET /v1/me');
   });
@@ -174,7 +172,7 @@ describe('a session', () => {
     const { services, backend } = start({ path: '/login' });
     renderApp(services);
     await signIn();
-    await screen.findByRole('heading', { name: 'Your office' });
+    await screen.findByRole('heading', { level: 1, name: 'Conversations' });
     backend.options.apiStatus = 401;
     await act(() => services.api.json('/v1/me').catch(() => undefined));
     expect(await screen.findByText('Your session has ended. Please sign in again.')).toBeTruthy();
@@ -186,7 +184,7 @@ describe('a session', () => {
     backend.options.apiStatus = 403;
     renderApp(services);
     expect(await screen.findByRole('heading', { name: 'Access denied' })).toBeTruthy();
-    expect(screen.queryByRole('heading', { name: 'Your office' })).toBeNull();
+    expect(screen.queryByRole('heading', { level: 1, name: 'Conversations' })).toBeNull();
   });
 
   it('when the API is down, says so and can try again', async () => {
@@ -198,7 +196,7 @@ describe('a session', () => {
     ).toBeTruthy();
     delete backend.options.apiStatus;
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
-    expect(await screen.findByRole('heading', { name: 'Your office' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { level: 1, name: 'Conversations' })).toBeTruthy();
   });
 
   it('signs out: back to sign-in, tokens forgotten, protected pages closed', async () => {
@@ -213,5 +211,86 @@ describe('a session', () => {
     act(() => globalThis.history.pushState(null, '', '/'));
     act(() => globalThis.dispatchEvent(new PopStateEvent('popstate')));
     await waitFor(() => expect(path()).toBe('/login'));
+  });
+});
+
+describe('the Conversations Center, signed in (ADR-0035, ADR-0036)', () => {
+  async function signedIn() {
+    const started = start({ path: '/login' });
+    renderApp(started.services);
+    await signIn();
+    await screen.findByRole('heading', { level: 1, name: 'Conversations' });
+    return started;
+  }
+  const inbox = () => screen.findByRole('list', { name: 'Conversations' });
+
+  it('opens after sign-in with the organization’s conversations only, through the signed-in client', async () => {
+    const { backend } = await signedIn();
+    expect(await within(await inbox()).findByText('Juan Pérez')).toBeTruthy();
+    expect(screen.queryByText('Another company’s customer')).toBeNull();
+    const inboxCalls = backend
+      .apiCalls()
+      .filter((call) => call.url.includes('/conversations') || call.url.includes('/departments'));
+    expect(inboxCalls.length).toBeGreaterThan(0);
+    for (const call of inboxCalls) {
+      expect(call.url.startsWith(`${API}/v1/organizations/org_1/`)).toBe(true);
+      expect(call.authorization).toBe('Bearer id-1');
+    }
+  });
+
+  it('another organization’s inbox is refused by the API, whatever the screen asks', async () => {
+    const { services } = await signedIn();
+    const response = await services.api.request('/v1/organizations/org_other/conversations');
+    expect(response.status).toBe(403);
+  });
+
+  it('searches, opens a conversation, changes its priority and replies through the send route', async () => {
+    const { backend } = await signedIn();
+    fireEvent.change(screen.getByLabelText('Search'), { target: { value: 'juan' } });
+    await waitFor(() =>
+      expect(apiPaths(backend)).toContain(
+        'GET /v1/organizations/org_1/conversations?q=juan&sort=last_activity',
+      ),
+    );
+    fireEvent.click(await within(await inbox()).findByText('Juan Pérez'));
+    const panel = await screen.findByRole('article', { name: 'Juan Pérez' });
+    fireEvent.change(within(panel).getByLabelText('Priority'), { target: { value: 'urgent' } });
+    await waitFor(() =>
+      expect(apiPaths(backend)).toContain('POST /v1/organizations/org_1/conversations/c1/priority'),
+    );
+    fireEvent.change(within(panel).getByRole('textbox', { name: 'Your reply' }), {
+      target: { value: 'Hola Juan' },
+    });
+    fireEvent.click(within(panel).getByRole('button', { name: 'Send' }));
+    expect(await within(panel).findByText('Sent.')).toBeTruthy();
+    const send = backend.apiCalls().find((call) => call.url.endsWith('/conversations/c1/messages'));
+    expect(send?.authorization).toBe('Bearer id-1');
+    expect(Object.keys(JSON.parse(send?.body ?? '{}')).sort()).toEqual(['clientMessageId', 'text']);
+    // Only the MelonOffice API and Identity Platform are ever called: never a channel provider.
+    expect(
+      backend.calls.every(
+        (call) => call.url.startsWith(API) || call.url.includes('googleapis.com'),
+      ),
+    ).toBe(true);
+  });
+
+  it('a refused action shows the reason: the API, not the screen, decides', async () => {
+    const { backend } = await signedIn();
+    backend.options.permissions = backend.options.permissions.filter(
+      (p) => p !== 'conversation.manage',
+    );
+    fireEvent.click(await within(await inbox()).findByText('Juan Pérez'));
+    const panel = await screen.findByRole('article', { name: 'Juan Pérez' });
+    fireEvent.change(within(panel).getByLabelText('Priority'), { target: { value: 'high' } });
+    expect(
+      within(await screen.findByRole('alert')).getByText('You do not have permission to do that.'),
+    ).toBeTruthy();
+  });
+
+  it('is closed again after sign-out', async () => {
+    await signedIn();
+    fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+    expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeTruthy();
+    expect(screen.queryByRole('list', { name: 'Conversations' })).toBeNull();
   });
 });

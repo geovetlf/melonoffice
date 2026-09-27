@@ -68,8 +68,10 @@ Errors carry the API's stable code only, never a stack or a token.
 `/login` is public. Every other path is behind `ProtectedRoute`: it shows loading while the
 session resumes, sends anyone without a session to `/login`, and shows the page only to a member of
 an organization. A small history-API router is used; a router library is not an approved
-dependency. The signed-in page is a frame (organization, user, sign-out) where the Conversations
-Center will be mounted next.
+dependency. The signed-in page is a frame (organization, user, sign-out) that shows the Conversations
+Center (ADR-0035) to a role with `conversation.read`. The center calls the API only through this
+session's client, for the organization the API listed; it has no sign-in, tenant choice or
+permission rules of its own.
 
 ### 6. Runtime configuration, one build for every environment
 
@@ -110,4 +112,3 @@ declared non-sensitive. Staging and prod get nothing (no apps there).
   allowed; a custom domain (D-4) would be added to both lists.
 - The planner's least-privilege rule (ADR-0015) now also admits `getKeyString`, for this key only.
 - Email verification is still not required (pending product decision).
-- Next: mount the Conversations Center (CV-3) behind `ProtectedRoute`, using this API client.

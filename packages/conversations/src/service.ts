@@ -13,6 +13,7 @@ import type {
   ContactId,
   Conversation,
   ConversationId,
+  ConversationPriority,
   ConversationStatus,
   DepartmentId,
   Message,
@@ -24,15 +25,21 @@ import { isResolvedTenant, type TenancyStore, type TenantContext } from '@melono
 import { randomUUID } from 'node:crypto';
 import { ConversationError } from './errors.js';
 import {
+  checkSearch,
+  contactMatches,
   CONVERSATION_TRANSITIONS,
+  conversationOrder,
   isChannelType,
   isContactId,
   isConversationId,
+  isConversationSort,
   isConversationStatus,
   isIsoTimestamp,
+  isPriority,
   isTag,
   isUuid,
   normalizeTags,
+  type ConversationSort,
   type DeliveryStatusUpdate,
   type InboundMessage,
 } from './model.js';
@@ -55,11 +62,40 @@ export interface ConversationFilter {
   readonly departmentId?: DepartmentId;
   readonly contactId?: ContactId;
   readonly tag?: string;
+  readonly priority?: ConversationPriority;
+  /**
+   * Text to find in the contact's name, phone or email, or in its channel identities (CV-3).
+   * Needs `contact.read` as well, since it searches contacts.
+   */
+  readonly q?: string;
+  /** The order of the list: latest activity first unless said otherwise. */
+  readonly sort?: ConversationSort;
   /** Last message at or after this time. */
   readonly since?: string;
   /** Last message before this time. */
   readonly until?: string;
   readonly limit?: number;
+}
+
+/** One row of the inbox: the conversation and, for a reader of contacts, who it is with. */
+export interface InboxEntry {
+  readonly conversation: Conversation;
+  /** Present when the reader holds `contact.read`. */
+  readonly contact?: Contact;
+}
+
+/**
+ * Everything a person sees when opening one conversation (CV-3), and the shape a future
+ * specialist will read it in as `conversation` context (ADR-0029): the conversation, its contact
+ * and the channel identity it speaks through, and its latest messages. Records, never secrets:
+ * the connection's credentials are not part of it.
+ */
+export interface ConversationDetail {
+  readonly conversation: Conversation;
+  readonly contact: Contact;
+  readonly identity: ChannelIdentity;
+  /** The latest messages, oldest first. */
+  readonly messages: readonly Message[];
 }
 
 /** Who is responsible: a member, a department, both, or nobody (`null` clears). */
@@ -82,6 +118,17 @@ export interface TagChange {
  */
 export interface ConversationService {
   list(tenant: TenantContext, filter?: ConversationFilter): Promise<readonly Conversation[]>;
+  /** The inbox list (CV-3): `list`, with each conversation's contact for a reader of contacts. */
+  inbox(tenant: TenantContext, filter?: ConversationFilter): Promise<readonly InboxEntry[]>;
+  /**
+   * One conversation opened (CV-3). Needs `conversation.read` and `contact.read`. Another
+   * organization's is `conversation_not_found`.
+   */
+  detail(
+    tenant: TenantContext,
+    id: string,
+    options?: { readonly limit?: number },
+  ): Promise<ConversationDetail>;
   /** `conversation_not_found` for an unknown id or another organization's alike. */
   get(tenant: TenantContext, id: string): Promise<Conversation>;
   messages(
@@ -92,6 +139,8 @@ export interface ConversationService {
   assign(tenant: TenantContext, id: string, change: AssignmentChange): Promise<Conversation>;
   changeStatus(tenant: TenantContext, id: string, status: unknown): Promise<Conversation>;
   changeTags(tenant: TenantContext, id: string, change: TagChange): Promise<Conversation>;
+  /** Sets how urgent a conversation is (CV-3), by a person; audited from and to. */
+  changePriority(tenant: TenantContext, id: string, priority: unknown): Promise<Conversation>;
   contacts(tenant: TenantContext): Promise<readonly Contact[]>;
   contact(
     tenant: TenantContext,
@@ -202,28 +251,94 @@ export function createConversationService({
     if (filter.tag !== undefined && !isTag(filter.tag)) bad('tag');
     if (filter.since !== undefined && !isIsoTimestamp(filter.since)) bad('since');
     if (filter.until !== undefined && !isIsoTimestamp(filter.until)) bad('until');
+    if (filter.priority !== undefined && !isPriority(filter.priority)) bad('priority');
+    if (filter.sort !== undefined && !isConversationSort(filter.sort)) bad('sort');
+  }
+
+  const holds = (tenant: TenantContext, permission: string): boolean =>
+    authorization.authorize(tenant, permission).allowed;
+
+  /**
+   * The inbox: the organization's conversations that pass every filter, in the chosen order.
+   * Everything is read from the tenant's own organization; a search reads its contacts and
+   * identities too, and only those.
+   */
+  async function inbox(
+    tenant: TenantContext,
+    filter: ConversationFilter = {},
+  ): Promise<readonly InboxEntry[]> {
+    const organizationId = await organizationOf(tenant, 'conversation.read');
+    checkFilter(filter);
+    const limit = limitOf(filter.limit, MAX_CONVERSATIONS_LISTED);
+    const search = filter.q === undefined ? undefined : checkSearch(filter.q);
+    const withContacts = holds(tenant, 'contact.read');
+    if (search !== undefined && !withContacts) throw new ConversationError('permission_denied');
+    const [all, contacts, identities] = await Promise.all([
+      repository.listConversations(organizationId),
+      withContacts ? repository.listContacts(organizationId) : Promise.resolve([]),
+      search === undefined
+        ? Promise.resolve([])
+        : repository.listOrganizationIdentities(organizationId),
+    ]);
+    const contactOf = new Map(contacts.map((c) => [c.id, c]));
+    const matches = (c: Conversation): boolean => {
+      if (search === undefined) return true;
+      return contactMatches(
+        search,
+        contactOf.get(c.contactId),
+        identities.filter((i) => i.contactId === c.contactId),
+      );
+    };
+    return all
+      .filter(
+        (c) =>
+          (filter.status === undefined || c.status === filter.status) &&
+          (filter.channel === undefined || c.channel === filter.channel) &&
+          (filter.assigneeId === undefined || c.assigneeId === filter.assigneeId) &&
+          (filter.unassigned !== true || c.assigneeId === undefined) &&
+          (filter.departmentId === undefined || c.departmentId === filter.departmentId) &&
+          (filter.contactId === undefined || c.contactId === filter.contactId) &&
+          (filter.tag === undefined || c.tags.includes(filter.tag)) &&
+          (filter.priority === undefined || c.priority === filter.priority) &&
+          (filter.since === undefined || c.lastMessageAt >= filter.since) &&
+          (filter.until === undefined || c.lastMessageAt < filter.until) &&
+          matches(c),
+      )
+      .sort(conversationOrder(filter.sort ?? 'last_activity'))
+      .slice(0, limit)
+      .map((conversation) => {
+        const contact = contactOf.get(conversation.contactId);
+        return Object.freeze(contact === undefined ? { conversation } : { conversation, contact });
+      });
   }
 
   return {
     async list(tenant, filter = {}) {
-      const organizationId = await organizationOf(tenant, 'conversation.read');
-      checkFilter(filter);
-      const limit = limitOf(filter.limit, MAX_CONVERSATIONS_LISTED);
-      const all = await repository.listConversations(organizationId);
-      return all
-        .filter(
-          (c) =>
-            (filter.status === undefined || c.status === filter.status) &&
-            (filter.channel === undefined || c.channel === filter.channel) &&
-            (filter.assigneeId === undefined || c.assigneeId === filter.assigneeId) &&
-            (filter.unassigned !== true || c.assigneeId === undefined) &&
-            (filter.departmentId === undefined || c.departmentId === filter.departmentId) &&
-            (filter.contactId === undefined || c.contactId === filter.contactId) &&
-            (filter.tag === undefined || c.tags.includes(filter.tag)) &&
-            (filter.since === undefined || c.lastMessageAt >= filter.since) &&
-            (filter.until === undefined || c.lastMessageAt < filter.until),
-        )
-        .slice(0, limit);
+      return (await inbox(tenant, filter)).map((entry) => entry.conversation);
+    },
+
+    inbox,
+
+    async detail(tenant, id, options = {}) {
+      const conversation = await get(tenant, id);
+      if (!holds(tenant, 'contact.read')) throw new ConversationError('permission_denied');
+      const limit = limitOf(options.limit, MAX_MESSAGES_LISTED);
+      const organizationId = conversation.organizationId;
+      const [contact, identity, all] = await Promise.all([
+        repository.findContact(organizationId, conversation.contactId),
+        repository.findIdentity(organizationId, conversation.channelIdentityId),
+        repository.listMessages(organizationId, conversation.id),
+      ]);
+      // Written together with the conversation: absent only if the store is inconsistent.
+      if (contact === undefined || identity === undefined) {
+        throw new ConversationError('conversation_not_found');
+      }
+      return Object.freeze({
+        conversation,
+        contact,
+        identity,
+        messages: all.slice(Math.max(0, all.length - limit)),
+      });
     },
 
     get,
@@ -330,6 +445,30 @@ export function createConversationService({
         return {
           conversation,
           events: [event(tenant, conversation, 'conversation.tags_changed', at)],
+        };
+      });
+    },
+
+    async changePriority(tenant, id, priority) {
+      const organizationId = await managerOf(tenant);
+      const conversationId = idOf(id);
+      if (!isPriority(priority)) throw new ConversationError('invalid_request', 'priority');
+      const at = now();
+      return repository.updateConversation(organizationId, conversationId, (current) => {
+        if (current.priority === priority) throw new ConversationError('invalid_transition');
+        const conversation: Conversation = Object.freeze({
+          ...current,
+          priority,
+          updatedAt: at.toISOString() as Conversation['updatedAt'],
+          revision: current.revision + 1,
+        });
+        return {
+          conversation,
+          events: [
+            event(tenant, conversation, 'conversation.priority_changed', at, {
+              transition: { from: current.priority, to: priority },
+            }),
+          ],
         };
       });
     },
