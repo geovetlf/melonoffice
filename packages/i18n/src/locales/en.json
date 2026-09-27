@@ -18,5 +18,18 @@
   "department.research.name": "Research",
   "department.research.short": "Research",
   "department.finance.name": "Finance",
-  "department.finance.short": "Finance"
+  "department.finance.short": "Finance",
+  "conversation.reply.label": "Your reply",
+  "conversation.reply.byPerson": "You are replying yourself, in your own name. No AI writes or sends anything.",
+  "conversation.reply.send": "Send",
+  "conversation.reply.sending": "Sending…",
+  "conversation.reply.sent": "Sent.",
+  "conversation.reply.unknown": "We could not confirm whether WhatsApp received it. It will not be sent again automatically.",
+  "conversation.reply.error.outside_messaging_window": "More than 24 hours have passed since the contact's last message. WhatsApp only allows approved templates now, which are not available yet.",
+  "conversation.reply.error.conversation_closed": "This conversation is closed. Reopen it to reply.",
+  "conversation.reply.error.channel_not_available": "The channel is not available right now. Nothing was sent.",
+  "conversation.reply.error.permission_denied": "You do not have permission to reply in conversations.",
+  "conversation.reply.error.duplicate_request": "This message is already being sent.",
+  "conversation.reply.error.external_send_failed": "WhatsApp did not accept the message. Nothing was sent.",
+  "conversation.reply.error.generic": "The message could not be sent. Nothing was sent."
 }
