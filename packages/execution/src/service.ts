@@ -342,7 +342,12 @@ export function createExecutionService({
   /** A status change and its event, in one write. The model decides whether it is allowed. */
   function statusWrite(tenant: TenantContext, change: StatusChange, at: Date) {
     return (current: Execution) => {
-      const next = applyStatusChange(current, change, tenant.userId, at.toISOString() as IsoTimestamp);
+      const next = applyStatusChange(
+        current,
+        change,
+        tenant.userId,
+        at.toISOString() as IsoTimestamp,
+      );
       const reason =
         next.cancellation?.reason ?? (change.to === 'failed' ? next.failure?.code : undefined);
       return {
@@ -428,7 +433,8 @@ export function createExecutionService({
       const at = now();
       return repository.update(organizationId, idOf(id), (current) => {
         // The runtime drives work, not plans: a planning execution runs nothing itself.
-        if (current.mode === 'plan') throw new ExecutionError('actor_not_allowed', 'plan_execution');
+        if (current.mode === 'plan')
+          throw new ExecutionError('actor_not_allowed', 'plan_execution');
         return statusWrite(tenant, change, at)(current);
       });
     },
@@ -448,7 +454,8 @@ export function createExecutionService({
       const organizationId = await organizationOf(tenant);
       const at = now();
       return repository.update(organizationId, idOf(id), (current) => {
-        if (current.mode === 'plan') throw new ExecutionError('actor_not_allowed', 'plan_execution');
+        if (current.mode === 'plan')
+          throw new ExecutionError('actor_not_allowed', 'plan_execution');
         const next = applyNodeChange(current, change, at.toISOString() as IsoTimestamp);
         const reason = change.to === 'failed' ? change.error?.code : undefined;
         return {
@@ -545,17 +552,29 @@ export function createExecutionService({
       }),
 
     retryNode: (tenant, id, nodeId) =>
-      runtimeChange(tenant, id, 'execution.node_retried', (current, at) => {
-        const next = retryNode(current, nodeId, at);
-        // retryNode accepted it, so the node exists and was failed: name the rule that allowed it.
-        const node = current.nodes.find((n) => n.id === nodeId) as ExecutionNode;
-        return { next, reason: retryRuleOf(node) };
-      }, nodeId),
+      runtimeChange(
+        tenant,
+        id,
+        'execution.node_retried',
+        (current, at) => {
+          const next = retryNode(current, nodeId, at);
+          // retryNode accepted it, so the node exists and was failed: name the rule that allowed it.
+          const node = current.nodes.find((n) => n.id === nodeId) as ExecutionNode;
+          return { next, reason: retryRuleOf(node) };
+        },
+        nodeId,
+      ),
 
     markOutcomeUnknown: (tenant, id, nodeId) =>
-      runtimeChange(tenant, id, 'execution.node_outcome_unknown', (current, at) => ({
-        next: markOutcomeUnknown(current, nodeId, at),
-        reason: 'outcome_unknown',
-      }), nodeId),
+      runtimeChange(
+        tenant,
+        id,
+        'execution.node_outcome_unknown',
+        (current, at) => ({
+          next: markOutcomeUnknown(current, nodeId, at),
+          reason: 'outcome_unknown',
+        }),
+        nodeId,
+      ),
   };
 }

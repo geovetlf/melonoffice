@@ -356,7 +356,7 @@ describe.each(STORES)('tools and approvals with storage in %s', (_name, createSt
 
     it('rejects once, and the gate then refuses the tool', async () => {
       const { call, orgA, pending, gate, calls } = await setup();
-      const { tenant, runtime, execution, approvalId } = await pending();
+      const { runtime, execution, approvalId } = await pending();
       const path = `/v1/organizations/${orgA}/approvals/${approvalId}`;
       expect((await call('token-alice', `${path}/reject`, { method: 'POST' })).body).toMatchObject({
         status: 'rejected',

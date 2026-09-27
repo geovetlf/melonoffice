@@ -15,6 +15,8 @@ import {
   jobIdFor,
   leaseIsLive,
   newJob,
+  releaseJob,
+  takeTurn,
 } from './model.js';
 
 const ORG = '33333333-3333-4333-8333-333333333333' as OrganizationId;
@@ -144,6 +146,25 @@ describe('job state machine', () => {
     expect(
       codeOf(() => acquireLease(cancelled, { leaseId: LEASE_2, workerId: 'w', leaseMs: 1 }, AT)),
     ).toBe('job_cancelled');
+  });
+
+  it('gives the holder one turn per revision, and lets it release the job to the queue (ADR-0031)', () => {
+    const job = leased();
+    const proof = { jobId: job.id, leaseId: LEASE_1, revision: job.revision };
+    const turned = takeTurn(job, proof, later(1));
+    expect(turned).toMatchObject({ state: 'leased', revision: 3, leaseCount: 1, lease: job.lease });
+    expect(codeOf(() => checkNextJob(job, turned))).toBe('accepted');
+    // The same proof never gets a second turn.
+    expect(codeOf(() => takeTurn(turned, proof, later(2)))).toBe('job_revision_mismatch');
+    expect(codeOf(() => takeTurn(job, proof, later(1_000)))).toBe('job_lease_expired');
+    const next = { ...proof, revision: turned.revision };
+    const released = releaseJob(turned, next, later(3));
+    expect(released).toMatchObject({ state: 'queued', revision: 4, lease: job.lease });
+    expect(codeOf(() => checkNextJob(turned, released))).toBe('accepted');
+    expect(codeOf(() => releaseJob(released, next, later(4)))).toBe('job_lease_mismatch');
+    expect(
+      acquireLease(released, { leaseId: LEASE_2, workerId: 'w2', leaseMs: 1_000 }, later(4)),
+    ).toMatchObject({ state: 'leased', leaseCount: 2, lease: { leaseId: LEASE_2 } });
   });
 
   it('accepts a finish with exactly a result, a code and a reference', () => {

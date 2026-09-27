@@ -91,14 +91,14 @@ export const AUDIT_ACTIONS = {
   'execution.node_changed': {
     category: 'execution',
     description:
-      "The runtime or the tool gate moved one node; the transition gives its status before and after, nodeId which node (ADR-0031).",
+      'The runtime or the tool gate moved one node; the transition gives its status before and after, nodeId which node (ADR-0031).',
     results: ['success'],
   },
   'execution.job_released': {
     category: 'execution',
     description:
-      'The lease holder gave a job back without ending it, because its node waits on a human approval (ADR-0031).',
-    results: ['success'],
+      'The lease holder gave a job back without ending it, because its node waits on a human approval, or its write was refused with the reason (ADR-0031).',
+    results: ['success', 'denied'],
   },
   'execution.job_enqueued': {
     category: 'execution',
@@ -108,7 +108,8 @@ export const AUDIT_ACTIONS = {
   },
   'execution.job_leased': {
     category: 'execution',
-    description: 'A worker took the lease of a job, or was refused it with the reason (ADR-0030).',
+    description:
+      'A worker took the lease of a job, or was refused it or its turn on it with the reason (ADR-0030, ADR-0031).',
     results: ['success', 'denied'],
   },
   'execution.job_finished': {

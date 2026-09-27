@@ -1,0 +1,43 @@
+{
+  "name": "@melonoffice/runtime",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "@melonoffice/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@melonoffice/ai-gateway": "workspace:*",
+    "@melonoffice/approvals": "workspace:*",
+    "@melonoffice/domain": "workspace:*",
+    "@melonoffice/execution": "workspace:*",
+    "@melonoffice/guardrails": "workspace:*",
+    "@melonoffice/jobs": "workspace:*",
+    "@melonoffice/observability": "workspace:*",
+    "@melonoffice/tenancy": "workspace:*"
+  },
+  "devDependencies": {
+    "@melonoffice/audit": "workspace:*",
+    "@melonoffice/auth": "workspace:*",
+    "@melonoffice/billing": "workspace:*",
+    "@melonoffice/config": "workspace:*",
+    "@melonoffice/credits": "workspace:*",
+    "@melonoffice/departments": "workspace:*",
+    "@melonoffice/firestore": "workspace:*",
+    "@melonoffice/rbac": "workspace:*",
+    "@melonoffice/specialists": "workspace:*",
+    "@melonoffice/tools": "workspace:*"
+  }
+}
