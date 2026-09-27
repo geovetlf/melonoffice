@@ -1,3 +1,4 @@
+import { checkAssistedAIRequest, type AIResponse } from '@melonoffice/ai-gateway';
 import { createAuditService, InMemoryAuditStore } from '@melonoffice/audit';
 import type { AuthenticatedContext } from '@melonoffice/auth';
 import { openWallet } from '@melonoffice/credits';
@@ -43,6 +44,8 @@ import {
   type InboundMessage,
 } from './model.js';
 import { InMemoryConversationRepository } from './repository.js';
+import { ASSIST_OPERATIONS } from './assist-context.js';
+import { ASSIST_OUTPUT_SCHEMAS } from './assist-output.js';
 import { createConversationAssistant } from './assist.js';
 import { createConversationIngress, createConversationService } from './service.js';
 
@@ -885,7 +888,11 @@ describe('assisted AI (ADR-0037)', () => {
       fallbackFrom: null,
     }) as const;
 
-  async function assistWorld(rateLimits?: { perUserOperation: number }) {
+  async function assistWorld(
+    rateLimits?: { perUserOperation: number },
+    answer: () => AIResponse = () =>
+      completed({ reply: 'Hola Ana', explanation: null, warnings: [] }),
+  ) {
     const w = await world();
     const seen: unknown[] = [];
     const assistant = createConversationAssistant({
@@ -894,7 +901,7 @@ describe('assisted AI (ADR-0037)', () => {
       gateway: {
         assist: async (_tenant, request) => {
           seen.push(request);
-          return completed({ reply: 'Hola Ana', explanation: null, warnings: [] });
+          return answer();
         },
       },
       authorization: createAuthorizationService(),
@@ -962,5 +969,59 @@ describe('assisted AI (ADR-0037)', () => {
       'success',
       'denied',
     ]);
+  });
+  it("asks for structured output in each operation's shape, which the gateway accepts", async () => {
+    const { w, assistant, seen, conversation } = await assistWorld();
+    for (const [i, operation] of ASSIST_OPERATIONS.entries()) {
+      await codeOf(
+        assistant.assist(w.tenantA, conversation.id, { operation, requestKey: `click-000${i}` }),
+      );
+    }
+    expect(seen).toHaveLength(4);
+    for (const [i, operation] of ASSIST_OPERATIONS.entries()) {
+      expect(seen[i]).toMatchObject({
+        requirements: { structuredOutput: true },
+        outputSchema: ASSIST_OUTPUT_SCHEMAS[operation],
+      });
+      // The request as sent passes the gateway's own checks.
+      expect(checkAssistedAIRequest(seen[i])).toBeUndefined();
+    }
+  });
+
+  it('tells the person why, in their terms: policy, timeout, provider limit, credits', async () => {
+    const denied = (code: string) => (): AIResponse => ({ status: 'denied', requestId: 'r', code });
+    const failed = (code: string) => (): AIResponse => ({
+      status: 'failed',
+      requestId: 'r',
+      code,
+      provider: 'alpha',
+      model: 'alpha-ok',
+      attempts: 2,
+      latencyMs: 1,
+    });
+    for (const [answer, expected] of [
+      [denied('sensitivity_not_allowed'), 'ai_policy_denied'],
+      [denied('model_not_allowed'), 'ai_policy_denied'],
+      [denied('environment_not_allowed'), 'ai_policy_denied'],
+      [denied('credits_insufficient'), 'ai_credits_insufficient'],
+      [denied('environment_unknown'), 'ai_not_available'],
+      [denied('policy_not_found'), 'ai_not_available'],
+      [denied('no_model_available'), 'ai_not_available'],
+      [failed('timeout'), 'ai_timeout'],
+      [failed('rate_limited'), 'rate_limited'],
+      [failed('server_error'), 'ai_unavailable'],
+      [failed('invalid_response'), 'ai_unavailable'],
+      [() => completed({ unexpected: true }), 'ai_invalid_output'],
+    ] as const) {
+      const { w, assistant, conversation } = await assistWorld(undefined, answer);
+      expect(
+        await codeOf(
+          assistant.assist(w.tenantA, conversation.id, {
+            operation: 'reply',
+            requestKey: 'click-0001',
+          }),
+        ),
+      ).toBe(expected);
+    }
   });
 });

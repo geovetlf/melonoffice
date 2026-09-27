@@ -16,7 +16,7 @@ import {
   type AssistLocale,
   type AssistOperation,
 } from './assist-context.js';
-import { parseAssistOutput, type AssistResult } from './assist-output.js';
+import { ASSIST_OUTPUT_SCHEMAS, parseAssistOutput, type AssistResult } from './assist-output.js';
 import { ConversationError } from './errors.js';
 import type { ConversationService } from './service.js';
 
@@ -104,7 +104,10 @@ const OUTPUT_TOKENS: Readonly<Record<AssistOperation, number>> = {
   next_steps: 800,
 };
 
-/** Gateway refusals that are the person's to see as such; every other one is "not available". */
+/**
+ * Gateway refusals that are the person's to see as such. Every other one (no environment, no
+ * policy, no provider or model, no credit rate or price) is "not available": not configured here.
+ */
 const DENIALS: Readonly<Record<string, ConversationError['code']>> = {
   permission_denied: 'permission_denied',
   assist_requires_user: 'requires_user',
@@ -112,6 +115,22 @@ const DENIALS: Readonly<Record<string, ConversationError['code']>> = {
   organization_inactive: 'organization_inactive',
   credits_insufficient: 'ai_credits_insufficient',
   credit_limit_exceeded: 'ai_credits_insufficient',
+  // The policy found models but allows none of them for this call (ADR-0038).
+  sensitivity_not_allowed: 'ai_policy_denied',
+  provider_not_allowed: 'ai_policy_denied',
+  model_not_allowed: 'ai_policy_denied',
+  environment_not_allowed: 'ai_policy_denied',
+  capability_unsupported: 'ai_policy_denied',
+  modality_unsupported: 'ai_policy_denied',
+  requirements_unmet: 'ai_policy_denied',
+  cost_limit_exceeded: 'ai_policy_denied',
+  provider_unavailable: 'ai_unavailable',
+};
+
+/** How a failed provider call reads to the person; anything else is "unavailable". */
+const FAILURES: Readonly<Record<string, ConversationError['code']>> = {
+  timeout: 'ai_timeout',
+  rate_limited: 'rate_limited',
 };
 
 /**
@@ -285,6 +304,7 @@ export function createConversationAssistant(
       taskType: `conversation_${operation}`,
       capability: 'text_generation',
       requirements: { structuredOutput: true },
+      outputSchema: ASSIST_OUTPUT_SCHEMAS[operation],
       messages: assistMessages(operation, context, locale),
       outputModality: 'text',
       maxOutputTokens: OUTPUT_TOKENS[operation],
@@ -312,7 +332,7 @@ export function createConversationAssistant(
         attempts: response.attempts,
         latencyMs,
       });
-      throw new ConversationError('ai_unavailable');
+      throw new ConversationError(FAILURES[response.code] ?? 'ai_unavailable');
     }
     const model = { provider: response.provider, id: response.model };
     const result = parseAssistOutput(operation, response.output, departmentOfAlias);

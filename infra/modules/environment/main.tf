@@ -27,6 +27,10 @@ locals {
   web_url             = local.web_sign_in_enabled ? "https://web-${data.google_project.this[0].number}.${var.region}.run.app" : null
   api_url             = local.web_sign_in_enabled ? "https://api-${data.google_project.this[0].number}.${var.region}.run.app" : null
 
+  # Assisted AI (ADR-0038): the api calls Vertex AI's generateContent with its own identity.
+  # Only where the apps, Firestore and the runtime exist, and only when turned on (dev today).
+  ai_assist_enabled = var.ai_assist && local.runtime_enabled
+
   base_services = [
     "artifactregistry.googleapis.com",
     "cloudresourcemanager.googleapis.com",
@@ -48,6 +52,9 @@ locals {
   ]
   runtime_services = [
     "cloudtasks.googleapis.com",
+  ]
+  ai_assist_services = [
+    "aiplatform.googleapis.com",
   ]
   budget_services = [
     "billingbudgets.googleapis.com",
@@ -122,6 +129,13 @@ locals {
         # The one origin whose browser calls get CORS headers (ADR-0036). Authentication and
         # RBAC still decide every call.
         local.web_sign_in_enabled ? { WEB_ORIGINS = local.web_url } : {},
+        # Where this server runs, like the worker: tools and AI models run only where allowed.
+        local.runtime_enabled ? { DEPLOYMENT_ENVIRONMENT = var.environment } : {},
+        # Where Vertex AI runs the approved model (ADR-0038). Not secrets: a project and a region.
+        local.ai_assist_enabled ? {
+          VERTEX_AI_PROJECT_ID = var.project_id
+          VERTEX_AI_LOCATION   = var.region
+        } : {},
       )
       timeout = null
     }
@@ -156,6 +170,7 @@ module "services" {
     local.budget_enabled ? local.budget_services : [],
     local.runtime_enabled ? local.runtime_services : [],
     local.web_sign_in_enabled ? local.web_sign_in_services : [],
+    local.ai_assist_enabled ? local.ai_assist_services : [],
   )
 }
 
@@ -465,4 +480,31 @@ resource "google_project_iam_member" "worker_firestore" {
   project = var.project_id
   role    = "roles/datastore.user"
   member  = local.worker_member
+}
+
+# ---------------------------------------------------------------------------------------------
+# Assisted AI (ADR-0038, D-7): the api calls Gemini 2.5 Flash-Lite on Vertex AI with its own
+# runtime identity, through the metadata server. No key.
+
+# The smallest grant that can call a model: predict (which covers generateContent) and nothing
+# else. roles/aiplatform.user would also let it create and manage datasets, endpoints, jobs and
+# models. Which model it may call is decided in code by the model policy.
+resource "google_project_iam_custom_role" "vertex_ai_invoker" {
+  count = local.ai_assist_enabled ? 1 : 0
+
+  project     = var.project_id
+  role_id     = "melonofficeVertexAIInvoker"
+  title       = "MelonOffice Vertex AI invoker"
+  description = "Calls Vertex AI models (predict, generateContent) only. No datasets, endpoints, jobs, models or admin."
+  permissions = ["aiplatform.endpoints.predict"]
+
+  depends_on = [module.services]
+}
+
+resource "google_project_iam_member" "api_vertex_ai" {
+  count = local.ai_assist_enabled ? 1 : 0
+
+  project = var.project_id
+  role    = google_project_iam_custom_role.vertex_ai_invoker[0].id
+  member  = "serviceAccount:${module.app["api"].runtime_service_account}"
 }

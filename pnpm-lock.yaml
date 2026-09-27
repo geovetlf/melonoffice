@@ -59,6 +59,12 @@ importers:
       '@hono/node-server':
         specifier: 2.1.1
         version: 2.1.1(hono@4.13.9)
+      '@melonoffice/ai-gateway':
+        specifier: workspace:*
+        version: link:../../packages/ai-gateway
+      '@melonoffice/ai-vertex':
+        specifier: workspace:*
+        version: link:../../packages/ai-vertex
       '@melonoffice/approvals':
         specifier: workspace:*
         version: link:../../packages/approvals
@@ -120,9 +126,6 @@ importers:
         specifier: 4.13.9
         version: 4.13.9
     devDependencies:
-      '@melonoffice/ai-gateway':
-        specifier: workspace:*
-        version: link:../../packages/ai-gateway
       '@melonoffice/config':
         specifier: workspace:*
         version: link:../../packages/config
@@ -273,6 +276,19 @@ importers:
       '@melonoffice/departments':
         specifier: workspace:*
         version: link:../departments
+
+  packages/ai-vertex:
+    dependencies:
+      '@melonoffice/ai-gateway':
+        specifier: workspace:*
+        version: link:../ai-gateway
+      '@melonoffice/domain':
+        specifier: workspace:*
+        version: link:../domain
+    devDependencies:
+      '@melonoffice/config':
+        specifier: workspace:*
+        version: link:../config
 
   packages/approvals:
     dependencies:

@@ -9,6 +9,7 @@ import {
   createWhatsAppAdapter,
 } from '@melonoffice/integrations';
 import { createLogger } from '@melonoffice/observability';
+import { aiConfigurationOf } from './ai.js';
 import { createApp, SERVICE_NAME } from './app.js';
 import { loadConfig } from './config.js';
 import {
@@ -104,14 +105,17 @@ logger.info('channels', {
 
 logger.info('web origins', { count: config.webOrigins?.length ?? 0 });
 
+// The AI Gateway (ADR-0027, ADR-0038): Vertex AI with Gemini 2.5 Flash-Lite (D-7) and the credit
+// rate (D-12), only where Terraform sets the environment and the Vertex AI project (DEV today).
+// Anywhere else nothing is registered and every AI call is denied before reaching a provider.
+const ai = aiConfigurationOf(config);
+logger.info('ai', { enabled: ai.registry !== undefined, environment: ai.environment ?? null });
+
 const app = createApp({
   logger,
   version: config.version,
   webOrigins: config.webOrigins ?? [],
-  // The AI Gateway (ADR-0027, ADR-0037): no provider is registered (D-7) and no credit rate is
-  // set (D-12), so every AI call is denied before reaching any provider, wherever this runs.
-  ai:
-    config.deploymentEnvironment === undefined ? {} : { environment: config.deploymentEnvironment },
+  ai,
   ...configured,
 });
 

@@ -127,9 +127,9 @@ export interface AppOptions {
   };
   /**
    * The AI Gateway's configuration (ADR-0027), used today by assisted AI on conversations
-   * (ADR-0037). Every part fails closed: no environment, no registered provider (D-7) or no
-   * credit rate (D-12) and every call is denied before any provider is reached. Credits default
-   * to the credits engine (`credits`); tests may pass their own registry, policies and rate.
+   * (ADR-0037, ADR-0038; built by `aiConfigurationOf`). Every part fails closed: no environment,
+   * no registered provider, no policy or no credit rate and every call is denied before any
+   * provider is reached. Credits default to the credits engine (`credits`).
    */
   readonly ai?: {
     readonly environment?: DeploymentEnvironment;
@@ -407,7 +407,7 @@ export function createApp({
       });
       // Assisted AI (CV-4, ADR-0037): the one AI Gateway, in its assisted mode. The execution and
       // specialist stores are there because the gateway is built whole; an assisted call reads
-      // neither. The credits engine accounts for every call; with no rate (D-12) it denies all.
+      // neither. The credits engine accounts for every call; with no rate it denies all.
       const aiCredits =
         ai.credits ??
         (credits === undefined

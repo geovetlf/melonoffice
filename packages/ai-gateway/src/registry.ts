@@ -227,8 +227,9 @@ export function createProviderRegistry(input: {
 }
 
 /**
- * MelonOffice's providers and models. Empty: the launch provider is decision D-7, and no
- * provider, model or price is invented before it. Tests use fake providers.
+ * The providers every server has without configuration: none. Each provider lives in its own
+ * package with its adapter (Vertex AI in `@melonoffice/ai-vertex`, ADR-0038), and the server
+ * registers it only where it is configured. Tests use fake providers.
  */
 export const AI_PROVIDER_CATALOGUE: readonly AIProviderDefinition[] = Object.freeze([]);
 export const AI_MODEL_CATALOGUE: readonly AIModelDefinition[] = Object.freeze([]);

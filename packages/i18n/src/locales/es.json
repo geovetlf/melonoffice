@@ -146,6 +146,8 @@
   "conversations.assist.error.ai_invalid_output": "No se pudo interpretar la respuesta de IA.",
   "conversations.assist.error.ai_not_available": "La asistencia de IA aún no está disponible.",
   "conversations.assist.error.ai_credits_insufficient": "No hay créditos suficientes para esta solicitud.",
+  "conversations.assist.error.ai_policy_denied": "La política de IA de tu organización no permite esta solicitud.",
+  "conversations.assist.error.ai_timeout": "La IA tardó demasiado en responder. Intenta nuevamente.",
   "conversations.assist.error.rate_limited": "Demasiadas solicitudes. Espera un momento e inténtalo de nuevo.",
   "conversations.assist.error.permission_denied": "No tienes permiso para usar la asistencia de IA.",
   "conversations.assist.error.generic": "Algo salió mal. Inténtalo de nuevo.",

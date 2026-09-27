@@ -70,6 +70,18 @@ export const ASSIST_PERMISSIONS: Readonly<Record<AssistSubjectType, string>> = O
   conversation: 'conversation.assist',
 });
 
+/**
+ * The model policy an assisted call about each kind of subject uses (ADR-0038). Fixed here, like
+ * its permission: a person cannot pick another. Each is its own named policy, never the default,
+ * so allowing a subject's data (a conversation is `confidential`) to reach a model is an explicit
+ * decision about that subject and those models only. A missing policy denies the call.
+ */
+export const ASSIST_MODEL_POLICIES: Readonly<
+  Record<AssistSubjectType, { readonly id: string; readonly version: number }>
+> = Object.freeze({
+  conversation: Object.freeze({ id: 'conversation_assist', version: 1 }),
+});
+
 export interface AIGatewayOptions {
   readonly executions: Pick<ExecutionRepository, 'find'>;
   /** Only `findOrganization` is used, to refuse inactive organizations. */
@@ -283,6 +295,7 @@ export function createAIGateway(options: AIGatewayOptions): AIGateway {
           outputModality: request.outputModality,
           maxOutputTokens: request.maxOutputTokens,
           structuredOutput: request.requirements?.structuredOutput ?? false,
+          ...(request.outputSchema === undefined ? {} : { outputSchema: request.outputSchema }),
           credential: candidate.provider.credential,
           deadline: new Date(now().getTime() + timeoutMs),
         });
@@ -451,8 +464,8 @@ export function createAIGateway(options: AIGatewayOptions): AIGateway {
         return deny('permission_denied');
       }
 
-      // 3. Policy: no specialist names one, so the default.
-      const policy = policies.resolve(undefined);
+      // 3. Policy: the subject's own named policy, never the default.
+      const policy = policies.resolve(ASSIST_MODEL_POLICIES[request.subject.type]);
       if (policy === undefined) return deny('policy_not_found');
 
       return callModel(ctx, request, policy);

@@ -12,6 +12,7 @@ import type {
   ChannelConnectionId,
   IsoTimestamp,
   OrganizationId,
+  PolicyId,
   UserId,
 } from '@melonoffice/domain';
 import { createConversationIngress } from '@melonoffice/conversations';
@@ -27,7 +28,7 @@ const MISSING = '99999999-9999-4999-8999-999999999999';
 const CONNECTION_A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' as ChannelConnectionId;
 const CONNECTION_B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' as ChannelConnectionId;
 
-// Test fixtures only: MelonOffice's real catalogue is empty until the launch provider (D-7).
+// Test fixtures only: a fake provider, so no test calls a real model.
 const MODEL: AIModelDefinition = {
   providerId: 'alpha',
   modelId: 'alpha-ok',
@@ -109,14 +110,18 @@ const registryWith = (adapter: ProviderAdapter) =>
     adapters: [adapter],
   });
 
+// The conversation's own named policy (ADR-0038), here allowing the fake model.
 const policies = (allowedModels = ['alpha/alpha-ok']) =>
-  createModelPolicyCatalogue([], {
-    ...DEFAULT_MODEL_POLICY,
-    maxSensitivity: 'confidential',
-    allowedModels,
-    maxAttempts: 2,
-    backoffMs: 0,
-  });
+  createModelPolicyCatalogue([
+    {
+      ...DEFAULT_MODEL_POLICY,
+      id: 'conversation_assist' as PolicyId,
+      maxSensitivity: 'confidential',
+      allowedModels,
+      maxAttempts: 2,
+      backoffMs: 0,
+    },
+  ]);
 
 interface Json {
   readonly [key: string]: unknown;
@@ -314,13 +319,13 @@ describe.each(STORES)('conversation assist with storage in %s', (_name, createSt
     expect(event).toMatchObject({ result: 'failure', reason: 'ai_invalid_output' });
   });
 
-  it('10–11. answers a timeout or a provider error with one safe code', async () => {
+  it('10–11. answers a timeout or a provider error with one safe code each', async () => {
     const t = await setup();
     const id = await t.receive(t.orgA, 'Hola');
     t.provider.state.answer = () => ({ status: 'error', kind: 'timeout' });
     expect(
       await t.assist('token-alice', t.orgA, id, { operation: 'intent', requestKey: key(1) }),
-    ).toEqual({ status: 502, body: { error: 'ai_unavailable' } });
+    ).toEqual({ status: 504, body: { error: 'ai_timeout' } });
     // Retried by the gateway's policy (2 attempts), then given up.
     expect(t.provider.calls).toHaveLength(2);
     t.provider.state.answer = () => ({ status: 'error', kind: 'authentication', httpStatus: 401 });
@@ -345,7 +350,7 @@ describe.each(STORES)('conversation assist with storage in %s', (_name, createSt
     const id = await t.receive(t.orgA, 'Hola');
     expect(
       await t.assist('token-alice', t.orgA, id, { operation: 'summary', requestKey: key() }),
-    ).toEqual({ status: 503, body: { error: 'ai_not_available' } });
+    ).toEqual({ status: 403, body: { error: 'ai_policy_denied' } });
     expect(t.provider.calls).toHaveLength(0);
   });
 
