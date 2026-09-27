@@ -17,6 +17,8 @@ export default defineConfig({
   },
   test: {
     environment: 'jsdom',
+    // Whole-app tests render the office and query it by role: fast locally, slow on CI runners.
+    testTimeout: 20_000,
     server: { deps: { inline: [/@melonoffice\//] } },
   },
 });
