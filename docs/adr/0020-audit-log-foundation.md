@@ -47,15 +47,16 @@ A failed authentication (no, invalid or expired token) is none of these and is n
 
 Only actions the code performs today:
 
-| Action                | Category      | Results                  | Recorded when                                                 |
-| --------------------- | ------------- | ------------------------ | ------------------------------------------------------------- |
-| `auth.register`       | auth          | success                  | `POST /v1/me` creates the internal user                       |
-| `auth.sign_in`        | auth          | success                  | `POST /v1/me` for an existing user                            |
-| `organization.create` | tenancy       | success, denied, failure | `POST /v1/organizations`, except a malformed name (bad input) |
-| `membership.create`   | tenancy       | success                  | The owner membership created with an organization             |
-| `plan.assign`         | entitlements  | success                  | An organization gets its initial plan (added by ADR-0021)     |
-| `tenancy.resolve`     | tenancy       | denied                   | A request inside an organization is refused by tenancy        |
-| `authorization.check` | authorization | denied                   | RBAC refuses a permission                                     |
+| Action                         | Category      | Results                  | Recorded when                                                          |
+| ------------------------------ | ------------- | ------------------------ | ---------------------------------------------------------------------- |
+| `auth.register`                | auth          | success                  | `POST /v1/me` creates the internal user                                |
+| `auth.sign_in`                 | auth          | success                  | `POST /v1/me` for an existing user                                     |
+| `organization.create`          | tenancy       | success, denied, failure | `POST /v1/organizations`, except a malformed name (bad input)          |
+| `membership.create`            | tenancy       | success                  | The owner membership created with an organization                      |
+| `plan.assign`                  | entitlements  | success                  | An organization gets its initial plan (added by ADR-0021)              |
+| `billing.subscription_created` | billing       | success                  | An organization's first subscription opens with it (added by ADR-0022) |
+| `tenancy.resolve`              | tenancy       | denied                   | A request inside an organization is refused by tenancy                 |
+| `authorization.check`          | authorization | denied                   | RBAC refuses a permission                                              |
 
 ### Not recorded
 

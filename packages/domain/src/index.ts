@@ -5,3 +5,4 @@ export type * from './skill.js';
 export type * from './specialist.js';
 export type * from './user.js';
 export type * from './tenancy.js';
+export type * from './billing.js';

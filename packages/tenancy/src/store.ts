@@ -1,9 +1,9 @@
 import type { AuditEvent } from '@melonoffice/audit';
 import type {
+  InitialBilling,
   Membership,
   Organization,
   OrganizationId,
-  PlanRef,
   UserId,
 } from '@melonoffice/domain';
 
@@ -12,10 +12,11 @@ export interface NewOrganization {
   readonly name: string;
   readonly creator: UserId;
   /**
-   * The plan the organization starts on (ADR-0021). Always chosen by the server, never by the
-   * client, and stored with the organization in the same write.
+   * The organization's billing account and first subscription (ADR-0022), built by billing for
+   * the new organization. Always chosen by the server, never by the client, and stored with the
+   * organization in the same write. If building them throws, nothing is created.
    */
-  readonly plan: PlanRef;
+  readonly billing: (organization: Organization) => InitialBilling;
   /**
    * Audit events for the creation (ADR-0020). The store writes them together with the
    * organization, so the organization never exists without its record. If building them throws,
@@ -28,6 +29,22 @@ export interface CreatedOrganization {
   readonly organization: Organization;
   /** The creator's membership: active, role `owner`. */
   readonly membership: Membership;
+  readonly billing: InitialBilling;
+}
+
+/**
+ * Checks that the billing built for a new organization belongs to it, so a store never writes an
+ * account or subscription for another organization.
+ */
+export function checkInitialBilling(organization: Organization, billing: InitialBilling): void {
+  const { account, subscription } = billing;
+  if (
+    account.organizationId !== organization.id ||
+    subscription.organizationId !== organization.id ||
+    account.subscriptionId !== subscription.id
+  ) {
+    throw new Error('initial billing does not belong to the new organization');
+  }
 }
 
 /**

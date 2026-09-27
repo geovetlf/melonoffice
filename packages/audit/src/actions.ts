@@ -1,7 +1,7 @@
 import type { AuditResult } from './event.js';
 
 export interface AuditActionDefinition {
-  readonly category: 'auth' | 'tenancy' | 'authorization' | 'entitlements';
+  readonly category: 'auth' | 'tenancy' | 'authorization' | 'entitlements' | 'billing';
   readonly description: string;
   /** The results this action is recorded with. Anything else is a programming error. */
   readonly results: readonly AuditResult[];
@@ -35,6 +35,12 @@ export const AUDIT_ACTIONS = {
   'plan.assign': {
     category: 'entitlements',
     description: 'An organization was given a plan (today: its initial plan, when it is created).',
+    results: ['success'],
+  },
+  'billing.subscription_created': {
+    category: 'billing',
+    description:
+      "An organization's subscription was created (today: its first, with the organization).",
     results: ['success'],
   },
   'tenancy.resolve': {

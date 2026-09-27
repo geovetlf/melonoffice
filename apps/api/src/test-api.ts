@@ -13,13 +13,27 @@ import {
   type AuditService,
   type AuditStore,
 } from '@melonoffice/audit';
-import type { Membership, Organization } from '@melonoffice/domain';
+import { InMemoryBillingStore, type BillingStore } from '@melonoffice/billing';
+import type {
+  BillingAccount,
+  Membership,
+  Organization,
+  OrganizationId,
+  Subscription,
+} from '@melonoffice/domain';
 import { createLogger } from '@melonoffice/observability';
 import type { EntitlementService } from '@melonoffice/entitlements';
 import type { AuthorizationService } from '@melonoffice/rbac';
 import { InMemoryTenancyStore, type TenancyStore } from '@melonoffice/tenancy';
 import { createApp } from './app.js';
 import { AUDIT_LOGS, FirestoreAuditStore, type AuditDocument } from './audit-firestore.js';
+import {
+  BILLING_ACCOUNTS,
+  FirestoreBillingStore,
+  SUBSCRIPTIONS,
+  toAccountDocument,
+  toSubscriptionDocument,
+} from './billing-firestore.js';
 import { FirestoreTenancyStore, MEMBERSHIPS, ORGANIZATIONS } from './tenancy-firestore.js';
 import { emulatorFirestore, emulatorHost } from './test-firestore.js';
 import { FirestoreUserDirectory } from './users-firestore.js';
@@ -47,6 +61,11 @@ export interface Stores {
   readonly tenancy: TenancyStore;
   /** Stores a record as given, e.g. a suspended membership, the way an operator change would. */
   readonly put: (record: Organization | Membership) => Promise<void>;
+  readonly billing: BillingStore;
+  /** Stores a billing record as given, the way a provider sync or an operator change would. */
+  readonly putBilling: (record: BillingAccount | Subscription) => Promise<void>;
+  /** Removes an organization's billing account, as for one created before billing existed. */
+  readonly removeBilling: (organizationId: OrganizationId) => Promise<void>;
   readonly audit: AuditService;
   /** Every stored audit event, oldest first, as plain data. */
   readonly auditEvents: () => Promise<readonly AuditEvent[]>;
@@ -67,11 +86,15 @@ class Breakable implements AuditStore {
 function memoryStores(): Stores {
   const events = new InMemoryAuditStore();
   const breakable = new Breakable(events);
-  const tenancy = new InMemoryTenancyStore(undefined, events);
+  const billing = new InMemoryBillingStore();
+  const tenancy = new InMemoryTenancyStore(undefined, events, billing);
   return {
     users: new InMemoryUserDirectory(),
     tenancy,
     put: async (r) => tenancy.put(r),
+    billing,
+    putBilling: async (r) => billing.put(r),
+    removeBilling: async (id) => billing.removeAccount(id),
     audit: createAuditService(breakable),
     auditEvents: async () => events.events(),
     breakAudit: (broken) => (breakable.broken = broken),
@@ -108,6 +131,20 @@ function firestoreStores(): Stores {
   return {
     users: new FirestoreUserDirectory(db),
     tenancy: new FirestoreTenancyStore(db),
+    billing: new FirestoreBillingStore(db),
+    async putBilling(record) {
+      if ('status' in record) {
+        await db.collection(SUBSCRIPTIONS).doc(record.id).set(toSubscriptionDocument(record));
+      } else {
+        await db
+          .collection(BILLING_ACCOUNTS)
+          .doc(record.organizationId)
+          .set(toAccountDocument(record));
+      }
+    },
+    async removeBilling(organizationId) {
+      await db.collection(BILLING_ACCOUNTS).doc(organizationId).delete();
+    },
     audit: createAuditService(breakable),
     breakAudit: (broken) => (breakable.broken = broken),
     async auditEvents() {
@@ -146,6 +183,7 @@ export function setupApp(
     version: 'test',
     auth: { verifier, users: stores.users },
     tenancy: stores.tenancy,
+    billing: stores.billing,
     audit: stores.audit,
     ...(authorization ? { authorization } : {}),
     ...(entitlements ? { entitlements } : {}),

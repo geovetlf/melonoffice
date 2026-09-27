@@ -1,11 +1,13 @@
 import type { AuditService } from '@melonoffice/audit';
 import type { AuthDependencies } from '@melonoffice/auth';
+import { createBillingService, type BillingStore } from '@melonoffice/billing';
 import { createEntitlementService, type EntitlementService } from '@melonoffice/entitlements';
 import type { Logger } from '@melonoffice/observability';
 import { createAuthorizationService, type AuthorizationService } from '@melonoffice/rbac';
 import type { TenancyStore } from '@melonoffice/tenancy';
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { registerAuthRoutes, type AuthEnv } from './auth.js';
+import { registerBillingRoutes } from './billing.js';
 import { registerEntitlementRoutes } from './entitlements.js';
 import { registerHealth } from './health.js';
 import { registerTenancyRoutes } from './tenancy.js';
@@ -24,8 +26,13 @@ export interface AppOptions {
   /** Role permissions (ADR-0019). Defaults to the built-in roles; tests may narrow them. */
   readonly authorization?: AuthorizationService;
   /**
-   * What organizations' plans allow (ADR-0021). Defaults to the plan catalogue in code, read
-   * through the tenancy store; tests may pass another catalogue.
+   * Billing accounts and subscriptions (ADR-0022), the source of each organization's plan.
+   * Absent: billing and entitlement routes answer 503 (fails closed).
+   */
+  readonly billing?: BillingStore;
+  /**
+   * What organizations' plans allow (ADR-0021). Defaults to the plan catalogue in code, with the
+   * plan from billing; tests may pass another catalogue.
    */
   readonly entitlements?: EntitlementService;
 }
@@ -42,6 +49,7 @@ export function createApp({
   tenancy,
   audit,
   authorization = createAuthorizationService(),
+  billing,
   entitlements,
 }: AppOptions): Hono<Env> {
   const app = new Hono<Env>();
@@ -69,13 +77,20 @@ export function createApp({
   registerAuthRoutes(app, auth, audit);
   if (auth !== undefined && audit !== undefined) {
     registerTenancyRoutes(app, tenancy, authorization, audit);
-    if (tenancy !== undefined) {
+    if (tenancy !== undefined && billing !== undefined) {
+      const billingService = createBillingService({ billing, organizations: tenancy });
+      const dependencies = { store: tenancy, authorization, audit };
+      registerBillingRoutes(app, { ...dependencies, billing: billingService });
       registerEntitlementRoutes(app, {
-        store: tenancy,
-        authorization,
-        audit,
-        entitlements: entitlements ?? createEntitlementService({ organizations: tenancy }),
+        ...dependencies,
+        entitlements:
+          entitlements ??
+          createEntitlementService({ organizations: tenancy, plans: billingService }),
       });
+    } else if (tenancy !== undefined) {
+      const unavailable = (c: Context<Env>) => c.json({ error: 'billing_not_configured' }, 503);
+      app.all('/v1/organizations/:organizationId/billing', unavailable);
+      app.all('/v1/organizations/:organizationId/entitlements', unavailable);
     }
   }
 

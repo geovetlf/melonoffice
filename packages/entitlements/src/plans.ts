@@ -96,7 +96,7 @@ export function findPlan(
 
 /**
  * The plan every new organization starts on (ADR-0021): Emprendedor, version 1, the only active
- * plan at launch. It is passed explicitly when an organization is created; it is never used as a
- * fallback for an organization that has no plan. Changing it affects only new organizations.
+ * plan at launch. Billing opens every new organization's first subscription on it (ADR-0022). It
+ * is never a fallback for an organization with no plan. Changing it affects new organizations only.
  */
 export const DEFAULT_PLAN: PlanRef = Object.freeze({ id: 'entrepreneur', version: 1 });

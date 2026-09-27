@@ -3,6 +3,7 @@ import { InMemoryUserDirectory } from '@melonoffice/auth';
 import type { OrganizationId, UserId } from '@melonoffice/domain';
 import { createLogger } from '@melonoffice/observability';
 import { createAuthorizationService, type AuthorizationService } from '@melonoffice/rbac';
+import { InMemoryTenancyStore } from '@melonoffice/tenancy';
 import { describe, expect, it } from 'vitest';
 import { createApp } from './app.js';
 import { setupApp, STORES, verifier } from './test-api.js';
@@ -239,6 +240,24 @@ describe('regression', () => {
     expect(response.status).toBe(503);
     expect(await response.json()).toEqual({ error: 'tenancy_not_configured' });
     expect((await app.request('/v1/organizations', { method: 'POST', headers })).status).toBe(503);
+  });
+
+  it('with tenancy but no billing store, billing and entitlement routes fail closed', async () => {
+    const logger = createLogger({ service: 'api', sink: () => undefined });
+    const app = createApp({
+      logger,
+      version: 'test',
+      auth: { verifier, users: new InMemoryUserDirectory() },
+      tenancy: new InMemoryTenancyStore(),
+      audit: createAuditService(new InMemoryAuditStore()),
+    });
+    const headers = { authorization: 'Bearer token-alice' };
+    expect((await app.request('/v1/me', { method: 'POST', headers })).status).toBe(201);
+    for (const path of ['billing', 'entitlements']) {
+      const response = await app.request(`/v1/organizations/${MISSING_ORG}/${path}`, { headers });
+      expect(response.status).toBe(503);
+      expect(await response.json()).toEqual({ error: 'billing_not_configured' });
+    }
   });
 });
 

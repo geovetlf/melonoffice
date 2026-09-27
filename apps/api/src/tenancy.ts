@@ -1,4 +1,5 @@
 import { actorOf, buildAuditEvent, type AuditService } from '@melonoffice/audit';
+import { openBilling } from '@melonoffice/billing';
 import { DEFAULT_PLAN } from '@melonoffice/entitlements';
 import type { AuthorizationService } from '@melonoffice/rbac';
 import {
@@ -41,8 +42,8 @@ export function registerTenancyRoutes(
     return;
   }
 
-  // Only `name` is read from the body. Anything else, such as an id, owner, status or plan, is
-  // ignored: the plan is always the server's default (ADR-0021).
+  // Only `name` is read from the body. Anything else, such as an id, owner, status, plan or
+  // subscription, is ignored: billing opens every organization on the default plan (ADR-0022).
   app.post('/v1/organizations', async (c) => {
     const body: unknown = await c.req.json().catch(() => undefined);
     const name =
@@ -53,8 +54,8 @@ export function registerTenancyRoutes(
     try {
       // The creation's events are stored in the same write as the organization (ADR-0020).
       result = await createOrganization(auth, { name }, store, {
-        plan: DEFAULT_PLAN,
-        audit: ({ organization, membership }) => {
+        billing: (organization) => openBilling(organization, DEFAULT_PLAN),
+        audit: ({ organization, membership, billing: { subscription } }) => {
           const at = new Date(organization.createdAt);
           const common = { result: 'success', actor, organizationId: organization.id } as const;
           return [
@@ -76,20 +77,26 @@ export function registerTenancyRoutes(
               },
               at,
             ),
-            ...(organization.plan === undefined
-              ? []
-              : [
-                  buildAuditEvent(
-                    {
-                      action: 'plan.assign',
-                      ...common,
-                      target: { type: 'organization', id: organization.id },
-                      plan: organization.plan,
-                      ...requestFields(c),
-                    },
-                    at,
-                  ),
-                ]),
+            buildAuditEvent(
+              {
+                action: 'billing.subscription_created',
+                ...common,
+                target: { type: 'subscription', id: subscription.id },
+                plan: subscription.plan,
+                ...requestFields(c),
+              },
+              at,
+            ),
+            buildAuditEvent(
+              {
+                action: 'plan.assign',
+                ...common,
+                target: { type: 'organization', id: organization.id },
+                plan: subscription.plan,
+                ...requestFields(c),
+              },
+              at,
+            ),
           ];
         },
       });

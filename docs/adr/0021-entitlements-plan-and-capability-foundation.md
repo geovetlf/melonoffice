@@ -2,6 +2,7 @@
 
 - Status: Proposed (Phase 2F, pending Geovet's review)
 - Date: 2026-09-27
+- Plan source superseded by: [ADR-0022](0022-billing-foundation.md) (the plan now comes from the billing subscription, not from `Organization.plan`)
 - Builds on: [ADR-0007](0007-plans-entitlements.md), [ADR-0013](0013-entitlements-core.md), [ADR-0018](0018-tenancy-and-memberships.md), [ADR-0019](0019-rbac-foundation.md), [ADR-0020](0020-audit-log-foundation.md)
 
 ## Context

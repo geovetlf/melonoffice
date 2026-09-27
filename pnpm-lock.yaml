@@ -65,6 +65,9 @@ importers:
       '@melonoffice/auth':
         specifier: workspace:*
         version: link:../../packages/auth
+      '@melonoffice/billing':
+        specifier: workspace:*
+        version: link:../../packages/billing
       '@melonoffice/entitlements':
         specifier: workspace:*
         version: link:../../packages/entitlements
@@ -160,6 +163,22 @@ importers:
         specifier: 6.2.12
         version: 6.2.12
     devDependencies:
+      '@melonoffice/config':
+        specifier: workspace:*
+        version: link:../config
+
+  packages/billing:
+    dependencies:
+      '@melonoffice/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@melonoffice/tenancy':
+        specifier: workspace:*
+        version: link:../tenancy
+    devDependencies:
+      '@melonoffice/auth':
+        specifier: workspace:*
+        version: link:../auth
       '@melonoffice/config':
         specifier: workspace:*
         version: link:../config
