@@ -222,6 +222,8 @@ describe.each(STORES)('executions with storage in %s', (_name, createStores) => 
             dependsOn: [],
             owner: { kind: 'specialist', id: 'spec-research', version: '3' },
             input: null,
+            tool: null,
+            approvalId: null,
             output: null,
             error: null,
             startedAt: null,

@@ -16,6 +16,10 @@ export const ROLES = {
     'execution.read',
     'department.read',
     'specialist.read',
+    'tool.read',
+    'tool.execute',
+    'approval.read',
+    'approval.approve',
   ],
 } as const satisfies RoleCatalogue;
 

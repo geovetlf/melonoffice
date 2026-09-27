@@ -18,6 +18,7 @@ import {
 import {
   addNodes,
   applyNodeChange,
+  attachApproval,
   applyStatusChange,
   checkSnapshot,
   checkStoredExecution,
@@ -266,7 +267,13 @@ describe('cancellation', () => {
       request({
         nodes: [
           { id: 'a', type: 'agent', label: 'Research' },
-          { id: 'b', type: 'tool', label: 'Search', dependsOn: ['a'] },
+          {
+            id: 'b',
+            type: 'tool',
+            label: 'Search',
+            dependsOn: ['a'],
+            tool: { id: 'web_search', version: 1 },
+          },
           { id: 'c', type: 'verification', label: 'Check', dependsOn: ['b'] },
         ],
       }),
@@ -306,6 +313,7 @@ describe('graph', () => {
       label: 'Publish',
       dependsOn: ['approve'],
       input: { type: 'draft', id: 'd1' },
+      tool: { id: 'publish_post', version: 2 },
     },
     { id: 'verify', type: 'verification', label: 'Verify', dependsOn: ['publish'] },
   ];
@@ -333,8 +341,64 @@ describe('graph', () => {
     'event',
   ])('accepts a %s node', (type) => {
     expect(
-      newExecution(request({ nodes: [{ id: 'n', type, label: 'x' } as NodeInput] }), T0).nodes,
+      newExecution(
+        request({
+          nodes: [
+            {
+              id: 'n',
+              type,
+              label: 'x',
+              ...(type === 'tool' ? { tool: { id: 'web_search', version: 1 } } : {}),
+            } as NodeInput,
+          ],
+        }),
+        T0,
+      ).nodes,
     ).toHaveLength(1);
+  });
+
+  it('names the exact tool version on tool nodes, and only on them (ADR-0026)', () => {
+    const tool = { id: 'web_search', version: 3 };
+    const [node] = newExecution(
+      request({ nodes: [{ id: 't', type: 'tool', label: 'Search', tool }] }),
+      T0,
+    ).nodes;
+    expect(node?.tool).toEqual(tool);
+    for (const bad of [
+      { id: 't', type: 'tool', label: 'x' },
+      { id: 't', type: 'tool', label: 'x', tool: { id: 'Web Search', version: 1 } },
+      { id: 't', type: 'tool', label: 'x', tool: { id: 'web_search', version: 0 } },
+      { id: 't', type: 'agent', label: 'x', tool },
+    ]) {
+      expect(codeOf(() => newExecution(request({ nodes: [bad as NodeInput] }), T0))).toBe(
+        'invalid_execution',
+      );
+    }
+  });
+
+  it('attaches one approval to a pending tool node, never a second one', () => {
+    const approval = '33333333-3333-4333-8333-333333333333';
+    const execution = newExecution(
+      request({
+        nodes: [
+          { id: 't', type: 'tool', label: 'Send', tool: { id: 'send_email', version: 1 } },
+          { id: 'a', type: 'agent', label: 'Write' },
+        ],
+      }),
+      T0,
+    );
+    const attached = attachApproval(execution, 't', approval, T1);
+    expect(attached.nodes[0]?.approvalId).toBe(approval);
+    expect(attached.revision).toBe(2);
+    expect(checkStoredExecution(attached)).toBe(attached);
+    const other = '44444444-4444-4444-8444-444444444444';
+    expect(codeOf(() => attachApproval(attached, 't', other, T1))).toBe(
+      'execution_concurrency_conflict',
+    );
+    expect(codeOf(() => attachApproval(execution, 'a', approval, T1))).toBe('invalid_execution');
+    expect(codeOf(() => attachApproval(execution, 't', 'not-a-uuid', T1))).toBe(
+      'invalid_execution',
+    );
   });
 
   it.each([

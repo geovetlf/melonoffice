@@ -1,9 +1,11 @@
+import type { ApprovalId } from './approval.js';
 import type {
   Brand,
   DepartmentId,
   IsoTimestamp,
   OrganizationId,
   SpecialistId,
+  ToolId,
   UserId,
 } from './ids.js';
 
@@ -93,6 +95,12 @@ export interface ExecutionCancellation {
   readonly reason: string;
 }
 
+/** One exact version of a tool, as a `tool` node names it. */
+export interface ExecutionToolRef {
+  readonly id: ToolId;
+  readonly version: number;
+}
+
 export interface ExecutionNode {
   readonly id: ExecutionNodeId;
   readonly type: ExecutionNodeType;
@@ -104,6 +112,13 @@ export interface ExecutionNode {
   /** Who or what runs the node: a specialist, a tool, a workflow… */
   readonly owner?: VersionRef;
   readonly input?: ExecutionRef;
+  /**
+   * For `tool` nodes, and only them: the exact tool version the node runs (ADR-0026). The input
+   * itself is never stored here; `input` may point at it.
+   */
+  readonly tool?: ExecutionToolRef;
+  /** The human approval this tool node waits on or ran with (ADR-0026). */
+  readonly approvalId?: ApprovalId;
   readonly output?: ExecutionRef;
   readonly error?: ExecutionFailure;
   readonly startedAt?: IsoTimestamp;

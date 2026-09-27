@@ -7,3 +7,5 @@ export type * from './user.js';
 export type * from './tenancy.js';
 export type * from './billing.js';
 export type * from './execution.js';
+export type * from './tool.js';
+export type * from './approval.js';

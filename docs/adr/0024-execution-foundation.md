@@ -77,7 +77,7 @@ Real approval, verification, retry and pause behaviour is not built. X1 prepares
 
 ### Graph
 
-The graph is a list of typed nodes: `agent`, `workflow`, `tool`, `approval`, `condition`, `verification`, `parallel`, `delay` and `event`. Each node has an id, type, label, status, `dependsOn`, and optionally `owner` (a versioned reference), `input`, `output`, `error`, `startedAt` and `completedAt`.
+The graph is a list of typed nodes: `agent`, `workflow`, `tool`, `approval`, `condition`, `verification`, `parallel`, `delay` and `event`. Each node has an id, type, label, status, `dependsOn`, and optionally `owner` (a versioned reference), `input`, `output`, `error`, `startedAt` and `completedAt`. A `tool` node also names its exact tool version and the approval it waits on ([ADR-0026](0026-tools-approvals-and-guardrails.md)).
 
 Rules:
 

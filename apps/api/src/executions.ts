@@ -76,6 +76,8 @@ function toView(execution: Execution) {
           ? null
           : { kind: node.owner.kind, id: node.owner.id, version: node.owner.version },
       input: refView(node.input),
+      tool: node.tool === undefined ? null : { id: node.tool.id, version: node.tool.version },
+      approvalId: node.approvalId ?? null,
       output: refView(node.output),
       error: failureView(node.error),
       startedAt: node.startedAt ?? null,
