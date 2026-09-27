@@ -97,6 +97,34 @@ export const PERMISSIONS = {
     description:
       "Create, version and activate the organization's workflows. Server side only: no client route yet (ADR-0028).",
   },
+  'conversation.read': {
+    resource: 'conversation',
+    action: 'read',
+    description: "See the organization's conversations and their messages: the inbox (ADR-0033).",
+  },
+  'conversation.manage': {
+    resource: 'conversation',
+    action: 'manage',
+    description:
+      "Assign the organization's conversations, change their status and tags (ADR-0033). Not sending.",
+  },
+  'contact.read': {
+    resource: 'contact',
+    action: 'read',
+    description: "See the organization's contacts and their channel identities (ADR-0033).",
+  },
+  'channel.read': {
+    resource: 'channel',
+    action: 'read',
+    description:
+      "See the organization's channel connections: channel, account and status, never secrets (ADR-0033).",
+  },
+  'channel.manage': {
+    resource: 'channel',
+    action: 'manage',
+    description:
+      "Configure and turn off the organization's channel connections. Server side only: no client route yet (ADR-0033).",
+  },
   'credits.read': {
     resource: 'credits',
     action: 'read',

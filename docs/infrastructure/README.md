@@ -109,6 +109,16 @@ You need the Google Cloud CLI and Terraform 1.16 or later. For each project you 
 
 There is no staging or production deployment workflow.
 
+## Channels (not applied)
+
+Channel webhooks ([ADR-0033](../adr/0033-conversations-foundation.md)) are in the API code but are off everywhere: without `CHANNEL_SECRETS_PROJECT_ID`, `/webhooks/*` answers 503. Nothing in Terraform sets it. Turning them on is CV-2 and needs Geovet's authorization and apply (**INFRASTRUCTURE REQUIRED**):
+
+- enable the Secret Manager API in the environment's project;
+- create one secret per connection and kind (`channel-{connectionId}-app-secret`, `-access-token`, `-verify-token`), with values entered by the owner, never in the repository or chat;
+- grant the API service account `roles/secretmanager.secretAccessor` on those secrets only;
+- set `CHANNEL_SECRETS_PROJECT_ID` (and `WHATSAPP_GRAPH_API_VERSION` before any send) on the API service;
+- register `https://<api>/webhooks/whatsapp/{connectionId}` in Meta.
+
 ## Rollback
 
 Every deploy creates a new Cloud Run revision. To roll back dev, route traffic to an earlier revision, or re-run `CD (dev)` on an earlier commit:

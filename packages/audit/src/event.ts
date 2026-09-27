@@ -48,7 +48,9 @@ export interface AuditTarget {
     | 'execution'
     | 'approval'
     | 'plan'
-    | 'workflow';
+    | 'workflow'
+    | 'conversation'
+    | 'channel_connection';
   readonly id: string;
 }
 

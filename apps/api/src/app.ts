@@ -3,9 +3,15 @@ import type { AuditService } from '@melonoffice/audit';
 import type { AuthDependencies } from '@melonoffice/auth';
 import { createBillingService, type BillingStore } from '@melonoffice/billing';
 import { createDepartmentService, type DepartmentRepository } from '@melonoffice/departments';
+import { createConversationService, type ConversationRepository } from '@melonoffice/conversations';
 import { createCreditService, type CreditStore } from '@melonoffice/credits';
 import { createEntitlementService, type EntitlementService } from '@melonoffice/entitlements';
 import { createExecutionService, type ExecutionRepository } from '@melonoffice/execution';
+import {
+  createChannelConnectionService,
+  type ChannelConnectionRepository,
+  type WebhookIngress,
+} from '@melonoffice/integrations';
 import type { Logger } from '@melonoffice/observability';
 import { createAuthorizationService, type AuthorizationService } from '@melonoffice/rbac';
 import { createSpecialistService, type SpecialistRepository } from '@melonoffice/specialists';
@@ -23,6 +29,7 @@ import { registerApprovalRoutes } from './approvals.js';
 import { registerAuthRoutes, type AuthEnv } from './auth.js';
 import { registerBillingRoutes } from './billing.js';
 import { registerDepartmentRoutes } from './departments.js';
+import { registerConversationRoutes } from './conversations.js';
 import { registerCreditRoutes } from './credits.js';
 import { registerEntitlementRoutes } from './entitlements.js';
 import { registerExecutionRoutes } from './executions.js';
@@ -31,6 +38,7 @@ import { registerPlanRoutes } from './plans.js';
 import { registerSpecialistRoutes } from './specialists.js';
 import { registerTenancyRoutes } from './tenancy.js';
 import { registerToolRoutes } from './tools.js';
+import { registerWebhookRoutes } from './webhooks.js';
 import { registerWorkflowRoutes } from './workflows.js';
 
 export const SERVICE_NAME = 'api';
@@ -76,6 +84,18 @@ export interface AppOptions {
   readonly plans?: PlanRepository;
   /** Workflows (ADR-0028). Absent: the workflow routes answer 503 (fails closed). */
   readonly workflows?: WorkflowRepository;
+  /**
+   * Conversations, contacts and channel connections (ADR-0033). Absent: the inbox routes answer
+   * 503 (fails closed). They also need departments (`structure`) to assign to one.
+   */
+  readonly conversations?: {
+    readonly repository: ConversationRepository;
+    readonly connections: ChannelConnectionRepository;
+    /** Where channel secrets live. Unset: no connection can be created. */
+    readonly secretProjectId?: string;
+  };
+  /** Channel webhooks (ADR-0033). Absent: `/webhooks/*` answers 503. */
+  readonly webhooks?: WebhookIngress;
 }
 
 type Env = AuthEnv;
@@ -99,6 +119,8 @@ export function createApp({
   credits,
   plans,
   workflows,
+  conversations,
+  webhooks,
 }: AppOptions): Hono<Env> {
   const app = new Hono<Env>();
 
@@ -122,6 +144,8 @@ export function createApp({
   });
 
   registerHealth(app, { service: SERVICE_NAME, version });
+  // Outside /v1: providers sign deliveries, they have no user token.
+  registerWebhookRoutes(app, webhooks);
   registerAuthRoutes(app, auth, audit);
   if (auth !== undefined && audit !== undefined) {
     registerTenancyRoutes(app, tenancy, authorization, audit);
@@ -265,6 +289,47 @@ export function createApp({
       if (!plansReady || workflows === undefined) {
         app.all('/v1/organizations/:organizationId/workflows', unavailable('workflows'));
         app.all('/v1/organizations/:organizationId/workflows/*', unavailable('workflows'));
+      }
+    }
+    if (tenancy !== undefined && structure !== undefined && conversations !== undefined) {
+      const billingPlans =
+        billing === undefined
+          ? undefined
+          : createBillingService({ billing, organizations: tenancy });
+      const planEntitlements =
+        entitlements ??
+        (billingPlans === undefined
+          ? undefined
+          : createEntitlementService({ organizations: tenancy, plans: billingPlans }));
+      registerConversationRoutes(app, {
+        store: tenancy,
+        authorization,
+        audit,
+        conversations: createConversationService({
+          repository: conversations.repository,
+          organizations: tenancy,
+          departments: structure.departments,
+          authorization,
+        }),
+        connections: createChannelConnectionService({
+          repository: conversations.connections,
+          organizations: tenancy,
+          authorization,
+          // Only `create` reads a limit, and no route creates: without billing it fails closed.
+          entitlements: planEntitlements ?? {
+            getLimit: async () => ({ available: false, reason: 'unknown_limit' }),
+          },
+          ...(conversations.secretProjectId === undefined
+            ? {}
+            : { secretProjectId: conversations.secretProjectId }),
+        }),
+      });
+    } else if (tenancy !== undefined) {
+      const unavailable = (c: Context<Env>) =>
+        c.json({ error: 'conversations_not_configured' }, 503);
+      for (const path of ['conversations', 'contacts', 'channel-connections']) {
+        app.all(`/v1/organizations/:organizationId/${path}`, unavailable);
+        app.all(`/v1/organizations/:organizationId/${path}/*`, unavailable);
       }
     }
     if (tenancy !== undefined && credits !== undefined) {

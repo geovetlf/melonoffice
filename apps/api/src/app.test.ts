@@ -73,6 +73,23 @@ describe('loadConfig', () => {
     }
   });
 
+  it('turns channels on only with a valid secrets project, and never guesses a Graph version', () => {
+    expect(loadConfig({}).channelSecretsProjectId).toBeUndefined();
+    expect(loadConfig({}).whatsappGraphApiVersion).toBeUndefined();
+    expect(
+      loadConfig({
+        CHANNEL_SECRETS_PROJECT_ID: 'melonoffice',
+        WHATSAPP_GRAPH_API_VERSION: 'v23.0',
+      }),
+    ).toMatchObject({ channelSecretsProjectId: 'melonoffice', whatsappGraphApiVersion: 'v23.0' });
+    expect(() => loadConfig({ CHANNEL_SECRETS_PROJECT_ID: 'x/../y' })).toThrow(
+      'Invalid CHANNEL_SECRETS_PROJECT_ID',
+    );
+    expect(() => loadConfig({ WHATSAPP_GRAPH_API_VERSION: 'latest' })).toThrow(
+      'Invalid WHATSAPP_GRAPH_API_VERSION',
+    );
+  });
+
   it('rejects invalid values', () => {
     expect(() => loadConfig({ PORT: 'x' })).toThrow('Invalid PORT');
     expect(() => loadConfig({ LOG_LEVEL: 'loud' })).toThrow('Invalid LOG_LEVEL');

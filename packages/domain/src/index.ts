@@ -14,3 +14,4 @@ export type * from './credits.js';
 export type * from './plan.js';
 export type * from './context.js';
 export type * from './job.js';
+export type * from './conversation.js';

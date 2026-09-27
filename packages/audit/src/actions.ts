@@ -12,7 +12,9 @@ export interface AuditActionDefinition {
     | 'tool'
     | 'ai'
     | 'planning'
-    | 'workflow';
+    | 'workflow'
+    | 'conversation'
+    | 'channel';
   readonly description: string;
   /** The results this action is recorded with. Anything else is a programming error. */
   readonly results: readonly AuditResult[];
@@ -250,6 +252,35 @@ export const AUDIT_ACTIONS = {
     category: 'workflow',
     description:
       "A workflow's status changed (activated, paused, archived); the event records from and to (ADR-0028).",
+    results: ['success'],
+  },
+  'conversation.assigned': {
+    category: 'conversation',
+    description:
+      'A person set or cleared who is responsible for a conversation: a member and or a department (ADR-0033).',
+    results: ['success'],
+  },
+  'conversation.status_changed': {
+    category: 'conversation',
+    description:
+      "A person changed a conversation's status (open, pending, closed); the event records from and to (ADR-0033).",
+    results: ['success'],
+  },
+  'conversation.tags_changed': {
+    category: 'conversation',
+    description: "A person added or removed a conversation's tags (ADR-0033).",
+    results: ['success'],
+  },
+  'channel.connection_created': {
+    category: 'channel',
+    description:
+      'A channel connection was configured for the organization; its secrets are references only (ADR-0033).',
+    results: ['success'],
+  },
+  'channel.connection_disabled': {
+    category: 'channel',
+    description:
+      'A channel connection was turned off: its webhooks are refused from then on (ADR-0033).',
     results: ['success'],
   },
   'credits.grant': {

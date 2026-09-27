@@ -19,10 +19,24 @@ import { InMemoryBillingStore, type BillingStore } from '@melonoffice/billing';
 import { InMemoryDepartmentRepository, type DepartmentRepository } from '@melonoffice/departments';
 import { InMemoryExecutionRepository, type ExecutionRepository } from '@melonoffice/execution';
 import { InMemoryCreditStore, type CreditStore } from '@melonoffice/credits';
+import {
+  createConversationIngress,
+  InMemoryConversationRepository,
+  type ConversationRepository,
+} from '@melonoffice/conversations';
+import {
+  createWebhookIngress,
+  createWhatsAppAdapter,
+  InMemoryChannelConnectionRepository,
+  InMemorySecretStore,
+  type ChannelConnectionRepository,
+} from '@melonoffice/integrations';
 import { InMemoryPlanRepository, type PlanRepository } from '@melonoffice/planning';
 import { InMemoryWorkflowRepository, type WorkflowRepository } from '@melonoffice/workflows';
 import type {
   BillingAccount,
+  ChannelConnection,
+  Message,
   Department,
   Membership,
   Organization,
@@ -67,6 +81,11 @@ import {
   MEMBERSHIPS,
   ORGANIZATIONS,
   FirestoreUserDirectory,
+  CHANNEL_CONNECTIONS,
+  FirestoreChannelConnectionRepository,
+  FirestoreConversationRepository,
+  putOutboundMessage,
+  toConnectionDocument,
 } from '@melonoffice/firestore';
 import { emulatorFirestore, emulatorHost } from '@melonoffice/firestore/testing';
 
@@ -115,6 +134,14 @@ export interface Stores {
   ) => Promise<void>;
   /** Removes an organization's wallet, as for one created before credits existed. */
   readonly removeWallet: (organizationId: OrganizationId) => Promise<void>;
+  readonly conversations: ConversationRepository;
+  readonly connections: ChannelConnectionRepository;
+  /** Stores a channel connection as given, the way the server-side setup would. */
+  readonly putConnection: (connection: ChannelConnection) => Promise<void>;
+  /** Stores an outbound message as given (nothing sends in CV-1), to test delivery statuses. */
+  readonly putOutbound: (message: Message) => Promise<void>;
+  /** Channel secrets: in memory in both, standing in for Secret Manager. */
+  readonly secrets: InMemorySecretStore;
   readonly audit: AuditService;
   /** Every stored audit event, oldest first, as plain data. */
   readonly auditEvents: () => Promise<readonly AuditEvent[]>;
@@ -143,7 +170,14 @@ function memoryStores(): Stores {
   const credits = new InMemoryCreditStore(events);
   const tenancy = new InMemoryTenancyStore(undefined, events, billing, departments, credits);
   const plans = new InMemoryPlanRepository(events);
+  const conversations = new InMemoryConversationRepository(events);
+  const connections = new InMemoryChannelConnectionRepository(events);
   return {
+    conversations,
+    connections,
+    putConnection: async (c) => connections.put(c),
+    putOutbound: async (m) => conversations.putOutbound(m),
+    secrets: new InMemorySecretStore(),
     users: new InMemoryUserDirectory(),
     tenancy,
     put: async (r) => tenancy.put(r),
@@ -180,6 +214,13 @@ function firestoreStores(): Stores {
   const db: Firestore = emulatorFirestore();
   const breakable = new Breakable(new FirestoreAuditStore(db));
   return {
+    conversations: new FirestoreConversationRepository(db),
+    connections: new FirestoreChannelConnectionRepository(db),
+    async putConnection(c) {
+      await db.collection(CHANNEL_CONNECTIONS).doc(c.id).set(toConnectionDocument(c));
+    },
+    putOutbound: (m) => putOutboundMessage(db, m),
+    secrets: new InMemorySecretStore(),
     users: new FirestoreUserDirectory(db),
     tenancy: new FirestoreTenancyStore(db),
     billing: new FirestoreBillingStore(db),
@@ -277,6 +318,18 @@ export function setupApp(
     plans: stores.plans,
     workflows: stores.workflows,
     audit: stores.audit,
+    conversations: {
+      repository: stores.conversations,
+      connections: stores.connections,
+      secretProjectId: 'melonoffice-test',
+    },
+    webhooks: createWebhookIngress({
+      connections: stores.connections,
+      secrets: stores.secrets,
+      adapters: [createWhatsAppAdapter()],
+      conversations: createConversationIngress({ repository: stores.conversations }),
+      logger,
+    }),
     ...(tools ? { tools } : {}),
     ...(authorization ? { authorization } : {}),
     ...(entitlements ? { entitlements } : {}),
