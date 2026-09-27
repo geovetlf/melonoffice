@@ -55,6 +55,8 @@ Only actions the code performs today:
 | `membership.create`            | tenancy       | success                  | The owner membership created with an organization                      |
 | `plan.assign`                  | entitlements  | success                  | An organization gets its initial plan (added by ADR-0021)              |
 | `billing.subscription_created` | billing       | success                  | An organization's first subscription opens with it (added by ADR-0022) |
+| `execution.created`            | execution     | success                  | An execution is created for an organization (added by ADR-0024)        |
+| `execution.state_changed`      | execution     | success                  | An execution's status changes, with from and to (added by ADR-0024)    |
 | `tenancy.resolve`              | tenancy       | denied                   | A request inside an organization is refused by tenancy                 |
 | `authorization.check`          | authorization | denied                   | RBAC refuses a permission                                              |
 
@@ -67,7 +69,7 @@ Only actions the code performs today:
 
 ### Persistence and immutability
 
-- The Firestore collection is `auditLogs/{eventId}`, with flat fields: `occurredAt`, `action`, `result`, `actorType`, `actorUserId`, `actorVia`, `organizationId`, `targetType`, `targetId`, `requestedOrganizationId`, `permission`, `planId`, `planVersion` (added by ADR-0021), `reason`, `requestId` and `source`. Absent values are stored as `null`.
+- The Firestore collection is `auditLogs/{eventId}`, with flat fields: `occurredAt`, `action`, `result`, `actorType`, `actorUserId`, `actorVia`, `organizationId`, `targetType`, `targetId`, `requestedOrganizationId`, `permission`, `planId`, `planVersion` (added by ADR-0021), `transitionFrom` and `transitionTo` (added by ADR-0024), `reason`, `requestId` and `source`. Absent values are stored as `null`.
 - The `AuditStore` port has only `append`. The Firestore store writes with `create` in a batch, so an event is never overwritten and a batch is all or nothing. There is no update or delete in the application.
 - **No endpoint** reads or writes audit events. `POST /v1/audit-logs` and similar paths are `404`.
 - IAM cannot make one collection append-only. The API's service account (`roles/datastore.user`) could technically change documents, and only the code prevents it. See the risks.

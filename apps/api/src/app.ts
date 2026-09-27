@@ -2,6 +2,7 @@ import type { AuditService } from '@melonoffice/audit';
 import type { AuthDependencies } from '@melonoffice/auth';
 import { createBillingService, type BillingStore } from '@melonoffice/billing';
 import { createEntitlementService, type EntitlementService } from '@melonoffice/entitlements';
+import { createExecutionService, type ExecutionRepository } from '@melonoffice/execution';
 import type { Logger } from '@melonoffice/observability';
 import { createAuthorizationService, type AuthorizationService } from '@melonoffice/rbac';
 import type { TenancyStore } from '@melonoffice/tenancy';
@@ -9,6 +10,7 @@ import { Hono, type Context } from 'hono';
 import { registerAuthRoutes, type AuthEnv } from './auth.js';
 import { registerBillingRoutes } from './billing.js';
 import { registerEntitlementRoutes } from './entitlements.js';
+import { registerExecutionRoutes } from './executions.js';
 import { registerHealth } from './health.js';
 import { registerTenancyRoutes } from './tenancy.js';
 
@@ -35,6 +37,8 @@ export interface AppOptions {
    * plan from billing; tests may pass another catalogue.
    */
   readonly entitlements?: EntitlementService;
+  /** Executions (ADR-0024). Absent: the execution route answers 503 (fails closed). */
+  readonly executions?: ExecutionRepository;
 }
 
 type Env = AuthEnv;
@@ -51,6 +55,7 @@ export function createApp({
   authorization = createAuthorizationService(),
   billing,
   entitlements,
+  executions,
 }: AppOptions): Hono<Env> {
   const app = new Hono<Env>();
 
@@ -91,6 +96,18 @@ export function createApp({
       const unavailable = (c: Context<Env>) => c.json({ error: 'billing_not_configured' }, 503);
       app.all('/v1/organizations/:organizationId/billing', unavailable);
       app.all('/v1/organizations/:organizationId/entitlements', unavailable);
+    }
+    if (tenancy !== undefined && executions !== undefined) {
+      registerExecutionRoutes(app, {
+        store: tenancy,
+        authorization,
+        audit,
+        executions: createExecutionService({ repository: executions, organizations: tenancy }),
+      });
+    } else if (tenancy !== undefined) {
+      app.all('/v1/organizations/:organizationId/executions/*', (c) =>
+        c.json({ error: 'executions_not_configured' }, 503),
+      );
     }
   }
 

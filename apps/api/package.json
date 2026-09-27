@@ -19,6 +19,7 @@
     "@melonoffice/auth": "workspace:*",
     "@melonoffice/billing": "workspace:*",
     "@melonoffice/entitlements": "workspace:*",
+    "@melonoffice/execution": "workspace:*",
     "@melonoffice/observability": "workspace:*",
     "@melonoffice/rbac": "workspace:*",
     "@melonoffice/tenancy": "workspace:*",

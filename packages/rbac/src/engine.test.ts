@@ -85,7 +85,12 @@ describe('catalogue', () => {
   });
 
   it('lists exactly what owner may do: no wildcard, only catalogue permissions', () => {
-    expect(ROLES.owner).toEqual(['organization.read', 'entitlement.read', 'billing.read']);
+    expect(ROLES.owner).toEqual([
+      'organization.read',
+      'entitlement.read',
+      'billing.read',
+      'execution.read',
+    ]);
     for (const permissions of Object.values(ROLES)) {
       for (const permission of permissions) expect(isPermission(permission)).toBe(true);
     }
