@@ -214,9 +214,7 @@ export function ProtectedRoute({
       if (state.workspace === undefined) {
         return (
           <PublicFrame {...locale}>
-            <p role="alert" className="notice notice--warning">
-              <FormattedMessage id="auth.noOrganization" />
-            </p>
+            <CreateOrganization />
             <Button variant="secondary" onClick={signOut}>
               <FormattedMessage id="auth.signOut" />
             </Button>
@@ -225,4 +223,61 @@ export function ProtectedRoute({
       }
       return <>{children}</>;
   }
+}
+
+const CREATE_ERRORS = new Set(['invalid_organization_name', 'organization_limit_reached']);
+
+/**
+ * A new user's first step: name their organization. The API creates it with them as owner and
+ * decides everything else (plan, departments, credits); this form sends only the name.
+ */
+function CreateOrganization() {
+  const { createOrganization } = useAuth();
+  const id = useId();
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | undefined>();
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    setError(undefined);
+    const result = await createOrganization(name.trim());
+    setBusy(false);
+    if (!result.ok) setError(CREATE_ERRORS.has(result.code) ? result.code : 'generic');
+  }
+
+  return (
+    <>
+      <h2>
+        <FormattedMessage id="organization.create.title" />
+      </h2>
+      <p className="notice">
+        <FormattedMessage id="auth.noOrganization" />
+      </p>
+      {error === undefined ? null : (
+        <p role="alert" className="notice notice--danger">
+          <FormattedMessage id={`organization.create.error.${error}`} />
+        </p>
+      )}
+      <form className="login" onSubmit={(event) => void submit(event)} noValidate>
+        <label htmlFor={`${id}-name`}>
+          <FormattedMessage id="organization.create.name" />
+        </label>
+        <input
+          id={`${id}-name`}
+          type="text"
+          autoComplete="organization"
+          maxLength={100}
+          required
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+        />
+        <Button type="submit" disabled={busy || name.trim() === ''}>
+          <FormattedMessage id={busy ? 'organization.create.busy' : 'organization.create.submit'} />
+        </Button>
+      </form>
+    </>
+  );
 }

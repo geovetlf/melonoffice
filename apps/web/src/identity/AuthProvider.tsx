@@ -47,6 +47,13 @@ export interface Auth {
   readonly services: IdentityServices;
   signIn(email: string, password: string): Promise<SignInResult>;
   signOut(): void;
+  /**
+   * Creates the signed-in user's first organization, with them as its owner (POST
+   * /v1/organizations, ADR-0018), then loads it as their workspace. `code`: the API's refusal.
+   */
+  createOrganization(
+    name: string,
+  ): Promise<{ readonly ok: true } | { readonly ok: false; readonly code: string }>;
   /** Try loading the profile again after the API was unavailable. */
   retry(): void;
 }
@@ -176,6 +183,23 @@ export function AuthProvider({
       },
       signOut() {
         session.signOut();
+      },
+      async createOrganization(name) {
+        try {
+          await services.api.json('/v1/organizations', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ name }),
+          });
+        } catch (error) {
+          return { ok: false, code: error instanceof ApiError ? error.code : 'generic' };
+        }
+        try {
+          setState({ status: 'signed_in', ...(await loadProfile(services, false)) });
+        } catch (error) {
+          settle(error);
+        }
+        return { ok: true };
       },
       retry() {
         setState({ status: 'loading' });

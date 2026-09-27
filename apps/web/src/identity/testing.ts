@@ -33,6 +33,7 @@ export interface FakeBackend {
     idTokenSeconds: number;
     /** Each organization's conversations: only its members can read them. */
     conversations: Record<string, { id: string; name: string; priority: string }[]>;
+    organizationLimitReached?: boolean;
   };
   apiCalls(): Call[];
 }
@@ -123,6 +124,18 @@ export function fakeBackend(): FakeBackend {
           membership: { id: `m_${id}`, role, status: 'active' },
         })),
       });
+    }
+    if (path === '/v1/organizations' && method === 'POST') {
+      const name = ((JSON.parse(body ?? '{}') as { name?: unknown }).name ?? '') as string;
+      if (options.organizationLimitReached === true) {
+        return json(409, { error: 'organization_limit_reached' });
+      }
+      if (typeof name !== 'string' || name.trim() === '') {
+        return json(400, { error: 'invalid_organization_name' });
+      }
+      const created = { id: 'org_new', name: name.trim(), role: 'owner' };
+      options.organizations.push(created);
+      return json(201, { organization: { id: created.id, name: created.name } });
     }
     const inbox = /^\/v1\/organizations\/([^/]+)\/(.+)$/.exec(path);
     if (inbox !== null) return inboxAnswer(inbox[1] ?? '', inbox[2] ?? '', method, body);

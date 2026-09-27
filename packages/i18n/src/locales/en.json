@@ -101,7 +101,7 @@
   "auth.notConfigured": "Sign-in is not set up on this site yet.",
   "auth.unavailable": "We could not load your office right now. Please try again.",
   "auth.retry": "Try again",
-  "auth.noOrganization": "Your account is not part of any organization yet.",
+  "auth.noOrganization": "Your account is not part of any organization yet. Create one to start.",
   "auth.denied.title": "Access denied",
   "auth.denied.body": "You do not have permission to see this. If you think you should, ask your organization's owner.",
   "home.title": "Your office",
@@ -110,5 +110,12 @@
   "conversations.loading": "Loading conversations…",
   "conversations.sender.person": "Sent by a person",
   "nav.label": "Main",
-  "nav.conversations": "Conversations"
+  "nav.conversations": "Conversations",
+  "organization.create.title": "Create your organization",
+  "organization.create.name": "Organization name",
+  "organization.create.submit": "Create organization",
+  "organization.create.busy": "Creating…",
+  "organization.create.error.invalid_organization_name": "Enter a name of 1 to 100 characters.",
+  "organization.create.error.organization_limit_reached": "You cannot create more organizations.",
+  "organization.create.error.generic": "The organization could not be created. Please try again."
 }
