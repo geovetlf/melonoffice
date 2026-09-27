@@ -102,6 +102,8 @@ export interface ConversationRepository {
     organizationId: OrganizationId,
     contactId: ContactId,
   ): Promise<readonly ChannelIdentity[]>;
+  /** Every channel identity of the organization, for the inbox search (CV-3). */
+  listOrganizationIdentities(organizationId: OrganizationId): Promise<readonly ChannelIdentity[]>;
   /** One identity, or undefined when it is absent or another organization's. */
   findIdentity(
     organizationId: OrganizationId,
@@ -266,6 +268,12 @@ export class InMemoryConversationRepository implements ConversationRepository {
     return [...this.#identities.values()].filter(
       (i) => i.organizationId === organizationId && i.contactId === contactId,
     );
+  }
+
+  async listOrganizationIdentities(
+    organizationId: OrganizationId,
+  ): Promise<readonly ChannelIdentity[]> {
+    return [...this.#identities.values()].filter((i) => i.organizationId === organizationId);
   }
 
   async findIdentity(

@@ -271,6 +271,12 @@ export const AUDIT_ACTIONS = {
     description: "A person added or removed a conversation's tags (ADR-0033).",
     results: ['success'],
   },
+  'conversation.priority_changed': {
+    category: 'conversation',
+    description:
+      "A person changed a conversation's priority (low, normal, high, urgent); the event records from and to (CV-3).",
+    results: ['success'],
+  },
   'conversation.message_sent': {
     category: 'conversation',
     description:

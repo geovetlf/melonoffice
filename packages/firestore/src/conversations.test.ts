@@ -164,6 +164,17 @@ describe.each(STORES)('conversation storage in %s', (name, create) => {
     ]);
   });
 
+  it("lists an organization's identities for the inbox search, and only its own (CV-3)", async () => {
+    const s = create();
+    const a = await s.conversations.receive(inbound(ORG_A), contactId(1), T0);
+    await s.conversations.receive(inbound(ORG_B), contactId(2), T0);
+    const identities = await s.conversations.listOrganizationIdentities(ORG_A);
+    expect(identities.map((i) => [i.organizationId, i.contactId])).toEqual([
+      [ORG_A, a.conversation.contactId],
+    ]);
+    expect(await s.conversations.listOrganizationIdentities('not-an-org' as never)).toEqual([]);
+  });
+
   it('round-trips every field it stores', async () => {
     const s = create();
     const received = await s.conversations.receive(
