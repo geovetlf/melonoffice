@@ -20,6 +20,7 @@ export const ROLES = {
     'tool.execute',
     'approval.read',
     'approval.approve',
+    'ai.generate',
   ],
 } as const satisfies RoleCatalogue;
 

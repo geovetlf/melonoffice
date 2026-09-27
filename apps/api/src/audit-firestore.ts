@@ -27,6 +27,10 @@ export interface AuditDocument {
   readonly transitionTo: string | null;
   readonly toolId: string | null;
   readonly toolVersion: number | null;
+  readonly modelProvider: string | null;
+  readonly modelId: string | null;
+  readonly previousModelProvider: string | null;
+  readonly previousModelId: string | null;
   readonly reason: string | null;
   readonly requestId: string | null;
   readonly source: string;
@@ -52,6 +56,10 @@ export function toAuditDocument(event: AuditEvent): AuditDocument {
     transitionTo: event.transition?.to ?? null,
     toolId: event.tool?.id ?? null,
     toolVersion: event.tool?.version ?? null,
+    modelProvider: event.model?.provider ?? null,
+    modelId: event.model?.id ?? null,
+    previousModelProvider: event.previousModel?.provider ?? null,
+    previousModelId: event.previousModel?.id ?? null,
     reason: event.reason ?? null,
     requestId: event.requestId ?? null,
     source: event.source,

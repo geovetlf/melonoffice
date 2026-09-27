@@ -49,4 +49,17 @@ describe('withCorrelation', () => {
     expect(lines[1]).not.toHaveProperty('toolId');
     expect(lines[1]).not.toHaveProperty('toolVersion');
   });
+
+  it('adds the provider and model of an AI call, and drops malformed ones', () => {
+    const lines: Record<string, unknown>[] = [];
+    const logger = createLogger({
+      service: 'api',
+      sink: (line) => lines.push(JSON.parse(line) as Record<string, unknown>),
+    });
+    withCorrelation(logger, { provider: 'alpha', model: 'alpha/alpha-small' }).info('ai');
+    withCorrelation(logger, { provider: 'Bad Provider', model: 'x\n{"y":1}' }).info('bad');
+    expect(lines[0]).toMatchObject({ provider: 'alpha', model: 'alpha/alpha-small' });
+    expect(lines[1]).not.toHaveProperty('provider');
+    expect(lines[1]).not.toHaveProperty('model');
+  });
 });
