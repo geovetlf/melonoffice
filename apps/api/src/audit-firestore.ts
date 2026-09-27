@@ -25,6 +25,8 @@ export interface AuditDocument {
   readonly planVersion: number | null;
   readonly transitionFrom: string | null;
   readonly transitionTo: string | null;
+  readonly toolId: string | null;
+  readonly toolVersion: number | null;
   readonly reason: string | null;
   readonly requestId: string | null;
   readonly source: string;
@@ -48,6 +50,8 @@ export function toAuditDocument(event: AuditEvent): AuditDocument {
     planVersion: event.plan?.version ?? null,
     transitionFrom: event.transition?.from ?? null,
     transitionTo: event.transition?.to ?? null,
+    toolId: event.tool?.id ?? null,
+    toolVersion: event.tool?.version ?? null,
     reason: event.reason ?? null,
     requestId: event.requestId ?? null,
     source: event.source,

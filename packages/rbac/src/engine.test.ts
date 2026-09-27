@@ -92,6 +92,10 @@ describe('catalogue', () => {
       'execution.read',
       'department.read',
       'specialist.read',
+      'tool.read',
+      'tool.execute',
+      'approval.read',
+      'approval.approve',
     ]);
     for (const permissions of Object.values(ROLES)) {
       for (const permission of permissions) expect(isPermission(permission)).toBe(true);

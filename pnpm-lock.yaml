@@ -59,6 +59,9 @@ importers:
       '@hono/node-server':
         specifier: 2.1.1
         version: 2.1.1(hono@4.13.9)
+      '@melonoffice/approvals':
+        specifier: workspace:*
+        version: link:../../packages/approvals
       '@melonoffice/audit':
         specifier: workspace:*
         version: link:../../packages/audit
@@ -89,6 +92,9 @@ importers:
       '@melonoffice/tenancy':
         specifier: workspace:*
         version: link:../../packages/tenancy
+      '@melonoffice/tools':
+        specifier: workspace:*
+        version: link:../../packages/tools
       hono:
         specifier: 4.13.9
         version: 4.13.9
@@ -99,6 +105,9 @@ importers:
       '@melonoffice/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      '@melonoffice/guardrails':
+        specifier: workspace:*
+        version: link:../../packages/guardrails
 
   apps/web:
     dependencies:
@@ -149,6 +158,31 @@ importers:
       '@melonoffice/config':
         specifier: workspace:*
         version: link:../../packages/config
+
+  packages/approvals:
+    dependencies:
+      '@melonoffice/audit':
+        specifier: workspace:*
+        version: link:../audit
+      '@melonoffice/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@melonoffice/rbac':
+        specifier: workspace:*
+        version: link:../rbac
+      '@melonoffice/tenancy':
+        specifier: workspace:*
+        version: link:../tenancy
+      '@melonoffice/tools':
+        specifier: workspace:*
+        version: link:../tools
+    devDependencies:
+      '@melonoffice/auth':
+        specifier: workspace:*
+        version: link:../auth
+      '@melonoffice/config':
+        specifier: workspace:*
+        version: link:../config
 
   packages/audit:
     dependencies:
@@ -251,6 +285,46 @@ importers:
         specifier: workspace:*
         version: link:../config
 
+  packages/guardrails:
+    dependencies:
+      '@melonoffice/approvals':
+        specifier: workspace:*
+        version: link:../approvals
+      '@melonoffice/audit':
+        specifier: workspace:*
+        version: link:../audit
+      '@melonoffice/departments':
+        specifier: workspace:*
+        version: link:../departments
+      '@melonoffice/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@melonoffice/execution':
+        specifier: workspace:*
+        version: link:../execution
+      '@melonoffice/observability':
+        specifier: workspace:*
+        version: link:../observability
+      '@melonoffice/rbac':
+        specifier: workspace:*
+        version: link:../rbac
+      '@melonoffice/specialists':
+        specifier: workspace:*
+        version: link:../specialists
+      '@melonoffice/tenancy':
+        specifier: workspace:*
+        version: link:../tenancy
+      '@melonoffice/tools':
+        specifier: workspace:*
+        version: link:../tools
+    devDependencies:
+      '@melonoffice/auth':
+        specifier: workspace:*
+        version: link:../auth
+      '@melonoffice/config':
+        specifier: workspace:*
+        version: link:../config
+
   packages/i18n:
     dependencies:
       react-intl:
@@ -334,6 +408,19 @@ importers:
       '@melonoffice/domain':
         specifier: workspace:*
         version: link:../domain
+    devDependencies:
+      '@melonoffice/config':
+        specifier: workspace:*
+        version: link:../config
+
+  packages/tools:
+    dependencies:
+      '@melonoffice/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@melonoffice/rbac':
+        specifier: workspace:*
+        version: link:../rbac
     devDependencies:
       '@melonoffice/config':
         specifier: workspace:*

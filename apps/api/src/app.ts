@@ -1,3 +1,4 @@
+import { createApprovalService, type ApprovalRepository } from '@melonoffice/approvals';
 import type { AuditService } from '@melonoffice/audit';
 import type { AuthDependencies } from '@melonoffice/auth';
 import { createBillingService, type BillingStore } from '@melonoffice/billing';
@@ -8,7 +9,9 @@ import type { Logger } from '@melonoffice/observability';
 import { createAuthorizationService, type AuthorizationService } from '@melonoffice/rbac';
 import { createSpecialistService, type SpecialistRepository } from '@melonoffice/specialists';
 import type { TenancyStore } from '@melonoffice/tenancy';
+import { defaultToolRegistry, type ToolRegistry } from '@melonoffice/tools';
 import { Hono, type Context } from 'hono';
+import { registerApprovalRoutes } from './approvals.js';
 import { registerAuthRoutes, type AuthEnv } from './auth.js';
 import { registerBillingRoutes } from './billing.js';
 import { registerDepartmentRoutes } from './departments.js';
@@ -17,6 +20,7 @@ import { registerExecutionRoutes } from './executions.js';
 import { registerHealth } from './health.js';
 import { registerSpecialistRoutes } from './specialists.js';
 import { registerTenancyRoutes } from './tenancy.js';
+import { registerToolRoutes } from './tools.js';
 
 export const SERVICE_NAME = 'api';
 
@@ -51,6 +55,10 @@ export interface AppOptions {
     readonly departments: DepartmentRepository;
     readonly specialists: SpecialistRepository;
   };
+  /** The tool catalogue (ADR-0026). Defaults to the one in code, which is empty until tools exist. */
+  readonly tools?: ToolRegistry;
+  /** Tool approvals (ADR-0026). Absent: the approval routes answer 503 (fails closed). */
+  readonly approvals?: ApprovalRepository;
 }
 
 type Env = AuthEnv;
@@ -69,6 +77,8 @@ export function createApp({
   entitlements,
   executions,
   structure,
+  tools = defaultToolRegistry(),
+  approvals,
 }: AppOptions): Hono<Env> {
   const app = new Hono<Env>();
 
@@ -151,6 +161,27 @@ export function createApp({
       app.all('/v1/organizations/:organizationId/executions/*', (c) =>
         c.json({ error: 'executions_not_configured' }, 503),
       );
+    }
+    // Tools are listed, never run, over HTTP: only the tool gate runs them, on the server.
+    if (tenancy !== undefined) {
+      registerToolRoutes(app, { store: tenancy, authorization, audit, tools });
+    }
+    if (tenancy !== undefined && approvals !== undefined) {
+      registerApprovalRoutes(app, {
+        store: tenancy,
+        authorization,
+        audit,
+        approvals: createApprovalService({
+          repository: approvals,
+          organizations: tenancy,
+          authorization,
+          audit,
+        }),
+      });
+    } else if (tenancy !== undefined) {
+      const unavailable = (c: Context<Env>) => c.json({ error: 'approvals_not_configured' }, 503);
+      app.all('/v1/organizations/:organizationId/approvals', unavailable);
+      app.all('/v1/organizations/:organizationId/approvals/*', unavailable);
     }
   }
 

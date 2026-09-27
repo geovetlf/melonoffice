@@ -26,4 +26,27 @@ describe('withCorrelation', () => {
     ]);
     expect(lines[0]).not.toHaveProperty('nodeId');
   });
+
+  it('adds the organization, specialist and exact tool version of a tool call', () => {
+    const lines: Record<string, unknown>[] = [];
+    const logger = createLogger({
+      service: 'api',
+      sink: (line) => lines.push(JSON.parse(line) as Record<string, unknown>),
+    });
+    withCorrelation(logger, {
+      organizationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      specialistId: '33333333-3333-4333-8333-333333333333',
+      toolId: 'send_email',
+      toolVersion: 2,
+    }).info('tool');
+    withCorrelation(logger, { toolId: 'bad tool', toolVersion: 0 }).info('bad');
+    expect(lines[0]).toMatchObject({
+      organizationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      specialistId: '33333333-3333-4333-8333-333333333333',
+      toolId: 'send_email',
+      toolVersion: 2,
+    });
+    expect(lines[1]).not.toHaveProperty('toolId');
+    expect(lines[1]).not.toHaveProperty('toolVersion');
+  });
 });

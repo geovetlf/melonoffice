@@ -34,6 +34,29 @@ export const PERMISSIONS = {
     description:
       "See the organization's specialists: role, department, status and version (ADR-0025).",
   },
+  'tool.read': {
+    resource: 'tool',
+    action: 'read',
+    description:
+      'See the tools the product offers: name, version, risk and approval policy (ADR-0026).',
+  },
+  'tool.execute': {
+    resource: 'tool',
+    action: 'execute',
+    description:
+      'Let an execution run a tool for you. Checked by the tool gate, never by a client route (ADR-0026).',
+  },
+  'approval.read': {
+    resource: 'approval',
+    action: 'read',
+    description: "See the organization's tool approvals and their status (ADR-0026).",
+  },
+  'approval.approve': {
+    resource: 'approval',
+    action: 'approve',
+    description:
+      'Approve or reject a pending tool approval, directly and never through GIA (ADR-0026).',
+  },
 } as const satisfies Record<string, PermissionDefinition>;
 
 export interface PermissionDefinition {

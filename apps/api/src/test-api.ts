@@ -1,3 +1,5 @@
+import { InMemoryApprovalRepository, type ApprovalRepository } from '@melonoffice/approvals';
+import type { ToolRegistry } from '@melonoffice/tools';
 import {
   AuthError,
   InMemoryUserDirectory,
@@ -46,6 +48,7 @@ import {
   toDepartmentDocument,
 } from './departments-firestore.js';
 import { FirestoreExecutionRepository } from './executions-firestore.js';
+import { FirestoreApprovalRepository } from './approvals-firestore.js';
 import {
   FirestoreSpecialistRepository,
   SPECIALISTS,
@@ -86,6 +89,7 @@ export interface Stores {
   /** Removes an organization's billing account, as for one created before billing existed. */
   readonly removeBilling: (organizationId: OrganizationId) => Promise<void>;
   readonly executions: ExecutionRepository;
+  readonly approvals: ApprovalRepository;
   readonly departments: DepartmentRepository;
   readonly specialists: SpecialistRepository;
   /** Stores a department or specialist record as given, the way an operator change or bad data would. */
@@ -122,6 +126,7 @@ function memoryStores(): Stores {
     putBilling: async (r) => billing.put(r),
     removeBilling: async (id) => billing.removeAccount(id),
     executions: new InMemoryExecutionRepository(events),
+    approvals: new InMemoryApprovalRepository(events),
     departments,
     specialists,
     putStructure: async (record) => {
@@ -155,6 +160,7 @@ function fromAuditDocument(id: string, d: AuditDocument): AuditEvent {
     ...(d.transitionFrom === null
       ? {}
       : { transition: { from: d.transitionFrom, to: d.transitionTo } }),
+    ...(d.toolId == null ? {} : { tool: { id: d.toolId, version: d.toolVersion } }),
     ...(d.reason === null ? {} : { reason: d.reason }),
     ...(d.requestId === null ? {} : { requestId: d.requestId }),
     source: d.source,
@@ -179,6 +185,7 @@ function firestoreStores(): Stores {
       }
     },
     executions: new FirestoreExecutionRepository(db),
+    approvals: new FirestoreApprovalRepository(db),
     departments: new FirestoreDepartmentRepository(db),
     specialists: new FirestoreSpecialistRepository(db),
     async putStructure(record) {
@@ -226,6 +233,7 @@ export function setupApp(
   stores: Stores,
   authorization?: AuthorizationService,
   entitlements?: EntitlementService,
+  tools?: ToolRegistry,
 ) {
   const lines: string[] = [];
   const logger = createLogger({ service: 'api', sink: (line) => lines.push(line) });
@@ -237,7 +245,9 @@ export function setupApp(
     billing: stores.billing,
     executions: stores.executions,
     structure: { departments: stores.departments, specialists: stores.specialists },
+    approvals: stores.approvals,
     audit: stores.audit,
+    ...(tools ? { tools } : {}),
     ...(authorization ? { authorization } : {}),
     ...(entitlements ? { entitlements } : {}),
   });

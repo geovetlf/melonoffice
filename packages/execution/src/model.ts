@@ -1,4 +1,5 @@
 import type {
+  ApprovalId,
   DepartmentId,
   Execution,
   ExecutionFailure,
@@ -13,7 +14,9 @@ import type {
   ExecutionVersionSnapshot,
   IsoTimestamp,
   OrganizationId,
+  ExecutionToolRef,
   SpecialistId,
+  ToolId,
   UserId,
   VersionRef,
   WorkflowId,
@@ -121,12 +124,32 @@ export interface NodeInput {
   readonly dependsOn?: readonly string[];
   readonly owner?: VersionRef;
   readonly input?: ExecutionRef;
+  /** Required on `tool` nodes and refused on any other: the exact tool version to run. */
+  readonly tool?: { readonly id: string; readonly version: number };
+}
+
+const TOOL_ID = /^[a-z][a-z0-9_]{0,63}$/;
+const APPROVAL_ID = UUID;
+
+/** Checks a node's tool reference: present exactly on `tool` nodes. */
+function checkNodeTool(type: string, tool: unknown, field: string): ExecutionToolRef | undefined {
+  if (type !== 'tool') {
+    if (tool !== undefined) invalid(`${field}.tool`);
+    return undefined;
+  }
+  if (!isRecord(tool)) return invalid(`${field}.tool`);
+  const { id, version } = tool;
+  if (typeof id !== 'string' || !TOOL_ID.test(id)) return invalid(`${field}.tool.id`);
+  if (typeof version !== 'number' || !Number.isSafeInteger(version) || version < 1) {
+    return invalid(`${field}.tool.version`);
+  }
+  return Object.freeze({ id: id as ToolId, version });
 }
 
 function checkNodeInput(value: unknown, index: number): ExecutionNode {
   const field = `nodes.${index}`;
   if (!isRecord(value)) return invalid(field);
-  const { id, type, label, dependsOn = [], owner, input } = value;
+  const { id, type, label, dependsOn = [], owner, input, tool } = value;
   if (typeof id !== 'string' || !NODE_ID.test(id)) return invalid(`${field}.id`);
   if (typeof type !== 'string' || !(NODE_TYPES as readonly string[]).includes(type)) {
     return invalid(`${field}.type`);
@@ -147,6 +170,7 @@ function checkNodeInput(value: unknown, index: number): ExecutionNode {
   ) {
     return invalid(`${field}.dependsOn`);
   }
+  const toolRef = checkNodeTool(type, tool, field);
   return Object.freeze({
     id: id as ExecutionNodeId,
     type: type as ExecutionNodeType,
@@ -155,6 +179,7 @@ function checkNodeInput(value: unknown, index: number): ExecutionNode {
     dependsOn: Object.freeze([...(dependsOn as ExecutionNodeId[])]),
     ...(owner === undefined ? {} : { owner: checkVersionRef(owner, `${field}.owner`) }),
     ...(input === undefined ? {} : { input: checkRef(input, `${field}.input`) }),
+    ...(toolRef === undefined ? {} : { tool: toolRef }),
   });
 }
 
@@ -441,6 +466,34 @@ export function applyNodeChange(
 }
 
 /**
+ * Attaches a human approval to a pending `tool` node (ADR-0026). A node holds at most one
+ * approval: attaching another is refused, so an approval can never be swapped for a different
+ * one. Attaching the same one again changes nothing and is refused as a conflict.
+ */
+export function attachApproval(
+  execution: Execution,
+  nodeId: string,
+  approvalId: string,
+  now: IsoTimestamp,
+): Execution {
+  if (isTerminal(execution.status)) throw new ExecutionError('execution_already_terminal');
+  if (!APPROVAL_ID.test(approvalId)) invalid('approvalId');
+  const index = execution.nodes.findIndex((n) => n.id === nodeId);
+  const node = execution.nodes[index];
+  if (node === undefined || node.type !== 'tool') return invalid('nodeId');
+  if (node.status !== 'pending' || node.approvalId !== undefined) {
+    throw new ExecutionError('execution_concurrency_conflict');
+  }
+  const updated: ExecutionNode = Object.freeze({ ...node, approvalId: approvalId as ApprovalId });
+  return Object.freeze({
+    ...execution,
+    nodes: Object.freeze(execution.nodes.map((n, i) => (i === index ? updated : n))),
+    revision: execution.revision + 1,
+    updatedAt: later(execution, now),
+  });
+}
+
+/**
  * Checks a stored execution before it is trusted: a record that fails is refused, never
  * repaired or used.
  */
@@ -453,6 +506,13 @@ export function checkStoredExecution(execution: Execution): Execution {
   for (const node of execution.nodes) {
     if (!isNodeStatus(node.status)) invalid('nodes.status');
     if (!(NODE_TYPES as readonly string[]).includes(node.type)) invalid('nodes.type');
+    checkNodeTool(node.type, node.tool, 'nodes');
+    if (
+      node.approvalId !== undefined &&
+      (node.type !== 'tool' || !APPROVAL_ID.test(node.approvalId))
+    ) {
+      invalid('nodes.approvalId');
+    }
   }
   checkGraph(execution.nodes);
   if (!Number.isSafeInteger(execution.revision) || execution.revision < 1) invalid('revision');

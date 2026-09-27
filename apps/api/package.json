@@ -15,6 +15,7 @@
   "dependencies": {
     "@google-cloud/firestore": "8.7.1",
     "@hono/node-server": "2.1.1",
+    "@melonoffice/approvals": "workspace:*",
     "@melonoffice/audit": "workspace:*",
     "@melonoffice/auth": "workspace:*",
     "@melonoffice/billing": "workspace:*",
@@ -25,10 +26,12 @@
     "@melonoffice/rbac": "workspace:*",
     "@melonoffice/specialists": "workspace:*",
     "@melonoffice/tenancy": "workspace:*",
+    "@melonoffice/tools": "workspace:*",
     "hono": "4.13.9"
   },
   "devDependencies": {
     "@melonoffice/config": "workspace:*",
-    "@melonoffice/domain": "workspace:*"
+    "@melonoffice/domain": "workspace:*",
+    "@melonoffice/guardrails": "workspace:*"
   }
 }

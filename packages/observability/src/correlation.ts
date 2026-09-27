@@ -1,11 +1,27 @@
 import type { Logger } from './logger.js';
 
-/** Ids that tie log lines together: the request, and the execution and node it worked on. */
+/**
+ * Ids that tie log lines together: the request, the execution and node it worked on and, for a
+ * tool call (ADR-0026), the organization, specialist and exact tool version.
+ */
 export interface Correlation {
   readonly requestId?: string;
+  readonly organizationId?: string;
   readonly executionId?: string;
   readonly nodeId?: string;
+  readonly specialistId?: string;
+  readonly toolId?: string;
+  readonly toolVersion?: number;
 }
+
+const KEYS = [
+  'requestId',
+  'organizationId',
+  'executionId',
+  'nodeId',
+  'specialistId',
+  'toolId',
+] as const;
 
 const ID = /^[\w-]{1,128}$/;
 
@@ -14,10 +30,14 @@ const ID = /^[\w-]{1,128}$/;
  * execution can be found together. Malformed ids are left out rather than logged.
  */
 export function withCorrelation(logger: Logger, correlation: Correlation): Logger {
-  const bindings: Record<string, string> = {};
-  for (const key of ['requestId', 'executionId', 'nodeId'] as const) {
+  const bindings: Record<string, string | number> = {};
+  for (const key of KEYS) {
     const value = correlation[key];
     if (value !== undefined && ID.test(value)) bindings[key] = value;
+  }
+  const { toolVersion } = correlation;
+  if (toolVersion !== undefined && Number.isSafeInteger(toolVersion) && toolVersion >= 1) {
+    bindings.toolVersion = toolVersion;
   }
   return logger.child(bindings);
 }

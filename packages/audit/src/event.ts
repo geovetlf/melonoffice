@@ -27,7 +27,7 @@ export type AuditActor =
   | { readonly type: 'system' | 'anonymous' };
 
 export interface AuditTarget {
-  readonly type: 'user' | 'organization' | 'membership' | 'subscription' | 'execution';
+  readonly type: 'user' | 'organization' | 'membership' | 'subscription' | 'execution' | 'approval';
   readonly id: string;
 }
 
@@ -41,6 +41,12 @@ export interface AuditPlan {
 export interface AuditTransition {
   readonly from: string;
   readonly to: string;
+}
+
+/** A tool version as recorded, for `tool.*` events (ADR-0026). Never its input or output. */
+export interface AuditTool {
+  readonly id: string;
+  readonly version: number;
 }
 
 /** The component that recorded the event. */
@@ -70,6 +76,8 @@ export interface AuditEvent {
   readonly plan?: AuditPlan;
   /** The status change, for `execution.state_changed`. */
   readonly transition?: AuditTransition;
+  /** The tool version, for `tool.*` events. */
+  readonly tool?: AuditTool;
   /**
    * A stable code saying why: for `denied` and `failure`, an error code; for a successful
    * change, its cause (for example why an execution was cancelled). Never a message.
@@ -86,6 +94,7 @@ const CODE = /^[a-z][a-z_]{0,63}$/;
 const PERMISSION = /^[a-z][a-z_]*\.[a-z][a-z_]*$/;
 const REQUEST_ID = /^[\w-]{1,128}$/;
 const PLAN_ID = /^[a-z][a-z0-9_-]{0,63}$/;
+const TOOL_ID = /^[a-z][a-z0-9_]{0,63}$/;
 
 /**
  * Builds an event, checking every field so nothing unexpected reaches storage. Untrusted parts
@@ -108,6 +117,14 @@ export function buildAuditEvent(input: AuditEventInput, at: Date): AuditEvent {
     (!CODE.test(input.transition.from) || !CODE.test(input.transition.to))
   ) {
     throw new Error('invalid audit transition');
+  }
+  if (
+    input.tool !== undefined &&
+    (!TOOL_ID.test(input.tool.id) ||
+      !Number.isSafeInteger(input.tool.version) ||
+      input.tool.version < 1)
+  ) {
+    throw new Error('invalid audit tool');
   }
   if (
     input.plan !== undefined &&
@@ -142,6 +159,9 @@ export function buildAuditEvent(input: AuditEventInput, at: Date): AuditEvent {
     ...(input.transition === undefined
       ? {}
       : { transition: Object.freeze({ from: input.transition.from, to: input.transition.to }) }),
+    ...(input.tool === undefined
+      ? {}
+      : { tool: Object.freeze({ id: input.tool.id, version: input.tool.version }) }),
     ...(input.reason === undefined ? {} : { reason: input.reason }),
     ...(input.requestId !== undefined && REQUEST_ID.test(input.requestId)
       ? { requestId: input.requestId }
