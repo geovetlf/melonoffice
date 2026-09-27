@@ -53,6 +53,7 @@ Only actions the code performs today:
 | `auth.sign_in`        | auth          | success                  | `POST /v1/me` for an existing user                            |
 | `organization.create` | tenancy       | success, denied, failure | `POST /v1/organizations`, except a malformed name (bad input) |
 | `membership.create`   | tenancy       | success                  | The owner membership created with an organization             |
+| `plan.assign`         | entitlements  | success                  | An organization gets its initial plan (added by ADR-0021)     |
 | `tenancy.resolve`     | tenancy       | denied                   | A request inside an organization is refused by tenancy        |
 | `authorization.check` | authorization | denied                   | RBAC refuses a permission                                     |
 
@@ -65,7 +66,7 @@ Only actions the code performs today:
 
 ### Persistence and immutability
 
-- The Firestore collection is `auditLogs/{eventId}`, with flat fields: `occurredAt`, `action`, `result`, `actorType`, `actorUserId`, `actorVia`, `organizationId`, `targetType`, `targetId`, `requestedOrganizationId`, `permission`, `reason`, `requestId` and `source`. Absent values are stored as `null`.
+- The Firestore collection is `auditLogs/{eventId}`, with flat fields: `occurredAt`, `action`, `result`, `actorType`, `actorUserId`, `actorVia`, `organizationId`, `targetType`, `targetId`, `requestedOrganizationId`, `permission`, `planId`, `planVersion` (added by ADR-0021), `reason`, `requestId` and `source`. Absent values are stored as `null`.
 - The `AuditStore` port has only `append`. The Firestore store writes with `create` in a batch, so an event is never overwritten and a batch is all or nothing. There is no update or delete in the application.
 - **No endpoint** reads or writes audit events. `POST /v1/audit-logs` and similar paths are `404`.
 - IAM cannot make one collection append-only. The API's service account (`roles/datastore.user`) could technically change documents, and only the code prevents it. See the risks.

@@ -22,6 +22,7 @@ const ALICE = '11111111-1111-4111-8111-111111111111' as UserId;
 const BOB = '22222222-2222-4222-8222-222222222222' as UserId;
 const CAROL = '33333333-3333-4333-8333-333333333333' as UserId;
 const rbac = createAuthorizationService();
+const PLAN = { id: 'test-plan', version: 1 } as const;
 
 const as = (userId: UserId): AuthenticatedContext =>
   Object.freeze({ actor: 'user', userId, emailVerified: true });
@@ -29,8 +30,8 @@ const as = (userId: UserId): AuthenticatedContext =>
 /** Alice owns A, Bob owns B, Carol has no membership anywhere. */
 async function world() {
   const store = new InMemoryTenancyStore();
-  const a = await createOrganization(as(ALICE), { name: 'A' }, store);
-  const b = await createOrganization(as(BOB), { name: 'B' }, store);
+  const a = await createOrganization(as(ALICE), { name: 'A' }, store, { plan: PLAN });
+  const b = await createOrganization(as(BOB), { name: 'B' }, store, { plan: PLAN });
   return { store, a, b, orgA: a.organization.id, orgB: b.organization.id };
 }
 
@@ -66,7 +67,7 @@ describe('catalogue', () => {
   });
 
   it('lists exactly what owner may do: no wildcard, only catalogue permissions', () => {
-    expect(ROLES.owner).toEqual(['organization.read']);
+    expect(ROLES.owner).toEqual(['organization.read', 'entitlement.read']);
     for (const permissions of Object.values(ROLES)) {
       for (const permission of permissions) expect(isPermission(permission)).toBe(true);
     }

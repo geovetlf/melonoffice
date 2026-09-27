@@ -9,10 +9,12 @@ import type {
   Organization,
   OrganizationId,
   OrganizationStatus,
+  PlanRef,
   UserId,
 } from '@melonoffice/domain';
 import {
   isOrganizationId,
+  isPlanRef,
   membershipIdOf,
   newOrganizationId,
   OWNER_ROLE,
@@ -33,6 +35,8 @@ interface OrganizationDocument {
   readonly name: string;
   readonly status: OrganizationStatus;
   readonly createdBy: string;
+  /** The plan reference (ADR-0021). Missing only on organizations created before it existed. */
+  readonly plan?: PlanRef;
   readonly createdAt: FirestoreTimestamp;
   readonly updatedAt: FirestoreTimestamp;
 }
@@ -66,15 +70,23 @@ const MEMBERSHIP_STATUSES: readonly string[] = [
 const iso = (timestamp: FirestoreTimestamp): IsoTimestamp =>
   timestamp.toDate().toISOString() as IsoTimestamp;
 
-// Stored values are checked, not trusted: an unknown status is an error, never access. The role
-// is passed on as a name: RBAC alone interprets it, and a name it does not know grants nothing.
+// Stored values are checked, not trusted: an unknown status or a malformed plan reference is an
+// error, never access. The role is passed on as a name: RBAC alone interprets it, and a name it
+// does not know grants nothing. A plan reference is passed on the same way: entitlements alone
+// decides whether it names a real, active plan.
 function toOrganization(id: string, data: OrganizationDocument): Organization {
   if (!ORGANIZATION_STATUSES.includes(data.status)) throw new Error('invalid organization record');
+  if (data.plan !== undefined && !isPlanRef(data.plan)) {
+    throw new Error('invalid organization record');
+  }
   return Object.freeze({
     id: id as OrganizationId,
     name: data.name,
     status: data.status,
     createdBy: data.createdBy as UserId,
+    ...(data.plan === undefined
+      ? {}
+      : { plan: Object.freeze({ id: data.plan.id, version: data.plan.version }) }),
     createdAt: iso(data.createdAt),
     updatedAt: iso(data.updatedAt),
   });
@@ -96,8 +108,8 @@ function toMembership(id: string, data: MembershipDocument): Membership {
 }
 
 /**
- * Organizations and memberships in Firestore. An organization, its owner's membership, the
- * creator record and the creation's audit events are written in one transaction with `create`,
+ * Organizations and memberships in Firestore. An organization with its plan reference, its
+ * owner's membership, the creator record and the creation's audit events are written in one transaction with `create`,
  * so they exist together or not at all, and a second organization by the same user fails even
  * under concurrent requests.
  */
@@ -110,6 +122,7 @@ export class FirestoreTenancyStore implements TenancyStore {
   async createOrganization({
     name,
     creator,
+    plan,
     audit,
   }: NewOrganization): Promise<CreatedOrganization> {
     const creatorRef = this.db.collection(ORGANIZATION_CREATORS).doc(creator);
@@ -122,6 +135,7 @@ export class FirestoreTenancyStore implements TenancyStore {
         name,
         status: 'active',
         createdBy: creator,
+        plan: { id: plan.id, version: plan.version },
         createdAt: at,
         updatedAt: at,
       };

@@ -1,4 +1,4 @@
-import type { Brand } from '@melonoffice/domain';
+import type { Brand, PlanRef } from '@melonoffice/domain';
 import { assertValidBlock, type EntitlementBlock } from './registry.js';
 
 export type PlanId = Brand<string, 'PlanId'>;
@@ -93,3 +93,10 @@ export function findPlan(
 ): PlanConfig | undefined {
   return catalog.find((plan) => plan.id === id && plan.version === version);
 }
+
+/**
+ * The plan every new organization starts on (ADR-0021): Emprendedor, version 1, the only active
+ * plan at launch. It is passed explicitly when an organization is created; it is never used as a
+ * fallback for an organization that has no plan. Changing it affects only new organizations.
+ */
+export const DEFAULT_PLAN: PlanRef = Object.freeze({ id: 'entrepreneur', version: 1 });

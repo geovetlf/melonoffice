@@ -1,4 +1,5 @@
 import { actorOf, buildAuditEvent, type AuditService } from '@melonoffice/audit';
+import { DEFAULT_PLAN } from '@melonoffice/entitlements';
 import type { AuthorizationService } from '@melonoffice/rbac';
 import {
   createOrganization,
@@ -40,7 +41,8 @@ export function registerTenancyRoutes(
     return;
   }
 
-  // Only `name` is read from the body. Anything else, such as an id, owner or status, is ignored.
+  // Only `name` is read from the body. Anything else, such as an id, owner, status or plan, is
+  // ignored: the plan is always the server's default (ADR-0021).
   app.post('/v1/organizations', async (c) => {
     const body: unknown = await c.req.json().catch(() => undefined);
     const name =
@@ -51,6 +53,7 @@ export function registerTenancyRoutes(
     try {
       // The creation's events are stored in the same write as the organization (ADR-0020).
       result = await createOrganization(auth, { name }, store, {
+        plan: DEFAULT_PLAN,
         audit: ({ organization, membership }) => {
           const at = new Date(organization.createdAt);
           const common = { result: 'success', actor, organizationId: organization.id } as const;
@@ -73,6 +76,20 @@ export function registerTenancyRoutes(
               },
               at,
             ),
+            ...(organization.plan === undefined
+              ? []
+              : [
+                  buildAuditEvent(
+                    {
+                      action: 'plan.assign',
+                      ...common,
+                      target: { type: 'organization', id: organization.id },
+                      plan: organization.plan,
+                      ...requestFields(c),
+                    },
+                    at,
+                  ),
+                ]),
           ];
         },
       });
