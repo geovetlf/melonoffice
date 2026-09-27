@@ -1,6 +1,6 @@
 # ADR-0024: Execution foundation
 
-- Status: Proposed (Phase X1, pending Geovet's review)
+- Status: Accepted (Phase X1; accepted by Geovet, 2026-09-27)
 - Date: 2026-09-27
 - Builds on: [ADR-0018](0018-tenancy-and-memberships.md), [ADR-0019](0019-rbac-foundation.md), [ADR-0020](0020-audit-log-foundation.md), and D-28 (a specialist is the agent)
 - Numbering: ADR-0023 is taken by the credits foundation (PR #20).

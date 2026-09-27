@@ -1,6 +1,6 @@
 # ADR-0026: Tools, approvals and guardrails
 
-- Status: Proposed (Phase X3, pending Geovet's review)
+- Status: Accepted (Phase X3; accepted by Geovet, 2026-09-27)
 - Date: 2026-09-27
 - Builds on: [ADR-0008](0008-entity-model.md) (D-28), [ADR-0019](0019-rbac-foundation.md), [ADR-0020](0020-audit-log-foundation.md), [ADR-0024](0024-execution-foundation.md) and [ADR-0025](0025-departments-and-specialists.md)
 
