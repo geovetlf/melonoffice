@@ -544,3 +544,42 @@ describe('stored records', () => {
     }
   });
 });
+
+describe('specialist assignment (ADR-0025)', () => {
+  const assigned = {
+    specialistId: 'spec-1',
+    specialistVersion: 4,
+    departmentId: `${ORG}_research`,
+  };
+
+  it('records specialist, version and department together, matching the snapshot', () => {
+    const execution = newExecution(request(assigned), T0);
+    expect(execution).toMatchObject(assigned);
+    expect(checkStoredExecution(execution)).toBe(execution);
+  });
+
+  it.each([
+    ['only a specialist', { specialistId: 'spec-1' }],
+    ['no department', { specialistId: 'spec-1', specialistVersion: 4 }],
+    ['no version', { specialistId: 'spec-1', departmentId: `${ORG}_research` }],
+    ['a version that is not a positive integer', { ...assigned, specialistVersion: 1.5 }],
+    ['a version the snapshot does not record', { ...assigned, specialistVersion: 3 }],
+    ['a specialist the snapshot does not record', { ...assigned, specialistId: 'spec-2' }],
+  ])('refuses %s', (_name, extra) => {
+    expect(codeOf(() => newExecution(request(extra as Partial<NewExecution>), T0))).toBe(
+      'invalid_execution',
+    );
+  });
+
+  it('refuses a stored execution whose assignment disagrees with its snapshot', () => {
+    const execution = newExecution(request(assigned), T0);
+    expect(codeOf(() => checkStoredExecution({ ...execution, specialistVersion: 9 }))).toBe(
+      'invalid_execution',
+    );
+    const partial = { ...execution } as Record<string, unknown>;
+    delete partial.departmentId;
+    expect(codeOf(() => checkStoredExecution(partial as unknown as Execution))).toBe(
+      'invalid_execution',
+    );
+  });
+});

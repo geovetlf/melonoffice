@@ -10,6 +10,7 @@ import type {
   SpecialistConfiguration,
   SpecialistHistoryEvent,
   SpecialistId,
+  SpecialistVersion,
 } from './index.js';
 
 describe('D-28 entity model', () => {
@@ -22,13 +23,19 @@ describe('D-28 entity model', () => {
 
   it('gives each specialist exactly one main role and several skills (D-29)', () => {
     expectTypeOf<SpecialistConfiguration['mainRoleId']>().toEqualTypeOf<RoleId>();
-    expectTypeOf<SpecialistConfiguration['enabledSkillIds']>().toEqualTypeOf<readonly SkillId[]>();
+    expectTypeOf<SpecialistConfiguration['skills'][number]['id']>().toEqualTypeOf<SkillId>();
   });
 
   it('separates identity from configuration', () => {
     expectTypeOf<Specialist>().toHaveProperty('identity');
     expectTypeOf<Specialist>().toHaveProperty('configuration');
     expectTypeOf<Specialist['identity']['id']>().toEqualTypeOf<SpecialistId>();
+  });
+
+  it('versions the configuration, never the identity (ADR-0025)', () => {
+    expectTypeOf<SpecialistVersion['configuration']>().toEqualTypeOf<SpecialistConfiguration>();
+    expectTypeOf<SpecialistVersion>().not.toHaveProperty('identity');
+    expectTypeOf<Specialist['version']>().toEqualTypeOf<number>();
   });
 
   it('does not fix the list of department types (D-11)', () => {
@@ -49,7 +56,9 @@ describe('D-28 entity model', () => {
       | 'role_changed'
       | 'skills_changed'
       | 'department_changed'
+      | 'activated'
       | 'paused'
+      | 'disabled'
       | 'reactivated'
       | 'archived'
     >();

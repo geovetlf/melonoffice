@@ -7,7 +7,9 @@ import { createApp, SERVICE_NAME } from './app.js';
 import { loadConfig } from './config.js';
 import { FirestoreAuditStore } from './audit-firestore.js';
 import { FirestoreBillingStore } from './billing-firestore.js';
+import { FirestoreDepartmentRepository } from './departments-firestore.js';
 import { FirestoreExecutionRepository } from './executions-firestore.js';
+import { FirestoreSpecialistRepository } from './specialists-firestore.js';
 import { FirestoreTenancyStore } from './tenancy-firestore.js';
 import { FirestoreUserDirectory } from './users-firestore.js';
 
@@ -27,6 +29,10 @@ function services(projectId: string) {
     tenancy: new FirestoreTenancyStore(firestore),
     billing: new FirestoreBillingStore(firestore),
     executions: new FirestoreExecutionRepository(firestore),
+    structure: {
+      departments: new FirestoreDepartmentRepository(firestore),
+      specialists: new FirestoreSpecialistRepository(firestore),
+    },
     audit: createAuditService(new FirestoreAuditStore(firestore)),
   };
 }

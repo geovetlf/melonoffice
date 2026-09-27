@@ -1,0 +1,368 @@
+import { acceptsAssignments, organizationOfDepartmentId } from '@melonoffice/departments';
+import type {
+  DefinitionRef,
+  Department,
+  DepartmentId,
+  IsoTimestamp,
+  OrganizationId,
+  PolicyId,
+  RoleId,
+  SkillId,
+  Specialist,
+  SpecialistConfiguration,
+  SpecialistId,
+  SpecialistPolicies,
+  SpecialistPolicyKind,
+  SpecialistStatus,
+  SpecialistVersion,
+  ToolId,
+  UserId,
+} from '@melonoffice/domain';
+import { isPermission } from '@melonoffice/rbac';
+import { randomUUID } from 'node:crypto';
+import { SpecialistError } from './errors.js';
+import { canChangeSpecialistStatus, isSpecialistStatus } from './lifecycle.js';
+
+/** Limits that keep one specialist document small and bounded. */
+// 2 + 2 × 40 + 5 policies stays under the execution snapshot limit of 100 components.
+export const MAX_REFERENCES = 40;
+export const MAX_TEXT_LENGTH = 500;
+export const MAX_NAME_LENGTH = 100;
+
+export const POLICY_KINDS = [
+  'model',
+  'context',
+  'budget',
+  'approval',
+  'verification',
+] as const satisfies readonly SpecialistPolicyKind[];
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const CODE = /^[a-z][a-z0-9_]{0,63}$/;
+const REF_ID = /^[A-Za-z0-9._:-]{1,128}$/;
+// eslint-disable-next-line no-control-regex
+const CONTROL = /[\u0000-\u001f\u007f]/;
+
+export const isSpecialistId = (value: unknown): value is SpecialistId =>
+  typeof value === 'string' && UUID.test(value);
+
+export const isVersionNumber = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value >= 1;
+
+const invalid = (detail: string): never => {
+  throw new SpecialistError('invalid_specialist', detail);
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+function checkText(value: unknown, field: string, max: number): string {
+  if (typeof value !== 'string') return invalid(field);
+  const text = value.normalize('NFC').trim();
+  if (text.length === 0 || [...text].length > max || CONTROL.test(text)) return invalid(field);
+  return text;
+}
+
+function checkList<T>(
+  value: unknown,
+  field: string,
+  check: (item: unknown, field: string) => T,
+  key: (item: T) => string,
+): readonly T[] {
+  if (!Array.isArray(value) || value.length > MAX_REFERENCES) return invalid(field);
+  const items = value.map((item, i) => check(item, `${field}.${i}`));
+  if (new Set(items.map(key)).size !== items.length) return invalid(`${field}.duplicate`);
+  return Object.freeze(items);
+}
+
+function checkDefinitionRef<Id extends string>(value: unknown, field: string): DefinitionRef<Id> {
+  if (!isRecord(value)) return invalid(field);
+  const { id, version } = value;
+  if (typeof id !== 'string' || !REF_ID.test(id)) return invalid(`${field}.id`);
+  if (!isVersionNumber(version)) return invalid(`${field}.version`);
+  return Object.freeze({ id: id as Id, version });
+}
+
+const checkCode = (value: unknown, field: string): string =>
+  typeof value === 'string' && CODE.test(value) ? value : invalid(field);
+
+const checkPermission = (value: unknown, field: string): string =>
+  isPermission(value) ? value : invalid(field);
+
+function checkPolicies(value: unknown): SpecialistPolicies {
+  if (!isRecord(value)) return invalid('policies');
+  const policies: Partial<Record<SpecialistPolicyKind, DefinitionRef<PolicyId>>> = {};
+  for (const [kind, ref] of Object.entries(value)) {
+    if (!(POLICY_KINDS as readonly string[]).includes(kind)) invalid(`policies.${kind}`);
+    if (ref === undefined) continue;
+    policies[kind as SpecialistPolicyKind] = checkDefinitionRef<PolicyId>(ref, `policies.${kind}`);
+  }
+  return Object.freeze(policies);
+}
+
+/**
+ * Checks a configuration and returns a frozen copy with only its known fields. Its department
+ * must belong to `organizationId`, and every permission must exist in the RBAC catalogue.
+ */
+export function checkConfiguration(
+  value: unknown,
+  organizationId: OrganizationId,
+): SpecialistConfiguration {
+  if (!isRecord(value)) return invalid('configuration');
+  const { departmentId, mainRoleId, roleVersion, purpose, description } = value;
+  if (organizationOfDepartmentId(departmentId) !== organizationId) invalid('departmentId');
+  if (typeof mainRoleId !== 'string' || !REF_ID.test(mainRoleId)) invalid('mainRoleId');
+  if (!isVersionNumber(roleVersion)) invalid('roleVersion');
+  return Object.freeze({
+    departmentId: departmentId as DepartmentId,
+    mainRoleId: mainRoleId as RoleId,
+    roleVersion: roleVersion as number,
+    ...(purpose === undefined ? {} : { purpose: checkText(purpose, 'purpose', MAX_TEXT_LENGTH) }),
+    ...(description === undefined
+      ? {}
+      : { description: checkText(description, 'description', MAX_TEXT_LENGTH) }),
+    capabilities: checkList(value.capabilities ?? [], 'capabilities', checkCode, (c) => c),
+    skills: checkList(
+      value.skills ?? [],
+      'skills',
+      (v, f) => checkDefinitionRef<SkillId>(v, f),
+      (r) => r.id,
+    ),
+    tools: checkList(
+      value.tools ?? [],
+      'tools',
+      (v, f) => checkDefinitionRef<ToolId>(v, f),
+      (r) => r.id,
+    ),
+    permissions: checkList(value.permissions ?? [], 'permissions', checkPermission, (p) => p),
+    policies: checkPolicies(value.policies ?? {}),
+  });
+}
+
+/** Whether two configurations say the same thing. Lists compare in order. */
+export function sameConfiguration(a: SpecialistConfiguration, b: SpecialistConfiguration): boolean {
+  return canonical(a) === canonical(b);
+}
+
+// Keys sorted at every level, so field order never makes two equal configurations differ.
+function canonical(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
+  if (isRecord(value)) {
+    return `{${Object.keys(value)
+      .sort()
+      .filter((k) => value[k] !== undefined)
+      .map((k) => `${JSON.stringify(k)}:${canonical(value[k])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function checkAssignable(department: Department, configuration: SpecialistConfiguration): void {
+  if (department.id !== configuration.departmentId) invalid('departmentId');
+  if (!acceptsAssignments(department)) throw new SpecialistError('department_not_assignable');
+}
+
+/** A specialist and, when its configuration changed, the new version to store with it. */
+export interface SpecialistWrite {
+  readonly specialist: Specialist;
+  readonly version?: SpecialistVersion;
+}
+
+export interface NewSpecialist {
+  readonly organizationId: OrganizationId;
+  readonly displayName: string;
+  readonly avatar?: string;
+  readonly configuration: unknown;
+}
+
+/**
+ * Builds a new specialist in `draft`, at version 1, in `department`, which must be the
+ * configuration's department and active: an archived or paused department takes no new
+ * specialists. Pure apart from its random id.
+ */
+export function newSpecialist(
+  request: NewSpecialist,
+  department: Department,
+  by: UserId,
+  at: IsoTimestamp,
+): Required<SpecialistWrite> {
+  const configuration = checkConfiguration(request.configuration, request.organizationId);
+  checkAssignable(department, configuration);
+  const id = randomUUID() as SpecialistId;
+  const specialist: Specialist = Object.freeze({
+    identity: Object.freeze({
+      id,
+      displayName: checkText(request.displayName, 'displayName', MAX_NAME_LENGTH),
+      ...(request.avatar === undefined
+        ? {}
+        : { avatar: checkText(request.avatar, 'avatar', MAX_TEXT_LENGTH) }),
+      createdAt: at,
+      createdBy: by,
+    }),
+    organizationId: request.organizationId,
+    status: 'draft',
+    version: 1,
+    configuration,
+    revision: 1,
+    updatedAt: at,
+  });
+  const version: SpecialistVersion = Object.freeze({
+    specialistId: id,
+    organizationId: request.organizationId,
+    version: 1,
+    configuration,
+    createdAt: at,
+    createdBy: by,
+  });
+  return { specialist, version };
+}
+
+const later = (specialist: Specialist, at: IsoTimestamp): IsoTimestamp =>
+  Date.parse(at) >= Date.parse(specialist.updatedAt) ? at : specialist.updatedAt;
+
+/** A configuration change as a caller asks for it. `fromVersion` is the version the caller last saw. */
+export interface ConfigurationChange {
+  readonly fromVersion: number;
+  readonly configuration: unknown;
+  /** The department the configuration moves to, as read by the caller. Needed only for a move. */
+  readonly department?: Department;
+}
+
+/**
+ * Creates the next version of a specialist's configuration (ADR-0025). Versions are never
+ * edited: an execution that used version 3 keeps meaning version 3. A change that says nothing
+ * new creates no version and is refused. Moving to another department needs that department to
+ * be active. An archived specialist is history and cannot change.
+ */
+export function reviseSpecialist(
+  current: Specialist,
+  change: ConfigurationChange,
+  by: UserId,
+  now: IsoTimestamp,
+): Required<SpecialistWrite> {
+  if (current.status === 'archived') throw new SpecialistError('specialist_archived');
+  if (current.version !== change.fromVersion) {
+    throw new SpecialistError('specialist_concurrency_conflict');
+  }
+  const configuration = checkConfiguration(change.configuration, current.organizationId);
+  if (sameConfiguration(configuration, current.configuration)) invalid('configuration.unchanged');
+  if (configuration.departmentId !== current.configuration.departmentId) {
+    if (change.department === undefined) invalid('department');
+    checkAssignable(change.department as Department, configuration);
+  }
+  const at = later(current, now);
+  const next = current.version + 1;
+  return {
+    specialist: Object.freeze({
+      ...current,
+      version: next,
+      configuration,
+      revision: current.revision + 1,
+      updatedAt: at,
+    }),
+    version: Object.freeze({
+      specialistId: current.identity.id,
+      organizationId: current.organizationId,
+      version: next,
+      configuration,
+      createdAt: at,
+      createdBy: by,
+    }),
+  };
+}
+
+/** A status change as a caller asks for it. `from` is the status the caller last saw. */
+export interface SpecialistStatusChange {
+  readonly from: SpecialistStatus;
+  readonly to: SpecialistStatus;
+}
+
+/**
+ * Applies one status change, or refuses it without changing anything. A status is not part of
+ * the configuration, so it creates no version.
+ */
+export function applySpecialistStatus(
+  current: Specialist,
+  change: SpecialistStatusChange,
+  now: IsoTimestamp,
+): SpecialistWrite {
+  if (current.status !== change.from) {
+    throw new SpecialistError('specialist_concurrency_conflict');
+  }
+  if (current.status === 'archived') throw new SpecialistError('specialist_archived');
+  if (!isSpecialistStatus(change.to) || !canChangeSpecialistStatus(current.status, change.to)) {
+    throw new SpecialistError('invalid_specialist_transition');
+  }
+  return {
+    specialist: Object.freeze({
+      ...current,
+      status: change.to,
+      revision: current.revision + 1,
+      updatedAt: later(current, now),
+    }),
+  };
+}
+
+/**
+ * Checks what a write would store against the current specialist: the same specialist, one
+ * revision ahead; and a new version exactly when the configuration changed, numbered one more
+ * than the current one and holding that configuration. Anything else would rewrite history.
+ */
+export function checkSpecialistWrite(
+  current: Specialist | undefined,
+  write: SpecialistWrite,
+): void {
+  const { specialist, version } = write;
+  const conflict = () => {
+    throw new SpecialistError('specialist_concurrency_conflict');
+  };
+  if (current === undefined) {
+    if (specialist.revision !== 1 || specialist.version !== 1 || version?.version !== 1) {
+      conflict();
+    }
+  } else {
+    if (
+      specialist.identity.id !== current.identity.id ||
+      specialist.organizationId !== current.organizationId ||
+      specialist.revision !== current.revision + 1
+    ) {
+      conflict();
+    }
+    const expected = version === undefined ? current.version : current.version + 1;
+    if (specialist.version !== expected) conflict();
+    if (
+      version === undefined &&
+      !sameConfiguration(specialist.configuration, current.configuration)
+    ) {
+      conflict();
+    }
+  }
+  if (version !== undefined) {
+    if (
+      version.specialistId !== specialist.identity.id ||
+      version.organizationId !== specialist.organizationId ||
+      version.version !== specialist.version ||
+      !sameConfiguration(version.configuration, specialist.configuration)
+    ) {
+      conflict();
+    }
+  }
+}
+
+/** Checks a stored specialist before it is trusted: a record that fails is refused, never repaired. */
+export function checkStoredSpecialist(specialist: Specialist): Specialist {
+  if (!isSpecialistId(specialist.identity.id)) invalid('id');
+  checkText(specialist.identity.displayName, 'displayName', MAX_NAME_LENGTH);
+  if (!isSpecialistStatus(specialist.status)) invalid('status');
+  if (!isVersionNumber(specialist.version)) invalid('version');
+  if (!isVersionNumber(specialist.revision)) invalid('revision');
+  checkConfiguration(specialist.configuration, specialist.organizationId);
+  return specialist;
+}
+
+export function checkStoredVersion(version: SpecialistVersion): SpecialistVersion {
+  if (!isSpecialistId(version.specialistId)) invalid('specialistId');
+  if (!isVersionNumber(version.version)) invalid('version');
+  checkConfiguration(version.configuration, version.organizationId);
+  return version;
+}

@@ -1,17 +1,21 @@
 import type { AuditService } from '@melonoffice/audit';
 import type { AuthDependencies } from '@melonoffice/auth';
 import { createBillingService, type BillingStore } from '@melonoffice/billing';
+import { createDepartmentService, type DepartmentRepository } from '@melonoffice/departments';
 import { createEntitlementService, type EntitlementService } from '@melonoffice/entitlements';
 import { createExecutionService, type ExecutionRepository } from '@melonoffice/execution';
 import type { Logger } from '@melonoffice/observability';
 import { createAuthorizationService, type AuthorizationService } from '@melonoffice/rbac';
+import { createSpecialistService, type SpecialistRepository } from '@melonoffice/specialists';
 import type { TenancyStore } from '@melonoffice/tenancy';
 import { Hono, type Context } from 'hono';
 import { registerAuthRoutes, type AuthEnv } from './auth.js';
 import { registerBillingRoutes } from './billing.js';
+import { registerDepartmentRoutes } from './departments.js';
 import { registerEntitlementRoutes } from './entitlements.js';
 import { registerExecutionRoutes } from './executions.js';
 import { registerHealth } from './health.js';
+import { registerSpecialistRoutes } from './specialists.js';
 import { registerTenancyRoutes } from './tenancy.js';
 
 export const SERVICE_NAME = 'api';
@@ -39,6 +43,14 @@ export interface AppOptions {
   readonly entitlements?: EntitlementService;
   /** Executions (ADR-0024). Absent: the execution route answers 503 (fails closed). */
   readonly executions?: ExecutionRepository;
+  /**
+   * Departments and specialists (ADR-0025). Absent: their routes answer 503 (fails closed), and
+   * an execution that names a specialist is refused.
+   */
+  readonly structure?: {
+    readonly departments: DepartmentRepository;
+    readonly specialists: SpecialistRepository;
+  };
 }
 
 type Env = AuthEnv;
@@ -56,6 +68,7 @@ export function createApp({
   billing,
   entitlements,
   executions,
+  structure,
 }: AppOptions): Hono<Env> {
   const app = new Hono<Env>();
 
@@ -97,12 +110,42 @@ export function createApp({
       app.all('/v1/organizations/:organizationId/billing', unavailable);
       app.all('/v1/organizations/:organizationId/entitlements', unavailable);
     }
+    const specialists =
+      tenancy !== undefined && structure !== undefined
+        ? createSpecialistService({
+            repository: structure.specialists,
+            departments: structure.departments,
+            organizations: tenancy,
+            authorization,
+          })
+        : undefined;
+    if (tenancy !== undefined && structure !== undefined && specialists !== undefined) {
+      const dependencies = { store: tenancy, authorization, audit };
+      registerDepartmentRoutes(app, {
+        ...dependencies,
+        departments: createDepartmentService({
+          repository: structure.departments,
+          organizations: tenancy,
+        }),
+      });
+      registerSpecialistRoutes(app, { ...dependencies, specialists });
+    } else if (tenancy !== undefined) {
+      const unavailable = (c: Context<Env>) => c.json({ error: 'structure_not_configured' }, 503);
+      app.all('/v1/organizations/:organizationId/departments', unavailable);
+      app.all('/v1/organizations/:organizationId/departments/*', unavailable);
+      app.all('/v1/organizations/:organizationId/specialists', unavailable);
+      app.all('/v1/organizations/:organizationId/specialists/*', unavailable);
+    }
     if (tenancy !== undefined && executions !== undefined) {
       registerExecutionRoutes(app, {
         store: tenancy,
         authorization,
         audit,
-        executions: createExecutionService({ repository: executions, organizations: tenancy }),
+        executions: createExecutionService({
+          repository: executions,
+          organizations: tenancy,
+          ...(specialists === undefined ? {} : { assignments: specialists.assignments }),
+        }),
       });
     } else if (tenancy !== undefined) {
       app.all('/v1/organizations/:organizationId/executions/*', (c) =>

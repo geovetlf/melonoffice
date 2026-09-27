@@ -13,6 +13,7 @@ import type {
 } from '@melonoffice/domain';
 import {
   checkInitialBilling,
+  checkInitialDepartments,
   isOrganizationId,
   membershipIdOf,
   newOrganizationId,
@@ -29,6 +30,7 @@ import {
   toAccountDocument,
   toSubscriptionDocument,
 } from './billing-firestore.js';
+import { DEPARTMENTS, toDepartmentDocument } from './departments-firestore.js';
 
 /** Collections (ADR-0018). Read and written only by the API, never by clients. */
 export const ORGANIZATIONS = 'organizations';
@@ -105,7 +107,8 @@ function toMembership(id: string, data: MembershipDocument): Membership {
 
 /**
  * Organizations and memberships in Firestore. An organization, its owner's membership, the creator
- * record, its billing account and first subscription (ADR-0022) and the creation's audit events are written in one transaction with `create`,
+ * record, its billing account and first subscription (ADR-0022), its first departments (ADR-0025)
+ * and the creation's audit events are written in one transaction with `create`,
  * so they exist together or not at all, and a second organization by the same user fails even
  * under concurrent requests.
  */
@@ -119,6 +122,7 @@ export class FirestoreTenancyStore implements TenancyStore {
     name,
     creator,
     billing,
+    departments,
     audit,
   }: NewOrganization): Promise<CreatedOrganization> {
     const creatorRef = this.db.collection(ORGANIZATION_CREATORS).doc(creator);
@@ -146,10 +150,13 @@ export class FirestoreTenancyStore implements TenancyStore {
       const createdOrganization = toOrganization(organizationId, organization);
       const initialBilling = billing(createdOrganization);
       checkInitialBilling(createdOrganization, initialBilling);
+      const initialDepartments = departments?.(createdOrganization) ?? [];
+      checkInitialDepartments(createdOrganization, initialDepartments);
       const created = {
         organization: createdOrganization,
         membership: toMembership(membershipId, membership),
         billing: initialBilling,
+        departments: initialDepartments,
       };
       const events = audit?.(created) ?? [];
       tx.create(creatorRef, record);
@@ -163,6 +170,12 @@ export class FirestoreTenancyStore implements TenancyStore {
         this.db.collection(SUBSCRIPTIONS).doc(initialBilling.subscription.id),
         toSubscriptionDocument(initialBilling.subscription),
       );
+      for (const department of initialDepartments) {
+        tx.create(
+          this.db.collection(DEPARTMENTS).doc(department.id),
+          toDepartmentDocument(department),
+        );
+      }
       for (const event of events) {
         tx.create(this.db.collection(AUDIT_LOGS).doc(event.id), toAuditDocument(event));
       }

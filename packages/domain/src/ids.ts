@@ -14,6 +14,8 @@ export type SpecialistId = Brand<string, 'SpecialistId'>;
 export type RoleId = Brand<string, 'RoleId'>;
 export type SkillId = Brand<string, 'SkillId'>;
 export type ToolId = Brand<string, 'ToolId'>;
+/** Id of a policy definition (model, context, budget, approval, verification). */
+export type PolicyId = Brand<string, 'PolicyId'>;
 export type UserId = Brand<string, 'UserId'>;
 export type MembershipId = Brand<string, 'MembershipId'>;
 export type HistoryEventId = Brand<string, 'HistoryEventId'>;

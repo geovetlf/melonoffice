@@ -18,10 +18,12 @@
     "@melonoffice/audit": "workspace:*",
     "@melonoffice/auth": "workspace:*",
     "@melonoffice/billing": "workspace:*",
+    "@melonoffice/departments": "workspace:*",
     "@melonoffice/entitlements": "workspace:*",
     "@melonoffice/execution": "workspace:*",
     "@melonoffice/observability": "workspace:*",
     "@melonoffice/rbac": "workspace:*",
+    "@melonoffice/specialists": "workspace:*",
     "@melonoffice/tenancy": "workspace:*",
     "hono": "4.13.9"
   },

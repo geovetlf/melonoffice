@@ -14,17 +14,22 @@ import {
   type AuditStore,
 } from '@melonoffice/audit';
 import { InMemoryBillingStore, type BillingStore } from '@melonoffice/billing';
+import { InMemoryDepartmentRepository, type DepartmentRepository } from '@melonoffice/departments';
 import { InMemoryExecutionRepository, type ExecutionRepository } from '@melonoffice/execution';
 import type {
   BillingAccount,
+  Department,
   Membership,
   Organization,
   OrganizationId,
+  Specialist,
+  SpecialistVersion,
   Subscription,
 } from '@melonoffice/domain';
 import { createLogger } from '@melonoffice/observability';
 import type { EntitlementService } from '@melonoffice/entitlements';
 import type { AuthorizationService } from '@melonoffice/rbac';
+import { InMemorySpecialistRepository, type SpecialistRepository } from '@melonoffice/specialists';
 import { InMemoryTenancyStore, type TenancyStore } from '@melonoffice/tenancy';
 import { createApp } from './app.js';
 import { AUDIT_LOGS, FirestoreAuditStore, type AuditDocument } from './audit-firestore.js';
@@ -35,7 +40,19 @@ import {
   toAccountDocument,
   toSubscriptionDocument,
 } from './billing-firestore.js';
+import {
+  DEPARTMENTS,
+  FirestoreDepartmentRepository,
+  toDepartmentDocument,
+} from './departments-firestore.js';
 import { FirestoreExecutionRepository } from './executions-firestore.js';
+import {
+  FirestoreSpecialistRepository,
+  SPECIALISTS,
+  SPECIALIST_VERSIONS,
+  toSpecialistDocument,
+  toSpecialistVersionDocument,
+} from './specialists-firestore.js';
 import { FirestoreTenancyStore, MEMBERSHIPS, ORGANIZATIONS } from './tenancy-firestore.js';
 import { emulatorFirestore, emulatorHost } from './test-firestore.js';
 import { FirestoreUserDirectory } from './users-firestore.js';
@@ -69,6 +86,10 @@ export interface Stores {
   /** Removes an organization's billing account, as for one created before billing existed. */
   readonly removeBilling: (organizationId: OrganizationId) => Promise<void>;
   readonly executions: ExecutionRepository;
+  readonly departments: DepartmentRepository;
+  readonly specialists: SpecialistRepository;
+  /** Stores a department or specialist record as given, the way an operator change or bad data would. */
+  readonly putStructure: (record: Department | Specialist | SpecialistVersion) => Promise<void>;
   readonly audit: AuditService;
   /** Every stored audit event, oldest first, as plain data. */
   readonly auditEvents: () => Promise<readonly AuditEvent[]>;
@@ -90,7 +111,9 @@ function memoryStores(): Stores {
   const events = new InMemoryAuditStore();
   const breakable = new Breakable(events);
   const billing = new InMemoryBillingStore();
-  const tenancy = new InMemoryTenancyStore(undefined, events, billing);
+  const departments = new InMemoryDepartmentRepository();
+  const specialists = new InMemorySpecialistRepository();
+  const tenancy = new InMemoryTenancyStore(undefined, events, billing, departments);
   return {
     users: new InMemoryUserDirectory(),
     tenancy,
@@ -99,6 +122,12 @@ function memoryStores(): Stores {
     putBilling: async (r) => billing.put(r),
     removeBilling: async (id) => billing.removeAccount(id),
     executions: new InMemoryExecutionRepository(events),
+    departments,
+    specialists,
+    putStructure: async (record) => {
+      if ('origin' in record) departments.put(record);
+      else specialists.put(record);
+    },
     audit: createAuditService(breakable),
     auditEvents: async () => events.events(),
     breakAudit: (broken) => (breakable.broken = broken),
@@ -150,6 +179,20 @@ function firestoreStores(): Stores {
       }
     },
     executions: new FirestoreExecutionRepository(db),
+    departments: new FirestoreDepartmentRepository(db),
+    specialists: new FirestoreSpecialistRepository(db),
+    async putStructure(record) {
+      if ('origin' in record) {
+        await db.collection(DEPARTMENTS).doc(record.id).set(toDepartmentDocument(record));
+      } else if ('identity' in record) {
+        await db.collection(SPECIALISTS).doc(record.identity.id).set(toSpecialistDocument(record));
+      } else {
+        await db
+          .collection(SPECIALIST_VERSIONS)
+          .doc(`${record.specialistId}_${record.version}`)
+          .set(toSpecialistVersionDocument(record));
+      }
+    },
     async removeBilling(organizationId) {
       await db.collection(BILLING_ACCOUNTS).doc(organizationId).delete();
     },
@@ -193,6 +236,7 @@ export function setupApp(
     tenancy: stores.tenancy,
     billing: stores.billing,
     executions: stores.executions,
+    structure: { departments: stores.departments, specialists: stores.specialists },
     audit: stores.audit,
     ...(authorization ? { authorization } : {}),
     ...(entitlements ? { entitlements } : {}),

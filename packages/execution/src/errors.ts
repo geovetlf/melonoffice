@@ -10,7 +10,8 @@ export type ExecutionErrorCode =
   | 'execution_not_found'
   | 'invalid_execution_transition'
   | 'execution_already_terminal'
-  | 'execution_concurrency_conflict';
+  | 'execution_concurrency_conflict'
+  | 'specialist_not_eligible';
 
 export class ExecutionError extends Error {
   override readonly name = 'ExecutionError';
