@@ -12,6 +12,9 @@ export interface Correlation {
   readonly specialistId?: string;
   readonly toolId?: string;
   readonly toolVersion?: number;
+  /** The AI provider and model of an AI call (ADR-0027). */
+  readonly provider?: string;
+  readonly model?: string;
 }
 
 const KEYS = [
@@ -21,6 +24,7 @@ const KEYS = [
   'nodeId',
   'specialistId',
   'toolId',
+  'provider',
 ] as const;
 
 const ID = /^[\w-]{1,128}$/;
@@ -35,6 +39,9 @@ export function withCorrelation(logger: Logger, correlation: Correlation): Logge
     const value = correlation[key];
     if (value !== undefined && ID.test(value)) bindings[key] = value;
   }
+  // Model ids may carry dots and colons (e.g. versions); nothing else.
+  const { model } = correlation;
+  if (model !== undefined && /^[\w.:/-]{1,160}$/.test(model)) bindings.model = model;
   const { toolVersion } = correlation;
   if (toolVersion !== undefined && Number.isSafeInteger(toolVersion) && toolVersion >= 1) {
     bindings.toolVersion = toolVersion;

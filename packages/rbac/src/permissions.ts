@@ -57,6 +57,12 @@ export const PERMISSIONS = {
     description:
       'Approve or reject a pending tool approval, directly and never through GIA (ADR-0026).',
   },
+  'ai.generate': {
+    resource: 'ai',
+    action: 'generate',
+    description:
+      'Let an execution call an AI model for you. Checked by the AI Gateway, never by a client route (ADR-0027).',
+  },
 } as const satisfies Record<string, PermissionDefinition>;
 
 export interface PermissionDefinition {

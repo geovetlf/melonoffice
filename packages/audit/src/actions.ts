@@ -2,7 +2,7 @@ import type { AuditResult } from './event.js';
 
 export interface AuditActionDefinition {
   readonly category:
-    'auth' | 'tenancy' | 'authorization' | 'entitlements' | 'billing' | 'execution' | 'tool';
+    'auth' | 'tenancy' | 'authorization' | 'entitlements' | 'billing' | 'execution' | 'tool' | 'ai';
   readonly description: string;
   /** The results this action is recorded with. Anything else is a programming error. */
   readonly results: readonly AuditResult[];
@@ -106,6 +106,24 @@ export const AUDIT_ACTIONS = {
     description:
       'A pending tool approval was withdrawn, e.g. because its execution ended (ADR-0026).',
     results: ['success'],
+  },
+  'ai.request_denied': {
+    category: 'ai',
+    description:
+      'The AI Gateway refused a call before any provider saw it: validation, authorization, policy, routing or credits (ADR-0027).',
+    results: ['denied'],
+  },
+  'ai.provider_fallback': {
+    category: 'ai',
+    description:
+      'The chosen model could not serve an AI call and the policy let another compatible model answer (ADR-0027).',
+    results: ['success'],
+  },
+  'ai.request_failed': {
+    category: 'ai',
+    description:
+      'An AI call reached a provider and did not complete: provider error, invalid response or charge failure (ADR-0027).',
+    results: ['failure'],
   },
   'tenancy.resolve': {
     category: 'tenancy',

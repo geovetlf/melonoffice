@@ -29,6 +29,7 @@ The MelonOffice architecture was defined in the **Phase 0 Architecture Plan (v0.
 | [0024](../adr/0024-execution-foundation.md)                        | Execution foundation: states, graph and version snapshots | D-28, D-25       |
 | [0025](../adr/0025-departments-and-specialists.md)                 | Departments, specialists and the execution profile        | D-11, D-28, D-29 |
 | [0026](../adr/0026-tools-approvals-and-guardrails.md)              | Tools, approvals and guardrails                           | D-28, D-25       |
+| [0027](../adr/0027-ai-gateway-and-provider-registry.md)            | AI Gateway and provider registry                          | D-7, D-12, D-28  |
 
 ## Current phase
 

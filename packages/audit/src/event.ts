@@ -49,6 +49,12 @@ export interface AuditTool {
   readonly version: number;
 }
 
+/** An AI model as recorded, for `ai.*` events (ADR-0027). Never a prompt or an output. */
+export interface AuditModel {
+  readonly provider: string;
+  readonly id: string;
+}
+
 /** The component that recorded the event. */
 export type AuditSource = 'api';
 
@@ -78,6 +84,10 @@ export interface AuditEvent {
   readonly transition?: AuditTransition;
   /** The tool version, for `tool.*` events. */
   readonly tool?: AuditTool;
+  /** The model, for `ai.*` events. */
+  readonly model?: AuditModel;
+  /** The model that could not answer, for `ai.provider_fallback`. */
+  readonly previousModel?: AuditModel;
   /**
    * A stable code saying why: for `denied` and `failure`, an error code; for a successful
    * change, its cause (for example why an execution was cancelled). Never a message.
@@ -95,6 +105,11 @@ const PERMISSION = /^[a-z][a-z_]*\.[a-z][a-z_]*$/;
 const REQUEST_ID = /^[\w-]{1,128}$/;
 const PLAN_ID = /^[a-z][a-z0-9_-]{0,63}$/;
 const TOOL_ID = /^[a-z][a-z0-9_]{0,63}$/;
+const PROVIDER_ID = /^[a-z][a-z0-9_-]{0,63}$/;
+const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+
+const isAuditModel = (m: AuditModel): boolean =>
+  PROVIDER_ID.test(m.provider) && MODEL_ID.test(m.id);
 
 /**
  * Builds an event, checking every field so nothing unexpected reaches storage. Untrusted parts
@@ -125,6 +140,12 @@ export function buildAuditEvent(input: AuditEventInput, at: Date): AuditEvent {
       input.tool.version < 1)
   ) {
     throw new Error('invalid audit tool');
+  }
+  if (
+    (input.model !== undefined && !isAuditModel(input.model)) ||
+    (input.previousModel !== undefined && !isAuditModel(input.previousModel))
+  ) {
+    throw new Error('invalid audit model');
   }
   if (
     input.plan !== undefined &&
@@ -162,6 +183,17 @@ export function buildAuditEvent(input: AuditEventInput, at: Date): AuditEvent {
     ...(input.tool === undefined
       ? {}
       : { tool: Object.freeze({ id: input.tool.id, version: input.tool.version }) }),
+    ...(input.model === undefined
+      ? {}
+      : { model: Object.freeze({ provider: input.model.provider, id: input.model.id }) }),
+    ...(input.previousModel === undefined
+      ? {}
+      : {
+          previousModel: Object.freeze({
+            provider: input.previousModel.provider,
+            id: input.previousModel.id,
+          }),
+        }),
     ...(input.reason === undefined ? {} : { reason: input.reason }),
     ...(input.requestId !== undefined && REQUEST_ID.test(input.requestId)
       ? { requestId: input.requestId }

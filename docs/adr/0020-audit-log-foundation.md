@@ -47,28 +47,31 @@ A failed authentication (no, invalid or expired token) is none of these and is n
 
 Only actions the code performs today:
 
-| Action                         | Category      | Results                  | Recorded when                                                           |
-| ------------------------------ | ------------- | ------------------------ | ----------------------------------------------------------------------- |
-| `auth.register`                | auth          | success                  | `POST /v1/me` creates the internal user                                 |
-| `auth.sign_in`                 | auth          | success                  | `POST /v1/me` for an existing user                                      |
-| `organization.create`          | tenancy       | success, denied, failure | `POST /v1/organizations`, except a malformed name (bad input)           |
-| `membership.create`            | tenancy       | success                  | The owner membership created with an organization                       |
-| `plan.assign`                  | entitlements  | success                  | An organization gets its initial plan (added by ADR-0021)               |
-| `billing.subscription_created` | billing       | success                  | An organization's first subscription opens with it (added by ADR-0022)  |
-| `execution.created`            | execution     | success                  | An execution is created for an organization (added by ADR-0024)         |
-| `execution.state_changed`      | execution     | success                  | An execution's status changes, with from and to (added by ADR-0024)     |
-| `tool.authorization_checked`   | tool          | success, denied          | The tool gate decided whether a tool may run (added by ADR-0026)        |
-| `tool.execution_requested`     | tool          | success                  | A node asked to run a tool version (added by ADR-0026)                  |
-| `tool.execution_denied`        | tool          | denied                   | A guardrail or approval refused a tool call (added by ADR-0026)         |
-| `tool.execution_completed`     | tool          | success                  | A tool ran and passed the post-execution guardrails (added by ADR-0026) |
-| `tool.execution_failed`        | tool          | failure                  | A tool failed, timed out or its output was rejected (added by ADR-0026) |
-| `tool.approval_requested`      | tool          | success                  | A human approval was requested for a tool call (added by ADR-0026)      |
-| `tool.approval_approved`       | tool          | success, denied          | A user approved an approval, or was refused (added by ADR-0026)         |
-| `tool.approval_rejected`       | tool          | success, denied          | A user rejected an approval, or was refused (added by ADR-0026)         |
-| `tool.approval_expired`        | tool          | success                  | A pending approval ran out of time (added by ADR-0026)                  |
-| `tool.approval_cancelled`      | tool          | success                  | A pending approval was withdrawn (added by ADR-0026)                    |
-| `tenancy.resolve`              | tenancy       | denied                   | A request inside an organization is refused by tenancy                  |
-| `authorization.check`          | authorization | denied                   | RBAC refuses a permission                                               |
+| Action                         | Category      | Results                  | Recorded when                                                                |
+| ------------------------------ | ------------- | ------------------------ | ---------------------------------------------------------------------------- |
+| `auth.register`                | auth          | success                  | `POST /v1/me` creates the internal user                                      |
+| `auth.sign_in`                 | auth          | success                  | `POST /v1/me` for an existing user                                           |
+| `organization.create`          | tenancy       | success, denied, failure | `POST /v1/organizations`, except a malformed name (bad input)                |
+| `membership.create`            | tenancy       | success                  | The owner membership created with an organization                            |
+| `plan.assign`                  | entitlements  | success                  | An organization gets its initial plan (added by ADR-0021)                    |
+| `billing.subscription_created` | billing       | success                  | An organization's first subscription opens with it (added by ADR-0022)       |
+| `execution.created`            | execution     | success                  | An execution is created for an organization (added by ADR-0024)              |
+| `execution.state_changed`      | execution     | success                  | An execution's status changes, with from and to (added by ADR-0024)          |
+| `tool.authorization_checked`   | tool          | success, denied          | The tool gate decided whether a tool may run (added by ADR-0026)             |
+| `tool.execution_requested`     | tool          | success                  | A node asked to run a tool version (added by ADR-0026)                       |
+| `tool.execution_denied`        | tool          | denied                   | A guardrail or approval refused a tool call (added by ADR-0026)              |
+| `tool.execution_completed`     | tool          | success                  | A tool ran and passed the post-execution guardrails (added by ADR-0026)      |
+| `tool.execution_failed`        | tool          | failure                  | A tool failed, timed out or its output was rejected (added by ADR-0026)      |
+| `tool.approval_requested`      | tool          | success                  | A human approval was requested for a tool call (added by ADR-0026)           |
+| `tool.approval_approved`       | tool          | success, denied          | A user approved an approval, or was refused (added by ADR-0026)              |
+| `tool.approval_rejected`       | tool          | success, denied          | A user rejected an approval, or was refused (added by ADR-0026)              |
+| `tool.approval_expired`        | tool          | success                  | A pending approval ran out of time (added by ADR-0026)                       |
+| `tool.approval_cancelled`      | tool          | success                  | A pending approval was withdrawn (added by ADR-0026)                         |
+| `ai.request_denied`            | ai            | denied                   | The AI Gateway refused a call before any provider saw it (added by ADR-0027) |
+| `ai.provider_fallback`         | ai            | success                  | Another compatible model answered an AI call (added by ADR-0027)             |
+| `ai.request_failed`            | ai            | failure                  | An AI call reached a provider and did not complete (added by ADR-0027)       |
+| `tenancy.resolve`              | tenancy       | denied                   | A request inside an organization is refused by tenancy                       |
+| `authorization.check`          | authorization | denied                   | RBAC refuses a permission                                                    |
 
 ### Not recorded
 
@@ -79,7 +82,7 @@ Only actions the code performs today:
 
 ### Persistence and immutability
 
-- The Firestore collection is `auditLogs/{eventId}`, with flat fields: `occurredAt`, `action`, `result`, `actorType`, `actorUserId`, `actorVia`, `organizationId`, `targetType`, `targetId`, `requestedOrganizationId`, `permission`, `planId`, `planVersion` (added by ADR-0021), `transitionFrom` and `transitionTo` (added by ADR-0024), `toolId` and `toolVersion` (added by ADR-0026), `reason`, `requestId` and `source`. Absent values are stored as `null`.
+- The Firestore collection is `auditLogs/{eventId}`, with flat fields: `occurredAt`, `action`, `result`, `actorType`, `actorUserId`, `actorVia`, `organizationId`, `targetType`, `targetId`, `requestedOrganizationId`, `permission`, `planId`, `planVersion` (added by ADR-0021), `transitionFrom` and `transitionTo` (added by ADR-0024), `toolId` and `toolVersion` (added by ADR-0026), `modelProvider`, `modelId`, `previousModelProvider` and `previousModelId` (added by ADR-0027), `reason`, `requestId` and `source`. Absent values are stored as `null`.
 - The `AuditStore` port has only `append`. The Firestore store writes with `create` in a batch, so an event is never overwritten and a batch is all or nothing. There is no update or delete in the application.
 - **No endpoint** reads or writes audit events. `POST /v1/audit-logs` and similar paths are `404`.
 - IAM cannot make one collection append-only. The API's service account (`roles/datastore.user`) could technically change documents, and only the code prevents it. See the risks.

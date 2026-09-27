@@ -1,0 +1,86 @@
+import type { FinishReason, ProviderOutcome, ProviderUsage } from './adapter.js';
+import type { AICreditState } from './credits.js';
+import { looksLikeSecretText } from './secrets.js';
+
+/** Which versions answered, for reproducibility: adapter, exact model, and policy. */
+export interface AIVersions {
+  readonly adapter: string;
+  readonly model: string;
+  readonly policy: { readonly id: string; readonly version: number };
+}
+
+/**
+ * The answer to an AI call (ADR-0027). Always one of these, never an ambiguous exception, and
+ * never a secret. `denied` means nothing was sent to any provider.
+ */
+export type AIResponse =
+  | {
+      readonly status: 'completed';
+      readonly requestId: string;
+      readonly provider: string;
+      readonly model: string;
+      readonly versions: AIVersions;
+      readonly output: { readonly text?: string; readonly structured?: unknown };
+      readonly usage: ProviderUsage;
+      readonly latencyMs: number;
+      readonly finishReason: FinishReason;
+      readonly cost: {
+        readonly estimatedMicroUsd: number | null;
+        readonly actualMicroUsd: number | null;
+      };
+      readonly credits: {
+        readonly state: AICreditState;
+        readonly estimated: number | null;
+        readonly consumed: number;
+      };
+      readonly providerRequestId: string | null;
+      readonly attempts: number;
+      /** Set when another model answered than the one first chosen. */
+      readonly fallbackFrom: string | null;
+    }
+  | {
+      readonly status: 'failed';
+      readonly requestId: string;
+      readonly code: string;
+      readonly provider: string | null;
+      readonly model: string | null;
+      readonly attempts: number;
+      readonly latencyMs: number;
+    }
+  | { readonly status: 'denied'; readonly requestId: string; readonly code: string };
+
+const PROVIDER_REQUEST_ID = /^[A-Za-z0-9._:-]{1,200}$/;
+const FINISH: readonly FinishReason[] = ['stop', 'length', 'content_filter', 'tool_use'];
+
+const count = (v: unknown): boolean =>
+  typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 && v <= 100_000_000;
+
+/**
+ * Checks what an adapter returned before anything else sees it: known fields and types,
+ * sane usage, and no text that looks like a credential. A provider's answer that fails is an
+ * `invalid_response`, never passed on.
+ */
+export function checkProviderSuccess(
+  outcome: Extract<ProviderOutcome, { status: 'success' }>,
+): boolean {
+  const { output, usage, finishReason, providerRequestId } = outcome;
+  if (typeof output !== 'object' || output === null) return false;
+  if (Object.keys(output).some((k) => k !== 'text' && k !== 'structured')) return false;
+  if (output.text === undefined && output.structured === undefined) return false;
+  if (output.text !== undefined && typeof output.text !== 'string') return false;
+  if (output.text !== undefined && looksLikeSecretText(output.text)) return false;
+  if (output.structured !== undefined) {
+    let json: string;
+    try {
+      json = JSON.stringify(output.structured);
+    } catch {
+      return false;
+    }
+    if (json === undefined || looksLikeSecretText(json.replace(/[{}[\]",:]/g, ' '))) return false;
+  }
+  if (typeof usage !== 'object' || usage === null) return false;
+  if (!count(usage.inputTokens) || !count(usage.outputTokens)) return false;
+  if (!FINISH.includes(finishReason)) return false;
+  if (providerRequestId !== undefined && !PROVIDER_REQUEST_ID.test(providerRequestId)) return false;
+  return true;
+}

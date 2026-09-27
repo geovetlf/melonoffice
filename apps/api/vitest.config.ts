@@ -6,6 +6,9 @@ import { defineConfig } from 'vitest/config';
 // load. mergeConfig would append to the preset's list, so the list is replaced here.
 export default defineConfig({
   ...vitestPreset,
+  // API tests also run against one shared Firestore emulator, file by file in parallel; the first
+  // test of a file can wait on it well past Vitest's 5 s default on a busy CI runner.
+  test: { ...vitestPreset.test, testTimeout: 20_000 },
   ssr: {
     ...vitestPreset.ssr,
     resolve: {

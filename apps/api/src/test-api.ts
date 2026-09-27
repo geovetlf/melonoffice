@@ -99,6 +99,8 @@ export interface Stores {
   readonly auditEvents: () => Promise<readonly AuditEvent[]>;
   /** Makes the audit store fail (or work again), to test the error policy. */
   readonly breakAudit: (broken: boolean) => void;
+  /** Everything stored in the audit trail, raw, as one string: for scanning it for secrets. */
+  readonly storedAudit: () => Promise<string>;
 }
 
 /** An audit store that can be made to fail on demand. */
@@ -136,6 +138,7 @@ function memoryStores(): Stores {
     audit: createAuditService(breakable),
     auditEvents: async () => events.events(),
     breakAudit: (broken) => (breakable.broken = broken),
+    storedAudit: async () => JSON.stringify(events.events()),
   };
 }
 
@@ -161,6 +164,10 @@ function fromAuditDocument(id: string, d: AuditDocument): AuditEvent {
       ? {}
       : { transition: { from: d.transitionFrom, to: d.transitionTo } }),
     ...(d.toolId == null ? {} : { tool: { id: d.toolId, version: d.toolVersion } }),
+    ...(d.modelId == null ? {} : { model: { provider: d.modelProvider, id: d.modelId } }),
+    ...(d.previousModelId == null
+      ? {}
+      : { previousModel: { provider: d.previousModelProvider, id: d.previousModelId } }),
     ...(d.reason === null ? {} : { reason: d.reason }),
     ...(d.requestId === null ? {} : { requestId: d.requestId }),
     source: d.source,
@@ -205,6 +212,10 @@ function firestoreStores(): Stores {
     },
     audit: createAuditService(breakable),
     breakAudit: (broken) => (breakable.broken = broken),
+    async storedAudit() {
+      const snapshot = await db.collection(AUDIT_LOGS).get();
+      return JSON.stringify(snapshot.docs.map((doc) => doc.data()));
+    },
     async auditEvents() {
       const snapshot = await db.collection(AUDIT_LOGS).orderBy('occurredAt').get();
       return snapshot.docs.map((doc) => fromAuditDocument(doc.id, doc.data() as AuditDocument));
