@@ -88,6 +88,18 @@ export const AUDIT_ACTIONS = {
       'The runtime re-ran a failed node; the reason names the attempt rule that allowed it (ADR-0029).',
     results: ['success'],
   },
+  'execution.node_changed': {
+    category: 'execution',
+    description:
+      "The runtime or the tool gate moved one node; the transition gives its status before and after, nodeId which node (ADR-0031).",
+    results: ['success'],
+  },
+  'execution.job_released': {
+    category: 'execution',
+    description:
+      'The lease holder gave a job back without ending it, because its node waits on a human approval (ADR-0031).',
+    results: ['success'],
+  },
   'execution.job_enqueued': {
     category: 'execution',
     description:

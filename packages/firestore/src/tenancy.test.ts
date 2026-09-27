@@ -381,6 +381,7 @@ describe.runIf(emulatorHost)('FirestoreAuditStore (emulator)', () => {
       jobNodeId: null,
       jobAttempt: null,
       jobLeaseId: null,
+      nodeId: null,
       modelProvider: null,
       modelId: null,
       previousModelProvider: null,

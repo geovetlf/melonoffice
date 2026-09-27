@@ -390,12 +390,12 @@ describe.each(STORES)('execution jobs with storage in %s', (_name, createStores)
       executionId: execution.id,
       nodeId: 'n0',
     });
-    await w.executions.changeNode(w.runtimeA, execution.id, {
+    await w.executions.runtimeChangeNode(w.runtimeA, execution.id, {
       nodeId: 'n0',
       from: 'pending',
       to: 'running',
     });
-    await w.executions.changeNode(w.runtimeA, execution.id, {
+    await w.executions.runtimeChangeNode(w.runtimeA, execution.id, {
       nodeId: 'n0',
       from: 'running',
       to: 'failed',
@@ -675,7 +675,7 @@ describe.each(STORES)('execution jobs with storage in %s', (_name, createStores)
     expect(
       await codeOf(w.jobService.enqueue(w.tenantA, { executionId: execution.id, nodeId: 'nx' })),
     ).toBe('node_not_runnable');
-    await w.executions.changeNode(w.runtimeA, execution.id, {
+    await w.executions.runtimeChangeNode(w.runtimeA, execution.id, {
       nodeId: 'n0',
       from: 'pending',
       to: 'running',
