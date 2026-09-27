@@ -58,6 +58,17 @@ variable "log_level" {
   default     = "info"
 }
 
+variable "job_lease_seconds" {
+  description = "How long a job lease lasts (ADR-0032, provisional option A). It must exceed the longest tool (10 min) or model call; Cloud Tasks allows at most 30 min."
+  type        = number
+  default     = 900
+
+  validation {
+    condition     = var.job_lease_seconds >= 60 && var.job_lease_seconds <= 1800
+    error_message = "job_lease_seconds must be between 60 and 1800."
+  }
+}
+
 variable "terraform_state_bucket" {
   description = "Bucket holding this environment's Terraform state. When set, the planner can read it."
   type        = string

@@ -11,6 +11,15 @@ locals {
 
   budget_enabled = var.budget != null
 
+  # The execution runtime (ADR-0032): the worker runs jobs Cloud Tasks delivers (D-X6-JOB). Only
+  # where the apps and Firestore exist (dev today).
+  runtime_enabled = var.deploy_apps && var.firestore_and_auth
+  job_queue_name  = "execution-jobs"
+  job_queue_path  = "projects/${var.project_id}/locations/${var.region}/queues/${local.job_queue_name}"
+  # The worker's deterministic run.app URL: the audience of the tasks' OIDC tokens and the base of
+  # their target. Known before the service exists, so the worker's own settings can name it.
+  worker_url = local.runtime_enabled ? "https://worker-${data.google_project.this[0].number}.${var.region}.run.app" : null
+
   base_services = [
     "artifactregistry.googleapis.com",
     "cloudresourcemanager.googleapis.com",
@@ -25,6 +34,9 @@ locals {
   firestore_and_auth_services = [
     "firestore.googleapis.com",
     "identitytoolkit.googleapis.com",
+  ]
+  runtime_services = [
+    "cloudtasks.googleapis.com",
   ]
   budget_services = [
     "billingbudgets.googleapis.com",
@@ -64,15 +76,20 @@ locals {
     budget = [
       "monitoring.notificationChannels.get", # budget alert channels
     ]
+    runtime = [
+      "cloudtasks.queues.get",          # the execution jobs queue
+      "cloudtasks.queues.getIamPolicy", # its enqueuer binding
+    ]
   }
 
   # The deployable applications of the repository. Only the web and API are public; the worker
   # accepts requests from the deployer alone, which it needs for health checks.
   apps = {
     web = {
-      public = true
-      memory = "256Mi"
-      env    = {}
+      public  = true
+      memory  = "256Mi"
+      env     = {}
+      timeout = null
     }
     api = {
       public = true
@@ -83,11 +100,25 @@ locals {
         { LOG_LEVEL = var.log_level },
         var.firestore_and_auth ? { IDENTITY_PLATFORM_PROJECT_ID = var.project_id } : {},
       )
+      timeout = null
     }
     worker = {
       public = false
       memory = "512Mi"
-      env    = { LOG_LEVEL = var.log_level }
+      # With the runtime on, everything the worker needs to run jobs (ADR-0032). None is a secret.
+      env = merge(
+        { LOG_LEVEL = var.log_level },
+        local.runtime_enabled ? {
+          FIRESTORE_PROJECT_ID   = var.project_id
+          DEPLOYMENT_ENVIRONMENT = var.environment
+          JOB_LEASE_MS           = tostring(var.job_lease_seconds * 1000)
+          JOB_QUEUE              = local.job_queue_path
+          WORKER_URL             = local.worker_url
+          JOB_INVOKER_EMAIL      = google_service_account.job_dispatch[0].email
+        } : {},
+      )
+      # A delivery may run as long as its lease; other services keep the default.
+      timeout = local.runtime_enabled ? "${var.job_lease_seconds}s" : null
     }
   }
 }
@@ -100,7 +131,14 @@ module "services" {
     local.base_services,
     var.firestore_and_auth ? local.firestore_and_auth_services : [],
     local.budget_enabled ? local.budget_services : [],
+    local.runtime_enabled ? local.runtime_services : [],
   )
+}
+
+data "google_project" "this" {
+  count = local.runtime_enabled ? 1 : 0
+
+  project_id = var.project_id
 }
 
 module "registry" {
@@ -176,6 +214,7 @@ resource "google_project_iam_custom_role" "planner" {
     var.deploy_apps ? local.planner_permissions.cloud_run : [],
     var.firestore_and_auth ? local.planner_permissions.firestore_and_auth : [],
     local.budget_enabled ? local.planner_permissions.budget : [],
+    local.runtime_enabled ? local.planner_permissions.runtime : [],
   ))
 
   depends_on = [module.services]
@@ -222,11 +261,17 @@ module "app" {
   public              = each.value.public
   memory              = each.value.memory
   env                 = each.value.env
+  timeout             = each.value.timeout
   max_instances       = var.max_instances
   deletion_protection = var.deletion_protection
   labels              = local.labels
   developer_members   = { deployer = local.deployer_member }
-  invoker_members     = each.value.public ? {} : { deployer = local.deployer_member }
+  # A private service answers the deployer (health checks). The worker also answers the job
+  # dispatch identity, which Cloud Tasks signs its OIDC tokens as.
+  invoker_members = each.value.public ? {} : merge(
+    { deployer = local.deployer_member },
+    each.key == "worker" && local.runtime_enabled ? { job_dispatch = local.job_dispatch_member } : {},
+  )
 
   depends_on = [module.services]
 }
@@ -293,4 +338,81 @@ module "budget" {
   alert_emails       = var.budget.alert_emails
 
   depends_on = [module.services]
+}
+
+# ---------------------------------------------------------------------------------------------
+# Execution runtime transport (ADR-0032, D-X6-JOB). Cloud Tasks delivers { jobId } to the private
+# worker; it is never the source of truth (the job's lease and revision are).
+
+# The identity Cloud Tasks signs its OIDC tokens as. It can only invoke the worker.
+resource "google_service_account" "job_dispatch" {
+  count = local.runtime_enabled ? 1 : 0
+
+  project      = var.project_id
+  account_id   = "job-dispatch"
+  display_name = "Cloud Tasks job delivery to the worker (${var.environment})"
+
+  depends_on = [module.services]
+}
+
+locals {
+  job_dispatch_member = local.runtime_enabled ? "serviceAccount:${google_service_account.job_dispatch[0].email}" : null
+  worker_member       = local.runtime_enabled ? "serviceAccount:${module.app["worker"].runtime_service_account}" : null
+}
+
+# One queue for execution jobs. Retries are transport redeliveries only: a delivery that finds
+# the lease held answers 409 and comes back later, until the lease ends (ADR-0032).
+resource "google_cloud_tasks_queue" "execution_jobs" {
+  count = local.runtime_enabled ? 1 : 0
+
+  project  = var.project_id
+  location = var.region
+  name     = local.job_queue_name
+
+  rate_limits {
+    max_dispatches_per_second = 5
+    max_concurrent_dispatches = 10
+  }
+
+  retry_config {
+    max_attempts  = 10
+    min_backoff   = "10s"
+    max_backoff   = "600s"
+    max_doublings = 6
+  }
+
+  depends_on = [module.services]
+}
+
+# The worker hands the next job to the queue: enqueue on this queue only.
+resource "google_cloud_tasks_queue_iam_member" "worker_enqueuer" {
+  count = local.runtime_enabled ? 1 : 0
+
+  project  = var.project_id
+  location = var.region
+  name     = google_cloud_tasks_queue.execution_jobs[0].name
+  role     = "roles/cloudtasks.enqueuer"
+  member   = local.worker_member
+}
+
+# Creating a task with an OIDC token for the dispatch identity requires acting as it; the worker
+# may act as that identity only.
+resource "google_service_account_iam_member" "worker_acts_as_job_dispatch" {
+  count = local.runtime_enabled ? 1 : 0
+
+  service_account_id = google_service_account.job_dispatch[0].name
+  role               = "roles/iam.serviceAccountUser"
+  member             = local.worker_member
+}
+
+# The worker reads and writes Firestore with its own runtime identity, like the api. Firestore
+# IAM cannot be narrowed to collections for server identities; datastore.user is the smallest
+# predefined role that reads and writes documents (no admin, index, import or export). Which
+# collections the worker touches is enforced by its repositories.
+resource "google_project_iam_member" "worker_firestore" {
+  count = local.runtime_enabled ? 1 : 0
+
+  project = var.project_id
+  role    = "roles/datastore.user"
+  member  = local.worker_member
 }
