@@ -48,6 +48,14 @@ import {
   type AgentOutputRepository,
   type ExecutionRepository,
 } from '@melonoffice/execution';
+import {
+  createForecastEngine,
+  createRecordSources,
+  type ForecastLimits,
+  type ForecastModelProvider,
+  type ForecastRepository,
+  type ForecastScheduler,
+} from '@melonoffice/forecasting';
 import { createGia } from '@melonoffice/gia';
 import type { DeploymentEnvironment, OrganizationId } from '@melonoffice/domain';
 import { createToolGate } from '@melonoffice/guardrails';
@@ -87,6 +95,7 @@ import { registerBrainRoutes } from './brain.js';
 import { registerBusinessRoutes } from './business.js';
 import { registerCustomerRoutes } from './customers.js';
 import { registerFollowUpRoutes } from './follow-ups.js';
+import { registerForecastRoutes } from './forecasts.js';
 import { registerOpportunityRoutes } from './opportunities.js';
 import { registerGiaRoutes } from './gia.js';
 import { registerDepartmentRoutes } from './departments.js';
@@ -210,6 +219,23 @@ export interface AppOptions {
     readonly creditRate?: CreditRate;
     readonly credits?: AICreditsPort;
   };
+  /**
+   * The Forecasting Engine (ADR-0059). Its series come from the conversations' records (C1, C2,
+   * the inbox), so it also needs `conversations`, `credits` and `tenancy`. Absent: the forecast
+   * routes answer 503 and GIA says forecasts are not available.
+   */
+  readonly forecasting?: {
+    readonly repository: ForecastRepository;
+    /** The model's runtime (TimesFM 2.5). Absent: every run is refused, never pretended. */
+    readonly provider?: ForecastModelProvider;
+    /** The existing job queue, to the worker. Absent: every run is refused. */
+    readonly scheduler?: ForecastScheduler;
+    /** Whole credits per model run. Absent: every run is refused (`forecast_price_not_set`). */
+    readonly creditsPerRun?: number;
+    readonly limits?: ForecastLimits;
+    /** The clock periods are read from. Tests only. */
+    readonly now?: () => Date;
+  };
   /** Channel webhooks (ADR-0033). Absent: `/webhooks/*` answers 503. */
   readonly webhooks?: WebhookIngress;
   /**
@@ -251,6 +277,7 @@ export function createApp({
   workflows,
   conversations,
   ai = {},
+  forecasting,
   webhooks,
   agentTurns,
   webOrigins = [],
@@ -490,6 +517,51 @@ export function createApp({
       tenancy !== undefined && conversations !== undefined
         ? commercialOf(tenancy, conversations.repository)
         : undefined;
+    // The Forecasting Engine (ADR-0059): one capability for every department, GIA and reports.
+    // Its series are the organization's own records, read through the existing repositories;
+    // Company Brain gives only context (the currency, with the profile's time zone). A run goes
+    // to the worker on the existing job queue and is charged by the existing credits engine.
+    const forecastEngine =
+      tenancy !== undefined &&
+      conversations !== undefined &&
+      credits !== undefined &&
+      forecasting !== undefined
+        ? createForecastEngine({
+            repository: forecasting.repository,
+            sources: createRecordSources(conversations.repository),
+            ...(forecasting.provider === undefined ? {} : { provider: forecasting.provider }),
+            ...(forecasting.scheduler === undefined ? {} : { scheduler: forecasting.scheduler }),
+            ...(forecasting.creditsPerRun === undefined
+              ? {}
+              : { creditsPerRun: forecasting.creditsPerRun }),
+            ...(forecasting.limits === undefined ? {} : { limits: forecasting.limits }),
+            ...(forecasting.now === undefined ? {} : { now: forecasting.now }),
+            credits: createCreditService({ store: credits, organizations: tenancy }),
+            context: {
+              async of(organizationId) {
+                const profile = await businessProfiles?.find(organizationId);
+                if (profile === undefined) return undefined;
+                const currency = await companyFact(organizationId, 'finance', 'currency');
+                return {
+                  timeZone: profile.timeZone,
+                  ...(currency === undefined ? {} : { currency }),
+                };
+              },
+            },
+            tenancy,
+            authorization,
+            audit,
+            logger: logger.child({ component: 'forecasting' }),
+          })
+        : undefined;
+    if (tenancy !== undefined) {
+      registerForecastRoutes(app, {
+        store: tenancy,
+        authorization,
+        audit,
+        ...(forecastEngine === undefined ? {} : { engine: forecastEngine }),
+      });
+    }
     // GIA's chat (ADR-0052): the same gateway, Company Brain and activity, read as the person;
     // and, with C4, the commercial insights.
     if (tenancy !== undefined) {
@@ -518,6 +590,7 @@ export function createApp({
                       },
                     }),
                 ...(commercial === undefined ? {} : { commercial: commercial.insights }),
+                ...(forecastEngine === undefined ? {} : { forecasting: forecastEngine }),
                 departments: structure.departments,
                 authorization,
                 audit,

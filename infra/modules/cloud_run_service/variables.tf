@@ -30,6 +30,17 @@ variable "health_path" {
   default     = "/health"
 }
 
+variable "startup_failure_threshold" {
+  description = "Startup probe failures (every 3 seconds) before an instance counts as failed. A service that loads a large model at start needs more."
+  type        = number
+  default     = 10
+
+  validation {
+    condition     = var.startup_failure_threshold >= 1 && var.startup_failure_threshold <= 80
+    error_message = "startup_failure_threshold must be between 1 and 80 (Cloud Run allows 240 seconds)."
+  }
+}
+
 variable "public" {
   description = "Allow unauthenticated requests."
   type        = bool

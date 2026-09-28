@@ -45,6 +45,8 @@ export interface GiaAnswerView {
   readonly proposedFacts: number;
   readonly links: readonly GiaLinkView[];
   readonly proposedFollowUp: GiaFollowUpProposalView | null;
+  /** The answer carries a finished projection (ADR-0059): by the model or the simple fallback. */
+  readonly forecast: 'model' | 'fallback' | null;
 }
 
 export type GiaFailure = 'credits' | 'not_available' | 'rate_limited' | 'failed';
@@ -109,6 +111,11 @@ function proposalOf(raw: unknown): GiaFollowUpProposalView | null {
   };
 }
 
+function forecastOf(raw: unknown): GiaAnswerView['forecast'] {
+  if (!isRecord(raw) || raw.status !== 'completed') return null;
+  return raw.model === 'model' || raw.model === 'fallback' ? raw.model : null;
+}
+
 const FAILURES: Readonly<Record<string, GiaFailure>> = {
   ai_credits_insufficient: 'credits',
   ai_not_available: 'not_available',
@@ -146,6 +153,7 @@ export function createGiaClient(request: ReplyRequest, organizationId: string): 
           proposedFacts: typeof body.proposedFacts === 'number' ? body.proposedFacts : 0,
           links: linksOf(body.links),
           proposedFollowUp: proposalOf(body.proposedFollowUp),
+          forecast: forecastOf(body.forecast),
         },
       };
     },

@@ -140,6 +140,8 @@ describe('catalogue', () => {
       'pipeline.manage',
       'follow_up.read',
       'follow_up.manage',
+      'forecast.read',
+      'forecast.run',
       'channel.read',
       'channel.create',
       'channel.update',

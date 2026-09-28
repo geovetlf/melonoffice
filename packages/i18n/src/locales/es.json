@@ -522,6 +522,8 @@
   "gia.chat.cost": "Cada mensaje a GIA usa 1 crédito.",
   "gia.chat.notStored": "Este chat no se guarda: se borra al cerrar la aplicación.",
   "gia.chat.suggestion": "Sugerencia (la haces tú): {action}",
+  "gia.chat.forecastModel": "Proyección del modelo de pronóstico: es una estimación, no un dato real.",
+  "gia.chat.forecastFallback": "Estimación simple con promedios recientes (el modelo de pronóstico no estaba disponible): no es un dato real.",
   "gia.chat.facts": "{count, plural, one {GIA anotó # dato de tu negocio para que lo confirmes.} other {GIA anotó # datos de tu negocio para que los confirmes.}}",
   "gia.chat.department": "Esto le corresponde a {department}.",
   "gia.chat.go": "Ir a {place}",

@@ -57,7 +57,7 @@ resource "google_cloud_run_v2_service" "this" {
         }
         period_seconds    = 3
         timeout_seconds   = 2
-        failure_threshold = 10
+        failure_threshold = var.startup_failure_threshold
       }
 
       liveness_probe {

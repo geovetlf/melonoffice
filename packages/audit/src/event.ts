@@ -63,6 +63,7 @@ export interface AuditTarget {
     | 'opportunity'
     | 'pipeline'
     | 'follow_up'
+    | 'forecast'
     | 'gia';
   readonly id: string;
 }

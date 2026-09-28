@@ -56,6 +56,9 @@ jobs:
           # The Firestore tests fail instead of skipping if the emulator is missing.
           REQUIRE_FIRESTORE_EMULATOR: '1'
       - run: pnpm build
+      # The forecaster's contract and server (ADR-0059), with a fake model: no torch needed.
+      - name: Test the forecaster
+        run: python3 -m unittest discover -s apps/forecaster/tests -t apps/forecaster
 
   terraform:
     name: Terraform format, validate, test

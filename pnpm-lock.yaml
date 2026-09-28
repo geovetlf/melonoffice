@@ -104,6 +104,9 @@ importers:
       '@melonoffice/firestore':
         specifier: workspace:*
         version: link:../../packages/firestore
+      '@melonoffice/forecasting':
+        specifier: workspace:*
+        version: link:../../packages/forecasting
       '@melonoffice/gia':
         specifier: workspace:*
         version: link:../../packages/gia
@@ -226,6 +229,9 @@ importers:
       '@melonoffice/firestore':
         specifier: workspace:*
         version: link:../../packages/firestore
+      '@melonoffice/forecasting':
+        specifier: workspace:*
+        version: link:../../packages/forecasting
       '@melonoffice/guardrails':
         specifier: workspace:*
         version: link:../../packages/guardrails
@@ -642,6 +648,9 @@ importers:
       '@melonoffice/execution':
         specifier: workspace:*
         version: link:../execution
+      '@melonoffice/forecasting':
+        specifier: workspace:*
+        version: link:../forecasting
       '@melonoffice/integrations':
         specifier: workspace:*
         version: link:../integrations
@@ -674,6 +683,37 @@ importers:
         specifier: workspace:*
         version: link:../rbac
 
+  packages/forecasting:
+    dependencies:
+      '@melonoffice/audit':
+        specifier: workspace:*
+        version: link:../audit
+      '@melonoffice/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@melonoffice/observability':
+        specifier: workspace:*
+        version: link:../observability
+      '@melonoffice/rbac':
+        specifier: workspace:*
+        version: link:../rbac
+      '@melonoffice/tenancy':
+        specifier: workspace:*
+        version: link:../tenancy
+    devDependencies:
+      '@melonoffice/auth':
+        specifier: workspace:*
+        version: link:../auth
+      '@melonoffice/config':
+        specifier: workspace:*
+        version: link:../config
+      '@melonoffice/credits':
+        specifier: workspace:*
+        version: link:../credits
+      '@melonoffice/departments':
+        specifier: workspace:*
+        version: link:../departments
+
   packages/gia:
     dependencies:
       '@melonoffice/activity':
@@ -697,6 +737,9 @@ importers:
       '@melonoffice/domain':
         specifier: workspace:*
         version: link:../domain
+      '@melonoffice/forecasting':
+        specifier: workspace:*
+        version: link:../forecasting
       '@melonoffice/observability':
         specifier: workspace:*
         version: link:../observability

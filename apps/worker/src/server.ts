@@ -28,6 +28,7 @@ import {
   FirestoreCreditStore,
   FirestoreDepartmentRepository,
   FirestoreExecutionRepository,
+  FirestoreForecastRepository,
   FirestoreJobRepository,
   FirestoreSpecialistRepository,
   FirestoreTenancyStore,
@@ -40,6 +41,13 @@ import {
   deliveryPolicyFromEnv,
 } from '@melonoffice/integrations';
 import { createFollowUpService } from '@melonoffice/conversations';
+import {
+  createForecastEngine,
+  createRecordSources,
+  createTimesFMProvider,
+  forecastingConfigFromEnv,
+  metadataIdentityTokens,
+} from '@melonoffice/forecasting';
 import { createLogger } from '@melonoffice/observability';
 import { createAuthorizationService } from '@melonoffice/rbac';
 import { createToolRegistry, TOOL_CATALOGUE } from '@melonoffice/tools';
@@ -49,11 +57,14 @@ import { createApp, RUN_JOB_PATH, SERVICE_NAME, type AppOptions } from './app.js
 import { loadConfig, type RuntimeConfig } from './config.js';
 import { createCloudTasksDispatcher, createCloudTasksScheduler } from './dispatcher.js';
 import { createFollowUpHandler, RUN_FOLLOW_UP_PATH } from './follow-ups.js';
+import { createForecastHandler } from './forecasts.js';
 import { createJobHandler } from './handler.js';
 import { createWorkerRuntime } from './runtime.js';
 
 const config = loadConfig(process.env);
 const logger = createLogger({ service: SERVICE_NAME, level: config.logLevel });
+// The Forecasting Engine's settings (ADR-0059): the model's runtime and the credit cost.
+const forecasting = forecastingConfigFromEnv(process.env);
 
 /** This instance, recorded on the leases it takes. Infrastructure only, never an actor. */
 const workerId = `${(process.env.K_REVISION ?? 'local').replace(/[^\w-]/g, '-').slice(0, 80)}-${randomUUID().slice(0, 8)}`;
@@ -176,8 +187,47 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
       dispatchDeadlineSeconds: Math.ceil(runtime.leaseMs / 1000),
     }),
   });
+  // Forecasts (ADR-0059): the worker is the only place the model is called, with its own identity
+  // on the private forecaster service. The engine re-reads each forecast and charges it once.
+  const forecastEngine = createForecastEngine({
+    repository: new FirestoreForecastRepository(firestore),
+    sources: createRecordSources(new FirestoreConversationRepository(firestore)),
+    ...(forecasting.forecasterUrl === undefined
+      ? {}
+      : {
+          provider: createTimesFMProvider({
+            url: forecasting.forecasterUrl,
+            token: metadataIdentityTokens({ audience: forecasting.forecasterUrl }),
+          }),
+        }),
+    fallback: forecasting.fallback,
+    credits: createCreditService({
+      store: new FirestoreCreditStore(firestore),
+      organizations: tenancy,
+    }),
+    ...(forecasting.creditsPerRun === undefined
+      ? {}
+      : { creditsPerRun: forecasting.creditsPerRun }),
+    context: {
+      of: async (organizationId) => {
+        const profile = await businessProfiles.find(organizationId);
+        return profile === undefined
+          ? undefined
+          : { timeZone: profile.timeZone, currency: profile.currency };
+      },
+    },
+    tenancy,
+    authorization: createAuthorizationService(),
+    audit: createAuditService(stores.audit),
+    logger: logger.child({ component: 'forecasting' }),
+    limits: forecasting.limits,
+  });
   return {
     handler: createJobHandler({ jobs: jobService, runtime: engine, workerId, logger }),
+    forecasts: createForecastHandler({
+      engine: forecastEngine,
+      logger: logger.child({ component: 'forecasts' }),
+    }),
     followUps: createFollowUpHandler({
       followUps,
       logger: logger.child({ component: 'follow-ups' }),
@@ -190,6 +240,10 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
 }
 
 logger.info('runtime', { enabled: config.runtime !== undefined, workerId });
+logger.info('forecasting', {
+  model: forecasting.forecasterUrl !== undefined,
+  priced: forecasting.creditsPerRun !== undefined,
+});
 logger.info('conversation agents', {
   ai: config.agents.vertexAI !== undefined,
   sending: config.agents.channelSecretsProjectId !== undefined,

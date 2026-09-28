@@ -639,6 +639,105 @@ run "no_conversation_agents_without_assisted_ai" {
   }
 }
 
+# The Forecasting Engine (ADR-0059): one private forecaster, only the worker may call it, and the
+# api and worker know its URL. No price is invented: without one, runs stay refused.
+run "dev_runs_the_forecaster" {
+  command = apply
+
+  variables {
+    environment         = "dev"
+    deploy_apps         = true
+    deletion_protection = false
+    firestore_and_auth  = true
+    ai_assist           = true
+    conversation_agents = true
+    forecasting         = true
+  }
+
+  assert {
+    condition     = length(module.app) == 4 && !contains(module.app["forecaster"].invoker_members, "allUsers") && length(module.app["forecaster"].invoker_members) == 1
+    error_message = "The forecaster must be a fourth, private service that only the deployer invokes through the module."
+  }
+
+  assert {
+    condition     = google_cloud_run_v2_service_iam_member.worker_invokes_forecaster[0].role == "roles/run.invoker" && google_cloud_run_v2_service_iam_member.worker_invokes_forecaster[0].member == "serviceAccount:${module.app["worker"].runtime_service_account}" && google_cloud_run_v2_service_iam_member.worker_invokes_forecaster[0].name == module.app["forecaster"].name
+    error_message = "Only the worker's identity may call the forecaster (besides the deployer)."
+  }
+
+  assert {
+    condition     = module.app["forecaster"].resources == { cpu = "2", memory = "4Gi", concurrency = 1, max_instances = 1 }
+    error_message = "The forecaster runs one forecast at a time, on 2 vCPU and 4 GiB, at most one instance."
+  }
+
+  assert {
+    condition     = module.app["api"].env["FORECASTER_URL"] == "https://forecaster-123456789012.test-region.run.app" && module.app["worker"].env["FORECASTER_URL"] == module.app["api"].env["FORECASTER_URL"]
+    error_message = "The api and worker must name the same forecaster URL."
+  }
+
+  assert {
+    condition     = !contains(keys(module.app["api"].env), "FORECAST_CREDITS_PER_RUN") && !contains(keys(module.app["worker"].env), "FORECAST_CREDITS_PER_RUN")
+    error_message = "Without a price set, no price is passed and runs stay refused."
+  }
+
+  assert {
+    condition     = length(google_cloud_tasks_queue.execution_jobs) == 1 && length(google_service_account.job_dispatch) == 1
+    error_message = "Forecasts reuse the one queue and dispatch identity; nothing parallel is created."
+  }
+
+  assert {
+    condition     = module.app["web"].resources.cpu == "1" && module.app["api"].resources.concurrency == 80 && module.app["worker"].resources.max_instances == 2
+    error_message = "The other services keep their resources."
+  }
+}
+
+run "forecast_price_is_passed_when_set" {
+  command = plan
+
+  variables {
+    environment              = "dev"
+    deploy_apps              = true
+    deletion_protection      = false
+    firestore_and_auth       = true
+    ai_assist                = true
+    conversation_agents      = true
+    forecasting              = true
+    forecast_credits_per_run = 1
+  }
+
+  assert {
+    condition     = module.app["api"].env["FORECAST_CREDITS_PER_RUN"] == "1" && module.app["worker"].env["FORECAST_CREDITS_PER_RUN"] == "1"
+    error_message = "A price set is passed to the api and worker alike."
+  }
+}
+
+run "no_forecaster_without_agents" {
+  command = plan
+
+  variables {
+    environment         = "dev"
+    deploy_apps         = true
+    deletion_protection = false
+    firestore_and_auth  = true
+    forecasting         = true
+  }
+
+  assert {
+    condition     = length(module.app) == 3 && length(google_cloud_run_v2_service_iam_member.worker_invokes_forecaster) == 0 && !contains(keys(module.app["api"].env), "FORECASTER_URL")
+    error_message = "Without the api's queue access (conversation agents), forecasting creates nothing."
+  }
+}
+
+run "rejects_a_fractional_forecast_price" {
+  command = plan
+
+  variables {
+    environment              = "dev"
+    forecast_credits_per_run = 0.5
+  }
+
+  expect_failures = [var.forecast_credits_per_run]
+}
+
 # The WhatsApp channel (ADR-0033): the api and worker read channel secrets only, by name, and
 # Terraform never holds a secret value.
 run "dev_turns_the_whatsapp_channel_on" {

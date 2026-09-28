@@ -375,12 +375,15 @@ export function setupApp(
     webOrigins,
     ai,
     followUpScheduler,
+    forecasting,
   }: {
     readonly sending?: boolean;
     readonly webOrigins?: readonly string[];
     readonly ai?: AppOptions['ai'];
     /** Follow-ups' scheduler (C5): a recording one unless a test passes its own, or `null`. */
     readonly followUpScheduler?: FollowUpScheduler | null;
+    /** The Forecasting Engine's parts (ADR-0059). Absent: its routes answer 503. */
+    readonly forecasting?: AppOptions['forecasting'];
   } = {},
 ) {
   const lines: string[] = [];
@@ -441,6 +444,7 @@ export function setupApp(
       ...(scheduler === null ? {} : { followUpScheduler: scheduler }),
     },
     webhooks: engine,
+    ...(forecasting ? { forecasting } : {}),
     ...(tools ? { tools } : {}),
     ...(webOrigins ? { webOrigins } : {}),
     ...(ai ? { ai } : {}),

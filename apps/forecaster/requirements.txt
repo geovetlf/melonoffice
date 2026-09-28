@@ -1,0 +1,7 @@
+# The Forecasting Engine's model runtime (ADR-0059). Every version is pinned: an upgrade is an
+# explicit decision. TimesFM stays on 2.0.2 (TimesFM 2.5); 3.x is not used.
+# torch is installed first from the CPU index (see requirements-torch.txt), so no CUDA wheels.
+timesfm==2.0.2
+numpy==2.4.6
+safetensors==0.8.0
+huggingface_hub==2.0.0

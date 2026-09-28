@@ -252,7 +252,10 @@ describe('worker architecture', () => {
       'createVertexAIAdapter(',
       'createWhatsAppAdapter(',
     ]);
-    expect([...server.matchAll(/credits:/g)]).toHaveLength(1);
+    // Credits: the gateway's, at the approved rate, and the Forecasting Engine's (ADR-0059), the
+    // same credit service charging whole credits per run.
+    expect([...server.matchAll(/credits:/g)]).toHaveLength(2);
+    expect(server).toMatch(/credits: createCreditService\(/);
     expect(server).toMatch(/rate: CREDIT_RATE/);
     const agents = text('agents.ts');
     expect(

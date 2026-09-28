@@ -2,6 +2,8 @@
 # Phase 2 adds Firestore and Identity Platform to dev only (D-6).
 # CV-5 lets the dev api call Vertex AI for assisted AI (D-7, ADR-0038).
 # CV-6C lets conversation agents run in dev (ADR-0043) and turns on the WhatsApp channel's secrets.
+# The Forecasting Engine (ADR-0059) adds the private forecaster (TimesFM 2.5). Its price per run is
+# not set yet (forecast_credits_per_run): until the owner sets it, runs are refused.
 module "environment" {
   source = "../../modules/environment"
 
@@ -15,6 +17,7 @@ module "environment" {
   ai_assist           = true
   conversation_agents = true
   whatsapp_channel    = true
+  forecasting         = true
   # Meta Graph API version for sending, as Meta shows it for the DEV app (App settings → Advanced).
   whatsapp_graph_api_version = "v26.0"
   deletion_protection        = false

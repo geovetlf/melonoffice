@@ -12,6 +12,11 @@ import {
   withAgentTurns,
   type ConversationIngressPort,
 } from '@melonoffice/integrations';
+import {
+  createTimesFMProvider,
+  forecastingConfigFromEnv,
+  metadataIdentityTokens,
+} from '@melonoffice/forecasting';
 import { createCloudTasksDispatcher, createCloudTasksScheduler } from '@melonoffice/runtime';
 import { defaultToolRegistry } from '@melonoffice/tools';
 import { createAgentTurns } from './agent-turns.js';
@@ -33,6 +38,7 @@ import {
   FirestoreDepartmentRepository,
   FirestoreEntitlementOverrideStore,
   FirestoreExecutionRepository,
+  FirestoreForecastRepository,
   FirestoreJobRepository,
   FirestoreSpecialistRepository,
   FirestoreCreditStore,
@@ -43,6 +49,9 @@ import {
 } from '@melonoffice/firestore';
 
 const config = loadConfig(process.env);
+// The Forecasting Engine (ADR-0059): the model's runtime, its credit cost and limits, from
+// Terraform. Each missing part refuses runs; nothing is pretended.
+const forecastingConfig = forecastingConfigFromEnv(process.env);
 const logger = createLogger({ service: SERVICE_NAME, level: config.logLevel });
 
 // Auth is on only where Terraform sets the project (dev today). Firestore credentials come from
@@ -167,6 +176,37 @@ function services(projectId: string) {
       // configured (DEV, from Terraform); anywhere else sending stays off (fails closed).
       ...(engine === undefined || environment === undefined ? {} : { outbound: { environment } }),
     },
+    // Forecasts (ADR-0059): stored in Firestore; a run goes to the worker on the same queue and
+    // invoker as jobs. The API never calls the model: it only needs to know it is deployed.
+    forecasting: {
+      repository: new FirestoreForecastRepository(firestore),
+      ...(forecastingConfig.forecasterUrl === undefined
+        ? {}
+        : {
+            provider: createTimesFMProvider({
+              url: forecastingConfig.forecasterUrl,
+              token: metadataIdentityTokens({ audience: forecastingConfig.forecasterUrl }),
+            }),
+          }),
+      ...(transport === undefined
+        ? {}
+        : {
+            scheduler: (() => {
+              const scheduler = createCloudTasksScheduler({
+                queue: transport.queue,
+                targetUrl: `${transport.workerUrl}/internal/forecasts/run`,
+                audience: transport.workerUrl,
+                invokerEmail: transport.invokerEmail,
+                dispatchDeadlineSeconds: Math.ceil(transport.leaseMs / 1000),
+              });
+              return { enqueue: (task: object) => scheduler.schedule(task, new Date()) };
+            })(),
+          }),
+      ...(forecastingConfig.creditsPerRun === undefined
+        ? {}
+        : { creditsPerRun: forecastingConfig.creditsPerRun }),
+      limits: forecastingConfig.limits,
+    },
     // Webhooks: the engine's inbound side, only where it exists.
     ...(engine === undefined ? {} : { webhooks: engine }),
   };
@@ -182,6 +222,10 @@ logger.info('channels', {
 });
 
 logger.info('web origins', { count: config.webOrigins?.length ?? 0 });
+logger.info('forecasting', {
+  model: forecastingConfig.forecasterUrl !== undefined,
+  priced: forecastingConfig.creditsPerRun !== undefined,
+});
 
 // The AI Gateway (ADR-0027, ADR-0038): Vertex AI with Gemini 2.5 Flash-Lite (D-7) and the credit
 // rate (D-12), only where Terraform sets the environment and the Vertex AI project (DEV today).

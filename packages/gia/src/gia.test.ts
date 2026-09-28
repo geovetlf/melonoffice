@@ -35,6 +35,14 @@ import type {
 } from '@melonoffice/domain';
 import { createAuthorizationService, ROLES, type RoleCatalogue } from '@melonoffice/rbac';
 import { createOrganization, InMemoryTenancyStore, resolveTenant } from '@melonoffice/tenancy';
+import {
+  addPeriods,
+  createForecastEngine,
+  InMemoryForecastRepository,
+  TIMESFM_MODEL,
+  type ForecastModelProvider,
+  type ForecastTask,
+} from '@melonoffice/forecasting';
 import { describe, expect, it } from 'vitest';
 import { GiaError } from './errors.js';
 import { createGia, giaRequestIdOf, type GiaService } from './service.js';
@@ -117,6 +125,8 @@ async function world(
     roles?: RoleCatalogue;
     activity?: ActivityItem[];
     commercial?: (organizationId: string, mentions?: string) => Promise<CommercialInsights>;
+    /** The Forecasting Engine, real, over a daily sales history of this many days. */
+    forecast?: { readonly days: number; readonly model?: 'ok' | 'down' };
   } = {},
 ) {
   const store = new InMemoryAuditStore();
@@ -145,6 +155,60 @@ async function world(
   });
   const ai = fakeGateway();
   const commercialReads: string[] = [];
+  const forecastRuns: ForecastTask[] = [];
+  const charges: string[] = [];
+  const model: ForecastModelProvider = {
+    model: TIMESFM_MODEL,
+    forecast: async (input) => {
+      if (options.forecast?.model === 'down') throw new Error('down');
+      return {
+        point: Array.from({ length: input.horizon }, () => 110),
+        quantiles: Array.from({ length: input.horizon }, () => [
+          60, 70, 80, 90, 110, 120, 130, 140, 160,
+        ]),
+      };
+    },
+  };
+  const forecastEngine =
+    options.forecast === undefined
+      ? undefined
+      : createForecastEngine({
+          repository: new InMemoryForecastRepository(),
+          sources: {
+            // Won sales of the last `days` days, S/100 a day, up to yesterday in Lima.
+            'sales.won_value': {
+              read: async (request) => {
+                const days = options.forecast?.days ?? 0;
+                return Array.from({ length: days }, (_, i) => ({
+                  timestamp: addPeriods(request.end, i - days + 1, 'day'),
+                  value: 100,
+                }));
+              },
+            },
+          },
+          provider: model,
+          scheduler: {
+            // The worker, as the queue would call it.
+            enqueue: async (task) => {
+              forecastRuns.push(task);
+              setTimeout(() => void forecastEngine?.run(task, { final: true }), 0);
+            },
+          },
+          credits: {
+            balanceOf: async () => ({ status: 'present', balance: 100 }),
+            consume: async (_tenant, request) => {
+              charges.push(request.referenceId);
+              return { balance: 99, replayed: false };
+            },
+          },
+          creditsPerRun: 1,
+          context: { of: async () => ({ timeZone: 'America/Lima', currency: 'PEN' }) },
+          tenancy,
+          authorization,
+          audit,
+          now: () => NOW,
+          sleep: (ms) => new Promise((resolve) => setTimeout(resolve, Math.min(ms, 5))),
+        });
   const gia: GiaService = createGia({
     gateway: ai.gateway,
     brain,
@@ -165,6 +229,7 @@ async function world(
             },
           },
         }),
+    ...(forecastEngine === undefined ? {} : { forecasting: forecastEngine }),
     departments,
     authorization,
     audit,
@@ -184,6 +249,8 @@ async function world(
   return {
     ai,
     commercialReads,
+    forecastRuns,
+    charges,
     gia,
     brain,
     store,
@@ -349,7 +416,13 @@ describe('GIA chat (ADR-0052)', () => {
   it('answers without company context when the person may not read it', async () => {
     const w = await world({ roles: { owner: ['organization.read', 'gia.ask'] } });
     const answer = await w.gia.ask(w.alice, ask('Hola'));
-    expect(answer.context).toEqual({ facts: 0, activity: false, commercial: false, missing: [] });
+    expect(answer.context).toEqual({
+      facts: 0,
+      activity: false,
+      commercial: false,
+      forecast: false,
+      missing: [],
+    });
     expect(w.ai.calls).toHaveLength(1);
     expect(textOf(w.ai.calls[0])).toContain('(nothing known yet)');
   });
@@ -834,5 +907,159 @@ describe('GIA follow-ups (C5)', () => {
     expect(answer.proposedFollowUp).toBeNull();
     expect(schemaOf(w.ai.calls[0]).properties.followUp).toBeUndefined();
     expect(textOf(w.ai.calls[0])).toContain('this person may not schedule follow-ups');
+  });
+});
+
+describe('GIA and the Forecasting Engine (ADR-0059)', () => {
+  const forecastOf = (sent: string) => /<forecast>\n([\s\S]*?)\n<\/forecast>/.exec(sent)?.[1];
+
+  it('"¿Cuánto venderemos el próximo mes?" asks the engine, as the person, and keeps history apart', async () => {
+    const w = await world({ forecast: { days: 90 } });
+    const answer = await w.gia.ask(w.alice, ask('¿Cuánto venderemos el próximo mes?'));
+    expect(w.forecastRuns).toHaveLength(1);
+    expect(w.charges).toHaveLength(1);
+    expect(answer.forecast).toMatchObject({
+      status: 'completed',
+      metric: 'sales.won_value',
+      frequency: 'day',
+      horizon: 30,
+      model: 'model',
+    });
+    expect(answer.context.forecast).toBe(true);
+    const sent = textOf(w.ai.calls[0]);
+    const block = forecastOf(sent) as string;
+    // History and projection are separate, labelled, and every figure is calculated here.
+    expect(block).toContain('HISTORY (what was recorded; facts):');
+    expect(block).toContain('PROJECTION (an estimate, not a fact; it can be wrong):');
+    expect(block.indexOf('HISTORY')).toBeLessThan(block.indexOf('PROJECTION'));
+    expect(block).toMatch(/90 days, total S\/\s?9,000\.00/);
+    expect(block).toMatch(/central estimate S\/\s?3,300\.00 in total/);
+    expect(block).toMatch(/range of the total: S\/\s?1,800\.00 to S\/\s?4,800\.00/);
+    expect(block).toContain('trend: projected average is +10%');
+    expect(block).toContain('the forecasting model timesfm-2.5-200m');
+    // The rules: an estimate, never a certainty, no confidence figure.
+    expect(sent).toContain('Projections of the future come only from <forecast>');
+    expect(sent).toContain('never give a confidence or probability percentage');
+    expect(sent).toContain('el modelo proyecta alrededor de');
+    // The audit names the sources, never a figure.
+    const events = w.store.events().filter((e) => e.action === 'gia.message_answered');
+    expect(events.at(-1)).toMatchObject({ result: 'success', reason: 'forecast_context' });
+    expect(JSON.stringify(w.store.events())).not.toMatch(/3,300|9,000/);
+  });
+
+  it('"Proyecta nuestras ventas de los próximos 30 días." is the same forecast: no second run or charge', async () => {
+    const w = await world({ forecast: { days: 90 } });
+    const first = await w.gia.ask(
+      w.alice,
+      ask('¿Cuánto venderemos el próximo mes?', 'key-00000001'),
+    );
+    const second = await w.gia.ask(
+      w.alice,
+      ask('Proyecta nuestras ventas de los próximos 30 días.', 'key-00000002'),
+    );
+    expect(second.forecast?.id).toBe(first.forecast?.id);
+    expect(w.forecastRuns).toHaveLength(1);
+    expect(w.charges).toHaveLength(1);
+    // The same click again is answered from memory: no gateway call, no engine request.
+    await w.gia.ask(
+      w.alice,
+      ask('Proyecta nuestras ventas de los próximos 30 días.', 'key-00000002'),
+    );
+    expect(w.ai.calls).toHaveLength(2);
+  });
+
+  it('"¿Cuál es la tendencia de nuestras ventas?" gives the trend from the engine, not from the model', async () => {
+    const w = await world({ forecast: { days: 90 } });
+    const answer = await w.gia.ask(w.alice, ask('¿Cuál es la tendencia de nuestras ventas?'));
+    expect(answer.forecast).toMatchObject({ metric: 'sales.won_value', status: 'completed' });
+    expect(forecastOf(textOf(w.ai.calls[0]))).toContain('trend: projected average is +10%');
+  });
+
+  it('"¿Cuántos pedidos esperamos la próxima semana?" is unsupported: no run, no other metric', async () => {
+    const w = await world({ forecast: { days: 90 } });
+    const answer = await w.gia.ask(w.alice, ask('¿Cuántos pedidos esperamos la próxima semana?'));
+    expect(w.forecastRuns).toHaveLength(0);
+    expect(answer.forecast).toEqual({
+      id: null,
+      status: 'unsupported',
+      metric: null,
+      frequency: null,
+      horizon: null,
+      model: null,
+    });
+    const block = forecastOf(textOf(w.ai.calls[0])) as string;
+    expect(block).toContain('no records of orders');
+    expect(block).not.toMatch(/HISTORY|PROJECTION|S\//);
+  });
+
+  it('with too little history, says so with no figure and no charge', async () => {
+    const w = await world({ forecast: { days: 10 } });
+    const answer = await w.gia.ask(w.alice, ask('¿Cuánto venderemos el próximo mes?'));
+    expect(answer.forecast?.status).toBe('insufficient_data');
+    expect(w.forecastRuns).toHaveLength(0);
+    expect(w.charges).toHaveLength(0);
+    const block = forecastOf(textOf(w.ai.calls[0])) as string;
+    expect(block).toContain('insufficient_data');
+    expect(block).toContain('recorded periods: 10');
+    expect(block).toContain('periods needed: 28');
+    expect(block).not.toContain('PROJECTION');
+  });
+
+  it('respects permissions: without forecast.run or opportunity.read the engine is not asked', async () => {
+    for (const missing of ['forecast.run', 'opportunity.read']) {
+      const w = await world({
+        forecast: { days: 90 },
+        roles: { ...ROLES, owner: ROLES.owner.filter((p) => p !== missing) },
+      });
+      const answer = await w.gia.ask(w.alice, ask('¿Cuánto venderemos el próximo mes?'));
+      expect(answer.forecast?.status).toBe('not_allowed');
+      expect(w.forecastRuns).toHaveLength(0);
+      const sent = textOf(w.ai.calls[0]);
+      expect(forecastOf(sent)).toContain('not_allowed');
+      expect(sent).toContain('No tienes permisos para consultar esa información.');
+    }
+  });
+
+  it('labels the fallback as a simple estimate when the model is down', async () => {
+    const w = await world({ forecast: { days: 90, model: 'down' } });
+    const answer = await w.gia.ask(
+      w.alice,
+      ask('Proyecta nuestras ventas de los próximos 30 días.'),
+    );
+    expect(answer.forecast).toMatchObject({ status: 'completed', model: 'fallback' });
+    expect(w.charges).toHaveLength(0);
+    expect(forecastOf(textOf(w.ai.calls[0]))).toContain('a simple estimate from recent averages');
+  });
+
+  it('never asks the engine for questions that are not projections, and never forecasts on its own', async () => {
+    const w = await world({ forecast: { days: 90 } });
+    for (const [i, message] of [
+      'Hola',
+      '¿Cuánto vendimos este mes?',
+      'Recuérdame el próximo seguimiento sobre la venta de Juan',
+    ].entries()) {
+      const answer = await w.gia.ask(w.alice, ask(message, `key-0000010${i}`));
+      expect(answer.forecast).toBeNull();
+    }
+    expect(w.forecastRuns).toHaveLength(0);
+    const sent = textOf(w.ai.calls[0]);
+    expect(forecastOf(sent)).toBeUndefined();
+    expect(sent).toContain('never forecast, project or estimate future figures yourself');
+  });
+
+  it('uses Company Brain facts chosen for the question, not all of it', async () => {
+    const w = await world({ forecast: { days: 90 } });
+    for (let i = 0; i < 40; i += 1) {
+      await w.brain.propose(w.alice, {
+        domain: 'products',
+        key: 'price',
+        subject: { type: 'product', id: `p_${i}` },
+        label: `Producto ${i}`,
+        value: { type: 'money', amountMinor: 1000 + i, currency: 'PEN' },
+      });
+    }
+    const answer = await w.gia.ask(w.alice, ask('¿Cuánto venderemos el próximo mes?'));
+    expect(answer.context.facts).toBeLessThanOrEqual(25);
+    expect(forecastOf(textOf(w.ai.calls[0]))).toBeDefined();
   });
 });
