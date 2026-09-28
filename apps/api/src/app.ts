@@ -32,6 +32,8 @@ import {
   createConversationService,
   createCustomerService,
   createCommercialInsights,
+  createFollowUpService,
+  type FollowUpScheduler,
   type ConversationRepository,
 } from '@melonoffice/conversations';
 import { createCreditService, type CreditStore } from '@melonoffice/credits';
@@ -84,6 +86,7 @@ import { DEFAULT_ACTIVITY_TIME_ZONE, registerActivityRoutes } from './activity.j
 import { registerBrainRoutes } from './brain.js';
 import { registerBusinessRoutes } from './business.js';
 import { registerCustomerRoutes } from './customers.js';
+import { registerFollowUpRoutes } from './follow-ups.js';
 import { registerOpportunityRoutes } from './opportunities.js';
 import { registerGiaRoutes } from './gia.js';
 import { registerDepartmentRoutes } from './departments.js';
@@ -168,6 +171,12 @@ export interface AppOptions {
     readonly templates?: ChannelTemplateRepository;
     /** Where channel secrets live. Unset: no connection can be created. */
     readonly secretProjectId?: string;
+    /**
+     * Where follow-ups' tasks are queued for their time (C5, ADR-0058): the job transport's queue
+     * and worker. Absent: follow-ups can be read, but creating or rescheduling one answers 503
+     * (`follow_up_scheduler_unavailable`); nothing pretends to be scheduled.
+     */
+    readonly followUpScheduler?: FollowUpScheduler;
     /**
      * Agents' kept answers (CV-6B, ADR-0043), read only for the note an agent left when it handed
      * a conversation to a person. Absent: the detail shows no note.
@@ -441,6 +450,8 @@ export function createApp({
     // them (C4) as the person asking. Opportunities and pipeline (C2, ADR-0054) have stages
     // proposed for the kind of business Company Brain knows; customers and leads (C1, ADR-0053)
     // are the same contacts, with a commercial stage.
+    const zoneOf = async (organizationId: OrganizationId) =>
+      (await businessProfiles?.find(organizationId))?.timeZone ?? DEFAULT_ACTIVITY_TIME_ZONE;
     const commercialOf = (store: TenancyStore, repository: ConversationRepository) => {
       const opportunities = createOpportunityService({
         repository,
@@ -454,16 +465,26 @@ export function createApp({
         organizations: store,
         authorization,
       });
+      // Follow-ups (C5, ADR-0058): scheduled on the job transport, read in the business's zone.
+      const followUps = createFollowUpService({
+        repository,
+        organizations: store,
+        authorization,
+        timeZone: zoneOf,
+        ...(conversations?.followUpScheduler === undefined
+          ? {}
+          : { scheduler: conversations.followUpScheduler }),
+      });
       const insights = createCommercialInsights({
         customers,
         opportunities,
         conversations: repository,
+        followUps,
         authorization,
-        timeZone: async (organizationId) =>
-          (await businessProfiles?.find(organizationId))?.timeZone ?? DEFAULT_ACTIVITY_TIME_ZONE,
+        timeZone: zoneOf,
         currency: (organizationId) => companyFact(organizationId, 'finance', 'currency'),
       });
-      return { opportunities, customers, insights };
+      return { opportunities, customers, insights, followUps };
     };
     const commercial =
       tenancy !== undefined && conversations !== undefined
@@ -723,8 +744,16 @@ export function createApp({
       });
       // Customers and leads (C1): each card also shows the contact's conversations,
       // opportunities and history (C3, ADR-0055).
-      const { opportunities, customers } =
+      const { opportunities, customers, followUps } =
         commercial ?? commercialOf(tenancy, conversations.repository);
+      registerFollowUpRoutes(app, {
+        store: tenancy,
+        authorization,
+        audit,
+        followUps,
+        contacts: conversations.repository,
+        ...(brain === undefined ? {} : { brain }),
+      });
       registerCustomerRoutes(app, {
         store: tenancy,
         authorization,
@@ -784,7 +813,13 @@ export function createApp({
     } else if (tenancy !== undefined) {
       const unavailable = (c: Context<Env>) =>
         c.json({ error: 'conversations_not_configured' }, 503);
-      for (const path of ['conversations', 'contacts', 'channel-connections', 'integrations']) {
+      for (const path of [
+        'conversations',
+        'contacts',
+        'channel-connections',
+        'integrations',
+        'follow-ups',
+      ]) {
         app.all(`/v1/organizations/:organizationId/${path}`, unavailable);
         app.all(`/v1/organizations/:organizationId/${path}/*`, unavailable);
       }

@@ -397,7 +397,12 @@ describe('commercial insights (C4)', () => {
       wonValue: [],
     });
     expect(Object.values(insights.lists).every((l) => l.length === 0)).toBe(true);
-    expect(insights.records).toEqual({ contacts: [], opportunities: [], conversations: [] });
+    expect(insights.records).toEqual({
+      contacts: [],
+      opportunities: [],
+      conversations: [],
+      followUps: [],
+    });
   });
 
   it('leaves out, whole, what the person may not read', () => {

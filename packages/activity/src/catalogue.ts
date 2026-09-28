@@ -56,10 +56,24 @@ const CUSTOMER_ACTIONS = [
   'opportunity.lost',
 ] as const satisfies readonly AuditAction[];
 
+/**
+ * Follow-ups (C5, ADR-0058): scheduled, due (the internal notice that its time came), done,
+ * rescheduled, cancelled and failed. Nothing is sent to the contact; the office shows it.
+ */
+const FOLLOW_UP_ACTIONS = [
+  'follow_up.created',
+  'follow_up.due',
+  'follow_up.completed',
+  'follow_up.rescheduled',
+  'follow_up.cancelled',
+  'follow_up.failed',
+] as const satisfies readonly AuditAction[];
+
 /** The actions of each audit query the activity view runs. */
 export const ACTIVITY_ACTION_GROUPS: readonly (readonly AuditAction[])[] = [
   OFFICE_ACTIONS,
   CUSTOMER_ACTIONS,
+  FOLLOW_UP_ACTIONS,
 ];
 
 /** Every action the activity view shows. */
@@ -81,8 +95,8 @@ export interface ActivityItem {
   readonly action: string;
   readonly result: string;
   readonly actor: ActivityActor;
-  /** What the event is about, when the app can open it: today, a conversation. */
-  readonly link?: { readonly kind: 'conversation'; readonly id: string };
+  /** What the event is about, when the app can open it: a conversation or a follow-up. */
+  readonly link?: { readonly kind: 'conversation' | 'follow_up'; readonly id: string };
 }
 
 function actorOf(event: AuditEvent, viewer: UserId): ActivityActor {
@@ -91,7 +105,8 @@ function actorOf(event: AuditEvent, viewer: UserId): ActivityActor {
     if (actor.via === 'gia') return 'gia';
     return actor.userId === viewer ? 'you' : 'member';
   }
-  if (actor.type === 'system') return 'agent';
+  // The scheduler marking a follow-up due is the system, not an agent (C5).
+  if (actor.type === 'system') return event.action.startsWith('follow_up.') ? 'system' : 'agent';
   // Only a verified channel records an anonymous actor: the contact wrote.
   return event.action === 'conversation.message_received' ? 'contact' : 'system';
 }
@@ -100,6 +115,7 @@ const CONVERSATION_REFERENCE = /^conversation:([A-Za-z0-9_-]{1,128})$/;
 
 function linkOf(event: AuditEvent): ActivityItem['link'] {
   if (event.target?.type === 'conversation') return { kind: 'conversation', id: event.target.id };
+  if (event.target?.type === 'follow_up') return { kind: 'follow_up', id: event.target.id };
   const found = CONVERSATION_REFERENCE.exec(event.reference ?? '');
   return found?.[1] === undefined ? undefined : { kind: 'conversation', id: found[1] };
 }

@@ -2,6 +2,8 @@
 // hand an agent's first job over the same way (ADR-0043).
 export {
   createCloudTasksDispatcher,
+  createCloudTasksScheduler,
+  type CloudTasksScheduler,
   DispatchError,
   METADATA_TOKEN_URL,
   type CloudTasksDispatcherOptions,

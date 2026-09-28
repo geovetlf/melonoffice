@@ -3,6 +3,8 @@ import { Button } from '@melonoffice/ui';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type { CustomersClient, CustomerView } from '../customers/customersClient.js';
 import { navigate } from '../identity/router.js';
+import { RecordFollowUps } from '../followUps/FollowUps.js';
+import type { FollowUpsClient } from '../followUps/followUpsClient.js';
 import { openedWith, paths } from '../shell/routes.js';
 import { useRead } from '../shell/useRead.js';
 import {
@@ -71,6 +73,7 @@ export function OpportunitiesSection({
   canManagePipeline,
   currentUserId,
   today,
+  followUps,
 }: {
   readonly client: OpportunitiesClient;
   readonly customers?: CustomersClient;
@@ -78,6 +81,8 @@ export function OpportunitiesSection({
   readonly canManagePipeline: boolean;
   readonly currentUserId: string;
   readonly today: string;
+  /** An opportunity's next follow-up (C5), for a role that may read them. */
+  readonly followUps?: { readonly client: FollowUpsClient; readonly canManage: boolean };
 }) {
   const intl = useIntl();
   const [status, setStatus] = useState<OpportunityStatus>('open');
@@ -251,6 +256,7 @@ export function OpportunitiesSection({
           currentUserId={currentUserId}
           today={today}
           onChanged={reload}
+          {...(followUps === undefined ? {} : { followUps })}
         />
       )}
     </section>
@@ -452,6 +458,7 @@ function OpportunityCard({
   currentUserId,
   today,
   onChanged,
+  followUps,
 }: {
   readonly client: OpportunitiesClient;
   readonly id: string;
@@ -460,6 +467,7 @@ function OpportunityCard({
   readonly currentUserId: string;
   readonly today: string;
   readonly onChanged: () => void;
+  readonly followUps?: { readonly client: FollowUpsClient; readonly canManage: boolean };
 }) {
   const intl = useIntl();
   const detail = useRead(`opportunity:${id}`, () => client.get(id));
@@ -666,6 +674,8 @@ function OpportunityCard({
               <input
                 className="gia-chat__input"
                 maxLength={200}
+                // The earliest open follow-up's (ADR-0058): it changes only through them.
+                disabled={o.nextAction?.followUpId !== undefined}
                 value={field('nextText', o.nextAction?.text ?? '')}
                 onChange={(e) => setField('nextText', e.target.value)}
               />
@@ -675,6 +685,7 @@ function OpportunityCard({
               <input
                 className="gia-chat__input"
                 type="date"
+                disabled={o.nextAction?.followUpId !== undefined}
                 value={field('nextDue', o.nextAction?.dueOn ?? '')}
                 onChange={(e) => setField('nextDue', e.target.value)}
               />
@@ -691,6 +702,15 @@ function OpportunityCard({
         <p className="gia-chat__error" role="alert">
           <FormattedMessage id={error} />
         </p>
+      )}
+      {followUps === undefined ? null : (
+        <RecordFollowUps
+          client={followUps.client}
+          contactId={o.contact.id}
+          opportunityId={o.id}
+          canManage={followUps.canManage && o.status === 'open'}
+          onChanged={onChanged}
+        />
       )}
       <h4>
         <FormattedMessage id="opportunities.conversations" />

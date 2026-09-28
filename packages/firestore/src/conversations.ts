@@ -36,6 +36,10 @@ import {
   type ContactWrite,
   type OpportunityRead,
   type OpportunityWrite,
+  type FollowUpRead,
+  type FollowUpWrite,
+  checkNextFollowUp,
+  subjectOf,
   type PipelineWrite,
   type ConversationWrite,
   type DeliveryStatusUpdate,
@@ -58,10 +62,13 @@ import type {
   Conversation,
   ConversationId,
   ConversationSettings,
+  FollowUp,
+  FollowUpId,
   IsoTimestamp,
   Message,
   MessageId,
   MessageTemplateRef,
+  NextAction,
   Opportunity,
   OpportunityId,
   OrganizationId,
@@ -100,6 +107,12 @@ export const CONTACT_NOTES = 'contactNotes';
 export const PIPELINES = 'pipelines';
 /** `opportunities/{id}`: possible sales to contacts (C2, ADR-0054). */
 export const OPPORTUNITIES = 'opportunities';
+/**
+ * `followUps/{id}`: scheduled follow-ups of contacts and opportunities (C5, ADR-0058). Each
+ * carries `subject` (`opportunity:{id}` or `contact:{id}`), so a record's follow-ups are read with
+ * two equality filters, which Firestore serves from single-field indexes.
+ */
+export const FOLLOW_UPS = 'followUps';
 
 const ts = (value: IsoTimestamp): FirestoreTimestamp => Timestamp.fromDate(new Date(value));
 const iso = (value: FirestoreTimestamp): IsoTimestamp =>
@@ -145,6 +158,15 @@ function toCommercialDocument(c: ContactCommercial): Doc {
   };
 }
 
+/** A next action; with `followUpId` it is its record's earliest open follow-up (C5). */
+function toNextAction(d: { text: string; dueOn: string; followUpId?: string | null }): NextAction {
+  return Object.freeze({
+    text: d.text,
+    dueOn: d.dueOn,
+    ...orAbsent('followUpId', d.followUpId as FollowUpId | null | undefined),
+  });
+}
+
 function toCommercial(d: Doc): ContactCommercial {
   const source = d.source as Doc;
   const consent = d.consent as Doc;
@@ -163,7 +185,7 @@ function toCommercial(d: Doc): ContactCommercial {
     }),
     ...(nextAction === null || nextAction === undefined
       ? {}
-      : { nextAction: Object.freeze({ text: nextAction.text, dueOn: nextAction.dueOn }) }),
+      : { nextAction: toNextAction(nextAction) }),
     stageChangedAt: d.stageChangedAt as IsoTimestamp,
   });
 }
@@ -267,14 +289,82 @@ function toOpportunity(id: string, d: Doc): Opportunity {
     probability: d.probability as number,
     ...orAbsent('ownerId', d.ownerId as Opportunity['ownerId'] | null),
     ...orAbsent('expectedCloseOn', d.expectedCloseOn as string | null),
-    ...(nextAction == null
-      ? {}
-      : { nextAction: Object.freeze({ text: nextAction.text, dueOn: nextAction.dueOn }) }),
+    ...(nextAction == null ? {} : { nextAction: toNextAction(nextAction) }),
     ...orAbsent('lostReason', d.lostReason as Opportunity['lostReason'] | null),
     ...isoOrAbsent('closedAt', d.closedAt as FirestoreTimestamp | null),
     stageChangedAt: iso(d.stageChangedAt as FirestoreTimestamp),
     revision: d.revision as number,
     createdBy: d.createdBy as Opportunity['createdBy'],
+    createdAt: iso(d.createdAt as FirestoreTimestamp),
+    updatedAt: iso(d.updatedAt as FirestoreTimestamp),
+  });
+}
+
+// Follow-ups (C5) --------------------------------------------------------------------------------
+
+export function toFollowUpDocument(f: FollowUp): Doc {
+  return {
+    organizationId: f.organizationId,
+    contactId: f.contactId,
+    opportunityId: f.opportunityId ?? null,
+    subject: subjectOf(f),
+    assignedTo: f.assignedTo,
+    type: f.type,
+    title: f.title,
+    description: f.description ?? null,
+    scheduledAt: ts(f.scheduledAt),
+    timeZone: f.timeZone,
+    status: f.status,
+    source: f.source,
+    schedule: f.schedule,
+    history: f.history.map((h) => ({ ...h })),
+    dueAt: tsOrNull(f.dueAt),
+    completedAt: tsOrNull(f.completedAt),
+    completedBy: f.completedBy ?? null,
+    cancelledAt: tsOrNull(f.cancelledAt),
+    cancelledBy: f.cancelledBy ?? null,
+    cancelReason: f.cancelReason ?? null,
+    failure: f.failure ?? null,
+    failedAt: tsOrNull(f.failedAt),
+    metadata: { ...f.metadata },
+    revision: f.revision,
+    createdBy: f.createdBy,
+    createdAt: ts(f.createdAt),
+    updatedAt: ts(f.updatedAt),
+  };
+}
+
+function toFollowUp(id: string, d: Doc): FollowUp {
+  return Object.freeze({
+    id: id as FollowUpId,
+    organizationId: d.organizationId as OrganizationId,
+    contactId: d.contactId as ContactId,
+    ...orAbsent('opportunityId', d.opportunityId as OpportunityId | null),
+    assignedTo: d.assignedTo as FollowUp['assignedTo'],
+    type: d.type as FollowUp['type'],
+    title: d.title as string,
+    ...orAbsent('description', d.description as string | null),
+    scheduledAt: iso(d.scheduledAt as FirestoreTimestamp),
+    timeZone: d.timeZone as string,
+    status: d.status as FollowUp['status'],
+    source: d.source as FollowUp['source'],
+    schedule: d.schedule as number,
+    history: Object.freeze(
+      ((d.history as Doc[] | undefined) ?? []).map((h) =>
+        Object.freeze({ ...h }),
+      ) as unknown as FollowUp['history'],
+    ),
+    ...isoOrAbsent('dueAt', d.dueAt as FirestoreTimestamp | null),
+    ...isoOrAbsent('completedAt', d.completedAt as FirestoreTimestamp | null),
+    ...orAbsent('completedBy', d.completedBy as FollowUp['completedBy'] | null),
+    ...isoOrAbsent('cancelledAt', d.cancelledAt as FirestoreTimestamp | null),
+    ...orAbsent('cancelledBy', d.cancelledBy as FollowUp['cancelledBy'] | null),
+    ...orAbsent('cancelReason', d.cancelReason as FollowUp['cancelReason'] | null),
+    ...orAbsent('failure', d.failure as FollowUp['failure'] | null),
+    ...isoOrAbsent('failedAt', d.failedAt as FirestoreTimestamp | null),
+    metadata: Object.freeze({ ...(d.metadata as FollowUp['metadata']) }),
+    revision: d.revision as number,
+    createdBy: d.createdBy as FollowUp['createdBy'],
     createdAt: iso(d.createdAt as FirestoreTimestamp),
     updatedAt: iso(d.updatedAt as FirestoreTimestamp),
   });
@@ -974,6 +1064,116 @@ export class FirestoreConversationRepository implements ConversationRepository {
       }
       this.#append(t, next.events);
       return next.opportunity;
+    });
+  }
+
+  async findFollowUp(
+    organizationId: OrganizationId,
+    id: FollowUpId,
+  ): Promise<FollowUp | undefined> {
+    if (!isOrganizationId(organizationId) || !isUuid(id)) return undefined;
+    const snapshot = await this.db.collection(FOLLOW_UPS).doc(id).get();
+    const data = snapshot.data();
+    return data?.organizationId === organizationId ? toFollowUp(snapshot.id, data) : undefined;
+  }
+
+  async listFollowUps(organizationId: OrganizationId): Promise<readonly FollowUp[]> {
+    if (!isOrganizationId(organizationId)) return [];
+    const snapshot = await this.db
+      .collection(FOLLOW_UPS)
+      .where('organizationId', '==', organizationId)
+      .get();
+    return snapshot.docs.map((doc) => toFollowUp(doc.id, doc.data()));
+  }
+
+  async writeFollowUp(
+    organizationId: OrganizationId,
+    target: {
+      readonly followUpId: FollowUpId;
+      readonly contactId?: ContactId;
+      readonly opportunityId?: OpportunityId;
+    },
+    change: (read: FollowUpRead) => FollowUpWrite,
+  ): Promise<FollowUp> {
+    if (!isOrganizationId(organizationId) || !isUuid(target.followUpId)) {
+      throw new ConversationError('follow_up_not_found');
+    }
+    const doc = this.db.collection(FOLLOW_UPS).doc(target.followUpId);
+    return this.db.runTransaction(async (t) => {
+      const snapshot = await t.get(doc);
+      const data = snapshot.data();
+      if (data !== undefined && data.organizationId !== organizationId) {
+        // Another organization's id: never read, never overwritten.
+        throw new ConversationError(
+          target.contactId === undefined ? 'follow_up_not_found' : 'duplicate_request',
+        );
+      }
+      const current = data === undefined ? undefined : toFollowUp(snapshot.id, data);
+      if (current === undefined && target.contactId === undefined) {
+        throw new ConversationError('follow_up_not_found');
+      }
+      const contactId = current?.contactId ?? (target.contactId as ContactId);
+      const opportunityId = current === undefined ? target.opportunityId : current.opportunityId;
+      if (!isContactId(contactId)) throw new ConversationError('contact_not_found');
+      if (opportunityId !== undefined && !isUuid(opportunityId)) {
+        throw new ConversationError('opportunity_not_found');
+      }
+      const contactDoc = this.db.collection(CONTACTS).doc(contactId);
+      const opportunityDoc =
+        opportunityId === undefined
+          ? undefined
+          : this.db.collection(OPPORTUNITIES).doc(opportunityId);
+      const subject =
+        opportunityId === undefined ? `contact:${contactId}` : `opportunity:${opportunityId}`;
+      const [contactSnapshot, opportunitySnapshot, siblings] = await Promise.all([
+        t.get(contactDoc),
+        opportunityDoc === undefined ? undefined : t.get(opportunityDoc),
+        t.get(
+          this.db
+            .collection(FOLLOW_UPS)
+            .where('organizationId', '==', organizationId)
+            .where('subject', '==', subject),
+        ),
+      ]);
+      const contactData = contactSnapshot.data();
+      if (contactData?.organizationId !== organizationId) {
+        throw new ConversationError('contact_not_found');
+      }
+      const contact = toContact(contactSnapshot.id, contactData);
+      let opportunity: Opportunity | undefined;
+      if (opportunitySnapshot !== undefined) {
+        const opportunityData = opportunitySnapshot.data();
+        if (
+          opportunityData?.organizationId !== organizationId ||
+          opportunityData.contactId !== contact.id
+        ) {
+          throw new ConversationError('opportunity_not_found');
+        }
+        opportunity = toOpportunity(opportunitySnapshot.id, opportunityData);
+      }
+      const read: FollowUpRead = {
+        ...(current === undefined ? {} : { current }),
+        contact,
+        ...(opportunity === undefined ? {} : { opportunity }),
+        open: siblings.docs.map((d) => toFollowUp(d.id, d.data())),
+      };
+      const next = change(read);
+      if (next.followUp === current) return current;
+      checkNextFollowUp(read, next, organizationId);
+      if (current === undefined) t.create(doc, toFollowUpDocument(next.followUp));
+      else t.set(doc, toFollowUpDocument(next.followUp));
+      if (next.contact !== undefined && next.contact !== contact) {
+        t.set(contactDoc, toContactDocument(next.contact));
+      }
+      if (
+        next.opportunity !== undefined &&
+        next.opportunity !== opportunity &&
+        opportunityDoc !== undefined
+      ) {
+        t.set(opportunityDoc, toOpportunityDocument(next.opportunity));
+      }
+      this.#append(t, next.events);
+      return next.followUp;
     });
   }
 

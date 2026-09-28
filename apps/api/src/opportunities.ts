@@ -35,6 +35,7 @@ const STATUS: Partial<Record<ConversationErrorCode, ContentfulStatusCode>> = {
   opportunity_concurrency_conflict: 409,
   pipeline_concurrency_conflict: 409,
   contact_concurrency_conflict: 409,
+  next_action_from_follow_up: 409,
 };
 
 /** How many history entries and conversations one opportunity shows. */

@@ -1,6 +1,10 @@
 import type {
   Contact,
   ContactId,
+  FollowUp,
+  FollowUpId,
+  FollowUpStatus,
+  FollowUpType,
   ContactSourceKind,
   ContactStage,
   Conversation,
@@ -16,6 +20,12 @@ import type {
 import type { AuthorizationService } from '@melonoffice/rbac';
 import { isResolvedTenant, type TenantContext } from '@melonoffice/tenancy';
 import type { CustomerService } from './customers.js';
+import {
+  isOpenFollowUp,
+  timingOf,
+  type FollowUpService,
+  type FollowUpTiming,
+} from './follow-ups.js';
 import { ConversationError } from './errors.js';
 import type { OpportunityService } from './opportunities.js';
 import type { ConversationRepository } from './repository.js';
@@ -45,6 +55,11 @@ export const INSIGHT_RULES = Object.freeze({
   listed: 5,
   /** Items in "what to attend to". */
   attention: 10,
+  /** Open follow-ups named (overdue, today and the next days), soonest first. */
+  followUpsListed: 10,
+  /** Contacts a message names that are listed, and each one's open opportunities. */
+  mentioned: 5,
+  mentionedOpportunities: 3,
 });
 
 export type InsightOwner = 'you' | 'member' | 'none';
@@ -73,6 +88,8 @@ export interface InsightOpportunity {
   readonly ref: string;
   readonly id: OpportunityId;
   readonly title: string;
+  /** Its contact, for a follow-up proposed for it: never shown to the model. */
+  readonly contactId: ContactId;
   /** Its contact's reference, when the person may read contacts. */
   readonly contact: string | null;
   /** A name a person gave the stage, or the template stage's id. */
@@ -93,6 +110,24 @@ export interface InsightConversation {
   readonly id: ConversationId;
   readonly contact: string | null;
   readonly waitingSince: string;
+}
+
+/** A follow-up (C5), in its own time zone, with who must do it and what it is about. */
+export interface InsightFollowUp {
+  readonly ref: string;
+  readonly id: FollowUpId;
+  readonly type: FollowUpType;
+  readonly title: string;
+  readonly status: FollowUpStatus;
+  readonly date: string;
+  readonly time: string;
+  readonly when: FollowUpTiming['when'];
+  /** Days from today to its date: negative is overdue. */
+  readonly days: number;
+  readonly assignee: 'you' | 'member';
+  /** Its contact's and opportunity's references, when the person may read them. */
+  readonly contact: string | null;
+  readonly opportunity: string | null;
 }
 
 /** Why an item needs attention: a fixed rule, with its date and days. */
@@ -180,6 +215,19 @@ export interface CommercialInsights {
   } | null;
   /** Null when the person may not read conversations. */
   readonly conversations: { readonly waitingReply: number } | null;
+  /**
+   * Open follow-ups (C5): overdue, due today and within the next days, in all and assigned to
+   * the person; `listed` names them soonest first. Null when the person may not read them.
+   */
+  readonly followUps: {
+    readonly overdue: number;
+    readonly today: number;
+    readonly upcoming: number;
+    readonly open: number;
+    readonly mine: { readonly overdue: number; readonly today: number };
+    readonly listed: readonly string[];
+    readonly partial: boolean;
+  } | null;
   readonly attention: readonly AttentionItem[];
   readonly lists: {
     readonly highestValue: readonly string[];
@@ -188,12 +236,15 @@ export interface CommercialInsights {
     readonly inactiveCustomers: readonly string[];
     readonly quiet: readonly string[];
     readonly recentWins: readonly string[];
+    /** Contacts the person's message names, and their open opportunities (C5). */
+    readonly mentioned: readonly string[];
   };
   /** Every contact, opportunity and conversation a reference above names. */
   readonly records: {
     readonly contacts: readonly InsightContact[];
     readonly opportunities: readonly InsightOpportunity[];
     readonly conversations: readonly InsightConversation[];
+    readonly followUps: readonly InsightFollowUp[];
   };
 }
 
@@ -269,6 +320,37 @@ export interface InsightInput {
     readonly partial: boolean;
   };
   readonly conversations?: readonly Conversation[];
+  /** The organization's follow-ups (C5), when the person may read them. */
+  readonly followUps?: { readonly items: readonly FollowUp[]; readonly partial: boolean };
+  /**
+   * The person's message (C5): contacts it names are listed as `mentioned`, with their open
+   * opportunities, so a follow-up can be proposed for the right record. Matched by fixed rules.
+   */
+  readonly mentions?: string;
+}
+
+/** Lower case, without accents, words separated by one space. */
+const words = (text: string) =>
+  ` ${text
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim()} `;
+
+/**
+ * The contacts a message names: its whole name, or its first name (three letters or more) as a
+ * word. Several contacts may match; GIA asks which one when it matters.
+ */
+export function mentionedContacts(message: string, contacts: readonly Contact[]): Contact[] {
+  const said = words(message);
+  return contacts.filter((c) => {
+    if (c.status === 'archived' || c.displayName === undefined) return false;
+    const name = words(c.displayName).trim();
+    if (name === '') return false;
+    const first = name.split(' ')[0] ?? '';
+    return said.includes(` ${name} `) || (first.length >= 3 && said.includes(` ${first} `));
+  });
 }
 
 /** The insights of one organization's records, by the fixed rules above. Pure: no reads. */
@@ -337,6 +419,7 @@ export function commercialInsights(input: InsightInput): CommercialInsights {
         ref,
         id: o.id,
         title: o.title,
+        contactId: o.contactId,
         contact: contact === undefined ? null : contactRef(contact),
         stage: { id: o.stageId, name: stage?.name ?? null },
         status: o.status,
@@ -498,6 +581,51 @@ export function commercialInsights(input: InsightInput): CommercialInsights {
     }
   }
 
+  // Follow-ups (C5): what is overdue, due today and coming, soonest first. Their records are
+  // named only as the person may read them.
+  const followUpRefs = new Map<string, InsightFollowUp>();
+  const opportunityById = new Map(opportunities.map((o) => [o.id as string, o]));
+  const followCounts = { overdue: 0, today: 0, upcoming: 0, open: 0 };
+  const mine = { overdue: 0, today: 0 };
+  const listedFollowUps: string[] = [];
+  const openFollowUps = (input.followUps?.items ?? [])
+    .filter(isOpenFollowUp)
+    .toSorted((a, b) =>
+      a.scheduledAt < b.scheduledAt ? -1 : a.scheduledAt > b.scheduledAt ? 1 : 0,
+    );
+  for (const f of openFollowUps) {
+    const timing = timingOf(f, today);
+    followCounts.open += 1;
+    if (timing.when === 'overdue') followCounts.overdue += 1;
+    else if (timing.when === 'today') followCounts.today += 1;
+    else if (timing.when === 'upcoming') followCounts.upcoming += 1;
+    if (f.assignedTo === viewer && timing.when === 'overdue') mine.overdue += 1;
+    if (f.assignedTo === viewer && timing.when === 'today') mine.today += 1;
+    if (timing.when === 'later' || listedFollowUps.length >= R.followUpsListed) continue;
+    const contact = contactById.get(f.contactId);
+    const opportunity =
+      f.opportunityId === undefined ? undefined : opportunityById.get(f.opportunityId);
+    const ref = `f_${letters(followUpRefs.size + 1)}`;
+    followUpRefs.set(
+      f.id,
+      Object.freeze({
+        ref,
+        id: f.id,
+        type: f.type,
+        title: f.title,
+        status: f.status,
+        date: timing.date,
+        time: timing.time,
+        when: timing.when,
+        days: timing.days,
+        assignee: f.assignedTo === viewer ? 'you' : 'member',
+        contact: contact === undefined ? null : contactRef(contact),
+        opportunity: opportunity === undefined ? null : opportunityRef(opportunity),
+      }),
+    );
+    listedFollowUps.push(ref);
+  }
+
   const rank = (r: AttentionReason) => ATTENTION_ORDER.indexOf(r.kind);
   const attention = [...pending.values()]
     .map((p) => ({ ...p, reasons: p.reasons.toSorted((a, b) => rank(a) - rank(b)) }))
@@ -510,6 +638,17 @@ export function commercialInsights(input: InsightInput): CommercialInsights {
     })
     .slice(0, R.attention)
     .map((p) => Object.freeze({ ref: p.make(), reasons: Object.freeze(p.reasons) }));
+
+  // Contacts the person named, and their open opportunities: a follow-up may be for them.
+  const mentioned: string[] = [];
+  if (input.mentions !== undefined) {
+    for (const c of mentionedContacts(input.mentions, contacts).slice(0, R.mentioned)) {
+      mentioned.push(contactRef(c));
+      for (const o of open.filter((x) => x.contactId === c.id).slice(0, R.mentionedOpportunities)) {
+        mentioned.push(opportunityRef(o));
+      }
+    }
+  }
 
   const byValue = (a: Opportunity, b: Opportunity) =>
     (b.value?.amountMinor ?? 0) - (a.value?.amountMinor ?? 0);
@@ -538,6 +677,7 @@ export function commercialInsights(input: InsightInput): CommercialInsights {
         .slice(0, R.listed)
         .map(opportunityRef),
     ),
+    mentioned: Object.freeze(mentioned),
   });
 
   const closedIn = (o: Opportunity, from: string) =>
@@ -602,12 +742,22 @@ export function commercialInsights(input: InsightInput): CommercialInsights {
             partial: input.opportunities.partial,
           }),
     conversations: input.conversations === undefined ? null : Object.freeze({ waitingReply }),
+    followUps:
+      input.followUps === undefined
+        ? null
+        : Object.freeze({
+            ...followCounts,
+            mine: Object.freeze(mine),
+            listed: Object.freeze(listedFollowUps),
+            partial: input.followUps.partial,
+          }),
     attention: Object.freeze(attention),
     lists,
     records: Object.freeze({
       contacts: Object.freeze([...contactRefs.values()]),
       opportunities: Object.freeze([...opportunityRefs.values()]),
       conversations: Object.freeze([...conversationRefs.values()]),
+      followUps: Object.freeze([...followUpRefs.values()]),
     }),
   });
 }
@@ -618,13 +768,18 @@ export interface CommercialInsightService {
    * needs its own permission (`contact.read`, `opportunity.read`, `conversation.read`); a part
    * the person may not read is null, and nothing from it reaches another part.
    */
-  read(tenant: TenantContext): Promise<CommercialInsights>;
+  read(
+    tenant: TenantContext,
+    options?: { readonly mentions?: string },
+  ): Promise<CommercialInsights>;
 }
 
 export interface CommercialInsightOptions {
   readonly customers: Pick<CustomerService, 'list'>;
   readonly opportunities: Pick<OpportunityService, 'list' | 'pipeline'>;
   readonly conversations: Pick<ConversationRepository, 'listConversations'>;
+  /** Follow-ups (C5), read through their service as the person asking. */
+  readonly followUps?: Pick<FollowUpService, 'list'>;
   readonly authorization: Pick<AuthorizationService, 'authorize'>;
   /** The business's time zone (its profile): "today" and "this week" are its own. */
   readonly timeZone: (organizationId: OrganizationId) => Promise<string>;
@@ -644,19 +799,23 @@ export function createCommercialInsights(
     now = () => new Date(),
   } = options;
   return Object.freeze({
-    async read(tenant: TenantContext) {
+    async read(tenant: TenantContext, readOptions: { readonly mentions?: string } = {}) {
       if (!isResolvedTenant(tenant)) throw new ConversationError('unresolved_tenant');
       const organizationId = tenant.organizationId;
       const may = (permission: Parameters<AuthorizationService['authorize']>[1]) =>
         authorization.authorize(tenant, permission).allowed;
-      const [contactList, opportunityList, pipeline, threads, zone, currency] = await Promise.all([
-        may('contact.read') ? customers.list(tenant) : undefined,
-        may('opportunity.read') ? opportunities.list(tenant) : undefined,
-        may('opportunity.read') ? opportunities.pipeline(tenant) : undefined,
-        may('conversation.read') ? conversations.listConversations(organizationId) : undefined,
-        options.timeZone(organizationId),
-        options.currency(organizationId),
-      ]);
+      const [contactList, opportunityList, pipeline, threads, zone, currency, followUpList] =
+        await Promise.all([
+          may('contact.read') ? customers.list(tenant) : undefined,
+          may('opportunity.read') ? opportunities.list(tenant) : undefined,
+          may('opportunity.read') ? opportunities.pipeline(tenant) : undefined,
+          may('conversation.read') ? conversations.listConversations(organizationId) : undefined,
+          options.timeZone(organizationId),
+          options.currency(organizationId),
+          options.followUps !== undefined && may('follow_up.read')
+            ? options.followUps.list(tenant, { open: 'true' })
+            : undefined,
+        ]);
       const own = <T extends { readonly organizationId: OrganizationId }>(list: readonly T[]) =>
         list.filter((item) => item.organizationId === organizationId);
       return commercialInsights({
@@ -664,6 +823,7 @@ export function createCommercialInsights(
         now: now(),
         viewer: tenant.userId,
         currency,
+        ...(readOptions.mentions === undefined ? {} : { mentions: readOptions.mentions }),
         ...(contactList === undefined
           ? {}
           : {
@@ -688,6 +848,9 @@ export function createCommercialInsights(
               },
             }),
         ...(threads === undefined ? {} : { conversations: own(threads) }),
+        ...(followUpList === undefined
+          ? {}
+          : { followUps: { items: own(followUpList.items), partial: followUpList.hasMore } }),
       });
     },
   });

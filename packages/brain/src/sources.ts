@@ -169,6 +169,28 @@ export function pipelineKnowledge(summary: {
 }
 
 /**
+ * How the organization's follow-ups stand (C5, ADR-0058), `calculated`: how many are open and
+ * how many of those are overdue. Totals only: never a follow-up, its title, time or contact.
+ */
+export function followUpKnowledge(counts: { readonly open: number; readonly overdue: number }): {
+  readonly source: TrustedSource;
+  readonly facts: readonly Record<string, unknown>[];
+} {
+  const count = (key: string, number: number) => ({
+    domain: 'commercial',
+    key,
+    value: { type: 'number', number },
+  });
+  return {
+    source: { type: 'system', id: 'melonoffice' },
+    facts: [
+      count('open_follow_ups_count', counts.open),
+      count('overdue_follow_ups_count', counts.overdue),
+    ],
+  };
+}
+
+/**
  * Facts an integration brings (a CRM, a store, a channel), through the Integration Engine's own
  * connection: Company Brain never talks to an outside system itself. The connection must be the
  * organization's and connected; a CRM's facts are `crm`, any other's `integration`, both

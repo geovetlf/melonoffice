@@ -1,6 +1,8 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
 import { Button } from '@melonoffice/ui';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { RecordFollowUps } from '../followUps/FollowUps.js';
+import type { FollowUpsClient } from '../followUps/followUpsClient.js';
 import { openedWith } from '../shell/routes.js';
 import { ContactConversations, ContactHistory, ContactOpportunities } from './ContactContext.js';
 import {
@@ -45,11 +47,14 @@ export function CustomersSection({
   canManage,
   currentUserId,
   timeZone,
+  followUps,
 }: {
   readonly client: CustomersClient;
   readonly canManage: boolean;
   readonly currentUserId: string;
   readonly timeZone: string;
+  /** A contact's upcoming follow-ups (C5), for a role that may read them. */
+  readonly followUps?: { readonly client: FollowUpsClient; readonly canManage: boolean };
 }) {
   // A tab opened from elsewhere (GIA's links, C4) starts selected.
   const [stage, setStage] = useState<CustomerStage>(() => {
@@ -178,6 +183,7 @@ export function CustomersSection({
           currentUserId={currentUserId}
           today={today}
           onChanged={reload}
+          {...(followUps === undefined ? {} : { followUps })}
         />
       )}
     </section>
@@ -290,6 +296,7 @@ function CustomerCard({
   currentUserId,
   today,
   onChanged,
+  followUps,
 }: {
   readonly client: CustomersClient;
   readonly id: string;
@@ -297,6 +304,7 @@ function CustomerCard({
   readonly currentUserId: string;
   readonly today: string;
   readonly onChanged: () => void;
+  readonly followUps?: { readonly client: FollowUpsClient; readonly canManage: boolean };
 }) {
   const intl = useIntl();
   const [detail, setDetail] = useState<Load<CustomerDetail>>({ status: 'loading' });
@@ -438,47 +446,59 @@ function CustomerCard({
                 </Button>
               )}
             </div>
-            <div className="customers__next-edit">
-              <label>
-                <FormattedMessage id="customers.field.nextAction" />
-                <input
-                  className="gia-chat__input"
-                  value={nextText}
-                  maxLength={200}
-                  onChange={(e) => setNextText(e.target.value)}
-                />
-              </label>
-              <label>
-                <FormattedMessage id="customers.field.dueOn" />
-                <input
-                  className="gia-chat__input"
-                  type="date"
-                  value={nextDue}
-                  onChange={(e) => setNextDue(e.target.value)}
-                />
-              </label>
-              <div className="customers__actions">
-                <Button
-                  variant="secondary"
-                  disabled={nextText.trim() === '' || nextDue === ''}
-                  onClick={() =>
-                    void change({ nextAction: { text: nextText.trim(), dueOn: nextDue } })
-                  }
-                >
-                  <FormattedMessage id="customers.next.save" />
-                </Button>
-                {commercial.nextAction === null ? null : (
-                  <Button variant="secondary" onClick={() => void change({ nextAction: null })}>
-                    <FormattedMessage id="customers.next.clear" />
+            {commercial.nextAction?.followUpId !== undefined ? (
+              // The next action is the earliest open follow-up (ADR-0058): it moves with them.
+              <p className={`customers__next${late ? ' customers__next--late' : ''}`}>
+                {late ? <FormattedMessage id="customers.next.overdue" /> : null}{' '}
+                <FormattedMessage id="customers.field.nextAction" />: {commercial.nextAction.text} ·{' '}
+                {commercial.nextAction.dueOn}{' '}
+                <span className="customers__meta">
+                  <FormattedMessage id="followUps.nextActionFrom" />
+                </span>
+              </p>
+            ) : (
+              <div className="customers__next-edit">
+                <label>
+                  <FormattedMessage id="customers.field.nextAction" />
+                  <input
+                    className="gia-chat__input"
+                    value={nextText}
+                    maxLength={200}
+                    onChange={(e) => setNextText(e.target.value)}
+                  />
+                </label>
+                <label>
+                  <FormattedMessage id="customers.field.dueOn" />
+                  <input
+                    className="gia-chat__input"
+                    type="date"
+                    value={nextDue}
+                    onChange={(e) => setNextDue(e.target.value)}
+                  />
+                </label>
+                <div className="customers__actions">
+                  <Button
+                    variant="secondary"
+                    disabled={nextText.trim() === '' || nextDue === ''}
+                    onClick={() =>
+                      void change({ nextAction: { text: nextText.trim(), dueOn: nextDue } })
+                    }
+                  >
+                    <FormattedMessage id="customers.next.save" />
                   </Button>
-                )}
+                  {commercial.nextAction === null ? null : (
+                    <Button variant="secondary" onClick={() => void change({ nextAction: null })}>
+                      <FormattedMessage id="customers.next.clear" />
+                    </Button>
+                  )}
+                </div>
+                {late ? (
+                  <p className="customers__next customers__next--late">
+                    <FormattedMessage id="customers.next.overdue" />
+                  </p>
+                ) : null}
               </div>
-              {late ? (
-                <p className="customers__next customers__next--late">
-                  <FormattedMessage id="customers.next.overdue" />
-                </p>
-              ) : null}
-            </div>
+            )}
           </>
         )}
       </fieldset>
@@ -489,6 +509,17 @@ function CustomerCard({
       )}
       <ContactConversations detail={c} />
       <ContactOpportunities detail={c} today={today} />
+      {followUps === undefined ? null : (
+        <RecordFollowUps
+          client={followUps.client}
+          contactId={c.id}
+          canManage={followUps.canManage}
+          onChanged={() => {
+            onChanged();
+            setVersion((v) => v + 1);
+          }}
+        />
+      )}
       <h4>
         <FormattedMessage id="customers.notes" />
       </h4>

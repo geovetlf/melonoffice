@@ -79,6 +79,10 @@ const ICONS: readonly [string, IconName][] = [
   ['workflow.', 'automations'],
 ];
 
+/** Where an item opens: the conversations, or the follow-up among Comercial's (C5). */
+const linkPath = (link: NonNullable<ActivityItemView['link']>) =>
+  link.kind === 'follow_up' ? paths.followUp(link.id) : paths.conversations();
+
 const iconOf = (action: string): IconName =>
   ICONS.find(([prefix]) => action.startsWith(prefix))?.[1] ?? 'building';
 
@@ -161,16 +165,16 @@ export function ActivityList({ state }: { readonly state: ActivityState }) {
             <span className="activity__icon">
               <Icon name={iconOf(item.action)} size={16} />
             </span>
-            {item.link?.kind === 'conversation' ? (
+            {item.link !== undefined ? (
               <a
                 className="activity__link"
-                href={paths.conversations()}
+                href={linkPath(item.link)}
                 onClick={(event) => {
                   if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) {
                     return;
                   }
                   event.preventDefault();
-                  navigate(paths.conversations());
+                  navigate(linkPath(item.link as NonNullable<typeof item.link>));
                 }}
               >
                 {body}

@@ -22,6 +22,8 @@ import { commercialInsights, type CommercialInsights } from '@melonoffice/conver
 import type {
   Contact,
   ContactId,
+  FollowUp,
+  FollowUpId,
   InitialBilling,
   IsoTimestamp,
   Opportunity,
@@ -114,7 +116,7 @@ async function world(
   options: {
     roles?: RoleCatalogue;
     activity?: ActivityItem[];
-    commercial?: (organizationId: string) => Promise<CommercialInsights>;
+    commercial?: (organizationId: string, mentions?: string) => Promise<CommercialInsights>;
   } = {},
 ) {
   const store = new InMemoryAuditStore();
@@ -151,10 +153,14 @@ async function world(
       ? {}
       : {
           commercial: {
-            read: async (tenant: Parameters<GiaService['ask']>[0]) => {
+            read: async (
+              tenant: Parameters<GiaService['ask']>[0],
+              input?: { readonly mentions?: string },
+            ) => {
               commercialReads.push(tenant.actor);
               return (options.commercial as NonNullable<typeof options.commercial>)(
                 (tenant as { organizationId: string }).organizationId,
+                input?.mentions,
               );
             },
           },
@@ -440,7 +446,14 @@ function deal(title: string, of: Contact, n: number, fields: Partial<Opportunity
 }
 
 /** A restaurant: S/12,000 with an overdue next action, S/8,000 closing soon, US$1,000 open. */
-function restaurantInsights(parts: { contacts?: boolean; opportunities?: boolean } = {}) {
+function restaurantInsights(
+  parts: {
+    contacts?: boolean;
+    opportunities?: boolean;
+    followUps?: readonly FollowUp[];
+    mentions?: string;
+  } = {},
+) {
   const ana = lead('Ana', 1);
   const beto = lead('Beto', 2);
   const opportunities = [
@@ -462,6 +475,10 @@ function restaurantInsights(parts: { contacts?: boolean; opportunities?: boolean
     now: NOW,
     viewer: ALICE,
     currency: 'PEN',
+    ...(parts.followUps === undefined
+      ? {}
+      : { followUps: { items: parts.followUps, partial: false } }),
+    ...(parts.mentions === undefined ? {} : { mentions: parts.mentions }),
     ...(parts.contacts === false
       ? {}
       : {
@@ -630,5 +647,192 @@ describe('GIA commercial intelligence (C4)', () => {
     const answer = await w.gia.ask(w.alice, ask('Hola'));
     expect(answer).toMatchObject({ links: [], context: { commercial: false } });
     expect(textOf(w.ai.calls[0])).not.toContain('<commercial_context>');
+  });
+});
+
+// --- C5: follow-ups ---------------------------------------------------------------------------
+
+/** The restaurant, with the person's own words so the contacts she named are brought in. */
+const withFollowUps = (mentions = '', followUps: readonly FollowUp[] = []) =>
+  restaurantInsights({ mentions, followUps });
+
+function followUp(fields: Partial<FollowUp>): FollowUp {
+  return {
+    id: '00000000-0000-4000-8000-0000000000f1' as FollowUpId,
+    organizationId: 'org' as never,
+    contactId: 'contact_00000001' as ContactId,
+    assignedTo: ALICE,
+    type: 'call',
+    title: 'Llamar a Ana',
+    scheduledAt: '2026-09-27T15:00:00.000Z' as IsoTimestamp,
+    timeZone: 'America/Lima',
+    status: 'due',
+    source: 'manual',
+    schedule: 1,
+    history: [],
+    metadata: { automation: 'manual' },
+    revision: 1,
+    createdBy: ALICE,
+    createdAt: ts('2026-09-20'),
+    updatedAt: ts('2026-09-20'),
+    ...fields,
+  } as FollowUp;
+}
+
+const schemaOf = (request: AssistedAIRequest | undefined) =>
+  request?.outputSchema as unknown as {
+    properties: Record<string, { properties?: Record<string, { enum?: string[] }> } | undefined>;
+  };
+
+describe('GIA follow-ups (C5)', () => {
+  it('22. proposes a follow-up from the person’s words and creates nothing', async () => {
+    const w = await world({ commercial: async (_org, mentions) => withFollowUps(mentions) });
+    w.ai.state.answer = () =>
+      completed({
+        ...ANSWER,
+        answer: 'Te propongo llamar a Ana mañana a las 10. Confírmalo para programarlo.',
+        links: [],
+        // The model's date is wrong on purpose: the person said "mañana".
+        followUp: { record: 'c_a', type: 'call', title: 'Llamar a Ana', date: '2026-10-03' },
+      });
+    const answer = await w.gia.ask(w.alice, ask('Recuérdame llamar a Ana mañana a las 10'));
+    expect(answer.proposedFollowUp).toEqual({
+      contactId: 'contact_00000001',
+      contactLabel: 'Ana',
+      opportunityId: null,
+      opportunityLabel: null,
+      type: 'call',
+      title: 'Llamar a Ana',
+      date: '2026-09-29',
+      time: '10:00',
+      timeZone: 'America/Lima',
+    });
+    // The model got the contacts she named, a closed list of records and a grid of dates.
+    const sent = textOf(w.ai.calls[0]);
+    expect(sent).toContain('- named in the message: c_a, o_a');
+    expect(sent).toContain('- 2026-09-29 tuesday (tomorrow)');
+    expect(sent).toContain('never compute one');
+    const schema = schemaOf(w.ai.calls[0]);
+    expect(schema.properties.followUp?.properties?.record?.enum).toEqual(
+      expect.arrayContaining(['c_a', 'c_b', 'o_a']),
+    );
+    // Proposing is not doing: nothing but the answer's own audit.
+    expect(w.store.events().map((e) => e.action)).not.toContainEqual(
+      expect.stringMatching(/^follow_up\./),
+    );
+    expect(JSON.stringify(w.store.events())).not.toMatch(/Llamar|Ana/);
+  });
+
+  it('proposes it for the opportunity, from an earlier turn’s day, never for a closed one', async () => {
+    const w = await world({ commercial: async (_org, mentions) => withFollowUps(mentions) });
+    w.ai.state.answer = () =>
+      completed({
+        ...ANSWER,
+        links: [],
+        followUp: { record: 'o_a', type: 'review', title: 'Revisar cotización', date: null },
+      });
+    const answer = await w.gia.ask(
+      w.alice,
+      ask('Sí, eso', 'key-00000002', {
+        history: [
+          { role: 'person', text: 'El viernes quiero revisar la cotización de Ana' },
+          { role: 'gia', text: '¿Quieres que lo programe?' },
+        ],
+      }),
+    );
+    expect(answer.proposedFollowUp).toMatchObject({
+      contactId: 'contact_00000001',
+      opportunityId: '00000000-0000-4000-8000-000000000001',
+      opportunityLabel: 'Catering boda',
+      type: 'review',
+      date: '2026-10-02',
+      time: null,
+    });
+    // A record she was not given is no proposal.
+    w.ai.state.answer = () =>
+      completed({
+        ...ANSWER,
+        links: [],
+        followUp: { record: 'c_z', type: 'call', title: 'x', date: null },
+      });
+    expect(
+      (await w.gia.ask(w.alice, ask('Recuérdame', 'key-00000003'))).proposedFollowUp,
+    ).toBeNull();
+  });
+
+  it('23. answers "what follow-ups do I have" from the listed follow-ups, with links', async () => {
+    const w = await world({
+      commercial: async (_org, mentions) =>
+        withFollowUps(mentions, [
+          followUp({}),
+          followUp({
+            id: '00000000-0000-4000-8000-0000000000f2' as FollowUpId,
+            title: 'Enviar menú',
+            type: 'message',
+            status: 'scheduled',
+            scheduledAt: '2026-09-30T20:00:00.000Z' as IsoTimestamp,
+          }),
+        ]),
+    });
+    w.ai.state.answer = () =>
+      completed({ ...ANSWER, links: ['f_a', 'follow_ups', 'f_z'], followUp: null });
+    const answer = await w.gia.ask(w.alice, ask('¿Qué seguimientos tengo pendientes?'));
+    const sent = textOf(w.ai.calls[0]);
+    expect(sent).toContain('Follow-ups open: 2; overdue 1; today 0');
+    expect(sent).toMatch(
+      /- f_a follow-up call "Llamar a Ana".*2026-09-27 10:00 \(overdue by 1 days\)/,
+    );
+    expect(sent).toMatch(/- f_b follow-up message "Enviar menú".*2026-09-30 15:00 \(in 2 days\)/);
+    expect(answer.links).toEqual([
+      { kind: 'follow_up', id: '00000000-0000-4000-8000-0000000000f1', label: 'Llamar a Ana' },
+      { kind: 'follow_ups' },
+    ]);
+    expect(answer.proposedFollowUp).toBeNull();
+  });
+
+  it('24. never invents a time: only the person’s words give one', async () => {
+    const w = await world({ commercial: async (_org, mentions) => withFollowUps(mentions) });
+    w.ai.state.answer = () =>
+      completed({
+        ...ANSWER,
+        links: [],
+        // Whatever the model adds beyond the schema is ignored.
+        followUp: {
+          record: 'c_b',
+          type: 'call',
+          title: 'Llamar a Beto',
+          date: '2026-10-02',
+          time: '15:00',
+        },
+      });
+    const answer = await w.gia.ask(w.alice, ask('Recuérdame llamar a Beto el viernes'));
+    expect(answer.proposedFollowUp).toMatchObject({ date: '2026-10-02', time: null });
+    // No day said and the model's is not a real date: no day either; the card asks for both.
+    w.ai.state.answer = () =>
+      completed({
+        ...ANSWER,
+        links: [],
+        followUp: { record: 'c_b', type: 'call', title: 'Llamar a Beto', date: '2026-02-30' },
+      });
+    const vague = await w.gia.ask(w.alice, ask('Recuérdame llamar a Beto', 'key-00000002'));
+    expect(vague.proposedFollowUp).toMatchObject({ date: null, time: null });
+    expect(textOf(w.ai.calls[0])).toContain('never');
+  });
+
+  it('25. without follow_up.manage there is no follow-up field and no proposal', async () => {
+    const roles = {
+      owner: ROLES.owner.filter((p) => p !== 'follow_up.manage'),
+    } as unknown as RoleCatalogue;
+    const w = await world({ roles, commercial: async (_org, mentions) => withFollowUps(mentions) });
+    w.ai.state.answer = () =>
+      completed({
+        ...ANSWER,
+        links: [],
+        followUp: { record: 'c_a', type: 'call', title: 'Llamar a Ana', date: '2026-09-29' },
+      });
+    const answer = await w.gia.ask(w.alice, ask('Recuérdame llamar a Ana mañana a las 10'));
+    expect(answer.proposedFollowUp).toBeNull();
+    expect(schemaOf(w.ai.calls[0]).properties.followUp).toBeUndefined();
+    expect(textOf(w.ai.calls[0])).toContain('this person may not schedule follow-ups');
   });
 });

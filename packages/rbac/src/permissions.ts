@@ -191,6 +191,18 @@ export const PERMISSIONS = {
     description:
       'Open opportunities and move them through the pipeline to won or lost: value, probability, responsible member, expected close and next action, directly and never through GIA (C2, ADR-0054).',
   },
+  'follow_up.read': {
+    resource: 'follow_up',
+    action: 'read',
+    description:
+      "See the organization's scheduled follow-ups of contacts and opportunities: due, overdue and upcoming (C5, ADR-0058). GIA may read them for the person she helps.",
+  },
+  'follow_up.manage': {
+    resource: 'follow_up',
+    action: 'manage',
+    description:
+      'Schedule, change, reschedule, complete and cancel follow-ups, directly: GIA only proposes one, and a person confirms it (C5, ADR-0058). It never sends anything to a contact.',
+  },
   'pipeline.manage': {
     resource: 'pipeline',
     action: 'manage',

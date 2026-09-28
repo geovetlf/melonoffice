@@ -138,6 +138,8 @@ describe('catalogue', () => {
       'opportunity.read',
       'opportunity.manage',
       'pipeline.manage',
+      'follow_up.read',
+      'follow_up.manage',
       'channel.read',
       'channel.create',
       'channel.update',

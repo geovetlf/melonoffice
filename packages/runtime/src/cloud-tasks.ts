@@ -40,23 +40,14 @@ export class DispatchError extends Error {
 }
 
 /**
- * Hands a queued job to Cloud Tasks (D-X6-JOB, ADR-0032). The task carries exactly `{ jobId }`
- * and an OIDC token for the invoker service account; the worker re-reads everything else from
- * Firestore. Cloud Tasks is the transport, never the source of truth: a task that arrives twice,
- * late or for an ended job changes nothing (the lease, the revision and the node state decide).
- *
- * No task name is set, on purpose: a released job goes back to the queue under the same id and
- * must be deliverable again, and Cloud Tasks keeps names reserved long after a task ends.
- *
- * It calls the Cloud Tasks REST API with an access token from the metadata server, so it needs
- * no client library, key or credential of its own.
+ * Cloud Tasks over its REST API, with an access token from the metadata server: no client
+ * library, key or credential of its own (ADR-0032). One task is one HTTP call to the worker with
+ * an OIDC token for the invoker service account, now or at `scheduleTime`.
  */
-export function createCloudTasksDispatcher(options: CloudTasksDispatcherOptions): JobDispatcher {
-  const { queue, targetUrl, audience, invokerEmail, dispatchDeadlineSeconds } = options;
+function createCloudTasksClient(options: Omit<CloudTasksDispatcherOptions, 'targetUrl'>) {
+  const { queue, audience, invokerEmail, dispatchDeadlineSeconds } = options;
   if (!QUEUE.test(queue)) throw new Error('Invalid Cloud Tasks queue path');
-  if (!targetUrl.startsWith('https://') || !audience.startsWith('https://')) {
-    throw new Error('The worker URL must be https');
-  }
+  if (!audience.startsWith('https://')) throw new Error('The worker URL must be https');
   if (!/^[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z0-9-]+\.iam\.gserviceaccount\.com$/.test(invokerEmail)) {
     throw new Error('Invalid invoker service account');
   }
@@ -87,18 +78,19 @@ export function createCloudTasksDispatcher(options: CloudTasksDispatcherOptions)
   }
 
   return {
-    async dispatch(jobId: JobId) {
-      const payload = Buffer.from(JSON.stringify({ jobId })).toString('base64');
+    async enqueue(url: string, body: object, scheduleTime?: Date): Promise<void> {
+      const payload = Buffer.from(JSON.stringify(body)).toString('base64');
       const task = {
         task: {
           httpRequest: {
-            url: targetUrl,
+            url,
             httpMethod: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: payload,
             oidcToken: { serviceAccountEmail: invokerEmail, audience },
           },
           dispatchDeadline: `${dispatchDeadlineSeconds}s`,
+          ...(scheduleTime === undefined ? {} : { scheduleTime: scheduleTime.toISOString() }),
         },
       };
       let response: Response;
@@ -117,6 +109,48 @@ export function createCloudTasksDispatcher(options: CloudTasksDispatcherOptions)
       }
       // Never pass on the response body: it may echo the request.
       if (!response.ok) throw new DispatchError('enqueue_failed', response.status);
+    },
+  };
+}
+
+/**
+ * Hands a queued job to Cloud Tasks (D-X6-JOB, ADR-0032). The task carries exactly `{ jobId }`
+ * and an OIDC token for the invoker service account; the worker re-reads everything else from
+ * Firestore. Cloud Tasks is the transport, never the source of truth: a task that arrives twice,
+ * late or for an ended job changes nothing (the lease, the revision and the node state decide).
+ *
+ * No task name is set, on purpose: a released job goes back to the queue under the same id and
+ * must be deliverable again, and Cloud Tasks keeps names reserved long after a task ends.
+ */
+export function createCloudTasksDispatcher(options: CloudTasksDispatcherOptions): JobDispatcher {
+  if (!options.targetUrl.startsWith('https://')) throw new Error('The worker URL must be https');
+  const client = createCloudTasksClient(options);
+  return {
+    async dispatch(jobId: JobId) {
+      await client.enqueue(options.targetUrl, { jobId });
+    },
+  };
+}
+
+/**
+ * Queues a task for a later time on the same queue, worker and invoker as jobs (C5, ADR-0058):
+ * the follow-ups' scheduler. Cloud Tasks holds the task until `at` (up to 30 days ahead) and
+ * retries it with the queue's own policy; the worker re-reads everything from Firestore, so a
+ * repeated or late task changes nothing. The body is small and carries no personal data.
+ */
+export interface CloudTasksScheduler {
+  schedule(body: object, at: Date): Promise<void>;
+}
+
+export function createCloudTasksScheduler(
+  options: CloudTasksDispatcherOptions,
+): CloudTasksScheduler {
+  if (!options.targetUrl.startsWith('https://')) throw new Error('The worker URL must be https');
+  const client = createCloudTasksClient(options);
+  return {
+    async schedule(body: object, at: Date) {
+      if (Number.isNaN(at.getTime())) throw new Error('Invalid schedule time');
+      await client.enqueue(options.targetUrl, body, at);
     },
   };
 }

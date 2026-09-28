@@ -31,6 +31,7 @@ const STATUS: Partial<Record<ConversationErrorCode, ContentfulStatusCode>> = {
   duplicate_contact: 409,
   owner_not_member: 409,
   contact_concurrency_conflict: 409,
+  next_action_from_follow_up: 409,
 };
 
 /** A contact as the customers screen shows it. The owner is `you`, `member` or absent. */

@@ -9,6 +9,8 @@ import {
   type FormEvent,
   type ReactNode,
 } from 'react';
+import { FollowUpForm } from '../followUps/FollowUps.js';
+import type { FollowUpView, FollowUpsClient } from '../followUps/followUpsClient.js';
 import { navigate } from '../identity/router.js';
 import { paths } from '../shell/routes.js';
 import { GiaAvatar } from './GiaAvatar.js';
@@ -39,6 +41,8 @@ export interface GiaChat {
   readonly entries: readonly GiaChatEntry[];
   readonly pending: boolean;
   send(text: string): void;
+  /** Where a follow-up GIA prepared is confirmed (C5); absent when the role may not schedule. */
+  readonly followUps?: FollowUpsClient;
 }
 
 const UNAVAILABLE: GiaChat = {
@@ -53,9 +57,12 @@ const newKey = () => globalThis.crypto.randomUUID();
 
 export function GiaChatProvider({
   client,
+  followUps,
   children,
 }: {
   readonly client: GiaClient | undefined;
+  /** Follow-ups (C5), for a role that may schedule them: GIA's proposals are confirmed here. */
+  readonly followUps?: FollowUpsClient;
   readonly children: ReactNode;
 }) {
   const intl = useIntl();
@@ -95,8 +102,17 @@ export function GiaChatProvider({
   );
 
   const value = useMemo<GiaChat>(
-    () => (client === undefined ? UNAVAILABLE : { available: true, entries, pending, send }),
-    [client, entries, pending, send],
+    () =>
+      client === undefined
+        ? UNAVAILABLE
+        : {
+            available: true,
+            entries,
+            pending,
+            send,
+            ...(followUps === undefined ? {} : { followUps }),
+          },
+    [client, entries, pending, send, followUps],
   );
   return <GiaChatContext.Provider value={value}>{children}</GiaChatContext.Provider>;
 }
@@ -246,7 +262,84 @@ function linkOf(
       return { path: paths.contacts('customer'), label: say('gia.chat.link.customers') };
     case 'pipeline':
       return { path: paths.pipeline(), label: say('gia.chat.link.pipeline') };
+    case 'follow_up':
+      return {
+        path: paths.followUp(link.id),
+        label: say('gia.chat.link.followUp', { name: link.label }),
+      };
+    case 'follow_ups':
+      return { path: paths.followUps(), label: say('gia.chat.link.followUps') };
   }
+}
+
+/**
+ * A follow-up GIA prepared (C5), for the person to confirm: nothing is scheduled until they do,
+ * and the chat says it is scheduled only once the API answered that it is.
+ */
+function FollowUpProposal({ answer }: { readonly answer: GiaAnswerView }) {
+  const chat = useGiaChat();
+  const [state, setState] = useState<'open' | 'discarded' | FollowUpView>('open');
+  const proposal = answer.proposedFollowUp;
+  if (proposal === null) return null;
+  if (chat.followUps === undefined) {
+    return (
+      <p className="gia-chat__meta">
+        <FormattedMessage id="gia.chat.followUp.notAllowed" />
+      </p>
+    );
+  }
+  if (state === 'discarded') {
+    return (
+      <p className="gia-chat__meta">
+        <FormattedMessage id="gia.chat.followUp.discarded" />
+      </p>
+    );
+  }
+  if (state !== 'open') {
+    return (
+      <p className="gia-chat__meta" role="status">
+        <FormattedMessage
+          id="gia.chat.followUp.scheduled"
+          values={{ title: state.title, date: state.date, time: state.time }}
+        />{' '}
+        <a
+          className="gia-chat__go"
+          href={paths.followUp(state.id)}
+          onClick={(event) => {
+            event.preventDefault();
+            navigate(paths.followUp(state.id));
+          }}
+        >
+          <FormattedMessage id="gia.chat.link.followUps" />
+        </a>
+      </p>
+    );
+  }
+  return (
+    <div className="gia-chat__proposal" aria-label="follow-up proposal">
+      <p className="gia-chat__meta">
+        <FormattedMessage
+          id="gia.chat.followUp.prepared"
+          values={{
+            name: proposal.opportunityLabel ?? proposal.contactLabel ?? '',
+          }}
+        />
+      </p>
+      <FollowUpForm
+        client={chat.followUps}
+        contactId={proposal.contactId}
+        {...(proposal.opportunityId === null ? {} : { opportunityId: proposal.opportunityId })}
+        initial={{
+          type: proposal.type,
+          title: proposal.title,
+          date: proposal.date,
+          time: proposal.time,
+        }}
+        source="gia"
+        onDone={(created) => setState(created ?? 'discarded')}
+      />
+    </div>
+  );
 }
 
 function GiaReply({ answer }: { readonly answer: GiaAnswerView }) {
@@ -310,6 +403,7 @@ function GiaReply({ answer }: { readonly answer: GiaAnswerView }) {
           })}
         </ul>
       )}
+      <FollowUpProposal answer={answer} />
       {place === undefined ? null : (
         <a
           className="gia-chat__go"

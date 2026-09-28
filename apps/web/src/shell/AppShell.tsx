@@ -17,6 +17,8 @@ import { ConversationsCenter } from '../conversations/ConversationsCenter.js';
 import { createInboxClient } from '../conversations/inboxClient.js';
 import { CustomersSection, todayIn } from '../customers/CustomersSection.js';
 import { createCustomersClient } from '../customers/customersClient.js';
+import { FollowUpsSection } from '../followUps/FollowUps.js';
+import { createFollowUpsClient } from '../followUps/followUpsClient.js';
 import { OpportunitiesSection } from '../opportunities/OpportunitiesSection.js';
 import { createOpportunitiesClient } from '../opportunities/opportunitiesClient.js';
 import { HomePage } from '../home/HomePage.js';
@@ -56,6 +58,8 @@ export function AppShell(locale: LocaleProps) {
   const canReadOpportunities = useCan('opportunity.read');
   const canManageOpportunities = useCan('opportunity.manage');
   const canManagePipeline = useCan('pipeline.manage');
+  const canReadFollowUps = useCan('follow_up.read');
+  const canManageFollowUps = useCan('follow_up.manage');
   const canReadKnowledge = useCan('knowledge.read');
   const route = parseRoute(usePath());
   const [menuOpen, setMenuOpen] = useState(false);
@@ -82,6 +86,7 @@ export function AppShell(locale: LocaleProps) {
             gia: createGiaClient(services.api.request, organizationId),
             customers: createCustomersClient(services.api.request, organizationId),
             opportunities: createOpportunitiesClient(services.api.request, organizationId),
+            followUps: createFollowUpsClient(services.api.request, organizationId),
             memory: createMemoryClient(services.api.request, organizationId),
           },
     [services, organizationId],
@@ -92,6 +97,10 @@ export function AppShell(locale: LocaleProps) {
   );
   if (state.status !== 'signed_in' || workspace === undefined || clients === undefined) return null;
   const { me } = state;
+  // A contact's and an opportunity's follow-ups (C5), for a role that may read them.
+  const followUps = canReadFollowUps
+    ? { client: clients.followUps, canManage: canManageFollowUps }
+    : undefined;
 
   let page;
   switch (route.kind) {
@@ -128,6 +137,11 @@ export function AppShell(locale: LocaleProps) {
       page = (
         <DepartmentOffice
           slug={route.slug}
+          followUps={
+            canReadFollowUps ? (
+              <FollowUpsSection client={clients.followUps} canManage={canManageFollowUps} />
+            ) : undefined
+          }
           customers={
             canReadContacts ? (
               <BusinessTimeZone>
@@ -137,6 +151,7 @@ export function AppShell(locale: LocaleProps) {
                     canManage={canManageContacts}
                     currentUserId={me.userId}
                     timeZone={timeZone}
+                    {...(followUps === undefined ? {} : { followUps })}
                   />
                 )}
               </BusinessTimeZone>
@@ -153,6 +168,7 @@ export function AppShell(locale: LocaleProps) {
                     canManagePipeline={canManagePipeline}
                     currentUserId={me.userId}
                     today={todayIn(timeZone)}
+                    {...(followUps === undefined ? {} : { followUps })}
                   />
                 )}
               </BusinessTimeZone>
@@ -217,7 +233,10 @@ export function AppShell(locale: LocaleProps) {
     <OfficeDataProvider client={clients.office} business={clients.business} can={can}>
       <ActivityProvider client={canReadActivity ? clients.activity : undefined}>
         <BusinessFormats locale={locale.locale}>
-          <GiaChatProvider client={canAskGia ? clients.gia : undefined}>
+          <GiaChatProvider
+            client={canAskGia ? clients.gia : undefined}
+            {...(canManageFollowUps ? { followUps: clients.followUps } : {})}
+          >
             <div className="app">
               <Sidebar
                 route={route}

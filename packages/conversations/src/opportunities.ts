@@ -633,14 +633,25 @@ export function createOpportunityService(options: OpportunityServiceOptions): Op
             else record[key] = value;
             if (JSON.stringify(record[key]) !== old) reasons.push(reason);
           };
+          // A next action that comes from a follow-up changes only through it (ADR-0058).
+          if (
+            nextAction !== undefined &&
+            before.nextAction?.followUpId !== undefined &&
+            (nextAction?.text !== before.nextAction.text ||
+              nextAction?.dueOn !== before.nextAction.dueOn)
+          ) {
+            throw new ConversationError('next_action_from_follow_up');
+          }
           set('title', title, 'details');
           set('value', money, 'value');
           set('expectedCloseOn', expectedCloseOn, 'expected_close');
-          set(
-            'nextAction',
-            nextAction,
-            nextAction === null ? 'next_action_cleared' : 'next_action',
-          );
+          if (before.nextAction?.followUpId === undefined) {
+            set(
+              'nextAction',
+              nextAction,
+              nextAction === null ? 'next_action_cleared' : 'next_action',
+            );
+          }
 
           let contactWrite: Contact | undefined;
           if (moving) {
