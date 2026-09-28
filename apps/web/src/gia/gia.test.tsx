@@ -178,6 +178,95 @@ describe("GIA's Workplace (ADR-0050)", () => {
     }
   });
 
+  it("shows the engine's own counts when there is too little history, and invents none", async () => {
+    const base = {
+      answer: 'Todavía no tengo historial suficiente para proyectar tus ventas.',
+      department: 'sales',
+      screen: null,
+      proposedAction: null,
+      proposedFacts: 0,
+      context: { facts: 1, activity: true, missing: [] },
+      replayed: false,
+      generatedBy: 'ai',
+    };
+    const summary = {
+      id: null,
+      status: 'insufficient_data',
+      metric: 'sales.won_value',
+      frequency: 'day',
+      horizon: null,
+      model: null,
+      reason: null,
+    };
+    for (const [forecast, text] of [
+      [
+        { ...summary, have: 0, need: 28, shortOf: 'periods' },
+        'Recorded history: 0 of the 28 days needed. No projection was made.',
+      ],
+      [
+        { ...summary, have: 3, need: 5, shortOf: 'active_periods' },
+        'Days with activity: 3 of the 5 needed. No projection was made.',
+      ],
+      [
+        {
+          ...summary,
+          status: 'unavailable',
+          metric: null,
+          frequency: null,
+          have: null,
+          need: null,
+          shortOf: null,
+          reason: 'business_profile_missing',
+        },
+        'A projection needs the company information and its time zone. Fill it in under Company memory.',
+      ],
+      [
+        {
+          ...summary,
+          status: 'unavailable',
+          metric: null,
+          frequency: null,
+          have: null,
+          need: null,
+          shortOf: null,
+          reason: 'currency_missing',
+        },
+        "Projecting money needs the company's currency. Record it under Company memory.",
+      ],
+    ] as const) {
+      open('/gia', (b) => {
+        b.options.gia = { ...base, forecast };
+      });
+      const chat = await screen.findByRole('region', { name: 'Talk to GIA' });
+      fireEvent.change(within(chat).getByRole('textbox', { name: 'Your message to GIA' }), {
+        target: { value: '¿Cuánto venderemos el próximo mes?' },
+      });
+      fireEvent.click(within(chat).getByRole('button', { name: 'Send' }));
+      expect(await within(chat).findByText(text)).toBeTruthy();
+      expect(within(chat).queryByText(/Projection by the forecasting model/)).toBeNull();
+      cleanup();
+    }
+    // Without the engine's counts, or for another reason, nothing is added beside the answer.
+    for (const forecast of [
+      { ...summary, have: null, need: null, shortOf: null },
+      { ...summary, status: 'unavailable', reason: 'busy' },
+    ]) {
+      open('/gia', (b) => {
+        b.options.gia = { ...base, forecast };
+      });
+      const chat = await screen.findByRole('region', { name: 'Talk to GIA' });
+      fireEvent.change(within(chat).getByRole('textbox', { name: 'Your message to GIA' }), {
+        target: { value: '¿Cuánto venderemos el próximo mes?' },
+      });
+      fireEvent.click(within(chat).getByRole('button', { name: 'Send' }));
+      await within(chat).findByText(base.answer);
+      expect(
+        within(chat).queryByText(/Recorded history|with activity|Company memory\./),
+      ).toBeNull();
+      cleanup();
+    }
+  });
+
   it('offers to add what she does not know yet to the company memory (ADR-0056)', async () => {
     open('/gia', (b) => {
       b.options.gia = {

@@ -35,7 +35,12 @@ import {
 } from './periods.js';
 import { ForecastProviderError, type ForecastModelProvider } from './provider.js';
 import type { ForecastRepository } from './repository.js';
-import { prepareSeries, type DataQuality, type SeriesProblem } from './series.js';
+import {
+  prepareSeries,
+  type DataQuality,
+  type InsufficientCount,
+  type SeriesProblem,
+} from './series.js';
 import { isEntityOf, type SeriesSource } from './sources.js';
 
 /**
@@ -99,6 +104,7 @@ export type ForecastOutcome =
       readonly problem: SeriesProblem;
       readonly have?: number;
       readonly need?: number;
+      readonly shortOf?: InsufficientCount;
       readonly dataQuality?: DataQuality;
     }
   | {
@@ -448,6 +454,7 @@ export function createForecastEngine(options: ForecastEngineOptions): ForecastEn
           problem: prepared.problem,
           ...(prepared.have === undefined ? {} : { have: prepared.have }),
           ...(prepared.need === undefined ? {} : { need: prepared.need }),
+          ...(prepared.shortOf === undefined ? {} : { shortOf: prepared.shortOf }),
           ...(prepared.quality === undefined ? {} : { dataQuality: prepared.quality }),
         });
       }

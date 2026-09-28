@@ -47,7 +47,22 @@ export interface GiaAnswerView {
   readonly proposedFollowUp: GiaFollowUpProposalView | null;
   /** The answer carries a finished projection (ADR-0059): by the model or the simple fallback. */
   readonly forecast: 'model' | 'fallback' | null;
+  /** What the Forecasting Engine said is missing for a projection, from its own result. */
+  readonly forecastGap: GiaForecastGap | null;
 }
+
+/**
+ * Why no projection was made, as the engine counted it: too little history (or too few periods
+ * with activity), or company information a projection needs.
+ */
+export type GiaForecastGap =
+  | {
+      readonly kind: 'history' | 'activity';
+      readonly have: number;
+      readonly need: number;
+      readonly unit: 'day' | 'week' | 'month';
+    }
+  | { readonly kind: 'profile' | 'currency' };
 
 export type GiaFailure = 'credits' | 'not_available' | 'rate_limited' | 'failed';
 
@@ -116,6 +131,24 @@ function forecastOf(raw: unknown): GiaAnswerView['forecast'] {
   return raw.model === 'model' || raw.model === 'fallback' ? raw.model : null;
 }
 
+const count = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isInteger(value) && value >= 0;
+
+function forecastGapOf(raw: unknown): GiaForecastGap | null {
+  if (!isRecord(raw)) return null;
+  if (raw.status === 'unavailable') {
+    if (raw.reason === 'business_profile_missing') return { kind: 'profile' };
+    if (raw.reason === 'currency_missing') return { kind: 'currency' };
+    return null;
+  }
+  if (raw.status !== 'insufficient_data' || !count(raw.have) || !count(raw.need)) return null;
+  const unit = raw.frequency;
+  if (unit !== 'day' && unit !== 'week' && unit !== 'month') return null;
+  const kind =
+    raw.shortOf === 'active_periods' ? 'activity' : raw.shortOf === 'periods' ? 'history' : null;
+  return kind === null ? null : { kind, have: raw.have, need: raw.need, unit };
+}
+
 const FAILURES: Readonly<Record<string, GiaFailure>> = {
   ai_credits_insufficient: 'credits',
   ai_not_available: 'not_available',
@@ -154,6 +187,7 @@ export function createGiaClient(request: ReplyRequest, organizationId: string): 
           links: linksOf(body.links),
           proposedFollowUp: proposalOf(body.proposedFollowUp),
           forecast: forecastOf(body.forecast),
+          forecastGap: forecastGapOf(body.forecast),
         },
       };
     },

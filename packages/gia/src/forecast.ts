@@ -7,6 +7,7 @@ import {
   type ForecastEngine,
   type ForecastFrequency,
   type ForecastIntent,
+  type InsufficientCount,
 } from '@melonoffice/forecasting';
 import type { AuthorizationService } from '@melonoffice/rbac';
 import type { TenantContext } from '@melonoffice/tenancy';
@@ -33,6 +34,8 @@ export type GiaForecastContext =
       readonly frequency: ForecastFrequency;
       readonly have: number | null;
       readonly need: number | null;
+      /** What `have` and `need` count: periods of history, or periods with activity. */
+      readonly shortOf: InsufficientCount | null;
       readonly problem: string;
     }
   | { readonly kind: 'unsupported'; readonly subject: string }
@@ -51,6 +54,15 @@ export interface GiaForecastSummary {
   readonly frequency: ForecastFrequency | null;
   readonly horizon: number | null;
   readonly model: 'model' | 'fallback' | null;
+  /**
+   * For `insufficient_data`, the engine's own counts: what is recorded, what is needed, and
+   * whether they count periods of history or periods with activity. Null otherwise.
+   */
+  readonly have: number | null;
+  readonly need: number | null;
+  readonly shortOf: InsufficientCount | null;
+  /** For `unavailable`, why, as a code (`business_profile_missing`, `currency_missing`, …). */
+  readonly reason: string | null;
 }
 
 /** Engine refusals the person sees as their own reason; any other is "not available now". */
@@ -58,6 +70,16 @@ const UNAVAILABLE: Readonly<Record<string, string>> = {
   forecast_credits_insufficient: 'credits_insufficient',
   forecast_limit_reached: 'busy',
   horizon_out_of_range: 'horizon_out_of_range',
+};
+
+/**
+ * The company context a projection needs, named by the engine's refusal: the business profile
+ * (its time zone) and, for money, the company's currency. Any other invalid request stays
+ * "not available": nothing is guessed about it.
+ */
+const MISSING_CONTEXT: Readonly<Record<string, string>> = {
+  business_context: 'business_profile_missing',
+  entity: 'currency_missing',
 };
 
 /**
@@ -98,6 +120,7 @@ export async function readForecast(
           frequency: outcome.frequency,
           have: outcome.have ?? null,
           need: outcome.need ?? null,
+          shortOf: outcome.shortOf ?? null,
           problem: outcome.problem,
         },
       };
@@ -106,9 +129,16 @@ export async function readForecast(
   } catch (error) {
     if (!isForecastError(error)) throw error;
     if (error.code === 'permission_denied') return { intent, context: { kind: 'not_allowed' } };
+    const missing =
+      error.code === 'invalid_request' && error.detail !== undefined
+        ? MISSING_CONTEXT[error.detail]
+        : undefined;
     return {
       intent,
-      context: { kind: 'unavailable', reason: UNAVAILABLE[error.code] ?? 'not_available' },
+      context: {
+        kind: 'unavailable',
+        reason: missing ?? UNAVAILABLE[error.code] ?? 'not_available',
+      },
     };
   }
 }
@@ -123,8 +153,13 @@ export function forecastSummaryOf(context: GiaForecastContext): GiaForecastSumma
       frequency: f.frequency,
       horizon: f.horizon,
       model: f.result?.model.kind ?? null,
+      have: null,
+      need: null,
+      shortOf: null,
+      reason: null,
     });
   }
+  const short = context.kind === 'insufficient_data' ? context : undefined;
   return Object.freeze({
     id: null,
     status: context.kind,
@@ -132,6 +167,10 @@ export function forecastSummaryOf(context: GiaForecastContext): GiaForecastSumma
     frequency: context.kind === 'insufficient_data' ? context.frequency : null,
     horizon: null,
     model: null,
+    have: short?.have ?? null,
+    need: short?.need ?? null,
+    shortOf: short?.shortOf ?? null,
+    reason: context.kind === 'unavailable' ? context.reason : null,
   });
 }
 
@@ -141,6 +180,23 @@ const METRIC_WORDS: Readonly<Record<string, string>> = {
   'opportunities.new': 'new opportunities opened',
   'leads.new': 'new leads and customers registered',
   'conversations.new': 'new customer conversations started',
+};
+
+/** Where each metric's records come from, so GIA can say what to record. */
+const METRIC_RECORDS: Readonly<Record<string, string>> = {
+  'sales.won_value': 'opportunities closed as won in Comercial, with their value',
+  'sales.won_count': 'opportunities closed as won in Comercial',
+  'opportunities.new': 'opportunities created in Comercial',
+  'leads.new': 'leads and customers registered in Comercial',
+  'conversations.new': 'customer conversations started in Conversations',
+};
+
+/** Why a projection is not available, in words, when the engine named the missing context. */
+const UNAVAILABLE_WORDS: Readonly<Record<string, string>> = {
+  business_profile_missing:
+    'The company information has no business profile yet. A projection needs its time zone to count days. It is filled in under Company memory, Company information.',
+  currency_missing:
+    "The company's currency is not recorded, and projecting money needs it. It is set in Company memory, Company information.",
 };
 
 const SUBJECT_WORDS: Readonly<Record<string, string>> = {
@@ -174,17 +230,36 @@ export function forecastBlock(context: GiaForecastContext, locale: GiaLocale): s
       return `status: not_allowed. The person may NOT see this projection or its records.`;
     case 'unsupported':
       return `status: unsupported. MelonOffice has no records of ${SUBJECT_WORDS[context.subject] ?? context.subject} yet, so nothing about them can be projected. No other metric stands in for them.`;
-    case 'unavailable':
-      return `status: unavailable (${context.reason}). No projection now.`;
-    case 'insufficient_data':
+    case 'unavailable': {
+      const words = UNAVAILABLE_WORDS[context.reason];
+      return `status: unavailable (${context.reason}). No projection now.${words === undefined ? '' : ` ${words}`}`;
+    }
+    case 'insufficient_data': {
+      const unit = context.frequency;
+      const counts =
+        context.shortOf === 'active_periods'
+          ? [
+              context.have === null
+                ? null
+                : `${unit}s with at least one recorded event: ${context.have}`,
+              context.need === null
+                ? null
+                : `${unit}s with activity needed: at least ${context.need}`,
+            ]
+          : [
+              context.have === null ? null : `history recorded: ${context.have} ${unit}s`,
+              context.need === null ? null : `history needed: at least ${context.need} ${unit}s`,
+            ];
+      const records = METRIC_RECORDS[context.metric];
       return [
-        'status: insufficient_data. There is not enough recorded history to project this; no projection was made.',
-        `metric: ${METRIC_WORDS[context.metric] ?? context.metric}, per ${context.frequency}`,
-        context.have === null ? null : `recorded periods: ${context.have}`,
-        context.need === null ? null : `periods needed: ${context.need}`,
+        'status: insufficient_data. There is not enough recorded history to project this; no projection was made and the forecasting model was not run.',
+        `metric: ${METRIC_WORDS[context.metric] ?? context.metric}, per ${unit}`,
+        ...counts,
+        records === undefined ? null : `this history comes from: ${records}`,
       ]
         .filter((line) => line !== null)
         .join('\n');
+    }
     case 'forecast':
       break;
   }
@@ -244,7 +319,7 @@ export function forecastRules(locale: GiaLocale): readonly string[] {
     'If <forecast> was made by a simple estimate, say it is a simple estimate from recent averages, not the forecasting model.',
     `If <forecast> says not_allowed, answer exactly "${NO_PERMISSION[locale]}" and nothing about it.`,
     'If <forecast> says unsupported, say MelonOffice has no records of that yet, so it cannot be projected, and what they could register instead. Never answer with another metric.',
-    'If <forecast> says insufficient_data, say there is not enough history yet to project it (with the recorded and needed periods), and give no figure.',
-    'If <forecast> says the projection is still being calculated, say so and that they can ask again in a moment. If it says unavailable, say projections are not available right now (credits_insufficient: not enough credits; busy: other projections are running).',
+    'If <forecast> says insufficient_data, say which history is missing: name the metric and its unit (days, weeks or months), give the recorded and the needed amounts exactly as <forecast> states them, and say where that history comes from. Give no figure, and never say more is missing than <forecast> says.',
+    'If <forecast> says the projection is still being calculated, say so and that they can ask again in a moment. If it says unavailable, say projections are not available right now (credits_insufficient: not enough credits; busy: other projections are running; business_profile_missing or currency_missing: say exactly what <forecast> says is missing and where it is filled in).',
   ];
 }
