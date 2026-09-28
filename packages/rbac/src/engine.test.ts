@@ -142,6 +142,7 @@ describe('catalogue', () => {
       'follow_up.manage',
       'forecast.read',
       'forecast.run',
+      'report.read',
       'channel.read',
       'channel.create',
       'channel.update',

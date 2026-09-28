@@ -211,6 +211,86 @@ describe.each(STORES)('forecasts (ADR-0059) with storage in %s', (name, createSt
     expect((await t.call('token-bob', `${t.base(t.orgA)}/forecasts/${id}`)).status).toBe(403);
   });
 
+  it('reports what was recorded (ADR-0060): no run, no charge, and forecasting not needed', async () => {
+    for (const configured of [true, false]) {
+      const t = await setup({ tomorrow: true, configured });
+      await t.sale();
+      const listed = await t.call('token-alice', `${t.base(t.orgA)}/metrics`);
+      expect(listed.status).toBe(200);
+      expect(
+        (listed.body.metrics as { id: string; readable: boolean }[]).find(
+          (m) => m.id === 'sales.won_value',
+        ),
+      ).toMatchObject({ readable: true, departments: expect.arrayContaining(['leadership']) });
+      const read = await t.call(
+        'token-alice',
+        `${t.base(t.orgA)}/metrics/sales.won_value?periods=7`,
+      );
+      expect(read.status).toBe(200);
+      expect(read.body).toMatchObject({
+        metric: 'sales.won_value',
+        unit: 'currency',
+        entity: 'PEN',
+        frequency: 'day',
+        timeZone: 'America/Lima',
+        previousTotal: null,
+      });
+      if (configured) {
+        // Read as if it were tomorrow, with the test's short minimum: the sale is a complete day.
+        expect(read.body).toMatchObject({
+          total: 1500,
+          readiness: { ready: true, have: 1, need: 1 },
+        });
+      } else {
+        // Today, with the real minimums: today's sale is the day under way, kept apart.
+        expect(read.body).toMatchObject({
+          total: 0,
+          current: { value: 1500 },
+          readiness: { ready: false, have: 0, need: 28, shortOf: 'periods' },
+        });
+      }
+      expect(read.body.points).toHaveLength(7);
+      expect(t.tasks).toHaveLength(0);
+      // Bob's organization has no business profile: no time zone to count days in.
+      const bob = await t.call('token-bob', `${t.base(t.orgB)}/metrics/sales.won_count`);
+      expect(bob).toEqual({
+        status: 400,
+        body: { error: 'invalid_request', field: 'business_context' },
+      });
+      await t.send('token-bob', 'PUT', `${t.base(t.orgB)}/business-profile`, PROFILE);
+      // Then he reads his own organization, which recorded nothing, and never Alice's.
+      const own = await t.call('token-bob', `${t.base(t.orgB)}/metrics/sales.won_count`);
+      expect(own.body).toMatchObject({ total: 0, firstRecord: null });
+      expect((await t.call('token-bob', `${t.base(t.orgA)}/metrics/sales.won_count`)).status).toBe(
+        403,
+      );
+    }
+  });
+
+  it('reports need report.read and the permission of the records; malformed reads are 400', async () => {
+    const none = await setup({ permissions: ['opportunity.read'] });
+    expect(
+      await none.call('token-alice', `${none.base(none.orgA)}/metrics/sales.won_value`),
+    ).toEqual({ status: 403, body: { error: 'permission_denied' } });
+    const contacts = await setup({
+      permissions: ['report.read', 'contact.read', 'organization.update'],
+    });
+    const path = (metric: string, query = '') =>
+      `${contacts.base(contacts.orgA)}/metrics/${metric}${query}`;
+    expect((await contacts.call('token-alice', path('sales.won_value'))).body).toEqual({
+      error: 'permission_denied',
+    });
+    expect((await contacts.call('token-alice', path('leads.new'))).status).toBe(200);
+    expect((await contacts.call('token-alice', path('leads.new', '?periods=abc'))).body).toEqual({
+      error: 'invalid_request',
+      field: 'periods',
+    });
+    expect((await contacts.call('token-alice', path('leads.new', '?frequency=hour'))).status).toBe(
+      400,
+    );
+    expect((await contacts.call('token-alice', path('orders.count'))).status).toBe(404);
+  });
+
   it('refuses without forecast.run, and a metric whose records the person cannot read', async () => {
     const t = await setup({ permissions: ['forecast.read', 'forecast.run', 'contact.read'] });
     const denied = await t.send('token-alice', 'POST', `${t.base(t.orgA)}/forecasts`, {

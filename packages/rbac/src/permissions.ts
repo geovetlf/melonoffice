@@ -215,6 +215,12 @@ export const PERMISSIONS = {
     description:
       'Ask the Forecasting Engine for a forecast of a metric one may read, directly or through GIA (ADR-0059). A model run costs credits; it never changes or sends anything.',
   },
+  'report.read': {
+    resource: 'report',
+    action: 'read',
+    description:
+      "See the organization's reports: what was recorded per day, week or month for each metric (ADR-0060). Each metric also needs the permission of its records. Nothing is projected, charged or changed.",
+  },
   'pipeline.manage': {
     resource: 'pipeline',
     action: 'manage',

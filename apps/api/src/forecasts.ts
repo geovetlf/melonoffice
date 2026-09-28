@@ -10,7 +10,7 @@ import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import type { AuthEnv } from './auth.js';
 import { withPermission, type AuthorizationDependencies } from './authorization.js';
 
-const STATUS: Record<ForecastErrorCode, ContentfulStatusCode> = {
+export const FORECAST_STATUS: Record<ForecastErrorCode, ContentfulStatusCode> = {
   unresolved_tenant: 403,
   organization_inactive: 403,
   permission_denied: 403,
@@ -63,7 +63,7 @@ export function registerForecastRoutes(
       if (!isForecastError(error)) throw error;
       return c.json(
         { error: error.code, ...(error.detail === undefined ? {} : { field: error.detail }) },
-        STATUS[error.code],
+        FORECAST_STATUS[error.code],
       );
     }
   }

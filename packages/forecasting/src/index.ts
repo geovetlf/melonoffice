@@ -3,6 +3,7 @@ export * from './catalogue.js';
 export * from './engine.js';
 export * from './errors.js';
 export * from './fallback.js';
+export * from './history.js';
 export * from './intent.js';
 export * from './model.js';
 export * from './periods.js';

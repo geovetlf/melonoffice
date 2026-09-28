@@ -31,6 +31,8 @@ import { GiaWorkplace } from '../gia/GiaWorkplace.js';
 import { AgentPlace, DepartmentOffice, NotFound } from '../office/DepartmentOffice.js';
 import { createOfficeClient } from '../office/officeClient.js';
 import { MemoryPage } from '../memory/MemoryPage.js';
+import { ReportsPage, ReportsSection } from '../reports/Reports.js';
+import { createReportsClient } from '../reports/reportsClient.js';
 import { createMemoryClient } from '../memory/memoryClient.js';
 import { OfficeDataProvider, useOfficeData } from '../office/OfficeData.js';
 import { parseRoute } from './routes.js';
@@ -61,6 +63,7 @@ export function AppShell(locale: LocaleProps) {
   const canReadFollowUps = useCan('follow_up.read');
   const canManageFollowUps = useCan('follow_up.manage');
   const canReadKnowledge = useCan('knowledge.read');
+  const canReadReports = useCan('report.read');
   const route = parseRoute(usePath());
   const [menuOpen, setMenuOpen] = useState(false);
   useEffect(() => {
@@ -88,6 +91,7 @@ export function AppShell(locale: LocaleProps) {
             opportunities: createOpportunitiesClient(services.api.request, organizationId),
             followUps: createFollowUpsClient(services.api.request, organizationId),
             memory: createMemoryClient(services.api.request, organizationId),
+            reports: createReportsClient(services.api.request, organizationId),
           },
     [services, organizationId],
   );
@@ -137,6 +141,13 @@ export function AppShell(locale: LocaleProps) {
       page = (
         <DepartmentOffice
           slug={route.slug}
+          {...(canReadReports
+            ? {
+                reports: (typeId: string) => (
+                  <ReportsSection client={clients.reports} department={typeId} />
+                ),
+              }
+            : {})}
           followUps={
             canReadFollowUps ? (
               <FollowUpsSection client={clients.followUps} canManage={canManageFollowUps} />
@@ -182,6 +193,9 @@ export function AppShell(locale: LocaleProps) {
       break;
     case 'gia':
       page = <GiaWorkplace />;
+      break;
+    case 'reports':
+      page = canReadReports ? <ReportsPage client={clients.reports} /> : <NotFound />;
       break;
     case 'conversations':
       page = canReadConversations ? (
@@ -243,6 +257,7 @@ export function AppShell(locale: LocaleProps) {
                 canReadConversations={canReadConversations}
                 canReadConnections={canReadConnections}
                 canReadMemory={canReadBusiness || canReadKnowledge}
+                canReadReports={canReadReports}
                 open={menuOpen}
                 onNavigate={() => setMenuOpen(false)}
               />
