@@ -7,6 +7,7 @@ import {
   type ConversationDetail,
   type ConversationPriority,
   type ConversationAgentView,
+  type PendingReplyApproval,
   type ConversationRow,
   type ConversationSort,
   type ConversationStatus,
@@ -112,6 +113,7 @@ export function ConversationsCenter({
   const canManage = can('conversation.manage');
   const canSend = can('conversation.send');
   const canAssist = can('conversation.assist');
+  const canApprove = can('approval.read') && can('approval.approve');
   const intl = useIntl();
   const searchId = useId();
   const sortId = useId();
@@ -125,6 +127,8 @@ export function ConversationsCenter({
   const [departments, setDepartments] = useState<readonly DepartmentOption[]>([]);
   // The organization's agent (CV-6B): shown where it attends a conversation, never invented.
   const [agent, setAgent] = useState<ConversationAgentView | null>(null);
+  // Agents' replies waiting for a person (supervised, CV-6C), by the turn that wrote them.
+  const [pending, setPending] = useState<ReadonlyMap<string, PendingReplyApproval>>(new Map());
   const [newTag, setNewTag] = useState('');
   const [error, setError] = useState<string | undefined>();
   const [loading, setLoading] = useState(true);
@@ -172,6 +176,18 @@ export function ConversationsCenter({
       live = false;
     };
   }, [client, version]);
+
+  useEffect(() => {
+    if (!canApprove || client.pendingReplies === undefined) return;
+    let live = true;
+    client.pendingReplies().then(
+      (next) => live && setPending(new Map(next.map((p) => [p.executionId, p]))),
+      () => live && setPending(new Map()),
+    );
+    return () => {
+      live = false;
+    };
+  }, [client, canApprove, version]);
 
   useEffect(() => {
     if (selected === undefined) return;
@@ -586,6 +602,39 @@ export function ConversationsCenter({
                       {when(message.sentAt)}
                     </span>
                     <p>{message.text ?? ''}</p>
+                    {(() => {
+                      const waiting =
+                        message.sender.kind === 'specialist' &&
+                        message.status === 'queued' &&
+                        message.sender.executionId !== undefined
+                          ? pending.get(message.sender.executionId)
+                          : undefined;
+                      if (waiting === undefined || client.decideReply === undefined) return null;
+                      const decide = (decision: 'approve' | 'reject') => async () => {
+                        setError(undefined);
+                        try {
+                          await client.decideReply?.(waiting.approvalId, decision);
+                        } catch (e) {
+                          fail(e);
+                        }
+                        setVersion((v) => v + 1);
+                      };
+                      return (
+                        <div
+                          className="inbox__approval"
+                          role="group"
+                          aria-label={intl.formatMessage({ id: 'conversations.approval.pending' })}
+                        >
+                          <FormattedMessage id="conversations.approval.pending" />{' '}
+                          <Button variant="primary" onClick={() => void decide('approve')()}>
+                            <FormattedMessage id="conversations.approval.approve" />
+                          </Button>{' '}
+                          <Button variant="secondary" onClick={() => void decide('reject')()}>
+                            <FormattedMessage id="conversations.approval.reject" />
+                          </Button>
+                        </div>
+                      );
+                    })()}
                   </li>
                 ))}
               </ol>

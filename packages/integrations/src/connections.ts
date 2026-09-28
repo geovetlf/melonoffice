@@ -1,30 +1,34 @@
 import {
   actorOf,
   buildAuditEvent,
+  type AuditActor,
   type AuditEvent,
   type InMemoryAuditStore,
 } from '@melonoffice/audit';
 import { isChannelType } from '@melonoffice/conversations';
 import type {
+  ChannelCapabilities,
   ChannelConnection,
   ChannelConnectionId,
-  ChannelType,
+  ChannelConnectionStatus,
   IsoTimestamp,
   OrganizationId,
-  WhatsAppAccount,
+  UserId,
 } from '@melonoffice/domain';
 import type { EntitlementService } from '@melonoffice/entitlements';
 import type { AuthorizationService } from '@melonoffice/rbac';
 import { isResolvedTenant, type TenancyStore, type TenantContext } from '@melonoffice/tenancy';
 import { randomUUID } from 'node:crypto';
+import type { ConnectionCheck } from './adapter.js';
 import { IntegrationError } from './errors.js';
+import { canTransition, isConnectionStatus, occupiesSlot } from './lifecycle.js';
+import { isIntegrationCategory, isProviderId, type IntegrationRegistry } from './registry.js';
 import { isSecretRef, secretRefsFor } from './secrets.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-/** Meta's numeric ids (phone number id, WhatsApp Business Account id). */
-const META_ID = /^[0-9]{5,32}$/;
-const DISPLAY_PHONE = /^\+?[0-9 ()-]{6,32}$/;
 const MAX_NAME_LENGTH = 80;
+const ACCOUNT_VALUE = /^[A-Za-z0-9 +()_.-]{1,64}$/;
+const STATUS_REASON = /^[a-z][a-z0-9_]{1,63}$/;
 
 export const isConnectionId = (value: unknown): value is ChannelConnectionId =>
   typeof value === 'string' && UUID.test(value);
@@ -43,53 +47,57 @@ function checkName(value: unknown): string {
   return name;
 }
 
-/** Only the known, non-sensitive account fields; anything else (a token, a secret) is refused. */
-export function checkWhatsAppAccount(value: unknown): WhatsAppAccount {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) invalid('account');
-  const a = value as Record<string, unknown>;
-  const allowed = ['phoneNumberId', 'businessAccountId', 'displayPhoneNumber'];
-  if (Object.keys(a).some((k) => !allowed.includes(k))) invalid('account.fields');
-  if (typeof a.phoneNumberId !== 'string' || !META_ID.test(a.phoneNumberId)) {
-    invalid('account.phoneNumberId');
-  }
-  if (
-    a.businessAccountId !== undefined &&
-    (typeof a.businessAccountId !== 'string' || !META_ID.test(a.businessAccountId))
-  ) {
-    invalid('account.businessAccountId');
-  }
-  if (
-    a.displayPhoneNumber !== undefined &&
-    (typeof a.displayPhoneNumber !== 'string' || !DISPLAY_PHONE.test(a.displayPhoneNumber))
-  ) {
-    invalid('account.displayPhoneNumber');
-  }
-  return Object.freeze({
-    phoneNumberId: a.phoneNumberId as string,
-    ...(a.businessAccountId === undefined
-      ? {}
-      : { businessAccountId: a.businessAccountId as string }),
-    ...(a.displayPhoneNumber === undefined
-      ? {}
-      : { displayPhoneNumber: a.displayPhoneNumber as string }),
-  });
+const CAPABILITY_FLAGS = [
+  'inboundText',
+  'inboundMedia',
+  'outboundText',
+  'outboundMedia',
+  'outboundTemplates',
+  'deliveryStatus',
+] as const;
+
+function isCapabilities(value: unknown): value is ChannelCapabilities {
+  if (typeof value !== 'object' || value === null) return false;
+  const c = value as Record<string, unknown>;
+  return (
+    CAPABILITY_FLAGS.every((flag) => typeof c[flag] === 'boolean') &&
+    Number.isSafeInteger(c.maxOutboundTextLength) &&
+    (c.maxOutboundTextLength as number) > 0 &&
+    (c.serviceWindowMs === undefined ||
+      (Number.isSafeInteger(c.serviceWindowMs) && (c.serviceWindowMs as number) > 0))
+  );
 }
 
-/** Checks a connection read back from storage; bad data is refused, never used. */
+/**
+ * Checks a connection read back from storage; bad data is refused, never used. Provider-neutral:
+ * the account is only checked to be a few short public values here, and its adapter checks it
+ * again, field by field, whenever the Integration Engine uses it.
+ */
 export function checkStoredConnection(c: ChannelConnection): ChannelConnection {
+  const account = c.account as unknown;
   if (
     !isConnectionId(c.id) ||
     !UUID.test(c.organizationId) ||
+    !isProviderId(c.provider) ||
+    !isIntegrationCategory(c.category) ||
     !isChannelType(c.channel) ||
-    (c.status !== 'active' && c.status !== 'disabled') ||
+    !isConnectionStatus(c.status) ||
+    (c.statusReason !== undefined &&
+      (c.status !== 'error' || !STATUS_REASON.test(c.statusReason))) ||
+    typeof account !== 'object' ||
+    account === null ||
+    Object.keys(account).length > 8 ||
+    !Object.values(account).every((v) => typeof v === 'string' && ACCOUNT_VALUE.test(v)) ||
+    !isCapabilities(c.capabilities) ||
     !Object.values(c.secrets).every(isSecretRef) ||
     Object.keys(c.secrets).length !== 3 ||
+    !UUID.test(c.createdBy) ||
+    !UUID.test(c.updatedBy) ||
     !Number.isSafeInteger(c.revision) ||
     c.revision < 1
   ) {
     throw new IntegrationError('invalid_connection', 'stored');
   }
-  checkWhatsAppAccount(c.account);
   for (const ref of Object.values(c.secrets)) {
     // A reference must name this connection's own secrets and nothing else.
     if (!ref.includes(`/secrets/channel-${c.id}-`)) {
@@ -106,7 +114,8 @@ export interface ConnectionWrite {
 }
 
 /**
- * Where channel connections live: Firestore in the API (ADR-0033), memory in tests.
+ * Where channel connections live: Firestore in the API and the worker (ADR-0033), memory in
+ * tests.
  */
 export interface ChannelConnectionRepository {
   /** The connection, only when it belongs to the organization. */
@@ -121,6 +130,7 @@ export interface ChannelConnectionRepository {
   findForDelivery(id: ChannelConnectionId): Promise<ChannelConnection | undefined>;
   list(organizationId: OrganizationId): Promise<readonly ChannelConnection[]>;
   create(write: ConnectionWrite): Promise<void>;
+  /** Reads the current record, applies `change` and stores the result, atomically. */
   update(
     organizationId: OrganizationId,
     id: ChannelConnectionId,
@@ -178,46 +188,85 @@ export class InMemoryChannelConnectionRepository implements ChannelConnectionRep
   }
 }
 
+/**
+ * What a change may alter: the name, the status (along an allowed transition), its reason and
+ * when it was last checked. Never the organization, the provider, the channel, the account, the
+ * capabilities or where the secrets are. One revision at a time.
+ */
 export function checkNextConnection(current: ChannelConnection, next: ChannelConnection): void {
   if (
     next.id !== current.id ||
     next.organizationId !== current.organizationId ||
+    next.provider !== current.provider ||
+    next.category !== current.category ||
     next.channel !== current.channel ||
     next.revision !== current.revision + 1 ||
+    next.createdAt !== current.createdAt ||
+    next.createdBy !== current.createdBy ||
+    JSON.stringify(next.account) !== JSON.stringify(current.account) ||
+    JSON.stringify(next.capabilities) !== JSON.stringify(current.capabilities) ||
     JSON.stringify(next.secrets) !== JSON.stringify(current.secrets)
   ) {
     throw new IntegrationError('invalid_connection', 'concurrency');
+  }
+  if (next.status !== current.status && !canTransition(current.status, next.status)) {
+    throw new IntegrationError('invalid_transition', `${current.status}->${next.status}`);
   }
   checkStoredConnection(next);
 }
 
 export interface NewConnectionInput {
-  readonly channel: unknown;
+  /** The provider, e.g. `meta_whatsapp_cloud`. It names the channel and the category. */
+  readonly provider: unknown;
   readonly displayName: unknown;
   readonly account: unknown;
 }
 
+/** Checks a connection's credentials with its provider: the Integration Engine's `validate`. */
+export interface ConnectionChecker {
+  validate(connection: ChannelConnection): Promise<ConnectionCheck>;
+}
+
 /**
- * Channel connections of an organization (ADR-0033). Configuring or turning one off needs
- * `channel.manage` and a person acting directly: GIA and the runtime never change where
- * credentials point. A new connection also needs room under the plan's
- * `integrations.connectionsMax` (unset = 0 = denied, D-12). Server side only in CV-1: there is
- * no client route to create one.
+ * The organization's connections to outside services (ADR-0033, lifecycle and permissions in
+ * ADR-0044). Every change is made by a person acting directly (GIA and the runtime never change
+ * where a connection points or whether it is on) and is audited in the same write. Each kind of
+ * change has its own permission:
+ *
+ * - `channel.read`: see connections (never secrets);
+ * - `channel.create`: add one, within the plan (`integrations.categoriesAllowed`,
+ *   `integrations.connectionsMax`; unset = denied);
+ * - `channel.update`: rename, check with the provider (connect), pause;
+ * - `channel.disconnect`: turn off, which frees its slot;
+ * - `channel.delete`: delete (revoke), for good.
+ *
+ * Using a connection is not here: it is sending in a conversation (`conversation.send`, or an
+ * agent's `message_send`), always through the tool gate and the Integration Engine.
  */
 export interface ChannelConnectionService {
-  create(tenant: TenantContext, input: NewConnectionInput): Promise<ChannelConnection>;
-  disable(tenant: TenantContext, id: string): Promise<ChannelConnection>;
   list(tenant: TenantContext): Promise<readonly ChannelConnection[]>;
+  get(tenant: TenantContext, id: string): Promise<ChannelConnection>;
+  create(tenant: TenantContext, input: NewConnectionInput): Promise<ChannelConnection>;
+  rename(tenant: TenantContext, id: string, displayName: unknown): Promise<ChannelConnection>;
+  /** Checks the credentials with the provider: `connected`, or `error` with the provider's code. */
+  connect(tenant: TenantContext, id: string): Promise<ChannelConnection>;
+  pause(tenant: TenantContext, id: string): Promise<ChannelConnection>;
+  disconnect(tenant: TenantContext, id: string): Promise<ChannelConnection>;
+  /** Deletes it: `revoked`, kept only as history. Its secrets are deleted by an operator. */
+  revoke(tenant: TenantContext, id: string): Promise<ChannelConnection>;
 }
 
 export interface ChannelConnectionServiceOptions {
   readonly repository: ChannelConnectionRepository;
+  readonly registry: IntegrationRegistry;
   readonly organizations: Pick<TenancyStore, 'findOrganization'>;
   readonly authorization: Pick<AuthorizationService, 'authorize'>;
-  readonly entitlements: Pick<EntitlementService, 'getLimit'>;
+  readonly entitlements: Pick<EntitlementService, 'entitlementsOf'>;
+  /** The Integration Engine. Unset: no connection can be checked (`provider_unavailable`). */
+  readonly checker?: ConnectionChecker;
   /**
    * The project whose Secret Manager holds the channel secrets. Unset: connections can be listed
-   * and disabled, but none can be created (`secret_unavailable`).
+   * and turned off, but none can be created (`secret_unavailable`).
    */
   readonly secretProjectId?: string;
   readonly now?: () => Date;
@@ -225,11 +274,50 @@ export interface ChannelConnectionServiceOptions {
   readonly requestId?: string;
 }
 
+type ConnectionAction =
+  | 'channel.connection_created'
+  | 'channel.connection_updated'
+  | 'channel.connection_checked'
+  | 'channel.connection_paused'
+  | 'channel.connection_disconnected'
+  | 'channel.connection_revoked'
+  | 'channel.connection_failed';
+
+/** The audit event of a connection change. The reason is a status or a stable code. */
+export function connectionEventOf(
+  actor: AuditActor,
+  connection: ChannelConnection,
+  action: ConnectionAction,
+  at: Date,
+  options: {
+    readonly result?: 'success' | 'failure';
+    readonly reason?: string;
+    readonly requestId?: string;
+  } = {},
+): AuditEvent {
+  return buildAuditEvent(
+    {
+      action,
+      result: options.result ?? 'success',
+      actor,
+      organizationId: connection.organizationId,
+      target: { type: 'channel_connection', id: connection.id },
+      reference: `provider:${connection.provider}`,
+      reason: options.reason ?? connection.status,
+      ...(options.requestId === undefined ? {} : { requestId: options.requestId }),
+      source: 'api',
+    },
+    at,
+  );
+}
+
 export function createChannelConnectionService({
   repository,
+  registry,
   organizations,
   authorization,
   entitlements,
+  checker,
   secretProjectId,
   now = () => new Date(),
   newId = () => randomUUID(),
@@ -238,11 +326,14 @@ export function createChannelConnectionService({
   async function organizationOf(
     tenant: TenantContext,
     permission: string,
+    direct = true,
   ): Promise<OrganizationId> {
     if (!isResolvedTenant(tenant)) throw new IntegrationError('unresolved_tenant');
     if (!authorization.authorize(tenant, permission).allowed) {
       throw new IntegrationError('permission_denied');
     }
+    // A change is a person's own act: never GIA, never the runtime.
+    if (direct && tenant.actor !== 'user') throw new IntegrationError('requires_user');
     const organization = await organizations.findOrganization(tenant.organizationId);
     if (organization?.id !== tenant.organizationId || organization.status !== 'active') {
       throw new IntegrationError('organization_inactive');
@@ -250,92 +341,231 @@ export function createChannelConnectionService({
     return organization.id;
   }
 
-  const event = (
+  /** Room for one more connection of this category under the organization's plan. */
+  async function checkPlan(
     tenant: TenantContext,
-    connection: ChannelConnection,
-    action: 'channel.connection_created' | 'channel.connection_disabled',
-    at: Date,
-  ): AuditEvent =>
-    buildAuditEvent(
-      {
-        action,
-        result: 'success',
-        actor: actorOf(tenant),
-        organizationId: connection.organizationId,
-        target: { type: 'channel_connection', id: connection.id },
-        reason: connection.channel,
-        ...(requestId === undefined ? {} : { requestId }),
-        source: 'api',
-      },
-      at,
-    );
+    organizationId: OrganizationId,
+    category: ChannelConnection['category'],
+    excluding?: ChannelConnectionId,
+  ): Promise<void> {
+    const plan = await entitlements.entitlementsOf(tenant);
+    if (plan.status !== 'active') throw new IntegrationError('entitlements_unavailable');
+    if (!plan.values['integrations.categoriesAllowed'].includes(category)) {
+      throw new IntegrationError('category_not_allowed');
+    }
+    const limit = plan.values['integrations.connectionsMax'];
+    const used = (await repository.list(organizationId)).filter(
+      (c) => c.id !== excluding && occupiesSlot(c),
+    ).length;
+    if (limit !== 'unlimited' && used + 1 > limit) throw new IntegrationError('limit_reached');
+  }
+
+  /** Changes one connection of the tenant's organization, as the person, audited in the same write. */
+  async function change(
+    tenant: TenantContext,
+    permission: string,
+    id: string,
+    apply: (
+      current: ChannelConnection,
+      at: Date,
+    ) => {
+      readonly next: Partial<
+        Pick<ChannelConnection, 'status' | 'displayName' | 'lastValidatedAt'>
+      > & {
+        readonly statusReason?: string | undefined;
+      };
+      readonly action: ConnectionAction;
+      readonly result?: 'success' | 'failure';
+      readonly reason?: string;
+    },
+  ): Promise<ChannelConnection> {
+    const organizationId = await organizationOf(tenant, permission);
+    if (!isConnectionId(id)) throw new IntegrationError('connection_not_found');
+    const userId = (tenant as { readonly userId: UserId }).userId;
+    return repository.update(organizationId, id, (current) => {
+      const at = now();
+      const { next, action, result, reason } = apply(current, at);
+      const status = next.status ?? current.status;
+      if (status !== current.status && !canTransition(current.status, status)) {
+        throw new IntegrationError('invalid_transition', `${current.status}->${status}`);
+      }
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { statusReason: _dropped, ...rest } = current;
+      const { statusReason: asked, ...fields } = next;
+      const statusReason = 'statusReason' in next ? asked : current.statusReason;
+      const connection: ChannelConnection = Object.freeze({
+        ...rest,
+        ...fields,
+        status,
+        ...(status === 'error' && statusReason !== undefined ? { statusReason } : {}),
+        updatedAt: at.toISOString() as IsoTimestamp,
+        updatedBy: userId,
+        revision: current.revision + 1,
+      });
+      return {
+        connection,
+        events: [
+          connectionEventOf(actorOf(tenant as never), connection, action, at, {
+            ...(result === undefined ? {} : { result }),
+            ...(reason === undefined ? {} : { reason }),
+            ...(requestId === undefined ? {} : { requestId }),
+          }),
+        ],
+      };
+    });
+  }
+
+  const moveTo =
+    (status: ChannelConnectionStatus, action: ConnectionAction) => (current: ChannelConnection) => {
+      if (current.status === status) throw new IntegrationError('invalid_transition', status);
+      return { next: { status, statusReason: undefined }, action };
+    };
 
   return {
+    async list(tenant) {
+      const organizationId = await organizationOf(tenant, 'channel.read', false);
+      return repository.list(organizationId);
+    },
+
+    async get(tenant, id) {
+      const organizationId = await organizationOf(tenant, 'channel.read', false);
+      const connection = isConnectionId(id) ? await repository.find(organizationId, id) : undefined;
+      if (connection === undefined) throw new IntegrationError('connection_not_found');
+      return connection;
+    },
+
     async create(tenant, input) {
-      const organizationId = await organizationOf(tenant, 'channel.manage');
-      if (tenant.actor !== 'user') throw new IntegrationError('requires_user');
+      const organizationId = await organizationOf(tenant, 'channel.create');
       if (secretProjectId === undefined) throw new IntegrationError('secret_unavailable');
-      if (!isChannelType(input.channel)) invalid('channel');
-      const channel = input.channel as ChannelType;
+      const adapter = isProviderId(input.provider) ? registry.find(input.provider) : undefined;
+      if (adapter === undefined) invalid('provider');
+      const provider = adapter as NonNullable<typeof adapter>;
       const displayName = checkName(input.displayName);
-      const account = checkWhatsAppAccount(input.account);
+      const account = provider.checkAccount(input.account);
+      const accountId = provider.accountIdOf(account);
       const existing = await repository.list(organizationId);
-      if (existing.some((c) => c.account.phoneNumberId === account.phoneNumberId)) {
+      if (
+        existing.some(
+          (c) =>
+            c.provider === provider.provider &&
+            c.status !== 'revoked' &&
+            provider.accountIdOf(c.account) === accountId,
+        )
+      ) {
         invalid('account.duplicate');
       }
-      const limit = await entitlements.getLimit(tenant, 'integrations.connectionsMax');
-      if (!limit.available) throw new IntegrationError('entitlements_unavailable');
-      const active = existing.filter((c) => c.status === 'active').length;
-      if (limit.value !== 'unlimited' && active + 1 > limit.value) {
-        throw new IntegrationError('limit_reached');
-      }
+      await checkPlan(tenant, organizationId, provider.category);
       const at = now();
       const iso = at.toISOString() as IsoTimestamp;
       const id = newId() as ChannelConnectionId;
       if (!isConnectionId(id)) invalid('id');
+      const userId = (tenant as { readonly userId: UserId }).userId;
       const connection: ChannelConnection = Object.freeze({
         id,
         organizationId,
-        channel,
-        status: 'active',
+        provider: provider.provider,
+        category: provider.category,
+        channel: provider.channel,
+        status: 'created',
         displayName,
         account,
+        capabilities: provider.capabilities,
         secrets: secretRefsFor(secretProjectId, id),
         createdAt: iso,
-        createdBy: tenant.userId,
+        createdBy: userId,
         updatedAt: iso,
+        updatedBy: userId,
         revision: 1,
       });
       await repository.create({
         connection,
-        events: [event(tenant, connection, 'channel.connection_created', at)],
+        events: [
+          connectionEventOf(
+            actorOf(tenant as never),
+            connection,
+            'channel.connection_created',
+            at,
+            {
+              ...(requestId === undefined ? {} : { requestId }),
+            },
+          ),
+        ],
       });
       return connection;
     },
 
-    async disable(tenant, id) {
-      const organizationId = await organizationOf(tenant, 'channel.manage');
-      if (tenant.actor !== 'user') throw new IntegrationError('requires_user');
-      if (!isConnectionId(id)) throw new IntegrationError('connection_not_found');
-      const at = now();
-      return repository.update(organizationId, id, (current) => {
-        if (current.status === 'disabled') throw new IntegrationError('connection_disabled');
-        const connection: ChannelConnection = Object.freeze({
-          ...current,
-          status: 'disabled',
-          updatedAt: at.toISOString() as IsoTimestamp,
-          revision: current.revision + 1,
-        });
+    rename(tenant, id, displayName) {
+      const name = checkName(displayName);
+      return change(tenant, 'channel.update', id, (current) => {
+        if (current.status === 'revoked') throw new IntegrationError('connection_revoked');
         return {
-          connection,
-          events: [event(tenant, connection, 'channel.connection_disabled', at)],
+          next: { displayName: name },
+          action: 'channel.connection_updated',
+          reason: 'renamed',
         };
       });
     },
 
-    async list(tenant) {
-      const organizationId = await organizationOf(tenant, 'channel.read');
-      return repository.list(organizationId);
+    async connect(tenant, id) {
+      const organizationId = await organizationOf(tenant, 'channel.update');
+      if (!isConnectionId(id)) throw new IntegrationError('connection_not_found');
+      const current = await repository.find(organizationId, id);
+      if (current === undefined) throw new IntegrationError('connection_not_found');
+      if (current.status === 'revoked') throw new IntegrationError('connection_revoked');
+      if (current.status === 'disconnected') {
+        // Connecting again takes a slot back: the plan is asked again.
+        await checkPlan(tenant, organizationId, current.category, current.id);
+      }
+      const connecting = await change(tenant, 'channel.update', id, () => ({
+        next: { status: 'connecting', statusReason: undefined },
+        action: 'channel.connection_updated',
+        reason: 'connecting',
+      }));
+      let check: ConnectionCheck;
+      try {
+        check =
+          checker === undefined
+            ? { status: 'unavailable', code: 'provider_unavailable' }
+            : await checker.validate(connecting);
+      } catch {
+        check = { status: 'unavailable', code: 'provider_unavailable' };
+      }
+      return change(tenant, 'channel.update', id, (latest, at) => {
+        // Someone else changed it meanwhile (turned off, deleted): their change stands.
+        if (latest.status !== 'connecting' || latest.revision !== connecting.revision) {
+          throw new IntegrationError('invalid_transition', 'concurrent_change');
+        }
+        return check.status === 'valid'
+          ? {
+              next: {
+                status: 'connected',
+                statusReason: undefined,
+                lastValidatedAt: at.toISOString() as IsoTimestamp,
+              },
+              action: 'channel.connection_checked',
+              reason: 'connected',
+            }
+          : {
+              next: { status: 'error', statusReason: check.code },
+              action: 'channel.connection_checked',
+              result: 'failure',
+              reason: check.code,
+            };
+      });
     },
+
+    pause: (tenant, id) =>
+      change(tenant, 'channel.update', id, moveTo('paused', 'channel.connection_paused')),
+
+    disconnect: (tenant, id) =>
+      change(
+        tenant,
+        'channel.disconnect',
+        id,
+        moveTo('disconnected', 'channel.connection_disconnected'),
+      ),
+
+    revoke: (tenant, id) =>
+      change(tenant, 'channel.delete', id, moveTo('revoked', 'channel.connection_revoked')),
   };
 }

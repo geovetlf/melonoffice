@@ -10,7 +10,7 @@ import {
   type Limit,
   type LimitKey,
 } from './registry.js';
-import { resolveEntitlements } from './resolve.js';
+import { resolveEntitlements, type EntitlementOverride } from './resolve.js';
 
 /**
  * Why an organization has no entitlements right now. Each one denies everything; none is ever
@@ -22,9 +22,15 @@ import { resolveEntitlements } from './resolve.js';
  *   subscription is not `trialing` or `active` (ADR-0022).
  * - `plan_unknown`: its plan reference is not in the catalogue.
  * - `plan_inactive`: the plan exists but is not active (for example Empresa, `prepared`).
+ * - `overrides_unavailable`: the organization's overrides could not be read or are invalid.
  */
 export type EntitlementsUnavailableReason =
-  'unresolved_tenant' | 'organization_inactive' | 'plan_missing' | 'plan_unknown' | 'plan_inactive';
+  | 'unresolved_tenant'
+  | 'organization_inactive'
+  | 'plan_missing'
+  | 'plan_unknown'
+  | 'plan_inactive'
+  | 'overrides_unavailable';
 
 /** What an organization is entitled to: a state, not usage. Nothing here counts consumption. */
 export type OrganizationEntitlements =
@@ -75,6 +81,14 @@ export interface PlanSource {
   currentPlan(organizationId: OrganizationId): Promise<PlanRef | undefined>;
 }
 
+/**
+ * Where an organization's audited overrides come from (ADR-0044): values a platform operator set
+ * for that one organization, applied after its plan. Never a request, never the organization.
+ */
+export interface OverrideSource {
+  overridesOf(organizationId: OrganizationId): Promise<readonly EntitlementOverride[]>;
+}
+
 export interface EntitlementServiceOptions {
   /** Only `findOrganization` is used, to refuse inactive organizations. */
   readonly organizations: Pick<TenancyStore, 'findOrganization'>;
@@ -82,6 +96,8 @@ export interface EntitlementServiceOptions {
   readonly plans: PlanSource;
   /** The plan catalogue. Defaults to the one in code; tests may pass their own. */
   readonly catalog?: readonly PlanConfig[];
+  /** The organization's overrides. Absent: none. */
+  readonly overrides?: OverrideSource;
   readonly now?: () => Date;
 }
 
@@ -106,6 +122,7 @@ export function createEntitlementService({
   organizations,
   plans,
   catalog = PLAN_CATALOG,
+  overrides,
   now = () => new Date(),
 }: EntitlementServiceOptions): EntitlementService {
   async function entitlementsOf(tenant: TenantContext): Promise<OrganizationEntitlements> {
@@ -119,11 +136,19 @@ export function createEntitlementService({
     const plan = findPlan(catalog, reference.id as PlanId, reference.version);
     if (plan === undefined) return unavailable('plan_unknown');
     if (plan.status !== 'active') return unavailable('plan_inactive');
-    const resolved = resolveEntitlements({
-      orgId: organization.id,
-      plan,
-      now: now().toISOString() as IsoTimestamp,
-    });
+    let resolved;
+    try {
+      const set = overrides === undefined ? [] : await overrides.overridesOf(organization.id);
+      resolved = resolveEntitlements({
+        orgId: organization.id,
+        plan,
+        overrides: set,
+        now: now().toISOString() as IsoTimestamp,
+      });
+    } catch {
+      // An override that cannot be read or used denies everything: it is never skipped.
+      return unavailable('overrides_unavailable');
+    }
     return Object.freeze({
       status: 'active',
       organizationId: organization.id,

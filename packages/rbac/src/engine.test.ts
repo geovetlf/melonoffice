@@ -127,7 +127,10 @@ describe('catalogue', () => {
       'conversation.assist',
       'contact.read',
       'channel.read',
-      'channel.manage',
+      'channel.create',
+      'channel.update',
+      'channel.disconnect',
+      'channel.delete',
     ]);
     for (const permissions of Object.values(ROLES)) {
       for (const permission of permissions) expect(isPermission(permission)).toBe(true);

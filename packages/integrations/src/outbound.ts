@@ -9,7 +9,6 @@ import {
   type OutboundSettlement,
 } from '@melonoffice/conversations';
 import type {
-  ChannelType,
   Conversation,
   ConversationId,
   Execution,
@@ -29,10 +28,8 @@ import {
   type ToolExecutorOutcome,
   type ToolResult,
 } from '@melonoffice/tools';
-import type { ChannelAdapter } from './adapter.js';
-import type { ChannelConnectionRepository } from './connections.js';
+import type { IntegrationEngine } from './engine.js';
 import { isIntegrationError } from './errors.js';
-import type { SecretStore } from './secrets.js';
 
 /**
  * A person's reply in a conversation (CV-2, ADR-0034). There is one way out of MelonOffice for
@@ -47,20 +44,6 @@ export const MESSAGE_SEND = MESSAGE_SEND_TOOL.versions[0] as NonNullable<
 >;
 /** The one node of a send's execution. */
 export const SEND_NODE = 'send';
-
-export type ChannelAdapters = Readonly<Partial<Record<ChannelType, ChannelAdapter>>>;
-
-/** Whether a free-form reply may be sent now, under the channel's service window. */
-export function withinServiceWindow(
-  conversation: Pick<Conversation, 'lastInboundAt'>,
-  adapter: Pick<ChannelAdapter, 'serviceWindowMs'>,
-  now: Date,
-): boolean {
-  if (adapter.serviceWindowMs === undefined) return true;
-  if (conversation.lastInboundAt === undefined) return false;
-  const since = now.getTime() - new Date(conversation.lastInboundAt).getTime();
-  return since >= 0 && since < adapter.serviceWindowMs;
-}
 
 /** The audit event of a settled send: who, which message, in which conversation, and how. */
 export function messageEventOf(
@@ -143,9 +126,8 @@ export interface AgentReplyCheck {
 
 export interface ChannelMessageExecutorOptions {
   readonly conversations: ConversationRepository;
-  readonly connections: Pick<ChannelConnectionRepository, 'find'>;
-  readonly secrets: SecretStore;
-  readonly adapters: ChannelAdapters;
+  /** The Integration Engine (ADR-0044): the only way the executor reaches a provider. */
+  readonly engine: Pick<IntegrationEngine, 'send'>;
   /** Checks agents' replies. Without it, the runtime's versions are refused. */
   readonly agentReplies?: AgentReplyCheck;
   readonly now?: () => Date;
@@ -154,20 +136,14 @@ export interface ChannelMessageExecutorOptions {
 /**
  * The executor of `message_send` (provider `channel`). The gate calls it only after its checks
  * passed, with context built from verified data. Everything it sends is read again here, in the
- * context's organization: the reserved message (the person's own, still `queued`), its
- * conversation, the connection, the recipient's identity and the access token, which is read
- * from the secret store at this moment, used once and dropped. It settles the message itself,
- * with its audit event, in one write: `sent` with the provider's id, or `failed`/`unknown`.
+ * context's organization: the reserved message (the person's own, or the agent's for this turn,
+ * still `queued`), its conversation and the recipient's identity. The Integration Engine then
+ * checks the connection (lifecycle, capability, the channel's window) and reads the access token
+ * at that moment, used once and dropped (ADR-0044). It settles the message itself, with its
+ * audit event, in one write: `sent` with the provider's id, or `failed`/`unknown`.
  */
 export function createChannelMessageExecutor(options: ChannelMessageExecutorOptions): ToolExecutor {
-  const {
-    conversations,
-    connections,
-    secrets,
-    adapters,
-    agentReplies,
-    now = () => new Date(),
-  } = options;
+  const { conversations, engine, agentReplies, now = () => new Date() } = options;
 
   return {
     async execute(context: ToolExecutionContext, input: unknown): Promise<ToolExecutorOutcome> {
@@ -251,19 +227,6 @@ export function createChannelMessageExecutor(options: ChannelMessageExecutorOpti
         // An agent took the conversation while the person's message waited (CV-6A): not sent.
         return refuse('conversation_handled_by_ai');
       }
-      const adapter = adapters[conversation.channel];
-      if (adapter === undefined) return refuse('channel_not_available');
-      if (!withinServiceWindow(conversation, adapter, now())) {
-        return refuse('outside_messaging_window');
-      }
-      const connection = await connections.find(organizationId, conversation.connectionId);
-      if (
-        connection === undefined ||
-        connection.status !== 'active' ||
-        connection.channel !== conversation.channel
-      ) {
-        return refuse('channel_not_available');
-      }
       const identity = await conversations.findIdentity(
         organizationId,
         conversation.channelIdentityId,
@@ -271,35 +234,43 @@ export function createChannelMessageExecutor(options: ChannelMessageExecutorOpti
       if (identity === undefined || identity.channel !== conversation.channel) {
         return refuse('channel_not_available');
       }
-      let accessToken: string;
-      try {
-        accessToken = await secrets.read(connection.secrets.access_token);
-      } catch {
-        // Nothing left MelonOffice: the credential could not be read.
-        return refuse('channel_not_available');
-      }
-      if (agent) {
-        // Checked again as the very last step before the provider is called (CV-6B): a person
-        // who took control while the channel was being prepared is never overtaken.
-        const latest = await conversations.findConversation(organizationId, conversationId);
-        const refusal =
-          latest === undefined
-            ? 'conversation_not_found'
-            : await agentReplies?.refusalOf(context, latest, message);
-        if (refusal !== undefined) return refuse(refusal);
-      }
-      let externalMessageId: string;
-      try {
-        ({ externalMessageId } = await adapter.send(connection, accessToken, {
+      const result = await engine.send({
+        organizationId,
+        connectionId: conversation.connectionId,
+        channel: conversation.channel,
+        conversation,
+        message: {
           to: identity.externalId,
           text: message.text,
           ...(context.idempotencyKey === undefined
             ? {}
             : { idempotencyKey: context.idempotencyKey }),
-        }));
-      } catch (error) {
-        return settle(settlementOfError(error));
-      }
+        },
+        actor: { actor: agent ? 'runtime' : 'user', userId },
+        trace: {
+          messageId: message.id,
+          executionId: context.executionId,
+          nodeId: context.nodeId,
+          toolCallId: context.idempotencyKey,
+          agentId: context.specialistId,
+          requestId: context.requestId,
+        },
+        ...(agent
+          ? {
+              // Checked again as the very last step before the provider is called (CV-6B): a
+              // person who took control while the channel was being prepared is never overtaken.
+              lastCheck: async () => {
+                const latest = await conversations.findConversation(organizationId, conversationId);
+                return latest === undefined
+                  ? 'conversation_not_found'
+                  : agentReplies?.refusalOf(context, latest, message);
+              },
+            }
+          : {}),
+      });
+      if (result.status === 'refused') return refuse(result.code);
+      if (result.status === 'failed') return settle(settlementOfError(result.error));
+      const { externalMessageId } = result;
       return settle({ status: 'sent', externalMessageId });
     },
   };
@@ -332,7 +303,8 @@ export interface MessageSendServiceOptions {
   readonly authorization: Pick<AuthorizationService, 'authorize'>;
   readonly executions: Pick<ExecutionService, 'create' | 'get' | 'start'>;
   readonly gate: ToolInvoker;
-  readonly adapters: ChannelAdapters;
+  /** Asked before a message is reserved: whether its connection could send now (ADR-0044). */
+  readonly channels: Pick<IntegrationEngine, 'availability'>;
   /** Records refusals made before a message is reserved. */
   readonly audit: AuditService;
   readonly logger?: Logger;
@@ -362,7 +334,7 @@ export function createMessageSendService(options: MessageSendServiceOptions): Me
     authorization,
     executions,
     gate,
-    adapters,
+    channels,
     audit,
     logger,
     now = () => new Date(),
@@ -534,17 +506,17 @@ export function createMessageSendService(options: MessageSendServiceOptions): Me
       let message = stored;
       if (message === undefined) {
         // Refusals that need no attempt: nothing is reserved, nothing leaves.
-        const adapter = adapters[conversation.channel];
         const refusal =
           conversation.status === 'closed'
             ? 'conversation_closed'
             : !personMaySend(conversation)
               ? 'conversation_handled_by_ai'
-              : adapter === undefined
-                ? 'channel_not_available'
-                : !withinServiceWindow(conversation, adapter, now())
-                  ? 'outside_messaging_window'
-                  : undefined;
+              : await channels.availability({
+                  organizationId,
+                  connectionId: conversation.connectionId,
+                  channel: conversation.channel,
+                  conversation,
+                });
         if (refusal !== undefined) {
           await audit.record(
             messageEventOf(

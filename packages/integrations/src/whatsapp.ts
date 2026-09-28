@@ -8,13 +8,22 @@ import {
   MAX_TEXT_LENGTH,
 } from '@melonoffice/conversations';
 import type {
+  ChannelCapabilities,
   ChannelConnection,
+  IntegrationProviderId,
   IsoTimestamp,
   MessageAttachment,
   MessageType,
+  WhatsAppAccount,
 } from '@melonoffice/domain';
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import type { ChannelAdapter, NormalizedDelivery, OutboundText } from './adapter.js';
+import type {
+  ChannelAdapter,
+  ConnectionCheck,
+  ConnectionCredentials,
+  NormalizedDelivery,
+  OutboundText,
+} from './adapter.js';
 import { IntegrationError } from './errors.js';
 
 /**
@@ -34,6 +43,45 @@ const TIMESTAMP = /^[0-9]{9,11}$/;
 const CHALLENGE = /^[A-Za-z0-9_-]{1,128}$/;
 const MEDIA_TYPES = ['image', 'document', 'audio', 'video', 'sticker'] as const;
 const GRAPH_VERSION = /^v[0-9]{1,3}\.[0-9]$/;
+const DISPLAY_PHONE = /^\+?[0-9 ()-]{6,32}$/;
+
+/** Meta's WhatsApp Cloud API: the official provider, reached directly (DG-2, ADR-0044). */
+export const WHATSAPP_PROVIDER = 'meta_whatsapp_cloud' as IntegrationProviderId;
+
+/** Only the known, non-sensitive account fields; anything else (a token, a secret) is refused. */
+export function checkWhatsAppAccount(value: unknown): WhatsAppAccount {
+  const invalid = (detail: string): never => {
+    throw new IntegrationError('invalid_connection', detail);
+  };
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) invalid('account');
+  const a = value as Record<string, unknown>;
+  const allowed = ['phoneNumberId', 'businessAccountId', 'displayPhoneNumber'];
+  if (Object.keys(a).some((k) => !allowed.includes(k))) invalid('account.fields');
+  if (typeof a.phoneNumberId !== 'string' || !META_ID.test(a.phoneNumberId)) {
+    invalid('account.phoneNumberId');
+  }
+  if (
+    a.businessAccountId !== undefined &&
+    (typeof a.businessAccountId !== 'string' || !META_ID.test(a.businessAccountId))
+  ) {
+    invalid('account.businessAccountId');
+  }
+  if (
+    a.displayPhoneNumber !== undefined &&
+    (typeof a.displayPhoneNumber !== 'string' || !DISPLAY_PHONE.test(a.displayPhoneNumber))
+  ) {
+    invalid('account.displayPhoneNumber');
+  }
+  return Object.freeze({
+    phoneNumberId: a.phoneNumberId as string,
+    ...(a.businessAccountId === undefined
+      ? {}
+      : { businessAccountId: a.businessAccountId as string }),
+    ...(a.displayPhoneNumber === undefined
+      ? {}
+      : { displayPhoneNumber: a.displayPhoneNumber as string }),
+  });
+}
 /** Stands in for the organization and connection while checking, before they are known. */
 const PLACEHOLDER = '00000000-0000-4000-8000-000000000000';
 
@@ -181,6 +229,22 @@ async function rejectionOf(answer: Response): Promise<string> {
   }
 }
 
+/**
+ * What a WhatsApp Cloud API connection can do in MelonOffice today: text both ways, media in,
+ * delivery statuses, within the 24-hour service window. No media out and no templates yet, so
+ * nothing is ever sent outside the window.
+ */
+export const WHATSAPP_CAPABILITIES: ChannelCapabilities = Object.freeze({
+  inboundText: true,
+  inboundMedia: true,
+  outboundText: true,
+  outboundMedia: false,
+  outboundTemplates: false,
+  deliveryStatus: true,
+  maxOutboundTextLength: MAX_TEXT_LENGTH,
+  serviceWindowMs: WHATSAPP_SERVICE_WINDOW_MS,
+});
+
 export interface WhatsAppAdapterOptions {
   /** The Graph API version to send with, e.g. `v23.0`: set by configuration, never guessed. */
   readonly graphApiVersion?: string;
@@ -192,9 +256,67 @@ export function createWhatsAppAdapter(options: WhatsAppAdapterOptions = {}): Cha
   const call = options.fetch ?? fetch;
   const timeoutMs = options.timeoutMs ?? 10_000;
 
-  return {
+  const versionOf = (): string => {
+    const version = options.graphApiVersion;
+    if (version === undefined || !GRAPH_VERSION.test(version)) {
+      throw new IntegrationError('provider_unavailable', 'graph_api_version');
+    }
+    return version;
+  };
+
+  /**
+   * Reads the phone number's own node with the access token (Graph API, "WhatsApp Business Phone
+   * Number"): valid only when Meta answers with that same id. Sends nothing.
+   */
+  async function check(
+    connection: ChannelConnection,
+    credentials: ConnectionCredentials,
+  ): Promise<ConnectionCheck> {
+    let version: string;
+    try {
+      version = versionOf();
+    } catch {
+      return { status: 'unavailable', code: 'graph_api_version' };
+    }
+    const id = connection.account.phoneNumberId;
+    let answer: Response;
+    try {
+      answer = await call(`${GRAPH_API_URL}/${version}/${id}?fields=id`, {
+        headers: { authorization: `Bearer ${credentials.accessToken}` },
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+    } catch {
+      return { status: 'unavailable', code: 'no_answer' };
+    }
+    if (answer.status === 429) return { status: 'unavailable', code: 'rate_limited' };
+    if (answer.status >= 500) return { status: 'unavailable', code: 'server_error' };
+    if (!answer.ok) {
+      const code = await rejectionOf(answer);
+      if (code === 'rate_limited' || code === 'temporary_provider_error') {
+        return { status: 'unavailable', code };
+      }
+      return {
+        status: 'invalid',
+        code: code === 'provider_rejected' ? 'account_not_accessible' : code,
+      };
+    }
+    try {
+      const body = (await answer.json()) as { id?: unknown };
+      return body.id === id ? { status: 'valid' } : { status: 'invalid', code: 'account_mismatch' };
+    } catch {
+      return { status: 'unavailable', code: 'response' };
+    }
+  }
+
+  const adapter: ChannelAdapter = {
+    provider: WHATSAPP_PROVIDER,
+    category: 'messaging',
     channel: 'whatsapp',
-    serviceWindowMs: WHATSAPP_SERVICE_WINDOW_MS,
+    capabilities: WHATSAPP_CAPABILITIES,
+
+    checkAccount: checkWhatsAppAccount,
+
+    accountIdOf: (account) => account.phoneNumberId,
 
     verifySignature(rawBody, headers, appSecret) {
       const header = headers.get(SIGNATURE_HEADER) ?? '';
@@ -217,7 +339,7 @@ export function createWhatsAppAdapter(options: WhatsAppAdapterOptions = {}): Cha
       return a.length === b.length && timingSafeEqual(a, b) ? challenge : undefined;
     },
 
-    parse(rawBody) {
+    normalizeInbound(rawBody) {
       let body: unknown;
       try {
         body = JSON.parse(rawBody);
@@ -278,11 +400,7 @@ export function createWhatsAppAdapter(options: WhatsAppAdapterOptions = {}): Cha
       return Object.freeze(deliveries);
     },
 
-    async send(connection: ChannelConnection, accessToken: string, message: OutboundText) {
-      const version = options.graphApiVersion;
-      if (version === undefined || !GRAPH_VERSION.test(version)) {
-        throw new IntegrationError('provider_unavailable', 'graph_api_version');
-      }
+    normalizeOutbound(message: OutboundText) {
       if (
         typeof message.to !== 'string' ||
         !WA_ID.test(message.to) ||
@@ -293,7 +411,7 @@ export function createWhatsAppAdapter(options: WhatsAppAdapterOptions = {}): Cha
       ) {
         throw new IntegrationError('invalid_outbound');
       }
-      const body = {
+      return Object.freeze({
         messaging_product: 'whatsapp',
         recipient_type: 'individual',
         to: message.to,
@@ -302,7 +420,16 @@ export function createWhatsAppAdapter(options: WhatsAppAdapterOptions = {}): Cha
         ...(message.replyToExternalId === undefined
           ? {}
           : { context: { message_id: message.replyToExternalId } }),
-      };
+      });
+    },
+
+    async send(
+      connection: ChannelConnection,
+      credentials: ConnectionCredentials,
+      message: OutboundText,
+    ) {
+      const version = versionOf();
+      const body = adapter.normalizeOutbound(message);
       let answer: Response;
       try {
         answer = await call(
@@ -310,7 +437,7 @@ export function createWhatsAppAdapter(options: WhatsAppAdapterOptions = {}): Cha
           {
             method: 'POST',
             headers: {
-              authorization: `Bearer ${accessToken}`,
+              authorization: `Bearer ${credentials.accessToken}`,
               'content-type': 'application/json',
             },
             body: JSON.stringify(body),
@@ -335,5 +462,9 @@ export function createWhatsAppAdapter(options: WhatsAppAdapterOptions = {}): Cha
       if (!isExternalId(id)) throw new IntegrationError('provider_unavailable', 'response');
       return Object.freeze({ externalMessageId: id as string });
     },
+
+    validateConnection: check,
+    healthCheck: check,
   };
+  return Object.freeze(adapter);
 }

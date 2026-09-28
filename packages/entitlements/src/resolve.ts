@@ -25,12 +25,33 @@ export interface AddOn {
   readonly expiresAt: IsoTimestamp;
 }
 
-/** A value set by a platform operator for one organization. Always audited, so a reason is required. */
+/**
+ * A value set by a platform operator for one organization (ADR-0007, wired in ADR-0044). It is
+ * data about that organization, never a change to its plan: the plan's values stay as they are
+ * for everyone else. Always audited, so a reason is required; it may expire.
+ */
 export interface EntitlementOverride {
   readonly key: EntitlementKey;
   readonly value: EntitlementBlock[EntitlementKey];
   readonly reason: string;
   readonly approvedBy: UserId;
+  /** From then on it no longer applies. Absent: until an operator removes it. */
+  readonly expiresAt?: IsoTimestamp;
+}
+
+const MAX_REASON_LENGTH = 200;
+
+/** Checks an override before it is stored or used: a known key, a value of its kind, a reason. */
+export function checkOverride(override: EntitlementOverride): EntitlementOverride {
+  const reason = typeof override.reason === 'string' ? override.reason.trim() : '';
+  if (reason === '' || reason.length > MAX_REASON_LENGTH) {
+    throw new Error(`override of "${String(override.key)}" needs a reason`);
+  }
+  assertValidBlock({ [override.key]: override.value }, 'override');
+  if (override.expiresAt !== undefined && Number.isNaN(Date.parse(override.expiresAt))) {
+    throw new Error(`override of "${String(override.key)}" has an invalid expiry`);
+  }
+  return override;
 }
 
 /** Caps a company sets for itself. They can only lower an effective limit, never raise it. */
@@ -122,10 +143,11 @@ export function resolveEntitlements(input: ResolveInput): EffectiveEntitlements 
   }
 
   for (const override of input.overrides ?? []) {
-    if (override.reason.trim() === '') {
-      throw new Error(`override of "${override.key}" needs a reason`);
+    checkOverride(override);
+    // An expired override, or an unreadable date, changes nothing.
+    if (override.expiresAt !== undefined && !(Date.parse(override.expiresAt) > Date.parse(now))) {
+      continue;
     }
-    assertValidBlock({ [override.key]: override.value }, 'override');
     values[override.key] = copyValue(override.value);
   }
 

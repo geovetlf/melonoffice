@@ -1,5 +1,4 @@
 import type {
-  ChannelConnection,
   ChannelIdentity,
   Contact,
   Conversation,
@@ -15,7 +14,6 @@ import {
 } from '@melonoffice/conversations';
 import {
   isIntegrationError,
-  type ChannelConnectionService,
   type HandoffSummaries,
   type MessageSendService,
 } from '@melonoffice/integrations';
@@ -32,15 +30,14 @@ import { withPermission, type AuthorizationDependencies } from './authorization.
  * here routes by AI or sends on its own: messages arrive only through the verified
  * channel webhook, and leave only when a person sends them. A person can take control of a
  * conversation from AI and hand it back (CV-6A, ADR-0039); while AI handles one, a person's send
- * is refused, so the two never answer at once. Channel connections are listed
- * without their secret references; they are configured on the server. Another organization's
+ * is refused, so the two never answer at once. Connections have their own routes
+ * (`connections.ts`, ADR-0044). Another organization's
  * conversation or contact answers exactly like a missing one.
  */
 export function registerConversationRoutes(
   app: Hono<AuthEnv>,
   dependencies: AuthorizationDependencies & {
     readonly conversations: ConversationService;
-    readonly connections: ChannelConnectionService;
     /** A person's replies (ADR-0034). Absent: the send route answers 503. */
     readonly sender?: MessageSendService;
     /** Assisted AI (ADR-0037). Absent: the assist route answers 503. */
@@ -49,7 +46,7 @@ export function registerConversationRoutes(
     readonly handoffSummaries?: HandoffSummaries;
   },
 ): void {
-  const { conversations, connections, sender, assistant, handoffSummaries } = dependencies;
+  const { conversations, sender, assistant, handoffSummaries } = dependencies;
   const base = '/v1/organizations/:organizationId';
   const one = `${base}/conversations/:conversationId`;
   const idOf = (c: Context<AuthEnv>) => c.req.param('conversationId') ?? '';
@@ -355,15 +352,6 @@ export function registerConversationRoutes(
       }),
     ),
   );
-
-  app.get(
-    `${base}/channel-connections`,
-    withPermission('channel.read', dependencies, (c, tenant) =>
-      answer(c, async () => ({
-        connections: (await connections.list(tenant)).map(toConnectionView),
-      })),
-    ),
-  );
 }
 
 const FILTER_KEYS = new Set([
@@ -435,6 +423,7 @@ const STATUS = {
   duplicate_request: 409,
   conversation_closed: 409,
   outside_messaging_window: 409,
+  capability_not_available: 409,
   tool_not_human_invokable: 403,
   channel_not_available: 503,
   // Assisted AI (ADR-0037): stable codes only, never a provider's message or detail.
@@ -458,6 +447,7 @@ const SEND_REFUSALS = {
   conversation_closed: 409,
   conversation_handled_by_ai: 409,
   outside_messaging_window: 409,
+  capability_not_available: 409,
   tool_not_human_invokable: 403,
   permission_not_held: 403,
   channel_not_available: 503,
@@ -591,21 +581,5 @@ export function toIdentityView(i: ChannelIdentity) {
     displayName: i.displayName ?? null,
     verification: i.verification,
     createdAt: i.createdAt,
-  };
-}
-
-/** A connection without its secret references: they name where credentials live. */
-export function toConnectionView(c: ChannelConnection) {
-  return {
-    id: c.id,
-    channel: c.channel,
-    status: c.status,
-    displayName: c.displayName,
-    account: {
-      phoneNumberId: c.account.phoneNumberId,
-      displayPhoneNumber: c.account.displayPhoneNumber ?? null,
-    },
-    createdAt: c.createdAt,
-    updatedAt: c.updatedAt,
   };
 }

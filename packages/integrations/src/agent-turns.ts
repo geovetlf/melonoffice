@@ -62,6 +62,7 @@ import {
   type ToolExecutorOutcome,
 } from '@melonoffice/tools';
 import { messageEventOf, type AgentReplyCheck } from './outbound.js';
+import type { IntegrationEngine } from './engine.js';
 
 /**
  * An agent's turn on a conversation (CV-6B, ADR-0043), on the existing engines only: the turn is
@@ -212,6 +213,12 @@ export interface AgentTurnTriggerOptions {
   readonly tenancy: TenancyStore;
   /** Queues the turn's first job. Without it, a started turn waits in the queue. */
   readonly runtime?: TurnKickoff;
+  /**
+   * The Integration Engine (ADR-0044), asked whether the conversation's connection could send a
+   * reply before any model is asked: a turn that could not answer spends nothing and goes to a
+   * person. Absent: the send itself refuses, later.
+   */
+  readonly channels?: Pick<IntegrationEngine, 'availability'>;
   readonly audit: AuditService;
   readonly logger?: Logger;
   readonly now?: () => Date;
@@ -235,6 +242,7 @@ export function createAgentTurnTrigger(options: AgentTurnTriggerOptions): AgentT
     executions,
     tenancy,
     runtime,
+    channels,
     audit,
     logger,
     requestId,
@@ -375,20 +383,33 @@ export function createAgentTurnTrigger(options: AgentTurnTriggerOptions): AgentT
         return skipped('conversation_handled_by_human');
       }
 
-      // The agent's limit in one conversation: past it, a person takes over.
-      const messages = await conversations.listMessages(organizationId, conversation.id);
-      if (agentRepliesIn(messages, agentId) >= profile.maxRepliesPerConversation) {
+      const escalate = async (reason: HandoffReason, code: string): Promise<AgentTurnOutcome> => {
         try {
           await conversationService.escalate(tenant, conversation.id, {
-            reason: 'too_many_attempts',
+            reason,
             epoch: control.epoch,
           });
         } catch (error) {
           if (!isConversationError(error)) throw error;
           return skipped(error.code);
         }
-        log('agent_turn_escalated', { ...fields, code: 'too_many_attempts' });
-        return Object.freeze({ status: 'escalated', code: 'too_many_attempts' });
+        log('agent_turn_escalated', { ...fields, code });
+        return Object.freeze({ status: 'escalated', code });
+      };
+
+      // A reply that could not be sent is never asked of a model: no credits, a person answers.
+      const channel = await channels?.availability({
+        organizationId,
+        connectionId: conversation.connectionId,
+        channel: conversation.channel,
+        conversation,
+      });
+      if (channel !== undefined) return escalate('channel_unavailable', channel);
+
+      // The agent's limit in one conversation: past it, a person takes over.
+      const messages = await conversations.listMessages(organizationId, conversation.id);
+      if (agentRepliesIn(messages, agentId) >= profile.maxRepliesPerConversation) {
+        return escalate('too_many_attempts', 'too_many_attempts');
       }
 
       const { execution, created } = await executionOf(
@@ -797,6 +818,7 @@ export function handoffReasonOf(code: string): HandoffReason | undefined {
     [
       'outside_messaging_window',
       'channel_not_available',
+      'capability_not_available',
       'provider_rejected',
       'rate_limited',
       'invalid_message',

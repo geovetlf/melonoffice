@@ -23,7 +23,8 @@ import { isOrganizationId } from '@melonoffice/tenancy';
 import { AUDIT_LOGS, toAuditDocument } from './audit.js';
 
 /**
- * `channelConnections/{connectionId}`: an organization's channel account (ADR-0033). Only
+ * `channelConnections/{connectionId}`: an organization's connection to an outside service
+ * (ADR-0033, ADR-0044): provider, lifecycle status, capabilities and account. Only
  * non-sensitive configuration and secret references (resource names derived from the id); a
  * secret value is never written here.
  */
@@ -36,29 +37,48 @@ const iso = (value: FirestoreTimestamp): IsoTimestamp =>
 export function toConnectionDocument(c: ChannelConnection): Record<string, unknown> {
   return {
     organizationId: c.organizationId,
+    provider: c.provider,
+    category: c.category,
     channel: c.channel,
     status: c.status,
+    statusReason: c.statusReason ?? null,
     displayName: c.displayName,
     account: {
       phoneNumberId: c.account.phoneNumberId,
       businessAccountId: c.account.businessAccountId ?? null,
       displayPhoneNumber: c.account.displayPhoneNumber ?? null,
     },
+    capabilities: {
+      inboundText: c.capabilities.inboundText,
+      inboundMedia: c.capabilities.inboundMedia,
+      outboundText: c.capabilities.outboundText,
+      outboundMedia: c.capabilities.outboundMedia,
+      outboundTemplates: c.capabilities.outboundTemplates,
+      deliveryStatus: c.capabilities.deliveryStatus,
+      maxOutboundTextLength: c.capabilities.maxOutboundTextLength,
+      serviceWindowMs: c.capabilities.serviceWindowMs ?? null,
+    },
     secrets: { ...c.secrets },
     createdAt: ts(c.createdAt),
     createdBy: c.createdBy,
     updatedAt: ts(c.updatedAt),
+    updatedBy: c.updatedBy,
+    lastValidatedAt: c.lastValidatedAt === undefined ? null : ts(c.lastValidatedAt),
     revision: c.revision,
   };
 }
 
 function toConnection(id: string, d: Record<string, unknown>): ChannelConnection {
   const account = d.account as Record<string, string | null>;
+  const capabilities = (d.capabilities ?? {}) as Record<string, unknown>;
   const connection = {
     id,
     organizationId: d.organizationId,
+    provider: d.provider,
+    category: d.category,
     channel: d.channel,
     status: d.status,
+    ...(d.statusReason == null ? {} : { statusReason: d.statusReason }),
     displayName: d.displayName,
     account: {
       phoneNumberId: account.phoneNumberId,
@@ -69,10 +89,26 @@ function toConnection(id: string, d: Record<string, unknown>): ChannelConnection
         ? {}
         : { displayPhoneNumber: account.displayPhoneNumber }),
     },
+    capabilities: {
+      inboundText: capabilities.inboundText,
+      inboundMedia: capabilities.inboundMedia,
+      outboundText: capabilities.outboundText,
+      outboundMedia: capabilities.outboundMedia,
+      outboundTemplates: capabilities.outboundTemplates,
+      deliveryStatus: capabilities.deliveryStatus,
+      maxOutboundTextLength: capabilities.maxOutboundTextLength,
+      ...(capabilities.serviceWindowMs == null
+        ? {}
+        : { serviceWindowMs: capabilities.serviceWindowMs }),
+    },
     secrets: { ...(d.secrets as Record<string, string>) },
     createdAt: iso(d.createdAt as FirestoreTimestamp),
     createdBy: d.createdBy,
     updatedAt: iso(d.updatedAt as FirestoreTimestamp),
+    updatedBy: d.updatedBy,
+    ...(d.lastValidatedAt == null
+      ? {}
+      : { lastValidatedAt: iso(d.lastValidatedAt as FirestoreTimestamp) }),
     revision: d.revision,
   } as unknown as ChannelConnection;
   try {

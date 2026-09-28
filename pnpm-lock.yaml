@@ -528,6 +528,9 @@ importers:
       '@melonoffice/domain':
         specifier: workspace:*
         version: link:../domain
+      '@melonoffice/entitlements':
+        specifier: workspace:*
+        version: link:../entitlements
       '@melonoffice/execution':
         specifier: workspace:*
         version: link:../execution

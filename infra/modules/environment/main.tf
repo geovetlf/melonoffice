@@ -31,6 +31,19 @@ locals {
   # Only where the apps, Firestore and the runtime exist, and only when turned on (dev today).
   ai_assist_enabled = var.ai_assist && local.runtime_enabled
 
+  # Conversation agents (ADR-0043): the worker runs agent turns with the same approved model, and
+  # the api hands each turn to the same execution jobs queue (X6d). Needs assisted AI.
+  conversation_agents_enabled = var.conversation_agents && local.ai_assist_enabled
+
+  # The WhatsApp channel (ADR-0033, ADR-0034): channel secrets live in this project's Secret
+  # Manager, one secret per connection and kind, named `channel-{connectionId}-{kind}`. The api
+  # reads them for webhooks and a person's replies; the worker for an agent's replies.
+  whatsapp_channel_enabled = var.whatsapp_channel && local.runtime_enabled
+  whatsapp_env = local.whatsapp_channel_enabled ? merge(
+    { CHANNEL_SECRETS_PROJECT_ID = var.project_id },
+    var.whatsapp_graph_api_version == null ? {} : { WHATSAPP_GRAPH_API_VERSION = var.whatsapp_graph_api_version },
+  ) : {}
+
   base_services = [
     "artifactregistry.googleapis.com",
     "cloudresourcemanager.googleapis.com",
@@ -55,6 +68,9 @@ locals {
   ]
   ai_assist_services = [
     "aiplatform.googleapis.com",
+  ]
+  whatsapp_channel_services = [
+    "secretmanager.googleapis.com",
   ]
   budget_services = [
     "billingbudgets.googleapis.com",
@@ -136,6 +152,15 @@ locals {
           VERTEX_AI_PROJECT_ID = var.project_id
           VERTEX_AI_LOCATION   = var.region
         } : {},
+        # Agent turns go to the worker through the execution jobs queue (ADR-0032, ADR-0043), with
+        # the same settings the worker uses. None is a secret.
+        local.conversation_agents_enabled ? {
+          JOB_QUEUE         = local.job_queue_path
+          WORKER_URL        = local.worker_url
+          JOB_INVOKER_EMAIL = google_service_account.job_dispatch[0].email
+          JOB_LEASE_MS      = tostring(var.job_lease_seconds * 1000)
+        } : {},
+        local.whatsapp_env,
       )
       timeout = null
     }
@@ -153,6 +178,13 @@ locals {
           WORKER_URL             = local.worker_url
           JOB_INVOKER_EMAIL      = google_service_account.job_dispatch[0].email
         } : {},
+        # The approved model for agent turns (ADR-0043), in the same project and region as the
+        # api's. Not secrets.
+        local.conversation_agents_enabled ? {
+          VERTEX_AI_PROJECT_ID = var.project_id
+          VERTEX_AI_LOCATION   = var.region
+        } : {},
+        local.whatsapp_env,
       )
       # A delivery may run as long as its lease; other services keep the default.
       timeout = local.runtime_enabled ? "${var.job_lease_seconds}s" : null
@@ -171,6 +203,7 @@ module "services" {
     local.runtime_enabled ? local.runtime_services : [],
     local.web_sign_in_enabled ? local.web_sign_in_services : [],
     local.ai_assist_enabled ? local.ai_assist_services : [],
+    local.whatsapp_channel_enabled ? local.whatsapp_channel_services : [],
   )
 }
 
@@ -507,4 +540,71 @@ resource "google_project_iam_member" "api_vertex_ai" {
   project = var.project_id
   role    = google_project_iam_custom_role.vertex_ai_invoker[0].id
   member  = "serviceAccount:${module.app["api"].runtime_service_account}"
+}
+
+# ---------------------------------------------------------------------------------------------
+# Conversation agents (ADR-0043): the same approved model and the same jobs queue, for the worker
+# and the api respectively. Nothing new is created: only who may use what already exists.
+
+# The worker calls the model for agent turns with the same smallest role the api has.
+resource "google_project_iam_member" "worker_vertex_ai" {
+  count = local.conversation_agents_enabled ? 1 : 0
+
+  project = var.project_id
+  role    = google_project_iam_custom_role.vertex_ai_invoker[0].id
+  member  = local.worker_member
+}
+
+# The api hands a new agent turn's first job to the queue: enqueue on this queue only.
+resource "google_cloud_tasks_queue_iam_member" "api_enqueuer" {
+  count = local.conversation_agents_enabled ? 1 : 0
+
+  project  = var.project_id
+  location = var.region
+  name     = google_cloud_tasks_queue.execution_jobs[0].name
+  role     = "roles/cloudtasks.enqueuer"
+  member   = "serviceAccount:${module.app["api"].runtime_service_account}"
+}
+
+# Creating a task with an OIDC token for the dispatch identity requires acting as it; the api may
+# act as that identity only, as the worker does.
+resource "google_service_account_iam_member" "api_acts_as_job_dispatch" {
+  count = local.conversation_agents_enabled ? 1 : 0
+
+  service_account_id = google_service_account.job_dispatch[0].name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${module.app["api"].runtime_service_account}"
+}
+
+# ---------------------------------------------------------------------------------------------
+# WhatsApp channel secrets (ADR-0033). Terraform never holds a secret value: the project's owner
+# creates each connection's secrets in Secret Manager. The api and worker may read the latest
+# version of channel secrets only (`channel-*`), never list, create or change any secret.
+
+resource "google_project_iam_member" "api_channel_secrets" {
+  count = local.whatsapp_channel_enabled ? 1 : 0
+
+  project = var.project_id
+  role    = "roles/secretmanager.secretAccessor"
+  member  = "serviceAccount:${module.app["api"].runtime_service_account}"
+
+  condition {
+    title       = "channel-secrets-only"
+    description = "Channel connection secrets only (channel-{connectionId}-{kind})."
+    expression  = "resource.name.startsWith(\"projects/${data.google_project.this[0].number}/secrets/channel-\")"
+  }
+}
+
+resource "google_project_iam_member" "worker_channel_secrets" {
+  count = local.whatsapp_channel_enabled ? 1 : 0
+
+  project = var.project_id
+  role    = "roles/secretmanager.secretAccessor"
+  member  = local.worker_member
+
+  condition {
+    title       = "channel-secrets-only"
+    description = "Channel connection secrets only (channel-{connectionId}-{kind})."
+    expression  = "resource.name.startsWith(\"projects/${data.google_project.this[0].number}/secrets/channel-\")"
+  }
 }

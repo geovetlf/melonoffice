@@ -1,6 +1,7 @@
 # ADR-0033: Conversations foundation and human inbox API (CV-1)
 
 - Status: Proposed (Phase CV-1, pending Geovet's review)
+- Amended by: [ADR-0044](0044-integration-engine.md) (connection lifecycle and routes; `channel.manage` split into `channel.create`, `channel.update`, `channel.disconnect` and `channel.delete`; `channel.connection_disabled` replaced by the lifecycle events)
 - Date: 2026-09-27
 - Builds on:
   - [ADR-0018](0018-tenancy-and-memberships.md)

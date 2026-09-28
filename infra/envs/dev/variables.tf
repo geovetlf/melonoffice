@@ -30,3 +30,9 @@ variable "budget" {
   })
   default = null
 }
+
+variable "whatsapp_graph_api_version" {
+  description = "Meta Graph API version for WhatsApp sends, e.g. v23.0. Null leaves sending off."
+  type        = string
+  default     = null
+}

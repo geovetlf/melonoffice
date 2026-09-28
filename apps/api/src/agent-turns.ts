@@ -15,6 +15,7 @@ import {
   createConversationAgentCheck,
   turnOf,
   type AgentTurnTrigger,
+  type IntegrationEngine,
 } from '@melonoffice/integrations';
 import { createJobService, type JobRepository } from '@melonoffice/jobs';
 import type { Logger } from '@melonoffice/observability';
@@ -39,6 +40,11 @@ export interface AgentTurnsOptions {
    * first job stays queued until something delivers it (fails closed: nothing runs here).
    */
   readonly dispatcher?: JobDispatcher;
+  /**
+   * The Integration Engine (ADR-0044), asked whether the conversation's connection could send a
+   * reply before a turn starts. Absent: the reply's send refuses later instead.
+   */
+  readonly channels?: Pick<IntegrationEngine, 'availability'>;
   readonly logger?: Logger;
 }
 
@@ -145,6 +151,7 @@ export function createAgentTurns(options: AgentTurnsOptions): AgentTurns {
     executions: executionsFor(),
     tenancy,
     runtime,
+    ...(options.channels === undefined ? {} : { channels: options.channels }),
     audit,
     ...(logger === undefined ? {} : { logger }),
   });

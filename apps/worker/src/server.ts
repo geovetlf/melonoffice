@@ -28,7 +28,12 @@ import {
   FirestoreSpecialistRepository,
   FirestoreTenancyStore,
 } from '@melonoffice/firestore';
-import { createSecretManagerStore, createWhatsAppAdapter } from '@melonoffice/integrations';
+import {
+  createIntegrationEngine,
+  createIntegrationRegistry,
+  createSecretManagerStore,
+  createWhatsAppAdapter,
+} from '@melonoffice/integrations';
 import { createLogger } from '@melonoffice/observability';
 import { createToolRegistry, TOOL_CATALOGUE } from '@melonoffice/tools';
 import { createConversationAgentParts } from './agents.js';
@@ -72,17 +77,20 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
     ...(channelSecretsProjectId === undefined
       ? {}
       : {
-          channels: {
-            connections: new FirestoreChannelConnectionRepository(firestore),
-            secrets: createSecretManagerStore(),
-            adapters: {
-              whatsapp: createWhatsAppAdapter(
+          // The Integration Engine (ADR-0044): the same one the API uses, for sends only. It
+          // stores no inbound message here, so it gets no ingress.
+          channels: createIntegrationEngine({
+            registry: createIntegrationRegistry([
+              createWhatsAppAdapter(
                 whatsappGraphApiVersion === undefined
                   ? {}
                   : { graphApiVersion: whatsappGraphApiVersion },
               ),
-            },
-          },
+            ]),
+            connections: new FirestoreChannelConnectionRepository(firestore),
+            secrets: createSecretManagerStore(),
+            logger: logger.child({ component: 'integrations' }),
+          }),
         }),
     logger: logger.child({ component: 'conversation-agents' }),
   });

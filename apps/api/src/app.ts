@@ -18,7 +18,11 @@ import {
   type ConversationRepository,
 } from '@melonoffice/conversations';
 import { createCreditService, type CreditStore } from '@melonoffice/credits';
-import { createEntitlementService, type EntitlementService } from '@melonoffice/entitlements';
+import {
+  createEntitlementService,
+  type EntitlementService,
+  type OverrideSource,
+} from '@melonoffice/entitlements';
 import {
   createAgentOutputStore,
   createExecutionService,
@@ -32,10 +36,10 @@ import {
   createChannelMessageExecutor,
   createConversationAgentCheck,
   createHandoffSummaries,
+  createIntegrationRegistry,
   createMessageSendService,
-  type ChannelAdapters,
   type ChannelConnectionRepository,
-  type SecretStore,
+  type IntegrationEngine,
   type WebhookIngress,
 } from '@melonoffice/integrations';
 import type { Logger } from '@melonoffice/observability';
@@ -57,6 +61,7 @@ import { registerAuthRoutes, type AuthEnv } from './auth.js';
 import { registerCors } from './cors.js';
 import { registerBillingRoutes } from './billing.js';
 import { registerDepartmentRoutes } from './departments.js';
+import { registerConnectionRoutes } from './connections.js';
 import { registerConversationRoutes } from './conversations.js';
 import { registerCreditRoutes } from './credits.js';
 import { registerEntitlementRoutes } from './entitlements.js';
@@ -92,6 +97,11 @@ export interface AppOptions {
    * plan from billing; tests may pass another catalogue.
    */
   readonly entitlements?: EntitlementService;
+  /**
+   * Audited per-organization overrides (ADR-0044), applied after the plan by the default
+   * entitlement service. Absent: none.
+   */
+  readonly entitlementOverrides?: OverrideSource;
   /** Executions (ADR-0024). Absent: the execution route answers 503 (fails closed). */
   readonly executions?: ExecutionRepository;
   /**
@@ -127,13 +137,16 @@ export interface AppOptions {
      */
     readonly agentOutputs?: AgentOutputRepository;
     /**
-     * A person's replies (CV-2, ADR-0034), through the tool gate. Absent: the send route answers
-     * 503 (fails closed). It also needs executions, departments, specialists and approvals, which
-     * the gate is built from.
+     * The Integration Engine (ADR-0044): its provider registry, connection checks and sends.
+     * Absent: no provider is registered, so no connection can be created, checked or used.
+     */
+    readonly engine?: IntegrationEngine;
+    /**
+     * A person's replies (CV-2, ADR-0034), through the tool gate and the engine. Absent (or no
+     * engine): the send route answers 503 (fails closed). It also needs executions,
+     * departments, specialists and approvals, which the gate is built from.
      */
     readonly outbound?: {
-      readonly secrets: SecretStore;
-      readonly adapters: ChannelAdapters;
       /** Where this server runs, set explicitly: the tool runs only where its version allows. */
       readonly environment: DeploymentEnvironment;
     };
@@ -179,6 +192,7 @@ export function createApp({
   authorization = createAuthorizationService(),
   billing,
   entitlements,
+  entitlementOverrides,
   executions,
   structure,
   tools = defaultToolRegistry(),
@@ -229,7 +243,11 @@ export function createApp({
         ...dependencies,
         entitlements:
           entitlements ??
-          createEntitlementService({ organizations: tenancy, plans: billingService }),
+          createEntitlementService({
+            organizations: tenancy,
+            plans: billingService,
+            ...(entitlementOverrides === undefined ? {} : { overrides: entitlementOverrides }),
+          }),
       });
     } else if (tenancy !== undefined) {
       const unavailable = (c: Context<Env>) => c.json({ error: 'billing_not_configured' }, 503);
@@ -373,13 +391,18 @@ export function createApp({
         entitlements ??
         (billingPlans === undefined
           ? undefined
-          : createEntitlementService({ organizations: tenancy, plans: billingPlans }));
-      const { outbound } = conversations;
+          : createEntitlementService({
+              organizations: tenancy,
+              plans: billingPlans,
+              ...(entitlementOverrides === undefined ? {} : { overrides: entitlementOverrides }),
+            }));
+      const { outbound, engine } = conversations;
       // The same tool gate as the runtime's (ADR-0026, ADR-0034), with the one executor a person
       // may reach through it. No specialist, approval or runtime is involved in a person's send,
       // but the gate is built whole: there is no second, lighter gate.
       const sender =
         outbound !== undefined &&
+        engine !== undefined &&
         executions !== undefined &&
         executionService !== undefined &&
         specialists !== undefined &&
@@ -404,9 +427,7 @@ export function createApp({
                 executors: {
                   channel: createChannelMessageExecutor({
                     conversations: conversations.repository,
-                    connections: conversations.connections,
-                    secrets: outbound.secrets,
-                    adapters: outbound.adapters,
+                    engine,
                   }),
                 },
                 authorization,
@@ -414,7 +435,7 @@ export function createApp({
                 environment: outbound.environment,
                 logger: logger.child({ component: 'tool-gate' }),
               }),
-              adapters: outbound.adapters,
+              channels: engine,
               audit,
               logger: logger.child({ component: 'outbound' }),
             })
@@ -474,14 +495,25 @@ export function createApp({
               }),
             }),
         conversations: conversationService,
+      });
+      // Connections (ADR-0044): the engine's registry names the providers; without an engine
+      // there is none, so nothing can be created or checked.
+      const registry = engine?.registry ?? createIntegrationRegistry([]);
+      registerConnectionRoutes(app, {
+        store: tenancy,
+        authorization,
+        audit,
+        registry,
         connections: createChannelConnectionService({
           repository: conversations.connections,
+          registry,
           organizations: tenancy,
           authorization,
-          // Only `create` reads a limit, and no route creates: without billing it fails closed.
+          // Without billing, the plan cannot be read: creating fails closed.
           entitlements: planEntitlements ?? {
-            getLimit: async () => ({ available: false, reason: 'unknown_limit' }),
+            entitlementsOf: async () => ({ status: 'unavailable', reason: 'plan_missing' }),
           },
+          ...(engine === undefined ? {} : { checker: engine }),
           ...(conversations.secretProjectId === undefined
             ? {}
             : { secretProjectId: conversations.secretProjectId }),
@@ -490,7 +522,7 @@ export function createApp({
     } else if (tenancy !== undefined) {
       const unavailable = (c: Context<Env>) =>
         c.json({ error: 'conversations_not_configured' }, 503);
-      for (const path of ['conversations', 'contacts', 'channel-connections']) {
+      for (const path of ['conversations', 'contacts', 'channel-connections', 'integrations']) {
         app.all(`/v1/organizations/:organizationId/${path}`, unavailable);
         app.all(`/v1/organizations/:organizationId/${path}/*`, unavailable);
       }

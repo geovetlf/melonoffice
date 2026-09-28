@@ -10,7 +10,7 @@ import type {
   OrganizationId,
   UserId,
 } from '@melonoffice/domain';
-import { secretRefsFor } from '@melonoffice/integrations';
+import { secretRefsFor, WHATSAPP_CAPABILITIES, WHATSAPP_PROVIDER } from '@melonoffice/integrations';
 import { createAuthorizationService, ROLES, type AuthorizationService } from '@melonoffice/rbac';
 import { defaultToolRegistry } from '@melonoffice/tools';
 import { createHmac } from 'node:crypto';
@@ -125,14 +125,18 @@ describe.each(STORES)('conversations with storage in %s', (_name, createStores) 
       const connection: ChannelConnection = {
         id,
         organizationId,
+        provider: WHATSAPP_PROVIDER,
+        category: 'messaging',
         channel: 'whatsapp',
-        status: 'active',
+        status: 'connected',
+        capabilities: WHATSAPP_CAPABILITIES,
         displayName: 'Ventas',
         account: { phoneNumberId },
         secrets: secretRefsFor(PROJECT, id),
         createdAt: '2026-09-27T12:00:00.000Z' as IsoTimestamp,
         createdBy: aliceId,
         updatedAt: '2026-09-27T12:00:00.000Z' as IsoTimestamp,
+        updatedBy: aliceId,
         revision: 1,
       };
       await stores.putConnection(connection);
@@ -480,7 +484,7 @@ describe.each(STORES)('conversations with storage in %s', (_name, createStores) 
       // Not even where the secrets live.
       expect(JSON.stringify(connections.body)).not.toContain('/secrets/');
       expect(connections.body.connections).toEqual([
-        expect.objectContaining({ id: CONNECTION_A, status: 'active', channel: 'whatsapp' }),
+        expect.objectContaining({ id: CONNECTION_A, status: 'connected', channel: 'whatsapp' }),
       ]);
     });
   });
@@ -979,6 +983,9 @@ describe.each(STORES)('conversations with storage in %s', (_name, createStores) 
         .map((e) => e.action)
         .filter((a) => a.startsWith('conversation.'));
       expect(actions).toEqual([
+        // Each stored inbound message, recorded once by the Integration Engine (ADR-0044).
+        'conversation.message_received',
+        'conversation.message_received',
         'conversation.assigned',
         'conversation.tags_changed',
         'conversation.priority_changed',
@@ -1287,10 +1294,11 @@ describe.each(STORES)('conversations with storage in %s', (_name, createStores) 
       const off = await setup();
       const other = await conversationIn(off);
       const connection = await off.connect(off.orgA, CONNECTION_A, PHONE_A, APP_SECRET_A);
-      await off.stores.putConnection({ ...connection, status: 'disabled', revision: 2 });
-      expect(await send(off, other.id)).toMatchObject({
+      await off.stores.putConnection({ ...connection, status: 'disconnected', revision: 2 });
+      // A connection that is not connected is refused before anything is reserved (ADR-0044).
+      expect(await send(off, other.id)).toEqual({
         status: 503,
-        body: { error: 'channel_not_available', message: { status: 'failed' } },
+        body: { error: 'channel_not_available' },
       });
       expect([...t.meta.calls, ...off.meta.calls]).toHaveLength(0);
     });

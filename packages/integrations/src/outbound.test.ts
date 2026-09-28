@@ -31,16 +31,22 @@ import {
 import type { ToolExecutionContext, ToolResult } from '@melonoffice/tools';
 import { describe, expect, it, vi } from 'vitest';
 import { InMemoryChannelConnectionRepository } from './connections.js';
+import { createIntegrationEngine, withinServiceWindow } from './engine.js';
+import { createIntegrationRegistry } from './registry.js';
 import { IntegrationError } from './errors.js';
 import {
   createChannelMessageExecutor,
   createMessageSendService,
   settlementOfError,
-  withinServiceWindow,
   type ToolInvoker,
 } from './outbound.js';
 import { InMemorySecretStore, secretRefsFor } from './secrets.js';
-import { createWhatsAppAdapter, WHATSAPP_SERVICE_WINDOW_MS } from './whatsapp.js';
+import {
+  createWhatsAppAdapter,
+  WHATSAPP_CAPABILITIES,
+  WHATSAPP_PROVIDER,
+  WHATSAPP_SERVICE_WINDOW_MS,
+} from './whatsapp.js';
 
 const T0 = new Date('2026-09-27T12:00:00Z');
 const ALICE = '11111111-1111-4111-8111-111111111111' as UserId;
@@ -88,14 +94,18 @@ async function world() {
     const connection: ChannelConnection = {
       id,
       organizationId,
+      provider: WHATSAPP_PROVIDER,
+      category: 'messaging',
       channel: 'whatsapp',
-      status: 'active',
+      status: 'connected',
       displayName: 'Ventas',
       account: { phoneNumberId: phone },
+      capabilities: WHATSAPP_CAPABILITIES,
       secrets: secretRefsFor('melonoffice-test', id),
       createdAt: T0.toISOString() as IsoTimestamp,
       createdBy: ALICE,
       updatedAt: T0.toISOString() as IsoTimestamp,
+      updatedBy: ALICE,
       revision: 1,
     };
     connections.put(connection);
@@ -134,13 +144,15 @@ async function world() {
       return answer();
     }),
   });
-  const executor = createChannelMessageExecutor({
-    conversations,
-    connections,
-    secrets,
-    adapters: { whatsapp },
-    now,
-  });
+  const engineWith = (store: InMemorySecretStore) =>
+    createIntegrationEngine({
+      registry: createIntegrationRegistry([whatsapp]),
+      connections,
+      secrets: store,
+      now,
+    });
+  const engine = engineWith(secrets);
+  const executor = createChannelMessageExecutor({ conversations, engine, now });
   const tenantA = await resolveTenant(as(ALICE), orgA, tenancy);
   const tenantB = await resolveTenant(as(BOB), orgB, tenancy);
   const reserve = async (conversation: Conversation, clientMessageId = 'reply-1') =>
@@ -193,6 +205,8 @@ async function world() {
     reserve,
     run,
     executor,
+    engine,
+    engineWith,
     whatsapp,
     calls,
     answerWith: (next: () => Promise<Response>) => {
@@ -218,7 +232,7 @@ describe('WhatsApp service window', () => {
     // A last message "from the future" is not trusted to open the window.
     expect(withinServiceWindow(at(-60_000), adapter, T0)).toBe(false);
     expect(withinServiceWindow({}, {}, T0)).toBe(true);
-    expect(createWhatsAppAdapter().serviceWindowMs).toBe(WHATSAPP_SERVICE_WINDOW_MS);
+    expect(createWhatsAppAdapter().capabilities.serviceWindowMs).toBe(WHATSAPP_SERVICE_WINDOW_MS);
   });
 });
 
@@ -234,7 +248,7 @@ describe('provider answers', () => {
       });
     const detailOf = async (body: unknown, status?: number) => {
       const error = await rejecting(body, status)
-        .send(connection, TOKEN_A, { to: '15551234567', text: 'Hola' })
+        .send(connection, { accessToken: TOKEN_A }, { to: '15551234567', text: 'Hola' })
         .catch((e: unknown) => e);
       return error instanceof IntegrationError ? `${error.code}:${error.detail}` : 'none';
     };
@@ -387,7 +401,7 @@ describe('message_send executor', () => {
     expect(await w.run(late)).toEqual({ status: 'failure', code: 'outside_messaging_window' });
     const x = await world();
     const open = await x.receive(x.orgA, CONNECTION_A);
-    x.connections.put({ ...x.connectionA, status: 'disabled' });
+    x.connections.put({ ...x.connectionA, status: 'disconnected' });
     expect(await x.run(await x.reserve(open))).toEqual({
       status: 'failure',
       code: 'channel_not_available',
@@ -398,9 +412,7 @@ describe('message_send executor', () => {
     const empty = new InMemorySecretStore();
     const executor = createChannelMessageExecutor({
       conversations: noToken.conversations,
-      connections: noToken.connections,
-      secrets: empty,
-      adapters: { whatsapp: noToken.whatsapp },
+      engine: noToken.engineWith(empty),
       now: noToken.now,
     });
     expect(
@@ -478,7 +490,7 @@ describe('message send service', () => {
       authorization: createAuthorizationService(),
       executions,
       gate,
-      adapters: { whatsapp: w.whatsapp },
+      channels: w.engine,
       audit: createAuditService(w.audit, w.now),
       now: w.now,
     });
