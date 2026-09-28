@@ -100,7 +100,16 @@ describe.each(STORES)('follow-ups (C5) with storage in %s', (_name, createStores
     // The same request again is the same follow-up, not a second one.
     const again = await t.send('token-alice', 'POST', `${t.base(t.orgA)}/follow-ups`, request);
     expect(again).toMatchObject({ status: 200, body: { id, created: false } });
-    expect(t.scheduled).toHaveLength(1);
+    // Its task is queued again, the same one (a repeat does nothing when it arrives).
+    expect(t.scheduled).toHaveLength(2);
+    expect(t.scheduled[1]?.task).toEqual(t.scheduled[0]?.task);
+    // A time zone in the request is refused: it is always the business's.
+    expect(
+      await t.send('token-alice', 'POST', `${t.base(t.orgA)}/follow-ups`, {
+        ...t.followUp(contactId),
+        timeZone: 'Asia/Tokyo',
+      }),
+    ).toMatchObject({ status: 400, body: { error: 'invalid_request', field: 'timeZone' } });
 
     const list = await t.call('token-alice', `${t.base(t.orgA)}/follow-ups?open=true`);
     expect(list.body).toMatchObject({ timeZone: LIMA, counts: { open: 1, overdue: 0 } });

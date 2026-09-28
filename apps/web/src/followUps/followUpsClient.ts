@@ -61,7 +61,6 @@ export interface NewFollowUp {
   readonly title: string;
   readonly date: string;
   readonly time: string;
-  readonly timeZone?: string;
   readonly source?: 'manual' | 'gia';
 }
 
