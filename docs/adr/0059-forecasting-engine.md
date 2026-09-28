@@ -85,6 +85,14 @@ Departments are catalogue data (D-11) and no code may assume how many there are.
 - The image is large (torch and the weights). Its cold start is slow, which is why runs go through the queue and callers wait a bounded time.
 - Nothing is operational until the owner applies the Terraform in dev, CD deploys the forecaster, and the price per run is set.
 
+## Amendments
+
+- 2026-09-28, GIA forecasting answers:
+  - GIA words each refusal as the engine gave it. Recorded history that cannot be read as a series (`invalid_data`) is never called too little history.
+  - A horizon beyond the longest allowed carries that limit (`ForecastError.limit`), so GIA names how far was asked and the longest allowed.
+  - "Next year" and "N years" are read as months, and the engine refuses more than its limit.
+  - The real validation that closes level 3 is in [forecasting-real-validation.md](../infrastructure/forecasting-real-validation.md).
+
 ## Alternatives rejected
 
 - **TimesFM 3.x**: excluded by the brief.

@@ -141,6 +141,12 @@ function horizonOf(text: string): { frequency: ForecastFrequency; horizon: numbe
   if (weeks !== null) return { frequency: 'week', horizon: count(weeks[1] as string) ?? 4 };
   const months = new RegExp(`\\b${n} (meses|months)\\b`).exec(text);
   if (months !== null) return { frequency: 'month', horizon: count(months[1] as string) ?? 3 };
+  // Years are counted in months: the engine refuses what is beyond its longest horizon.
+  const years = new RegExp(`\\b${n} (anos|years)\\b`).exec(text);
+  if (years !== null) return { frequency: 'month', horizon: (count(years[1] as string) ?? 1) * 12 };
+  if (/\bproximo ano\b|\bnext year\b/.test(text)) {
+    return { frequency: 'month', horizon: 12 };
+  }
   if (/\b(proxima|esta) semana\b|\bnext week\b|\bthis week\b/.test(text)) {
     return { frequency: 'day', horizon: 7 };
   }

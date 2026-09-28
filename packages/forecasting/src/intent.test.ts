@@ -15,6 +15,10 @@ describe("15. reading a forecast request from the person's words", () => {
     ['Forecast our sales for the next 14 days', 'sales.won_value', 'day', 14, false],
     ['How many new leads will we get next month?', 'leads.new', 'day', 30, false],
     ['¿Cuántas ventas cerraremos? proyecta 3 meses', 'sales.won_count', 'month', 3, false],
+    // A year is counted in months; two years go beyond the longest horizon and the engine says so.
+    ['Proyecta nuestras ventas del próximo año', 'sales.won_value', 'month', 12, false],
+    ['Forecast our sales for the next year', 'sales.won_value', 'month', 12, false],
+    ['Proyecta las ventas de los próximos 2 años', 'sales.won_value', 'month', 24, false],
   ])('%s', (message, metric, frequency, horizon, trend) => {
     expect(forecastIntentOf(message)).toEqual({
       kind: 'forecast',

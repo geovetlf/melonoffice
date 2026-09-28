@@ -30,6 +30,8 @@ export class ForecastError extends Error {
     readonly code: ForecastErrorCode,
     /** The input field at fault, for `invalid_request`. */
     readonly detail?: string,
+    /** For `horizon_out_of_range`: the longest horizon allowed for the frequency asked. */
+    readonly limit?: number,
   ) {
     super(detail === undefined ? code : `${code}: ${detail}`);
   }

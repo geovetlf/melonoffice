@@ -53,13 +53,20 @@ export interface GiaAnswerView {
 
 /**
  * Why no projection was made, as the engine counted it: too little history (or too few periods
- * with activity), or company information a projection needs.
+ * with activity), a horizon beyond the longest it projects, or company information it needs.
  */
 export type GiaForecastGap =
   | {
       readonly kind: 'history' | 'activity';
       readonly have: number;
       readonly need: number;
+      readonly unit: 'day' | 'week' | 'month';
+    }
+  | {
+      /** Further ahead than the engine projects: how far was asked and the longest allowed. */
+      readonly kind: 'horizon';
+      readonly asked: number;
+      readonly max: number;
       readonly unit: 'day' | 'week' | 'month';
     }
   | { readonly kind: 'profile' | 'currency' };
@@ -139,6 +146,15 @@ function forecastGapOf(raw: unknown): GiaForecastGap | null {
   if (raw.status === 'unavailable') {
     if (raw.reason === 'business_profile_missing') return { kind: 'profile' };
     if (raw.reason === 'currency_missing') return { kind: 'currency' };
+    const unit = raw.frequency;
+    if (
+      raw.reason === 'horizon_out_of_range' &&
+      count(raw.horizon) &&
+      count(raw.maxHorizon) &&
+      (unit === 'day' || unit === 'week' || unit === 'month')
+    ) {
+      return { kind: 'horizon', asked: raw.horizon, max: raw.maxHorizon, unit };
+    }
     return null;
   }
   if (raw.status !== 'insufficient_data' || !count(raw.have) || !count(raw.need)) return null;

@@ -527,6 +527,7 @@
   "gia.chat.forecastFallback": "Simple estimate from recent averages (the forecasting model was not available): not a fact.",
   "gia.chat.forecastGap.history": "Recorded history: {have} of the {need} {unit, select, week {weeks} month {months} other {days}} needed. No projection was made.",
   "gia.chat.forecastGap.activity": "{unit, select, week {Weeks} month {Months} other {Days}} with activity: {have} of the {need} needed. No projection was made.",
+  "gia.chat.forecastGap.horizon": "{unit, select, week {You asked for {asked} weeks; the longest projection is {max} weeks} month {You asked for {asked} months; the longest projection is {max} months} other {You asked for {asked} days; the longest projection is {max} days}}. No projection was made.",
   "gia.chat.forecastGap.profile": "A projection needs the company information and its time zone. Fill it in under Company memory.",
   "gia.chat.forecastGap.currency": "Projecting money needs the company's currency. Record it under Company memory.",
   "gia.chat.facts": "{count, plural, one {GIA noted # fact about your business for you to confirm.} other {GIA noted # facts about your business for you to confirm.}}",

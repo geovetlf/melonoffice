@@ -378,6 +378,14 @@ describe('10. horizon validation', () => {
       await codeOf(w.engine.request(w.tenantA, { ...SALES, frequency: 'month', horizon: 12 })),
     ).toBe('accepted');
   });
+
+  it('names the longest horizon allowed for the frequency asked', async () => {
+    const w = await world();
+    const refused = await w.engine
+      .request(w.tenantA, { ...SALES, frequency: 'week', horizon: 27 })
+      .catch((error: unknown) => error);
+    expect(refused).toMatchObject({ code: 'horizon_out_of_range', limit: 26 });
+  });
 });
 
 describe('11. covariates', () => {

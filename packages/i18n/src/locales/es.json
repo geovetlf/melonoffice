@@ -527,6 +527,7 @@
   "gia.chat.forecastFallback": "Estimación simple con promedios recientes (el modelo de pronóstico no estaba disponible): no es un dato real.",
   "gia.chat.forecastGap.history": "Historial registrado: {unit, select, week {{have} de {need} semanas necesarias} month {{have} de {need} meses necesarios} other {{have} de {need} días necesarios}}. No se hizo ninguna proyección.",
   "gia.chat.forecastGap.activity": "{unit, select, week {Semanas con actividad: {have} de {need} necesarias} month {Meses con actividad: {have} de {need} necesarios} other {Días con actividad: {have} de {need} necesarios}}. No se hizo ninguna proyección.",
+  "gia.chat.forecastGap.horizon": "{unit, select, week {Pediste {asked} semanas; la proyección más larga es de {max} semanas} month {Pediste {asked} meses; la proyección más larga es de {max} meses} other {Pediste {asked} días; la proyección más larga es de {max} días}}. No se hizo ninguna proyección.",
   "gia.chat.forecastGap.profile": "Para proyectar se necesita la información de la empresa con su zona horaria. Complétala en Memoria de la empresa.",
   "gia.chat.forecastGap.currency": "Para proyectar dinero se necesita la moneda de la empresa. Regístrala en Memoria de la empresa.",
   "gia.chat.facts": "{count, plural, one {GIA anotó # dato de tu negocio para que lo confirmes.} other {GIA anotó # datos de tu negocio para que los confirmes.}}",
