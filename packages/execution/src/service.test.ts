@@ -465,6 +465,43 @@ describe('X6a: start (ADR-0029)', () => {
   });
 });
 
+describe('CV-6B: delegated start (ADR-0043)', () => {
+  it("the runtime starts its own person's pending work, audited as a delegated start", async () => {
+    const w = await world();
+    const { id } = await w.service.create(w.runtimeA, REQUEST);
+    const started = await w.service.runtimeStart(w.runtimeA, id);
+    expect(started).toMatchObject({ status: 'running', startedAt: NOW.toISOString() });
+    expect(w.events().at(-1)).toMatchObject({
+      action: 'execution.state_changed',
+      transition: { from: 'pending', to: 'running' },
+      reason: 'delegated_start',
+    });
+    // Idempotent, as a person's start.
+    expect(await w.service.runtimeStart(w.runtimeA, id)).toEqual(started);
+  });
+
+  it('only the runtime, only while its person holds execution.start, only in its organization', async () => {
+    const w = await world();
+    const { id } = await w.service.create(w.tenantA, REQUEST);
+    expect(await codeOf(w.service.runtimeStart(w.tenantA, id))).toBe('actor_not_allowed');
+    expect(await codeOf(w.service.runtimeStart(w.giaA, id))).toBe('actor_not_allowed');
+    const runtimeB = await resolveRuntimeTenant(BOB, w.b.organization.id, w.tenancy);
+    expect(await codeOf(w.service.runtimeStart(runtimeB, id))).toBe('execution_not_found');
+    const denied = await world({ owner: ROLES.owner.filter((p) => p !== 'execution.start') });
+    const other = await denied.service.create(denied.runtimeA, REQUEST);
+    expect(await codeOf(denied.service.runtimeStart(denied.runtimeA, other.id))).toBe(
+      'permission_denied',
+    );
+    expect(
+      w
+        .events()
+        .filter((e) => e.action === 'execution.start_denied')
+        .map((e) => e.reason),
+    ).toEqual(['runtime_only', 'runtime_only']);
+    expect((await w.service.get(w.tenantA, id)).status).toBe('pending');
+  });
+});
+
 describe('X6a: cancellation (ADR-0029)', () => {
   it('11. only the owner, acting directly, cancels', async () => {
     const w = await world({ owner: ROLES.owner.filter((p) => p !== 'execution.cancel') });

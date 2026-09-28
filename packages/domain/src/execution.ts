@@ -219,3 +219,18 @@ export interface Execution {
   readonly startedAt?: IsoTimestamp;
   readonly completedAt?: IsoTimestamp;
 }
+
+/**
+ * What an agent node's model call answered (CV-6B, ADR-0043), kept so the nodes after it can use
+ * it. Written once by the runtime, for the node's own request; never a decision by itself: the
+ * nodes that read it check it again.
+ */
+export interface AgentOutputRecord {
+  readonly organizationId: OrganizationId;
+  readonly executionId: ExecutionId;
+  readonly nodeId: ExecutionNodeId;
+  /** The AI call's own id (`job-{jobId}`), the same the credits were charged under. */
+  readonly requestId: string;
+  readonly output: { readonly text?: string; readonly structured?: unknown };
+  readonly createdAt: IsoTimestamp;
+}

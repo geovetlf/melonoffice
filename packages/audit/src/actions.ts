@@ -343,6 +343,24 @@ export const AUDIT_ACTIONS = {
       'The runtime handed a conversation an agent handled to a person; the reason is the handoff code, the reference the execution when there is one (ADR-0039).',
     results: ['success'],
   },
+  'conversation.agent_changed': {
+    category: 'conversation',
+    description:
+      "A person chose which agent (a specialist with a conversation profile) attends the organization's conversations, or removed it; the reference is the agent (ADR-0043).",
+    results: ['success'],
+  },
+  'conversation.ai_assigned': {
+    category: 'conversation',
+    description:
+      "The organization's agent took a new conversation no one had handled, where autonomy allows it; the reference is the agent (ADR-0043).",
+    results: ['success'],
+  },
+  'conversation.ai_turn_started': {
+    category: 'conversation',
+    description:
+      "An inbound message started one agent turn: an execution for the conversation's agent. The reason is what started it, the reference the execution (ADR-0043).",
+    results: ['success'],
+  },
   'channel.connection_created': {
     category: 'channel',
     description:

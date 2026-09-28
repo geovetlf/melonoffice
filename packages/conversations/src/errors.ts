@@ -34,7 +34,9 @@ export type ConversationErrorCode =
   // Human control (CV-6A, ADR-0039).
   | 'autonomy_not_enabled'
   | 'conversation_handled_by_ai'
-  | 'settings_concurrency_conflict';
+  | 'settings_concurrency_conflict'
+  // The conversation agent (CV-6B, ADR-0043).
+  | 'agent_not_available';
 
 export class ConversationError extends Error {
   override readonly name = 'ConversationError';

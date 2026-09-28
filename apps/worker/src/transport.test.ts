@@ -204,17 +204,18 @@ describe('worker architecture', () => {
     for (const dependency of Object.keys(manifest.dependencies)) {
       expect(dependency.startsWith('@melonoffice/') || allowed.includes(dependency)).toBe(true);
     }
+    // Credits are here only for the AI Gateway's charge per model call (CV-6B, ADR-0043).
     for (const forbidden of [
       '@melonoffice/planning',
       '@melonoffice/workflows',
-      '@melonoffice/credits',
       '@melonoffice/billing',
     ]) {
       expect(Object.keys(manifest.dependencies)).not.toContain(forbidden);
     }
     for (const file of sources) {
+      // Providers are reached only through their @melonoffice adapter packages, never an SDK.
       expect(text(file)).not.toMatch(
-        /openai|anthropic|@google\/genai|generative-ai|vertexai|elevenlabs|@google-cloud\/tasks/i,
+        /from '[^']*(openai|anthropic|@google\/genai|generative-ai|vertexai|elevenlabs|@google-cloud\/tasks)[^']*'/i,
       );
       expect(text(file)).not.toMatch(/from '@melonoffice\/(planning|workflows)'/);
     }
@@ -240,11 +241,24 @@ describe('worker architecture', () => {
       expect(text(file)).not.toMatch(/ProviderAdapter|ProviderCredential|CredentialResolver/);
       expect(text(file)).not.toMatch(/\.execute\(/);
     }
-    // Only the composition builds the gate and the gateway; the server passes the real,
-    // empty catalogues and no executors.
+    // Only the composition builds the gate and the gateway. The server passes the real tool
+    // catalogue with the conversation agent's executors only (ADR-0043), and one provider
+    // adapter, Vertex AI (D-7), with credits at the approved rate (D-12); without the Vertex AI
+    // settings it registers no adapter and no credits.
     const server = text('server.ts');
-    expect(server).toMatch(/createToolRegistry\(TOOL_CATALOGUE\), executors: \{\}/);
+    expect(server).toMatch(/createToolRegistry\(TOOL_CATALOGUE\), executors: agents\.executors/);
     expect(server).toMatch(/adapters: \[\]/);
-    expect(server).not.toMatch(/credits:/);
+    expect([...server.matchAll(/create\w*Adapter\(/g)].map((m) => m[0]).sort()).toEqual([
+      'createVertexAIAdapter(',
+      'createWhatsAppAdapter(',
+    ]);
+    expect([...server.matchAll(/credits:/g)]).toHaveLength(1);
+    expect(server).toMatch(/rate: CREDIT_RATE/);
+    const agents = text('agents.ts');
+    expect(
+      [...agents.matchAll(/executors\.(\w+) =|^\s+(\w+): create\w+Executor\(/gm)]
+        .map((m) => m[1] ?? m[2])
+        .sort(),
+    ).toEqual(['channel', 'conversation']);
   });
 });

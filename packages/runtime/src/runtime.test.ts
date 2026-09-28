@@ -50,7 +50,9 @@ import type {
 } from '@melonoffice/domain';
 import {
   attachApproval,
+  createAgentOutputStore,
   createExecutionService,
+  InMemoryAgentOutputRepository,
   InMemoryExecutionRepository,
   type ExecutionRepository,
 } from '@melonoffice/execution';
@@ -104,7 +106,13 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { isRuntimeError } from './errors.js';
-import type { AgentWork, NodeWorkSource, VerificationSource } from './ports.js';
+import type {
+  AgentOutputSink,
+  AgentWork,
+  ExecutionStopHook,
+  NodeWorkSource,
+  VerificationSource,
+} from './ports.js';
 import { createRuntime, type AdvanceResult } from './runtime.js';
 
 const T0 = new Date('2026-09-27T12:00:00Z');
@@ -350,6 +358,8 @@ interface WorldOptions {
   readonly credits?: 'none';
   readonly work?: NodeWorkSource | 'none';
   readonly verifier?: VerificationSource | 'none';
+  readonly outputs?: AgentOutputSink;
+  readonly onStopped?: ExecutionStopHook;
 }
 
 describe.each(STORES)('runtime advance() with storage in %s', (storage, createStores) => {
@@ -518,6 +528,8 @@ describe.each(STORES)('runtime advance() with storage in %s', (storage, createSt
       ...(options.work === 'none' ? {} : { work: options.work ?? work }),
       ...(options.verifier === 'none' ? {} : { verifier: options.verifier ?? verifier }),
       dispatcher: { dispatch: async (id) => void dispatched.push(id) },
+      ...(options.outputs === undefined ? {} : { outputs: options.outputs }),
+      ...(options.onStopped === undefined ? {} : { onStopped: options.onStopped }),
     });
 
     const tenantA = await resolveTenant(as(ALICE), orgA, stores.tenancy);
@@ -1336,6 +1348,77 @@ describe.each(STORES)('runtime advance() with storage in %s', (storage, createSt
     expect(w.providerCalls).toHaveLength(1);
     expect(w.credits.spent.size).toBe(1);
     expect((await w.get(execution.id)).status).toBe('completed');
+  });
+
+  it('35. keeps an agent answer, for its own request, before the node completes (ADR-0043)', async () => {
+    const repository = new InMemoryAgentOutputRepository();
+    const w = await world({ outputs: createAgentOutputStore(repository) });
+    const execution = await w.started([{ id: 'n0' }]);
+    const claim = await firstClaim(w, execution);
+    expect((await w.runtime.advance(claim.lease)).outcome).toBe('completed');
+    expect(repository.records()).toEqual([
+      expect.objectContaining({
+        organizationId: w.orgA,
+        executionId: execution.id,
+        nodeId: 'n0',
+        requestId: `job-${claim.job.id}`,
+        output: { text: 'Summary ready.' },
+      }),
+    ]);
+  });
+
+  it('36. an answer that cannot be kept fails the node, never completes it', async () => {
+    const w = await world({
+      outputs: {
+        record: async () => {
+          throw new Error('store down');
+        },
+      },
+    });
+    const execution = await w.started([{ id: 'n0' }]);
+    const result = await w.runtime.advance((await firstClaim(w, execution)).lease);
+    expect(result).toEqual({ outcome: 'failed', code: 'output_unavailable' });
+    expect(await w.nodeOf(execution.id, 'n0')).toMatchObject({
+      status: 'failed',
+      error: { code: 'output_unavailable' },
+    });
+  });
+
+  it('37. skips a node the work before it made unnecessary, and never runs it', async () => {
+    const w = await world({
+      work: {
+        toolInput: async () => INPUT,
+        agentWork: async () => AGENT_WORK,
+        needed: async (_tenant, _execution, node) => node.id !== 'n1',
+      },
+    });
+    const execution = await w.started([
+      { id: 'n0', tool: 'lookup' },
+      { id: 'n1', tool: 'update_record', dependsOn: ['n0'] },
+      { id: 'n2', tool: 'lookup', dependsOn: ['n0'] },
+    ]);
+    const results = await w.drive(execution);
+    expect(results.at(-1)?.outcome).toBe('completed');
+    expect(w.toolCalls.map((c) => c.context.toolId)).toEqual(['lookup', 'lookup']);
+    expect(await w.nodeOf(execution.id, 'n1')).toMatchObject({ status: 'skipped' });
+  });
+
+  it('38. tells the stop hook when an execution fails; a failing hook changes nothing', async () => {
+    const stops: string[] = [];
+    const w = await world({
+      credits: 'none',
+      onStopped: {
+        stopped: async (_tenant, execution, code) => {
+          stops.push(`${execution.id}:${code}`);
+          throw new Error('hook down');
+        },
+      },
+    });
+    const execution = await w.started([{ id: 'n0' }]);
+    const result = await w.runtime.advance((await firstClaim(w, execution)).lease);
+    expect(result).toEqual({ outcome: 'failed', code: 'credits_not_configured' });
+    expect(stops).toEqual([`${execution.id}:credits_not_configured`]);
+    expect((await w.get(execution.id)).status).toBe('failed');
   });
 
   it('refuses a job error that is not a known refusal, and keeps runtime errors typed', async () => {

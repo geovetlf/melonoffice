@@ -13,7 +13,9 @@ import { randomUUID } from 'node:crypto';
 import { RuntimeError } from './errors.js';
 import {
   RUNTIME_AI_FIELDS,
+  type AgentOutputSink,
   type AgentWork,
+  type ExecutionStopHook,
   type JobDispatcher,
   type NodeWorkSource,
   type RuntimeServices,
@@ -89,6 +91,10 @@ export interface RuntimeOptions {
   readonly work?: NodeWorkSource;
   readonly verifier?: VerificationSource;
   readonly dispatcher?: JobDispatcher;
+  /** Keeps agent answers for the nodes after them (ADR-0043). */
+  readonly outputs?: AgentOutputSink;
+  /** Told when an execution stops without completing (ADR-0043). */
+  readonly onStopped?: ExecutionStopHook;
   readonly logger?: Logger;
 }
 
@@ -131,7 +137,7 @@ function readyNode(execution: Execution): ExecutionNode | undefined {
 }
 
 export function createRuntime(options: RuntimeOptions): Runtime {
-  const { jobs, services, work, verifier, dispatcher, logger } = options;
+  const { jobs, services, work, verifier, dispatcher, outputs, onStopped, logger } = options;
 
   const logOf = (job: ExecutionJob, leaseId?: string) =>
     logger === undefined
@@ -187,6 +193,16 @@ export function createRuntime(options: RuntimeOptions): Runtime {
 
     const load = () => s.executions.get(tenant, job.executionId);
 
+    /** Tells the stop hook, once the stop is stored. Its failure changes nothing here. */
+    async function stopped(execution: Execution, code: string): Promise<void> {
+      if (onStopped === undefined) return;
+      try {
+        await onStopped.stopped(tenant, execution, code);
+      } catch {
+        log?.warn('stop hook failed', { code });
+      }
+    }
+
     /** The execution ended: cancel its jobs, this one included. */
     async function ended(execution: Execution): Promise<AdvanceResult> {
       await s.jobs.cancelForExecution(tenant, execution.id);
@@ -210,6 +226,7 @@ export function createRuntime(options: RuntimeOptions): Runtime {
       }
       const result = await finish('failed', code, 'failed');
       await s.jobs.cancelForExecution(tenant, execution.id);
+      await stopped(execution, code);
       return result;
     }
 
@@ -221,13 +238,19 @@ export function createRuntime(options: RuntimeOptions): Runtime {
         if (!isExecutionError(error)) throw error;
         return step(await load(), false);
       }
-      return finish('failed', 'outcome_unknown', 'awaiting_resolution');
+      const result = await finish('failed', 'outcome_unknown', 'awaiting_resolution');
+      await stopped(execution, 'outcome_unknown');
+      return result;
     }
 
     /** A failed node: its one allowed retry, or the end of the execution. */
     async function failed(execution: Execution, node: ExecutionNode): Promise<AdvanceResult> {
       const code = node.error?.code ?? 'node_failed';
-      if (isUnknownOutcome(node)) return finish('failed', 'outcome_unknown', 'awaiting_resolution');
+      if (isUnknownOutcome(node)) {
+        const result = await finish('failed', 'outcome_unknown', 'awaiting_resolution');
+        await stopped(execution, 'outcome_unknown');
+        return result;
+      }
       try {
         retryRuleOf(node);
       } catch (error) {
@@ -274,7 +297,14 @@ export function createRuntime(options: RuntimeOptions): Runtime {
     async function progress(): Promise<AdvanceResult> {
       const execution = await load();
       if (isTerminal(execution.status)) return ended(execution);
-      if (execution.nodes.every(isNodeDone)) return verify(execution);
+      if (execution.nodes.every(isNodeDone)) {
+        // Every node was skipped: nothing was done, so nothing can be verified or completed
+        // (ADR-0029). The execution ends failed, saying so (ADR-0043).
+        if (!execution.nodes.some((n) => n.status === 'completed')) {
+          return fail(execution, 'no_work_done');
+        }
+        return verify(execution);
+      }
       const ready = readyNode(execution);
       if (ready === undefined) {
         if (execution.nodes.some(isUnknownOutcome)) {
@@ -362,6 +392,27 @@ export function createRuntime(options: RuntimeOptions): Runtime {
         return unknown(execution, node);
       }
       if (response.status === 'completed') {
+        if (outputs !== undefined) {
+          try {
+            await outputs.record(tenant, {
+              executionId: execution.id,
+              nodeId: node.id,
+              requestId,
+              output: response.output,
+            });
+          } catch {
+            // An answer nobody can read is no answer: the node fails, and its retry rule decides.
+            log?.warn('agent output not kept');
+            const moved = await s.executions.runtimeChangeNode(tenant, execution.id, {
+              nodeId: node.id,
+              from: 'running',
+              to: 'failed',
+              error: { code: 'output_unavailable' },
+            });
+            const stored = moved.nodes.find((n) => n.id === node.id);
+            return stored === undefined ? step(moved, false) : failed(moved, stored);
+          }
+        }
         await s.executions.runtimeChangeNode(tenant, execution.id, {
           nodeId: node.id,
           from: 'running',
@@ -399,6 +450,21 @@ export function createRuntime(options: RuntimeOptions): Runtime {
       return progress();
     }
 
+    /** A node the work before it made unnecessary: skipped, never run. */
+    async function skip(execution: Execution, node: ExecutionNode): Promise<AdvanceResult> {
+      try {
+        await s.executions.runtimeChangeNode(tenant, execution.id, {
+          nodeId: node.id,
+          from: 'pending',
+          to: 'skipped',
+        });
+      } catch (error) {
+        if (!isExecutionError(error)) throw error;
+        return step(await load(), false);
+      }
+      return progress();
+    }
+
     /** Decides what the job's node needs, from the stored execution only. */
     async function step(execution: Execution, first: boolean): Promise<AdvanceResult> {
       if (isTerminal(execution.status)) return ended(execution);
@@ -425,6 +491,13 @@ export function createRuntime(options: RuntimeOptions): Runtime {
           return finish('failed', 'node_cancelled', 'failed');
         case 'pending':
           if (!first) return finish('failed', 'node_not_pending', 'duplicate');
+          if (
+            (node.type === 'tool' || node.type === 'agent') &&
+            work?.needed !== undefined &&
+            !(await work.needed(tenant, execution, node))
+          ) {
+            return skip(execution, node);
+          }
           switch (node.type) {
             case 'tool':
               return runTool(execution, node);

@@ -141,6 +141,12 @@ export type AssistResult =
       readonly requiresHuman: boolean;
     };
 
+/** The agent that attends the organization's conversations (CV-6B). */
+export interface ConversationAgentView {
+  readonly id: string;
+  readonly name: string | null;
+}
+
 export interface InboxClient {
   list(query: InboxQuery): Promise<readonly ConversationRow[]>;
   detail(id: string): Promise<ConversationDetail>;
@@ -159,6 +165,11 @@ export interface InboxClient {
     id: string,
     reply: { readonly clientMessageId: string; readonly text: string },
   ): Promise<ReplyOutcome>;
+  /**
+   * The organization's conversation agent (CV-6B, ADR-0043), or `null` when it has none. The name
+   * is `null` for a reader who may not read specialists.
+   */
+  agent?(): Promise<ConversationAgentView | null>;
   /** A person takes control from AI (CV-6A): AI pauses and sends nothing more. */
   takeOver(id: string): Promise<ConversationRow>;
   /** A person hands the conversation back to AI, where the organization allows it. */
@@ -220,6 +231,15 @@ export function createInboxClient(request: ReplyRequest, organizationId: string)
     setPriority: (id, priority) => post<ConversationRow>(`${one(id)}/priority`, { priority }),
     changeTags: (id, change) => post<ConversationRow>(`${one(id)}/tags`, change),
     reply: (id, reply) => sendReply(request, organizationId, id, reply),
+    async agent() {
+      const { agentId } = await call<{ agentId?: string | null }>(`${base}/conversation-settings`);
+      if (typeof agentId !== 'string') return null;
+      const specialist = await call<{ displayName?: unknown }>(
+        `${base}/specialists/${encodeURIComponent(agentId)}`,
+      ).catch(() => undefined);
+      const name = specialist?.displayName;
+      return { id: agentId, name: typeof name === 'string' ? name : null };
+    },
     takeOver: (id) => post<ConversationRow>(`${one(id)}/takeover`, {}),
     handBack: (id) => post<ConversationRow>(`${one(id)}/handback`, {}),
     async assist(id, body) {

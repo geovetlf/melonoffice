@@ -1,5 +1,6 @@
 import { isApprovalError, type ApprovalService } from '@melonoffice/approvals';
 import type { Approval } from '@melonoffice/domain';
+import type { TenantContext } from '@melonoffice/tenancy';
 import type { Context, Hono } from 'hono';
 import type { AuthEnv } from './auth.js';
 import { withPermission, type AuthorizationDependencies } from './authorization.js';
@@ -13,9 +14,20 @@ import { withPermission, type AuthorizationDependencies } from './authorization.
  */
 export function registerApprovalRoutes(
   app: Hono<AuthEnv>,
-  dependencies: AuthorizationDependencies & { readonly approvals: ApprovalService },
+  dependencies: AuthorizationDependencies & {
+    readonly approvals: ApprovalService;
+    /**
+     * Told once a person decided an approval (CV-6B): an agent's turn waiting on it is handed back
+     * to the worker. It never changes the answer.
+     */
+    readonly afterDecision?: (tenant: TenantContext, approval: Approval) => Promise<void>;
+  },
 ): void {
-  const { approvals } = dependencies;
+  const { approvals, afterDecision } = dependencies;
+  const decided = async (tenant: TenantContext, approval: Approval): Promise<Approval> => {
+    await afterDecision?.(tenant, approval);
+    return approval;
+  };
   const base = '/v1/organizations/:organizationId/approvals';
 
   app.get(
@@ -35,14 +47,18 @@ export function registerApprovalRoutes(
   app.post(
     `${base}/:approvalId/approve`,
     withPermission('approval.approve', dependencies, async (c, tenant) =>
-      answer(c, () => approvals.approve(tenant, c.req.param('approvalId') ?? '')),
+      answer(c, async () =>
+        decided(tenant, await approvals.approve(tenant, c.req.param('approvalId') ?? '')),
+      ),
     ),
   );
 
   app.post(
     `${base}/:approvalId/reject`,
     withPermission('approval.approve', dependencies, async (c, tenant) =>
-      answer(c, () => approvals.reject(tenant, c.req.param('approvalId') ?? '')),
+      answer(c, async () =>
+        decided(tenant, await approvals.reject(tenant, c.req.param('approvalId') ?? '')),
+      ),
     ),
   );
 }

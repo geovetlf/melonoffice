@@ -115,6 +115,11 @@ export type AutonomyLevel = 'manual' | 'assisted' | 'supervised' | 'autonomous';
 export interface ConversationSettings {
   readonly organizationId: OrganizationId;
   readonly autonomy: AutonomyLevel;
+  /**
+   * The agent (a specialist with a conversation profile) that attends the organization's
+   * conversations where autonomy allows it (CV-6B, ADR-0043). Absent: no agent attends any.
+   */
+  readonly agentId?: SpecialistId;
   readonly updatedAt: IsoTimestamp;
   /** The person who last changed it; absent while nobody has. */
   readonly updatedBy?: UserId;

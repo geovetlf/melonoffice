@@ -10,6 +10,7 @@ import type {
   ToolId,
   UserId,
 } from './ids.js';
+import type { AutonomyLevel, ChannelType } from './conversation.js';
 
 /** Permanent identity of a specialist. The id never changes; name and avatar are editable. */
 export interface SpecialistIdentity {
@@ -66,6 +67,31 @@ export interface SpecialistConfiguration {
    */
   readonly permissions: readonly string[];
   readonly policies: SpecialistPolicies;
+  /**
+   * How this specialist attends customer conversations (CV-6B, ADR-0043), when it does. Absent:
+   * it never handles a conversation. It grants nothing: tools, permissions and the model policy
+   * still come from the fields above, and the organization's own level stays the outer limit.
+   */
+  readonly conversation?: ConversationAgentProfile;
+}
+
+/**
+ * A specialist's profile as a conversational agent (CV-6B, ADR-0043). A restriction only: it
+ * says how far this agent may go, never more than its organization allows.
+ */
+export interface ConversationAgentProfile {
+  /** The company's instructions to the agent: tone, what it may answer, what it must hand off. */
+  readonly instructions: string;
+  /** The channels it may answer on. */
+  readonly channels: readonly ChannelType[];
+  /**
+   * The furthest this agent may go on its own: `supervised` (a person approves each reply) or
+   * `autonomous` (it replies within its limits). The stricter of this and the organization's
+   * level applies.
+   */
+  readonly autonomy: Extract<AutonomyLevel, 'supervised' | 'autonomous'>;
+  /** How many replies it may send in one conversation before handing it to a person. */
+  readonly maxRepliesPerConversation: number;
 }
 
 /** One version of a specialist's configuration. Written once and never changed. */

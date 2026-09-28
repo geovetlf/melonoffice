@@ -101,6 +101,9 @@ importers:
       '@melonoffice/integrations':
         specifier: workspace:*
         version: link:../../packages/integrations
+      '@melonoffice/jobs':
+        specifier: workspace:*
+        version: link:../../packages/jobs
       '@melonoffice/observability':
         specifier: workspace:*
         version: link:../../packages/observability
@@ -110,6 +113,9 @@ importers:
       '@melonoffice/rbac':
         specifier: workspace:*
         version: link:../../packages/rbac
+      '@melonoffice/runtime':
+        specifier: workspace:*
+        version: link:../../packages/runtime
       '@melonoffice/specialists':
         specifier: workspace:*
         version: link:../../packages/specialists
@@ -178,6 +184,9 @@ importers:
       '@melonoffice/ai-gateway':
         specifier: workspace:*
         version: link:../../packages/ai-gateway
+      '@melonoffice/ai-vertex':
+        specifier: workspace:*
+        version: link:../../packages/ai-vertex
       '@melonoffice/approvals':
         specifier: workspace:*
         version: link:../../packages/approvals
@@ -187,6 +196,12 @@ importers:
       '@melonoffice/auth':
         specifier: workspace:*
         version: link:../../packages/auth
+      '@melonoffice/conversations':
+        specifier: workspace:*
+        version: link:../../packages/conversations
+      '@melonoffice/credits':
+        specifier: workspace:*
+        version: link:../../packages/credits
       '@melonoffice/departments':
         specifier: workspace:*
         version: link:../../packages/departments
@@ -202,6 +217,9 @@ importers:
       '@melonoffice/guardrails':
         specifier: workspace:*
         version: link:../../packages/guardrails
+      '@melonoffice/integrations':
+        specifier: workspace:*
+        version: link:../../packages/integrations
       '@melonoffice/jobs':
         specifier: workspace:*
         version: link:../../packages/jobs
@@ -230,9 +248,6 @@ importers:
       '@melonoffice/config':
         specifier: workspace:*
         version: link:../../packages/config
-      '@melonoffice/credits':
-        specifier: workspace:*
-        version: link:../../packages/credits
       jose:
         specifier: 6.2.12
         version: 6.2.12
@@ -615,6 +630,9 @@ importers:
 
   packages/integrations:
     dependencies:
+      '@melonoffice/ai-gateway':
+        specifier: workspace:*
+        version: link:../ai-gateway
       '@melonoffice/audit':
         specifier: workspace:*
         version: link:../audit

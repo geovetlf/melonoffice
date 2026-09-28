@@ -50,7 +50,7 @@ describe('unknown routes', () => {
 
 describe('loadConfig', () => {
   it('uses safe defaults', () => {
-    expect(loadConfig({})).toEqual({ port: 8080, logLevel: 'info', version: 'dev' });
+    expect(loadConfig({})).toEqual({ port: 8080, logLevel: 'info', version: 'dev', agents: {} });
   });
 
   it('reads the environment', () => {
@@ -58,7 +58,33 @@ describe('loadConfig', () => {
       port: 3000,
       logLevel: 'debug',
       version: 'abc',
+      agents: {},
     });
+  });
+
+  it('reads the conversation agents’ settings, all checked (ADR-0043)', () => {
+    expect(
+      loadConfig({
+        VERTEX_AI_PROJECT_ID: 'melonoffice',
+        VERTEX_AI_LOCATION: 'us-central1',
+        CHANNEL_SECRETS_PROJECT_ID: 'melonoffice',
+        WHATSAPP_GRAPH_API_VERSION: 'v21.0',
+      }).agents,
+    ).toEqual({
+      vertexAI: { projectId: 'melonoffice', location: 'us-central1' },
+      channelSecretsProjectId: 'melonoffice',
+      whatsappGraphApiVersion: 'v21.0',
+    });
+    expect(() => loadConfig({ VERTEX_AI_PROJECT_ID: 'melonoffice' })).toThrow('set together');
+    expect(() =>
+      loadConfig({ VERTEX_AI_PROJECT_ID: 'Bad_Id', VERTEX_AI_LOCATION: 'us-central1' }),
+    ).toThrow('Invalid VERTEX_AI_PROJECT_ID');
+    expect(() => loadConfig({ CHANNEL_SECRETS_PROJECT_ID: 'x' })).toThrow(
+      'Invalid CHANNEL_SECRETS_PROJECT_ID',
+    );
+    expect(() => loadConfig({ WHATSAPP_GRAPH_API_VERSION: 'latest' })).toThrow(
+      'Invalid WHATSAPP_GRAPH_API_VERSION',
+    );
   });
 
   it('rejects invalid values', () => {

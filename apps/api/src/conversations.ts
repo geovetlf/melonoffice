@@ -310,6 +310,24 @@ export function registerConversationRoutes(
     }),
   );
 
+  /**
+   * A person chooses the agent that attends the organization's conversations, exactly
+   * `{ agentId }` (a specialist id, or `null` to remove it) (CV-6B, ADR-0043). It grants nothing:
+   * the level still decides whether the agent acts at all.
+   */
+  app.post(
+    `${base}/conversation-settings/agent`,
+    withPermission('conversation.manage', dependencies, async (c, tenant) => {
+      const body = await bodyOf(c, ['agentId']);
+      if (body === undefined || body.agentId === undefined) {
+        return c.json({ error: 'invalid_request' }, 400);
+      }
+      return answer(c, async () =>
+        toSettingsView(await conversations.changeAgent(tenant, body.agentId)),
+      );
+    }),
+  );
+
   app.get(
     `${base}/contacts`,
     withPermission('contact.read', dependencies, (c, tenant) =>
@@ -425,6 +443,8 @@ const STATUS = {
   autonomy_not_enabled: 409,
   conversation_handled_by_ai: 409,
   settings_concurrency_conflict: 409,
+  // The conversation agent (CV-6B, ADR-0043).
+  agent_not_available: 409,
 } as const;
 
 /** A send refused before anything left MelonOffice, found once the message was reserved. */
@@ -497,7 +517,7 @@ export function toConversationView(c: Conversation) {
 }
 
 export function toSettingsView(s: ConversationSettings) {
-  return { autonomy: s.autonomy, updatedAt: s.updatedAt };
+  return { autonomy: s.autonomy, agentId: s.agentId ?? null, updatedAt: s.updatedAt };
 }
 
 export function toMessageView(m: Message) {

@@ -1,5 +1,6 @@
 import { acceptsAssignments, organizationOfDepartmentId } from '@melonoffice/departments';
 import type {
+  ConversationAgentProfile,
   DefinitionRef,
   Department,
   DepartmentId,
@@ -100,6 +101,68 @@ function checkPolicies(value: unknown): SpecialistPolicies {
   return Object.freeze(policies);
 }
 
+/** The longest instructions a conversation profile may carry (CV-6B). */
+export const MAX_INSTRUCTIONS_LENGTH = 4_000;
+/** The channels an agent may answer on: the ones MelonOffice has an adapter for. */
+export const AGENT_CHANNELS = ['whatsapp'] as const;
+export const AGENT_AUTONOMY_LEVELS = ['supervised', 'autonomous'] as const;
+export const MAX_REPLIES_PER_CONVERSATION = 50;
+
+// Instructions keep their line breaks; other control characters are refused.
+// eslint-disable-next-line no-control-regex
+const INSTRUCTIONS_CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/;
+
+/**
+ * Checks a conversation profile (CV-6B, ADR-0043): instructions, at least one known channel, how
+ * far it may go on its own (never below `supervised`: `manual` and `assisted` are not agents), and
+ * a reply limit. Nothing in it grants a tool, a permission or a model.
+ */
+function checkConversationProfile(value: unknown): ConversationAgentProfile {
+  if (!isRecord(value)) return invalid('conversation');
+  const keys = ['instructions', 'channels', 'autonomy', 'maxRepliesPerConversation'];
+  if (Object.keys(value).some((k) => !keys.includes(k))) invalid('conversation.fields');
+  const { instructions, channels, autonomy, maxRepliesPerConversation } = value;
+  if (typeof instructions !== 'string') return invalid('conversation.instructions');
+  const text = instructions.normalize('NFC').trim();
+  if (
+    text.length === 0 ||
+    [...text].length > MAX_INSTRUCTIONS_LENGTH ||
+    INSTRUCTIONS_CONTROL.test(text)
+  ) {
+    invalid('conversation.instructions');
+  }
+  const list = checkList(
+    channels,
+    'conversation.channels',
+    (v, f) =>
+      typeof v === 'string' && (AGENT_CHANNELS as readonly string[]).includes(v)
+        ? (v as ConversationAgentProfile['channels'][number])
+        : invalid(f),
+    (c) => c,
+  );
+  if (list.length === 0) invalid('conversation.channels');
+  if (
+    typeof autonomy !== 'string' ||
+    !(AGENT_AUTONOMY_LEVELS as readonly string[]).includes(autonomy)
+  ) {
+    invalid('conversation.autonomy');
+  }
+  if (
+    typeof maxRepliesPerConversation !== 'number' ||
+    !Number.isSafeInteger(maxRepliesPerConversation) ||
+    maxRepliesPerConversation < 1 ||
+    maxRepliesPerConversation > MAX_REPLIES_PER_CONVERSATION
+  ) {
+    invalid('conversation.maxRepliesPerConversation');
+  }
+  return Object.freeze({
+    instructions: text,
+    channels: list,
+    autonomy: autonomy as ConversationAgentProfile['autonomy'],
+    maxRepliesPerConversation: maxRepliesPerConversation as number,
+  });
+}
+
 /**
  * Checks a configuration and returns a frozen copy with only its known fields. Its department
  * must belong to `organizationId`, and every permission must exist in the RBAC catalogue.
@@ -136,6 +199,9 @@ export function checkConfiguration(
     ),
     permissions: checkList(value.permissions ?? [], 'permissions', checkPermission, (p) => p),
     policies: checkPolicies(value.policies ?? {}),
+    ...(value.conversation === undefined
+      ? {}
+      : { conversation: checkConversationProfile(value.conversation) }),
   });
 }
 

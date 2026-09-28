@@ -44,6 +44,13 @@ interface ConfigurationDocument {
   readonly tools: readonly { id: string; version: number }[];
   readonly permissions: readonly string[];
   readonly policies: Readonly<Record<string, { id: string; version: number }>>;
+  /** Absent on specialists that are not conversation agents (CV-6B, ADR-0043). */
+  readonly conversation?: {
+    readonly instructions: string;
+    readonly channels: readonly string[];
+    readonly autonomy: string;
+    readonly maxRepliesPerConversation: number;
+  };
 }
 
 export interface SpecialistDocument {
@@ -87,6 +94,16 @@ function toConfigurationDocument(c: SpecialistConfiguration): ConfigurationDocum
     policies: Object.fromEntries(
       Object.entries(c.policies).map(([kind, { id, version }]) => [kind, { id, version }]),
     ),
+    ...(c.conversation === undefined
+      ? {}
+      : {
+          conversation: {
+            instructions: c.conversation.instructions,
+            channels: [...c.conversation.channels],
+            autonomy: c.conversation.autonomy,
+            maxRepliesPerConversation: c.conversation.maxRepliesPerConversation,
+          },
+        }),
   };
 }
 

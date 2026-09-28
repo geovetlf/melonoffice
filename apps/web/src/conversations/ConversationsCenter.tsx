@@ -6,6 +6,7 @@ import {
   PRIORITIES,
   type ConversationDetail,
   type ConversationPriority,
+  type ConversationAgentView,
   type ConversationRow,
   type ConversationSort,
   type ConversationStatus,
@@ -122,6 +123,8 @@ export function ConversationsCenter({
   const [selected, setSelected] = useState<string | undefined>();
   const [detail, setDetail] = useState<ConversationDetail | undefined>();
   const [departments, setDepartments] = useState<readonly DepartmentOption[]>([]);
+  // The organization's agent (CV-6B): shown where it attends a conversation, never invented.
+  const [agent, setAgent] = useState<ConversationAgentView | null>(null);
   const [newTag, setNewTag] = useState('');
   const [error, setError] = useState<string | undefined>();
   const [loading, setLoading] = useState(true);
@@ -157,6 +160,18 @@ export function ConversationsCenter({
   useEffect(() => {
     client.departments().then(setDepartments, () => setDepartments([]));
   }, [client]);
+
+  useEffect(() => {
+    if (client.agent === undefined) return;
+    let live = true;
+    client.agent().then(
+      (next) => live && setAgent(next),
+      () => live && setAgent(null),
+    );
+    return () => {
+      live = false;
+    };
+  }, [client, version]);
 
   useEffect(() => {
     if (selected === undefined) return;
@@ -366,6 +381,19 @@ export function ConversationsCenter({
                     id={controlLabel(conversation) ?? 'conversations.control.human'}
                   />
                 </span>
+                {agent !== null &&
+                (controlOf(conversation).aiState === 'active' ||
+                  controlOf(conversation).aiState === 'escalated') ? (
+                  <span>
+                    <FormattedMessage
+                      id="conversations.agent.assigned"
+                      values={{
+                        name:
+                          agent.name ?? intl.formatMessage({ id: 'conversations.agent.unnamed' }),
+                      }}
+                    />
+                  </span>
+                ) : null}
                 {conversation.handoff === null || conversation.handoff === undefined ? null : (
                   <span>
                     <FormattedMessage id="conversations.control.reason" />{' '}
@@ -539,6 +567,12 @@ export function ConversationsCenter({
                         <>
                           {' · '}
                           <FormattedMessage id="conversations.sender.person" />
+                        </>
+                      ) : null}
+                      {message.sender.kind === 'specialist' ? (
+                        <>
+                          {' · '}
+                          <FormattedMessage id="conversations.sender.agent" />
                         </>
                       ) : null}
                       {' · '}

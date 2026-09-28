@@ -25,6 +25,20 @@ export const AUTONOMY_LEVELS = [
 export const isAutonomyLevel = (value: unknown): value is AutonomyLevel =>
   typeof value === 'string' && (AUTONOMY_LEVELS as readonly string[]).includes(value);
 
+const AUTONOMY_RANK: Readonly<Record<AutonomyLevel, number>> = {
+  manual: 0,
+  assisted: 1,
+  supervised: 2,
+  autonomous: 3,
+};
+
+/**
+ * The stricter of two levels (CV-6B): an agent never goes further than its organization allows,
+ * and never further than its own profile says.
+ */
+export const stricterAutonomy = (a: AutonomyLevel, b: AutonomyLevel): AutonomyLevel =>
+  AUTONOMY_RANK[a] <= AUTONOMY_RANK[b] ? a : b;
+
 /** The levels at which an agent may handle a conversation at all. */
 export const AI_HANDLING_LEVELS: readonly AutonomyLevel[] = ['supervised', 'autonomous'];
 
@@ -141,3 +155,11 @@ export function checkAutoSend(
   if (control.epoch !== turnEpoch) return { allowed: false, code: 'control_changed' };
   return { allowed: true };
 }
+
+/**
+ * Whether an agent may take a conversation it was never given (CV-6B, ADR-0043): only one no
+ * person or agent ever controlled (no control record) that is not closed. A conversation a person
+ * holds, paused or was escalated to is never taken: only a person hands it back.
+ */
+export const mayAssignAgent = (conversation: Pick<Conversation, 'control' | 'status'>): boolean =>
+  conversation.control === undefined && conversation.status !== 'closed';
