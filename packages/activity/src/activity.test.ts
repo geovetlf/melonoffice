@@ -12,7 +12,7 @@ import type {
 import { createAuthorizationService } from '@melonoffice/rbac';
 import { createOrganization, InMemoryTenancyStore, resolveTenant } from '@melonoffice/tenancy';
 import { describe, expect, it } from 'vitest';
-import { ACTIVITY_ACTIONS, toActivityItem } from './catalogue.js';
+import { ACTIVITY_ACTION_GROUPS, ACTIVITY_ACTIONS, toActivityItem } from './catalogue.js';
 import { ActivityError } from './errors.js';
 import { periodRange } from './period.js';
 import { createActivityService } from './service.js';
@@ -146,8 +146,10 @@ describe('activity items', () => {
     expect(Object.keys(item).sort()).toEqual(['action', 'actor', 'at', 'id', 'link', 'result']);
   });
 
-  it('shows at most 30 kinds of event, none of them plumbing', () => {
-    expect(ACTIVITY_ACTIONS.length).toBeLessThanOrEqual(30);
+  it('queries at most 30 kinds of event at a time, none of them plumbing', () => {
+    expect(ACTIVITY_ACTION_GROUPS.length).toBeGreaterThan(1);
+    for (const group of ACTIVITY_ACTION_GROUPS) expect(group.length).toBeLessThanOrEqual(30);
+    expect(ACTIVITY_ACTIONS).toContain('contact.stage_changed');
     for (const hidden of ['auth.sign_in', 'tenancy.resolve', 'authorization.check']) {
       expect(ACTIVITY_ACTIONS as readonly string[]).not.toContain(hidden);
     }
@@ -213,6 +215,20 @@ describe('activity service', () => {
     expect(page.hasMore).toBe(false);
     // The month includes Sunday evening in Lima, which UTC already called Monday.
     expect((await w.service.list(w.tenantA, { ...LIMA, period: 'month' })).items.length).toBe(3);
+  });
+
+  it('merges the customer actions, queried apart, into the same newest-first page', async () => {
+    const w = await world();
+    w.record(w.orgA, 'conversation.message_sent', '2026-09-28T15:00:00Z');
+    w.record(w.orgA, 'contact.created', '2026-09-28T15:30:00Z');
+    w.record(w.orgA, 'contact.stage_changed', '2026-09-28T16:10:00Z');
+    w.record(w.orgA, 'contact.note_added', '2026-09-28T16:20:00Z'); // kept in the audit only
+    const page = await w.service.list(w.tenantA, LIMA);
+    expect(page.items.map((i) => i.action)).toEqual([
+      'contact.stage_changed',
+      'contact.created',
+      'conversation.message_sent',
+    ]);
   });
 
   it('keeps each organization’s activity to itself', async () => {

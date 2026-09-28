@@ -1,5 +1,6 @@
 import {
   isBrainError,
+  customerKnowledge,
   operationalKnowledge,
   organizationKnowledge,
   profileKnowledge,
@@ -46,6 +47,12 @@ export interface BrainSources {
   readonly specialists?: Pick<SpecialistRepository, 'list'>;
   readonly connections?: {
     list(organizationId: OrganizationId): Promise<readonly ChannelConnection[]>;
+  };
+  /** How many contacts are at each commercial stage (C1). */
+  readonly contacts?: {
+    counts(
+      organizationId: OrganizationId,
+    ): Promise<{ readonly lead: number; readonly customer: number; readonly inactive: number }>;
   };
 }
 
@@ -275,6 +282,10 @@ export async function syncCompanyBrain(
       activeAgents: specialists.filter((s) => s.status === 'active').length,
       channels: connections,
     });
+    count(await brain.ingest(tenant, source, facts));
+  }
+  if (sources.contacts !== undefined) {
+    const { source, facts } = customerKnowledge(await sources.contacts.counts(organizationId));
     count(await brain.ingest(tenant, source, facts));
   }
   return { changed };

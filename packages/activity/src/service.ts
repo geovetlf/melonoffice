@@ -1,7 +1,7 @@
 import type { AuditReader } from '@melonoffice/audit';
 import type { AuthorizationService } from '@melonoffice/rbac';
 import { isResolvedTenant, type TenancyStore, type TenantContext } from '@melonoffice/tenancy';
-import { ACTIVITY_ACTIONS, toActivityItem, type ActivityItem } from './catalogue.js';
+import { ACTIVITY_ACTION_GROUPS, toActivityItem, type ActivityItem } from './catalogue.js';
 import { ActivityError } from './errors.js';
 import { isActivityPeriod, isTimeZone, periodRange, type ActivityPeriod } from './period.js';
 
@@ -49,15 +49,27 @@ export function createActivityService(options: {
         throw new ActivityError('organization_inactive');
       }
       const { from, to } = periodRange(input.period, input.timeZone, now());
-      const events = await reader.query({
-        organizationId: tenant.organizationId,
-        actions: ACTIVITY_ACTIONS,
-        from,
-        to,
-        limit: ACTIVITY_PAGE_SIZE + 1,
-      });
+      // One query per group of actions (each within the per-query limit), merged newest first.
+      const pages = await Promise.all(
+        ACTIVITY_ACTION_GROUPS.map((actions) =>
+          reader.query({
+            organizationId: tenant.organizationId,
+            actions,
+            from,
+            to,
+            limit: ACTIVITY_PAGE_SIZE + 1,
+          }),
+        ),
+      );
       // Only this organization's events, whatever the store returned.
-      const own = events.filter((event) => event.organizationId === tenant.organizationId);
+      const own = pages
+        .flat()
+        .filter((event) => event.organizationId === tenant.organizationId)
+        .sort((a, b) =>
+          a.occurredAt === b.occurredAt
+            ? b.id.localeCompare(a.id)
+            : b.occurredAt.localeCompare(a.occurredAt),
+        );
       return Object.freeze({
         period: input.period,
         timeZone: input.timeZone,

@@ -13,6 +13,7 @@ import {
   byLatestActivity,
   channelIdentityIdFor,
   checkInbound,
+  checkNextContact,
   checkNextConversation,
   checkNextSettings,
   checkStatusUpdate,
@@ -20,6 +21,7 @@ import {
   checkStoredConversation,
   conversationIdFor,
   ConversationError,
+  duplicateOf,
   inboundMessageIdFor,
   isContactId,
   isConversationId,
@@ -27,6 +29,7 @@ import {
   messageRefKeyFor,
   settleOutbound,
   type ConversationRepository,
+  type ContactWrite,
   type ConversationWrite,
   type DeliveryStatusUpdate,
   type InboundMessage,
@@ -42,7 +45,9 @@ import type {
   ChannelIdentity,
   ChannelIdentityId,
   Contact,
+  ContactCommercial,
   ContactId,
+  ContactNote,
   Conversation,
   ConversationId,
   ConversationSettings,
@@ -77,6 +82,8 @@ export const MESSAGES = 'messages';
 export const MESSAGE_REFS = 'messageRefs';
 /** `conversationSettings/{organizationId}`: one per organization (CV-6A, ADR-0039). */
 export const CONVERSATION_SETTINGS = 'conversationSettings';
+/** Notes about contacts (C1): written once, never edited. */
+export const CONTACT_NOTES = 'contactNotes';
 
 const ts = (value: IsoTimestamp): FirestoreTimestamp => Timestamp.fromDate(new Date(value));
 const iso = (value: FirestoreTimestamp): IsoTimestamp =>
@@ -99,9 +106,50 @@ export function toContactDocument(c: Contact): Doc {
     email: c.email ?? null,
     status: c.status,
     origin: { ...c.origin },
+    commercial: c.commercial === undefined ? null : toCommercialDocument(c.commercial),
+    revision: c.revision ?? 0,
     createdAt: ts(c.createdAt),
     updatedAt: ts(c.updatedAt),
   };
+}
+
+/** A contact's commercial block (C1) as stored: absent values are null, never undefined. */
+function toCommercialDocument(c: ContactCommercial): Doc {
+  return {
+    stage: c.stage,
+    ownerId: c.ownerId ?? null,
+    source: { kind: c.source.kind, reference: c.source.reference ?? null },
+    consent: {
+      messaging: c.consent.messaging,
+      at: c.consent.at ?? null,
+      recordedBy: c.consent.recordedBy ?? null,
+    },
+    nextAction: c.nextAction === undefined ? null : { ...c.nextAction },
+    stageChangedAt: c.stageChangedAt,
+  };
+}
+
+function toCommercial(d: Doc): ContactCommercial {
+  const source = d.source as Doc;
+  const consent = d.consent as Doc;
+  const nextAction = d.nextAction as { text: string; dueOn: string } | null;
+  return Object.freeze({
+    stage: d.stage as ContactCommercial['stage'],
+    ...orAbsent('ownerId', d.ownerId as ContactCommercial['ownerId'] | null),
+    source: Object.freeze({
+      kind: source.kind as ContactCommercial['source']['kind'],
+      ...orAbsent('reference', source.reference as string | null),
+    }),
+    consent: Object.freeze({
+      messaging: consent.messaging as ContactCommercial['consent']['messaging'],
+      ...orAbsent('at', consent.at as IsoTimestamp | null),
+      ...orAbsent('recordedBy', consent.recordedBy as 'contact' | 'member' | null),
+    }),
+    ...(nextAction === null || nextAction === undefined
+      ? {}
+      : { nextAction: Object.freeze({ text: nextAction.text, dueOn: nextAction.dueOn }) }),
+    stageChangedAt: d.stageChangedAt as IsoTimestamp,
+  });
 }
 
 function toContact(id: string, d: Doc): Contact {
@@ -113,6 +161,10 @@ function toContact(id: string, d: Doc): Contact {
     ...orAbsent('email', d.email as string | null),
     status: d.status as Contact['status'],
     origin: Object.freeze({ ...(d.origin as Contact['origin']) }),
+    ...(d.commercial === null || d.commercial === undefined
+      ? {}
+      : { commercial: toCommercial(d.commercial as Doc) }),
+    ...(typeof d.revision === 'number' && d.revision > 0 ? { revision: d.revision } : {}),
     createdAt: iso(d.createdAt as FirestoreTimestamp),
     updatedAt: iso(d.updatedAt as FirestoreTimestamp),
   });
@@ -572,6 +624,124 @@ export class FirestoreConversationRepository implements ConversationRepository {
     return snapshot.docs
       .map((doc) => toContact(doc.id, doc.data()))
       .sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0));
+  }
+
+  /** The organization's other contacts with this phone or email: equality filters only. */
+  async #sameAddress(
+    t: Transaction,
+    contact: Pick<Contact, 'organizationId' | 'phone' | 'email'>,
+  ): Promise<Contact[]> {
+    const found: Contact[] = [];
+    for (const [field, value] of [
+      ['phone', contact.phone],
+      ['email', contact.email],
+    ] as const) {
+      if (value === undefined) continue;
+      const snapshot = await t.get(
+        this.db
+          .collection(CONTACTS)
+          .where('organizationId', '==', contact.organizationId)
+          .where(field, '==', value),
+      );
+      found.push(...snapshot.docs.map((doc) => toContact(doc.id, doc.data())));
+    }
+    return found;
+  }
+
+  async createContact(contact: Contact, events: readonly AuditEvent[]): Promise<Contact> {
+    if (!isOrganizationId(contact.organizationId) || !isContactId(contact.id)) {
+      throw new ConversationError('invalid_request', 'contact');
+    }
+    const doc = this.db.collection(CONTACTS).doc(contact.id);
+    return this.db.runTransaction(async (t) => {
+      const duplicate = duplicateOf(contact, await this.#sameAddress(t, contact));
+      if (duplicate !== undefined) throw new ConversationError('duplicate_contact', duplicate);
+      t.create(doc, toContactDocument(contact));
+      this.#append(t, events);
+      return contact;
+    });
+  }
+
+  async updateContact(
+    organizationId: OrganizationId,
+    id: ContactId,
+    change: (current: Contact) => ContactWrite,
+  ): Promise<Contact> {
+    if (!isOrganizationId(organizationId) || !isContactId(id)) {
+      throw new ConversationError('contact_not_found');
+    }
+    const doc = this.db.collection(CONTACTS).doc(id);
+    // Firestore re-runs this when the contact changed after it was read, so a change is always
+    // decided on the latest state (and its revision check refuses a stale one).
+    return this.db.runTransaction(async (t) => {
+      const snapshot = await t.get(doc);
+      const data = snapshot.data();
+      if (data?.organizationId !== organizationId) throw new ConversationError('contact_not_found');
+      const current = toContact(snapshot.id, data);
+      const { contact, events } = change(current);
+      if (contact === current) return current;
+      checkNextContact(current, contact);
+      if (contact.phone !== current.phone || contact.email !== current.email) {
+        const duplicate = duplicateOf(contact, await this.#sameAddress(t, contact));
+        if (duplicate !== undefined) throw new ConversationError('duplicate_contact', duplicate);
+      }
+      t.set(doc, toContactDocument(contact));
+      this.#append(t, events);
+      return contact;
+    });
+  }
+
+  async addContactNote(note: ContactNote, events: readonly AuditEvent[]): Promise<void> {
+    if (
+      !isOrganizationId(note.organizationId) ||
+      !isContactId(note.contactId) ||
+      !isUuid(note.id)
+    ) {
+      throw new ConversationError('invalid_request', 'note');
+    }
+    const contactDoc = this.db.collection(CONTACTS).doc(note.contactId);
+    await this.db.runTransaction(async (t) => {
+      const contact = await t.get(contactDoc);
+      if (contact.data()?.organizationId !== note.organizationId) {
+        throw new ConversationError('contact_not_found');
+      }
+      t.create(this.db.collection(CONTACT_NOTES).doc(note.id), {
+        organizationId: note.organizationId,
+        contactId: note.contactId,
+        text: note.text,
+        createdBy: note.createdBy,
+        createdAt: ts(note.createdAt),
+      });
+      this.#append(t, events);
+    });
+  }
+
+  async listContactNotes(
+    organizationId: OrganizationId,
+    contactId: ContactId,
+    limit: number,
+  ): Promise<readonly ContactNote[]> {
+    if (!isOrganizationId(organizationId) || !isContactId(contactId)) return [];
+    // Equality filters only: no composite index. A contact holds few notes; sorted here.
+    const snapshot = await this.db
+      .collection(CONTACT_NOTES)
+      .where('organizationId', '==', organizationId)
+      .where('contactId', '==', contactId)
+      .get();
+    return snapshot.docs
+      .map((doc) => {
+        const d = doc.data();
+        return Object.freeze({
+          id: doc.id,
+          organizationId,
+          contactId,
+          text: d.text as string,
+          createdBy: d.createdBy as ContactNote['createdBy'],
+          createdAt: iso(d.createdAt as FirestoreTimestamp),
+        });
+      })
+      .sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0))
+      .slice(0, limit);
   }
 
   async listIdentities(

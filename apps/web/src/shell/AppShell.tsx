@@ -10,10 +10,13 @@ import { ActivityProvider } from '../activity/ActivityFeed.js';
 import { createActivityClient } from '../activity/activityClient.js';
 import { BusinessPage } from '../business/BusinessPage.js';
 import { createBusinessClient } from '../business/businessClient.js';
+import { HOME_TIME_ZONE } from '../business/defaults.js';
 import { ConnectionsPage, permissionsOf } from '../connections/ConnectionsPage.js';
 import { createConnectionsClient } from '../connections/connectionsClient.js';
 import { ConversationsCenter } from '../conversations/ConversationsCenter.js';
 import { createInboxClient } from '../conversations/inboxClient.js';
+import { CustomersSection } from '../customers/CustomersSection.js';
+import { createCustomersClient } from '../customers/customersClient.js';
 import { HomePage } from '../home/HomePage.js';
 import { useAuth, useCan } from '../identity/AuthProvider.js';
 import type { LocaleProps } from '../identity/pages.js';
@@ -44,6 +47,8 @@ export function AppShell(locale: LocaleProps) {
   const canEditBusiness = useCan('organization.update');
   const canReadActivity = useCan('activity.read');
   const canAskGia = useCan('gia.ask');
+  const canReadContacts = useCan('contact.read');
+  const canManageContacts = useCan('contact.manage');
   const route = parseRoute(usePath());
   const [menuOpen, setMenuOpen] = useState(false);
   useEffect(() => {
@@ -67,6 +72,7 @@ export function AppShell(locale: LocaleProps) {
             business: createBusinessClient(services.api.request, organizationId),
             activity: createActivityClient(services.api.request, organizationId),
             gia: createGiaClient(services.api.request, organizationId),
+            customers: createCustomersClient(services.api.request, organizationId),
           },
     [services, organizationId],
   );
@@ -112,7 +118,25 @@ export function AppShell(locale: LocaleProps) {
       );
       break;
     case 'office':
-      page = <DepartmentOffice slug={route.slug} />;
+      page = (
+        <DepartmentOffice
+          slug={route.slug}
+          customers={
+            canReadContacts ? (
+              <BusinessTimeZone>
+                {(timeZone) => (
+                  <CustomersSection
+                    client={clients.customers}
+                    canManage={canManageContacts}
+                    currentUserId={me.userId}
+                    timeZone={timeZone}
+                  />
+                )}
+              </BusinessTimeZone>
+            ) : undefined
+          }
+        />
+      );
       break;
     case 'agent':
       page = <AgentPlace slug={route.slug} agentId={route.agentId} />;
@@ -208,6 +232,13 @@ function FirstBusinessStep({
   const { business } = useOfficeData();
   const missing = business.status === 'ready' && business.value.profile === null;
   return <>{show && missing ? step : children}</>;
+}
+
+/** The business's time zone once it is described, else the default of ADR-0048. */
+function BusinessTimeZone({ children }: { readonly children: (timeZone: string) => ReactNode }) {
+  const { business } = useOfficeData();
+  const profile = business.status === 'ready' ? business.value.profile : null;
+  return <>{children(profile?.timeZone ?? HOME_TIME_ZONE)}</>;
 }
 
 /**

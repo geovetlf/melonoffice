@@ -223,7 +223,10 @@ describe.each(STORES)('conversations with storage in %s', (_name, createStores) 
   describe('human control (CV-6A)', () => {
     it('keeps AI off until a person allows it, then lets a person take control and hand back', async () => {
       const t = await setup();
-      await t.deliver(CONNECTION_A, whatsapp(PHONE_A), APP_SECRET_A);
+      // A message from a minute ago: a person's reply must fall inside WhatsApp's 24-hour window
+      // whenever the test runs.
+      const recent = String(Math.floor(Date.now() / 1000) - 60);
+      await t.deliver(CONNECTION_A, whatsapp(PHONE_A, { timestamp: recent }), APP_SECRET_A);
       const conversation = await t.firstConversation();
       const one = `${t.base(t.orgA)}/conversations/${conversation.id}`;
       const settings = `${t.base(t.orgA)}/conversation-settings`;

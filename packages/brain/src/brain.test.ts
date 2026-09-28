@@ -25,6 +25,7 @@ import { InMemoryKnowledgeRepository } from './repository.js';
 import { createCompanyBrain, type KnowledgeExtractor } from './service.js';
 import {
   ingestFromConnection,
+  customerKnowledge,
   operationalKnowledge,
   organizationKnowledge,
   profileKnowledge,
@@ -321,6 +322,23 @@ describe('sources and verification', () => {
       ['agents', 'calculated'],
       ['departments', 'calculated'],
     ]);
+  });
+
+  it('knows how many leads and customers there are, never who they are', async () => {
+    const w = await world();
+    const { source, facts } = customerKnowledge({ lead: 3, customer: 2, inactive: 0 });
+    expect(JSON.stringify(facts)).not.toMatch(/name|phone|email/);
+    await w.brain.ingest(w.alice, source, facts);
+    const items = await w.brain.list(w.alice);
+    expect(
+      items.filter((i) => i.domain === 'customers').map((i) => [i.key, i.verification]),
+    ).toEqual(
+      expect.arrayContaining([
+        ['leads_count', 'calculated'],
+        ['customers_count', 'calculated'],
+        ['inactive_contacts_count', 'calculated'],
+      ]),
+    );
   });
 
   it('syncs from an integration only through its own, connected connection', async () => {

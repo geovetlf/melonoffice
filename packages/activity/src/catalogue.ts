@@ -4,10 +4,13 @@ import type { UserId } from '@melonoffice/domain';
 /**
  * What a person sees as their office's activity (ADR-0049): the events that say something
  * happened in the business, not the plumbing under it. Sign-ins, tenant resolution, permission
- * checks, job leases and delivery attempts are recorded but not shown. At most 30 actions, the
- * limit of one Firestore `in` filter.
+ * checks, job leases and delivery attempts are recorded but not shown.
+ *
+ * One audit query filters at most 30 actions (the limit of one Firestore `in` filter), so the
+ * actions come in groups and the activity view runs one query per group (C1, ADR-0053). The limit
+ * per query is never raised.
  */
-export const ACTIVITY_ACTIONS = [
+const OFFICE_ACTIONS = [
   'organization.create',
   'organization.profile_updated',
   'membership.create',
@@ -40,8 +43,27 @@ export const ACTIVITY_ACTIONS = [
   'gia.message_answered',
 ] as const satisfies readonly AuditAction[];
 
-if (ACTIVITY_ACTIONS.length > MAX_QUERY_ACTIONS) {
+/** Customers and leads (C1): a new contact, a stage change and a new responsible person. */
+const CUSTOMER_ACTIONS = [
+  'contact.created',
+  'contact.stage_changed',
+  'contact.owner_changed',
+] as const satisfies readonly AuditAction[];
+
+/** The actions of each audit query the activity view runs. */
+export const ACTIVITY_ACTION_GROUPS: readonly (readonly AuditAction[])[] = [
+  OFFICE_ACTIONS,
+  CUSTOMER_ACTIONS,
+];
+
+/** Every action the activity view shows. */
+export const ACTIVITY_ACTIONS: readonly AuditAction[] = ACTIVITY_ACTION_GROUPS.flat();
+
+if (ACTIVITY_ACTION_GROUPS.some((group) => group.length > MAX_QUERY_ACTIONS)) {
   throw new Error('too many activity actions for one audit query');
+}
+if (new Set(ACTIVITY_ACTIONS).size !== ACTIVITY_ACTIONS.length) {
+  throw new Error('an activity action is in more than one group');
 }
 
 /** Who did it, as a person reading their office understands it. Never another user's id. */

@@ -42,7 +42,11 @@ export type ConversationErrorCode =
   // Templates (CV-6D phase 2, ADR-0046): refused before anything is reserved or sent.
   | 'template_not_found'
   | 'template_not_active'
-  | 'template_parameters_invalid';
+  | 'template_parameters_invalid'
+  // Customers and leads (C1, ADR-0053).
+  | 'duplicate_contact'
+  | 'owner_not_member'
+  | 'contact_concurrency_conflict';
 
 export class ConversationError extends Error {
   override readonly name = 'ConversationError';
