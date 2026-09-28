@@ -16,7 +16,11 @@ export type MessageId = keyof (typeof catalogs)['en'];
 export type Messages = Readonly<Record<MessageId, string>>;
 
 export const SOURCE_LOCALE: Locale = 'en';
-export const DEFAULT_LOCALE: Locale = 'en';
+/**
+ * The language when the browser asks for none MelonOffice speaks. MelonOffice starts in Peru
+ * (ADR-0048), so it is Spanish; English stays the source catalog.
+ */
+export const DEFAULT_LOCALE: Locale = 'es';
 export const SUPPORTED_LOCALES = Object.freeze(Object.keys(catalogs) as Locale[]);
 
 export function isSupportedLocale(value: string): value is Locale {

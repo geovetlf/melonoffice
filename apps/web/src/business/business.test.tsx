@@ -6,6 +6,7 @@ import { createServices } from '../identity/services.js';
 import { REFRESH_KEY } from '../identity/session.js';
 import { API, KEY, fakeBackend, memoryStore } from '../identity/testing.js';
 import { officeDepartments } from '../office/departments.js';
+import { currencyAfterCountryChange, startingValues } from './defaults.js';
 import type { DepartmentView } from '../office/officeClient.js';
 import { parseRoute, paths } from '../shell/routes.js';
 
@@ -183,5 +184,26 @@ describe('the suggested order', () => {
     );
     expect(headquarters.map((d) => d.typeId)).toEqual(['leadership']);
     expect(floor.map((d) => d.typeId)).toEqual(['sales', 'finance', null]);
+  });
+});
+
+describe('starting values (Peru first)', () => {
+  it('proposes Peru, soles and Lima when the browser says nothing more precise', () => {
+    expect(startingValues(['es'], '')).toEqual({
+      country: 'PE',
+      currency: 'PEN',
+      timeZone: 'America/Lima',
+    });
+    expect(startingValues(['en-US'], 'America/New_York')).toEqual({
+      country: 'US',
+      currency: 'USD',
+      timeZone: 'America/New_York',
+    });
+  });
+
+  it('follows the country with its currency, unless the owner chose another one', () => {
+    expect(currencyAfterCountryChange('PE', 'MX', 'PEN')).toBe('MXN');
+    expect(currencyAfterCountryChange('PE', 'MX', 'USD')).toBe('USD');
+    expect(currencyAfterCountryChange('PE', 'FR', 'PEN')).toBe('PEN');
   });
 });

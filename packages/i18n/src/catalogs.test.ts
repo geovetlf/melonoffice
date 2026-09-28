@@ -2,6 +2,7 @@ import { createIntl } from 'react-intl';
 import { describe, expect, it } from 'vitest';
 import { catalogs, SOURCE_LOCALE, SUPPORTED_LOCALES, type Locale } from './catalogs.js';
 import { detectLocale } from './detect.js';
+import { formattingLocale } from './I18nProvider.js';
 import { pseudoLocalize, pseudoLocalizeCatalog } from './pseudo.js';
 
 /** A value for each argument a message names (`{name}`, `{count, plural, …}`), to format it. */
@@ -50,8 +51,8 @@ describe('detectLocale', () => {
 
   it('skips unsupported languages and falls back to the default', () => {
     expect(detectLocale(['fr-FR', 'es'])).toBe('es');
-    expect(detectLocale(['ja'])).toBe('en');
-    expect(detectLocale([])).toBe('en');
+    expect(detectLocale(['ja'])).toBe('es');
+    expect(detectLocale([])).toBe('es');
   });
 });
 
@@ -74,5 +75,14 @@ describe('pseudoLocalize', () => {
       intl.formatMessage({ id }, argumentsOf(message));
     }
     expect(errors).toEqual([]);
+  });
+});
+
+describe('formattingLocale', () => {
+  it('formats with the business country when there is one (es-PE), the words staying es', () => {
+    expect(formattingLocale('es', 'PE')).toBe('es-PE');
+    expect(formattingLocale('en', 'PE')).toBe('en-PE');
+    expect(formattingLocale('es')).toBe('es');
+    expect(formattingLocale('es', 'peru')).toBe('es');
   });
 });

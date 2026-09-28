@@ -1,4 +1,4 @@
-import { FormattedMessage } from '@melonoffice/i18n';
+import { FormattedMessage, I18nProvider, type Locale } from '@melonoffice/i18n';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { BusinessPage } from '../business/BusinessPage.js';
 import { createBusinessClient } from '../business/businessClient.js';
@@ -139,32 +139,34 @@ export function AppShell(locale: LocaleProps) {
 
   return (
     <OfficeDataProvider client={clients.office} business={clients.business} can={can}>
-      <div className="app">
-        <Sidebar
-          route={route}
-          canReadConversations={canReadConversations}
-          canReadConnections={canReadConnections}
-          canReadBusiness={canReadBusiness}
-          open={menuOpen}
-          onNavigate={() => setMenuOpen(false)}
-        />
-        {menuOpen ? (
-          <div className="app__scrim" aria-hidden="true" onClick={() => setMenuOpen(false)} />
-        ) : null}
-        <div className="app__body">
-          <TopBar
-            organizationName={workspace.organization.name}
-            email={me.email ?? me.userId}
-            onSignOut={signOut}
-            menuOpen={menuOpen}
-            onMenu={() => setMenuOpen((open) => !open)}
-            locale={locale}
+      <BusinessFormats locale={locale.locale}>
+        <div className="app">
+          <Sidebar
+            route={route}
+            canReadConversations={canReadConversations}
+            canReadConnections={canReadConnections}
+            canReadBusiness={canReadBusiness}
+            open={menuOpen}
+            onNavigate={() => setMenuOpen(false)}
           />
-          <main className="app__main" key={route.kind === 'office' ? route.slug : route.kind}>
-            {page}
-          </main>
+          {menuOpen ? (
+            <div className="app__scrim" aria-hidden="true" onClick={() => setMenuOpen(false)} />
+          ) : null}
+          <div className="app__body">
+            <TopBar
+              organizationName={workspace.organization.name}
+              email={me.email ?? me.userId}
+              onSignOut={signOut}
+              menuOpen={menuOpen}
+              onMenu={() => setMenuOpen((open) => !open)}
+              locale={locale}
+            />
+            <main className="app__main" key={route.kind === 'office' ? route.slug : route.kind}>
+              {page}
+            </main>
+          </div>
         </div>
-      </div>
+      </BusinessFormats>
     </OfficeDataProvider>
   );
 }
@@ -186,4 +188,28 @@ function FirstBusinessStep({
   const { business } = useOfficeData();
   const missing = business.status === 'ready' && business.value.profile === null;
   return <>{show && missing ? step : children}</>;
+}
+
+/**
+ * Dates, numbers and money follow the business's country once it is described (ADR-0048): a
+ * Peruvian business in Spanish formats as es-PE. The words stay the chosen language's.
+ */
+function BusinessFormats({
+  locale,
+  children,
+}: {
+  readonly locale: Locale;
+  readonly children: ReactNode;
+}) {
+  const { business } = useOfficeData();
+  const country =
+    business.status === 'ready' && business.value.profile !== null
+      ? business.value.profile.country
+      : undefined;
+  // Always the same element, so the page below is never remounted when the profile arrives.
+  return (
+    <I18nProvider locale={locale} {...(country === undefined ? {} : { region: country })}>
+      {children}
+    </I18nProvider>
+  );
 }
