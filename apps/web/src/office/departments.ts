@@ -85,7 +85,7 @@ export function officeDepartments(departments: readonly DepartmentView[]): {
  * The other states (ADR-0040) are ready for when the runtime reports them.
  */
 export type AgentState =
-  'working' | 'waiting' | 'processing' | 'available' | 'attention' | 'paused';
+  'working' | 'waiting' | 'processing' | 'available' | 'attention' | 'paused' | 'offline';
 
 export const AGENT_STATES: readonly AgentState[] = [
   'working',
@@ -94,6 +94,7 @@ export const AGENT_STATES: readonly AgentState[] = [
   'available',
   'attention',
   'paused',
+  'offline',
 ];
 
 export interface DepartmentAgents {

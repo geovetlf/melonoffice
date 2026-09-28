@@ -25,6 +25,9 @@ export interface SpecialistView {
   readonly departmentId: string;
   readonly displayName: string;
   readonly status: SpecialistStatus;
+  /** What the agent is for, in the owner's words: the office shows it as the agent's role. */
+  readonly purpose?: string | null;
+  readonly updatedAt?: string;
 }
 
 export type CreditsView =

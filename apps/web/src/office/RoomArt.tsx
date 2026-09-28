@@ -1,38 +1,52 @@
 import { useId, type ReactNode } from 'react';
 import type { RoomMotif } from './departments.js';
+import type { RoomOccupant, SeatPosition } from './workstations.js';
 
 /**
- * A department's room, drawn in SVG (ADR-0040): a lit back wall with the department's big screen,
- * shelves, lamps, plants and desks. The people at the desks are the department's real agents
- * (ADR-0006), never extras, and nothing drawn says what an agent is doing. Hidden from assistive
- * technology; the room's name and its agents are given by the element around it.
+ * A department's room, drawn in SVG (ADR-0040, ADR-0041): a lit back wall with the department's
+ * big screen, shelves, lamps, plants and its workstations. Each desk is one of the department's
+ * workstations; the person at it is a real agent (ADR-0006), never an extra, and an empty desk
+ * shows its empty chair. Nothing drawn says what an agent is doing. Hidden from assistive
+ * technology; the room's name, its workstations and its agents are given by the elements around it.
  */
+
+/** Who is at a desk, as the drawing shows it: by record state only. */
+export type SeatOccupant = RoomOccupant;
+
+export interface RoomSeat {
+  readonly position: SeatPosition;
+  readonly occupant: SeatOccupant;
+}
+
 export interface RoomArtProps {
   readonly motif: RoomMotif;
   readonly hue: string;
   /** `zone`: a room seen from the Home; `office`: the same room, entered. */
   readonly variant?: 'zone' | 'office';
-  /**
-   * The department's real agents (ADR-0006): one person per agent at a desk, paused ones dimmed,
-   * as many as the room has desks. The other desks stay empty.
-   */
-  readonly agents?: { readonly active: number; readonly paused: number };
+  /** The department's workstations, where they stand and who is at each (see `seatAgents`). */
+  readonly seats?: readonly RoomSeat[];
 }
 
-const SIZES = {
-  zone: { width: 360, height: 200, desks: 3 },
-  office: { width: 720, height: 300, desks: 5 },
+/** The rooms' drawing sizes. Workstation positions are fractions of these. */
+export const ROOM_SIZES = {
+  zone: { width: 360, height: 200 },
+  office: { width: 720, height: 400 },
 } as const;
 
-export function RoomArt({
-  motif,
-  hue,
-  variant = 'zone',
-  agents = { active: 0, paused: 0 },
-}: RoomArtProps) {
+/** How big a desk is drawn, so the widest row still fits its room. */
+export function deskScale(seats: readonly RoomSeat[], variant: 'zone' | 'office', row: number) {
+  const { width } = ROOM_SIZES[variant];
+  const perRow = seats.filter((seat) => seat.position.row === row).length || 1;
+  const rows = new Set(seats.map((seat) => seat.position.row)).size || 1;
+  const room = variant === 'office' ? 2.1 : 1.1;
+  // Back rows are a little smaller: depth.
+  const depth = 1 - (rows - 1 - row) * 0.12;
+  return Math.min(room, ((width * 0.7) / perRow / 66) * (variant === 'office' ? 1.2 : 1)) * depth;
+}
+
+export function RoomArt({ motif, hue, variant = 'zone', seats = [] }: RoomArtProps) {
   const id = useId().replace(/[^a-zA-Z0-9_-]/g, '');
-  const { active, paused } = agents;
-  const { width: w, height: h, desks } = SIZES[variant];
+  const { width: w, height: h } = ROOM_SIZES[variant];
   const wall = `wall-${id}`;
   const glow = `glow-${id}`;
   const floor = `floor-${id}`;
@@ -43,12 +57,15 @@ export function RoomArt({
   const firstScreen = (w - screenCount * screenW - (screenCount - 1) * gap) / 2;
   const screens = Array.from({ length: screenCount }, (_, i) => firstScreen + i * (screenW + gap));
   const lamps = variant === 'office' ? [0.2, 0.4, 0.6, 0.8] : [0.28, 0.72];
-  const deskXs = Array.from({ length: desks }, (_, i) => ((i + 0.5) * w) / desks);
+  // Back rows first, so the front rows are drawn over them.
+  const ordered = seats
+    .map((seat, i) => ({ seat, i }))
+    .sort((a, b) => a.seat.position.row - b.seat.position.row);
   return (
     <svg
       className={`room room--${variant}`}
       viewBox={`0 0 ${w} ${h}`}
-      preserveAspectRatio="xMidYMid slice"
+      preserveAspectRatio={variant === 'office' ? 'xMidYMid meet' : 'xMidYMid slice'}
       aria-hidden="true"
       focusable="false"
     >
@@ -111,16 +128,15 @@ export function RoomArt({
       {/* Floor. */}
       <path d={`M0 ${h * 0.62} H${w} V${h} H0 Z`} fill={`url(#${floor})`} />
       <ellipse cx={w / 2} cy={h * 0.64} rx={w * 0.46} ry={h * 0.05} fill={hue} opacity="0.18" />
-      {deskXs.map((x, i) => (
+      {ordered.map(({ seat, i }) => (
         <Desk
-          key={x}
-          x={x}
-          y={h * 0.62}
+          key={i}
+          x={seat.position.x * w}
+          y={seat.position.y * h}
           hue={hue}
-          delay={i * 0.9}
           look={i}
-          occupant={i < active ? 'active' : i < active + paused ? 'paused' : undefined}
-          scale={variant === 'office' ? 1.35 : 1.1}
+          occupant={seat.occupant}
+          scale={deskScale(seats, variant, seat.position.row)}
         />
       ))}
       <Plant x={18} y={h - 4} scale={variant === 'office' ? 1.4 : 1} />
@@ -168,7 +184,6 @@ function Desk({
   x,
   y,
   hue,
-  delay,
   look,
   occupant,
   scale,
@@ -176,20 +191,36 @@ function Desk({
   x: number;
   y: number;
   hue: string;
-  delay: number;
   look: number;
-  occupant: 'active' | 'paused' | undefined;
+  occupant: SeatOccupant;
   scale: number;
 }) {
   const person = PEOPLE[look % PEOPLE.length] ?? PEOPLE[0];
   return (
-    <g transform={`translate(${x} ${y + 30 * scale}) scale(${scale})`}>
-      {/* A person at work, seen over the monitor. */}
-      {occupant === undefined ? null : (
+    <g
+      transform={`translate(${x} ${y}) scale(${scale})`}
+      className={occupant === null ? 'room__desk room__desk--free' : 'room__desk'}
+    >
+      {occupant === null ? (
+        // An empty workstation: its chair, waiting.
+        <g className="room__chair" opacity="0.8">
+          <rect
+            x="-9"
+            y="-24"
+            width="18"
+            height="16"
+            rx="4"
+            fill="#4a2a20"
+            stroke={hue}
+            strokeOpacity="0.55"
+          />
+          <rect x="-11" y="-9" width="22" height="5" rx="2" fill="#3b2019" />
+        </g>
+      ) : (
+        // The agent, seen over the monitor: dimmed when paused, faded when offline.
         <g
-          className={occupant === 'active' ? 'room__agent' : 'room__agent room__agent--paused'}
-          style={{ animationDelay: `${delay}s` }}
-          opacity={occupant === 'paused' ? 0.45 : 1}
+          className={`room__agent room__agent--${occupant}`}
+          opacity={occupant === 'present' ? 1 : occupant === 'paused' ? 0.55 : 0.32}
         >
           <path d="M-15 -4 Q-15 -24 0 -24 Q15 -24 15 -4 Z" fill={person.shirt} />
           <rect x="-2.5" y="-28" width="5" height="5" fill={person.skin} />
@@ -200,7 +231,7 @@ function Desk({
           />
         </g>
       )}
-      {/* Monitor, lit by the department's light. */}
+      {/* Monitor: lit only for a present agent; no one is shown working. */}
       <rect
         x="-10"
         y="-17"
@@ -218,9 +249,7 @@ function Desk({
         height="9"
         rx="1"
         fill={hue}
-        opacity="0.45"
-        className="room__monitor"
-        style={{ animationDelay: `${delay + 0.4}s` }}
+        opacity={occupant === 'present' ? 0.45 : 0.12}
       />
       <rect x="-1.5" y="-5" width="3" height="3" fill="#1c110d" />
       {/* Desk. */}
