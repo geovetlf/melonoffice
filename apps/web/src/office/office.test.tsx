@@ -1,5 +1,6 @@
 import { catalogs, I18nProvider, pseudoLocalizeCatalog } from '@melonoffice/i18n';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../App.js';
 import { createServices } from '../identity/services.js';
@@ -9,7 +10,15 @@ import { parseRoute, paths } from '../shell/routes.js';
 import { agentsOf, lookOf, officeDepartments, officeSlug, DEFAULT_LOOK } from './departments.js';
 import type { DepartmentView, SpecialistView } from './officeClient.js';
 import { navigateInto, ROOM_TRANSITION } from './transition.js';
-import { arrangeSeats, layoutOf, MAX_SEATS, presenceOf, seatAgents } from './workstations.js';
+import {
+  agentAt,
+  arrangeSeats,
+  layoutOf,
+  MAX_SEATS,
+  presenceOf,
+  roomSeats,
+  seatAgents,
+} from './workstations.js';
 
 afterEach(cleanup);
 beforeEach(() => globalThis.history.replaceState(null, '', '/'));
@@ -388,8 +397,8 @@ describe('workstations (ADR-0041)', () => {
 
   it('keep every seat when nobody sits there: an empty department has only free workstations', () => {
     const seating = seatAgents(department('marketing'), []);
-    expect(seating.workstations.map((w) => [w.number, w.status, w.agentId])).toEqual(
-      [1, 2, 3, 4, 5, 6].map((n) => [n, 'available', null]),
+    expect(seating.workstations.map((w) => [w.number, agentAt(w)])).toEqual(
+      [1, 2, 3, 4, 5, 6].map((n) => [n, null]),
     );
     expect(seating.occupied).toBe(0);
     expect(seating.unseated).toEqual([]);
@@ -405,7 +414,7 @@ describe('workstations (ADR-0041)', () => {
       // Another organization's agent, even for a department of the same type, never sits here.
       agent('intruder', 'org_other_marketing'),
     ]);
-    expect(seating.workstations.map((w) => w.agentId)).toEqual(['a', 'b', null, null, null, null]);
+    expect(seating.workstations.map(agentAt)).toEqual(['a', 'b', null, null, null, null]);
     expect(seating.occupied).toBe(2);
     expect(seating.workstations[0]?.id).toBe('org_1_marketing:seat-1');
 
@@ -428,6 +437,115 @@ describe('workstations (ADR-0041)', () => {
     expect(presenceOf(agent('a', 'd', 'paused'), null).state).toBe('paused');
     expect(presenceOf(agent('a', 'd', 'draft'), null).state).toBe('offline');
     expect(presenceOf(agent('a', 'd', 'disabled'), null).state).toBe('offline');
+  });
+});
+
+describe('ambient figures (ADR-0042)', () => {
+  const kinds = (seating: ReturnType<typeof seatAgents>) =>
+    seating.workstations.map((w) => w.occupant?.kind ?? 'free');
+
+  it('fill some desks of an office with no agents, and always leave desks free', () => {
+    const seating = seatAgents(department('marketing'), []);
+    expect(kinds(seating)).toEqual(['ambient', 'ambient', 'free', 'ambient', 'free', 'free']);
+    expect(seating.workstations[0]?.occupant).toEqual({ kind: 'ambient', visualId: 'ambient-1' });
+    // An ambient figure is nobody: it seats no agent and counts for nothing.
+    expect(seating.workstations.map(agentAt)).toEqual([null, null, null, null, null, null]);
+    expect(seating.occupied).toBe(0);
+    for (const typeId of ['leadership', 'operations', 'sales', 'research', 'finance', null]) {
+      const layout = layoutOf(department(typeId));
+      expect(layout.ambient.length).toBeGreaterThan(0);
+      expect(layout.ambient.length).toBeLessThan(layout.seats);
+    }
+  });
+
+  it('give way to a real agent: a desk never shows both', () => {
+    const marketing = department('marketing');
+    const seating = seatAgents(marketing, [agent('a', marketing.id)]);
+    expect(seating.workstations[0]?.occupant).toEqual({ kind: 'agent', agentId: 'a' });
+    expect(kinds(seating)).toEqual(['agent', 'ambient', 'free', 'ambient', 'free', 'free']);
+    const drawn = roomSeats(seating, [agent('a', marketing.id)]).map((seat) => seat.occupant);
+    expect(drawn).toEqual(['present', 'ambient', null, 'ambient', null, null]);
+  });
+
+  it('never come from another organization or department', () => {
+    const marketing = department('marketing');
+    const seating = seatAgents(marketing, [
+      agent('elsewhere', 'org_1_finance'),
+      agent('intruder', 'org_other_marketing'),
+    ]);
+    expect(kinds(seating)).toEqual(['ambient', 'ambient', 'free', 'ambient', 'free', 'free']);
+  });
+
+  it('are drawn only as decoration, the same on the Home and in the office', async () => {
+    open('/');
+    await waitFor(() => expect(document.querySelectorAll('.zone').length).toBe(7));
+    const marketingZone = [...document.querySelectorAll('.zone')].find((zone) =>
+      zone.querySelector('a[href="/office/marketing"]'),
+    );
+    const onHome = marketingZone?.querySelectorAll('.room__worker--ambient').length;
+    expect(onHome).toBe(layoutOf(department('marketing')).ambient.length);
+    for (const figure of document.querySelectorAll('.room__worker')) {
+      expect(figure.closest('[aria-hidden="true"]')).not.toBeNull();
+    }
+    cleanup();
+
+    open('/office/marketing');
+    const seats = within(await screen.findByRole('list', { name: 'Workstations' }));
+    await waitFor(() =>
+      expect(document.querySelectorAll('.dept-office__room .room__worker--ambient').length).toBe(
+        onHome,
+      ),
+    );
+    // No ambient figure is a link, a name, a state or an activity.
+    expect(seats.queryAllByRole('link')).toHaveLength(0);
+    expect(document.querySelectorAll('.room__worker--agent')).toHaveLength(0);
+    expect(document.querySelectorAll('.seat--ambient')).toHaveLength(onHome ?? -1);
+    for (const word of ['Working', 'Analyzing', 'Writing', 'Processing', 'Paused', 'Offline']) {
+      expect(seats.queryByText(word)).toBeNull();
+    }
+    expect(screen.queryByText('Working')).toBeNull();
+    // Their desks are still free workstations, with the same options as any other.
+    const ambientDesk = seats.getByRole('button', { name: 'Workstation 1. Available workstation' });
+    fireEvent.click(ambientDesk);
+    expect(screen.getByRole('dialog', { name: 'Workstation 1' })).toBeTruthy();
+  });
+
+  it('only breathe when motion is welcome, and phones keep the workstation cards', () => {
+    const officeCss = readFileSync(`${import.meta.dirname}/../office.css`, 'utf8');
+    const block = (query: string) => {
+      const start = officeCss.indexOf(`@media ${query}`);
+      expect(start).toBeGreaterThan(-1);
+      let depth = 0;
+      for (let i = officeCss.indexOf('{', start); i < officeCss.length; i += 1) {
+        if (officeCss[i] === '{') depth += 1;
+        if (officeCss[i] === '}' && (depth -= 1) === 0) return officeCss.slice(start, i + 1);
+      }
+      return '';
+    };
+    const motion = block('(prefers-reduced-motion: no-preference)');
+    expect(motion).toContain('.room__breath');
+    expect(motion).toContain('.room__presence');
+    // Outside that block, nothing animates the figures.
+    const rest = officeCss.replace(motion, '');
+    expect(rest).not.toMatch(/\.room__(breath|presence|worker)[^{]*\{[^}]*animation/);
+    expect(block('(max-width: 40rem)')).toContain('.seat');
+  });
+
+  it('are replaced in the office by a real agent, which stays a link to its profile', async () => {
+    open('/office/marketing', (backend) => {
+      backend.options.specialists.org_1 = [
+        { id: 'spec_ana', name: 'Ana Campañas', type: 'marketing', status: 'active' },
+      ];
+    });
+    const link = await screen.findByRole('link', {
+      name: 'Ana Campañas. Available. Workstation 1',
+    });
+    expect(link.closest('.seat')?.classList.contains('seat--ambient')).toBe(false);
+    expect(document.querySelectorAll('.dept-office__room .room__worker--agent')).toHaveLength(1);
+    expect(document.querySelectorAll('.dept-office__room .room__worker--ambient')).toHaveLength(2);
+    fireEvent.click(link);
+    await screen.findByRole('heading', { level: 1, name: 'Ana Campañas' });
+    expect(path()).toBe('/office/marketing/agent/spec_ana');
   });
 });
 

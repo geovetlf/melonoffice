@@ -7,7 +7,13 @@ import { Icon } from './icons.js';
 import type { DepartmentView, SpecialistView } from './officeClient.js';
 import { RoomArt } from './RoomArt.js';
 import { ROOM_TRANSITION, navigateInto } from './transition.js';
-import { presenceOf, roomSeats, type DepartmentSeating, type Workstation } from './workstations.js';
+import {
+  agentAt,
+  presenceOf,
+  roomSeats,
+  type DepartmentSeating,
+  type Workstation,
+} from './workstations.js';
 
 /**
  * A department's office floor (ADR-0041): the room, entered, with each workstation a place the
@@ -42,7 +48,7 @@ export function WorkstationMap({
         />
         <ul className="seats" aria-label={intl.formatMessage({ id: 'office.seats.label' })}>
           {seating.workstations.map((workstation) => {
-            const agent = specialists.find((s) => s.id === workstation.agentId);
+            const agent = specialists.find((s) => s.id === agentAt(workstation));
             return agent === undefined ? (
               <FreeSeat
                 key={workstation.id}
@@ -166,9 +172,12 @@ function FreeSeat({
     wasOpen.current = open;
   }, [open]);
   const number = intl.formatMessage({ id: 'office.seats.number' }, { number: workstation.number });
+  const ambient = workstation.occupant?.kind === 'ambient';
   return (
     <li
-      className={open ? 'seat seat--free seat--open' : 'seat seat--free'}
+      className={['seat', 'seat--free', ambient ? 'seat--ambient' : '', open ? 'seat--open' : '']
+        .filter(Boolean)
+        .join(' ')}
       style={placeStyle(workstation)}
     >
       <button
@@ -180,9 +189,12 @@ function FreeSeat({
         aria-label={`${number}. ${intl.formatMessage({ id: 'office.seats.free' })}`}
         onClick={() => onToggle(!open)}
       >
-        <span className="seat__plate" aria-hidden="true">
-          <FormattedMessage id="office.seats.freeShort" />
-        </span>
+        {/* A desk with an ambient figure needs no plate: the figure is decoration, not a person. */}
+        {ambient ? null : (
+          <span className="seat__plate" aria-hidden="true">
+            <FormattedMessage id="office.seats.freeShort" />
+          </span>
+        )}
         <span className="seat__card" aria-hidden="true">
           <span className="seat__chair">
             <Icon name="seat" size={20} />
@@ -192,6 +204,11 @@ function FreeSeat({
               <FormattedMessage id="office.seats.free" />
             </span>
             <span className="seat__number">{number}</span>
+            {ambient ? (
+              <span className="seat__number">
+                <FormattedMessage id="office.seats.ambientNote" />
+              </span>
+            ) : null}
           </span>
         </span>
       </button>
