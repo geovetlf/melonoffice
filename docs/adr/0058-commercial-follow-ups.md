@@ -102,7 +102,7 @@ C4's "next action overdue" rule therefore covers follow-ups with no change to C4
   - `follow_up.created` (reason = type, reference = source);
   - `updated`, `rescheduled`, `completed`, `cancelled` (reason = cancel reason) and `due`;
   - `failed` (result `failure`, reason = failure).
-  An event never carries a title, description, name or phone.
+    An event never carries a title, description, name or phone.
 - **Activity:** a new action group `FOLLOW_UP_ACTIONS`, read through the existing composite index. It is queried in groups of ten actions, as before.
 - **Company Brain:** after each change the API ingests `commercial.open_follow_ups_count` and `commercial.overdue_follow_ups_count`, best effort. Totals only.
 
