@@ -686,7 +686,17 @@ export function createApp({
             }),
         conversations: conversationService,
       });
-      // Customers and leads (C1, ADR-0053): the same contacts, with a commercial stage.
+      // Opportunities and pipeline (C2, ADR-0054): on the same contacts, with stages proposed for
+      // the kind of business Company Brain knows.
+      const opportunities = createOpportunityService({
+        repository: conversations.repository,
+        organizations: tenancy,
+        authorization,
+        businessType: (organizationId) => companyFact(organizationId, 'identity', 'business_type'),
+        currency: (organizationId) => companyFact(organizationId, 'finance', 'currency'),
+      });
+      // Customers and leads (C1, ADR-0053): the same contacts, with a commercial stage. Each card
+      // also shows the contact's conversations, opportunities and history (C3, ADR-0055).
       registerCustomerRoutes(app, {
         store: tenancy,
         authorization,
@@ -696,22 +706,19 @@ export function createApp({
           organizations: tenancy,
           authorization,
         }),
+        context: {
+          authorization,
+          opportunities,
+          conversations: conversations.repository,
+          ...(activity === undefined ? {} : { history: activity }),
+        },
         ...(brain === undefined ? {} : { brain }),
       });
-      // Opportunities and pipeline (C2, ADR-0054): on the same contacts, with stages proposed for
-      // the kind of business Company Brain knows.
       registerOpportunityRoutes(app, {
         store: tenancy,
         authorization,
         audit,
-        opportunities: createOpportunityService({
-          repository: conversations.repository,
-          organizations: tenancy,
-          authorization,
-          businessType: (organizationId) =>
-            companyFact(organizationId, 'identity', 'business_type'),
-          currency: (organizationId) => companyFact(organizationId, 'finance', 'currency'),
-        }),
+        opportunities,
         conversations: conversations.repository,
         ...(activity === undefined ? {} : { history: activity }),
         ...(brain === undefined ? {} : { brain }),

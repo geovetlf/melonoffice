@@ -677,5 +677,22 @@
   "pipeline.stage.approval": "Approval",
   "pipeline.stage.trial_order": "Trial order",
   "pipeline.stage.won": "Won",
-  "pipeline.stage.lost": "Lost"
+  "pipeline.stage.lost": "Lost",
+  "contact.summary": "Commercial context",
+  "contact.summary.unavailable": "The commercial context could not be loaded.",
+  "contact.openCard": "Open the full card in Comercial",
+  "contact.conversations": "Conversations",
+  "contact.opportunities": "Opportunities",
+  "contact.opportunities.none": "No opportunities with this contact yet.",
+  "contact.opportunities.noneOpen": "No open opportunities.",
+  "contact.opportunities.hidden": "Your role cannot see opportunities.",
+  "contact.opportunity.probability": "{value}% likely",
+  "contact.history": "History",
+  "contact.history.none": "Nothing recorded yet.",
+  "contact.history.contact.created": "Registered",
+  "contact.history.contact.updated": "Details changed",
+  "contact.history.contact.stage_changed": "Stage changed",
+  "contact.history.contact.owner_changed": "Responsible person changed",
+  "contact.history.contact.consent_changed": "Messaging consent changed",
+  "contact.history.contact.note_added": "A note was added"
 }

@@ -39,8 +39,53 @@ export interface CustomerNote {
   readonly createdAt: string;
 }
 
+/** One of the contact's opportunities as its card shows it (C3), with its stage. */
+export interface ContactOpportunity {
+  readonly id: string;
+  readonly title: string;
+  readonly status: 'open' | 'won' | 'lost';
+  readonly value: { readonly amountMinor: number; readonly currency: string } | null;
+  readonly probability: number;
+  readonly owner: 'you' | 'member' | null;
+  readonly expectedCloseOn: string | null;
+  readonly nextAction: { readonly text: string; readonly dueOn: string } | null;
+  readonly lostReason: string | null;
+  readonly stage: {
+    readonly id: string;
+    readonly kind: 'open' | 'won' | 'lost';
+    readonly name: string | null;
+    readonly nameKey: string | null;
+  } | null;
+  readonly updatedAt: string;
+}
+
+/** One entry of the contact's history (C3): its own events and its opportunities'. */
+export interface ContactHistoryEntry {
+  readonly id: string;
+  readonly at: string;
+  readonly action: string;
+  readonly transition: { readonly from: string; readonly to: string } | null;
+  readonly reason: string | null;
+  readonly actor: 'you' | 'member' | 'gia' | 'system';
+  readonly opportunityId: string | null;
+}
+
 export interface CustomerDetail extends CustomerView {
   readonly notes: readonly CustomerNote[];
+  /**
+   * The rest of the contact's commercial context (C3, ADR-0055). `null` when the reader may not
+   * see that part (or the server does not send it), which the card says instead of "none".
+   */
+  readonly conversations?:
+    | readonly {
+        readonly id: string;
+        readonly channel: string;
+        readonly status: string;
+        readonly lastMessageAt: string;
+      }[]
+    | null;
+  readonly opportunities?: readonly ContactOpportunity[] | null;
+  readonly history?: readonly ContactHistoryEntry[] | null;
 }
 
 export type StageCounts = Readonly<Record<CustomerStage, number>>;

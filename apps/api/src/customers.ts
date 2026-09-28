@@ -1,15 +1,25 @@
+import type { AuditEvent, AuditHistoryReader } from '@melonoffice/audit';
 import { customerKnowledge, type CompanyBrainService } from '@melonoffice/brain';
 import {
   isConversationError,
   type ConversationErrorCode,
   type CustomerService,
+  type OpportunityService,
 } from '@melonoffice/conversations';
-import type { Contact, ContactNote, UserId } from '@melonoffice/domain';
+import type {
+  Contact,
+  ContactNote,
+  Conversation,
+  OrganizationId,
+  UserId,
+} from '@melonoffice/domain';
+import type { AuthorizationService } from '@melonoffice/rbac';
 import type { TenantContext } from '@melonoffice/tenancy';
 import type { Context, Hono } from 'hono';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import type { AuthEnv } from './auth.js';
 import { withPermission, type AuthorizationDependencies } from './authorization.js';
+import { toConversationView, toHistoryView, toOpportunityView } from './opportunities.js';
 
 const STATUS: Partial<Record<ConversationErrorCode, ContentfulStatusCode>> = {
   invalid_request: 400,
@@ -50,6 +60,18 @@ export function toCustomerView(contact: Contact, viewer: UserId) {
   };
 }
 
+/**
+ * How much of a contact's commercial context its card shows (C3, ADR-0055): its latest
+ * conversations, its opportunities (the history of the most recent ones) and the merged history.
+ */
+const SHOWN = Object.freeze({
+  conversations: 20,
+  opportunities: 20,
+  historyOf: 10,
+  historyEach: 20,
+  history: 40,
+});
+
 const toNoteView = (note: ContactNote, viewer: UserId) => ({
   id: note.id,
   text: note.text,
@@ -68,9 +90,18 @@ export function registerCustomerRoutes(
   dependencies: AuthorizationDependencies & {
     readonly customers: CustomerService;
     readonly brain?: Pick<CompanyBrainService, 'ingest'>;
+    /** The contact's commercial context on its card (C3): each part only to a role that reads it. */
+    readonly context?: {
+      readonly authorization: Pick<AuthorizationService, 'authorize'>;
+      readonly opportunities: Pick<OpportunityService, 'list' | 'pipeline'>;
+      readonly conversations: {
+        listConversations(organizationId: OrganizationId): Promise<readonly Conversation[]>;
+      };
+      readonly history?: AuditHistoryReader;
+    };
   },
 ): void {
-  const { customers, brain } = dependencies;
+  const { customers, brain, context } = dependencies;
   const base = '/v1/organizations/:organizationId/customers';
 
   async function answer(c: Context<AuthEnv>, work: () => Promise<unknown>): Promise<Response> {
@@ -109,6 +140,81 @@ export function registerCustomerRoutes(
     }
   }
 
+  /**
+   * The rest of the contact's story, read where it already lives (C3): its conversations, its
+   * opportunities with their stage, and the history of both from the audit trail. A part the
+   * reader may not see is `null`, never an empty list that would read as "none".
+   */
+  async function contextOf(tenant: TenantContext, contact: Contact) {
+    if (context === undefined) return { conversations: null, opportunities: null, history: null };
+    const may = (permission: Parameters<AuthorizationService['authorize']>[1]) =>
+      context.authorization.authorize(tenant, permission).allowed;
+    const readsConversations = may('conversation.read');
+    const readsOpportunities = may('opportunity.read');
+    const [allConversations, own, pipeline] = await Promise.all([
+      readsConversations
+        ? context.conversations.listConversations(tenant.organizationId)
+        : Promise.resolve(undefined),
+      readsOpportunities
+        ? context.opportunities.list(tenant, { contactId: contact.id })
+        : Promise.resolve(undefined),
+      readsOpportunities
+        ? context.opportunities.pipeline(tenant).then((p) => p.pipeline)
+        : Promise.resolve(undefined),
+    ]);
+    const conversations = allConversations
+      ?.filter((conv) => conv.contactId === contact.id)
+      .sort((a, b) => (a.lastMessageAt < b.lastMessageAt ? 1 : -1))
+      .slice(0, SHOWN.conversations);
+    const opportunities = own?.items
+      .toSorted((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))
+      .slice(0, SHOWN.opportunities);
+    const history = context.history;
+    let events: { event: AuditEvent; opportunityId: string | null }[] | null = null;
+    if (history !== undefined) {
+      const reads = [
+        history
+          .history(tenant.organizationId, { type: 'contact', id: contact.id }, SHOWN.historyEach)
+          .then((list) => list.map((event) => ({ event, opportunityId: null }))),
+        ...(opportunities ?? [])
+          .slice(0, SHOWN.historyOf)
+          .map((o) =>
+            history
+              .history(tenant.organizationId, { type: 'opportunity', id: o.id }, SHOWN.historyEach)
+              .then((list) => list.map((event) => ({ event, opportunityId: o.id as string }))),
+          ),
+      ];
+      events = (await Promise.all(reads))
+        .flat()
+        .sort((a, b) => (a.event.occurredAt < b.event.occurredAt ? 1 : -1))
+        .slice(0, SHOWN.history);
+    }
+    return {
+      conversations: conversations?.map(toConversationView) ?? null,
+      opportunities:
+        opportunities?.map((o) => {
+          const stage = pipeline?.stages.find((s) => s.id === o.stageId);
+          return {
+            ...toOpportunityView(o, tenant.userId),
+            stage:
+              stage === undefined
+                ? null
+                : {
+                    id: stage.id,
+                    kind: stage.kind,
+                    name: stage.name ?? null,
+                    nameKey: stage.nameKey ?? null,
+                  },
+          };
+        }) ?? null,
+      history:
+        events?.map(({ event, opportunityId }) => ({
+          ...toHistoryView(event, tenant.userId),
+          opportunityId,
+        })) ?? null,
+    };
+  }
+
   app.get(
     base,
     withPermission('contact.read', dependencies, (c, tenant) =>
@@ -136,6 +242,7 @@ export function registerCustomerRoutes(
         return {
           ...toCustomerView(contact, tenant.userId),
           notes: notes.map((n) => toNoteView(n, tenant.userId)),
+          ...(await contextOf(tenant, contact)),
         };
       }),
     ),

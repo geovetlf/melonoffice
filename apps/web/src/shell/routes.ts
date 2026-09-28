@@ -42,6 +42,10 @@ export function parseRoute(path: string): Route {
 export const paths = {
   home: () => '/',
   conversations: () => '/conversations',
+  /** One conversation open in the Conversations Center (C3). */
+  conversation: (id: string) => `/conversations?c=${encodeURIComponent(id)}`,
+  /** A contact's card in the Comercial office (C3). */
+  customer: (contactId: string) => `/office/sales?contact=${encodeURIComponent(contactId)}`,
   connections: () => '/settings/connections',
   business: () => '/settings/business',
   gia: () => '/gia',
@@ -49,3 +53,9 @@ export const paths = {
   agent: (slug: string, agentId: string) =>
     `/office/${encodeURIComponent(slug)}/agent/${encodeURIComponent(agentId)}`,
 } as const;
+
+/** An id a page was opened with (`?c=` or `?contact=`), when it looks like one (C3). */
+export function openedWith(name: 'c' | 'contact'): string | undefined {
+  const value = new URLSearchParams(globalThis.location.search).get(name);
+  return value !== null && ID.test(value) ? value : undefined;
+}

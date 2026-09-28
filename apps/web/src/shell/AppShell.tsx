@@ -169,7 +169,20 @@ export function AppShell(locale: LocaleProps) {
     case 'conversations':
       page = canReadConversations ? (
         <div className="light-surface">
-          <ConversationsCenter client={clients.inbox} currentUserId={me.userId} can={can} />
+          {canReadContacts ? (
+            <BusinessTimeZone>
+              {(timeZone) => (
+                <ConversationsCenter
+                  client={clients.inbox}
+                  currentUserId={me.userId}
+                  can={can}
+                  commercial={{ read: clients.customers.get, today: todayIn(timeZone) }}
+                />
+              )}
+            </BusinessTimeZone>
+          ) : (
+            <ConversationsCenter client={clients.inbox} currentUserId={me.userId} can={can} />
+          )}
         </div>
       ) : (
         <div className="page-notice">
