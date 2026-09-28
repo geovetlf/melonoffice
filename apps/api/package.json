@@ -29,6 +29,7 @@
     "@melonoffice/departments": "workspace:*",
     "@melonoffice/entitlements": "workspace:*",
     "@melonoffice/execution": "workspace:*",
+    "@melonoffice/gia": "workspace:*",
     "@melonoffice/firestore": "workspace:*",
     "@melonoffice/guardrails": "workspace:*",
     "@melonoffice/integrations": "workspace:*",

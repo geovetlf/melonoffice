@@ -40,6 +40,7 @@ import {
   type AgentOutputRepository,
   type ExecutionRepository,
 } from '@melonoffice/execution';
+import { createGia } from '@melonoffice/gia';
 import type { DeploymentEnvironment } from '@melonoffice/domain';
 import { createToolGate } from '@melonoffice/guardrails';
 import {
@@ -73,9 +74,10 @@ import { registerApprovalRoutes } from './approvals.js';
 import { registerAuthRoutes, type AuthEnv } from './auth.js';
 import { registerCors } from './cors.js';
 import { registerBillingRoutes } from './billing.js';
-import { registerActivityRoutes } from './activity.js';
+import { DEFAULT_ACTIVITY_TIME_ZONE, registerActivityRoutes } from './activity.js';
 import { registerBrainRoutes } from './brain.js';
 import { registerBusinessRoutes } from './business.js';
+import { registerGiaRoutes } from './gia.js';
 import { registerDepartmentRoutes } from './departments.js';
 import { registerConnectionRoutes } from './connections.js';
 import { registerConversationRoutes } from './conversations.js';
@@ -354,16 +356,16 @@ export function createApp({
         c.json({ error: 'business_not_configured' }, 503),
       );
     }
-    if (tenancy !== undefined && activity !== undefined) {
+    const activityService =
+      tenancy !== undefined && activity !== undefined
+        ? createActivityService({ reader: activity, organizations: tenancy, authorization })
+        : undefined;
+    if (tenancy !== undefined && activityService !== undefined) {
       registerActivityRoutes(app, {
         store: tenancy,
         authorization,
         audit,
-        activity: createActivityService({
-          reader: activity,
-          organizations: tenancy,
-          authorization,
-        }),
+        activity: activityService,
         ...(businessProfiles === undefined ? {} : { businessProfiles }),
       });
     } else if (tenancy !== undefined) {
@@ -393,6 +395,40 @@ export function createApp({
       app.all('/v1/organizations/:organizationId/brain/*', (c) =>
         c.json({ error: 'brain_not_configured' }, 503),
       );
+    }
+    // GIA's chat (ADR-0052): the same gateway, Company Brain and activity, read as the person.
+    if (tenancy !== undefined) {
+      registerGiaRoutes(app, {
+        store: tenancy,
+        authorization,
+        audit,
+        ...(aiGateway === undefined || structure === undefined
+          ? {}
+          : {
+              gia: createGia({
+                gateway: aiGateway,
+                ...(brain === undefined ? {} : { brain }),
+                ...(activityService === undefined
+                  ? {}
+                  : {
+                      activity: {
+                        async today(tenant) {
+                          const profile = await businessProfiles?.find(tenant.organizationId);
+                          const page = await activityService.list(tenant, {
+                            period: 'today',
+                            timeZone: profile?.timeZone ?? DEFAULT_ACTIVITY_TIME_ZONE,
+                          });
+                          return page.items;
+                        },
+                      },
+                    }),
+                departments: structure.departments,
+                authorization,
+                audit,
+                logger: logger.child({ component: 'gia' }),
+              }),
+            }),
+      });
     }
     if (tenancy !== undefined && structure !== undefined && specialists !== undefined) {
       const dependencies = { store: tenancy, authorization, audit };

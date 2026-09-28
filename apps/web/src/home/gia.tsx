@@ -4,11 +4,12 @@ import { navigate } from '../identity/router.js';
 import { Icon, type IconName } from '../office/icons.js';
 import { paths } from '../shell/routes.js';
 import { GiaAvatar } from '../gia/GiaAvatar.js';
+import { useGiaChat } from '../gia/GiaChat.js';
 
 /**
- * GIA's place on the Home (ADR-0040). GIA is not built yet: the command bar, the attachments, the
- * voice and the quick actions are laid out, and say so when used. Nothing here calls a model or a
- * tool; when GIA exists it goes through the AI Gateway and the tool gate like everything else.
+ * GIA's place on the Home (ADR-0040). The command bar talks to GIA (ADR-0052): a message goes to
+ * her chat and the conversation continues in her Workplace. Attachments, voice and the quick
+ * actions are laid out and say they are coming. Nothing here runs a tool.
  */
 
 export function GiaCard() {
@@ -41,9 +42,17 @@ export function GiaCommandBar() {
   const intl = useIntl();
   const [text, setText] = useState('');
   const [notice, setNotice] = useState(false);
+  const chat = useGiaChat();
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    setNotice(true);
+    if (!chat.available) {
+      setNotice(true);
+      return;
+    }
+    if (text.trim() === '') return;
+    chat.send(text);
+    setText('');
+    navigate(paths.gia());
   };
   const soon = intl.formatMessage({ id: 'common.soon' });
   return (

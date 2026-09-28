@@ -20,6 +20,12 @@ export const PERMISSIONS = {
     description:
       "See what happened in the organization's office, read from the audit trail (ADR-0049).",
   },
+  'gia.ask': {
+    resource: 'gia',
+    action: 'ask',
+    description:
+      'Talk to GIA: she answers from what you may read, through the AI Gateway, spending credits; she changes nothing (ADR-0052).',
+  },
   'knowledge.read': {
     resource: 'knowledge',
     action: 'read',

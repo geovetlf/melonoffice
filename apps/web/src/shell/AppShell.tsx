@@ -18,6 +18,8 @@ import { HomePage } from '../home/HomePage.js';
 import { useAuth, useCan } from '../identity/AuthProvider.js';
 import type { LocaleProps } from '../identity/pages.js';
 import { usePath } from '../identity/router.js';
+import { GiaChatProvider } from '../gia/GiaChat.js';
+import { createGiaClient } from '../gia/giaClient.js';
 import { GiaWorkplace } from '../gia/GiaWorkplace.js';
 import { AgentPlace, DepartmentOffice, NotFound } from '../office/DepartmentOffice.js';
 import { createOfficeClient } from '../office/officeClient.js';
@@ -41,6 +43,7 @@ export function AppShell(locale: LocaleProps) {
   const canReadBusiness = useCan('organization.read');
   const canEditBusiness = useCan('organization.update');
   const canReadActivity = useCan('activity.read');
+  const canAskGia = useCan('gia.ask');
   const route = parseRoute(usePath());
   const [menuOpen, setMenuOpen] = useState(false);
   useEffect(() => {
@@ -63,6 +66,7 @@ export function AppShell(locale: LocaleProps) {
             connections: createConnectionsClient(services.api.request, organizationId),
             business: createBusinessClient(services.api.request, organizationId),
             activity: createActivityClient(services.api.request, organizationId),
+            gia: createGiaClient(services.api.request, organizationId),
           },
     [services, organizationId],
   );
@@ -153,32 +157,34 @@ export function AppShell(locale: LocaleProps) {
     <OfficeDataProvider client={clients.office} business={clients.business} can={can}>
       <ActivityProvider client={canReadActivity ? clients.activity : undefined}>
         <BusinessFormats locale={locale.locale}>
-          <div className="app">
-            <Sidebar
-              route={route}
-              canReadConversations={canReadConversations}
-              canReadConnections={canReadConnections}
-              canReadBusiness={canReadBusiness}
-              open={menuOpen}
-              onNavigate={() => setMenuOpen(false)}
-            />
-            {menuOpen ? (
-              <div className="app__scrim" aria-hidden="true" onClick={() => setMenuOpen(false)} />
-            ) : null}
-            <div className="app__body">
-              <TopBar
-                organizationName={workspace.organization.name}
-                email={me.email ?? me.userId}
-                onSignOut={signOut}
-                menuOpen={menuOpen}
-                onMenu={() => setMenuOpen((open) => !open)}
-                locale={locale}
+          <GiaChatProvider client={canAskGia ? clients.gia : undefined}>
+            <div className="app">
+              <Sidebar
+                route={route}
+                canReadConversations={canReadConversations}
+                canReadConnections={canReadConnections}
+                canReadBusiness={canReadBusiness}
+                open={menuOpen}
+                onNavigate={() => setMenuOpen(false)}
               />
-              <main className="app__main" key={route.kind === 'office' ? route.slug : route.kind}>
-                {page}
-              </main>
+              {menuOpen ? (
+                <div className="app__scrim" aria-hidden="true" onClick={() => setMenuOpen(false)} />
+              ) : null}
+              <div className="app__body">
+                <TopBar
+                  organizationName={workspace.organization.name}
+                  email={me.email ?? me.userId}
+                  onSignOut={signOut}
+                  menuOpen={menuOpen}
+                  onMenu={() => setMenuOpen((open) => !open)}
+                  locale={locale}
+                />
+                <main className="app__main" key={route.kind === 'office' ? route.slug : route.kind}>
+                  {page}
+                </main>
+              </div>
             </div>
-          </div>
+          </GiaChatProvider>
         </BusinessFormats>
       </ActivityProvider>
     </OfficeDataProvider>

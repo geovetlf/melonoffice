@@ -159,6 +159,6 @@ Company Brain has no table per topic. It has one generic, typed item, so it grow
 - CRM, ecommerce, accounting and marketing adapters: the Integration Engine has only WhatsApp.
 - An event bus: the audit trail stays the record. `knowledge.*` events are not in the Home's activity allowlist yet.
 - Plan-based limits (items, documents, extraction volume) wait on plan allotments (D-12). Today the limits are fixed technical bounds.
-- A web screen for Company Brain, and GIA's conversational onboarding in the chat (Fase 1c).
+- A web screen for Company Brain. GIA's conversational onboarding is in her chat (ADR-0052).
 - Embeddings or vector search: not needed at this volume.
 - Roles other than owner (D-27).

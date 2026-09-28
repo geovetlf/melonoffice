@@ -104,6 +104,9 @@ importers:
       '@melonoffice/firestore':
         specifier: workspace:*
         version: link:../../packages/firestore
+      '@melonoffice/gia':
+        specifier: workspace:*
+        version: link:../../packages/gia
       '@melonoffice/guardrails':
         specifier: workspace:*
         version: link:../../packages/guardrails
@@ -670,6 +673,46 @@ importers:
       '@melonoffice/rbac':
         specifier: workspace:*
         version: link:../rbac
+
+  packages/gia:
+    dependencies:
+      '@melonoffice/activity':
+        specifier: workspace:*
+        version: link:../activity
+      '@melonoffice/ai-gateway':
+        specifier: workspace:*
+        version: link:../ai-gateway
+      '@melonoffice/audit':
+        specifier: workspace:*
+        version: link:../audit
+      '@melonoffice/brain':
+        specifier: workspace:*
+        version: link:../brain
+      '@melonoffice/departments':
+        specifier: workspace:*
+        version: link:../departments
+      '@melonoffice/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@melonoffice/observability':
+        specifier: workspace:*
+        version: link:../observability
+      '@melonoffice/rbac':
+        specifier: workspace:*
+        version: link:../rbac
+      '@melonoffice/tenancy':
+        specifier: workspace:*
+        version: link:../tenancy
+    devDependencies:
+      '@melonoffice/auth':
+        specifier: workspace:*
+        version: link:../auth
+      '@melonoffice/config':
+        specifier: workspace:*
+        version: link:../config
+      '@melonoffice/credits':
+        specifier: workspace:*
+        version: link:../credits
 
   packages/guardrails:
     dependencies:

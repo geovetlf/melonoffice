@@ -54,6 +54,17 @@ export const COMPANY_KNOWLEDGE_ASSIST_POLICY: ModelPolicy = Object.freeze({
   version: ASSIST_MODEL_POLICIES.company_knowledge.version,
 });
 
+/**
+ * The model policy of GIA's chat (ADR-0052): a person's question and the company context GIA
+ * reads for them are the business's own knowledge (`confidential`). Same model, environment,
+ * cost ceiling (1 credit per message, Geovet's decision) and no fallback; its own name.
+ */
+export const GIA_ASSIST_POLICY: ModelPolicy = Object.freeze({
+  ...CONVERSATION_ASSIST_POLICY,
+  id: ASSIST_MODEL_POLICIES.gia.id as PolicyId,
+  version: ASSIST_MODEL_POLICIES.gia.version,
+});
+
 /** What the AI Gateway is built with on this server; see `AppOptions['ai']`. */
 export interface AIConfiguration {
   readonly environment?: DeploymentEnvironment;
@@ -92,6 +103,7 @@ export function aiConfigurationOf(config: {
     policies: createModelPolicyCatalogue([
       CONVERSATION_ASSIST_POLICY,
       COMPANY_KNOWLEDGE_ASSIST_POLICY,
+      GIA_ASSIST_POLICY,
     ]),
     creditRate: CREDIT_RATE,
   };

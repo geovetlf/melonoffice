@@ -47,6 +47,8 @@ export interface FakeBackend {
     activity: Record<string, Record<string, unknown>[]>;
     /** The activity read fails (for example, before the index exists). */
     activityFails?: boolean;
+    /** What GIA's chat answers (ADR-0052): the API's body, or an error code with its status. */
+    gia: Record<string, unknown> | { readonly error: string; readonly status: number };
   };
   apiCalls(): Call[];
 }
@@ -68,6 +70,7 @@ export function fakeBackend(): FakeBackend {
       'contact.read',
       'credits.read',
       'department.read',
+      'gia.ask',
       'specialist.read',
       'conversation.manage',
       'conversation.read',
@@ -83,6 +86,16 @@ export function fakeBackend(): FakeBackend {
     },
     businessProfiles: {},
     activity: {},
+    gia: {
+      answer: 'Hoy no hubo actividad en tu oficina.',
+      department: null,
+      screen: null,
+      proposedAction: null,
+      proposedFacts: 0,
+      context: { facts: 1, activity: true, missing: [] },
+      replayed: false,
+      generatedBy: 'ai',
+    },
   };
 
   function issue() {
@@ -270,6 +283,14 @@ export function fakeBackend(): FakeBackend {
         items: options.activity[organizationId] ?? [],
         hasMore: false,
       });
+    }
+    if (route === 'gia/messages' && method === 'POST') {
+      const denied = needs('gia.ask');
+      if (denied !== undefined) return denied;
+      const answer = options.gia;
+      return 'error' in answer && typeof answer.status === 'number'
+        ? json(answer.status, { error: answer.error })
+        : json(200, answer);
     }
     if (route === 'business-profile') {
       const view = () => {

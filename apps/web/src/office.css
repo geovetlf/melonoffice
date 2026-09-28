@@ -1736,6 +1736,103 @@ a.sidebar__item:hover {
   font-size: var(--mo-font-size-sm);
 }
 
+.gia-state--ready .gia-state__dot {
+  background: var(--office-accent);
+  box-shadow: 0 0 0 4px var(--office-accent-soft);
+}
+
+/* GIA's chat (ADR-0052). */
+.gia-workplace__chat {
+  margin-bottom: var(--mo-space-4);
+}
+
+.gia-chat {
+  display: grid;
+  gap: var(--mo-space-3);
+}
+
+.gia-chat__log {
+  display: grid;
+  gap: var(--mo-space-3);
+  max-height: 28rem;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.gia-chat__turn {
+  max-width: 44rem;
+  padding: var(--mo-space-3);
+  border: 1px solid var(--office-line);
+  border-radius: 12px;
+  background: var(--office-panel);
+}
+
+.gia-chat__turn--person {
+  justify-self: end;
+  background: var(--office-accent-soft);
+}
+
+.gia-chat__who {
+  display: flex;
+  align-items: center;
+  gap: var(--mo-space-2);
+  margin-bottom: var(--mo-space-1);
+  color: var(--office-muted);
+  font-size: var(--mo-font-size-xs);
+  font-weight: 600;
+}
+
+.gia-chat__text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.gia-chat__meta,
+.gia-chat__generated,
+.gia-chat__note {
+  margin: var(--mo-space-2) 0 0;
+  color: var(--office-muted);
+  font-size: var(--mo-font-size-xs);
+}
+
+.gia-chat__go {
+  display: inline-block;
+  margin-top: var(--mo-space-2);
+  color: var(--office-focus);
+  font-size: var(--mo-font-size-sm);
+}
+
+.gia-chat__error {
+  margin: 0;
+  color: var(--office-focus);
+}
+
+.gia-chat__composer {
+  display: flex;
+  gap: var(--mo-space-2);
+  align-items: flex-end;
+}
+
+.gia-chat__input {
+  flex: 1;
+  min-width: 0;
+  padding: var(--mo-space-2) var(--mo-space-3);
+  border: 1px solid var(--office-line);
+  border-radius: 10px;
+  background: var(--office-panel-strong);
+  color: var(--office-text);
+  font: inherit;
+  resize: vertical;
+}
+
+.gia-chat__input:focus-visible {
+  outline: 2px solid var(--office-focus);
+  outline-offset: 2px;
+}
+
 /* GIA blinks now and then, only when motion is welcome. */
 @media (prefers-reduced-motion: no-preference) {
   .gia-art__eyes {

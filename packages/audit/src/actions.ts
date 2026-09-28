@@ -17,7 +17,8 @@ export interface AuditActionDefinition {
     | 'channel'
     | 'department'
     | 'specialist'
-    | 'knowledge';
+    | 'knowledge'
+    | 'gia';
   readonly description: string;
   /** The results this action is recorded with. Anything else is a programming error. */
   readonly results: readonly AuditResult[];
@@ -94,6 +95,12 @@ export const AUDIT_ACTIONS = {
     description:
       'A document was given to Company Brain (ADR-0051); its facts are extracted as unverified. Never its text.',
     results: ['success'],
+  },
+  'gia.message_answered': {
+    category: 'gia',
+    description:
+      'A person asked GIA and she answered, or was refused or failed (ADR-0052); `reference` is the credit reference of the call. Never the question or the answer.',
+    results: ['success', 'denied', 'failure'],
   },
   'membership.create': {
     category: 'tenancy',

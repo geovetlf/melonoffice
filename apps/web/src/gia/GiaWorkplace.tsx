@@ -10,14 +10,16 @@ import type { ActivityPeriod } from '../activity/activityClient.js';
 import { OfficeBreadcrumb } from '../office/DepartmentOffice.js';
 import { Icon } from '../office/icons.js';
 import { GiaAvatar } from './GiaAvatar.js';
+import { GiaConversation, useGiaChat } from './GiaChat.js';
 
 /**
  * GIA's Workplace (ADR-0050): GIA's own office, entered from the Home like a department's. It
- * shows GIA, her desk, her state, what she can do, what she has done and room for what comes.
- * Everything comes from real data or says that it does not exist yet: nothing is simulated.
+ * shows GIA, her desk, her state, her chat (ADR-0052), what she can do, what she has done and
+ * room for what comes. Everything comes from real data or says that it does not exist yet:
+ * nothing is simulated.
  */
 
-/** What GIA can do in phase 1 (decisions of 2026-09-28). None is connected until the chat is. */
+/** What GIA does in phase 1 (decisions of 2026-09-28), through her chat. */
 export const GIA_CAPABILITIES = ['answer', 'activity', 'navigate', 'route'] as const;
 
 /** What GIA never does in phase 1, said plainly so no one expects it. */
@@ -37,6 +39,7 @@ export function GiaWorkplace() {
   useEffect(() => heading.current?.focus(), []);
   const [period, setPeriod] = useState<ActivityPeriod>('week');
   const activity = useActivity(period);
+  const chat = useGiaChat();
   return (
     <article className="dept-office gia-workplace">
       <OfficeBreadcrumb trail={[{ label: <FormattedMessage id="gia.name" /> }]} />
@@ -54,14 +57,23 @@ export function GiaWorkplace() {
 
       <GiaDesk />
 
+      <section className="dept-office__section gia-workplace__chat" aria-labelledby="gia-chat">
+        <h2 id="gia-chat">
+          <FormattedMessage id="gia.chat.title" />
+        </h2>
+        <GiaConversation />
+      </section>
+
       <div className="dept-office__grid">
         <section className="dept-office__section" aria-labelledby="gia-state">
           <h2 id="gia-state">
             <FormattedMessage id="gia.workplace.state.title" />
           </h2>
-          <p className="gia-state">
+          <p className={`gia-state${chat.available ? ' gia-state--ready' : ''}`}>
             <span className="gia-state__dot" aria-hidden="true" />
-            <FormattedMessage id="gia.workplace.state.preparing" />
+            <FormattedMessage
+              id={chat.available ? 'gia.workplace.state.ready' : 'gia.chat.unavailable'}
+            />
           </p>
           <p className="panel__empty">
             <FormattedMessage id="gia.workplace.state.source" />
@@ -76,9 +88,6 @@ export function GiaWorkplace() {
             {GIA_CAPABILITIES.map((capability) => (
               <li key={capability} className="coming__item">
                 <FormattedMessage id={`gia.capability.${capability}`} />
-                <span className="coming__soon">
-                  <FormattedMessage id="common.soon" />
-                </span>
               </li>
             ))}
           </ul>
@@ -92,6 +101,9 @@ export function GiaWorkplace() {
               </li>
             ))}
           </ul>
+          <p className="panel__empty">
+            <FormattedMessage id="gia.limit.proposals" />
+          </p>
         </section>
       </div>
 

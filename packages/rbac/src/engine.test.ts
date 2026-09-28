@@ -106,6 +106,7 @@ describe('catalogue', () => {
       'organization.read',
       'organization.update',
       'activity.read',
+      'gia.ask',
       'knowledge.read',
       'knowledge.read_restricted',
       'knowledge.propose',

@@ -290,17 +290,34 @@ describe('the Home (ADR-0040)', () => {
     expect(reads.some((url) => /specialists|credits|billing|activity/.test(url))).toBe(false);
   });
 
-  it('keeps GIA honest: the bar says GIA is not connected yet and calls nothing', async () => {
+  it('sends the bar to GIA and continues the chat in her Workplace (ADR-0052)', async () => {
     const backend = open('/');
+    await rooms();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Tell GIA what you need…' }), {
+      target: { value: '¿Qué pasó hoy?' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send to GIA' }));
+    expect(await screen.findByText('Hoy no hubo actividad en tu oficina.')).toBeTruthy();
+    expect(globalThis.location.pathname).toBe('/gia');
+    const call = backend.apiCalls().find((c) => c.url.endsWith('/gia/messages'));
+    expect(JSON.parse(call?.body ?? '{}')).toMatchObject({
+      message: '¿Qué pasó hoy?',
+      locale: 'en',
+      history: [],
+    });
+  });
+
+  it('keeps GIA honest: without permission the bar says so and calls nothing', async () => {
+    const backend = open('/', (b) => {
+      b.options.permissions = b.options.permissions.filter((p) => p !== 'gia.ask');
+    });
     await rooms();
     const before = backend.apiCalls().length;
     fireEvent.change(screen.getByRole('textbox', { name: 'Tell GIA what you need…' }), {
       target: { value: 'Prepara el informe' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Send to GIA' }));
-    expect(screen.getByRole('status').textContent).toBe(
-      'GIA is not connected to this bar yet. It arrives in a coming phase.',
-    );
+    expect(screen.getByRole('status').textContent).toBe('GIA is not available for your role.');
     expect(backend.apiCalls().length).toBe(before);
   });
 

@@ -37,6 +37,7 @@ export const ACTIVITY_ACTIONS = [
   'plan.approved',
   'workflow.created',
   'credits.grant',
+  'gia.message_answered',
 ] as const satisfies readonly AuditAction[];
 
 if (ACTIVITY_ACTIONS.length > MAX_QUERY_ACTIONS) {
