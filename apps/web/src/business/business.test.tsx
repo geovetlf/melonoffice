@@ -49,18 +49,27 @@ const RESTAURANT = {
 
 const field = (name: string) => screen.getByRole('combobox', { name }) as HTMLSelectElement;
 
-describe('the business route (ADR-0048)', () => {
-  it('lives under Settings', () => {
-    expect(parseRoute('/settings/business')).toEqual({ kind: 'business_profile' });
-    expect(paths.business()).toBe('/settings/business');
+describe('the business route (ADR-0048, ADR-0056)', () => {
+  it('lives in the company memory, and the old address still opens it', () => {
+    expect(parseRoute('/memory')).toEqual({ kind: 'memory' });
+    expect(parseRoute('/settings/business')).toEqual({ kind: 'memory' });
+    expect(paths.memory()).toBe('/memory');
   });
 });
 
-describe('the first step of a new organization (ADR-0048)', () => {
-  it('asks the owner to describe the business before the Home, then shows the Home', async () => {
-    const backend = open('/', owner);
+describe('a business not described yet (ADR-0056)', () => {
+  it('never stands in front of the Home, even for the owner', async () => {
+    open('/', owner);
     expect(
-      await screen.findByRole('heading', { level: 1, name: 'Set up your business' }),
+      await screen.findByRole('heading', { level: 1, name: 'Your office is ready to work' }),
+    ).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Company information' })).toBeNull();
+  });
+
+  it('is described from the company memory, then the Home is the same', async () => {
+    const backend = open('/memory', owner);
+    expect(
+      await screen.findByRole('heading', { level: 2, name: 'Company information' }),
     ).toBeTruthy();
     // The name is the organization's own, shown and not edited here.
     expect(
@@ -79,10 +88,9 @@ describe('the first step of a new organization (ADR-0048)', () => {
     fireEvent.click(screen.getByRole('checkbox', { name: 'WhatsApp' }));
     fireEvent.click(screen.getByRole('checkbox', { name: 'Physical store' }));
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-
-    expect(
-      await screen.findByRole('heading', { level: 1, name: 'Your office is ready to work' }),
-    ).toBeTruthy();
+    await waitFor(() =>
+      expect(backend.apiCalls().some((call) => call.method === 'PUT')).toBe(true),
+    );
     const put = backend.apiCalls().find((call) => call.method === 'PUT');
     // Only what was filled in, trimmed; channels in the catalogue's order; nothing empty.
     expect(JSON.parse(put?.body ?? '{}')).toEqual({
@@ -94,33 +102,17 @@ describe('the first step of a new organization (ADR-0048)', () => {
       salesChannels: ['physical_store', 'whatsapp'],
     });
   });
-
-  it('does not stop a member who cannot describe it', async () => {
-    open('/');
-    expect(
-      await screen.findByRole('heading', { level: 1, name: 'Your office is ready to work' }),
-    ).toBeTruthy();
-    expect(screen.queryByRole('heading', { name: 'Set up your business' })).toBeNull();
-  });
-
-  it('shows the Home once the business is described', async () => {
-    open('/', (backend) => {
-      owner(backend);
-      backend.options.businessProfiles.org_1 = RESTAURANT;
-    });
-    expect(
-      await screen.findByRole('heading', { level: 1, name: 'Your office is ready to work' }),
-    ).toBeTruthy();
-  });
 });
 
-describe('Settings → Business (ADR-0048)', () => {
+describe('Company information in the company memory (ADR-0048, ADR-0056)', () => {
   it('shows the saved profile, and says what the API refused', async () => {
-    open('/settings/business', (backend) => {
+    open('/memory', (backend) => {
       owner(backend);
       backend.options.businessProfiles.org_1 = RESTAURANT;
     });
-    expect(await screen.findByRole('heading', { level: 1, name: 'Your business' })).toBeTruthy();
+    expect(
+      await screen.findByRole('heading', { level: 2, name: 'Company information' }),
+    ).toBeTruthy();
     await waitFor(() => expect(field('Country').value).toBe('PE'));
     expect(field('Currency').value).toBe('PEN');
     expect(field('Time zone').value).toBe('America/Lima');
@@ -154,6 +146,7 @@ describe('Settings → Business (ADR-0048)', () => {
       ).toEqual([
         'Home',
         'GIA',
+        'Company memory',
         'Board',
         'Commercial',
         'Operations',

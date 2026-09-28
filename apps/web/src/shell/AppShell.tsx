@@ -28,6 +28,8 @@ import { createGiaClient } from '../gia/giaClient.js';
 import { GiaWorkplace } from '../gia/GiaWorkplace.js';
 import { AgentPlace, DepartmentOffice, NotFound } from '../office/DepartmentOffice.js';
 import { createOfficeClient } from '../office/officeClient.js';
+import { MemoryPage } from '../memory/MemoryPage.js';
+import { createMemoryClient } from '../memory/memoryClient.js';
 import { OfficeDataProvider, useOfficeData } from '../office/OfficeData.js';
 import { parseRoute } from './routes.js';
 import { Sidebar } from './Sidebar.js';
@@ -54,6 +56,7 @@ export function AppShell(locale: LocaleProps) {
   const canReadOpportunities = useCan('opportunity.read');
   const canManageOpportunities = useCan('opportunity.manage');
   const canManagePipeline = useCan('pipeline.manage');
+  const canReadKnowledge = useCan('knowledge.read');
   const route = parseRoute(usePath());
   const [menuOpen, setMenuOpen] = useState(false);
   useEffect(() => {
@@ -79,6 +82,7 @@ export function AppShell(locale: LocaleProps) {
             gia: createGiaClient(services.api.request, organizationId),
             customers: createCustomersClient(services.api.request, organizationId),
             opportunities: createOpportunitiesClient(services.api.request, organizationId),
+            memory: createMemoryClient(services.api.request, organizationId),
           },
     [services, organizationId],
   );
@@ -92,36 +96,33 @@ export function AppShell(locale: LocaleProps) {
   let page;
   switch (route.kind) {
     case 'home':
-      page = (
-        <FirstBusinessStep
-          show={canEditBusiness}
-          step={
-            <div className="light-surface">
-              <BusinessPage
-                client={clients.business}
-                organizationName={workspace.organization.name}
-                canEdit
-                onboarding
-              />
-            </div>
-          }
-        >
-          <HomePage />
-        </FirstBusinessStep>
-      );
+      // The Home is always the first screen: describing the business lives in the company's
+      // memory (ADR-0056), never in front of the Home.
+      page = <HomePage />;
       break;
-    case 'business_profile':
-      page = canReadBusiness ? (
-        <div className="light-surface">
-          <BusinessPage
-            client={clients.business}
-            organizationName={workspace.organization.name}
-            canEdit={canEditBusiness}
-          />
-        </div>
-      ) : (
-        <NotFound />
-      );
+    case 'memory':
+      page =
+        canReadBusiness || canReadKnowledge ? (
+          <div className="light-surface">
+            <MemoryPage
+              client={clients.memory}
+              can={can}
+              {...(canReadBusiness
+                ? {
+                    business: (
+                      <BusinessPage
+                        client={clients.business}
+                        organizationName={workspace.organization.name}
+                        canEdit={canEditBusiness}
+                      />
+                    ),
+                  }
+                : {})}
+            />
+          </div>
+        ) : (
+          <NotFound />
+        );
       break;
     case 'office':
       page = (
@@ -222,7 +223,7 @@ export function AppShell(locale: LocaleProps) {
                 route={route}
                 canReadConversations={canReadConversations}
                 canReadConnections={canReadConnections}
-                canReadBusiness={canReadBusiness}
+                canReadMemory={canReadBusiness || canReadKnowledge}
                 open={menuOpen}
                 onNavigate={() => setMenuOpen(false)}
               />
@@ -248,25 +249,6 @@ export function AppShell(locale: LocaleProps) {
       </ActivityProvider>
     </OfficeDataProvider>
   );
-}
-
-/**
- * The first step of a new organization (ADR-0048): while its business is not described, the
- * person who can describe it sees the business form in place of the Home. Everyone else, and every
- * other page, is unaffected; once it is saved the Home appears.
- */
-function FirstBusinessStep({
-  show,
-  step,
-  children,
-}: {
-  readonly show: boolean;
-  readonly step: ReactNode;
-  readonly children: ReactNode;
-}) {
-  const { business } = useOfficeData();
-  const missing = business.status === 'ready' && business.value.profile === null;
-  return <>{show && missing ? step : children}</>;
 }
 
 /** The business's time zone once it is described, else the default of ADR-0048. */

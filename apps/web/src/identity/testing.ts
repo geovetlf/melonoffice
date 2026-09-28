@@ -62,6 +62,12 @@ export interface FakeBackend {
     opportunities: Record<string, Record<string, unknown>[]>;
     /** A contact card's commercial context (C3): conversations, opportunities and history. */
     contactContext: Record<string, Record<string, unknown>>;
+    /** Each organization's Company Brain items (ADR-0051), as the API's views. */
+    knowledge: Record<string, Record<string, unknown>[]>;
+    /** Each organization's open Company Brain conflicts. */
+    knowledgeConflicts: Record<string, Record<string, unknown>[]>;
+    /** Company Brain's onboarding questions still unanswered. */
+    knowledgeQuestions: Record<string, Record<string, unknown>[]>;
   };
   apiCalls(): Call[];
 }
@@ -114,6 +120,9 @@ export function fakeBackend(): FakeBackend {
     pipelines: {},
     opportunities: {},
     contactContext: {},
+    knowledge: {},
+    knowledgeConflicts: {},
+    knowledgeQuestions: {},
   };
 
   function issue() {
@@ -324,6 +333,127 @@ export function fakeBackend(): FakeBackend {
       needs('contact.read') ??
       json(200, { ...contact, notes: kept, ...(options.contactContext[id] ?? {}) })
     );
+  }
+
+  /** Company Brain's routes (ADR-0051), as the company memory (ADR-0056) calls them. */
+  function brainAnswer(
+    organizationId: string,
+    route: string,
+    query: string,
+    method: string,
+    body: string | undefined,
+    needs: (permission: string) => Response | undefined,
+  ) {
+    const all = (options.knowledge[organizationId] ??= []);
+    const conflicts = (options.knowledgeConflicts[organizationId] ??= []);
+    const input = JSON.parse(body ?? '{}') as Record<string, unknown>;
+    const active = all.filter((i) => i.status === 'active');
+    if (route === 'brain') {
+      const byDomain: Record<string, number> = {};
+      for (const i of active)
+        byDomain[i.domain as string] = (byDomain[i.domain as string] ?? 0) + 1;
+      return (
+        needs('knowledge.read') ??
+        json(200, {
+          initialized: active.length > 0,
+          items: active.length,
+          byDomain,
+          gaps: {
+            questions: options.knowledgeQuestions[organizationId] ?? [],
+            toConfirm: active.filter((i) => i.needsConfirmation === true),
+            openConflicts: conflicts.length,
+          },
+        })
+      );
+    }
+    if (route === 'brain/conflicts') return needs('knowledge.read') ?? json(200, { conflicts });
+    const resolve = /^brain\/conflicts\/([^/]+)\/resolve$/.exec(route);
+    if (resolve !== null) {
+      const denied = needs('knowledge.manage');
+      if (denied !== undefined) return denied;
+      options.knowledgeConflicts[organizationId] = conflicts.filter((c) => c.id !== resolve[1]);
+      return json(200, { outcome: 'conflict_resolved', itemId: 'x' });
+    }
+    if (route === 'brain/documents') {
+      return (
+        needs('knowledge.propose') ??
+        json(200, { document: { id: 'd1' }, extraction: 'extracted', outcomes: [], rejected: 0 })
+      );
+    }
+    if (route === 'brain/knowledge' && method === 'GET') {
+      const q = new URLSearchParams(query);
+      const domain = q.get('domain');
+      const items = (q.get('inactive') === '1' ? all : active).filter(
+        (i) => domain === null || i.domain === domain,
+      );
+      return needs('knowledge.read') ?? json(200, { items });
+    }
+    if (route === 'brain/knowledge' && method === 'POST') {
+      const denied = needs('knowledge.propose');
+      if (denied !== undefined) return denied;
+      const id = `${organizationId}_${String(input.domain)}_${String(input.key)}`;
+      const existing = all.find((i) => i.id === id);
+      const item = {
+        id,
+        domain: input.domain,
+        key: input.key,
+        subject: null,
+        label: input.label ?? existing?.label ?? null,
+        value: input.value,
+        verification: 'confirmed',
+        status: 'active',
+        sensitivity: 'internal',
+        critical: false,
+        needsConfirmation: false,
+        source: { type: 'user', id: null, reference: null, recordedBy: 'you', confidence: null },
+        effectiveFrom: '2026-09-28T12:00:00Z',
+        effectiveUntil: null,
+        revision: ((existing?.revision as number | undefined) ?? 0) + 1,
+        updatedAt: '2026-09-28T12:00:00Z',
+        openConflictId: null,
+      };
+      if (existing === undefined) all.push(item);
+      else Object.assign(existing, item);
+      return json(200, {
+        outcome: existing === undefined ? 'created' : 'updated',
+        itemId: id,
+        revision: item.revision,
+      });
+    }
+    const one = /^brain\/knowledge\/([^/]+)(?:\/(confirm|invalidate|archive))?$/.exec(route);
+    const item = all.find((i) => i.id === one?.[1]);
+    if (one === null || item === undefined) return json(404, { error: 'not_found' });
+    if (one[2] === undefined) {
+      return (
+        needs('knowledge.read') ??
+        json(200, {
+          item,
+          versions: [
+            {
+              revision: item.revision,
+              operation: 'created',
+              value: item.value,
+              verification: item.verification,
+              status: item.status,
+              source: 'user',
+              changedAt: '2026-09-28T12:00:00Z',
+              changedBy: 'you',
+              reason: null,
+            },
+          ],
+        })
+      );
+    }
+    const denied = needs('knowledge.manage');
+    if (denied !== undefined) return denied;
+    if (input.revision !== item.revision) return json(409, { error: 'stale_revision' });
+    Object.assign(item, {
+      revision: (item.revision as number) + 1,
+      ...(one[2] === 'confirm'
+        ? { verification: 'confirmed', needsConfirmation: false }
+        : { status: one[2] === 'archive' ? 'archived' : 'outdated' }),
+    });
+    return json(200, { outcome: one[2], itemId: item.id, revision: item.revision });
   }
 
   /** The opportunity and pipeline routes (C2), as the API answers them. */
@@ -578,6 +708,9 @@ export function fakeBackend(): FakeBackend {
       route?.startsWith('opportunities/') === true
     ) {
       return opportunitiesAnswer(organizationId, route, query, method, body, needs);
+    }
+    if (route === 'brain' || route?.startsWith('brain/') === true) {
+      return brainAnswer(organizationId, route, query, method, body, needs);
     }
     if (route === 'customers' || route?.startsWith('customers/') === true) {
       return customersAnswer(organizationId, route, query, method, body, needs);
