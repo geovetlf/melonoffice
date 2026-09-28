@@ -13,9 +13,17 @@ import { agentAt, presenceOf, seatAgents } from './workstations.js';
 /**
  * A department's office (ADR-0040, level 2): the room from the Home, entered. Its workstations
  * (ADR-0041) hold the department's real agents (specialist records), and it leaves room for what
- * the office will hold (projects, tasks, activity, documents) once that data exists.
+ * the office will hold (projects, tasks, activity, documents) once that data exists. Comercial's
+ * office also holds its customers and leads (C1).
  */
-export function DepartmentOffice({ slug }: { readonly slug: string }) {
+export function DepartmentOffice({
+  slug,
+  customers,
+}: {
+  readonly slug: string;
+  /** The Comercial office's customers and leads (C1, ADR-0053), for a role that may read them. */
+  readonly customers?: ReactNode;
+}) {
   const intl = useIntl();
   const { departments, specialists } = useOfficeData();
   const department = findBySlug(readyList(departments), slug);
@@ -53,6 +61,7 @@ export function DepartmentOffice({ slug }: { readonly slug: string }) {
         </div>
       </header>
       <WorkstationMap department={department} slug={slug} seating={seating} specialists={agents} />
+      {department.typeId === 'sales' ? customers : null}
       <div className="dept-office__grid">
         <section className="dept-office__section" aria-labelledby="dept-agents">
           <h2 id="dept-agents">

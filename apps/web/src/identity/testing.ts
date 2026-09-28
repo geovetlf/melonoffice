@@ -49,6 +49,10 @@ export interface FakeBackend {
     activityFails?: boolean;
     /** What GIA's chat answers (ADR-0052): the API's body, or an error code with its status. */
     gia: Record<string, unknown> | { readonly error: string; readonly status: number };
+    /** Each organization's customers and leads (C1), as the API's views, newest first. */
+    customers: Record<string, Record<string, unknown>[]>;
+    /** Notes of each contact, by contact id. */
+    customerNotes: Record<string, Record<string, unknown>[]>;
   };
   apiCalls(): Call[];
 }
@@ -96,6 +100,8 @@ export function fakeBackend(): FakeBackend {
       replayed: false,
       generatedBy: 'ai',
     },
+    customers: {},
+    customerNotes: {},
   };
 
   function issue() {
@@ -211,6 +217,100 @@ export function fakeBackend(): FakeBackend {
     description: null,
   });
 
+  /** The customers routes (C1), as the API answers them: duplicates, revisions and notes. */
+  function customersAnswer(
+    organizationId: string,
+    route: string,
+    query: string,
+    method: string,
+    body: string | undefined,
+    needs: (permission: string) => Response | undefined,
+  ) {
+    const all = (options.customers[organizationId] ??= []);
+    const counts = { lead: 0, customer: 0, inactive: 0 } as Record<string, number>;
+    const stageOf = (c: Record<string, unknown>) =>
+      (c.commercial as { stage: string } | null)?.stage;
+    for (const c of all) {
+      const stage = stageOf(c);
+      if (stage !== undefined) counts[stage] = (counts[stage] ?? 0) + 1;
+    }
+    const input = JSON.parse(body ?? '{}') as Record<string, unknown>;
+    const [, id, notes] = route.split('/');
+    if (id === undefined) {
+      if (method === 'POST') {
+        const denied = needs('contact.manage');
+        if (denied !== undefined) return denied;
+        const phone = typeof input.phone === 'string' ? input.phone.replace(/[\s-]/g, '') : null;
+        const existing = all.find((c) => phone !== null && c.phone === phone);
+        if (existing !== undefined) {
+          return json(409, { error: 'duplicate_contact', contactId: existing.id });
+        }
+        const created = {
+          id: `contact_${all.length + 1}`,
+          displayName: input.displayName,
+          phone,
+          email: input.email ?? null,
+          origin: 'user',
+          revision: 1,
+          commercial: {
+            stage: 'lead',
+            owner: null,
+            source: 'manual',
+            consent: 'unknown',
+            consentAt: null,
+            nextAction: null,
+            stageChangedAt: '2026-09-28T12:00:00Z',
+          },
+          createdAt: '2026-09-28T12:00:00Z',
+          updatedAt: '2026-09-28T12:00:00Z',
+        };
+        all.unshift(created);
+        return json(200, created);
+      }
+      const stage = new URLSearchParams(query).get('stage');
+      return (
+        needs('contact.read') ??
+        json(200, {
+          items: all.filter((c) => stage === null || stageOf(c) === stage),
+          counts,
+          hasMore: false,
+        })
+      );
+    }
+    const contact = all.find((c) => c.id === id);
+    if (contact === undefined) return json(404, { error: 'contact_not_found' });
+    const kept = (options.customerNotes[id] ??= []);
+    if (notes === 'notes' && method === 'POST') {
+      const denied = needs('contact.manage');
+      if (denied !== undefined) return denied;
+      const note = {
+        id: `note_${kept.length + 1}`,
+        text: input.text,
+        author: 'you',
+        createdAt: '2026-09-28T12:00:00Z',
+      };
+      kept.unshift(note);
+      return json(200, note);
+    }
+    if (method === 'PATCH') {
+      const denied = needs('contact.manage');
+      if (denied !== undefined) return denied;
+      if (input.revision !== contact.revision) {
+        return json(409, { error: 'contact_concurrency_conflict' });
+      }
+      const commercial = { ...(contact.commercial as Record<string, unknown>) };
+      if (typeof input.stage === 'string') commercial.stage = input.stage;
+      if ('ownerId' in input) commercial.owner = input.ownerId === null ? null : 'you';
+      if ('nextAction' in input) commercial.nextAction = input.nextAction;
+      if (typeof input.consent === 'object' && input.consent !== null) {
+        commercial.consent = (input.consent as { messaging: string }).messaging;
+      }
+      Object.assign(contact, { commercial, revision: (contact.revision as number) + 1 });
+      return json(200, contact);
+    }
+    return needs('contact.read') ?? json(200, { ...contact, notes: kept });
+  }
+
   /** The inbox routes, as the API answers them: membership first, then the role's permission. */
   function inboxAnswer(organizationId: string, rest: string, method: string, body?: string) {
     if (!options.organizations.some((o) => o.id === organizationId)) {
@@ -291,6 +391,9 @@ export function fakeBackend(): FakeBackend {
       return 'error' in answer && typeof answer.status === 'number'
         ? json(answer.status, { error: answer.error })
         : json(200, answer);
+    }
+    if (route === 'customers' || route?.startsWith('customers/') === true) {
+      return customersAnswer(organizationId, route, query, method, body, needs);
     }
     if (route === 'business-profile') {
       const view = () => {

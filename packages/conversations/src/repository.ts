@@ -4,6 +4,7 @@ import type {
   ChannelIdentityId,
   Contact,
   ContactId,
+  ContactNote,
   Conversation,
   ConversationId,
   ConversationSettings,
@@ -12,6 +13,7 @@ import type {
   OrganizationId,
 } from '@melonoffice/domain';
 import { isAutonomyLevel } from './control.js';
+import { duplicateOf } from './customers.js';
 import { ConversationError } from './errors.js';
 import {
   applyInbound,
@@ -64,6 +66,12 @@ export interface ConversationWrite {
   readonly events: readonly AuditEvent[];
 }
 
+/** A contact's next state and the audit events that record the change (C1). */
+export interface ContactWrite {
+  readonly contact: Contact;
+  readonly events: readonly AuditEvent[];
+}
+
 /** The organization's new conversation settings and the audit events that record the change. */
 export interface SettingsWrite {
   readonly settings: ConversationSettings;
@@ -108,6 +116,30 @@ export interface ConversationRepository {
   ): Promise<Conversation>;
   findContact(organizationId: OrganizationId, id: ContactId): Promise<Contact | undefined>;
   listContacts(organizationId: OrganizationId): Promise<readonly Contact[]>;
+  /**
+   * Stores a contact a person entered (C1), with its audit events, in one transaction. Refused
+   * with `duplicate_contact` (its detail: the other contact's id) when another active contact of
+   * the organization has the same phone or email.
+   */
+  createContact(contact: Contact, events: readonly AuditEvent[]): Promise<Contact>;
+  /**
+   * Reads the current contact and lets `change` decide the next one, in one transaction (C1). A
+   * change that returns the current contact writes nothing. A new phone or email already on
+   * another contact is `duplicate_contact`. Absent, or another organization's: `contact_not_found`.
+   */
+  updateContact(
+    organizationId: OrganizationId,
+    id: ContactId,
+    change: (current: Contact) => ContactWrite,
+  ): Promise<Contact>;
+  /** Stores a note and its audit events together (C1). */
+  addContactNote(note: ContactNote, events: readonly AuditEvent[]): Promise<void>;
+  /** A contact's notes, newest first. Empty for another organization's contact. */
+  listContactNotes(
+    organizationId: OrganizationId,
+    contactId: ContactId,
+    limit: number,
+  ): Promise<readonly ContactNote[]>;
   /** A contact's channel identities. Empty for another organization's contact. */
   listIdentities(
     organizationId: OrganizationId,
@@ -191,6 +223,22 @@ export function checkNextConversation(current: Conversation, next: Conversation)
   checkStoredConversation(next);
 }
 
+/**
+ * A contact's next state must be the same contact, in the same organization, exactly one revision
+ * ahead of the one read (C1). Anything else is a lost race or a programming error.
+ */
+export function checkNextContact(current: Contact, next: Contact): void {
+  if (
+    next.id !== current.id ||
+    next.organizationId !== current.organizationId ||
+    next.origin.kind !== current.origin.kind ||
+    next.createdAt !== current.createdAt ||
+    next.revision !== (current.revision ?? 0) + 1
+  ) {
+    throw new ConversationError('contact_concurrency_conflict');
+  }
+}
+
 /** For tests and local runs only. */
 export class InMemoryConversationRepository implements ConversationRepository {
   readonly #contacts = new Map<string, Contact>();
@@ -200,6 +248,7 @@ export class InMemoryConversationRepository implements ConversationRepository {
   /** Provider message id key → our outbound message id. */
   readonly #refs = new Map<string, MessageId>();
   readonly #settings = new Map<string, ConversationSettings>();
+  readonly #notes: ContactNote[] = [];
 
   constructor(private readonly audit?: InMemoryAuditStore) {}
 
@@ -316,6 +365,53 @@ export class InMemoryConversationRepository implements ConversationRepository {
     return [...this.#contacts.values()]
       .filter((c) => c.organizationId === organizationId)
       .sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0));
+  }
+
+  async createContact(contact: Contact, events: readonly AuditEvent[]): Promise<Contact> {
+    const others = await this.listContacts(contact.organizationId);
+    const duplicate = duplicateOf(contact, others);
+    if (duplicate !== undefined) throw new ConversationError('duplicate_contact', duplicate);
+    this.audit?.append(events);
+    this.#contacts.set(contact.id, contact);
+    return contact;
+  }
+
+  async updateContact(
+    organizationId: OrganizationId,
+    id: ContactId,
+    change: (current: Contact) => ContactWrite,
+  ): Promise<Contact> {
+    const current = await this.findContact(organizationId, id);
+    if (current === undefined) throw new ConversationError('contact_not_found');
+    const { contact, events } = change(current);
+    if (contact === current) return current;
+    checkNextContact(current, contact);
+    if (contact.phone !== current.phone || contact.email !== current.email) {
+      const duplicate = duplicateOf(contact, await this.listContacts(organizationId));
+      if (duplicate !== undefined) throw new ConversationError('duplicate_contact', duplicate);
+    }
+    this.audit?.append(events);
+    this.#contacts.set(id, contact);
+    return contact;
+  }
+
+  async addContactNote(note: ContactNote, events: readonly AuditEvent[]): Promise<void> {
+    if (this.#contacts.get(note.contactId)?.organizationId !== note.organizationId) {
+      throw new ConversationError('contact_not_found');
+    }
+    this.audit?.append(events);
+    this.#notes.push(note);
+  }
+
+  async listContactNotes(
+    organizationId: OrganizationId,
+    contactId: ContactId,
+    limit: number,
+  ): Promise<readonly ContactNote[]> {
+    return this.#notes
+      .filter((n) => n.organizationId === organizationId && n.contactId === contactId)
+      .sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0))
+      .slice(0, limit);
   }
 
   async listIdentities(

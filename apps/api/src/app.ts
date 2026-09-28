@@ -25,7 +25,9 @@ import { createBillingService, type BillingStore } from '@melonoffice/billing';
 import { createDepartmentService, type DepartmentRepository } from '@melonoffice/departments';
 import {
   createConversationAssistant,
+  contactStageCounts,
   createConversationService,
+  createCustomerService,
   type ConversationRepository,
 } from '@melonoffice/conversations';
 import { createCreditService, type CreditStore } from '@melonoffice/credits';
@@ -77,6 +79,7 @@ import { registerBillingRoutes } from './billing.js';
 import { DEFAULT_ACTIVITY_TIME_ZONE, registerActivityRoutes } from './activity.js';
 import { registerBrainRoutes } from './brain.js';
 import { registerBusinessRoutes } from './business.js';
+import { registerCustomerRoutes } from './customers.js';
 import { registerGiaRoutes } from './gia.js';
 import { registerDepartmentRoutes } from './departments.js';
 import { registerConnectionRoutes } from './connections.js';
@@ -385,7 +388,15 @@ export function createApp({
           ...(structure === undefined
             ? {}
             : { departments: structure.departments, specialists: structure.specialists }),
-          ...(conversations === undefined ? {} : { connections: conversations.connections }),
+          ...(conversations === undefined
+            ? {}
+            : {
+                connections: conversations.connections,
+                contacts: {
+                  counts: async (organizationId) =>
+                    contactStageCounts(await conversations.repository.listContacts(organizationId)),
+                },
+              }),
         },
       });
     } else if (tenancy !== undefined) {
@@ -645,6 +656,18 @@ export function createApp({
               }),
             }),
         conversations: conversationService,
+      });
+      // Customers and leads (C1, ADR-0053): the same contacts, with a commercial stage.
+      registerCustomerRoutes(app, {
+        store: tenancy,
+        authorization,
+        audit,
+        customers: createCustomerService({
+          repository: conversations.repository,
+          organizations: tenancy,
+          authorization,
+        }),
+        ...(brain === undefined ? {} : { brain }),
       });
       // Connections (ADR-0044): the engine's registry names the providers; without an engine
       // there is none, so nothing can be created or checked.

@@ -168,6 +168,12 @@ export const PERMISSIONS = {
     description:
       'Ask the AI Gateway, as oneself, about a conversation one can read: a summary, the intent, a suggested reply or next steps. It only returns text to review: it never sends, changes or runs anything (ADR-0037).',
   },
+  'contact.manage': {
+    resource: 'contact',
+    action: 'manage',
+    description:
+      'Enter contacts and manage leads and customers: stage, responsible member, consent, next action and notes, directly and never through GIA (C1, ADR-0053).',
+  },
   'contact.read': {
     resource: 'contact',
     action: 'read',

@@ -55,8 +55,53 @@ export interface Contact {
   readonly email?: string;
   readonly status: ContactStatus;
   readonly origin: ConversationOrigin;
+  /** Where the contact stands commercially (C1, ADR-0053); absent for a contact nobody marked. */
+  readonly commercial?: ContactCommercial;
+  /** Increases with every change a person makes (C1); absent, it is 0. */
+  readonly revision?: number;
   readonly createdAt: IsoTimestamp;
   readonly updatedAt: IsoTimestamp;
+}
+
+/**
+ * The commercial stage of a contact (C1, ADR-0053): a lead becomes a customer, and either may
+ * become inactive. "Lost" belongs to opportunities (C2), not to the contact.
+ */
+export type ContactStage = 'lead' | 'customer' | 'inactive';
+
+/** How the contact reached the business, as a code (never personal data). */
+export type ContactSourceKind = 'channel' | 'manual' | 'import' | 'campaign';
+
+/**
+ * Consent to receive messages the business starts (C1). It never blocks creating or managing a
+ * contact, nor answering one who wrote first; it is required before bulk or automated sends.
+ */
+export type MessagingConsent = 'granted' | 'denied' | 'unknown';
+
+export interface ContactCommercial {
+  readonly stage: ContactStage;
+  /** A member of the organization responsible for the contact. */
+  readonly ownerId?: UserId;
+  readonly source: { readonly kind: ContactSourceKind; readonly reference?: string };
+  readonly consent: {
+    readonly messaging: MessagingConsent;
+    readonly at?: IsoTimestamp;
+    /** Who stated it: the contact itself, or a member recording what the contact said. */
+    readonly recordedBy?: 'contact' | 'member';
+  };
+  /** What to do next and by when (a date in the business's time zone). */
+  readonly nextAction?: { readonly text: string; readonly dueOn: string };
+  readonly stageChangedAt: IsoTimestamp;
+}
+
+/** A note a member wrote about a contact (C1). Written once, never edited or deleted. */
+export interface ContactNote {
+  readonly id: string;
+  readonly organizationId: OrganizationId;
+  readonly contactId: ContactId;
+  readonly text: string;
+  readonly createdBy: UserId;
+  readonly createdAt: IsoTimestamp;
 }
 
 /**

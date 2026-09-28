@@ -18,7 +18,8 @@ export interface AuditActionDefinition {
     | 'department'
     | 'specialist'
     | 'knowledge'
-    | 'gia';
+    | 'gia'
+    | 'contact';
   readonly description: string;
   /** The results this action is recorded with. Anything else is a programming error. */
   readonly results: readonly AuditResult[];
@@ -101,6 +102,41 @@ export const AUDIT_ACTIONS = {
     description:
       'A person asked GIA and she answered, or was refused or failed (ADR-0052); `reference` is the credit reference of the call. Never the question or the answer.',
     results: ['success', 'denied', 'failure'],
+  },
+  'contact.created': {
+    category: 'contact',
+    description:
+      'A person entered a contact (C1, ADR-0053); `transition` is none → its stage, `reason` its source kind. Never its name, phone or email.',
+    results: ['success'],
+  },
+  'contact.updated': {
+    category: 'contact',
+    description:
+      "A person changed a contact's details or next action (C1); `reason` says which (`details`, `next_action`, `next_action_cleared`), never the values.",
+    results: ['success'],
+  },
+  'contact.stage_changed': {
+    category: 'contact',
+    description:
+      'A person moved a contact between lead, customer and inactive, or first marked it (C1); `transition` is from → to.',
+    results: ['success'],
+  },
+  'contact.owner_changed': {
+    category: 'contact',
+    description:
+      'A person set or cleared the member responsible for a contact (C1); `reason` is `assigned` or `cleared`.',
+    results: ['success'],
+  },
+  'contact.consent_changed': {
+    category: 'contact',
+    description:
+      "A person recorded a contact's messaging consent (C1); `transition` is from → to (granted, denied, unknown).",
+    results: ['success'],
+  },
+  'contact.note_added': {
+    category: 'contact',
+    description: 'A person added a note to a contact (C1). Never its text.',
+    results: ['success'],
   },
   'membership.create': {
     category: 'tenancy',

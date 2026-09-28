@@ -1853,3 +1853,153 @@ a.sidebar__item:hover {
     transform: scaleY(0.1);
   }
 }
+
+/* Customers and leads in the Comercial office (C1, ADR-0053). */
+.customers {
+  display: grid;
+  gap: var(--mo-space-3);
+  margin-bottom: var(--mo-space-4);
+}
+
+.customers__header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--mo-space-2);
+  align-items: center;
+  justify-content: space-between;
+}
+
+.customers__header h2 {
+  margin: 0;
+}
+
+.customers__tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--mo-space-2);
+}
+
+.customers__tab {
+  display: inline-flex;
+  gap: var(--mo-space-2);
+  align-items: center;
+  padding: var(--mo-space-2) var(--mo-space-3);
+  border: 1px solid var(--office-line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--office-muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.customers__tab[aria-selected='true'] {
+  background: var(--office-accent-soft);
+  color: var(--office-text);
+}
+
+.customers__count {
+  font-weight: 600;
+}
+
+.customers__list,
+.customers__notes {
+  display: grid;
+  gap: var(--mo-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.customers__row {
+  display: grid;
+  gap: var(--mo-space-1);
+  width: 100%;
+  padding: var(--mo-space-3);
+  border: 1px solid var(--office-line);
+  border-radius: 12px;
+  background: var(--office-panel);
+  color: var(--office-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.customers__row[aria-current='true'] {
+  box-shadow: inset 3px 0 0 var(--office-accent);
+}
+
+.customers__name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.customers__meta {
+  color: var(--office-muted);
+  font-size: var(--mo-font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+.customers__next {
+  color: var(--office-muted);
+  font-size: var(--mo-font-size-sm);
+}
+
+.customers__next--late {
+  color: var(--office-focus);
+  font-weight: 600;
+}
+
+.customers__form,
+.customers__edit,
+.customers__next-edit {
+  display: grid;
+  gap: var(--mo-space-2);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.customers__form label,
+.customers__edit label {
+  display: grid;
+  gap: var(--mo-space-1);
+  color: var(--office-muted);
+  font-size: var(--mo-font-size-sm);
+}
+
+.customers__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--mo-space-2);
+}
+
+.customers__card {
+  display: grid;
+  gap: var(--mo-space-3);
+  padding: var(--mo-space-4);
+  border: 1px solid var(--office-line);
+  border-radius: 16px;
+  background: var(--office-panel-strong);
+}
+
+.customers__card h3,
+.customers__card h4 {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.customers__notes p {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.customers__link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--office-focus);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}

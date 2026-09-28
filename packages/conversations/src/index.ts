@@ -7,4 +7,5 @@ export * from './assist-context.js';
 export * from './assist-output.js';
 export * from './assist.js';
 export * from './control.js';
+export * from './customers.js';
 export * from './agent-turn.js';

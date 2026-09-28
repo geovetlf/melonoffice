@@ -112,6 +112,31 @@ export function operationalKnowledge(input: {
 }
 
 /**
+ * How many leads, customers and inactive contacts the organization has (C1, ADR-0053),
+ * `calculated` from its own contacts. Only totals: Company Brain is the business's knowledge,
+ * never a list of people.
+ */
+export function customerKnowledge(counts: {
+  readonly lead: number;
+  readonly customer: number;
+  readonly inactive: number;
+}): { readonly source: TrustedSource; readonly facts: readonly Record<string, unknown>[] } {
+  const fact = (key: string, number: number) => ({
+    domain: 'customers',
+    key,
+    value: { type: 'number', number },
+  });
+  return {
+    source: { type: 'system', id: 'melonoffice' },
+    facts: [
+      fact('leads_count', counts.lead),
+      fact('customers_count', counts.customer),
+      fact('inactive_contacts_count', counts.inactive),
+    ],
+  };
+}
+
+/**
  * Facts an integration brings (a CRM, a store, a channel), through the Integration Engine's own
  * connection: Company Brain never talks to an outside system itself. The connection must be the
  * organization's and connected; a CRM's facts are `crm`, any other's `integration`, both

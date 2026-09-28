@@ -59,6 +59,7 @@ export interface AuditTarget {
     | 'knowledge_conflict'
     | 'knowledge_document'
     | 'company_knowledge'
+    | 'contact'
     | 'gia';
   readonly id: string;
 }
