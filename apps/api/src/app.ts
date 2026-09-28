@@ -31,6 +31,7 @@ import {
   pipelineSummary,
   createConversationService,
   createCustomerService,
+  createCommercialInsights,
   type ConversationRepository,
 } from '@melonoffice/conversations';
 import { createCreditService, type CreditStore } from '@melonoffice/credits';
@@ -436,7 +437,40 @@ export function createApp({
         c.json({ error: 'brain_not_configured' }, 503),
       );
     }
-    // GIA's chat (ADR-0052): the same gateway, Company Brain and activity, read as the person.
+    // The commercial services, built once: Comercial's routes use them, and GIA reads through
+    // them (C4) as the person asking. Opportunities and pipeline (C2, ADR-0054) have stages
+    // proposed for the kind of business Company Brain knows; customers and leads (C1, ADR-0053)
+    // are the same contacts, with a commercial stage.
+    const commercialOf = (store: TenancyStore, repository: ConversationRepository) => {
+      const opportunities = createOpportunityService({
+        repository,
+        organizations: store,
+        authorization,
+        businessType: (organizationId) => companyFact(organizationId, 'identity', 'business_type'),
+        currency: (organizationId) => companyFact(organizationId, 'finance', 'currency'),
+      });
+      const customers = createCustomerService({
+        repository,
+        organizations: store,
+        authorization,
+      });
+      const insights = createCommercialInsights({
+        customers,
+        opportunities,
+        conversations: repository,
+        authorization,
+        timeZone: async (organizationId) =>
+          (await businessProfiles?.find(organizationId))?.timeZone ?? DEFAULT_ACTIVITY_TIME_ZONE,
+        currency: (organizationId) => companyFact(organizationId, 'finance', 'currency'),
+      });
+      return { opportunities, customers, insights };
+    };
+    const commercial =
+      tenancy !== undefined && conversations !== undefined
+        ? commercialOf(tenancy, conversations.repository)
+        : undefined;
+    // GIA's chat (ADR-0052): the same gateway, Company Brain and activity, read as the person;
+    // and, with C4, the commercial insights.
     if (tenancy !== undefined) {
       registerGiaRoutes(app, {
         store: tenancy,
@@ -462,6 +496,7 @@ export function createApp({
                         },
                       },
                     }),
+                ...(commercial === undefined ? {} : { commercial: commercial.insights }),
                 departments: structure.departments,
                 authorization,
                 audit,
@@ -686,26 +721,15 @@ export function createApp({
             }),
         conversations: conversationService,
       });
-      // Opportunities and pipeline (C2, ADR-0054): on the same contacts, with stages proposed for
-      // the kind of business Company Brain knows.
-      const opportunities = createOpportunityService({
-        repository: conversations.repository,
-        organizations: tenancy,
-        authorization,
-        businessType: (organizationId) => companyFact(organizationId, 'identity', 'business_type'),
-        currency: (organizationId) => companyFact(organizationId, 'finance', 'currency'),
-      });
-      // Customers and leads (C1, ADR-0053): the same contacts, with a commercial stage. Each card
-      // also shows the contact's conversations, opportunities and history (C3, ADR-0055).
+      // Customers and leads (C1): each card also shows the contact's conversations,
+      // opportunities and history (C3, ADR-0055).
+      const { opportunities, customers } =
+        commercial ?? commercialOf(tenancy, conversations.repository);
       registerCustomerRoutes(app, {
         store: tenancy,
         authorization,
         audit,
-        customers: createCustomerService({
-          repository: conversations.repository,
-          organizations: tenancy,
-          authorization,
-        }),
+        customers,
         context: {
           authorization,
           opportunities,

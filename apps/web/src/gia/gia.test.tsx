@@ -197,4 +197,80 @@ describe("GIA's Workplace (ADR-0050)", () => {
       expect(svg.getAttribute('aria-hidden')).toBe('true');
     }
   });
+
+  it('links an answer about sales to the real records in Comercial, and changes nothing (C4)', async () => {
+    const backend = open('/gia', (b) => {
+      b.options.permissions.push('opportunity.read');
+      b.options.opportunities.org_1 = [
+        {
+          id: 'opp_boda',
+          contactId: 'contact_1',
+          contactName: 'Ana',
+          stageId: 'proposal',
+          status: 'open',
+          title: 'Catering boda',
+          value: { amountMinor: 1_200_000, currency: 'PEN' },
+          probability: 50,
+          owner: null,
+          expectedCloseOn: null,
+          nextAction: { text: 'Enviar cotización', dueOn: '2026-09-25' },
+          lostReason: null,
+          closedAt: null,
+          revision: 1,
+          updatedAt: '2026-09-28T12:00:00Z',
+        },
+      ];
+      b.options.gia = {
+        answer:
+          'Hoy atiende primero Catering boda (S/ 12,000.00): la próxima acción venció hace 3 días.',
+        department: 'sales',
+        screen: null,
+        proposedAction: 'Enviar la cotización desde Comercial',
+        proposedFacts: 0,
+        links: [
+          { kind: 'opportunity', id: 'opp_boda', label: 'Catering boda' },
+          { kind: 'leads' },
+          { kind: 'pipeline' },
+          { kind: 'contact', id: 'contact_1', label: 'Ana' },
+          // Not a link the app knows: never shown.
+          { kind: 'campaign', id: 'x' },
+        ],
+        context: { facts: 1, activity: true, commercial: true, missing: [] },
+        replayed: false,
+        generatedBy: 'ai',
+      };
+    });
+    const chat = await screen.findByRole('region', { name: 'Talk to GIA' });
+    fireEvent.change(within(chat).getByRole('textbox', { name: 'Your message to GIA' }), {
+      target: { value: '¿Qué debería atender hoy?' },
+    });
+    fireEvent.click(within(chat).getByRole('button', { name: 'Send' }));
+    const links = within(await within(chat).findByRole('list', { name: 'Where to see it' }));
+    expect(links.getAllByRole('link').map((a) => [a.textContent, a.getAttribute('href')])).toEqual([
+      ['See opportunity: Catering boda', '/office/sales?opportunity=opp_boda'],
+      ['See leads', '/office/sales?stage=lead'],
+      ['See pipeline', '/office/sales?view=pipeline'],
+      ['See contact: Ana', '/office/sales?contact=contact_1'],
+    ]);
+
+    // The link opens that opportunity's card in the Comercial office.
+    fireEvent.click(links.getByRole('link', { name: 'See opportunity: Catering boda' }));
+    const region = await screen.findByRole('region', { name: 'Opportunities' });
+    const card = within(await within(region).findByRole('article'));
+    expect(await card.findByText('Catering boda', { exact: false })).toBeTruthy();
+    // Reading and following links wrote nothing.
+    expect(
+      backend.apiCalls().filter((c) => c.method !== 'GET' && !c.url.endsWith('/gia/messages')),
+    ).toEqual([]);
+  });
+
+  it('opens the leads tab from GIA’s link (C4)', async () => {
+    open('/office/sales?stage=customer', (b) => {
+      b.options.permissions.push('opportunity.read');
+    });
+    const region = await screen.findByRole('region', { name: 'Customers and leads' });
+    expect(
+      (await within(region).findByRole('tab', { name: /Customers/ })).getAttribute('aria-selected'),
+    ).toBe('true');
+  });
 });

@@ -7,6 +7,7 @@ import {
   type ContextFact,
   type KnowledgeGaps,
 } from '@melonoffice/brain';
+import type { CommercialInsights, CommercialInsightService } from '@melonoffice/conversations';
 import type { DepartmentRepository } from '@melonoffice/departments';
 import type { OrganizationId, UserId } from '@melonoffice/domain';
 import { withCorrelation, type Logger } from '@melonoffice/observability';
@@ -22,6 +23,7 @@ import {
   type GiaRateLimits,
   type GiaScreen,
 } from './catalogue.js';
+import { commercialLinks, type GiaLink } from './commercial.js';
 import { GiaError } from './errors.js';
 import { giaMessages, giaOutputSchema, type GiaTurn } from './prompt.js';
 
@@ -58,10 +60,16 @@ export interface GiaAnswer {
   readonly proposedAction: string | null;
   /** How many facts GIA proposed to Company Brain from this message, to be confirmed. */
   readonly proposedFacts: number;
-  /** What she read: how many facts, whether today's activity, and what is still unknown. */
+  /** Records and screens of Comercial the answer names (C4): only ones she was given. */
+  readonly links: readonly GiaLink[];
+  /**
+   * What she read: how many facts, whether today's activity and the commercial records, and
+   * what is still unknown.
+   */
   readonly context: {
     readonly facts: number;
     readonly activity: boolean;
+    readonly commercial: boolean;
     readonly missing: readonly string[];
   };
   readonly replayed: boolean;
@@ -76,6 +84,8 @@ export interface GiaOptions {
   readonly gateway: Pick<AIGateway, 'assist'>;
   readonly brain?: Pick<CompanyBrainService, 'context' | 'gaps' | 'ingest'>;
   readonly activity?: GiaActivityPort;
+  /** The commercial insights (C4), read as the person through the C1/C2 services. */
+  readonly commercial?: Pick<CommercialInsightService, 'read'>;
   readonly departments: Pick<DepartmentRepository, 'list'>;
   readonly authorization: Pick<AuthorizationService, 'authorize'>;
   readonly audit: AuditService;
@@ -165,6 +175,7 @@ function parseAnswer(
       screen: GiaScreen;
       action: string | null;
       facts: unknown[];
+      links: unknown[];
     }
   | undefined {
   let output: unknown = response.output.structured;
@@ -176,7 +187,7 @@ function parseAnswer(
     }
   }
   if (!isRecord(output)) return undefined;
-  const { answer, department, screen, proposedAction, facts } = output;
+  const { answer, department, screen, proposedAction, facts, links } = output;
   if (typeof answer !== 'string' || answer.trim() === '') return undefined;
   if (answer.length > GIA_LIMITS.answerLength) return undefined;
   if (typeof screen !== 'string' || !(GIA_SCREENS as readonly string[]).includes(screen)) {
@@ -197,6 +208,7 @@ function parseAnswer(
     screen: screen as GiaScreen,
     action,
     facts: Array.isArray(facts) ? facts.slice(0, GIA_LIMITS.facts) : [],
+    links: Array.isArray(links) ? links : [],
   };
 }
 
@@ -205,6 +217,7 @@ export function createGia(options: GiaOptions): GiaService {
     gateway,
     brain,
     activity,
+    commercial,
     departments,
     authorization,
     audit,
@@ -329,13 +342,17 @@ export function createGia(options: GiaOptions): GiaService {
 
     // What she reads, as this person: each part only with its own permission, and a part she
     // cannot read is simply left out (she says she does not know, never guesses).
-    const [facts, gaps, today, types] = await Promise.all([
+    const [facts, gaps, today, types, insights] = await Promise.all([
       readFacts(tenant, message),
       readGaps(tenant),
       readActivity(tenant),
       activeTypes(organizationId),
+      readCommercial(tenant),
     ]);
     const missing = gaps?.questions.map((q) => q.id) ?? [];
+    // What an answer may link to: only the references she was given, never an id she wrote.
+    const linkable =
+      insights === undefined ? new Map<string, GiaLink>() : commercialLinks(insights);
 
     const started = performance.now();
     const response = await gateway.assist(tenant, {
@@ -344,7 +361,8 @@ export function createGia(options: GiaOptions): GiaService {
       taskType: 'gia_chat',
       capability: 'text_generation',
       requirements: { structuredOutput: true },
-      outputSchema: giaOutputSchema(types),
+      // The gateway takes at most 50 codes in a list: the general screens and the first records.
+      outputSchema: giaOutputSchema(types, [...linkable.keys()].slice(0, 50)),
       messages: giaMessages({
         locale,
         facts,
@@ -353,6 +371,7 @@ export function createGia(options: GiaOptions): GiaService {
         departments: types,
         history,
         message,
+        ...(commercial === undefined ? {} : { commercial: { insights } }),
       }),
       outputModality: 'text',
       maxOutputTokens: GIA_LIMITS.outputTokens,
@@ -383,7 +402,11 @@ export function createGia(options: GiaOptions): GiaService {
       log.warn('gia.message_invalid_output', { latencyMs });
       throw new GiaError('ai_invalid_output');
     }
-    await record('success', { model });
+    // Which sources the answer drew on, as a code; never the question, the answer or a figure.
+    await record('success', {
+      model,
+      ...(insights === undefined ? {} : { reason: 'commercial_context' }),
+    });
     const proposedFacts = await propose(tenant, parsed.facts, log);
     log.info('gia.message_answered', {
       latencyMs,
@@ -392,7 +415,14 @@ export function createGia(options: GiaOptions): GiaService {
       proposedFacts,
       credits: response.credits.consumed,
       routed: parsed.department !== null,
+      commercial: insights !== undefined,
     });
+    const links = [...new Set(parsed.links.filter((ref): ref is string => typeof ref === 'string'))]
+      .flatMap((ref) => {
+        const link = linkable.get(ref);
+        return link === undefined ? [] : [link];
+      })
+      .slice(0, GIA_LIMITS.links);
     return Object.freeze({
       answer: parsed.answer,
       department: parsed.department,
@@ -402,9 +432,11 @@ export function createGia(options: GiaOptions): GiaService {
           : parsed.screen,
       proposedAction: parsed.action,
       proposedFacts,
+      links: Object.freeze(links),
       context: Object.freeze({
         facts: facts.length,
         activity: today !== undefined,
+        commercial: insights !== undefined,
         missing: Object.freeze([...missing]),
       }),
       replayed: false,
@@ -454,6 +486,17 @@ export function createGia(options: GiaOptions): GiaService {
       return (await activity.today(tenant)).slice(0, GIA_LIMITS.activityItems);
     } catch (error) {
       logger.warn('gia.activity_unavailable', { error: codeOf(error) });
+      return undefined;
+    }
+  }
+
+  /** The commercial insights, as this person may read them; a failure is only logged. */
+  async function readCommercial(tenant: TenantContext): Promise<CommercialInsights | undefined> {
+    if (commercial === undefined) return undefined;
+    try {
+      return await commercial.read(tenant);
+    } catch (error) {
+      logger.warn('gia.commercial_unavailable', { error: codeOf(error) });
       return undefined;
     }
   }

@@ -688,6 +688,9 @@ importers:
       '@melonoffice/brain':
         specifier: workspace:*
         version: link:../brain
+      '@melonoffice/conversations':
+        specifier: workspace:*
+        version: link:../conversations
       '@melonoffice/departments':
         specifier: workspace:*
         version: link:../departments

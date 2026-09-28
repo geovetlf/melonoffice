@@ -12,7 +12,13 @@ import {
 import { navigate } from '../identity/router.js';
 import { paths } from '../shell/routes.js';
 import { GiaAvatar } from './GiaAvatar.js';
-import type { GiaAnswerView, GiaClient, GiaFailure, GiaTurnView } from './giaClient.js';
+import type {
+  GiaAnswerView,
+  GiaClient,
+  GiaFailure,
+  GiaLinkView,
+  GiaTurnView,
+} from './giaClient.js';
 
 /**
  * GIA's chat in the app (Fase 1c, ADR-0052), shared by the Home's command bar and GIA's
@@ -206,6 +212,43 @@ function placeOf(
   }
 }
 
+/** A record or screen of Comercial an answer names (C4), on the app's own pages. */
+function linkOf(
+  link: GiaLinkView,
+  intl: ReturnType<typeof useIntl>,
+): { readonly path: string; readonly label: string } {
+  const say = (id: string, values?: Record<string, string>) => intl.formatMessage({ id }, values);
+  switch (link.kind) {
+    case 'opportunity':
+      return {
+        path: paths.opportunity(link.id),
+        label: say('gia.chat.link.opportunity', { name: link.label }),
+      };
+    case 'contact':
+      return {
+        path: paths.customer(link.id),
+        label:
+          link.label === null
+            ? say('gia.chat.link.contactUnnamed')
+            : say('gia.chat.link.contact', { name: link.label }),
+      };
+    case 'conversation':
+      return {
+        path: paths.conversation(link.id),
+        label:
+          link.label === null
+            ? say('gia.chat.link.conversationUnnamed')
+            : say('gia.chat.link.conversation', { name: link.label }),
+      };
+    case 'leads':
+      return { path: paths.contacts('lead'), label: say('gia.chat.link.leads') };
+    case 'customers':
+      return { path: paths.contacts('customer'), label: say('gia.chat.link.customers') };
+    case 'pipeline':
+      return { path: paths.pipeline(), label: say('gia.chat.link.pipeline') };
+  }
+}
+
 function GiaReply({ answer }: { readonly answer: GiaAnswerView }) {
   const intl = useIntl();
   const key = answer.department === null ? undefined : `department.${answer.department}.short`;
@@ -246,6 +289,27 @@ function GiaReply({ answer }: { readonly answer: GiaAnswerView }) {
           </a>
         </p>
       ) : null}
+      {answer.links.length === 0 ? null : (
+        <ul className="gia-chat__links" aria-label={intl.formatMessage({ id: 'gia.chat.links' })}>
+          {answer.links.map((link, index) => {
+            const to = linkOf(link, intl);
+            return (
+              <li key={`${to.path}:${String(index)}`}>
+                <a
+                  className="gia-chat__go"
+                  href={to.path}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    navigate(to.path);
+                  }}
+                >
+                  {to.label}
+                </a>
+              </li>
+            );
+          })}
+        </ul>
+      )}
       {place === undefined ? null : (
         <a
           className="gia-chat__go"

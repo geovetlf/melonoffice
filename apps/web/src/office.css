@@ -1798,6 +1798,15 @@ a.sidebar__item:hover {
   font-size: var(--mo-font-size-xs);
 }
 
+.gia-chat__links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 var(--mo-space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
 .gia-chat__go {
   display: inline-block;
   margin-top: var(--mo-space-2);

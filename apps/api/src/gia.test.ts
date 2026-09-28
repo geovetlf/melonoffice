@@ -6,6 +6,7 @@ import {
   type ProviderCall,
   type ProviderOutcome,
 } from '@melonoffice/ai-gateway';
+import { dateIn } from '@melonoffice/conversations';
 import { createCreditService } from '@melonoffice/credits';
 import type { AIModelDefinition, OrganizationId, PolicyId, UserId } from '@melonoffice/domain';
 import { createAuthorizationService, ROLES } from '@melonoffice/rbac';
@@ -156,7 +157,7 @@ describe.each(STORES)('GIA chat with storage in %s (ADR-0052)', (_name, createSt
     await credits.grant(tenantA, { amount: 10, referenceId: 'grant-1', reason: 'test_grant' });
     const ask = (token: string, org: string, body: Json) =>
       post(token, `/v1/organizations/${org}/gia/messages`, body);
-    return { ...ctx, stores, provider, orgA, orgB, tenantA, credits, ask };
+    return { ...ctx, stores, provider, orgA, orgB, tenantA, credits, ask, post };
   }
 
   const body = (message = '¿Qué pasó hoy?', requestKey = 'click-0001') => ({
@@ -176,9 +177,11 @@ describe.each(STORES)('GIA chat with storage in %s (ADR-0052)', (_name, createSt
         screen: 'conversations',
         proposedAction: ANSWER.proposedAction,
         proposedFacts: 0,
+        links: [],
         context: {
           facts: 1,
           activity: true,
+          commercial: true,
           missing: ['what_you_do', 'main_products', 'customers', 'areas', 'goals', 'tone'],
         },
         replayed: false,
@@ -284,5 +287,166 @@ describe.each(STORES)('GIA chat with storage in %s (ADR-0052)', (_name, createSt
         expect.objectContaining({ key: 'description', verification: 'proposed' }),
       ]),
     );
+  });
+
+  // C4: GIA's commercial intelligence, on the real C1/C2 services and storage.
+  async function restaurant(t: Awaited<ReturnType<typeof setup>>) {
+    const base = `/v1/organizations/${t.orgA}`;
+    const send = async (method: string, path: string, body: unknown) => {
+      const response = await t.app.request(
+        `${base}${path}`,
+        t.as('token-alice', {
+          method,
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+        }),
+      );
+      return (await response.json()) as Json;
+    };
+    await send('PUT', '/business-profile', {
+      businessType: 'restaurant',
+      country: 'PE',
+      currency: 'PEN',
+      timeZone: 'America/Lima',
+      city: 'Lima',
+    });
+    const today = dateIn('America/Lima', new Date());
+    const day = (offset: number) =>
+      new Date(Date.parse(`${today}T00:00:00Z`) + offset * 86_400_000).toISOString().slice(0, 10);
+    const contact = async (displayName: string, phone: string, stage: 'lead' | 'customer') =>
+      (await send('POST', '/customers', { displayName, phone, stage })).id as string;
+    const ana = await contact('Ana', '+51911111111', 'lead');
+    const beto = await contact('Beto', '+51922222222', 'lead');
+    await contact('Carla', '+51933333333', 'lead');
+    const diego = await contact('Diego', '+51944444444', 'customer');
+    const elena = await contact('Elena', '+51955555555', 'customer');
+    const boda = (
+      await send('POST', '/opportunities', {
+        contactId: ana,
+        title: 'Catering boda',
+        value: { amountMinor: 1_200_000 },
+        nextAction: { text: 'Enviar cotización final', dueOn: day(-3) },
+      })
+    ).id as string;
+    const cumple = (
+      await send('POST', '/opportunities', {
+        contactId: beto,
+        title: 'Cumpleaños 50 personas',
+        value: { amountMinor: 800_000 },
+        expectedCloseOn: day(3),
+      })
+    ).id as string;
+    await send('POST', '/opportunities', {
+      contactId: elena,
+      title: 'Pedido semanal',
+      value: { amountMinor: 150_000 },
+      nextAction: { text: 'Llamar', dueOn: day(5) },
+    });
+    const won = (
+      await send('POST', '/opportunities', {
+        contactId: diego,
+        title: 'Almuerzo corporativo',
+        value: { amountMinor: 250_000 },
+      })
+    ).id as string;
+    await send('PATCH', `/opportunities/${won}`, { revision: 1, stageId: 'won' });
+    return { base, boda, cumple, day };
+  }
+
+  const answering = (t: Awaited<ReturnType<typeof setup>>, links: string[]) => {
+    t.provider.state.answer = () => ({
+      status: 'success',
+      output: {
+        text: JSON.stringify({
+          answer:
+            'Hoy atiende primero Catering boda (S/ 12,000.00): la próxima acción venció hace 3 días. Luego Cumpleaños 50 personas (S/ 8,000.00): cierra en 3 días.',
+          department: 'sales',
+          screen: 'department',
+          proposedAction: 'Enviar la cotización final a Ana',
+          facts: [],
+          links,
+        }),
+      },
+      usage: { inputTokens: 1_000, outputTokens: 500 },
+      finishReason: 'stop',
+    });
+  };
+
+  it('tells a restaurant what to attend to today, with real links, 1 credit and no change', async () => {
+    const t = await setup();
+    const r = await restaurant(t);
+    const read = async () =>
+      JSON.stringify([
+        (await (
+          await t.app.request(`${r.base}/opportunities`, t.as('token-alice'))
+        ).json()) as Json,
+        (await (await t.app.request(`${r.base}/customers`, t.as('token-alice'))).json()) as Json,
+      ]);
+    const before = await read();
+    const eventsBefore = (await t.stores.auditEvents()).length;
+    answering(t, ['o_a', 'o_b', 'pipeline']);
+
+    const answer = await t.ask(
+      'token-alice',
+      t.orgA,
+      body('¿Qué debería atender hoy?', 'click-c4-01'),
+    );
+    expect(answer.body).toMatchObject({
+      links: [
+        { kind: 'opportunity', id: r.boda, label: 'Catering boda' },
+        { kind: 'opportunity', id: r.cumple, label: 'Cumpleaños 50 personas' },
+        { kind: 'pipeline' },
+      ],
+      context: { commercial: true },
+      generatedBy: 'ai',
+    });
+    const sent = JSON.stringify(t.provider.calls[0]);
+    expect(sent).toContain(`next action was due ${r.day(-3)}, 3 days late`);
+    expect(sent).toContain(`expected to close in 3 days (${r.day(3)})`);
+    expect(sent).toMatch(/Open value \(pipeline\): S\/\s21,500\.00 \(3 opportunities\)/);
+    expect(sent).toMatch(/Sold \(won value\): all time S\/\s2,500\.00 \(1 opportunity\)/);
+    expect(sent).toContain('Contacts: 3 leads, 2 customers, 0 inactive.');
+    // Company Brain's business context reaches the model beside the commercial records.
+    expect(sent).toContain('Pollería X');
+    expect(sent).not.toContain('Tienda B');
+
+    // 1 credit, one audited answer naming its source; nothing commercial changed.
+    expect(await t.credits.balanceOf(t.tenantA)).toMatchObject({ balance: 9 });
+    expect(t.provider.calls).toHaveLength(1);
+    expect(await read()).toBe(before);
+    const events = (await t.stores.auditEvents()).slice(eventsBefore);
+    expect(events.filter((e) => e.action === 'gia.message_answered')).toEqual([
+      expect.objectContaining({ result: 'success', reason: 'commercial_context' }),
+    ]);
+    expect(events.some((e) => /^(contact|opportunity|pipeline)\./.test(e.action))).toBe(false);
+    expect(JSON.stringify(events)).not.toMatch(/Catering|atender|12,000/);
+  });
+
+  it('gives a role without commercial permissions nothing commercial', async () => {
+    const t = await setup({
+      authorization: createAuthorizationService({
+        owner: ROLES.owner.filter(
+          (p) => !['opportunity.read', 'contact.read', 'conversation.read'].includes(p),
+        ),
+      }),
+    });
+    await restaurant(t);
+    answering(t, ['o_a', 'leads']);
+    const answer = await t.ask('token-alice', t.orgA, body('¿Cuánto vendí?', 'click-c4-02'));
+    expect(answer.body).toMatchObject({ links: [] });
+    const sent = JSON.stringify(t.provider.calls[0]);
+    expect(sent).toContain('Opportunities, pipeline and sales: the person may NOT read them.');
+    expect(sent).toContain('No tienes permisos para consultar esa información.');
+    expect(sent).not.toContain('Catering');
+    expect(sent).not.toContain('Ana');
+  });
+
+  it('answers with a clear error, and charges nothing, when the model fails', async () => {
+    const t = await setup();
+    await restaurant(t);
+    t.provider.state.answer = () => ({ status: 'error', kind: 'unavailable' });
+    const answer = await t.ask('token-alice', t.orgA, body('¿Cómo van mis ventas?', 'click-c4-03'));
+    expect(answer.status).toBeGreaterThanOrEqual(500);
+    expect(await t.credits.balanceOf(t.tenantA)).toMatchObject({ balance: 10 });
   });
 });

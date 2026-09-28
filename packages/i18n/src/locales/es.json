@@ -826,6 +826,15 @@
   "memory.error.extraction_unavailable": "GIA no puede leer documentos ahora. Inténtalo más tarde.",
   "gia.chat.addToMemory": "Agregar a Memoria de la empresa",
   "gia.chat.reviewFacts": "Revisar en Memoria de la empresa",
+  "gia.chat.links": "Dónde verlo",
+  "gia.chat.link.opportunity": "Ver oportunidad: {name}",
+  "gia.chat.link.contact": "Ver contacto: {name}",
+  "gia.chat.link.contactUnnamed": "Ver contacto",
+  "gia.chat.link.conversation": "Ver conversación con {name}",
+  "gia.chat.link.conversationUnnamed": "Ver conversación",
+  "gia.chat.link.leads": "Ver leads",
+  "gia.chat.link.customers": "Ver clientes",
+  "gia.chat.link.pipeline": "Ver pipeline",
   "memory.domain.recent": "Historial de cambios",
   "memory.recent.help": "Los últimos cambios, incluido lo desactualizado o archivado. Cada dato guarda todas sus versiones."
 }
