@@ -34,7 +34,10 @@ export const ROLES = {
     'conversation.assist',
     'contact.read',
     'channel.read',
-    'channel.manage',
+    'channel.create',
+    'channel.update',
+    'channel.disconnect',
+    'channel.delete',
   ],
 } as const satisfies RoleCatalogue;
 

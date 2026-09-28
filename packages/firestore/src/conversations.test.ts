@@ -19,6 +19,8 @@ import type {
 import {
   InMemoryChannelConnectionRepository,
   secretRefsFor,
+  WHATSAPP_CAPABILITIES,
+  WHATSAPP_PROVIDER,
   type ChannelConnectionRepository,
 } from '@melonoffice/integrations';
 import { describe, expect, it } from 'vitest';
@@ -116,14 +118,18 @@ const connectionOf = (
 ): ChannelConnection => ({
   id,
   organizationId,
+  provider: WHATSAPP_PROVIDER,
+  category: 'messaging',
   channel: 'whatsapp',
-  status: 'active',
+  status: 'connected',
+  capabilities: WHATSAPP_CAPABILITIES,
   displayName: 'Ventas',
   account: { phoneNumberId: '106540352242922', displayPhoneNumber: '+1 555 078 3881' },
   secrets: secretRefsFor('melonoffice-test', id),
   createdAt: T0.toISOString() as IsoTimestamp,
   createdBy: ALICE,
   updatedAt: T0.toISOString() as IsoTimestamp,
+  updatedBy: ALICE,
   revision: 1,
 });
 

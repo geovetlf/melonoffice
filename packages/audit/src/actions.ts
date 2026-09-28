@@ -50,6 +50,12 @@ export const AUDIT_ACTIONS = {
     description: 'An organization was given a plan (today: its initial plan, when it is created).',
     results: ['success'],
   },
+  'entitlements.override_set': {
+    category: 'entitlements',
+    description:
+      "A platform operator set an audited value for one organization's entitlement key, applied after its plan; the plan itself is unchanged (ADR-0044).",
+    results: ['success'],
+  },
   'billing.subscription_created': {
     category: 'billing',
     description:
@@ -295,6 +301,12 @@ export const AUDIT_ACTIONS = {
       "Whether a person's message reached the channel is not known (lost answer, timeout); it is never resent blindly (ADR-0034).",
     results: ['failure'],
   },
+  'conversation.message_received': {
+    category: 'conversation',
+    description:
+      "A contact's message arrived through a verified channel webhook and was stored once; the reference is the conversation (ADR-0044).",
+    results: ['success'],
+  },
   'conversation.ai_summary_requested': {
     category: 'conversation',
     description:
@@ -367,11 +379,41 @@ export const AUDIT_ACTIONS = {
       'A channel connection was configured for the organization; its secrets are references only (ADR-0033).',
     results: ['success'],
   },
-  'channel.connection_disabled': {
+  'channel.connection_updated': {
     category: 'channel',
     description:
-      'A channel connection was turned off: its webhooks are refused from then on (ADR-0033).',
+      'A person changed a channel connection: renamed it, or started checking it with its provider (ADR-0044).',
     results: ['success'],
+  },
+  'channel.connection_checked': {
+    category: 'channel',
+    description:
+      "A channel connection's credentials were checked with its provider: connected, or in error with the provider's code (ADR-0044).",
+    results: ['success', 'failure'],
+  },
+  'channel.connection_paused': {
+    category: 'channel',
+    description:
+      'A person paused a channel connection: nothing is sent on it; inbound messages are still stored (ADR-0044).',
+    results: ['success'],
+  },
+  'channel.connection_disconnected': {
+    category: 'channel',
+    description:
+      'A person turned a channel connection off: its webhooks are refused and its plan slot is free (ADR-0044).',
+    results: ['success'],
+  },
+  'channel.connection_revoked': {
+    category: 'channel',
+    description:
+      'A person deleted a channel connection: it is kept only as history and never used again (ADR-0044).',
+    results: ['success'],
+  },
+  'channel.connection_failed': {
+    category: 'channel',
+    description:
+      "The provider refused a channel connection's credentials during a send: it is in error until a person checks it again (ADR-0044).",
+    results: ['failure'],
   },
   'credits.grant': {
     category: 'credits',

@@ -12,9 +12,7 @@ import {
   createAgentTurnWork,
   createChannelMessageExecutor,
   createConversationHandoffExecutor,
-  type ChannelAdapters,
-  type ChannelConnectionRepository,
-  type SecretStore,
+  type IntegrationEngine,
 } from '@melonoffice/integrations';
 import type { Logger } from '@melonoffice/observability';
 import { createAuthorizationService } from '@melonoffice/rbac';
@@ -40,14 +38,10 @@ export interface ConversationAgentStores {
 export interface ConversationAgentOptions {
   readonly stores: ConversationAgentStores;
   /**
-   * The channel side of an agent's reply: connections, their secrets and adapters. Absent: the
-   * reply tool has no executor, so a reply fails at the gate and the conversation goes to a person.
+   * The Integration Engine (ADR-0044): the channel side of an agent's reply. Absent: the reply
+   * tool has no executor, so a reply fails at the gate and the conversation goes to a person.
    */
-  readonly channels?: {
-    readonly connections: ChannelConnectionRepository;
-    readonly secrets: SecretStore;
-    readonly adapters: ChannelAdapters;
-  };
+  readonly channels?: Pick<IntegrationEngine, 'send'>;
   readonly logger?: Logger;
   readonly now?: () => Date;
 }
@@ -93,9 +87,7 @@ export function createConversationAgentParts(
   if (channels !== undefined) {
     executors.channel = createChannelMessageExecutor({
       conversations: stores.conversations,
-      connections: channels.connections,
-      secrets: channels.secrets,
-      adapters: channels.adapters,
+      engine: channels,
       agentReplies: createAgentReplyCheck({
         conversations: stores.conversations,
         executions: stores.executions,

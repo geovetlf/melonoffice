@@ -531,6 +531,51 @@ describe('Human control (CV-6A)', () => {
     await waitFor(() => expect(client.takeOver).toHaveBeenCalledWith('c1'));
   });
 
+  it('shows an agent reply waiting for approval, and sends only what a person approves (CV-6C)', async () => {
+    const base = fakeClient([
+      row('c1', { control: { handledBy: 'ai', aiState: 'active', changedAt: null } }),
+    ]);
+    const queued = {
+      id: 'm2',
+      direction: 'outbound' as const,
+      sender: { kind: 'specialist', executionId: 'exec-1' },
+      type: 'text',
+      text: 'Hola, sí hacemos envíos a Lima.',
+      status: 'queued',
+      sentAt: '2026-09-27T12:01:00Z',
+    };
+    const detail = base.detail;
+    const decideReply = vi.fn(async () => undefined);
+    const client: InboxClient = {
+      ...base,
+      detail: vi.fn(async (id: string) => {
+        const d = await detail(id);
+        return { ...d, messages: [...d.messages, queued] };
+      }),
+      pendingReplies: vi.fn(async () => [
+        { approvalId: 'appr-1', executionId: 'exec-1', expiresAt: '2026-09-27T13:01:00Z' },
+        { approvalId: 'appr-2', executionId: 'exec-other', expiresAt: '2026-09-27T13:01:00Z' },
+      ]),
+      decideReply,
+    };
+    center(client);
+    const article = await open('Juan Pérez');
+    const group = await within(article).findByRole('group', {
+      name: 'Respuesta del agente pendiente de tu aprobación.',
+    });
+    expect(within(article).getAllByRole('group')).toHaveLength(1);
+    fireEvent.click(within(group).getByRole('button', { name: 'Aprobar y enviar' }));
+    await waitFor(() => expect(decideReply).toHaveBeenCalledWith('appr-1', 'approve'));
+    fireEvent.click(within(group).getByRole('button', { name: 'Rechazar' }));
+    await waitFor(() => expect(decideReply).toHaveBeenCalledWith('appr-1', 'reject'));
+    cleanup();
+
+    // Without the approval permissions, nothing is offered.
+    center(client, 'es', { can: (p) => !p.startsWith('approval.') });
+    const readOnly = await open('Juan Pérez');
+    expect(within(readOnly).queryByRole('group')).toBeNull();
+  });
+
   it('shows the agent’s note to the person taking over, as plain text (CV-6B)', async () => {
     const escalated = {
       control: { handledBy: 'human', aiState: 'escalated', changedAt: null },

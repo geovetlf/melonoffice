@@ -29,7 +29,8 @@ import {
   type ConversationRepository,
 } from '@melonoffice/conversations';
 import {
-  createWebhookIngress,
+  createIntegrationEngine,
+  createIntegrationRegistry,
   createWhatsAppAdapter,
   InMemoryChannelConnectionRepository,
   InMemorySecretStore,
@@ -348,6 +349,16 @@ export function setupApp(
       return meta.answer();
     }) as typeof fetch,
   });
+  // One Integration Engine for webhooks, sends and connection checks (ADR-0044), over the fake
+  // Graph API.
+  const engine = createIntegrationEngine({
+    registry: createIntegrationRegistry([graph]),
+    connections: stores.connections,
+    secrets: stores.secrets,
+    inbound: createConversationIngress({ repository: stores.conversations }),
+    audit: stores.audit,
+    logger,
+  });
   const app = createApp({
     logger,
     version: 'test',
@@ -366,23 +377,10 @@ export function setupApp(
       connections: stores.connections,
       secretProjectId: 'melonoffice-test',
       agentOutputs,
-      ...(sending
-        ? {
-            outbound: {
-              secrets: stores.secrets,
-              adapters: { whatsapp: graph },
-              environment: 'dev' as const,
-            },
-          }
-        : {}),
+      engine,
+      ...(sending ? { outbound: { environment: 'dev' as const } } : {}),
     },
-    webhooks: createWebhookIngress({
-      connections: stores.connections,
-      secrets: stores.secrets,
-      adapters: [createWhatsAppAdapter()],
-      conversations: createConversationIngress({ repository: stores.conversations }),
-      logger,
-    }),
+    webhooks: engine,
     ...(tools ? { tools } : {}),
     ...(webOrigins ? { webOrigins } : {}),
     ...(ai ? { ai } : {}),

@@ -47,6 +47,7 @@ The MelonOffice architecture was defined in the **Phase 0 Architecture Plan (v0.
 | [0041](../adr/0041-office-workstations-and-agent-presence.md)      | Workstations and agent presence in the office                    | Home             |
 | [0042](../adr/0042-office-ambient-workers.md)                      | Ambient figures in the office                                    | Home             |
 | [0043](../adr/0043-conversation-agent.md)                          | The first conversation agent                                     | CV-6B            |
+| [0044](../adr/0044-integration-engine.md)                          | The Integration Engine, connections and the first real channel   | CV-6C            |
 
 ## Current phase
 

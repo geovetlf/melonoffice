@@ -4,10 +4,12 @@ import { createAuditService } from '@melonoffice/audit';
 import { createIdentityPlatformVerifier } from '@melonoffice/auth';
 import { createConversationIngress } from '@melonoffice/conversations';
 import {
+  createIntegrationEngine,
+  createIntegrationRegistry,
   createSecretManagerStore,
-  createWebhookIngress,
   createWhatsAppAdapter,
   withAgentTurns,
+  type ConversationIngressPort,
 } from '@melonoffice/integrations';
 import { createCloudTasksDispatcher } from '@melonoffice/runtime';
 import { defaultToolRegistry } from '@melonoffice/tools';
@@ -24,6 +26,7 @@ import {
   FirestoreChannelConnectionRepository,
   FirestoreConversationRepository,
   FirestoreDepartmentRepository,
+  FirestoreEntitlementOverrideStore,
   FirestoreExecutionRepository,
   FirestoreJobRepository,
   FirestoreSpecialistRepository,
@@ -45,13 +48,7 @@ function services(projectId: string) {
   const conversations = new FirestoreConversationRepository(firestore);
   const connections = new FirestoreChannelConnectionRepository(firestore);
   const secretProjectId = config.channelSecretsProjectId;
-  const whatsapp = createWhatsAppAdapter(
-    config.whatsappGraphApiVersion === undefined
-      ? {}
-      : { graphApiVersion: config.whatsappGraphApiVersion },
-  );
   const environment = config.deploymentEnvironment;
-  const secrets = createSecretManagerStore();
   const tenancy = new FirestoreTenancyStore(firestore);
   const executions = new FirestoreExecutionRepository(firestore);
   const approvals = new FirestoreApprovalRepository(firestore);
@@ -60,6 +57,31 @@ function services(projectId: string) {
     specialists: new FirestoreSpecialistRepository(firestore),
   };
   const audit = createAuditService(new FirestoreAuditStore(firestore));
+  // The Integration Engine (ADR-0044), only where channel secrets are configured: its registry
+  // holds the official providers this server speaks to (WhatsApp Cloud API today). Inbound
+  // messages go to the conversations, then to the agents' turns (below).
+  const inbound: { current?: ConversationIngressPort } = {};
+  const engine =
+    secretProjectId === undefined
+      ? undefined
+      : createIntegrationEngine({
+          registry: createIntegrationRegistry([
+            createWhatsAppAdapter(
+              config.whatsappGraphApiVersion === undefined
+                ? {}
+                : { graphApiVersion: config.whatsappGraphApiVersion },
+            ),
+          ]),
+          connections,
+          secrets: createSecretManagerStore(),
+          inbound: {
+            receive: (message) => (inbound.current as ConversationIngressPort).receive(message),
+            applyStatus: (update) =>
+              (inbound.current as ConversationIngressPort).applyStatus(update),
+          },
+          audit,
+          logger: logger.child({ component: 'integrations' }),
+        });
   // Conversation agents (CV-6B, ADR-0043): the API starts an agent's turn after a message is
   // stored and hands jobs to the worker, only where the job transport is configured; without it,
   // started turns wait in the queue. The worker runs them.
@@ -72,6 +94,7 @@ function services(projectId: string) {
     jobs: new FirestoreJobRepository(firestore),
     conversations,
     tools: defaultToolRegistry(),
+    ...(engine === undefined ? {} : { channels: engine }),
     audit,
     ...(transport === undefined
       ? {}
@@ -86,6 +109,11 @@ function services(projectId: string) {
         }),
     logger: logger.child({ component: 'agent-turns' }),
   });
+  inbound.current = withAgentTurns(
+    createConversationIngress({ repository: conversations }),
+    agentTurns.trigger,
+    logger.child({ component: 'agent-turns' }),
+  );
   return {
     auth: {
       verifier: createIdentityPlatformVerifier({ projectId }),
@@ -101,39 +129,19 @@ function services(projectId: string) {
     workflows: new FirestoreWorkflowRepository(firestore),
     audit,
     agentTurns,
+    entitlementOverrides: new FirestoreEntitlementOverrideStore(firestore),
     conversations: {
       repository: conversations,
       connections,
       agentOutputs: new FirestoreAgentOutputRepository(firestore),
       ...(secretProjectId === undefined ? {} : { secretProjectId }),
-      // A person's replies (ADR-0034) only where channel secrets and the environment are both
-      // configured: neither is set in Terraform yet, so sending stays off (fails closed).
-      ...(secretProjectId === undefined || environment === undefined
-        ? {}
-        : {
-            outbound: {
-              secrets,
-              adapters: { whatsapp },
-              environment,
-            },
-          }),
+      ...(engine === undefined ? {} : { engine }),
+      // A person's replies (ADR-0034) only where the engine and the environment are both
+      // configured (DEV, from Terraform); anywhere else sending stays off (fails closed).
+      ...(engine === undefined || environment === undefined ? {} : { outbound: { environment } }),
     },
-    // Webhooks only where channel secrets are configured (none in Terraform yet: CV-2).
-    ...(secretProjectId === undefined
-      ? {}
-      : {
-          webhooks: createWebhookIngress({
-            connections,
-            secrets,
-            adapters: [whatsapp],
-            conversations: withAgentTurns(
-              createConversationIngress({ repository: conversations }),
-              agentTurns.trigger,
-              logger.child({ component: 'agent-turns' }),
-            ),
-            logger: logger.child({ component: 'webhooks' }),
-          }),
-        }),
+    // Webhooks: the engine's inbound side, only where it exists.
+    ...(engine === undefined ? {} : { webhooks: engine }),
   };
 }
 const configured = projectId === undefined ? {} : services(projectId);

@@ -21,6 +21,8 @@ export type ConversationErrorCode =
   | 'conversation_closed'
   | 'channel_not_available'
   | 'outside_messaging_window'
+  // The connection cannot do this (ADR-0044).
+  | 'capability_not_available'
   | 'tool_not_human_invokable'
   // Assisted AI on a conversation (CV-4, ADR-0037).
   | 'ai_not_available'

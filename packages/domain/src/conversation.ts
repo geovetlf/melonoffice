@@ -260,7 +260,54 @@ export interface Message {
   readonly readAt?: IsoTimestamp;
 }
 
-export type ChannelConnectionStatus = 'active' | 'disabled';
+/**
+ * Where a connection is in its life (CV-6C, ADR-0044). Only `connected` may send; `revoked` is
+ * final. The transitions live in `@melonoffice/integrations` (`CONNECTION_TRANSITIONS`).
+ *
+ * - `created`: configured, its credentials not yet checked with the provider.
+ * - `connecting`: a check with the provider is under way.
+ * - `connected`: checked and in use.
+ * - `paused`: a person stopped its outbound; inbound messages are still stored.
+ * - `error`: the provider refused its credentials; nothing is sent until it is checked again.
+ * - `disconnected`: a person turned it off; its webhooks are refused. It can be connected again.
+ * - `revoked`: deleted. Kept only as history; it never comes back.
+ */
+export type ChannelConnectionStatus =
+  'created' | 'connecting' | 'connected' | 'paused' | 'error' | 'disconnected' | 'revoked';
+
+/**
+ * The kinds of outside service the Integration Engine connects to (ADR-0044). Messaging is the
+ * only one with an adapter today; the others are named so that plans can list them
+ * (`integrations.categoriesAllowed`), not because anything implements them.
+ */
+export type IntegrationCategory = 'messaging' | 'email' | 'calendar' | 'crm' | 'storage';
+
+/**
+ * One official provider API, e.g. `meta_whatsapp_cloud` (Meta's WhatsApp Cloud API). Named by
+ * the provider registry; never an aggregator or intermediary.
+ */
+export type IntegrationProviderId = Brand<string, 'IntegrationProviderId'>;
+
+/**
+ * What a connection can do on its channel, copied from its provider's adapter when it is created
+ * (ADR-0044). The engine refuses anything a connection cannot do before a provider is called.
+ */
+export interface ChannelCapabilities {
+  readonly inboundText: boolean;
+  readonly inboundMedia: boolean;
+  readonly outboundText: boolean;
+  readonly outboundMedia: boolean;
+  /** Approved templates, which WhatsApp requires outside its service window. */
+  readonly outboundTemplates: boolean;
+  readonly deliveryStatus: boolean;
+  /** The longest text the provider accepts in one message. */
+  readonly maxOutboundTextLength: number;
+  /**
+   * How long after the contact's last message a free-form message may be sent, when the channel
+   * limits it (WhatsApp: 24 hours). Absent: no such window.
+   */
+  readonly serviceWindowMs?: number;
+}
 
 /**
  * The provider account a WhatsApp connection speaks from: public, non-sensitive identifiers only.
@@ -282,20 +329,34 @@ export type SecretRef = Brand<string, 'SecretRef'>;
 export type ChannelSecretKind = 'app_secret' | 'access_token' | 'verify_token';
 
 /**
- * An organization's connection to one channel account. It stores only non-sensitive
- * configuration and references to secrets that the server derives from the connection id; a
- * client never chooses which secret a connection uses.
+ * An organization's connection to one outside service through one official provider (CV-1,
+ * generalized in CV-6C, ADR-0044). It stores only non-sensitive configuration and references to
+ * secrets that the server derives from the connection id; a client never chooses which secret a
+ * connection uses, and no secret value is ever stored here.
  */
 export interface ChannelConnection {
   readonly id: ChannelConnectionId;
   readonly organizationId: OrganizationId;
+  readonly provider: IntegrationProviderId;
+  readonly category: IntegrationCategory;
   readonly channel: ChannelType;
   readonly status: ChannelConnectionStatus;
+  /** Why it is in `error` (a stable code, e.g. `channel_unauthorized`). Nothing else has one. */
+  readonly statusReason?: string;
   readonly displayName: string;
+  /** The provider account it speaks from: public identifiers only, checked by its adapter. */
   readonly account: WhatsAppAccount;
+  readonly capabilities: ChannelCapabilities;
   readonly secrets: Readonly<Record<ChannelSecretKind, SecretRef>>;
   readonly createdAt: IsoTimestamp;
   readonly createdBy: UserId;
   readonly updatedAt: IsoTimestamp;
+  /**
+   * Who made the last change: the person, or the person a send was made for when the provider
+   * refused the connection's credentials during it.
+   */
+  readonly updatedBy: UserId;
+  /** When the provider last confirmed its credentials. */
+  readonly lastValidatedAt?: IsoTimestamp;
   readonly revision: number;
 }

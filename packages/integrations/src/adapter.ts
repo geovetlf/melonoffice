@@ -1,5 +1,12 @@
 import type { DeliveryStatusUpdate, InboundMessage } from '@melonoffice/conversations';
-import type { ChannelConnection, ChannelType } from '@melonoffice/domain';
+import type {
+  ChannelCapabilities,
+  ChannelConnection,
+  ChannelType,
+  IntegrationCategory,
+  IntegrationProviderId,
+  WhatsAppAccount,
+} from '@melonoffice/domain';
 
 /**
  * What one channel delivered, normalized: no provider types reach the conversations domain.
@@ -22,21 +29,47 @@ export interface OutboundText {
   readonly idempotencyKey?: string;
 }
 
+/** The credentials a check or a send uses: read from the secret store at that moment, then dropped. */
+export interface ConnectionCredentials {
+  readonly accessToken: string;
+}
+
 /**
- * One channel, behind one interface (ADR-0033). The conversations domain knows the channel's
- * name, never its API. Adding Instagram, Messenger, Telegram, email or web chat is one more
- * adapter, not a change to the domain.
+ * What the provider answered about a connection's credentials. `invalid`: it refused them (the
+ * code is stable and safe to store). `unavailable`: no answer, so nothing is known.
+ */
+export type ConnectionCheck =
+  | { readonly status: 'valid' }
+  | { readonly status: 'invalid'; readonly code: string }
+  | { readonly status: 'unavailable'; readonly code: string };
+
+/**
+ * One provider of one channel, behind one interface (ADR-0033, generalized in ADR-0044). The
+ * conversations domain, the runtime, the tool gate, credits and the AI Gateway know a channel's
+ * name, never its API. Adding email, Instagram or a CRM is one more adapter in the provider
+ * registry, not a change to any of them.
  *
- * An adapter only translates and talks to the official API. It never decides who may send: the
- * tool gate does, before `send` is ever called (CV-2).
+ * An adapter only translates and talks to its provider's official API. It never decides who may
+ * send or whether a connection may be used: the tool gate and the Integration Engine do, before
+ * it is ever called. Only the Integration Engine calls an adapter.
+ *
+ * `receive` is `verifySignature` and then `normalizeInbound`, kept apart so that a forged
+ * delivery and a malformed one are answered differently.
  */
 export interface ChannelAdapter {
+  /** The official provider API this adapter speaks, e.g. `meta_whatsapp_cloud`. */
+  readonly provider: IntegrationProviderId;
+  readonly category: IntegrationCategory;
   readonly channel: ChannelType;
+  /** What its connections can do. Copied onto each connection when it is created. */
+  readonly capabilities: ChannelCapabilities;
   /**
-   * How long after the contact's last message a free-form reply may be sent, when the channel
-   * limits it (WhatsApp: 24 hours). Absent: no such window.
+   * The provider account a person configures, checked: only its known, non-sensitive fields.
+   * Throws `invalid_connection` on anything else (a token, a secret, an unknown field).
    */
-  readonly serviceWindowMs?: number;
+  checkAccount(value: unknown): WhatsAppAccount;
+  /** The account's id as the provider addresses deliveries to it (the tenant binding). */
+  accountIdOf(account: WhatsAppAccount): string;
   /**
    * Whether a delivery really comes from the provider: the provider's signature over the exact
    * raw body, with the connection's secret. Constant-time.
@@ -48,7 +81,12 @@ export interface ChannelAdapter {
    */
   handshake(query: URLSearchParams, verifyToken: string): string | undefined;
   /** The deliveries in a verified body. Throws `invalid_payload` on anything malformed. */
-  parse(rawBody: string): readonly NormalizedDelivery[];
+  normalizeInbound(rawBody: string): readonly NormalizedDelivery[];
+  /**
+   * The provider's request body for a text, checked. Pure: nothing is sent. Throws
+   * `invalid_outbound` on a text or address the provider would refuse.
+   */
+  normalizeOutbound(message: OutboundText): Readonly<Record<string, unknown>>;
   /**
    * Sends a text through the official API. Returns the provider's message id. Throws
    * `provider_rejected` (the provider refused: nothing was sent; the detail is a stable code) or
@@ -57,7 +95,20 @@ export interface ChannelAdapter {
    */
   send(
     connection: ChannelConnection,
-    accessToken: string,
+    credentials: ConnectionCredentials,
     message: OutboundText,
   ): Promise<{ readonly externalMessageId: string }>;
+  /**
+   * Asks the provider whether the connection's credentials open its account, before it is used.
+   * Reads only; never sends a message.
+   */
+  validateConnection(
+    connection: ChannelConnection,
+    credentials: ConnectionCredentials,
+  ): Promise<ConnectionCheck>;
+  /** The same question, asked of a connection already in use. */
+  healthCheck(
+    connection: ChannelConnection,
+    credentials: ConnectionCredentials,
+  ): Promise<ConnectionCheck>;
 }

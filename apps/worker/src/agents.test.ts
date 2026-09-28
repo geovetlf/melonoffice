@@ -72,11 +72,15 @@ import {
   createAgentTurnTrigger,
   createConversationAgentCheck,
   createHandoffSummaries,
+  createIntegrationEngine,
+  createIntegrationRegistry,
   createWhatsAppAdapter,
   handoffReasonOf,
   InMemoryChannelConnectionRepository,
   InMemorySecretStore,
   secretRefsFor,
+  WHATSAPP_CAPABILITIES,
+  WHATSAPP_PROVIDER,
   turnOf,
   withAgentTurns,
   type AgentTurnOutcome,
@@ -283,14 +287,18 @@ describe.each(STORES)('CV-6B conversation agent with storage in %s', (_storage, 
       const connection: ChannelConnection = {
         id,
         organizationId,
+        provider: WHATSAPP_PROVIDER,
+        category: 'messaging',
         channel: 'whatsapp',
-        status: 'active',
+        status: 'connected',
+        capabilities: WHATSAPP_CAPABILITIES,
         displayName: 'Ventas',
         account: { phoneNumberId: organizationId === orgA ? '106540352242922' : '206540352242922' },
         secrets: secretRefsFor('melonoffice-test', id),
         createdAt: AT,
         createdBy: organizationId === orgA ? ALICE : BOB,
         updatedAt: AT,
+        updatedBy: organizationId === orgA ? ALICE : BOB,
         revision: 1,
       };
       await stores.connections.create({ connection, events: [] });
@@ -355,9 +363,17 @@ describe.each(STORES)('CV-6B conversation agent with storage in %s', (_storage, 
         return secrets.read(ref);
       },
     };
+    // One Integration Engine (ADR-0044): the reply's sends in the worker, and the turn's check
+    // that the connection could answer at all, in the API.
+    const engine = createIntegrationEngine({
+      registry: createIntegrationRegistry([whatsapp]),
+      connections: stores.connections,
+      secrets: credentials,
+      now,
+    });
     const parts = createConversationAgentParts({
       stores,
-      channels: { connections: stores.connections, secrets: credentials, adapters: { whatsapp } },
+      channels: engine,
       now,
     });
     const dispatched: JobId[] = [];
@@ -412,6 +428,7 @@ describe.each(STORES)('CV-6B conversation agent with storage in %s', (_storage, 
       executions,
       tenancy: stores.tenancy,
       runtime,
+      channels: engine,
       audit,
       now,
     });
@@ -907,12 +924,12 @@ describe.each(STORES)('CV-6B conversation agent with storage in %s', (_storage, 
     await w.configure('autonomous');
     const { conversation } = await w.customer('Hola', { ageMs: 25 * 60 * 60 * 1000 });
     await w.drive();
-    expect(w.providerCalls).toHaveLength(1);
+    // The engine's availability check refuses before any model call or credit (CV-6C).
+    expect(w.outcomes).toEqual([{ status: 'escalated', code: 'outside_messaging_window' }]);
+    expect(w.providerCalls).toHaveLength(0);
+    expect(w.charges.size).toBe(0);
     expect(w.sends).toHaveLength(0);
-    expect((await w.agentMessages(conversation.id))[0]).toMatchObject({
-      status: 'failed',
-      failureCode: 'outside_messaging_window',
-    });
+    expect(await w.agentMessages(conversation.id)).toEqual([]);
     expect((await w.conversationOf(conversation.id)).handoff?.reason).toBe('channel_unavailable');
   });
 
@@ -1098,6 +1115,25 @@ describe.each(STORES)('CV-6B conversation agent with storage in %s', (_storage, 
   // -------------------------------------------------------------------------------------------
   // Closing CV-6B (Geovet, 2026-09-28): the cases the review listed that the numbers above did
   // not name on their own.
+
+  it('35. a connection that cannot send starts no turn: no model, no credits, a person answers (CV-6C)', async () => {
+    const w = await world();
+    await w.configure('autonomous');
+    await w.stores.connections.update(w.orgA, CONNECTION_A, (current) => ({
+      connection: { ...current, status: 'paused', revision: current.revision + 1 },
+      events: [],
+    }));
+    const { conversation } = await w.customer();
+    await w.drive();
+    expect(w.outcomes).toEqual([{ status: 'escalated', code: 'channel_not_available' }]);
+    expect(w.started()).toEqual([]);
+    expect(w.providerCalls).toHaveLength(0);
+    expect(w.charges.size).toBe(0);
+    expect(w.sends).toHaveLength(0);
+    const after = await w.conversationOf(conversation.id);
+    expect(after.control?.handledBy ?? 'human').toBe('human');
+    expect(after.handoff?.reason).toBe('channel_unavailable');
+  });
 
   it('28. a conversation already handed to a person starts no new turn', async () => {
     const w = await world();

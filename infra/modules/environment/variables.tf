@@ -46,6 +46,29 @@ variable "ai_assist" {
   default     = false
 }
 
+variable "conversation_agents" {
+  description = "Let conversation agents run (ADR-0043): the worker calls Vertex AI and the api hands agent turns to the execution jobs queue. Needs ai_assist. Only dev."
+  type        = bool
+  default     = false
+}
+
+variable "whatsapp_channel" {
+  description = "Turn on the WhatsApp channel (ADR-0033, ADR-0034): the api and worker read channel secrets from this project's Secret Manager. Needs the runtime. Only dev."
+  type        = bool
+  default     = false
+}
+
+variable "whatsapp_graph_api_version" {
+  description = "Meta Graph API version used to send WhatsApp messages, e.g. v23.0. Null leaves sending off (fails closed)."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.whatsapp_graph_api_version == null || can(regex("^v[0-9]{1,3}\\.[0-9]$", var.whatsapp_graph_api_version))
+    error_message = "whatsapp_graph_api_version must look like v23.0."
+  }
+}
+
 variable "max_instances" {
   description = "Maximum instances per service."
   type        = number

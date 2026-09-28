@@ -27,6 +27,7 @@ import {
   type EntitlementService,
   type PlanSource,
 } from './service.js';
+import type { EntitlementOverride } from './resolve.js';
 import { fixturePlan } from './test-fixtures.js';
 
 const ALICE = '11111111-1111-4111-8111-111111111111' as UserId;
@@ -285,5 +286,91 @@ describe('EntitlementService', () => {
     expect(await service.hasCapability(tenantA, 'gia.text')).toMatchObject({ enabled: false });
     plans.byOrganization.set(a.organization.id, FIXTURE);
     expect(await service.hasCapability(tenantA, 'gia.text')).toMatchObject({ enabled: true });
+  });
+});
+
+describe('audited overrides (ADR-0044)', () => {
+  const OVERRIDES = (byOrganization: Map<string, readonly EntitlementOverride[]>) => ({
+    overridesOf: async (organizationId: OrganizationId) => byOrganization.get(organizationId) ?? [],
+  });
+  const connections = (value: number, extra: Partial<EntitlementOverride> = {}) =>
+    ({
+      key: 'integrations.connectionsMax',
+      value,
+      reason: 'DEV test connection',
+      approvedBy: ALICE,
+      ...extra,
+    }) as EntitlementOverride;
+
+  it('apply to one organization only, after its plan, and never change the plan', async () => {
+    const w = await world();
+    const byOrganization = new Map([[w.a.organization.id as string, [connections(1)]]]);
+    const service = createEntitlementService({
+      organizations: w.store,
+      plans: w.plans,
+      catalog: CATALOG,
+      overrides: OVERRIDES(byOrganization),
+    });
+    expect(await service.getLimit(w.tenantA, 'integrations.connectionsMax')).toMatchObject({
+      value: 1,
+    });
+    // B is on another plan and has no override: nothing changes for it.
+    expect(await service.getLimit(w.tenantB, 'integrations.connectionsMax')).toMatchObject({
+      value: 0,
+    });
+    // The commercial plan itself is untouched: Emprendedor still leaves the limit unset (D-12).
+    const entrepreneur = findPlan(PLAN_CATALOG, 'entrepreneur' as PlanId, 1);
+    expect(entrepreneur?.entitlements['integrations.connectionsMax']).toBeUndefined();
+    expect(entrepreneur?.entitlements['integrations.categoriesAllowed']).toBeUndefined();
+  });
+
+  it('stop applying once expired', async () => {
+    const w = await world();
+    const service = createEntitlementService({
+      organizations: w.store,
+      plans: w.plans,
+      catalog: CATALOG,
+      overrides: OVERRIDES(
+        new Map([
+          [
+            w.a.organization.id as string,
+            [connections(1, { expiresAt: '2000-01-01T00:00:00.000Z' as never })],
+          ],
+        ]),
+      ),
+    });
+    expect(await service.getLimit(w.tenantA, 'integrations.connectionsMax')).toMatchObject({
+      value: 0,
+    });
+  });
+
+  it('deny everything when they cannot be read or are invalid, never skipping them', async () => {
+    const w = await world();
+    const broken = createEntitlementService({
+      organizations: w.store,
+      plans: w.plans,
+      catalog: CATALOG,
+      overrides: {
+        overridesOf: async () => {
+          throw new Error('unavailable');
+        },
+      },
+    });
+    expect(await broken.entitlementsOf(w.tenantA)).toEqual({
+      status: 'unavailable',
+      reason: 'overrides_unavailable',
+    });
+    const invalid = createEntitlementService({
+      organizations: w.store,
+      plans: w.plans,
+      catalog: CATALOG,
+      overrides: OVERRIDES(
+        new Map([[w.a.organization.id as string, [connections(1, { reason: ' ' })]]]),
+      ),
+    });
+    expect(await invalid.getLimit(w.tenantA, 'integrations.connectionsMax')).toEqual({
+      available: false,
+      reason: 'overrides_unavailable',
+    });
   });
 });

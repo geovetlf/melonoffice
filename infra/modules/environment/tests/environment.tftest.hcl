@@ -555,6 +555,158 @@ run "no_vertex_ai_without_apps_and_firestore" {
   }
 }
 
+# Conversation agents (ADR-0043): the worker calls the same model with the same smallest role, and
+# the api may hand turns to the same execution jobs queue. Nothing new is created.
+run "dev_runs_conversation_agents" {
+  command = apply
+
+  variables {
+    environment         = "dev"
+    deploy_apps         = true
+    deletion_protection = false
+    firestore_and_auth  = true
+    ai_assist           = true
+    conversation_agents = true
+  }
+
+  assert {
+    condition     = google_project_iam_member.worker_vertex_ai[0].role == google_project_iam_custom_role.vertex_ai_invoker[0].id && google_project_iam_member.worker_vertex_ai[0].member == "serviceAccount:${module.app["worker"].runtime_service_account}"
+    error_message = "The worker may call Vertex AI only through the predict-only custom role."
+  }
+
+  assert {
+    condition     = module.app["worker"].env["VERTEX_AI_PROJECT_ID"] == "test-project" && module.app["worker"].env["VERTEX_AI_LOCATION"] == "test-region"
+    error_message = "The worker must know where Vertex AI runs the model."
+  }
+
+  assert {
+    condition     = google_cloud_tasks_queue_iam_member.api_enqueuer[0].role == "roles/cloudtasks.enqueuer" && google_cloud_tasks_queue_iam_member.api_enqueuer[0].name == google_cloud_tasks_queue.execution_jobs[0].name && google_cloud_tasks_queue_iam_member.api_enqueuer[0].member == "serviceAccount:${module.app["api"].runtime_service_account}"
+    error_message = "The api may enqueue on the execution jobs queue only."
+  }
+
+  assert {
+    condition     = google_service_account_iam_member.api_acts_as_job_dispatch[0].service_account_id == google_service_account.job_dispatch[0].name && google_service_account_iam_member.api_acts_as_job_dispatch[0].role == "roles/iam.serviceAccountUser"
+    error_message = "The api may act as the job dispatch identity only."
+  }
+
+  assert {
+    condition     = module.app["api"].env["JOB_QUEUE"] == module.app["worker"].env["JOB_QUEUE"] && module.app["api"].env["WORKER_URL"] == module.app["worker"].env["WORKER_URL"] && module.app["api"].env["JOB_INVOKER_EMAIL"] == module.app["worker"].env["JOB_INVOKER_EMAIL"] && module.app["api"].env["JOB_LEASE_MS"] == module.app["worker"].env["JOB_LEASE_MS"]
+    error_message = "The api must hand jobs over exactly as the worker does: same queue, target, identity and lease."
+  }
+
+  assert {
+    condition     = length(google_cloud_tasks_queue.execution_jobs) == 1 && length(google_service_account.job_dispatch) == 1
+    error_message = "Agents reuse the one queue and dispatch identity; nothing parallel is created."
+  }
+
+  assert {
+    condition     = length(module.app["worker"].invoker_members) == 2 && contains(module.app["worker"].invoker_members, "serviceAccount:${google_service_account.job_dispatch[0].email}") && !contains(module.app["worker"].invoker_members, "allUsers")
+    error_message = "The worker stays private: only the deployer and the dispatch identity invoke it."
+  }
+
+  assert {
+    condition     = length(google_project_iam_member.api_channel_secrets) == 0 && !contains(keys(module.app["api"].env), "CHANNEL_SECRETS_PROJECT_ID")
+    error_message = "Agents alone do not turn the WhatsApp channel on."
+  }
+}
+
+run "no_conversation_agents_without_assisted_ai" {
+  command = plan
+
+  variables {
+    environment         = "dev"
+    deploy_apps         = true
+    deletion_protection = false
+    firestore_and_auth  = true
+    conversation_agents = true
+  }
+
+  assert {
+    condition     = length(google_project_iam_member.worker_vertex_ai) == 0 && length(google_cloud_tasks_queue_iam_member.api_enqueuer) == 0 && length(google_service_account_iam_member.api_acts_as_job_dispatch) == 0 && !contains(keys(module.app["api"].env), "JOB_QUEUE") && !contains(keys(module.app["worker"].env), "VERTEX_AI_PROJECT_ID")
+    error_message = "Without assisted AI, conversation_agents creates nothing."
+  }
+}
+
+# The WhatsApp channel (ADR-0033): the api and worker read channel secrets only, by name, and
+# Terraform never holds a secret value.
+run "dev_turns_the_whatsapp_channel_on" {
+  command = apply
+
+  variables {
+    environment                = "dev"
+    deploy_apps                = true
+    deletion_protection        = false
+    firestore_and_auth         = true
+    whatsapp_channel           = true
+    whatsapp_graph_api_version = "v23.0"
+  }
+
+  assert {
+    condition     = contains(module.services.services, "secretmanager.googleapis.com")
+    error_message = "The channel needs the Secret Manager API."
+  }
+
+  assert {
+    condition = alltrue([for m in [google_project_iam_member.api_channel_secrets[0], google_project_iam_member.worker_channel_secrets[0]] :
+      m.role == "roles/secretmanager.secretAccessor" && m.condition[0].expression == "resource.name.startsWith(\"projects/123456789012/secrets/channel-\")"
+    ])
+    error_message = "The api and worker may read channel secrets only."
+  }
+
+  assert {
+    condition     = google_project_iam_member.api_channel_secrets[0].member == "serviceAccount:${module.app["api"].runtime_service_account}" && google_project_iam_member.worker_channel_secrets[0].member == "serviceAccount:${module.app["worker"].runtime_service_account}"
+    error_message = "Only the api and worker runtime identities read channel secrets."
+  }
+
+  assert {
+    condition     = alltrue([for app in ["api", "worker"] : module.app[app].env["CHANNEL_SECRETS_PROJECT_ID"] == "test-project" && module.app[app].env["WHATSAPP_GRAPH_API_VERSION"] == "v23.0"])
+    error_message = "The api and worker must know where channel secrets live and the Graph API version."
+  }
+
+  assert {
+    condition     = !contains(keys(module.app["web"].env), "CHANNEL_SECRETS_PROJECT_ID")
+    error_message = "The web never learns about channel secrets."
+  }
+
+  assert {
+    condition     = length([for m in google_project_iam_member.planner : m if can(regex("secretmanager", m.role))]) == 0
+    error_message = "The channel must not widen the planner."
+  }
+}
+
+run "whatsapp_sending_stays_off_without_a_graph_version" {
+  command = plan
+
+  variables {
+    environment         = "dev"
+    deploy_apps         = true
+    deletion_protection = false
+    firestore_and_auth  = true
+    whatsapp_channel    = true
+  }
+
+  assert {
+    condition     = !contains(keys(module.app["worker"].env), "WHATSAPP_GRAPH_API_VERSION") && !contains(keys(module.app["api"].env), "WHATSAPP_GRAPH_API_VERSION")
+    error_message = "Without a Graph API version, nothing may send."
+  }
+}
+
+run "no_agents_or_channel_outside_dev_setups" {
+  command = plan
+
+  variables {
+    environment         = "staging"
+    ai_assist           = true
+    conversation_agents = true
+    whatsapp_channel    = true
+  }
+
+  assert {
+    condition     = length(google_project_iam_member.worker_vertex_ai) == 0 && length(google_project_iam_member.api_channel_secrets) == 0 && length(google_project_iam_member.worker_channel_secrets) == 0 && !contains(module.services.services, "secretmanager.googleapis.com")
+    error_message = "Without the apps and Firestore, agents and the channel create nothing."
+  }
+}
+
 run "rejects_unknown_environment" {
   command = plan
 

@@ -56,7 +56,12 @@ export interface ConversationRow {
 export interface MessageRow {
   readonly id: string;
   readonly direction: 'inbound' | 'outbound';
-  readonly sender: { readonly kind: string; readonly userId?: string };
+  readonly sender: {
+    readonly kind: string;
+    readonly userId?: string;
+    /** An agent's reply: the turn that wrote it (CV-6B). */
+    readonly executionId?: string;
+  };
   readonly type: string;
   readonly text: string | null;
   readonly status: string;
@@ -143,6 +148,16 @@ export type AssistResult =
       readonly requiresHuman: boolean;
     };
 
+/**
+ * An agent's reply waiting for a person's approval (supervised, CV-6C): the pending approval of
+ * the turn's `message_send`. The text is the queued message itself, shown in the conversation.
+ */
+export interface PendingReplyApproval {
+  readonly approvalId: string;
+  readonly executionId: string;
+  readonly expiresAt: string;
+}
+
 /** The agent that attends the organization's conversations (CV-6B). */
 export interface ConversationAgentView {
   readonly id: string;
@@ -172,6 +187,13 @@ export interface InboxClient {
    * is `null` for a reader who may not read specialists.
    */
   agent?(): Promise<ConversationAgentView | null>;
+  /**
+   * Agents' replies waiting for approval (CV-6C), from the organization's approvals. Absent: no
+   * approval is shown.
+   */
+  pendingReplies?(): Promise<readonly PendingReplyApproval[]>;
+  /** A person approves or rejects an agent's reply; only an approved one is sent. */
+  decideReply?(approvalId: string, decision: 'approve' | 'reject'): Promise<void>;
   /** A person takes control from AI (CV-6A): AI pauses and sends nothing more. */
   takeOver(id: string): Promise<ConversationRow>;
   /** A person hands the conversation back to AI, where the organization allows it. */
@@ -241,6 +263,23 @@ export function createInboxClient(request: ReplyRequest, organizationId: string)
       ).catch(() => undefined);
       const name = specialist?.displayName;
       return { id: agentId, name: typeof name === 'string' ? name : null };
+    },
+    async pendingReplies() {
+      const { approvals } = await call<{
+        approvals?: readonly {
+          readonly id: string;
+          readonly status: string;
+          readonly executionId: string;
+          readonly expiresAt: string;
+          readonly tool: { readonly id: string };
+        }[];
+      }>(`${base}/approvals`);
+      return (approvals ?? [])
+        .filter((a) => a.status === 'pending' && a.tool.id === 'message_send')
+        .map((a) => ({ approvalId: a.id, executionId: a.executionId, expiresAt: a.expiresAt }));
+    },
+    async decideReply(approvalId, decision) {
+      await post<unknown>(`${base}/approvals/${encodeURIComponent(approvalId)}/${decision}`, {});
     },
     takeOver: (id) => post<ConversationRow>(`${one(id)}/takeover`, {}),
     handBack: (id) => post<ConversationRow>(`${one(id)}/handback`, {}),

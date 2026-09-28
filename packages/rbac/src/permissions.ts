@@ -129,13 +129,31 @@ export const PERMISSIONS = {
     resource: 'channel',
     action: 'read',
     description:
-      "See the organization's channel connections: channel, account and status, never secrets (ADR-0033).",
+      "See the organization's connections to outside services: provider, account, status and capabilities, never secrets (ADR-0033, ADR-0044).",
   },
-  'channel.manage': {
+  'channel.create': {
     resource: 'channel',
-    action: 'manage',
+    action: 'create',
     description:
-      "Configure and turn off the organization's channel connections. Server side only: no client route yet (ADR-0033).",
+      "Add a connection to an outside service through a registered provider, within the plan's categories and connection limit. Only references to its secrets are stored (ADR-0044).",
+  },
+  'channel.update': {
+    resource: 'channel',
+    action: 'update',
+    description:
+      'Rename a connection, check its credentials with its provider (connect) and pause it. Never where its secrets are (ADR-0044).',
+  },
+  'channel.disconnect': {
+    resource: 'channel',
+    action: 'disconnect',
+    description:
+      'Turn a connection off: its webhooks are refused, nothing is sent and its plan slot is free. It can be connected again (ADR-0044).',
+  },
+  'channel.delete': {
+    resource: 'channel',
+    action: 'delete',
+    description:
+      'Delete a connection for good (revoked): it is kept only as history and never used again (ADR-0044).',
   },
   'credits.read': {
     resource: 'credits',

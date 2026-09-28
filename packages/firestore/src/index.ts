@@ -8,6 +8,7 @@ export * from './departments.js';
 export * from './executions.js';
 export * from './jobs.js';
 export * from './outputs.js';
+export * from './overrides.js';
 export * from './plans.js';
 export * from './specialists.js';
 export * from './tenancy.js';

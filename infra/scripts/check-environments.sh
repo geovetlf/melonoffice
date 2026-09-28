@@ -43,6 +43,9 @@ for env in staging prod; do
   if grep -Eq '^\s*firestore_and_auth\s*=\s*true' "infra/envs/${env}/main.tf"; then
     fail "${env} must not enable Firestore and Identity Platform yet (dev only)"
   fi
+  if grep -Eq '^\s*(conversation_agents|whatsapp_channel)\s*=\s*true' "infra/envs/${env}/main.tf"; then
+    fail "${env} must not run conversation agents or the WhatsApp channel yet (dev only)"
+  fi
 done
 
 # No real variable files are committed.

@@ -33,6 +33,7 @@
     "@melonoffice/credits": "workspace:*",
     "@melonoffice/departments": "workspace:*",
     "@melonoffice/domain": "workspace:*",
+    "@melonoffice/entitlements": "workspace:*",
     "@melonoffice/execution": "workspace:*",
     "@melonoffice/integrations": "workspace:*",
     "@melonoffice/jobs": "workspace:*",

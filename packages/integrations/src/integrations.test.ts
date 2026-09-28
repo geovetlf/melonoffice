@@ -16,7 +16,7 @@ import type {
   SubscriptionId,
   UserId,
 } from '@melonoffice/domain';
-import type { EntitlementService } from '@melonoffice/entitlements';
+import { defaultValues, type EntitlementService } from '@melonoffice/entitlements';
 import { createLogger } from '@melonoffice/observability';
 import { createAuthorizationService } from '@melonoffice/rbac';
 import {
@@ -32,7 +32,8 @@ import {
   InMemoryChannelConnectionRepository,
 } from './connections.js';
 import { IntegrationError } from './errors.js';
-import { createWebhookIngress } from './ingress.js';
+import { createIntegrationEngine } from './engine.js';
+import { createIntegrationRegistry } from './registry.js';
 import {
   createSecretManagerStore,
   InMemorySecretStore,
@@ -41,7 +42,12 @@ import {
   secretRefFor,
   secretRefsFor,
 } from './secrets.js';
-import { createWhatsAppAdapter, SIGNATURE_HEADER } from './whatsapp.js';
+import {
+  createWhatsAppAdapter,
+  SIGNATURE_HEADER,
+  WHATSAPP_CAPABILITIES,
+  WHATSAPP_PROVIDER,
+} from './whatsapp.js';
 
 const T0 = new Date('2026-09-27T12:00:00Z');
 const ALICE = '11111111-1111-4111-8111-111111111111' as UserId;
@@ -128,14 +134,18 @@ const connectionOf = (
 ): ChannelConnection => ({
   id: CONNECTION,
   organizationId,
+  provider: WHATSAPP_PROVIDER,
+  category: 'messaging',
   channel: 'whatsapp',
-  status: 'active',
+  status: 'connected',
   displayName: 'Ventas',
   account: { phoneNumberId: PHONE_NUMBER_ID },
+  capabilities: WHATSAPP_CAPABILITIES,
   secrets: secretRefsFor(PROJECT, CONNECTION),
   createdAt: T0.toISOString() as IsoTimestamp,
   createdBy: ALICE,
   updatedAt: T0.toISOString() as IsoTimestamp,
+  updatedBy: ALICE,
   revision: 1,
   ...overrides,
 });
@@ -172,22 +182,33 @@ async function world(limit: number | 'unlimited' | 'unavailable' = 1) {
   const conversations = new InMemoryConversationRepository(audit);
   const lines: string[] = [];
   const logger = createLogger({ service: 'test', sink: (line) => lines.push(line) });
-  const ingress = createWebhookIngress({
+  const registry = createIntegrationRegistry([createWhatsAppAdapter()]);
+  const ingress = createIntegrationEngine({
+    registry,
     connections,
     secrets,
-    adapters: [createWhatsAppAdapter()],
-    conversations: createConversationIngress({ repository: conversations, now: () => T0 }),
+    inbound: createConversationIngress({ repository: conversations, now: () => T0 }),
     logger,
   });
-  const entitlements: Pick<EntitlementService, 'getLimit'> = {
-    getLimit: async () =>
+  const entitlements: Pick<EntitlementService, 'entitlementsOf'> = {
+    entitlementsOf: async (tenant) =>
       limit === 'unavailable'
-        ? { available: false, reason: 'no_plan' as never }
-        : { available: true, limit: 'integrations.connectionsMax' as never, value: limit },
+        ? { status: 'unavailable', reason: 'plan_missing' }
+        : {
+            status: 'active',
+            organizationId: tenant.organizationId as OrganizationId,
+            plan: { id: 'test-plan', version: 1 },
+            values: {
+              ...defaultValues(),
+              'integrations.categoriesAllowed': ['messaging'],
+              'integrations.connectionsMax': limit,
+            },
+          },
   };
   let ids = 0;
   const service = createChannelConnectionService({
     repository: connections,
+    registry,
     organizations: tenancy,
     authorization: createAuthorizationService(),
     entitlements,
@@ -204,6 +225,7 @@ async function world(limit: number | 'unlimited' | 'unavailable' = 1) {
     secrets,
     conversations,
     ingress,
+    registry,
     service,
     entitlements,
     lines,
@@ -301,7 +323,7 @@ describe('WhatsApp adapter', () => {
   });
 
   it('normalizes text, media, location and delivery statuses', () => {
-    const [text] = adapter.parse(payload());
+    const [text] = adapter.normalizeInbound(payload());
     expect(text?.accountId).toBe(PHONE_NUMBER_ID);
     expect(text?.messages[0]).toMatchObject({
       channel: 'whatsapp',
@@ -311,7 +333,7 @@ describe('WhatsApp adapter', () => {
       text: 'Hola, quiero información',
       sentAt: new Date(1790510340 * 1000).toISOString(),
     });
-    const [media] = adapter.parse(
+    const [media] = adapter.normalizeInbound(
       payload({
         messages: [
           {
@@ -331,7 +353,7 @@ describe('WhatsApp adapter', () => {
       text: 'foto',
       attachments: [{ providerMediaId: '1234567890', mimeType: 'image/jpeg' }],
     });
-    const [statuses] = adapter.parse(
+    const [statuses] = adapter.normalizeInbound(
       payload({
         statuses: [
           { id: 'wamid.out', status: 'delivered', timestamp: '1790510350' },
@@ -354,7 +376,7 @@ describe('WhatsApp adapter', () => {
       object: 'whatsapp_business_account',
       entry: [{ id: '1', changes: [{ field: 'account_update', value: {} }] }],
     });
-    expect(adapter.parse(body)).toEqual([]);
+    expect(adapter.normalizeInbound(body)).toEqual([]);
   });
 
   it.each([
@@ -416,7 +438,7 @@ describe('WhatsApp adapter', () => {
       }),
     ],
   ])('refuses %s as invalid_payload', async (_case, body) => {
-    expect(await codeOf(() => adapter.parse(body))).toBe('invalid_payload');
+    expect(await codeOf(() => adapter.normalizeInbound(body))).toBe('invalid_payload');
   });
 
   describe('send', () => {
@@ -428,7 +450,7 @@ describe('WhatsApp adapter', () => {
         async () => new Response(JSON.stringify({ messages: [{ id: 'wamid.sent' }] })),
       );
       const sender = createWhatsAppAdapter({ graphApiVersion: 'v23.0', fetch: fetch as never });
-      expect(await sender.send(connection, ACCESS_TOKEN, message)).toEqual({
+      expect(await sender.send(connection, { accessToken: ACCESS_TOKEN }, message)).toEqual({
         externalMessageId: 'wamid.sent',
       });
       const [url, init] = fetch.mock.calls[0] as unknown as [string, RequestInit];
@@ -443,28 +465,32 @@ describe('WhatsApp adapter', () => {
     });
 
     it('never guesses an API version, and maps provider answers to stable codes', async () => {
-      expect(await codeOf(createWhatsAppAdapter().send(connection, ACCESS_TOKEN, message))).toBe(
-        'provider_unavailable',
-      );
+      expect(
+        await codeOf(
+          createWhatsAppAdapter().send(connection, { accessToken: ACCESS_TOKEN }, message),
+        ),
+      ).toBe('provider_unavailable');
       const answering = (status: number) =>
         createWhatsAppAdapter({
           graphApiVersion: 'v23.0',
           fetch: (async () => new Response('{}', { status })) as never,
         });
-      expect(await codeOf(answering(429).send(connection, ACCESS_TOKEN, message))).toBe(
-        'provider_unavailable',
-      );
-      expect(await codeOf(answering(503).send(connection, ACCESS_TOKEN, message))).toBe(
-        'provider_unavailable',
-      );
-      expect(await codeOf(answering(400).send(connection, ACCESS_TOKEN, message))).toBe(
-        'provider_rejected',
-      );
-      expect(await codeOf(answering(200).send(connection, ACCESS_TOKEN, message))).toBe(
-        'provider_unavailable',
-      );
       expect(
-        await codeOf(answering(200).send(connection, ACCESS_TOKEN, { to: 'x', text: 'Hola' })),
+        await codeOf(answering(429).send(connection, { accessToken: ACCESS_TOKEN }, message)),
+      ).toBe('provider_unavailable');
+      expect(
+        await codeOf(answering(503).send(connection, { accessToken: ACCESS_TOKEN }, message)),
+      ).toBe('provider_unavailable');
+      expect(
+        await codeOf(answering(400).send(connection, { accessToken: ACCESS_TOKEN }, message)),
+      ).toBe('provider_rejected');
+      expect(
+        await codeOf(answering(200).send(connection, { accessToken: ACCESS_TOKEN }, message)),
+      ).toBe('provider_unavailable');
+      expect(
+        await codeOf(
+          answering(200).send(connection, { accessToken: ACCESS_TOKEN }, { to: 'x', text: 'Hola' }),
+        ),
       ).toBe('invalid_outbound');
     });
 
@@ -473,7 +499,9 @@ describe('WhatsApp adapter', () => {
         graphApiVersion: 'v23.0',
         fetch: (async () => new Response('{}', { status: 401 })) as never,
       });
-      const error = await sender.send(connection, ACCESS_TOKEN, message).catch((e: unknown) => e);
+      const error = await sender
+        .send(connection, { accessToken: ACCESS_TOKEN }, message)
+        .catch((e: unknown) => e);
       expect(JSON.stringify(error)).not.toContain(ACCESS_TOKEN);
       expect(String(error)).not.toContain(ACCESS_TOKEN);
     });
@@ -530,9 +558,9 @@ describe('webhook ingress', () => {
     expect((await w.ingress.deliver('whatsapp', '../x', body, headers(body))).status).toBe(404);
   });
 
-  it('refuses a disabled connection', async () => {
+  it('refuses a disconnected connection', async () => {
     const w = await world();
-    w.connections.put(connectionOf(w.orgA, { status: 'disabled' }));
+    w.connections.put(connectionOf(w.orgA, { status: 'disconnected' }));
     const body = payload();
     const answer = await w.ingress.deliver('whatsapp', CONNECTION, body, headers(body));
     expect(answer).toEqual({ status: 403, body: { error: 'connection_disabled' } });
@@ -608,7 +636,7 @@ describe('webhook ingress', () => {
 
 describe('channel connection service', () => {
   const input = {
-    channel: 'whatsapp',
+    provider: WHATSAPP_PROVIDER,
     displayName: 'Ventas',
     account: { phoneNumberId: PHONE_NUMBER_ID, displayPhoneNumber: '+1 555 078 3881' },
   };
@@ -621,7 +649,15 @@ describe('channel connection service', () => {
     const [event] = w.audit.events().filter((e) => e.action === 'channel.connection_created');
     expect(event).toMatchObject({
       target: { type: 'channel_connection', id: created.id },
-      reason: 'whatsapp',
+      reference: `provider:${WHATSAPP_PROVIDER}`,
+      reason: 'created',
+    });
+    expect(created).toMatchObject({
+      status: 'created',
+      provider: WHATSAPP_PROVIDER,
+      category: 'messaging',
+      channel: 'whatsapp',
+      capabilities: WHATSAPP_CAPABILITIES,
     });
     expect(await w.service.list(w.tenantB)).toEqual([]);
   });
@@ -661,6 +697,7 @@ describe('channel connection service', () => {
     expect(await codeOf(w.service.create(runtime, input))).toBe('requires_user');
     const narrow = createChannelConnectionService({
       repository: w.connections,
+      registry: w.registry,
       organizations: w.tenancy,
       authorization: createAuthorizationService({ owner: ['channel.read'] } as never),
       entitlements: w.entitlements,
@@ -674,6 +711,7 @@ describe('channel connection service', () => {
     const w = await world();
     const unset = createChannelConnectionService({
       repository: w.connections,
+      registry: w.registry,
       organizations: w.tenancy,
       authorization: createAuthorizationService(),
       entitlements: w.entitlements,
@@ -681,15 +719,15 @@ describe('channel connection service', () => {
     expect(await codeOf(unset.create(w.tenantA, input))).toBe('secret_unavailable');
   });
 
-  it("disables a connection once, audited, and never another organization's", async () => {
+  it("disconnects a connection once, audited, and never another organization's", async () => {
     const w = await world();
     const created = await w.service.create(w.tenantA, input);
-    expect(await codeOf(w.service.disable(w.tenantB, created.id))).toBe('connection_not_found');
-    const disabled = await w.service.disable(w.tenantA, created.id);
-    expect(disabled).toMatchObject({ status: 'disabled', revision: 2, secrets: created.secrets });
-    expect(await codeOf(w.service.disable(w.tenantA, created.id))).toBe('connection_disabled');
-    expect(w.audit.events().filter((e) => e.action === 'channel.connection_disabled')).toHaveLength(
-      1,
-    );
+    expect(await codeOf(w.service.disconnect(w.tenantB, created.id))).toBe('connection_not_found');
+    const off = await w.service.disconnect(w.tenantA, created.id);
+    expect(off).toMatchObject({ status: 'disconnected', revision: 2, secrets: created.secrets });
+    expect(await codeOf(w.service.disconnect(w.tenantA, created.id))).toBe('invalid_transition');
+    expect(
+      w.audit.events().filter((e) => e.action === 'channel.connection_disconnected'),
+    ).toHaveLength(1);
   });
 });
