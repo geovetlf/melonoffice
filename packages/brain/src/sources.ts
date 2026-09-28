@@ -137,6 +137,38 @@ export function customerKnowledge(counts: {
 }
 
 /**
+ * Where the sales pipeline stands (C2, ADR-0054), `calculated` from the organization's
+ * opportunities: how many are open, won and lost, and the open value in the business's currency
+ * (only when the currency is known). Totals only: never an opportunity, a contact or an amount of
+ * one sale.
+ */
+export function pipelineKnowledge(summary: {
+  readonly currency: string | null;
+  readonly open: { readonly count: number; readonly valueMinor: number };
+  readonly won: number;
+  readonly lost: number;
+}): { readonly source: TrustedSource; readonly facts: readonly Record<string, unknown>[] } {
+  const count = (key: string, number: number) => ({
+    domain: 'commercial',
+    key,
+    value: { type: 'number', number },
+  });
+  const facts: Record<string, unknown>[] = [
+    count('open_opportunities_count', summary.open.count),
+    count('won_opportunities_count', summary.won),
+    count('lost_opportunities_count', summary.lost),
+  ];
+  if (summary.currency !== null) {
+    facts.push({
+      domain: 'commercial',
+      key: 'open_pipeline_value',
+      value: { type: 'money', amountMinor: summary.open.valueMinor, currency: summary.currency },
+    });
+  }
+  return { source: { type: 'system', id: 'melonoffice' }, facts };
+}
+
+/**
  * Facts an integration brings (a CRM, a store, a channel), through the Integration Engine's own
  * connection: Company Brain never talks to an outside system itself. The connection must be the
  * organization's and connected; a CRM's facts are `crm`, any other's `integration`, both

@@ -221,13 +221,48 @@ describe('AuditService and InMemoryAuditStore', () => {
     const store = new InMemoryAuditStore();
     const event = await createAuditService(store).record(signIn);
     const methods = Object.getOwnPropertyNames(Object.getPrototypeOf(store));
-    // `query` only reads (ADR-0049).
-    expect(methods.sort()).toEqual(['append', 'appendNow', 'constructor', 'events', 'query']);
+    // `query` and `history` only read (ADR-0049, ADR-0054).
+    expect(methods.sort()).toEqual([
+      'append',
+      'appendNow',
+      'constructor',
+      'events',
+      'history',
+      'query',
+    ]);
     expect(() => {
       (event as { result: string }).result = 'denied';
     }).toThrow();
     (store.events() as unknown[]).length = 0;
     expect(store.events()).toHaveLength(1);
+  });
+
+  it("reads one target's history, newest first, only in its organization (ADR-0054)", async () => {
+    const store = new InMemoryAuditStore();
+    const ORG_B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' as OrganizationId;
+    const about = (id: string, organizationId: OrganizationId, at: string, action: string) =>
+      buildAuditEvent(
+        {
+          action,
+          result: 'success',
+          actor: actorOf(alice),
+          source: 'api',
+          organizationId,
+          target: { type: 'opportunity', id },
+        } as AuditEventInput,
+        new Date(at),
+      );
+    const opened = about('opp_1', ORG_A, '2026-09-28T10:00:00Z', 'opportunity.created');
+    const won = about('opp_1', ORG_A, '2026-09-28T11:00:00Z', 'opportunity.won');
+    await store.append([
+      opened,
+      about('opp_2', ORG_A, '2026-09-28T10:30:00Z', 'opportunity.created'),
+      about('opp_1', ORG_B, '2026-09-28T10:45:00Z', 'opportunity.created'),
+      won,
+    ]);
+    const target = { type: 'opportunity', id: 'opp_1' };
+    expect((await store.history(ORG_A, target, 50)).map((e) => e.id)).toEqual([won.id, opened.id]);
+    expect((await store.history(ORG_A, target, 1)).map((e) => e.id)).toEqual([won.id]);
   });
 
   it('refuses to record the same event twice', async () => {

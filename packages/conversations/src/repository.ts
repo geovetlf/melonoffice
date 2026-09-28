@@ -10,7 +10,10 @@ import type {
   ConversationSettings,
   Message,
   MessageId,
+  Opportunity,
+  OpportunityId,
   OrganizationId,
+  Pipeline,
 } from '@melonoffice/domain';
 import { isAutonomyLevel } from './control.js';
 import { duplicateOf } from './customers.js';
@@ -70,6 +73,33 @@ export interface ConversationWrite {
 export interface ContactWrite {
   readonly contact: Contact;
   readonly events: readonly AuditEvent[];
+}
+
+/** The pipeline's next state and the audit events that record the change (C2). */
+export interface PipelineWrite {
+  readonly pipeline: Pipeline;
+  readonly events: readonly AuditEvent[];
+}
+
+/**
+ * An opportunity's next state (C2), with the contact's when the change moves it (a new
+ * opportunity makes it a lead, a won one a customer), the pipeline when this first opportunity
+ * stores it, and the audit events: written together or not at all.
+ */
+export interface OpportunityWrite {
+  readonly opportunity: Opportunity;
+  readonly contact?: Contact;
+  readonly pipeline?: Pipeline;
+  readonly events: readonly AuditEvent[];
+}
+
+/** What an opportunity change reads first, in the same transaction. */
+export interface OpportunityRead {
+  /** Absent when creating. */
+  readonly current?: Opportunity;
+  readonly contact: Contact;
+  /** Absent until the organization's pipeline is stored. */
+  readonly pipeline?: Pipeline;
 }
 
 /** The organization's new conversation settings and the audit events that record the change. */
@@ -140,6 +170,34 @@ export interface ConversationRepository {
     contactId: ContactId,
     limit: number,
   ): Promise<readonly ContactNote[]>;
+  /** The organization's pipeline (C2), once stored. */
+  findPipeline(organizationId: OrganizationId): Promise<Pipeline | undefined>;
+  /**
+   * Reads the pipeline and lets `change` decide the next one, in one transaction (C2). The next
+   * revision is exactly one ahead (1 for the first). A stage that is removed while an opportunity
+   * is at it is `stage_in_use`.
+   */
+  savePipeline(
+    organizationId: OrganizationId,
+    change: (current: Pipeline | undefined) => PipelineWrite,
+  ): Promise<Pipeline>;
+  findOpportunity(
+    organizationId: OrganizationId,
+    id: OpportunityId,
+  ): Promise<Opportunity | undefined>;
+  /** The organization's opportunities, newest change first. */
+  listOpportunities(organizationId: OrganizationId): Promise<readonly Opportunity[]>;
+  /**
+   * Creates (`{ contactId }`) or changes (`{ opportunityId }`) an opportunity (C2): reads it, its
+   * contact and the pipeline, and writes what `change` returns in one transaction. An absent or
+   * another organization's opportunity is `opportunity_not_found`; its contact,
+   * `contact_not_found`.
+   */
+  writeOpportunity(
+    organizationId: OrganizationId,
+    target: { readonly contactId: ContactId } | { readonly opportunityId: OpportunityId },
+    change: (read: OpportunityRead) => OpportunityWrite,
+  ): Promise<Opportunity>;
   /** A contact's channel identities. Empty for another organization's contact. */
   listIdentities(
     organizationId: OrganizationId,
@@ -239,6 +297,60 @@ export function checkNextContact(current: Contact, next: Contact): void {
   }
 }
 
+/** A pipeline's next state: the same organization, exactly one revision ahead (C2). */
+export function checkNextPipeline(
+  organizationId: OrganizationId,
+  current: Pipeline | undefined,
+  next: Pipeline,
+): void {
+  if (
+    next.organizationId !== organizationId ||
+    (current !== undefined && (next.id !== current.id || next.createdAt !== current.createdAt)) ||
+    next.revision !== (current?.revision ?? 0) + 1
+  ) {
+    throw new ConversationError('pipeline_concurrency_conflict');
+  }
+}
+
+/** An opportunity's next state: the same one (or a new one), exactly one revision ahead (C2). */
+export function checkNextOpportunity(
+  read: OpportunityRead,
+  next: OpportunityWrite,
+  organizationId: OrganizationId,
+): void {
+  const { current, contact } = read;
+  const o = next.opportunity;
+  if (
+    o.organizationId !== organizationId ||
+    o.contactId !== contact.id ||
+    (current !== undefined &&
+      (o.id !== current.id ||
+        o.createdAt !== current.createdAt ||
+        o.contactId !== current.contactId)) ||
+    o.revision !== (current?.revision ?? 0) + 1
+  ) {
+    throw new ConversationError('opportunity_concurrency_conflict');
+  }
+  if (next.contact !== undefined && next.contact !== contact)
+    checkNextContact(contact, next.contact);
+  if (next.pipeline !== undefined && next.pipeline !== read.pipeline) {
+    checkNextPipeline(organizationId, read.pipeline, next.pipeline);
+  }
+  const pipeline = next.pipeline ?? read.pipeline;
+  if (pipeline === undefined || o.pipelineId !== pipeline.id) {
+    throw new ConversationError('stage_not_found');
+  }
+  if (!pipeline.stages.some((s) => s.id === o.stageId))
+    throw new ConversationError('stage_not_found');
+}
+
+/** The stages a new pipeline drops that some opportunity is still at. */
+export function removedStages(current: Pipeline | undefined, next: Pipeline): readonly string[] {
+  if (current === undefined) return [];
+  const kept = new Set(next.stages.map((s) => s.id));
+  return current.stages.filter((s) => !kept.has(s.id)).map((s) => s.id);
+}
+
 /** For tests and local runs only. */
 export class InMemoryConversationRepository implements ConversationRepository {
   readonly #contacts = new Map<string, Contact>();
@@ -249,6 +361,8 @@ export class InMemoryConversationRepository implements ConversationRepository {
   readonly #refs = new Map<string, MessageId>();
   readonly #settings = new Map<string, ConversationSettings>();
   readonly #notes: ContactNote[] = [];
+  readonly #pipelines = new Map<string, Pipeline>();
+  readonly #opportunities = new Map<string, Opportunity>();
 
   constructor(private readonly audit?: InMemoryAuditStore) {}
 
@@ -412,6 +526,76 @@ export class InMemoryConversationRepository implements ConversationRepository {
       .filter((n) => n.organizationId === organizationId && n.contactId === contactId)
       .sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0))
       .slice(0, limit);
+  }
+
+  async findPipeline(organizationId: OrganizationId): Promise<Pipeline | undefined> {
+    return this.#pipelines.get(organizationId);
+  }
+
+  async savePipeline(
+    organizationId: OrganizationId,
+    change: (current: Pipeline | undefined) => PipelineWrite,
+  ): Promise<Pipeline> {
+    const current = this.#pipelines.get(organizationId);
+    const { pipeline, events } = change(current);
+    if (pipeline === current) return pipeline;
+    checkNextPipeline(organizationId, current, pipeline);
+    const removed = new Set(removedStages(current, pipeline));
+    const own = await this.listOpportunities(organizationId);
+    if (own.some((o) => o.pipelineId === pipeline.id && removed.has(o.stageId))) {
+      throw new ConversationError('stage_in_use');
+    }
+    this.audit?.append(events);
+    this.#pipelines.set(organizationId, pipeline);
+    return pipeline;
+  }
+
+  async findOpportunity(
+    organizationId: OrganizationId,
+    id: OpportunityId,
+  ): Promise<Opportunity | undefined> {
+    const o = this.#opportunities.get(id);
+    return o?.organizationId === organizationId ? o : undefined;
+  }
+
+  async listOpportunities(organizationId: OrganizationId): Promise<readonly Opportunity[]> {
+    return [...this.#opportunities.values()]
+      .filter((o) => o.organizationId === organizationId)
+      .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0));
+  }
+
+  async writeOpportunity(
+    organizationId: OrganizationId,
+    target: { readonly contactId: ContactId } | { readonly opportunityId: OpportunityId },
+    change: (read: OpportunityRead) => OpportunityWrite,
+  ): Promise<Opportunity> {
+    let current: Opportunity | undefined;
+    if ('opportunityId' in target) {
+      current = await this.findOpportunity(organizationId, target.opportunityId);
+      if (current === undefined) throw new ConversationError('opportunity_not_found');
+    }
+    const contactId = current?.contactId ?? (target as { contactId: ContactId }).contactId;
+    const contact = await this.findContact(organizationId, contactId);
+    if (contact === undefined || (current === undefined && contact.status === 'archived')) {
+      throw new ConversationError('contact_not_found');
+    }
+    const pipeline = this.#pipelines.get(organizationId);
+    const read = {
+      ...(current === undefined ? {} : { current }),
+      contact,
+      ...(pipeline === undefined ? {} : { pipeline }),
+    };
+    const next = change(read);
+    if (next.opportunity === current) return current;
+    checkNextOpportunity(read, next, organizationId);
+    if (current === undefined && this.#opportunities.has(next.opportunity.id)) {
+      throw new ConversationError('opportunity_concurrency_conflict');
+    }
+    this.audit?.append(next.events);
+    if (next.pipeline !== undefined) this.#pipelines.set(organizationId, next.pipeline);
+    if (next.contact !== undefined) this.#contacts.set(contact.id, next.contact);
+    this.#opportunities.set(next.opportunity.id, next.opportunity);
+    return next.opportunity;
   }
 
   async listIdentities(

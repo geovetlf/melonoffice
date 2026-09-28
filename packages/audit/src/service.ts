@@ -31,6 +31,22 @@ export interface AuditReader {
   query(query: AuditQuery): Promise<readonly AuditEvent[]>;
 }
 
+/** The most events one target's history reads (C2, ADR-0054). */
+export const MAX_HISTORY_EVENTS = 200;
+
+/**
+ * One record's history (C2, ADR-0054): the organization's events about one target, e.g. an
+ * opportunity, newest first. Equality filters only, so it needs no composite index; it reads at
+ * most `MAX_HISTORY_EVENTS`.
+ */
+export interface AuditHistoryReader {
+  history(
+    organizationId: OrganizationId,
+    target: { readonly type: string; readonly id: string },
+    limit: number,
+  ): Promise<readonly AuditEvent[]>;
+}
+
 /**
  * Records facts for any server-side caller: API, auth, tenancy, RBAC, MelonMotor, GIA, workflows
  * and jobs. It decides nothing: it neither grants nor refuses access.

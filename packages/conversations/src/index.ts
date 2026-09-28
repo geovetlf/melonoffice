@@ -8,4 +8,6 @@ export * from './assist-output.js';
 export * from './assist.js';
 export * from './control.js';
 export * from './customers.js';
+export * from './pipeline.js';
+export * from './opportunities.js';
 export * from './agent-turn.js';
