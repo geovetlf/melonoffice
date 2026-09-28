@@ -3,7 +3,7 @@ import { OfficeScene } from '../office/OfficeScene.js';
 import { readyList, useOfficeData } from '../office/OfficeData.js';
 import { GiaCard, GiaCommandBar, QuickActions } from './gia.js';
 import { CreditsUsage, RecentActivity, TodayTasks, UpcomingMeetings } from './panels.js';
-import { SAMPLE_ACTIVITY, SAMPLE_MEETINGS, SAMPLE_TASKS } from './sampleData.js';
+import { SAMPLE_MEETINGS, SAMPLE_TASKS } from './sampleData.js';
 
 /**
  * The Home (ADR-0040, level 1): the organization's office, seen whole, with GIA at hand and the
@@ -37,7 +37,7 @@ export function HomePage() {
       </div>
       <div className="home__panels">
         <TodayTasks tasks={SAMPLE_TASKS} sample />
-        <RecentActivity items={SAMPLE_ACTIVITY} sample />
+        <RecentActivity />
         <UpcomingMeetings meetings={SAMPLE_MEETINGS} sample />
         <CreditsUsage credits={credits} />
       </div>

@@ -196,30 +196,6 @@ export function AgentPlace({ slug, agentId }: { readonly slug: string; readonly 
   );
 }
 
-export function GiaPlace() {
-  return (
-    <article className="dept-office">
-      <OfficeBreadcrumb trail={[{ label: <FormattedMessage id="gia.name" /> }]} />
-      <header className="dept-office__header">
-        <span className="dept-office__icon" aria-hidden="true">
-          <Icon name="gia" size={26} />
-        </span>
-        <div>
-          <h1 className="dept-office__title">
-            <FormattedMessage id="gia.name" />
-          </h1>
-          <p className="dept-office__summary">
-            <FormattedMessage id="gia.role" />
-          </p>
-        </div>
-      </header>
-      <p className="page-notice">
-        <FormattedMessage id="gia.page.notYet" />
-      </p>
-    </article>
-  );
-}
-
 export function NotFound() {
   return (
     <div className="page-notice">

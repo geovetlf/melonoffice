@@ -1,3 +1,4 @@
+import { InMemoryKnowledgeRepository, type KnowledgeRepository } from '@melonoffice/brain';
 import { InMemoryApprovalRepository, type ApprovalRepository } from '@melonoffice/approvals';
 import {
   InMemoryDepartmentMigrationStore,
@@ -16,6 +17,7 @@ import {
   createAuditService,
   InMemoryAuditStore,
   type AuditEvent,
+  type AuditReader,
   type AuditService,
   type AuditStore,
 } from '@melonoffice/audit';
@@ -85,6 +87,7 @@ import {
   FirestoreSpecialistRepository,
   FirestoreDepartmentMigrationStore,
   FirestoreBusinessProfileRepository,
+  FirestoreKnowledgeRepository,
   SPECIALISTS,
   SPECIALIST_VERSIONS,
   toSpecialistDocument,
@@ -143,6 +146,9 @@ export interface Stores {
   readonly putStructure: (record: Department | Specialist | SpecialistVersion) => Promise<void>;
   /** Business profiles (ADR-0048). */
   readonly businessProfiles: BusinessProfileRepository;
+  /** The audit trail's read side (ADR-0049). */
+  readonly auditReader: AuditReader;
+  readonly knowledge: KnowledgeRepository;
   /** The department catalogue migration's storage (ADR-0047). */
   readonly departmentMigration: DepartmentMigrationStore;
   readonly credits: CreditStore;
@@ -214,6 +220,8 @@ function memoryStores(): Stores {
     departments,
     specialists,
     businessProfiles: new InMemoryBusinessProfileRepository(breakable),
+    auditReader: events,
+    knowledge: new InMemoryKnowledgeRepository(breakable),
     departmentMigration: new InMemoryDepartmentMigrationStore(
       departments,
       specialists,
@@ -272,6 +280,8 @@ function firestoreStores(): Stores {
     departments: new FirestoreDepartmentRepository(db),
     specialists: new FirestoreSpecialistRepository(db),
     businessProfiles: new FirestoreBusinessProfileRepository(db),
+    auditReader: new FirestoreAuditStore(db),
+    knowledge: new FirestoreKnowledgeRepository(db),
     departmentMigration: new FirestoreDepartmentMigrationStore(db),
     async putStructure(record) {
       if ('origin' in record) {
@@ -401,6 +411,8 @@ export function setupApp(
     executions: stores.executions,
     structure: { departments: stores.departments, specialists: stores.specialists },
     businessProfiles: stores.businessProfiles,
+    activity: stores.auditReader,
+    knowledge: stores.knowledge,
     approvals: stores.approvals,
     credits,
     plans: stores.plans,

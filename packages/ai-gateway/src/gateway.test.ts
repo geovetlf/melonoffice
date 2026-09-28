@@ -1038,6 +1038,8 @@ describe('AI gateway: assisted calls (ADR-0037)', () => {
     expect(w.calls).toHaveLength(0);
     expect(ASSIST_MODEL_POLICIES).toEqual({
       conversation: { id: 'conversation_assist', version: 1 },
+      company_knowledge: { id: 'company_knowledge_assist', version: 1 },
+      gia: { id: 'gia_assist', version: 1 },
     });
   });
 

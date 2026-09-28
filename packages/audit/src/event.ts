@@ -54,7 +54,12 @@ export interface AuditTarget {
     | 'channel_template'
     | 'message'
     | 'department'
-    | 'specialist';
+    | 'specialist'
+    | 'knowledge_item'
+    | 'knowledge_conflict'
+    | 'knowledge_document'
+    | 'company_knowledge'
+    | 'gia';
   readonly id: string;
 }
 

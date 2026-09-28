@@ -1,17 +1,19 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
+import { ActivityList, PeriodPicker, useActivity } from '../activity/ActivityFeed.js';
+import type { ActivityPeriod } from '../activity/activityClient.js';
 import { Icon, type IconName } from '../office/icons.js';
 import type { CreditsView } from '../office/officeClient.js';
 import type { Loadable } from '../office/OfficeData.js';
-import type { ActivityItem, MeetingItem, TaskItem } from './sampleData.js';
+import type { MeetingItem, TaskItem } from './sampleData.js';
 
 /**
  * The Home's panels under the office (ADR-0040). They complement the office; they are not the
- * page. Each says where its content comes from: credits are the organization's real balance; the
- * other panels show examples, marked as such, until their data exists.
+ * page. Each says where its content comes from: credits are the organization's real balance and
+ * activity is the audit trail's (ADR-0049); the other panels show examples, marked as such, until their data exists.
  */
 
-function Panel({
+export function Panel({
   titleId,
   icon,
   sample = false,
@@ -94,40 +96,19 @@ export function TodayTasks({
   );
 }
 
-export function RecentActivity({
-  items,
-  sample,
-}: {
-  readonly items: readonly ActivityItem[];
-  readonly sample: boolean;
-}) {
-  const intl = useIntl();
+/**
+ * The office's real activity (ADR-0049): what the audit trail recorded today, this week or this
+ * month, in the business's time zone. It is never an example.
+ */
+export function RecentActivity() {
+  const [period, setPeriod] = useState<ActivityPeriod>('today');
+  const state = useActivity(period);
   return (
-    <Panel titleId="home.activity.title" icon="reports" sample={sample}>
-      {items.length === 0 ? (
-        <p className="panel__empty">
-          <FormattedMessage id="home.activity.empty" />
-        </p>
-      ) : (
-        <ul className="panel__list">
-          {items.map((item) => (
-            <li key={item.id} className="activity">
-              <span className="activity__icon">
-                <Icon name={item.icon} size={16} />
-              </span>
-              <span className="task__body">
-                <span className="task__title">{intl.formatMessage({ id: item.textKey })}</span>
-                <span className="task__meta">
-                  {intl.formatRelativeTime(
-                    item.minutesAgo >= 60 ? -Math.round(item.minutesAgo / 60) : -item.minutesAgo,
-                    item.minutesAgo >= 60 ? 'hour' : 'minute',
-                  )}
-                </span>
-              </span>
-            </li>
-          ))}
-        </ul>
+    <Panel titleId="home.activity.title" icon="reports">
+      {state.status === 'hidden' ? null : (
+        <PeriodPicker period={period} onChange={setPeriod} labelId="activity.period.label" />
       )}
+      <ActivityList state={state} />
     </Panel>
   );
 }

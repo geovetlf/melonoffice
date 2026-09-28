@@ -11,6 +11,7 @@ import {
   type BusinessProfileInput,
   type BusinessType,
 } from './businessClient.js';
+import { currencyAfterCountryChange, startingValues } from './defaults.js';
 
 /**
  * The business profile (ADR-0048): Settings → Business, and the onboarding step a new owner sees
@@ -70,18 +71,21 @@ interface Form {
   notes: string;
 }
 
-const formOf = (profile: BusinessProfile | null): Form => ({
-  businessType: profile?.businessType ?? '',
-  country: profile?.country ?? '',
-  currency: profile?.currency ?? '',
-  timeZone: profile?.timeZone ?? deviceTimeZone(),
-  city: profile?.city ?? '',
-  employees: profile?.employees ?? '',
-  salesChannels: profile?.salesChannels ?? [],
-  offering: profile?.offering ?? '',
-  needs: profile?.needs ?? '',
-  notes: profile?.notes ?? '',
-});
+function formOf(profile: BusinessProfile | null): Form {
+  const start = startingValues(globalThis.navigator?.languages ?? [], deviceTimeZone());
+  return {
+    businessType: profile?.businessType ?? '',
+    country: profile?.country ?? start.country,
+    currency: profile?.currency ?? start.currency,
+    timeZone: profile?.timeZone ?? start.timeZone,
+    city: profile?.city ?? '',
+    employees: profile?.employees ?? '',
+    salesChannels: profile?.salesChannels ?? [],
+    offering: profile?.offering ?? '',
+    needs: profile?.needs ?? '',
+    notes: profile?.notes ?? '',
+  };
+}
 
 /** Only what the person filled in: an empty optional field is left out, never sent empty. */
 function inputOf(form: Form): BusinessProfileInput {
@@ -287,7 +291,13 @@ export function BusinessPage({
               name="country"
               required
               value={form.country}
-              onChange={(e) => set('country', e.target.value)}
+              onChange={(e) =>
+                setForm({
+                  ...form,
+                  country: e.target.value,
+                  currency: currencyAfterCountryChange(form.country, e.target.value, form.currency),
+                })
+              }
             >
               <option value="" disabled>
                 {intl.formatMessage({ id: 'business.choose' })}

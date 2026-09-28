@@ -43,6 +43,12 @@ export interface FakeBackend {
     organizationLimitReached?: boolean;
     /** Each organization's business profile (ADR-0048); absent means not described yet. */
     businessProfiles: Record<string, Record<string, unknown>>;
+    /** Each organization's activity items (ADR-0049), as the API returns them, for any period. */
+    activity: Record<string, Record<string, unknown>[]>;
+    /** The activity read fails (for example, before the index exists). */
+    activityFails?: boolean;
+    /** What GIA's chat answers (ADR-0052): the API's body, or an error code with its status. */
+    gia: Record<string, unknown> | { readonly error: string; readonly status: number };
   };
   apiCalls(): Call[];
 }
@@ -59,10 +65,12 @@ export function fakeBackend(): FakeBackend {
     registered: true,
     organizations: [{ id: 'org_1', name: 'Acme', role: 'owner' }],
     permissions: [
+      'activity.read',
       'billing.read',
       'contact.read',
       'credits.read',
       'department.read',
+      'gia.ask',
       'specialist.read',
       'conversation.manage',
       'conversation.read',
@@ -77,6 +85,17 @@ export function fakeBackend(): FakeBackend {
       org_other: [{ id: 'c9', name: 'Another company’s customer', priority: 'normal' }],
     },
     businessProfiles: {},
+    activity: {},
+    gia: {
+      answer: 'Hoy no hubo actividad en tu oficina.',
+      department: null,
+      screen: null,
+      proposedAction: null,
+      proposedFacts: 0,
+      context: { facts: 1, activity: true, missing: [] },
+      replayed: false,
+      generatedBy: 'ai',
+    },
   };
 
   function issue() {
@@ -249,6 +268,29 @@ export function fakeBackend(): FakeBackend {
             : { organizationId, status: 'present', balance, updatedAt: '2026-09-27T12:00:00Z' },
         )
       );
+    }
+    if (route === 'activity') {
+      const denied = needs('activity.read');
+      if (denied !== undefined) return denied;
+      if (options.activityFails === true) return json(500, { error: 'internal' });
+      const profile = options.businessProfiles[organizationId];
+      return json(200, {
+        period: new URLSearchParams(query).get('period'),
+        timeZone: profile?.timeZone ?? 'America/Lima',
+        timeZoneSource: profile === undefined ? 'default' : 'business',
+        from: '2026-09-28T05:00:00.000Z',
+        to: '2026-09-28T15:00:00.000Z',
+        items: options.activity[organizationId] ?? [],
+        hasMore: false,
+      });
+    }
+    if (route === 'gia/messages' && method === 'POST') {
+      const denied = needs('gia.ask');
+      if (denied !== undefined) return denied;
+      const answer = options.gia;
+      return 'error' in answer && typeof answer.status === 'number'
+        ? json(answer.status, { error: answer.error })
+        : json(200, answer);
     }
     if (route === 'business-profile') {
       const view = () => {

@@ -3,6 +3,7 @@ import { openBilling } from '@melonoffice/billing';
 import { DEFAULT_DEPARTMENT_CATALOGUE, provisionDepartments } from '@melonoffice/departments';
 import { openWallet } from '@melonoffice/credits';
 import { DEFAULT_PLAN } from '@melonoffice/entitlements';
+import type { AuthenticatedContext } from '@melonoffice/auth';
 import type { AuthorizationService } from '@melonoffice/rbac';
 import {
   createOrganization,
@@ -36,6 +37,11 @@ export function registerTenancyRoutes(
   store: TenancyStore | undefined,
   authorization: AuthorizationService,
   audit: AuditService,
+  /**
+   * Runs once an organization exists, e.g. to start its Company Brain with its name (ADR-0051).
+   * Best effort: the organization is created whatever it does, and a failure is only logged.
+   */
+  afterCreate?: (auth: AuthenticatedContext, organization: Organization) => Promise<void>,
 ): void {
   if (store === undefined) {
     app.all('/v1/organizations', (c) => c.json({ error: 'tenancy_not_configured' }, 503));
@@ -130,6 +136,15 @@ export function registerTenancyRoutes(
         ...requestFields(c),
       });
       throw error;
+    }
+    if (afterCreate !== undefined) {
+      try {
+        await afterCreate(auth, result.organization);
+      } catch {
+        c.get('logger').warn('after organization create failed', {
+          organizationId: result.organization.id,
+        });
+      }
     }
     return c.json(toView(result.organization, result.membership), 201);
   });

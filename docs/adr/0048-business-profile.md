@@ -1,6 +1,6 @@
 # ADR-0048: The business profile
 
-- Status: Proposed (B2, pending Geovet's review)
+- Status: Accepted (B2, PR #52, merged by Geovet on 2026-09-28); amended by section 8 (Peru first, es-PE formats, Company Context)
 - Date: 2026-09-28
 - Builds on: ADR-0018 (tenancy), ADR-0019 (RBAC), ADR-0020 (audit), ADR-0047 (six departments), the Master Functional Map v1 and Geovet's decisions of 2026-09-28 (decision 3)
 - Does not change: departments, specialists, executions, conversations, credits, billing, the tool gate, the AI Gateway, GIA or infrastructure.
@@ -84,7 +84,22 @@ The catalogue is data in `packages/business/src/catalogue.ts`: restaurant, store
 
 - The order for the kinds without their own.
 - Any change the profile makes beyond the order: that belongs to later phases, one department at a time.
-- es-PE, or other regional wording. There are no strings that differ yet, so it waits until one does.
+- Peruvian wording (es-PE words). Formats already follow the country (section 8); a separate es-PE catalogue waits until a string differs.
+
+### 8. Peru first, and the profile as Company Context (amendment, 2026-09-28)
+
+Geovet asked that Peru be the starting market: country Peru, soles (PEN), America/Lima and Peruvian Spanish.
+
+- **Starting values.** The form proposes values; the owner can change all of them, and the API checks each one again.
+  - Country: the one the browser's language names (`es-PE` gives Peru), when the form knows its currency. Otherwise Peru.
+  - Currency: the country's official currency, from a small table of Latin American countries, Spain and the United States (`apps/web/src/business/defaults.ts`). A country outside the table gets no suggestion.
+  - Time zone: the device's own. Otherwise America/Lima.
+  - Changing the country changes the currency, unless the owner had already picked a currency of their own.
+- **Language.** When the browser asks for a language MelonOffice does not speak, the app now starts in Spanish instead of English. English stays the source catalogue.
+- **Formats.** Once the profile exists, dates, numbers and money follow its country: a Peruvian business in Spanish formats as `es-PE`. The words stay the `es` catalogue, and there is still no string that differs for Peru.
+- **Company Context.** The profile is the first real source of the Company Context (ADR-0029). There is still no Context Engine.
+  - `companyContextSnapshotOf` gives the versioned reference an execution records: id `business_profile:{organizationId}`, version = the profile's revision, sections identity, industry, markets and preferences. Products and priorities are added only when the owner wrote them. The reference points at the profile and never copies it.
+  - `businessFactsOf` gives the stored facts, for GIA to answer with. Only what the profile holds and the organization's name; nothing is inferred.
 
 ## Consequences
 

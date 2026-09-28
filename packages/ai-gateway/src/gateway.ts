@@ -68,6 +68,10 @@ export interface AIGateway {
  */
 export const ASSIST_PERMISSIONS: Readonly<Record<AssistSubjectType, string>> = Object.freeze({
   conversation: 'conversation.assist',
+  // Extracting Company Brain facts from what a person gives (ADR-0051).
+  company_knowledge: 'knowledge.capture',
+  // A person asking GIA, about their own organization (ADR-0052).
+  gia: 'gia.ask',
 });
 
 /**
@@ -80,6 +84,8 @@ export const ASSIST_MODEL_POLICIES: Readonly<
   Record<AssistSubjectType, { readonly id: string; readonly version: number }>
 > = Object.freeze({
   conversation: Object.freeze({ id: 'conversation_assist', version: 1 }),
+  company_knowledge: Object.freeze({ id: 'company_knowledge_assist', version: 1 }),
+  gia: Object.freeze({ id: 'gia_assist', version: 1 }),
 });
 
 export interface AIGatewayOptions {

@@ -438,13 +438,8 @@ a.sidebar__item:hover {
 }
 
 .gia-card__mark {
-  display: grid;
-  place-items: center;
-  width: 44px;
-  height: 44px;
+  flex: none;
   border-radius: 50%;
-  background: radial-gradient(circle at 35% 30%, #ffe3a8, #f5b942 55%, #f2784b);
-  color: #241915;
 }
 
 .gia-card__text {
@@ -865,6 +860,42 @@ a.sidebar__item:hover {
   border-radius: var(--mo-radius-sm);
   background: var(--office-accent-soft);
   color: var(--office-accent);
+}
+
+/* Today / this week / this month, for the real activity (ADR-0049). */
+.period-picker {
+  display: flex;
+  gap: var(--mo-space-1);
+  margin-bottom: var(--mo-space-3);
+}
+
+.period-picker__option {
+  min-height: 32px;
+  padding: 0 var(--mo-space-3);
+  border: 1px solid var(--office-line);
+  border-radius: var(--mo-radius-pill);
+  background: transparent;
+  color: var(--office-muted);
+  font: inherit;
+  font-size: var(--mo-font-size-xs);
+  cursor: pointer;
+}
+
+.period-picker__option[aria-pressed='true'] {
+  border-color: var(--office-accent);
+  background: var(--office-accent-soft);
+  color: var(--office-accent);
+}
+
+.activity__link {
+  display: flex;
+  min-width: 0;
+  color: inherit;
+  text-decoration: none;
+}
+
+.activity__link:hover .task__title {
+  text-decoration: underline;
 }
 
 .timeline__item {
@@ -1626,5 +1657,199 @@ a.sidebar__item:hover {
 
   50% {
     transform: scaleY(1.012);
+  }
+}
+
+/* GIA's Workplace (ADR-0050). */
+.gia-avatar {
+  display: block;
+  flex: none;
+}
+
+.gia-workplace__header .gia-avatar {
+  border-radius: 50%;
+  box-shadow: 0 0 0 3px rgb(245 185 66 / 0.35);
+}
+
+.gia-desk {
+  position: relative;
+  margin: 0;
+  padding: var(--mo-space-4);
+  border: 1px solid var(--office-line);
+  border-radius: 20px;
+  background: linear-gradient(180deg, rgb(245 185 66 / 0.1), var(--office-panel));
+}
+
+.gia-desk__art {
+  display: block;
+  width: 100%;
+  max-height: 16rem;
+}
+
+.gia-desk__gia {
+  position: absolute;
+  bottom: 34%;
+  left: 38%;
+  width: 22%;
+  max-width: 112px;
+}
+
+.gia-desk__avatar {
+  width: 100%;
+  height: auto;
+}
+
+.gia-desk__caption {
+  display: flex;
+  align-items: center;
+  gap: var(--mo-space-2);
+  margin-top: var(--mo-space-2);
+  color: var(--office-muted);
+  font-size: var(--mo-font-size-xs);
+}
+
+.gia-state {
+  display: flex;
+  align-items: center;
+  gap: var(--mo-space-2);
+  margin: 0 0 var(--mo-space-2);
+}
+
+.gia-state__dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--office-highlight);
+}
+
+.gia-workplace__subtitle {
+  margin: var(--mo-space-4) 0 var(--mo-space-2);
+  font-size: var(--mo-font-size-sm);
+}
+
+.gia-limits {
+  display: grid;
+  gap: var(--mo-space-1);
+  margin: 0;
+  padding-left: var(--mo-space-4);
+  color: var(--office-muted);
+  font-size: var(--mo-font-size-sm);
+}
+
+.gia-state--ready .gia-state__dot {
+  background: var(--office-accent);
+  box-shadow: 0 0 0 4px var(--office-accent-soft);
+}
+
+/* GIA's chat (ADR-0052). */
+.gia-workplace__chat {
+  margin-bottom: var(--mo-space-4);
+}
+
+.gia-chat {
+  display: grid;
+  gap: var(--mo-space-3);
+}
+
+.gia-chat__log {
+  display: grid;
+  gap: var(--mo-space-3);
+  max-height: 28rem;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.gia-chat__turn {
+  max-width: 44rem;
+  padding: var(--mo-space-3);
+  border: 1px solid var(--office-line);
+  border-radius: 12px;
+  background: var(--office-panel);
+}
+
+.gia-chat__turn--person {
+  justify-self: end;
+  background: var(--office-accent-soft);
+}
+
+.gia-chat__who {
+  display: flex;
+  align-items: center;
+  gap: var(--mo-space-2);
+  margin-bottom: var(--mo-space-1);
+  color: var(--office-muted);
+  font-size: var(--mo-font-size-xs);
+  font-weight: 600;
+}
+
+.gia-chat__text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.gia-chat__meta,
+.gia-chat__generated,
+.gia-chat__note {
+  margin: var(--mo-space-2) 0 0;
+  color: var(--office-muted);
+  font-size: var(--mo-font-size-xs);
+}
+
+.gia-chat__go {
+  display: inline-block;
+  margin-top: var(--mo-space-2);
+  color: var(--office-focus);
+  font-size: var(--mo-font-size-sm);
+}
+
+.gia-chat__error {
+  margin: 0;
+  color: var(--office-focus);
+}
+
+.gia-chat__composer {
+  display: flex;
+  gap: var(--mo-space-2);
+  align-items: flex-end;
+}
+
+.gia-chat__input {
+  flex: 1;
+  min-width: 0;
+  padding: var(--mo-space-2) var(--mo-space-3);
+  border: 1px solid var(--office-line);
+  border-radius: 10px;
+  background: var(--office-panel-strong);
+  color: var(--office-text);
+  font: inherit;
+  resize: vertical;
+}
+
+.gia-chat__input:focus-visible {
+  outline: 2px solid var(--office-focus);
+  outline-offset: 2px;
+}
+
+/* GIA blinks now and then, only when motion is welcome. */
+@media (prefers-reduced-motion: no-preference) {
+  .gia-art__eyes {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: gia-blink 6s infinite;
+  }
+}
+
+@keyframes gia-blink {
+  0%,
+  96%,
+  100% {
+    transform: scaleY(1);
+  }
+
+  98% {
+    transform: scaleY(0.1);
   }
 }

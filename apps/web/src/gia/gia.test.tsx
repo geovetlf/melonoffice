@@ -1,0 +1,172 @@
+import { I18nProvider } from '@melonoffice/i18n';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { App } from '../App.js';
+import { createServices } from '../identity/services.js';
+import { REFRESH_KEY } from '../identity/session.js';
+import { API, KEY, fakeBackend, memoryStore } from '../identity/testing.js';
+
+afterEach(cleanup);
+beforeEach(() => globalThis.history.replaceState(null, '', '/'));
+
+function open(at: string, configure?: (backend: ReturnType<typeof fakeBackend>) => void) {
+  globalThis.history.replaceState(null, '', at);
+  const backend = fakeBackend();
+  const store = memoryStore();
+  backend.options.validRefresh.add('refresh-kept');
+  store.setItem(REFRESH_KEY, 'refresh-kept');
+  configure?.(backend);
+  const services = createServices({ apiUrl: API, identityApiKey: KEY }, backend.fetch, store);
+  render(
+    <I18nProvider locale="en">
+      <App identity={services} locale="en" onLocaleChange={vi.fn()} />
+    </I18nProvider>,
+  );
+  return backend;
+}
+
+describe("GIA's Workplace (ADR-0050)", () => {
+  it('is entered from the Home through GIA, with her face', async () => {
+    open('/');
+    await screen.findByRole('heading', { level: 1 });
+    const card = document.querySelector<HTMLAnchorElement>('a.gia-card');
+    if (card === null) throw new Error('no GIA card');
+    expect(card.querySelector('svg.gia-avatar')).toBeTruthy();
+    fireEvent.click(card);
+    const title = await screen.findByRole('heading', { level: 1, name: 'GIA' });
+    expect(globalThis.location.pathname).toBe('/gia');
+    // Keyboard users land on the page's title.
+    expect(document.activeElement).toBe(title);
+  });
+
+  it('shows her desk, state, capabilities and limits, without simulating anything', async () => {
+    open('/gia');
+    await screen.findByRole('heading', { level: 1, name: 'GIA' });
+    expect(screen.getByRole('figure', { name: "GIA's desk" })).toBeTruthy();
+    expect(screen.getByText('Available: ask GIA about your business')).toBeTruthy();
+    const capabilities = screen.getByRole('region', { name: 'What GIA does' });
+    expect(within(capabilities).queryByText('Soon')).toBeNull();
+    expect(within(capabilities).getByText('Send messages to customers')).toBeTruthy();
+    expect(
+      within(capabilities).getByText(
+        'What you tell GIA about your business is kept only as a proposal until you confirm it.',
+      ),
+    ).toBeTruthy();
+    expect(screen.getByRole('region', { name: 'Actions' }).textContent).toContain(
+      'Nothing runs without your approval.',
+    );
+  });
+
+  it("shows only GIA's own history, or says there is none", async () => {
+    open('/gia', (backend) => {
+      backend.options.activity.org_1 = [
+        {
+          id: 'e1',
+          at: new Date().toISOString(),
+          action: 'organization.profile_updated',
+          result: 'success',
+          actor: 'you',
+        },
+      ];
+    });
+    const history = await screen.findByRole('region', { name: "GIA's history" });
+    expect(
+      await within(history).findByText('GIA has not done anything yet in this period.'),
+    ).toBeTruthy();
+    expect(within(history).queryByText('The business profile was updated')).toBeNull();
+    cleanup();
+    open('/gia', (backend) => {
+      backend.options.activity.org_1 = [
+        {
+          id: 'e2',
+          at: new Date().toISOString(),
+          action: 'conversation.ai_summary_requested',
+          result: 'success',
+          actor: 'gia',
+          link: { kind: 'conversation', id: 'c1' },
+        },
+      ];
+    });
+    const again = await screen.findByRole('region', { name: "GIA's history" });
+    expect(
+      await within(again).findByRole('link', { name: /A conversation summary was requested/ }),
+    ).toBeTruthy();
+  });
+
+  it('answers in her chat, marked as AI, with where to go and what to confirm (ADR-0052)', async () => {
+    const backend = open('/gia', (b) => {
+      b.options.gia = {
+        answer: 'Tienes un mensaje nuevo de un cliente.',
+        department: 'sales',
+        screen: 'conversations',
+        proposedAction: 'Responder al cliente',
+        proposedFacts: 1,
+        context: { facts: 2, activity: true, missing: [] },
+        replayed: false,
+        generatedBy: 'ai',
+      };
+    });
+    const chat = await screen.findByRole('region', { name: 'Talk to GIA' });
+    expect(
+      within(chat).getByText('Each message to GIA uses 1 credit.', { exact: false }),
+    ).toBeTruthy();
+    fireEvent.change(within(chat).getByRole('textbox', { name: 'Your message to GIA' }), {
+      target: { value: '¿Algo nuevo?' },
+    });
+    fireEvent.click(within(chat).getByRole('button', { name: 'Send' }));
+    expect(await within(chat).findByText('Tienes un mensaje nuevo de un cliente.')).toBeTruthy();
+    expect(within(chat).getByText('This is for Commercial.')).toBeTruthy();
+    expect(within(chat).getByText('Suggestion (you do it): Responder al cliente')).toBeTruthy();
+    expect(
+      within(chat).getByText('GIA noted 1 fact about your business for you to confirm.'),
+    ).toBeTruthy();
+    expect(within(chat).getByText('Answer generated by AI. Check it before you act.')).toBeTruthy();
+    const go = within(chat).getByRole('link', { name: 'Go to Communications' });
+    expect(go.getAttribute('href')).toBe('/conversations');
+
+    // The next message carries the chat so far; nothing else is sent.
+    fireEvent.change(within(chat).getByRole('textbox', { name: 'Your message to GIA' }), {
+      target: { value: '¿Y ayer?' },
+    });
+    fireEvent.click(within(chat).getByRole('button', { name: 'Send' }));
+    await within(chat).findAllByText('Tienes un mensaje nuevo de un cliente.');
+    const sent = backend
+      .apiCalls()
+      .filter((c) => c.url.endsWith('/gia/messages'))
+      .map((c) => JSON.parse(c.body ?? '{}') as { history: unknown[]; requestKey: string });
+    expect(sent[1]?.history).toEqual([
+      { role: 'person', text: '¿Algo nuevo?' },
+      { role: 'gia', text: 'Tienes un mensaje nuevo de un cliente.' },
+    ]);
+    expect(sent[0]?.requestKey).not.toBe(sent[1]?.requestKey);
+  });
+
+  it('says plainly when there are no credits, or the role cannot talk to her', async () => {
+    open('/gia', (b) => {
+      b.options.gia = { error: 'ai_credits_insufficient', status: 409 };
+    });
+    const chat = await screen.findByRole('region', { name: 'Talk to GIA' });
+    fireEvent.change(within(chat).getByRole('textbox', { name: 'Your message to GIA' }), {
+      target: { value: 'Hola' },
+    });
+    fireEvent.click(within(chat).getByRole('button', { name: 'Send' }));
+    expect((await within(chat).findByRole('alert')).textContent).toBe(
+      'Your organization has no credits left for GIA.',
+    );
+    cleanup();
+    open('/gia', (b) => {
+      b.options.permissions = b.options.permissions.filter((p) => p !== 'gia.ask');
+    });
+    const none = await screen.findByRole('region', { name: 'Talk to GIA' });
+    expect(within(none).queryByRole('textbox')).toBeNull();
+    expect(within(none).getByText('Your role cannot talk to GIA.')).toBeTruthy();
+  });
+
+  it('keeps the avatar decorative where her name is written, and named where it is alone', async () => {
+    open('/gia');
+    await screen.findByRole('heading', { level: 1, name: 'GIA' });
+    for (const svg of document.querySelectorAll('.gia-workplace svg.gia-avatar')) {
+      expect(svg.getAttribute('aria-hidden')).toBe('true');
+    }
+  });
+});

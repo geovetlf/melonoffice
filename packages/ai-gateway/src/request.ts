@@ -139,7 +139,7 @@ export type AIModelRequest = Omit<AIRequest, 'executionId' | 'nodeId' | 'special
  * What a person may ask the AI Gateway about directly (ADR-0037). Each type names the record the
  * assistance is about, and the gateway knows which permission it needs.
  */
-export const ASSIST_SUBJECT_TYPES = ['conversation'] as const;
+export const ASSIST_SUBJECT_TYPES = ['conversation', 'company_knowledge', 'gia'] as const;
 export type AssistSubjectType = (typeof ASSIST_SUBJECT_TYPES)[number];
 
 /**

@@ -1,3 +1,5 @@
+import type { OrganizationId } from '@melonoffice/domain';
+import type { AuditAction } from './actions.js';
 import { buildAuditEvent, type AuditEvent, type AuditEventInput } from './event.js';
 
 /**
@@ -6,6 +8,27 @@ import { buildAuditEvent, type AuditEvent, type AuditEventInput } from './event.
  */
 export interface AuditStore {
   append(events: readonly AuditEvent[]): Promise<void>;
+}
+
+/**
+ * Reads recorded events back, for the activity view (ADR-0049). One organization at a time, only
+ * the listed actions, newest first. It is the only read of the audit trail; nothing edits it.
+ */
+export interface AuditQuery {
+  readonly organizationId: OrganizationId;
+  /** At most 30: Firestore's limit for one `in` filter. */
+  readonly actions: readonly AuditAction[];
+  /** Inclusive. */
+  readonly from: Date;
+  /** Exclusive. */
+  readonly to: Date;
+  readonly limit: number;
+}
+
+export const MAX_QUERY_ACTIONS = 30;
+
+export interface AuditReader {
+  query(query: AuditQuery): Promise<readonly AuditEvent[]>;
 }
 
 /**

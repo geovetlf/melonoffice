@@ -5,6 +5,7 @@ import {
   type BusinessProfileRead,
   type BusinessProfileService,
 } from '@melonoffice/business';
+import { profileKnowledge, type CompanyBrainService } from '@melonoffice/brain';
 import type { Hono } from 'hono';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import type { AuthEnv } from './auth.js';
@@ -27,9 +28,13 @@ const STATUS: Record<BusinessErrorCode, ContentfulStatusCode> = {
  */
 export function registerBusinessRoutes(
   app: Hono<AuthEnv>,
-  dependencies: AuthorizationDependencies & { readonly profiles: BusinessProfileService },
+  dependencies: AuthorizationDependencies & {
+    readonly profiles: BusinessProfileService;
+    /** Company Brain (ADR-0051): a saved profile feeds it, as the owner's confirmed facts. */
+    readonly brain?: Pick<CompanyBrainService, 'ingest'>;
+  },
 ): void {
-  const { profiles } = dependencies;
+  const { profiles, brain } = dependencies;
   const path = '/v1/organizations/:organizationId/business-profile';
 
   const answer = async (
@@ -78,7 +83,20 @@ export function registerBusinessRoutes(
       if (typeof body !== 'object' || body === null || Array.isArray(body)) {
         return c.json({ error: 'invalid_request' }, 400);
       }
-      return answer(c, () => profiles.save(tenant, body));
+      return answer(c, async () => {
+        const read = await profiles.save(tenant, body);
+        if (brain !== undefined && read.profile !== undefined) {
+          // Best effort and safe to repeat: the profile is saved whatever happens here, and
+          // Company Brain's sync route brings it in again.
+          try {
+            const { source, facts } = profileKnowledge(read.profile);
+            await brain.ingest(tenant, source, facts);
+          } catch {
+            c.get('logger').warn('company brain profile feed failed');
+          }
+        }
+        return read;
+      });
     }),
   );
 }

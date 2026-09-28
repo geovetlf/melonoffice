@@ -1,5 +1,13 @@
-import { FormattedMessage } from '@melonoffice/i18n';
+import {
+  FormattedMessage,
+  I18nProvider,
+  useIntl,
+  type Locale,
+  type Messages,
+} from '@melonoffice/i18n';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { ActivityProvider } from '../activity/ActivityFeed.js';
+import { createActivityClient } from '../activity/activityClient.js';
 import { BusinessPage } from '../business/BusinessPage.js';
 import { createBusinessClient } from '../business/businessClient.js';
 import { ConnectionsPage, permissionsOf } from '../connections/ConnectionsPage.js';
@@ -10,7 +18,10 @@ import { HomePage } from '../home/HomePage.js';
 import { useAuth, useCan } from '../identity/AuthProvider.js';
 import type { LocaleProps } from '../identity/pages.js';
 import { usePath } from '../identity/router.js';
-import { AgentPlace, DepartmentOffice, GiaPlace, NotFound } from '../office/DepartmentOffice.js';
+import { GiaChatProvider } from '../gia/GiaChat.js';
+import { createGiaClient } from '../gia/giaClient.js';
+import { GiaWorkplace } from '../gia/GiaWorkplace.js';
+import { AgentPlace, DepartmentOffice, NotFound } from '../office/DepartmentOffice.js';
 import { createOfficeClient } from '../office/officeClient.js';
 import { OfficeDataProvider, useOfficeData } from '../office/OfficeData.js';
 import { parseRoute } from './routes.js';
@@ -20,7 +31,8 @@ import { TopBar } from './TopBar.js';
 /**
  * The signed-in frame (ADR-0036, ADR-0040): the sidebar and top bar around the page the path
  * names: the Home (the office), a department's office, GIA, or the Conversations Center
- * (ADR-0035), Settings → Connections (ADR-0044) or Settings → Business (ADR-0048). Every page reaches the API only through the session's authenticated client, for the
+ * (ADR-0035), Settings → Connections (ADR-0044) or Settings → Business (ADR-0048). The office's activity (ADR-0049) is read only by a role
+ * that may read it. Every page reaches the API only through the session's authenticated client, for the
  * organization the API gave this user; none has sign-in, tenant choice or permission rules of its
  * own.
  */
@@ -30,6 +42,8 @@ export function AppShell(locale: LocaleProps) {
   const canReadConnections = useCan('channel.read');
   const canReadBusiness = useCan('organization.read');
   const canEditBusiness = useCan('organization.update');
+  const canReadActivity = useCan('activity.read');
+  const canAskGia = useCan('gia.ask');
   const route = parseRoute(usePath());
   const [menuOpen, setMenuOpen] = useState(false);
   useEffect(() => {
@@ -51,6 +65,8 @@ export function AppShell(locale: LocaleProps) {
             office: createOfficeClient(services.api.request, organizationId),
             connections: createConnectionsClient(services.api.request, organizationId),
             business: createBusinessClient(services.api.request, organizationId),
+            activity: createActivityClient(services.api.request, organizationId),
+            gia: createGiaClient(services.api.request, organizationId),
           },
     [services, organizationId],
   );
@@ -102,7 +118,7 @@ export function AppShell(locale: LocaleProps) {
       page = <AgentPlace slug={route.slug} agentId={route.agentId} />;
       break;
     case 'gia':
-      page = <GiaPlace />;
+      page = <GiaWorkplace />;
       break;
     case 'conversations':
       page = canReadConversations ? (
@@ -139,32 +155,38 @@ export function AppShell(locale: LocaleProps) {
 
   return (
     <OfficeDataProvider client={clients.office} business={clients.business} can={can}>
-      <div className="app">
-        <Sidebar
-          route={route}
-          canReadConversations={canReadConversations}
-          canReadConnections={canReadConnections}
-          canReadBusiness={canReadBusiness}
-          open={menuOpen}
-          onNavigate={() => setMenuOpen(false)}
-        />
-        {menuOpen ? (
-          <div className="app__scrim" aria-hidden="true" onClick={() => setMenuOpen(false)} />
-        ) : null}
-        <div className="app__body">
-          <TopBar
-            organizationName={workspace.organization.name}
-            email={me.email ?? me.userId}
-            onSignOut={signOut}
-            menuOpen={menuOpen}
-            onMenu={() => setMenuOpen((open) => !open)}
-            locale={locale}
-          />
-          <main className="app__main" key={route.kind === 'office' ? route.slug : route.kind}>
-            {page}
-          </main>
-        </div>
-      </div>
+      <ActivityProvider client={canReadActivity ? clients.activity : undefined}>
+        <BusinessFormats locale={locale.locale}>
+          <GiaChatProvider client={canAskGia ? clients.gia : undefined}>
+            <div className="app">
+              <Sidebar
+                route={route}
+                canReadConversations={canReadConversations}
+                canReadConnections={canReadConnections}
+                canReadBusiness={canReadBusiness}
+                open={menuOpen}
+                onNavigate={() => setMenuOpen(false)}
+              />
+              {menuOpen ? (
+                <div className="app__scrim" aria-hidden="true" onClick={() => setMenuOpen(false)} />
+              ) : null}
+              <div className="app__body">
+                <TopBar
+                  organizationName={workspace.organization.name}
+                  email={me.email ?? me.userId}
+                  onSignOut={signOut}
+                  menuOpen={menuOpen}
+                  onMenu={() => setMenuOpen((open) => !open)}
+                  locale={locale}
+                />
+                <main className="app__main" key={route.kind === 'office' ? route.slug : route.kind}>
+                  {page}
+                </main>
+              </div>
+            </div>
+          </GiaChatProvider>
+        </BusinessFormats>
+      </ActivityProvider>
     </OfficeDataProvider>
   );
 }
@@ -186,4 +208,34 @@ function FirstBusinessStep({
   const { business } = useOfficeData();
   const missing = business.status === 'ready' && business.value.profile === null;
   return <>{show && missing ? step : children}</>;
+}
+
+/**
+ * Dates, numbers and money follow the business's country once it is described (ADR-0048): a
+ * Peruvian business in Spanish formats as es-PE. The words stay the chosen language's.
+ */
+function BusinessFormats({
+  locale,
+  children,
+}: {
+  readonly locale: Locale;
+  readonly children: ReactNode;
+}) {
+  const { business } = useOfficeData();
+  // The words stay the ones already chosen above (the language's catalog, or a test's own).
+  const { messages } = useIntl();
+  const country =
+    business.status === 'ready' && business.value.profile !== null
+      ? business.value.profile.country
+      : undefined;
+  // Always the same element, so the page below is never remounted when the profile arrives.
+  return (
+    <I18nProvider
+      locale={locale}
+      messages={messages as Messages}
+      {...(country === undefined ? {} : { region: country })}
+    >
+      {children}
+    </I18nProvider>
+  );
 }
