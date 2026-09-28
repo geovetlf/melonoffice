@@ -71,11 +71,13 @@ import { emulatorFirestore, emulatorHost } from '@melonoffice/firestore/testing'
 import {
   createAgentTurnTrigger,
   createConversationAgentCheck,
+  createHandoffSummaries,
   createWhatsAppAdapter,
   handoffReasonOf,
   InMemoryChannelConnectionRepository,
   InMemorySecretStore,
   secretRefsFor,
+  turnOf,
   withAgentTurns,
   type AgentTurnOutcome,
   type ChannelConnectionRepository,
@@ -345,9 +347,17 @@ describe.each(STORES)('CV-6B conversation agent with storage in %s', (_storage, 
       },
     };
 
+    // Runs while the channel's credential is being read: the last moment before the provider.
+    let beforeCredential: (() => Promise<void>) | undefined;
+    const credentials = {
+      async read(ref: Parameters<InMemorySecretStore['read']>[0]) {
+        await beforeCredential?.();
+        return secrets.read(ref);
+      },
+    };
     const parts = createConversationAgentParts({
       stores,
-      channels: { connections: stores.connections, secrets, adapters: { whatsapp } },
+      channels: { connections: stores.connections, secrets: credentials, adapters: { whatsapp } },
       now,
     });
     const dispatched: JobId[] = [];
@@ -551,6 +561,9 @@ describe.each(STORES)('CV-6B conversation agent with storage in %s', (_storage, 
       },
       setBalance: (value: number) => {
         balance = value;
+      },
+      beforeCredential: (hook: () => Promise<void>) => {
+        beforeCredential = hook;
       },
       outputs: createAgentOutputStore(stores.outputs),
       runtimeTenantA: () => resolveRuntimeTenant(ALICE, orgA, stores.tenancy),
@@ -1080,5 +1093,212 @@ describe.each(STORES)('CV-6B conversation agent with storage in %s', (_storage, 
     await w.conversations.takeOver(w.tenantA, conversation.id);
     await w.drive();
     expect(w.charges.size).toBe(1);
+  });
+
+  // -------------------------------------------------------------------------------------------
+  // Closing CV-6B (Geovet, 2026-09-28): the cases the review listed that the numbers above did
+  // not name on their own.
+
+  it('28. a conversation already handed to a person starts no new turn', async () => {
+    const w = await world();
+    await w.configure('autonomous');
+    w.setModel(async () =>
+      answer({
+        action: 'handoff',
+        reply: null,
+        handoffReason: 'low_confidence',
+        confidence: 'low',
+      }),
+    );
+    const { conversation } = await w.customer('Tengo un problema con mi factura');
+    await w.drive();
+    expect((await w.conversationOf(conversation.id)).control?.aiState).toBe('escalated');
+    await w.customer('¿Hola?');
+    await w.drive();
+    expect(w.outcomes.at(-1)).toEqual({ status: 'skipped', code: 'conversation_handled_by_human' });
+    expect(w.providerCalls).toHaveLength(1);
+    expect(w.sends).toHaveLength(0);
+  });
+
+  it('29. the organization changes the level or the agent while a turn runs: nothing goes out', async () => {
+    const w = await world();
+    await w.configure('autonomous');
+    const first = await w.customer();
+    await w.drive(1); // the model answered; the reply has not gone yet
+    await w.conversations.changeAutonomy(w.tenantA, 'supervised');
+    await w.drive();
+    expect(w.sends).toHaveLength(0);
+    expect((await w.agentMessages(first.conversation.id))[0]).toMatchObject({
+      status: 'failed',
+      failureCode: 'autonomy_changed',
+    });
+
+    const other = await w.configure('autonomous');
+    const second = await w.customer('Hola', { from: '51911111111' });
+    await w.drive(1);
+    const replacement = await w.agent();
+    await w.conversations.changeAgent(w.tenantA, replacement.identity.id);
+    await w.drive();
+    expect(w.sends).toHaveLength(0);
+    expect((await w.agentMessages(second.conversation.id))[0]).toMatchObject({
+      status: 'failed',
+      sender: { specialistId: other.identity.id },
+      failureCode: 'agent_changed',
+    });
+  });
+
+  it('30. the model never sees a secret, a credential or another organization’s data', async () => {
+    const w = await world();
+    await w.configure('autonomous');
+    await w.customer('Hola, soy de B', { organizationId: w.orgB, from: '51922222222' });
+    await w.customer();
+    await w.drive();
+    expect(w.providerCalls).toHaveLength(1);
+    const seen = JSON.stringify(w.providerCalls);
+    const refs = secretRefsFor('melonoffice-test', CONNECTION_A);
+    for (const hidden of [
+      TOKEN_A,
+      TOKEN_B,
+      ...Object.values(refs),
+      'melonoffice-test',
+      CONNECTION_A,
+      '106540352242922',
+      '51922222222',
+      'Hola, soy de B',
+    ]) {
+      expect(seen).not.toContain(hidden);
+    }
+    // Nor is anything secret kept with the agent's answer.
+    expect(
+      JSON.stringify(await w.stores.outputs.find(w.orgA, must(w.started()[0]), 'decide')),
+    ).not.toContain(TOKEN_A);
+  });
+
+  it('31. no invented actor: the customer never acts, and every turn step names the person behind it', async () => {
+    const w = await world();
+    const specialist = await w.configure('autonomous');
+    const { conversation } = await w.customer();
+    await w.drive();
+    const events = await w.stores.events();
+    const turn = events.filter(
+      (e) =>
+        e.occurredAt >=
+        must(events.find((x) => x.action === 'conversation.ai_turn_started')).occurredAt,
+    );
+    expect(turn.length).toBeGreaterThan(0);
+    for (const event of turn) {
+      expect(event.actor).toEqual({
+        type: 'system',
+        id: 'runtime',
+        initiatedBy: ALICE,
+        via: 'runtime',
+      });
+    }
+    // The customer is data on the conversation, never an actor or a user.
+    const written = JSON.stringify(events.map((e) => e.actor));
+    expect(written).not.toContain(conversation.contactId);
+    expect(written).not.toContain('51987654321');
+    // The turn is traceable to the message that started it and the agent that answered.
+    const execution = await w.executionOf(must(w.started()[0]));
+    const inbound = (await w.messagesOf(conversation.id)).find((m) => m.direction === 'inbound');
+    expect(turnOf(execution)).toMatchObject({
+      conversationId: conversation.id,
+      inboundMessageId: must(inbound).id,
+      specialistId: specialist.identity.id,
+    });
+  });
+
+  it('32. a hand-off leaves the person taking over the agent’s note, safe and only for its organization', async () => {
+    const w = await world();
+    await w.configure('autonomous');
+    const note = 'Quiere cambiar la dirección del pedido 1042; ya dio su código postal 15074.';
+    w.setModel(
+      async () =>
+        answer({
+          action: 'handoff',
+          reply: null,
+          handoffReason: 'sensitive_operation',
+          confidence: 'high',
+          summary: note,
+        }),
+      async () =>
+        answer({
+          action: 'handoff',
+          reply: null,
+          handoffReason: 'sensitive_operation',
+          confidence: 'high',
+          summary: `Su clave es AIzaSyA1234567890abcdefghijklmnopqrstu`,
+        }),
+    );
+    const summaries = createHandoffSummaries({ outputs: w.outputs });
+    const { conversation } = await w.customer('Cambien la dirección de mi pedido');
+    await w.drive();
+    const escalated = await w.conversationOf(conversation.id);
+    expect(escalated.handoff?.reason).toBe('sensitive_operation');
+    expect(await summaries.summaryOf(w.tenantA, escalated)).toBe(note);
+    expect(await summaries.summaryOf(w.tenantB, escalated)).toBeUndefined();
+    // A note that looks like a secret is dropped; the hand-off still happens.
+    const second = await w.customer('Otra cosa', { from: '51933333333' });
+    await w.drive();
+    const other = await w.conversationOf(second.conversation.id);
+    expect(other.control?.aiState).toBe('escalated');
+    expect(await summaries.summaryOf(w.tenantA, other)).toBeUndefined();
+    // Nothing of the note is written to the audit log.
+    expect(JSON.stringify(await w.stores.events())).not.toContain('15074');
+  });
+
+  it('33. the agent’s profile, the conversation control and its epoch are stored as they were', async () => {
+    const w = await world();
+    const specialist = await w.configure('autonomous', { maxReplies: 4 });
+    expect(
+      (await w.stores.specialists.find(w.orgA, specialist.identity.id))?.configuration.conversation,
+    ).toEqual({
+      instructions: 'Atiende consultas sobre nuestros productos. No des precios.',
+      channels: ['whatsapp'],
+      autonomy: 'autonomous',
+      maxRepliesPerConversation: 4,
+    });
+    const version = await w.stores.specialists.findVersion(
+      w.orgA,
+      specialist.identity.id,
+      specialist.version,
+    );
+    expect(version?.configuration.conversation?.maxRepliesPerConversation).toBe(4);
+    const { conversation } = await w.customer();
+    await w.drive();
+    const before = must(await w.stores.conversations.findConversation(w.orgA, conversation.id));
+    expect(before.control).toMatchObject({ handledBy: 'ai', aiState: 'active' });
+    await w.conversations.takeOver(w.tenantA, conversation.id);
+    const after = must(await w.stores.conversations.findConversation(w.orgA, conversation.id));
+    expect(after.control).toMatchObject({
+      handledBy: 'human',
+      aiState: 'paused',
+      epoch: must(before.control).epoch + 1,
+    });
+    expect(after.revision).toBe(before.revision + 1);
+    expect(await w.conversations.settings(w.tenantA)).toMatchObject({
+      autonomy: 'autonomous',
+      agentId: specialist.identity.id,
+    });
+  });
+
+  it('34. a person who takes over while the reply is being prepared is never overtaken', async () => {
+    const w = await world();
+    await w.configure('autonomous');
+    const { conversation } = await w.customer();
+    // Every check before the channel passed; the person takes control while its credential is
+    // read, just before the provider would be called.
+    w.beforeCredential(async () => {
+      await w.conversations.takeOver(w.tenantA, conversation.id);
+    });
+    await w.drive();
+    expect(w.sends).toHaveLength(0);
+    expect((await w.agentMessages(conversation.id))[0]).toMatchObject({
+      status: 'failed',
+      failureCode: 'conversation_handled_by_human',
+    });
+    expect(await w.conversationOf(conversation.id)).toMatchObject({
+      control: { handledBy: 'human', aiState: 'paused' },
+    });
   });
 });

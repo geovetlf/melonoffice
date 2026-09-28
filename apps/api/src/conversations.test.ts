@@ -3,6 +3,8 @@ import type {
   ChannelConnection,
   ChannelConnectionId,
   ConversationId,
+  ExecutionId,
+  ExecutionNodeId,
   IsoTimestamp,
   MessageId,
   OrganizationId,
@@ -790,6 +792,74 @@ describe.each(STORES)('conversations with storage in %s', (_name, createStores) 
           ).status,
         ).toBe(400);
       }
+    });
+
+    it('shows the person taking over the note an agent left, and only its own organization’s', async () => {
+      const t = await setup();
+      const { jose, ana } = await two(t);
+      const path = (id: string) => `${t.base(t.orgA)}/conversations/${id}/detail`;
+      // No hand-off: no note.
+      expect((await t.request('token-alice', path(jose.id))).body.handoffSummary).toBeNull();
+      const executionId = '5b1f2c7e-9a41-4c3e-8f0d-2a6b7c8d9e10' as ExecutionId;
+      const note = 'Quiere cambiar la dirección del pedido 1042.';
+      const handedOff = (id: string, by: ExecutionId) =>
+        t.conversations.updateConversation(t.orgA, id as ConversationId, (current) => ({
+          conversation: {
+            ...current,
+            control: {
+              handledBy: 'human',
+              aiState: 'escalated',
+              epoch: 2,
+              changedAt: '2026-09-27T12:05:00.000Z' as IsoTimestamp,
+            },
+            handoff: {
+              reason: 'sensitive_operation',
+              requestedAt: '2026-09-27T12:05:00.000Z' as IsoTimestamp,
+              executionId: by,
+            },
+            revision: current.revision + 1,
+          },
+          events: [],
+        }));
+      await handedOff(jose.id, executionId);
+      await t.agentOutputs.save({
+        organizationId: t.orgA,
+        executionId,
+        nodeId: 'decide' as ExecutionNodeId,
+        requestId: 'job-1',
+        output: {
+          structured: {
+            action: 'handoff',
+            reply: null,
+            handoffReason: 'sensitive_operation',
+            confidence: 'high',
+            summary: note,
+          },
+        },
+        createdAt: '2026-09-27T12:04:59.000Z' as IsoTimestamp,
+      });
+      const detail = await t.request('token-alice', path(jose.id));
+      expect(detail.body).toMatchObject({
+        conversation: { handoff: { reason: 'sensitive_operation' } },
+        handoffSummary: note,
+      });
+      // The list and the conversation view never carry it, nor the execution behind it.
+      expect(JSON.stringify(await t.conversationsOf())).not.toContain(note);
+      expect(JSON.stringify(detail.body.conversation)).not.toContain(executionId);
+      // A hand-off naming another organization's answer gets nothing from it.
+      const theirs = '6c2a3d8f-0b52-4d4f-9a1e-3b7c8d9e0f21' as ExecutionId;
+      await handedOff(ana.id, theirs);
+      await t.agentOutputs.save({
+        organizationId: t.orgB,
+        executionId: theirs,
+        nodeId: 'decide' as ExecutionNodeId,
+        requestId: 'job-2',
+        output: { structured: { action: 'handoff', summary: 'de B' } },
+        createdAt: '2026-09-27T12:04:59.000Z' as IsoTimestamp,
+      });
+      const foreign = await t.request('token-alice', path(ana.id));
+      expect(foreign.body.handoffSummary).toBeNull();
+      expect(JSON.stringify(foreign.body)).not.toContain('de B');
     });
 
     it("never lets one organization read or change another's inbox (IDOR)", async () => {

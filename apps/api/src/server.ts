@@ -17,6 +17,7 @@ import { aiConfigurationOf } from './ai.js';
 import { createApp, SERVICE_NAME } from './app.js';
 import { loadConfig } from './config.js';
 import {
+  FirestoreAgentOutputRepository,
   FirestoreApprovalRepository,
   FirestoreAuditStore,
   FirestoreBillingStore,
@@ -103,6 +104,7 @@ function services(projectId: string) {
     conversations: {
       repository: conversations,
       connections,
+      agentOutputs: new FirestoreAgentOutputRepository(firestore),
       ...(secretProjectId === undefined ? {} : { secretProjectId }),
       // A person's replies (ADR-0034) only where channel secrets and the environment are both
       // configured: neither is set in Terraform yet, so sending stays off (fails closed).

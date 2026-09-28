@@ -94,6 +94,7 @@
   "conversations.control.paused": "IA en pausa: una persona tomó el control",
   "conversations.control.escalated": "Transferida a una persona",
   "conversations.control.reason": "Motivo:",
+  "conversations.control.summary": "Nota del agente:",
   "conversations.control.takeOver": "Tomar control",
   "conversations.control.handBack": "Devolver a la IA",
   "conversations.control.composerLocked": "La IA está atendiendo esta conversación. Toma el control para responder tú.",

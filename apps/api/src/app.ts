@@ -19,13 +19,19 @@ import {
 } from '@melonoffice/conversations';
 import { createCreditService, type CreditStore } from '@melonoffice/credits';
 import { createEntitlementService, type EntitlementService } from '@melonoffice/entitlements';
-import { createExecutionService, type ExecutionRepository } from '@melonoffice/execution';
+import {
+  createAgentOutputStore,
+  createExecutionService,
+  type AgentOutputRepository,
+  type ExecutionRepository,
+} from '@melonoffice/execution';
 import type { DeploymentEnvironment } from '@melonoffice/domain';
 import { createToolGate } from '@melonoffice/guardrails';
 import {
   createChannelConnectionService,
   createChannelMessageExecutor,
   createConversationAgentCheck,
+  createHandoffSummaries,
   createMessageSendService,
   type ChannelAdapters,
   type ChannelConnectionRepository,
@@ -115,6 +121,11 @@ export interface AppOptions {
     readonly connections: ChannelConnectionRepository;
     /** Where channel secrets live. Unset: no connection can be created. */
     readonly secretProjectId?: string;
+    /**
+     * Agents' kept answers (CV-6B, ADR-0043), read only for the note an agent left when it handed
+     * a conversation to a person. Absent: the detail shows no note.
+     */
+    readonly agentOutputs?: AgentOutputRepository;
     /**
      * A person's replies (CV-2, ADR-0034), through the tool gate. Absent: the send route answers
      * 503 (fails closed). It also needs executions, departments, specialists and approvals, which
@@ -455,6 +466,13 @@ export function createApp({
         audit,
         ...(sender === undefined ? {} : { sender }),
         ...(assistant === undefined ? {} : { assistant }),
+        ...(conversations.agentOutputs === undefined
+          ? {}
+          : {
+              handoffSummaries: createHandoffSummaries({
+                outputs: createAgentOutputStore(conversations.agentOutputs),
+              }),
+            }),
         conversations: conversationService,
         connections: createChannelConnectionService({
           repository: conversations.connections,

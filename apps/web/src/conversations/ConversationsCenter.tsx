@@ -400,6 +400,13 @@ export function ConversationsCenter({
                     <FormattedMessage id={handoffKey(conversation.handoff.reason)} />
                   </span>
                 )}
+                {conversation.handoff === null ||
+                conversation.handoff === undefined ||
+                typeof detail.handoffSummary !== 'string' ? null : (
+                  <span className="inbox__handoff-summary">
+                    <FormattedMessage id="conversations.control.summary" /> {detail.handoffSummary}
+                  </span>
+                )}
                 {canManage &&
                 (controlOf(conversation).aiState === 'active' ||
                   controlOf(conversation).aiState === 'escalated') ? (

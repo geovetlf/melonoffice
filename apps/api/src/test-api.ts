@@ -17,7 +17,11 @@ import {
 } from '@melonoffice/audit';
 import { InMemoryBillingStore, type BillingStore } from '@melonoffice/billing';
 import { InMemoryDepartmentRepository, type DepartmentRepository } from '@melonoffice/departments';
-import { InMemoryExecutionRepository, type ExecutionRepository } from '@melonoffice/execution';
+import {
+  InMemoryAgentOutputRepository,
+  InMemoryExecutionRepository,
+  type ExecutionRepository,
+} from '@melonoffice/execution';
 import { InMemoryCreditStore, type CreditStore } from '@melonoffice/credits';
 import {
   createConversationIngress,
@@ -334,6 +338,8 @@ export function setupApp(
 ) {
   const lines: string[] = [];
   const logger = createLogger({ service: 'api', sink: (line) => lines.push(line) });
+  // Agents' kept answers (CV-6B): the API only reads a hand-off's note from them.
+  const agentOutputs = new InMemoryAgentOutputRepository();
   const meta: FakeGraphApi = { calls: [], answer: graphAccepted() };
   const graph = createWhatsAppAdapter({
     graphApiVersion: 'v23.0',
@@ -359,6 +365,7 @@ export function setupApp(
       repository: stores.conversations,
       connections: stores.connections,
       secretProjectId: 'melonoffice-test',
+      agentOutputs,
       ...(sending
         ? {
             outbound: {
@@ -392,5 +399,5 @@ export function setupApp(
         userId: string;
       }
     ).userId;
-  return { app, lines, as, register, meta, ...stores };
+  return { app, lines, as, register, meta, agentOutputs, ...stores };
 }

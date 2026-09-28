@@ -31,6 +31,12 @@ export const REPLY_TOOL_VERSIONS = Object.freeze({ supervised: 2, autonomous: 3 
 /** The longest reply an agent may send: short, as a chat message is. */
 export const MAX_AGENT_REPLY_LENGTH = 1_000;
 
+/**
+ * The longest hand-off summary: what the customer wants, what they gave and what the agent did,
+ * for the person who takes over (CV-6B).
+ */
+export const MAX_HANDOFF_SUMMARY_LENGTH = 600;
+
 /** What the model may say when it hands off. Any other reason code becomes `unresolved`. */
 export const MODEL_HANDOFF_REASONS = [
   'customer_requested_human',
@@ -47,7 +53,12 @@ export const MODEL_HANDOFF_REASONS = [
  */
 export type AgentDecision =
   | { readonly action: 'reply'; readonly text: string }
-  | { readonly action: 'handoff'; readonly reason: HandoffReason };
+  | {
+      readonly action: 'handoff';
+      readonly reason: HandoffReason;
+      /** For the person who takes over; absent when the model gave none or an unsafe one. */
+      readonly summary?: string;
+    };
 
 /** The answer's shape, given to the model as structured output (ADR-0038). */
 export const AGENT_DECISION_SCHEMA: AIOutputSchema = {
@@ -57,6 +68,7 @@ export const AGENT_DECISION_SCHEMA: AIOutputSchema = {
     reply: { type: 'string', maxLength: MAX_AGENT_REPLY_LENGTH, nullable: true },
     handoffReason: { type: 'string', enum: MODEL_HANDOFF_REASONS, nullable: true },
     confidence: { type: 'string', enum: ['high', 'low'] },
+    summary: { type: 'string', maxLength: MAX_HANDOFF_SUMMARY_LENGTH, nullable: true },
   },
   required: ['action', 'confidence'],
 };
@@ -105,7 +117,10 @@ export function parseAgentDecision(output: {
     const reason = (MODEL_HANDOFF_REASONS as readonly unknown[]).includes(o.handoffReason)
       ? (o.handoffReason as HandoffReason)
       : 'unresolved';
-    return { action: 'handoff', reason };
+    const summary = safeSummaryOf(o.summary);
+    return summary === undefined
+      ? { action: 'handoff', reason }
+      : { action: 'handoff', reason, summary };
   }
   if (o.action !== 'reply') return invalid;
   if (o.confidence !== 'high') return { action: 'handoff', reason: 'low_confidence' };
@@ -120,6 +135,24 @@ export function parseAgentDecision(output: {
     return invalid;
   }
   return { action: 'reply', text };
+}
+
+/**
+ * A hand-off summary a person may read: plain text within its length, never anything that looks
+ * like a secret. Anything else is dropped; the hand-off itself still happens.
+ */
+function safeSummaryOf(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const text = value.trim();
+  if (
+    text.length === 0 ||
+    [...text].length > MAX_HANDOFF_SUMMARY_LENGTH ||
+    CONTROL.test(text) ||
+    looksLikeSecretText(text)
+  ) {
+    return undefined;
+  }
+  return text;
 }
 
 /** Escapes what could close a data block, so the data can never pose as instructions. */
@@ -155,7 +188,7 @@ export function agentTurnMessages(
     "Reply in the customer's language, briefly, as a chat message.",
     'Answer with exactly one JSON object: {"action": "reply" or "handoff", "reply": the message for the customer, or null, "handoffReason": one of [' +
       MODEL_HANDOFF_REASONS.join(', ') +
-      '] or null, "confidence": "high" or "low"}. Use "low" when you are not sure your reply is right.',
+      '] or null, "confidence": "high" or "low", "summary": when you hand off, a short note for the person who takes over (what the customer wants, the details they gave, what you already answered), or null}. Use "low" when you are not sure your reply is right.',
   ].join('\n');
   return [
     { role: 'system', content: [{ type: 'text', text: system }] },
