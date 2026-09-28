@@ -183,3 +183,188 @@
   width: 100%;
   min-height: 6rem;
 }
+
+/* Settings → Connections (ADR-0044): one card per connection, and one per provider not yet used.
+   Stacks on a phone; every action is a real button, nothing depends on hover. */
+.connections {
+  padding: var(--mo-space-4);
+}
+
+.connections__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--mo-space-3);
+  margin-bottom: var(--mo-space-4);
+}
+
+.connections__header h1 {
+  margin: 0 0 var(--mo-space-2);
+  font-size: var(--mo-font-size-xl);
+}
+
+.connections__eyebrow {
+  margin: 0;
+  font-size: var(--mo-font-size-xs);
+  color: var(--mo-color-text-secondary);
+  text-transform: uppercase;
+}
+
+.connections__list {
+  display: grid;
+  gap: var(--mo-space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.connection-card {
+  display: grid;
+  gap: var(--mo-space-3);
+  padding: var(--mo-space-4);
+  background: var(--mo-color-surface);
+  border: 1px solid var(--mo-color-border);
+  border-radius: var(--mo-radius-lg);
+}
+
+.connection-card__main p {
+  margin: 0 0 var(--mo-space-1);
+}
+
+.connection-card__provider {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--mo-space-2);
+}
+
+.connection-card__source,
+.connection-card__account,
+.connection-form__optional {
+  font-size: var(--mo-font-size-sm);
+  color: var(--mo-color-text-secondary);
+}
+
+.connection-card__status {
+  font-weight: 600;
+}
+
+.connection-card__status--ok {
+  color: var(--mo-color-success);
+}
+
+.connection-card__status--warn {
+  color: var(--mo-color-warning);
+}
+
+.connection-card__status--bad {
+  color: var(--mo-color-danger);
+}
+
+.connection-card__status--off {
+  color: var(--mo-color-text-secondary);
+}
+
+.connection-card__reason {
+  font-weight: 400;
+}
+
+.connection-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--mo-space-2);
+}
+
+.connection-card__confirm p {
+  margin: 0 0 var(--mo-space-2);
+}
+
+.connection-form {
+  display: grid;
+  gap: var(--mo-space-3);
+  max-width: 32rem;
+  margin-bottom: var(--mo-space-4);
+  padding: var(--mo-space-4);
+  background: var(--mo-color-surface);
+  border: 1px solid var(--mo-color-border);
+  border-radius: var(--mo-radius-lg);
+}
+
+.connection-form--inline {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.connection-form label {
+  display: grid;
+  gap: var(--mo-space-1);
+}
+
+.connection-form input,
+.connection-form select {
+  min-height: var(--mo-min-target-size);
+  padding: var(--mo-space-2) var(--mo-space-3);
+  border: 1px solid var(--mo-color-border);
+  border-radius: var(--mo-radius-md);
+  font: inherit;
+  color: var(--mo-color-text-primary);
+  background: var(--mo-color-surface);
+}
+
+.connection-setup {
+  padding: var(--mo-space-3);
+  background: var(--mo-color-surface-subtle);
+  border-radius: var(--mo-radius-md);
+}
+
+.connection-setup h2 {
+  margin: 0 0 var(--mo-space-2);
+  font-size: var(--mo-font-size-lg);
+}
+
+.connection-setup ol {
+  display: grid;
+  gap: var(--mo-space-2);
+  margin: 0;
+  padding-left: var(--mo-space-6);
+}
+
+.connection-setup__names {
+  margin: var(--mo-space-1) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.connection-setup__kind {
+  display: inline-block;
+  min-width: 8rem;
+  color: var(--mo-color-text-secondary);
+}
+
+.connection-setup code {
+  overflow-wrap: anywhere;
+}
+
+.connection-setup__url {
+  display: block;
+  margin-top: var(--mo-space-1);
+}
+
+@media (min-width: 48rem) {
+  .connection-card {
+    grid-template-columns: 1fr auto;
+    align-items: start;
+  }
+
+  .connection-card__actions {
+    justify-content: flex-end;
+  }
+
+  .connection-card > .connection-form,
+  .connection-card__confirm,
+  .connection-setup {
+    grid-column: 1 / -1;
+  }
+}
