@@ -32,22 +32,6 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # The forecaster (ADR-0059) exists only where Terraform created it (dev with forecasting on).
-      # Its image bakes in the pinned TimesFM 2.5 weights. The update waits for the new revision's
-      # startup probe on /health, which passes only once the pinned model is loaded.
-      - name: Build and deploy the forecaster, where it exists
-        run: |
-          if ! gcloud run services describe forecaster --project "$PROJECT_ID" --region "$REGION" --format='value(name)' >/dev/null 2>&1; then
-            echo "No forecaster service in this project; skipped."
-            exit 0
-          fi
-          registry="${REGION}-docker.pkg.dev/${PROJECT_ID}/melonoffice"
-          docker build -f apps/forecaster/Dockerfile --build-arg "SERVICE_VERSION=${IMAGE_TAG}" \
-            -t "${registry}/forecaster:${IMAGE_TAG}" .
-          docker push "${registry}/forecaster:${IMAGE_TAG}"
-          gcloud run services update forecaster --project "$PROJECT_ID" --region "$REGION" \
-            --image "${registry}/forecaster:${IMAGE_TAG}" --quiet
-
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -99,7 +83,7 @@ jobs:
     name: Build, deploy and check dev
     needs: validate
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     environment:
       name: dev
       url: ${{ steps.urls.outputs.web }}
@@ -202,6 +186,27 @@ jobs:
           # Without a token the worker must refuse the request.
           code="$(curl --silent --output /dev/null --write-out '%{http_code}' "${url}/health")"
           [ "$code" = 403 ] || { echo "::error::worker answered ${code} without authentication"; exit 1; }
+
+      # The forecaster (ADR-0059) exists only where Terraform created it (dev with forecasting on).
+      # Its image bakes in the pinned TimesFM 2.5 weights. The update waits for the new revision's
+      # startup probe on /health, which passes only once the pinned model is loaded. Only a service
+      # that does not exist is skipped; any other error (such as missing access) fails the job.
+      - name: Build and deploy the forecaster, where it exists
+        run: |
+          if ! out="$(gcloud run services describe forecaster --project "$PROJECT_ID" --region "$REGION" --format='value(name)' 2>&1)"; then
+            if echo "$out" | grep -qiE 'could not be found|not found|NOT_FOUND'; then
+              echo "No forecaster service in this project; skipped."
+              exit 0
+            fi
+            echo "::error::Could not read the forecaster service: ${out}"
+            exit 1
+          fi
+          registry="${REGION}-docker.pkg.dev/${PROJECT_ID}/melonoffice"
+          docker build -f apps/forecaster/Dockerfile --build-arg "SERVICE_VERSION=${IMAGE_TAG}" \
+            -t "${registry}/forecaster:${IMAGE_TAG}" .
+          docker push "${registry}/forecaster:${IMAGE_TAG}"
+          gcloud run services update forecaster --project "$PROJECT_ID" --region "$REGION" \
+            --image "${registry}/forecaster:${IMAGE_TAG}" --quiet
 
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
