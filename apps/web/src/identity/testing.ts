@@ -32,7 +32,10 @@ export interface FakeBackend {
     permissions: string[];
     idTokenSeconds: number;
     /** Each organization's agents (specialist records), by department type. */
-    specialists: Record<string, { id: string; name: string; type: string; status: string }[]>;
+    specialists: Record<
+      string,
+      { id: string; name: string; type: string; status: string; purpose?: string }[]
+    >;
     /** Each organization's credit balance, if it has a wallet. */
     credits: Record<string, number>;
     /** Each organization's conversations: only its members can read them. */
@@ -219,6 +222,8 @@ export function fakeBackend(): FakeBackend {
             departmentId: `${organizationId}_${s.type}`,
             displayName: s.name,
             status: s.status,
+            purpose: s.purpose ?? null,
+            updatedAt: '2026-09-27T12:00:00Z',
           })),
         })
       );

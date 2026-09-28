@@ -55,6 +55,7 @@ const PATHS = {
   hourglass: 'M7 4h10M7 20h10M8 4c0 5 8 5 8 8s-8 3-8 8M16 4c0 5-8 5-8 8',
   spinner: 'M12 4a8 8 0 1 1-8 8',
   moon: 'M18.5 14.5A7 7 0 0 1 9.5 5.5a7 7 0 1 0 9 9z',
+  seat: 'M7 4.5h10v7H7zM5.5 11.5h13v3h-13zM7.5 14.5V20M16.5 14.5V20',
   user: 'M12 4a4 4 0 1 1 0 8 4 4 0 0 1 0-8zM4.5 20a7.5 7.5 0 0 1 15 0',
   signOut: 'M14 4.5H6v15h8M10.5 12H20M16.5 8l4 4-4 4',
 } as const;

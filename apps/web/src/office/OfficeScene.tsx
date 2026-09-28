@@ -15,6 +15,7 @@ import type { DepartmentView, SpecialistView } from './officeClient.js';
 import { readyList, useOfficeData } from './OfficeData.js';
 import { RoomArt } from './RoomArt.js';
 import { navigateInto } from './transition.js';
+import { roomSeats, seatAgents, type DepartmentSeating } from './workstations.js';
 
 /**
  * The office, seen whole (ADR-0040, level 1): the organization's departments as rooms of one
@@ -83,6 +84,7 @@ export function DepartmentZone({
   const look = lookOf(department);
   const name = departmentName(intl, department);
   const here = agentsOf(department, agents);
+  const seating = seatAgents(department, agents);
   const href = paths.office(officeSlug(department));
   return (
     <li className="zone" style={{ '--zone-hue': look.hue } as CSSProperties}>
@@ -91,7 +93,7 @@ export function DepartmentZone({
         className="zone__link"
         aria-label={intl.formatMessage(
           { id: 'office.zone.enter' },
-          { name, agents: agentsSummary(intl, here) },
+          { name, agents: `${agentsSummary(intl, here)}. ${seatsSummary(intl, seating)}` },
         )}
         onClick={(event) => {
           if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;
@@ -100,7 +102,7 @@ export function DepartmentZone({
         }}
       >
         <span className="zone__room" ref={room}>
-          <RoomArt motif={look.motif} hue={look.hue} agents={here} />
+          <RoomArt motif={look.motif} hue={look.hue} seats={roomSeats(seating, agents)} />
         </span>
         {look.headquarters === true ? (
           // GIA's place is in Consejo y Dirección (ADR-0005).
@@ -114,6 +116,13 @@ export function DepartmentZone({
           <span className="zone__name">{name}</span>
         </span>
         <span className="zone__meta">
+          <span className="zone__seats" aria-hidden="true">
+            <Icon name="seat" size={14} />
+            <FormattedMessage
+              id="office.seats.short"
+              values={{ occupied: seating.occupied, total: seating.workstations.length }}
+            />
+          </span>
           {here.state === undefined ? (
             <span className="zone__empty">
               <FormattedMessage id="office.zone.noAgents" />
@@ -140,6 +149,14 @@ export function agentsSummary(intl: ReturnType<typeof useIntl>, here: Department
   if (here.paused > 0)
     return intl.formatMessage({ id: 'office.agents.paused' }, { count: here.paused });
   return intl.formatMessage({ id: 'office.zone.noAgents' });
+}
+
+/** How many of a department's workstations are taken, in words. */
+export function seatsSummary(intl: ReturnType<typeof useIntl>, seating: DepartmentSeating): string {
+  return intl.formatMessage(
+    { id: 'office.seats.summary' },
+    { occupied: seating.occupied, total: seating.workstations.length },
+  );
 }
 
 /** The city behind the office at dusk: background only. */

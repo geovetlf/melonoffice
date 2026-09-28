@@ -44,6 +44,7 @@ The MelonOffice architecture was defined in the **Phase 0 Architecture Plan (v0.
 | [0038](../adr/0038-vertex-ai-activation.md)                        | Assisted AI activation: Vertex AI, Gemini, credit rate           | D-7, D-12, CV-5  |
 | [0039](../adr/0039-conversation-control.md)                        | Human control of conversations and autonomy levels               | CV-6A            |
 | [0040](../adr/0040-home-virtual-office.md)                         | The Home as the virtual office, and the way into each department | Home             |
+| [0041](../adr/0041-office-workstations-and-agent-presence.md)      | Workstations and agent presence in the office                    | Home             |
 
 ## Current phase
 

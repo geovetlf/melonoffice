@@ -625,6 +625,7 @@ a.sidebar__item:hover {
 .agent-status,
 .zone__enter {
   display: inline-flex;
+  white-space: nowrap;
   align-items: center;
   gap: var(--mo-space-1);
   padding: 2px var(--mo-space-2);
@@ -998,8 +999,12 @@ a.sidebar__item:hover {
 }
 
 .dept-office__room {
+  position: relative;
   overflow: hidden;
-  aspect-ratio: 12 / 5;
+  width: 100%;
+  max-width: 58rem;
+  margin-inline: auto;
+  aspect-ratio: 9 / 5;
   border-radius: 28px;
   box-shadow:
     0 30px 80px rgb(0 0 0 / 0.5),
@@ -1098,16 +1103,251 @@ a.sidebar__item:hover {
   color: var(--mo-color-accent);
 }
 
+/* A department's workstations (ADR-0041): hit areas on the drawn desks, each with its name plate
+   and, on hover or focus, a card saying who works there. */
+.seats {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.seat {
+  position: absolute;
+  left: calc(var(--seat-x) * 100%);
+  top: calc(var(--seat-y) * 100%);
+  transform: translate(-50%, -78%);
+}
+
+.seat__spot {
+  position: relative;
+  display: grid;
+  place-items: end center;
+  width: clamp(3.5rem, 11vw, 7.5rem);
+  height: clamp(4rem, 12vw, 8rem);
+  padding: 0 0 var(--mo-space-1);
+  border: 0;
+  border-radius: 18px;
+  background: transparent;
+  color: var(--office-text);
+  font: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.seat__spot:hover,
+.seat__spot:focus-visible {
+  box-shadow:
+    0 0 0 2px var(--zone-hue),
+    0 0 28px color-mix(in srgb, var(--zone-hue) 45%, transparent);
+  background: rgb(255 226 206 / 0.06);
+}
+
+.seat__plate {
+  max-width: 100%;
+  overflow: hidden;
+  padding: 1px var(--mo-space-2);
+  border-radius: var(--mo-radius-pill);
+  background: rgb(20 13 10 / 0.82);
+  font-size: var(--mo-font-size-xs);
+  font-weight: var(--mo-font-weight-bold);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.seat--free .seat__plate {
+  border: 1px dashed color-mix(in srgb, var(--zone-hue) 55%, transparent);
+  background: rgb(20 13 10 / 0.6);
+  color: var(--office-muted);
+  font-weight: normal;
+}
+
+.seat__card {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: var(--mo-space-2);
+  width: max-content;
+  max-width: 16rem;
+  padding: var(--mo-space-2) var(--mo-space-3);
+  border: 1px solid color-mix(in srgb, var(--zone-hue) 60%, transparent);
+  border-radius: 14px;
+  background: rgb(36 22 17 / 0.95);
+  box-shadow: 0 14px 30px rgb(0 0 0 / 0.45);
+  text-align: left;
+  opacity: 0;
+  transform: translate(-50%, 4px);
+  pointer-events: none;
+}
+
+.seat__spot:hover .seat__card,
+.seat__spot:focus-visible .seat__card {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.seat__text {
+  display: grid;
+  gap: 2px;
+  justify-items: start;
+}
+
+.seat__name {
+  font-weight: var(--mo-font-weight-bold);
+}
+
+.seat__card .agent-status {
+  padding: 0;
+  background: none;
+  font-size: var(--mo-font-size-xs);
+}
+
+.seat__role,
+.seat__number {
+  font-size: var(--mo-font-size-xs);
+  color: var(--office-muted);
+}
+
+.seat__chair {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 1px dashed var(--office-line);
+  border-radius: 50%;
+  color: var(--office-muted);
+}
+
+.seat__panel {
+  width: min(100%, 26rem);
+  margin: var(--mo-space-3) auto 0;
+  padding: var(--mo-space-4);
+  border: 1px solid color-mix(in srgb, var(--zone-hue) 60%, transparent);
+  border-radius: 16px;
+  background: rgb(36 22 17 / 0.97);
+  box-shadow: 0 18px 40px rgb(0 0 0 / 0.5);
+}
+
+.seat--open {
+  z-index: 1;
+}
+
+.seat--open .seat__spot {
+  box-shadow: 0 0 0 2px var(--zone-hue);
+}
+
+.seat__panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.seat__panel h3 {
+  margin: 0;
+  font-size: var(--mo-font-size-md);
+}
+
+.seat__panel p {
+  margin: var(--mo-space-2) 0;
+  color: var(--office-muted);
+  font-size: var(--mo-font-size-sm);
+}
+
+.seat__close {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--office-text);
+  cursor: pointer;
+}
+
+.seat__actions {
+  display: grid;
+  gap: var(--mo-space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.seat__action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-height: 36px;
+  padding: 0 var(--mo-space-3);
+  border: 1px dashed var(--office-line);
+  border-radius: var(--mo-radius-md);
+  background: transparent;
+  color: var(--office-muted);
+  font: inherit;
+  font-size: var(--mo-font-size-sm);
+  cursor: not-allowed;
+}
+
+.zone__seats {
+  flex: none;
+  display: inline-flex;
+  white-space: nowrap;
+  align-items: center;
+  gap: var(--mo-space-1);
+  padding: 2px var(--mo-space-2);
+  border-radius: var(--mo-radius-pill);
+  background: rgb(20 13 10 / 0.78);
+  color: var(--office-muted);
+}
+
+.zone__meta .zone__seats + * {
+  margin-right: auto;
+}
+
+.agent-facts {
+  display: grid;
+  gap: var(--mo-space-2);
+  margin: 0 0 var(--mo-space-3);
+}
+
+.agent-facts__row {
+  display: grid;
+  grid-template-columns: minmax(7rem, 1fr) 2fr;
+  gap: var(--mo-space-3);
+  padding-bottom: var(--mo-space-2);
+  border-bottom: 1px solid var(--office-line);
+}
+
+.agent-facts dt {
+  color: var(--office-muted);
+}
+
+.agent-facts dd {
+  margin: 0;
+}
+
+.agent-facts__none {
+  color: var(--office-muted);
+  font-style: italic;
+}
+
+.agent-status--offline .mo-icon {
+  color: var(--office-muted);
+}
+
 /* Life in the rooms: small, slow, and only when motion is welcome. */
 @media (prefers-reduced-motion: no-preference) {
-  .room__agent {
-    animation: mo-sway 6s ease-in-out infinite alternate;
-    transform-box: fill-box;
-    transform-origin: 50% 100%;
-  }
-
-  .room__monitor {
-    animation: mo-glow 5s ease-in-out infinite alternate;
+  .seat__spot,
+  .seat__card {
+    transition:
+      opacity 160ms ease,
+      transform 160ms ease,
+      box-shadow 160ms ease;
   }
 
   .room__screen {
@@ -1138,16 +1378,6 @@ a.sidebar__item:hover {
   .gia-card:hover,
   .agent-presence__link:hover {
     transform: none;
-  }
-}
-
-@keyframes mo-sway {
-  from {
-    transform: translateY(0) rotate(0deg);
-  }
-
-  to {
-    transform: translateY(-1.2px) rotate(1.5deg);
   }
 }
 
@@ -1326,7 +1556,53 @@ a.sidebar__item:hover {
     display: none;
   }
 
+  /* On a phone the workstations leave the drawing and become cards under it. */
   .dept-office__room {
-    aspect-ratio: 4 / 3;
+    overflow: visible;
+    aspect-ratio: auto;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .dept-office__room .room {
+    aspect-ratio: 9 / 5;
+    height: auto;
+    border-radius: 20px;
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--zone-hue) 55%, transparent);
+  }
+
+  .seats {
+    position: static;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr));
+    gap: var(--mo-space-2);
+    margin-top: var(--mo-space-3);
+  }
+
+  .seat {
+    position: static;
+    transform: none;
+  }
+
+  .seat__spot {
+    width: 100%;
+    height: auto;
+    border-radius: var(--mo-radius-lg);
+  }
+
+  .seat__plate {
+    display: none;
+  }
+
+  .seat__card,
+  .seat__spot:hover .seat__card,
+  .seat__spot:focus-visible .seat__card {
+    position: static;
+    width: 100%;
+    max-width: none;
+    opacity: 1;
+    transform: none;
+    box-shadow: none;
+    pointer-events: auto;
   }
 }

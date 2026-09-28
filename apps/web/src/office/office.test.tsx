@@ -7,8 +7,9 @@ import { API, KEY, fakeBackend, memoryStore } from '../identity/testing.js';
 import { REFRESH_KEY } from '../identity/session.js';
 import { parseRoute, paths } from '../shell/routes.js';
 import { agentsOf, lookOf, officeDepartments, officeSlug, DEFAULT_LOOK } from './departments.js';
-import type { DepartmentView } from './officeClient.js';
+import type { DepartmentView, SpecialistView } from './officeClient.js';
 import { navigateInto, ROOM_TRANSITION } from './transition.js';
+import { arrangeSeats, layoutOf, MAX_SEATS, presenceOf, seatAgents } from './workstations.js';
 
 afterEach(cleanup);
 beforeEach(() => globalThis.history.replaceState(null, '', '/'));
@@ -130,9 +131,13 @@ describe('the Home (ADR-0040)', () => {
       '/office/finance',
     ]);
     expect(
-      office.getByRole('link', { name: 'Enter Board & Management. No agents yet' }),
+      office.getByRole('link', {
+        name: 'Enter Board & Management. No agents yet. 0 of 4 workstations taken',
+      }),
     ).toBeTruthy();
-    expect(office.getByRole('link', { name: 'Enter Finance. No agents yet' })).toBeTruthy();
+    expect(
+      office.getByRole('link', { name: 'Enter Finance. No agents yet. 0 of 4 workstations taken' }),
+    ).toBeTruthy();
     // The sidebar lists the same rooms apart from the tools.
     const officeNav = screen.getByRole('navigation', { name: 'Office' });
     expect(
@@ -210,12 +215,23 @@ describe('the Home (ADR-0040)', () => {
       await screen.findByRole('heading', { level: 1, name: 'Your office is already working' }),
     ).toBeTruthy();
     const office = await rooms();
-    expect(office.getByRole('link', { name: 'Enter Marketing. 2 active agents' })).toBeTruthy();
-    expect(office.getByRole('link', { name: 'Enter Finance. 1 paused agent' })).toBeTruthy();
+    expect(
+      office.getByRole('link', {
+        name: 'Enter Marketing. 2 active agents. 2 of 6 workstations taken',
+      }),
+    ).toBeTruthy();
+    // The draft agent has a workstation too: it is part of the team, offline.
+    expect(
+      office.getByRole('link', {
+        name: 'Enter Finance. 1 paused agent. 2 of 4 workstations taken',
+      }),
+    ).toBeTruthy();
     expect(document.querySelector('.topbar__agents')?.textContent).toBe('2 active agents');
 
     fireEvent.click(office.getByRole('link', { name: /^Enter Marketing/ }));
-    const agent = await screen.findByRole('link', { name: 'Open Ana Campañas' });
+    const agent = await screen.findByRole('link', {
+      name: 'Ana Campañas. Available. Workstation 1',
+    });
     expect(agent.getAttribute('href')).toBe('/office/marketing/agent/spec_ana');
     expect(screen.queryByText('Eva Cuentas')).toBeNull();
     fireEvent.click(agent);
@@ -342,5 +358,198 @@ describe('entering a room', () => {
     expect(path()).toBe('/office/finance');
     vi.unstubAllGlobals();
     delete (document as { startViewTransition?: unknown }).startViewTransition;
+  });
+});
+
+const agent = (
+  id: string,
+  departmentId: string,
+  status: SpecialistView['status'] = 'active',
+): SpecialistView => ({ id, departmentId, displayName: id, status });
+
+describe('workstations (ADR-0041)', () => {
+  it('lay out each department from its (provisional) seat count, never more than a room holds', () => {
+    expect(layoutOf(department('marketing')).seats).toBe(6);
+    expect(layoutOf(department('operations')).seats).toBe(8);
+    expect(layoutOf(department(null)).seats).toBe(4);
+    for (const count of [1, 4, 5, 6, 10, 11, MAX_SEATS]) {
+      const seats = arrangeSeats(count);
+      expect(seats).toHaveLength(count);
+      for (const { x, y } of seats) {
+        expect(x).toBeGreaterThan(0);
+        expect(x).toBeLessThan(1);
+        expect(y).toBeGreaterThan(0.62);
+        expect(y).toBeLessThan(1);
+      }
+    }
+    expect(new Set(arrangeSeats(5).map((seat) => seat.row)).size).toBe(1);
+    expect(new Set(arrangeSeats(8).map((seat) => seat.row)).size).toBe(2);
+  });
+
+  it('keep every seat when nobody sits there: an empty department has only free workstations', () => {
+    const seating = seatAgents(department('marketing'), []);
+    expect(seating.workstations.map((w) => [w.number, w.status, w.agentId])).toEqual(
+      [1, 2, 3, 4, 5, 6].map((n) => [n, 'available', null]),
+    );
+    expect(seating.occupied).toBe(0);
+    expect(seating.unseated).toEqual([]);
+  });
+
+  it('seat only the department’s own agents, in a stable order, and keep the rest visible', () => {
+    const marketing = department('marketing');
+    const seating = seatAgents(marketing, [
+      agent('b', marketing.id),
+      agent('a', marketing.id, 'paused'),
+      agent('gone', marketing.id, 'archived'),
+      agent('elsewhere', 'org_1_finance'),
+      // Another organization's agent, even for a department of the same type, never sits here.
+      agent('intruder', 'org_other_marketing'),
+    ]);
+    expect(seating.workstations.map((w) => w.agentId)).toEqual(['a', 'b', null, null, null, null]);
+    expect(seating.occupied).toBe(2);
+    expect(seating.workstations[0]?.id).toBe('org_1_marketing:seat-1');
+
+    const full = seatAgents(department('research'), [
+      ...['r1', 'r2', 'r3', 'r4', 'r5'].map((id) => agent(id, 'org_1_research')),
+    ]);
+    expect(full.occupied).toBe(4);
+    expect(full.unseated.map((a) => a.id)).toEqual(['r5']);
+  });
+
+  it('say only what the record says: never working, never an activity', () => {
+    expect(presenceOf(agent('a', 'd'), 'd:seat-1')).toEqual({
+      agentId: 'a',
+      workstationId: 'd:seat-1',
+      state: 'available',
+      activity: null,
+      updatedAt: null,
+      source: 'record',
+    });
+    expect(presenceOf(agent('a', 'd', 'paused'), null).state).toBe('paused');
+    expect(presenceOf(agent('a', 'd', 'draft'), null).state).toBe('offline');
+    expect(presenceOf(agent('a', 'd', 'disabled'), null).state).toBe('offline');
+  });
+});
+
+describe('a department’s workstations (ADR-0041)', () => {
+  const team = (backend: ReturnType<typeof fakeBackend>) => {
+    backend.options.specialists.org_1 = [
+      {
+        id: 'spec_ana',
+        name: 'Ana Campañas',
+        type: 'marketing',
+        status: 'active',
+        purpose: 'Content lead',
+      },
+      { id: 'spec_leo', name: 'Leo Contenidos', type: 'marketing', status: 'paused' },
+    ];
+    backend.options.specialists.org_other = [
+      { id: 'spec_zed', name: 'Zed Otro', type: 'marketing', status: 'active' },
+    ];
+  };
+
+  it('shows every workstation, taken or free, and only this organization’s agents', async () => {
+    open('/office/marketing', team);
+    const seats = within(await screen.findByRole('list', { name: 'Workstations' }));
+    expect(seats.getAllByRole('listitem')).toHaveLength(6);
+    expect(
+      await seats.findByRole('link', {
+        name: 'Ana Campañas. Content lead. Available. Workstation 1',
+      }),
+    ).toBeTruthy();
+    expect(seats.getByRole('link', { name: 'Leo Contenidos. Paused. Workstation 2' })).toBeTruthy();
+    expect(
+      seats.getAllByRole('button', { name: /^Workstation \d\. Available workstation$/ }),
+    ).toHaveLength(4);
+    expect(screen.queryByText('Zed Otro')).toBeNull();
+    expect(screen.getByText('1 active agent · 2 of 6 workstations taken')).toBeTruthy();
+    // Each workstation sits on its desk in the drawing.
+    for (const item of seats.getAllByRole('listitem')) {
+      const x = Number(item.style.getPropertyValue('--seat-x'));
+      expect(x).toBeGreaterThan(0);
+      expect(x).toBeLessThan(1);
+    }
+  });
+
+  it('opens a free workstation’s options, all still to come, and closes them with Escape', async () => {
+    open('/office/marketing', team);
+    const free = await screen.findByRole('button', {
+      name: 'Workstation 3. Available workstation',
+    });
+    expect(free.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(free);
+    const panel = screen.getByRole('dialog', { name: 'Workstation 3' });
+    expect(free.getAttribute('aria-expanded')).toBe('true');
+    await waitFor(() =>
+      expect(document.activeElement).toBe(within(panel).getByRole('heading', { level: 3 })),
+    );
+    for (const action of ['Assign an agent', 'Move workstation', 'Remove workstation']) {
+      const button = within(panel).getByRole('button', { name: new RegExp(`^${action}`) });
+      expect(button.getAttribute('aria-disabled')).toBe('true');
+    }
+    fireEvent.keyDown(panel, { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(free));
+  });
+
+  it('opens the agent from its workstation: a profile with no invented work', async () => {
+    const backend = open('/office/marketing', team);
+    fireEvent.click(
+      await screen.findByRole('link', {
+        name: 'Ana Campañas. Content lead. Available. Workstation 1',
+      }),
+    );
+    const title = await screen.findByRole('heading', { level: 1, name: 'Ana Campañas' });
+    expect(path()).toBe('/office/marketing/agent/spec_ana');
+    await waitFor(() => expect(document.activeElement).toBe(title));
+    const profile = within(screen.getByRole('region', { name: 'Profile' }));
+    expect(profile.getByText('Content lead')).toBeTruthy();
+    expect(profile.getByText('Workstation 1')).toBeTruthy();
+    expect(profile.getByText('Available')).toBeTruthy();
+    const work = within(screen.getByRole('region', { name: 'Work' }));
+    for (const none of [
+      'No activity available',
+      'No task assigned',
+      'No activity recorded',
+      'No projects',
+    ]) {
+      expect(work.getByText(none)).toBeTruthy();
+    }
+    expect(screen.queryByText('Working')).toBeNull();
+    // Reading the profile only reads.
+    expect(
+      backend.apiCalls().every((call) => call.method === 'GET' || call.url.endsWith('/v1/me')),
+    ).toBe(true);
+  });
+
+  it('keeps agents without a free workstation in the office', async () => {
+    open('/office/research', (backend) => {
+      backend.options.specialists.org_1 = ['r1', 'r2', 'r3', 'r4', 'r5'].map((id) => ({
+        id,
+        name: `Agent ${id}`,
+        type: 'research',
+        status: 'active',
+      }));
+    });
+    const section = within(
+      await screen.findByRole('region', { name: 'Agents without a workstation' }),
+    );
+    expect(section.getByRole('link', { name: 'Open Agent r5' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Agent r4. Available. Workstation 4' })).toBeTruthy();
+  });
+
+  it('shows an agent with no role and no seat for what it is', async () => {
+    open('/office/research/agent/r5', (backend) => {
+      backend.options.specialists.org_1 = ['r1', 'r2', 'r3', 'r4', 'r5'].map((id) => ({
+        id,
+        name: `Agent ${id}`,
+        type: 'research',
+        status: id === 'r5' ? 'draft' : 'active',
+      }));
+    });
+    const profile = within(await screen.findByRole('region', { name: 'Profile' }));
+    expect(profile.getByText('Not defined yet')).toBeTruthy();
+    expect(profile.getByText('No workstation')).toBeTruthy();
+    expect(profile.getByText('Offline')).toBeTruthy();
   });
 });

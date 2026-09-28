@@ -4,6 +4,7 @@ import { Icon, type IconName } from './icons.js';
 import type { SpecialistView } from './officeClient.js';
 import { paths } from '../shell/routes.js';
 import { navigateInto } from './transition.js';
+import { presenceOf } from './workstations.js';
 
 /**
  * How agents appear in the office (ADR-0040). An agent is a specialist record (D-28): its name,
@@ -18,6 +19,7 @@ const STATE_ICONS: Readonly<Record<AgentState, IconName>> = {
   available: 'check',
   attention: 'alert',
   paused: 'pause',
+  offline: 'moon',
 };
 
 /** A state, by shape and word as well as color, so it never depends on color alone. */
@@ -40,11 +42,13 @@ export function AgentStatus({
   );
 }
 
-/** A specialist's state as the office shows it. Only statuses the record has; never activity. */
+/**
+ * A specialist's state as the office shows it: from its record only (see `presenceOf`), never
+ * activity. Archived ones are not in the office.
+ */
 export function agentStateOf(specialist: Pick<SpecialistView, 'status'>): AgentState | undefined {
-  if (specialist.status === 'active') return 'available';
-  if (specialist.status === 'paused') return 'paused';
-  return undefined;
+  if (specialist.status === 'archived') return undefined;
+  return presenceOf({ id: '', status: specialist.status }, null).state;
 }
 
 export function AgentAvatar({
