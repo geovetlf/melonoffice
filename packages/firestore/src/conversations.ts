@@ -265,6 +265,7 @@ function toSettingsDocument(s: ConversationSettings): Doc {
   return {
     organizationId: s.organizationId,
     autonomy: s.autonomy,
+    agentId: s.agentId ?? null,
     updatedAt: ts(s.updatedAt),
     updatedBy: s.updatedBy ?? null,
     revision: s.revision,
@@ -275,6 +276,7 @@ function toSettings(d: Doc): ConversationSettings {
   const settings = {
     organizationId: d.organizationId,
     autonomy: d.autonomy,
+    ...orAbsent('agentId', d.agentId as string | null | undefined),
     updatedAt: iso(d.updatedAt as FirestoreTimestamp),
     ...orAbsent('updatedBy', d.updatedBy),
     revision: d.revision,
@@ -376,6 +378,7 @@ export class FirestoreConversationRepository implements ConversationRepository {
           message,
           conversation: toConversation(conversation.id, conversation.data() as Doc),
           newContact: false,
+          newConversation: false,
         };
       }
       const identitySnapshot = await t.get(identityDoc);
@@ -428,6 +431,7 @@ export class FirestoreConversationRepository implements ConversationRepository {
         message: records.message,
         conversation: records.conversation,
         newContact: identity === undefined,
+        newConversation: conversation === undefined,
       };
     });
   }

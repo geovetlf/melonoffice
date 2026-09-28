@@ -9,6 +9,7 @@ import type {
   ConversationId,
   ConversationPriority,
   ConversationStatus,
+  ExecutionId,
   IsoTimestamp,
   Message,
   MessageAttachment,
@@ -16,6 +17,7 @@ import type {
   MessageStatus,
   MessageType,
   OrganizationId,
+  SpecialistId,
   UserId,
 } from '@melonoffice/domain';
 import { nameBasedUuid } from '@melonoffice/execution';
@@ -510,6 +512,50 @@ export function newOutboundMessage(request: OutboundRequest, at: Date): Message 
     direction: 'outbound',
     clientMessageId,
     sender: Object.freeze({ kind: 'user', userId }),
+    type: 'text',
+    text,
+    attachments: Object.freeze([]),
+    status: 'queued',
+    sentAt: now,
+    createdAt: now,
+  });
+}
+
+/** What an agent's turn asks to send (CV-6B): its text, for the turn's own execution. */
+export interface AgentOutboundRequest {
+  readonly organizationId: OrganizationId;
+  readonly conversation: Conversation;
+  readonly specialistId: SpecialistId;
+  readonly executionId: ExecutionId;
+  readonly text: string;
+}
+
+/** The sender's key of an agent's reply: one reply per turn, whoever asks again. */
+export const agentReplyKeyOf = (executionId: ExecutionId): string => `turn:${executionId}`;
+
+/**
+ * An agent's reply, reserved before it is sent (CV-6B, ADR-0043): the same checks as a person's,
+ * with the specialist and its turn's execution as the sender. Its id comes from the turn, so a
+ * repeated turn reserves the same message and never a second one.
+ */
+export function newAgentOutboundMessage(request: AgentOutboundRequest, at: Date): Message {
+  const { organizationId, conversation, specialistId, executionId, text } = request;
+  if (conversation.organizationId !== organizationId) invalid('conversation');
+  if (typeof text !== 'string' || text.trim().length === 0) invalid('text');
+  if (text.length > MAX_TEXT_LENGTH) invalid('text.max');
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(text)) invalid('text.control');
+  const now = at.toISOString() as IsoTimestamp;
+  const clientMessageId = agentReplyKeyOf(executionId);
+  return Object.freeze({
+    id: outboundMessageIdFor(organizationId, conversation.id, clientMessageId),
+    organizationId,
+    conversationId: conversation.id,
+    channel: conversation.channel,
+    connectionId: conversation.connectionId,
+    direction: 'outbound',
+    clientMessageId,
+    sender: Object.freeze({ kind: 'specialist', specialistId, executionId }),
     type: 'text',
     text,
     attachments: Object.freeze([]),

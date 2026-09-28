@@ -21,6 +21,7 @@ import type {
   IsoTimestamp,
   Message,
   OrganizationId,
+  SpecialistId,
   UserId,
 } from '@melonoffice/domain';
 import type { AuthorizationService } from '@melonoffice/rbac';
@@ -32,6 +33,7 @@ import {
   defaultSettings,
   isAutonomyLevel,
   isHandoffReason,
+  mayAssignAgent,
 } from './control.js';
 import { ConversationError } from './errors.js';
 import {
@@ -163,6 +165,23 @@ export interface ConversationService {
    */
   changeAutonomy(tenant: TenantContext, autonomy: unknown): Promise<ConversationSettings>;
   /**
+   * Chooses the agent that attends the organization's conversations, or removes it with `null`
+   * (CV-6B, ADR-0043). A person acting directly with `conversation.manage`; the agent must be one
+   * of the organization's active specialists with a conversation profile. Audited. It grants
+   * nothing: the autonomy level still decides whether the agent acts at all.
+   */
+  changeAgent(tenant: TenantContext, agentId: unknown): Promise<ConversationSettings>;
+  /**
+   * The organization's agent takes a new conversation (CV-6B): only the runtime, for the person
+   * who configured AI handling (holding `conversation.manage`), only where the organization has an
+   * agent and allows AI handling, and only for a conversation no one ever controlled.
+   */
+  assignAgent(
+    tenant: TenantContext,
+    id: string,
+    request: { readonly agentId: unknown },
+  ): Promise<Conversation>;
+  /**
    * A person takes control of a conversation an agent handles or escalated (CV-6A): AI pauses and
    * the control epoch moves, so a send prepared before cannot go out. Needs `conversation.manage`.
    */
@@ -179,7 +198,15 @@ export interface ConversationService {
   escalate(
     tenant: TenantContext,
     id: string,
-    request: { readonly reason: unknown; readonly executionId?: unknown },
+    request: {
+      readonly reason: unknown;
+      readonly executionId?: unknown;
+      /**
+       * The control epoch the escalation was decided under (CV-6B): when given, a conversation
+       * whose control moved since (a person took it, or handed it back) is not escalated.
+       */
+      readonly epoch?: unknown;
+    },
   ): Promise<Conversation>;
   contact(
     tenant: TenantContext,
@@ -187,8 +214,19 @@ export interface ConversationService {
   ): Promise<{ readonly contact: Contact; readonly identities: readonly ChannelIdentity[] }>;
 }
 
+/**
+ * Whether a specialist can be the organization's conversation agent (CV-6B): it exists in the
+ * tenant's organization, is active and has a conversation profile. The specialists package
+ * answers; conversations only ask.
+ */
+export interface ConversationAgentCheck {
+  isConversationAgent(tenant: TenantContext, specialistId: string): Promise<boolean>;
+}
+
 export interface ConversationServiceOptions {
   readonly repository: ConversationRepository;
+  /** Checks an agent before it is chosen. Without it, no agent can be chosen. */
+  readonly agents?: ConversationAgentCheck;
   readonly organizations: Pick<TenancyStore, 'findOrganization' | 'findMembership'>;
   readonly departments: Pick<DepartmentRepository, 'find'>;
   readonly authorization: Pick<AuthorizationService, 'authorize'>;
@@ -200,6 +238,7 @@ type ConversationAction = Extract<AuditAction, `conversation.${string}`>;
 
 export function createConversationService({
   repository,
+  agents,
   organizations,
   departments,
   authorization,
@@ -535,6 +574,8 @@ export function createConversationService({
         const settings: ConversationSettings = Object.freeze({
           organizationId,
           autonomy,
+          // The agent stays chosen: the level only decides how far it may go.
+          ...(current.agentId === undefined ? {} : { agentId: current.agentId }),
           updatedAt: iso,
           updatedBy: tenant.userId,
           revision: current.revision + 1,
@@ -552,6 +593,94 @@ export function createConversationService({
                 transition: { from: current.autonomy, to: autonomy },
               },
             ),
+          ],
+        };
+      });
+    },
+
+    async changeAgent(tenant, agentId) {
+      const organizationId = await managerOf(tenant);
+      if (agentId !== null && !isUuid(agentId)) {
+        throw new ConversationError('invalid_request', 'agentId');
+      }
+      if (agentId !== null) {
+        const eligible =
+          agents === undefined ? false : await agents.isConversationAgent(tenant, agentId);
+        if (!eligible) throw new ConversationError('agent_not_available');
+      }
+      const at = now();
+      const iso = at.toISOString() as IsoTimestamp;
+      return repository.updateSettings(organizationId, (stored) => {
+        const current = stored ?? defaultSettings(organizationId, iso);
+        if ((current.agentId ?? null) === agentId)
+          throw new ConversationError('invalid_transition');
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const { agentId: _previous, ...rest } = current;
+        const settings: ConversationSettings = Object.freeze({
+          ...rest,
+          ...(agentId === null ? {} : { agentId: agentId as SpecialistId }),
+          updatedAt: iso,
+          updatedBy: tenant.userId,
+          revision: current.revision + 1,
+        });
+        return {
+          settings,
+          events: [
+            event(
+              tenant,
+              { organizationId, id: organizationId },
+              'conversation.agent_changed',
+              at,
+              {
+                target: 'organization',
+                ...(agentId === null
+                  ? { reason: 'agent_removed' }
+                  : { reference: `specialist:${agentId}` }),
+              },
+            ),
+          ],
+        };
+      });
+    },
+
+    async assignAgent(tenant, id, request) {
+      const organizationId = await organizationOf(tenant, 'conversation.manage');
+      // The agent takes a conversation for the person who configured it, through the runtime.
+      // A person hands conversations back instead, and GIA can do neither.
+      if (tenant.actor !== 'runtime') throw new ConversationError('permission_denied');
+      const conversationId = idOf(id);
+      const { agentId } = request;
+      const settings = await repository.findSettings(organizationId);
+      if (
+        settings === undefined ||
+        !allowsAIHandling(settings.autonomy) ||
+        settings.agentId === undefined ||
+        settings.agentId !== agentId
+      ) {
+        throw new ConversationError('autonomy_not_enabled');
+      }
+      const at = now();
+      const iso = at.toISOString() as IsoTimestamp;
+      return repository.updateConversation(organizationId, conversationId, (current) => {
+        if (!mayAssignAgent(current)) throw new ConversationError('invalid_transition');
+        const conversation: Conversation = Object.freeze({
+          ...current,
+          control: Object.freeze({
+            handledBy: 'ai',
+            aiState: 'active',
+            epoch: controlOf(current).epoch + 1,
+            changedAt: iso,
+          }),
+          updatedAt: iso,
+          revision: current.revision + 1,
+        });
+        return {
+          conversation,
+          events: [
+            event(tenant, conversation, 'conversation.ai_assigned', at, {
+              transition: { from: 'off', to: 'active' },
+              reference: `specialist:${settings.agentId as string}`,
+            }),
           ],
         };
       });
@@ -642,8 +771,11 @@ export function createConversationService({
       // instead, and GIA cannot do either.
       if (tenant.actor !== 'runtime') throw new ConversationError('permission_denied');
       const conversationId = idOf(id);
-      const { reason, executionId } = request;
+      const { reason, executionId, epoch } = request;
       if (!isHandoffReason(reason)) throw new ConversationError('invalid_request', 'reason');
+      if (epoch !== undefined && (typeof epoch !== 'number' || !Number.isSafeInteger(epoch))) {
+        throw new ConversationError('invalid_request', 'epoch');
+      }
       if (executionId !== undefined && !isUuid(executionId)) {
         throw new ConversationError('invalid_request', 'executionId');
       }
@@ -651,7 +783,11 @@ export function createConversationService({
       const iso = at.toISOString() as IsoTimestamp;
       return repository.updateConversation(organizationId, conversationId, (current) => {
         const control = controlOf(current);
-        if (control.handledBy !== 'ai' || control.aiState !== 'active') {
+        if (
+          control.handledBy !== 'ai' ||
+          control.aiState !== 'active' ||
+          (epoch !== undefined && control.epoch !== epoch)
+        ) {
           throw new ConversationError('invalid_transition');
         }
         const conversation: Conversation = Object.freeze({

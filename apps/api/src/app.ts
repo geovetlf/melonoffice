@@ -25,6 +25,7 @@ import { createToolGate } from '@melonoffice/guardrails';
 import {
   createChannelConnectionService,
   createChannelMessageExecutor,
+  createConversationAgentCheck,
   createMessageSendService,
   type ChannelAdapters,
   type ChannelConnectionRepository,
@@ -44,6 +45,7 @@ import type { TenancyStore } from '@melonoffice/tenancy';
 import { defaultToolRegistry, type ToolRegistry } from '@melonoffice/tools';
 import { createWorkflowService, type WorkflowRepository } from '@melonoffice/workflows';
 import { Hono, type Context } from 'hono';
+import type { AgentTurns } from './agent-turns.js';
 import { registerApprovalRoutes } from './approvals.js';
 import { registerAuthRoutes, type AuthEnv } from './auth.js';
 import { registerCors } from './cors.js';
@@ -141,6 +143,11 @@ export interface AppOptions {
   /** Channel webhooks (ADR-0033). Absent: `/webhooks/*` answers 503. */
   readonly webhooks?: WebhookIngress;
   /**
+   * Conversation agents (CV-6B, ADR-0043; built by `createAgentTurns`): hands a turn waiting on an
+   * approval back to the worker once a person decides it. Absent: the decision is stored only.
+   */
+  readonly agentTurns?: Pick<AgentTurns, 'afterDecision'>;
+  /**
    * The web app's exact origins, allowed to call `/v1` from a browser (ADR-0036). Empty or
    * absent: no CORS header is ever sent.
    */
@@ -171,6 +178,7 @@ export function createApp({
   conversations,
   ai = {},
   webhooks,
+  agentTurns,
   webOrigins = [],
 }: AppOptions): Hono<Env> {
   const app = new Hono<Env>();
@@ -284,6 +292,7 @@ export function createApp({
           authorization,
           audit,
         }),
+        ...(agentTurns === undefined ? {} : { afterDecision: agentTurns.afterDecision }),
       });
     } else if (tenancy !== undefined) {
       const unavailable = (c: Context<Env>) => c.json({ error: 'approvals_not_configured' }, 503);
@@ -401,6 +410,9 @@ export function createApp({
           : undefined;
       const conversationService = createConversationService({
         repository: conversations.repository,
+        // The organization's agent is one of its own active specialists with a conversation
+        // profile (CV-6B, ADR-0043).
+        agents: createConversationAgentCheck(structure.specialists),
         organizations: tenancy,
         departments: structure.departments,
         authorization,

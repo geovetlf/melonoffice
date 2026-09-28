@@ -4,6 +4,7 @@ import {
   DEFAULT_MODEL_POLICY,
   type AICreditsPort,
   type CreditRate,
+  type ModelPolicyCatalogue,
   type ProviderRegistry,
 } from '@melonoffice/ai-gateway';
 import { createApprovalService, type ApprovalRepository } from '@melonoffice/approvals';
@@ -17,6 +18,8 @@ import type { Logger } from '@melonoffice/observability';
 import { createAuthorizationService } from '@melonoffice/rbac';
 import {
   createRuntime,
+  type AgentOutputSink,
+  type ExecutionStopHook,
   type JobDispatcher,
   type NodeWorkSource,
   type Runtime,
@@ -52,9 +55,18 @@ export interface WorkerRuntimeOptions {
    * denied (`credits_not_configured`), exactly as the gateway already does.
    */
   readonly credits?: { readonly port: AICreditsPort; readonly rate: CreditRate };
+  /**
+   * The model policies specialists may name (ADR-0038, ADR-0043). Absent: only the default policy,
+   * which stops at `internal` data.
+   */
+  readonly policies?: ModelPolicyCatalogue;
   readonly work?: NodeWorkSource;
   readonly verifier?: VerificationSource;
   readonly dispatcher?: JobDispatcher;
+  /** Keeps agent answers for the nodes after them (ADR-0043). */
+  readonly outputs?: AgentOutputSink;
+  /** Told when an execution stops without completing (ADR-0043). */
+  readonly onStopped?: ExecutionStopHook;
   readonly logger?: Logger;
   readonly now?: () => Date;
 }
@@ -133,7 +145,7 @@ export function createWorkerRuntime(options: WorkerRuntimeOptions): {
         specialists,
         authorization,
         registry: ai,
-        policies: createModelPolicyCatalogue([], DEFAULT_MODEL_POLICY),
+        policies: options.policies ?? createModelPolicyCatalogue([], DEFAULT_MODEL_POLICY),
         environment,
         ...(credits === undefined ? {} : { credits }),
         audit,
@@ -152,6 +164,8 @@ export function createWorkerRuntime(options: WorkerRuntimeOptions): {
     ...(options.work === undefined ? {} : { work: options.work }),
     ...(options.verifier === undefined ? {} : { verifier: options.verifier }),
     ...(options.dispatcher === undefined ? {} : { dispatcher: options.dispatcher }),
+    ...(options.outputs === undefined ? {} : { outputs: options.outputs }),
+    ...(options.onStopped === undefined ? {} : { onStopped: options.onStopped }),
     ...log,
   });
   return Object.freeze({ jobs, runtime });

@@ -364,13 +364,15 @@ describe('message_send executor', () => {
       status: 'failure',
       code: 'message_not_sendable',
     });
-    // Nor can GIA or the runtime reach this tool at all.
-    for (const via of ['gia', 'runtime'] as const) {
-      expect(await w.run(mine, { actor: { userId: ALICE, via } })).toEqual({
-        status: 'failure',
-        code: 'tool_not_human_invokable',
-      });
-    }
+    // GIA never reaches this tool, and the runtime only an agent's reply version (CV-6B).
+    expect(await w.run(mine, { actor: { userId: ALICE, via: 'gia' } })).toEqual({
+      status: 'failure',
+      code: 'tool_not_human_invokable',
+    });
+    expect(await w.run(mine, { actor: { userId: ALICE, via: 'runtime' } })).toEqual({
+      status: 'failure',
+      code: 'tool_not_runtime_invokable',
+    });
     expect(w.calls).toHaveLength(0);
     expect(await w.conversations.findMessage(w.orgB, theirs.id)).toMatchObject({
       status: 'queued',

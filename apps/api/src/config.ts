@@ -33,6 +33,49 @@ export interface ServiceConfig {
    * is denied.
    */
   readonly vertexAI?: { readonly projectId: string; readonly location: string };
+  /**
+   * Where an agent's first job is handed to the worker (CV-6B, ADR-0043): `JOB_QUEUE`,
+   * `WORKER_URL`, `JOB_INVOKER_EMAIL` and `JOB_LEASE_MS`, all or none, the worker's own values.
+   * Unset: a turn is started and its job stays queued (nothing runs in the API).
+   */
+  readonly jobTransport?: {
+    readonly queue: string;
+    readonly workerUrl: string;
+    readonly invokerEmail: string;
+    readonly leaseMs: number;
+  };
+}
+
+const JOB_TRANSPORT_KEYS = [
+  'JOB_QUEUE',
+  'WORKER_URL',
+  'JOB_INVOKER_EMAIL',
+  'JOB_LEASE_MS',
+] as const;
+
+/** All of the job transport settings or none. The dispatcher checks each value again. */
+function loadJobTransport(
+  env: Readonly<Record<string, string | undefined>>,
+): ServiceConfig['jobTransport'] {
+  const present = JOB_TRANSPORT_KEYS.filter((key) => (env[key] ?? '') !== '');
+  if (present.length === 0) return undefined;
+  if (present.length !== JOB_TRANSPORT_KEYS.length) {
+    const missing = JOB_TRANSPORT_KEYS.filter((key) => !present.includes(key));
+    throw new Error(`Incomplete job transport configuration, missing: ${missing.join(', ')}`);
+  }
+  const leaseMs = Number(env.JOB_LEASE_MS);
+  if (!Number.isSafeInteger(leaseMs) || leaseMs < 60_000 || leaseMs > 30 * 60_000) {
+    throw new Error(`Invalid JOB_LEASE_MS: ${env.JOB_LEASE_MS}`);
+  }
+  const workerUrl = env.WORKER_URL as string;
+  if (!/^https:\/\/[a-z0-9.-]+$/.test(workerUrl))
+    throw new Error(`Invalid WORKER_URL: ${workerUrl}`);
+  return {
+    queue: env.JOB_QUEUE as string,
+    workerUrl,
+    invokerEmail: env.JOB_INVOKER_EMAIL as string,
+    leaseMs,
+  };
 }
 
 const ENVIRONMENTS: readonly string[] = ['dev', 'staging', 'prod'];
@@ -80,6 +123,7 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): S
   for (const origin of webOrigins) {
     if (!ORIGIN.test(origin)) throw new Error(`Invalid WEB_ORIGINS entry: ${origin}`);
   }
+  const jobTransport = loadJobTransport(env);
   const vertexProjectId = env.VERTEX_AI_PROJECT_ID;
   const vertexLocation = env.VERTEX_AI_LOCATION;
   if ((vertexProjectId === undefined) !== (vertexLocation === undefined)) {
@@ -105,5 +149,6 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): S
     ...(vertexProjectId === undefined || vertexLocation === undefined
       ? {}
       : { vertexAI: { projectId: vertexProjectId, location: vertexLocation } }),
+    ...(jobTransport === undefined ? {} : { jobTransport }),
   };
 }

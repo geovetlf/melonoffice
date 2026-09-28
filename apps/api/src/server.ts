@@ -7,7 +7,11 @@ import {
   createSecretManagerStore,
   createWebhookIngress,
   createWhatsAppAdapter,
+  withAgentTurns,
 } from '@melonoffice/integrations';
+import { createCloudTasksDispatcher } from '@melonoffice/runtime';
+import { defaultToolRegistry } from '@melonoffice/tools';
+import { createAgentTurns } from './agent-turns.js';
 import { createLogger } from '@melonoffice/observability';
 import { aiConfigurationOf } from './ai.js';
 import { createApp, SERVICE_NAME } from './app.js';
@@ -20,6 +24,7 @@ import {
   FirestoreConversationRepository,
   FirestoreDepartmentRepository,
   FirestoreExecutionRepository,
+  FirestoreJobRepository,
   FirestoreSpecialistRepository,
   FirestoreCreditStore,
   FirestorePlanRepository,
@@ -46,23 +51,55 @@ function services(projectId: string) {
   );
   const environment = config.deploymentEnvironment;
   const secrets = createSecretManagerStore();
+  const tenancy = new FirestoreTenancyStore(firestore);
+  const executions = new FirestoreExecutionRepository(firestore);
+  const approvals = new FirestoreApprovalRepository(firestore);
+  const structure = {
+    departments: new FirestoreDepartmentRepository(firestore),
+    specialists: new FirestoreSpecialistRepository(firestore),
+  };
+  const audit = createAuditService(new FirestoreAuditStore(firestore));
+  // Conversation agents (CV-6B, ADR-0043): the API starts an agent's turn after a message is
+  // stored and hands jobs to the worker, only where the job transport is configured; without it,
+  // started turns wait in the queue. The worker runs them.
+  const transport = config.jobTransport;
+  const agentTurns = createAgentTurns({
+    tenancy,
+    ...structure,
+    executions,
+    approvals,
+    jobs: new FirestoreJobRepository(firestore),
+    conversations,
+    tools: defaultToolRegistry(),
+    audit,
+    ...(transport === undefined
+      ? {}
+      : {
+          dispatcher: createCloudTasksDispatcher({
+            queue: transport.queue,
+            targetUrl: `${transport.workerUrl}/internal/jobs/run`,
+            audience: transport.workerUrl,
+            invokerEmail: transport.invokerEmail,
+            dispatchDeadlineSeconds: Math.ceil(transport.leaseMs / 1000),
+          }),
+        }),
+    logger: logger.child({ component: 'agent-turns' }),
+  });
   return {
     auth: {
       verifier: createIdentityPlatformVerifier({ projectId }),
       users: new FirestoreUserDirectory(firestore),
     },
-    tenancy: new FirestoreTenancyStore(firestore),
+    tenancy,
     billing: new FirestoreBillingStore(firestore),
-    executions: new FirestoreExecutionRepository(firestore),
-    approvals: new FirestoreApprovalRepository(firestore),
-    structure: {
-      departments: new FirestoreDepartmentRepository(firestore),
-      specialists: new FirestoreSpecialistRepository(firestore),
-    },
+    executions,
+    approvals,
+    structure,
     credits: new FirestoreCreditStore(firestore),
     plans: new FirestorePlanRepository(firestore),
     workflows: new FirestoreWorkflowRepository(firestore),
-    audit: createAuditService(new FirestoreAuditStore(firestore)),
+    audit,
+    agentTurns,
     conversations: {
       repository: conversations,
       connections,
@@ -87,7 +124,11 @@ function services(projectId: string) {
             connections,
             secrets,
             adapters: [whatsapp],
-            conversations: createConversationIngress({ repository: conversations }),
+            conversations: withAgentTurns(
+              createConversationIngress({ repository: conversations }),
+              agentTurns.trigger,
+              logger.child({ component: 'agent-turns' }),
+            ),
             logger: logger.child({ component: 'webhooks' }),
           }),
         }),

@@ -73,6 +73,13 @@ export interface ExecutionService {
    */
   start(tenant: TenantContext, id: string): Promise<Execution>;
   /**
+   * A delegated start (ADR-0043): `pending → running` by the runtime, on behalf of the person
+   * whose runtime context it is, for work that person configured to start by itself (an agent's
+   * turn on a conversation). Only a `runtime` context, and its person must still hold
+   * `execution.start`: the runtime never starts what that person could not. Idempotent as `start`.
+   */
+  runtimeStart(tenant: TenantContext, id: string): Promise<Execution>;
+  /**
    * A user's cancellation (ADR-0029), cooperative: the execution is marked `cancelled` and every
    * child its delegation created is cancelled with it. Nothing is killed; work still running
    * finds the execution ended and its late result is discarded. Cancelling again changes nothing
@@ -215,20 +222,23 @@ export function createExecutionService({
     organizationId: OrganizationId,
     id: ExecutionId,
     kind: 'start' | 'cancel',
+    delegated = false,
   ): Promise<void> {
     const reason =
-      tenant.actor === 'runtime'
-        ? `runtime_cannot_${kind}`
-        : tenant.actor !== 'user'
-          ? `gia_cannot_${kind}`
-          : authorization === undefined || audit === undefined
-            ? 'not_configured'
-            : (() => {
-                const decision = authorization.authorize(tenant, `execution.${kind}`, {
-                  organizationId,
-                });
-                return decision.allowed ? undefined : (decision.reason ?? 'permission_denied');
-              })();
+      delegated && tenant.actor !== 'runtime'
+        ? 'runtime_only'
+        : !delegated && tenant.actor === 'runtime'
+          ? `runtime_cannot_${kind}`
+          : !delegated && tenant.actor !== 'user'
+            ? `gia_cannot_${kind}`
+            : authorization === undefined || audit === undefined
+              ? 'not_configured'
+              : (() => {
+                  const decision = authorization.authorize(tenant, `execution.${kind}`, {
+                    organizationId,
+                  });
+                  return decision.allowed ? undefined : (decision.reason ?? 'permission_denied');
+                })();
     if (reason === undefined) return;
     if (audit !== undefined) {
       await audit.record({
@@ -242,7 +252,9 @@ export function createExecutionService({
         source: 'api',
       });
     }
-    if (reason.endsWith(`_cannot_${kind}`)) throw new ExecutionError('actor_not_allowed', reason);
+    if (reason.endsWith(`_cannot_${kind}`) || reason === 'runtime_only') {
+      throw new ExecutionError('actor_not_allowed', reason);
+    }
     throw new ExecutionError('permission_denied', reason);
   }
 
@@ -368,6 +380,61 @@ export function createExecutionService({
     };
   }
 
+  /** A start, by a user (`start`) or by the runtime on its person's behalf (`runtimeStart`). */
+  async function startOne(
+    tenant: TenantContext,
+    id: string,
+    delegated: boolean,
+  ): Promise<Execution> {
+    const organizationId = await organizationOf(tenant);
+    const executionId = idOf(id);
+    // A forged or foreign id is unknown before anyone is asked about permissions.
+    const found = await repository.find(organizationId, executionId);
+    if (found === undefined) throw new ExecutionError('execution_not_found');
+    await authorizeControl(tenant, organizationId, executionId, 'start', delegated);
+    // The runtime starts only what its own person created: never another person's work.
+    if (delegated && found.userId !== tenant.userId) {
+      throw new ExecutionError('actor_not_allowed', 'not_own_execution');
+    }
+    const started = (execution: Execution): boolean =>
+      execution.startedAt !== undefined && !isTerminal(execution.status);
+    if (started(found)) return found;
+    if (isTerminal(found.status)) throw new ExecutionError('execution_already_terminal');
+    if (found.parentExecutionId !== undefined) {
+      const parent = await repository.find(organizationId, found.parentExecutionId);
+      if (parent === undefined || isTerminal(parent.status)) {
+        throw new ExecutionError('execution_parent_ended');
+      }
+    }
+    const at = now();
+    try {
+      return await repository.update(organizationId, executionId, (current) => {
+        const next = startExecution(current, at.toISOString() as IsoTimestamp);
+        return {
+          execution: next,
+          events: [
+            event(
+              tenant,
+              next,
+              {
+                action: 'execution.state_changed',
+                transition: { from: current.status, to: next.status },
+                reason: delegated ? 'delegated_start' : 'user_started',
+              },
+              at,
+            ),
+          ],
+        };
+      });
+    } catch (error) {
+      // Another start won: the execution runs once, and this caller sees it running.
+      if (!isExecutionError(error) || error.code !== 'execution_concurrency_conflict') throw error;
+      const fresh = await repository.find(organizationId, executionId);
+      if (fresh !== undefined && started(fresh)) return fresh;
+      throw error;
+    }
+  }
+
   return {
     async create(tenant, request) {
       const organizationId = await organizationOf(tenant);
@@ -477,52 +544,9 @@ export function createExecutionService({
       });
     },
 
-    async start(tenant, id) {
-      const organizationId = await organizationOf(tenant);
-      const executionId = idOf(id);
-      // A forged or foreign id is unknown before anyone is asked about permissions.
-      const found = await repository.find(organizationId, executionId);
-      if (found === undefined) throw new ExecutionError('execution_not_found');
-      await authorizeControl(tenant, organizationId, executionId, 'start');
-      const started = (execution: Execution): boolean =>
-        execution.startedAt !== undefined && !isTerminal(execution.status);
-      if (started(found)) return found;
-      if (isTerminal(found.status)) throw new ExecutionError('execution_already_terminal');
-      if (found.parentExecutionId !== undefined) {
-        const parent = await repository.find(organizationId, found.parentExecutionId);
-        if (parent === undefined || isTerminal(parent.status)) {
-          throw new ExecutionError('execution_parent_ended');
-        }
-      }
-      const at = now();
-      try {
-        return await repository.update(organizationId, executionId, (current) => {
-          const next = startExecution(current, at.toISOString() as IsoTimestamp);
-          return {
-            execution: next,
-            events: [
-              event(
-                tenant,
-                next,
-                {
-                  action: 'execution.state_changed',
-                  transition: { from: current.status, to: next.status },
-                  reason: 'user_started',
-                },
-                at,
-              ),
-            ],
-          };
-        });
-      } catch (error) {
-        // Another start won: the execution runs once, and this caller sees it running.
-        if (!isExecutionError(error) || error.code !== 'execution_concurrency_conflict')
-          throw error;
-        const fresh = await repository.find(organizationId, executionId);
-        if (fresh !== undefined && started(fresh)) return fresh;
-        throw error;
-      }
-    },
+    start: (tenant, id) => startOne(tenant, id, false),
+
+    runtimeStart: (tenant, id) => startOne(tenant, id, true),
 
     async cancel(tenant, id, reason) {
       const organizationId = await organizationOf(tenant);

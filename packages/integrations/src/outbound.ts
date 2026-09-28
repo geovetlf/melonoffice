@@ -1,4 +1,4 @@
-import { buildAuditEvent, type AuditEvent, type AuditService } from '@melonoffice/audit';
+import { actorOf, buildAuditEvent, type AuditEvent, type AuditService } from '@melonoffice/audit';
 import {
   ConversationError,
   isClientMessageId,
@@ -70,6 +70,8 @@ export function messageEventOf(
   settlement: OutboundSettlement | { readonly status: 'denied'; readonly failureCode: string },
   at: Date,
   requestId?: string,
+  /** An agent's reply (CV-6B): the runtime sent it for `userId`, with this tool version. */
+  agent?: { readonly toolVersion: number },
 ): AuditEvent {
   return buildAuditEvent(
     {
@@ -85,12 +87,15 @@ export function messageEventOf(
           : settlement.status === 'denied'
             ? 'denied'
             : 'failure',
-      actor: { type: 'user', userId, via: 'direct' },
+      actor:
+        agent === undefined
+          ? { type: 'user', userId, via: 'direct' }
+          : actorOf({ actor: 'runtime', userId }),
       organizationId,
       target: { type: 'message', id: message.id },
       reference: `conversation:${message.conversationId}`,
       reason: settlement.status === 'sent' ? message.channel : settlement.failureCode,
-      tool: { id: MESSAGE_SEND.toolId, version: MESSAGE_SEND.version },
+      tool: { id: MESSAGE_SEND.toolId, version: agent?.toolVersion ?? MESSAGE_SEND.version },
       ...(requestId === undefined ? {} : { requestId }),
       source: 'api',
     },
@@ -120,11 +125,29 @@ export function settlementOfError(error: unknown): OutboundSettlement {
   }
 }
 
+/** The `message_send` versions an agent's reply uses (CV-6B, ADR-0043): never a person's. */
+export const AGENT_REPLY_VERSIONS: readonly number[] = [2, 3];
+
+/**
+ * Whether an agent's reply may still go out, read at the moment of sending (CV-6B, ADR-0043):
+ * the conversation is still the agent's, under the control its turn started with, the turn is
+ * still the latest, and the agent is within its limits. A refusal code, or `undefined`.
+ */
+export interface AgentReplyCheck {
+  refusalOf(
+    context: ToolExecutionContext,
+    conversation: Conversation,
+    message: Message,
+  ): Promise<string | undefined>;
+}
+
 export interface ChannelMessageExecutorOptions {
   readonly conversations: ConversationRepository;
   readonly connections: Pick<ChannelConnectionRepository, 'find'>;
   readonly secrets: SecretStore;
   readonly adapters: ChannelAdapters;
+  /** Checks agents' replies. Without it, the runtime's versions are refused. */
+  readonly agentReplies?: AgentReplyCheck;
   readonly now?: () => Date;
 }
 
@@ -137,13 +160,36 @@ export interface ChannelMessageExecutorOptions {
  * with its audit event, in one write: `sent` with the provider's id, or `failed`/`unknown`.
  */
 export function createChannelMessageExecutor(options: ChannelMessageExecutorOptions): ToolExecutor {
-  const { conversations, connections, secrets, adapters, now = () => new Date() } = options;
+  const {
+    conversations,
+    connections,
+    secrets,
+    adapters,
+    agentReplies,
+    now = () => new Date(),
+  } = options;
 
   return {
     async execute(context: ToolExecutionContext, input: unknown): Promise<ToolExecutorOutcome> {
-      // Only a person's own call reaches this tool; anything else is refused before any read.
-      if (context.actor.via !== 'direct' || context.toolId !== MESSAGE_SEND.toolId) {
+      // A person's own call to version 1, or the runtime's call to an agent's version (CV-6B).
+      // Anything else is refused before any read.
+      const agent = context.actor.via === 'runtime';
+      if (context.toolId !== MESSAGE_SEND.toolId) {
         return { status: 'failure', code: 'tool_not_human_invokable' };
+      }
+      if (
+        !agent &&
+        (context.actor.via !== 'direct' || context.toolVersion !== MESSAGE_SEND.version)
+      ) {
+        return { status: 'failure', code: 'tool_not_human_invokable' };
+      }
+      if (
+        agent &&
+        (agentReplies === undefined ||
+          !AGENT_REPLY_VERSIONS.includes(context.toolVersion) ||
+          context.specialistId === undefined)
+      ) {
+        return { status: 'failure', code: 'tool_not_runtime_invokable' };
       }
       const { conversationId, messageId } = input as {
         readonly conversationId: ConversationId;
@@ -157,8 +203,11 @@ export function createChannelMessageExecutor(options: ChannelMessageExecutorOpti
         message.direction !== 'outbound' ||
         message.status !== 'queued' ||
         message.conversationId !== conversationId ||
-        message.sender.kind !== 'user' ||
-        message.sender.userId !== userId ||
+        !(agent
+          ? message.sender.kind === 'specialist' &&
+            message.sender.specialistId === context.specialistId &&
+            message.sender.executionId === context.executionId
+          : message.sender.kind === 'user' && message.sender.userId === userId) ||
         message.text === undefined
       ) {
         return { status: 'failure', code: 'message_not_sendable' };
@@ -170,7 +219,17 @@ export function createChannelMessageExecutor(options: ChannelMessageExecutorOpti
           organizationId,
           message.id,
           settlement,
-          [messageEventOf(userId, organizationId, message, settlement, at, context.requestId)],
+          [
+            messageEventOf(
+              userId,
+              organizationId,
+              message,
+              settlement,
+              at,
+              context.requestId,
+              agent ? { toolVersion: context.toolVersion } : undefined,
+            ),
+          ],
           at,
         );
         return settlement.status === 'sent'
@@ -184,8 +243,14 @@ export function createChannelMessageExecutor(options: ChannelMessageExecutorOpti
         return refuse('conversation_not_found');
       }
       if (conversation.status === 'closed') return refuse('conversation_closed');
-      // An agent took the conversation while the person's message waited (CV-6A): not sent.
-      if (!personMaySend(conversation)) return refuse('conversation_handled_by_ai');
+      if (agent) {
+        // Read now, just before sending: a person who took control is never overtaken (CV-6B).
+        const refusal = await agentReplies?.refusalOf(context, conversation, message);
+        if (refusal !== undefined) return refuse(refusal);
+      } else if (!personMaySend(conversation)) {
+        // An agent took the conversation while the person's message waited (CV-6A): not sent.
+        return refuse('conversation_handled_by_ai');
+      }
       const adapter = adapters[conversation.channel];
       if (adapter === undefined) return refuse('channel_not_available');
       if (!withinServiceWindow(conversation, adapter, now())) {

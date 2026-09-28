@@ -27,7 +27,7 @@ export const PERMISSIONS = {
     resource: 'execution',
     action: 'start',
     description:
-      'Start a pending execution, directly and never through GIA, the planner or the runtime (ADR-0029).',
+      'Start a pending execution, directly and never through GIA or the planner (ADR-0029); the runtime starts only work its person configured to start by itself (ADR-0043).',
   },
   'execution.cancel': {
     resource: 'execution',

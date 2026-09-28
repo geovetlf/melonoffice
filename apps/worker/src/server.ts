@@ -3,20 +3,35 @@ import { serve } from '@hono/node-server';
 import {
   AI_MODEL_CATALOGUE,
   AI_PROVIDER_CATALOGUE,
+  createModelPolicyCatalogue,
   createProviderRegistry,
+  CREDIT_RATE,
 } from '@melonoffice/ai-gateway';
-import { createServiceIdentityVerifier } from '@melonoffice/auth';
 import {
+  CONVERSATION_AGENT_POLICY,
+  createVertexAIAdapter,
+  VERTEX_AI_MODELS,
+  VERTEX_AI_PROVIDER,
+} from '@melonoffice/ai-vertex';
+import { createServiceIdentityVerifier } from '@melonoffice/auth';
+import { createCreditService } from '@melonoffice/credits';
+import {
+  FirestoreAgentOutputRepository,
   FirestoreApprovalRepository,
   FirestoreAuditStore,
+  FirestoreChannelConnectionRepository,
+  FirestoreConversationRepository,
+  FirestoreCreditStore,
   FirestoreDepartmentRepository,
   FirestoreExecutionRepository,
   FirestoreJobRepository,
   FirestoreSpecialistRepository,
   FirestoreTenancyStore,
 } from '@melonoffice/firestore';
+import { createSecretManagerStore, createWhatsAppAdapter } from '@melonoffice/integrations';
 import { createLogger } from '@melonoffice/observability';
 import { createToolRegistry, TOOL_CATALOGUE } from '@melonoffice/tools';
+import { createConversationAgentParts } from './agents.js';
 import { randomUUID } from 'node:crypto';
 import { createApp, RUN_JOB_PATH, SERVICE_NAME, type AppOptions } from './app.js';
 import { loadConfig, type RuntimeConfig } from './config.js';
@@ -34,27 +49,85 @@ const workerId = `${(process.env.K_REVISION ?? 'local').replace(/[^\w-]/g, '-').
 // Tasks are reached with the service's own runtime identity, never with a key.
 function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
   const firestore = new Firestore({ projectId: runtime.firestoreProjectId });
-  const { jobs: jobService, runtime: engine } = createWorkerRuntime({
+  const tenancy = new FirestoreTenancyStore(firestore);
+  const stores = {
+    tenancy,
+    departments: new FirestoreDepartmentRepository(firestore),
+    specialists: new FirestoreSpecialistRepository(firestore),
+    executions: new FirestoreExecutionRepository(firestore),
+    approvals: new FirestoreApprovalRepository(firestore),
+    jobs: new FirestoreJobRepository(firestore),
+    audit: new FirestoreAuditStore(firestore),
+  };
+  const { vertexAI, channelSecretsProjectId, whatsappGraphApiVersion } = config.agents;
+  // Conversation agents (CV-6B, ADR-0043): their tools' executors, work source, verifier, answer
+  // store and stop hook. The reply's executor exists only where channel secrets are configured;
+  // without it a reply fails at the gate and the conversation goes to a person.
+  const agents = createConversationAgentParts({
     stores: {
-      tenancy: new FirestoreTenancyStore(firestore),
-      departments: new FirestoreDepartmentRepository(firestore),
-      specialists: new FirestoreSpecialistRepository(firestore),
-      executions: new FirestoreExecutionRepository(firestore),
-      approvals: new FirestoreApprovalRepository(firestore),
-      jobs: new FirestoreJobRepository(firestore),
-      audit: new FirestoreAuditStore(firestore),
+      ...stores,
+      conversations: new FirestoreConversationRepository(firestore),
+      outputs: new FirestoreAgentOutputRepository(firestore),
     },
+    ...(channelSecretsProjectId === undefined
+      ? {}
+      : {
+          channels: {
+            connections: new FirestoreChannelConnectionRepository(firestore),
+            secrets: createSecretManagerStore(),
+            adapters: {
+              whatsapp: createWhatsAppAdapter(
+                whatsappGraphApiVersion === undefined
+                  ? {}
+                  : { graphApiVersion: whatsappGraphApiVersion },
+              ),
+            },
+          },
+        }),
+    logger: logger.child({ component: 'conversation-agents' }),
+  });
+  const { jobs: jobService, runtime: engine } = createWorkerRuntime({
+    stores,
     environment: runtime.environment,
     leaseMs: runtime.leaseMs,
-    // The real catalogues: empty until tools and providers are approved (ADR-0026, D-7). No
-    // credit rate (D-12): every model call is denied. No work source or verifier yet: nodes fail
-    // with `input_unavailable` and nothing is completed without evidence.
-    tools: { registry: createToolRegistry(TOOL_CATALOGUE), executors: {} },
-    ai: createProviderRegistry({
-      providers: AI_PROVIDER_CATALOGUE,
-      models: AI_MODEL_CATALOGUE,
-      adapters: [],
-    }),
+    // The real tool catalogue (ADR-0026) with the conversation agent's executors. The model is
+    // Vertex AI's Gemini 2.5 Flash-Lite (D-7) with the credit rate (D-12), only where Terraform
+    // sets the Vertex AI project; anywhere else no provider is registered and every model call
+    // is denied before reaching one.
+    tools: { registry: createToolRegistry(TOOL_CATALOGUE), executors: agents.executors },
+    ai:
+      vertexAI === undefined
+        ? createProviderRegistry({
+            providers: AI_PROVIDER_CATALOGUE,
+            models: AI_MODEL_CATALOGUE,
+            adapters: [],
+          })
+        : createProviderRegistry({
+            providers: [VERTEX_AI_PROVIDER],
+            models: VERTEX_AI_MODELS,
+            adapters: [
+              createVertexAIAdapter({
+                projectId: vertexAI.projectId,
+                location: vertexAI.location,
+              }),
+            ],
+          }),
+    ...(vertexAI === undefined
+      ? {}
+      : {
+          credits: {
+            port: createCreditService({
+              store: new FirestoreCreditStore(firestore),
+              organizations: tenancy,
+            }),
+            rate: CREDIT_RATE,
+          },
+          policies: createModelPolicyCatalogue([CONVERSATION_AGENT_POLICY]),
+        }),
+    work: agents.work,
+    verifier: agents.verifier,
+    outputs: agents.outputs,
+    onStopped: agents.onStopped,
     dispatcher: createCloudTasksDispatcher({
       queue: runtime.queue,
       targetUrl: `${runtime.workerUrl}${RUN_JOB_PATH}`,
@@ -74,6 +147,10 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
 }
 
 logger.info('runtime', { enabled: config.runtime !== undefined, workerId });
+logger.info('conversation agents', {
+  ai: config.agents.vertexAI !== undefined,
+  sending: config.agents.channelSecretsProjectId !== undefined,
+});
 const app = createApp({
   logger,
   version: config.version,

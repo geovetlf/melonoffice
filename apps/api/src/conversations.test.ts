@@ -1275,7 +1275,7 @@ describe('the only send path is the tool gate (CV-2)', () => {
   });
 
   it('never calls an adapter from the API: its one send goes through the gate', () => {
-    const source = ['app.ts', 'conversations.ts', 'webhooks.ts', 'server.ts']
+    const source = ['app.ts', 'conversations.ts', 'webhooks.ts', 'server.ts', 'agent-turns.ts']
       .map((file) => readFileSync(new URL(`./${file}`, import.meta.url), 'utf8'))
       .join('\n');
     // The only way out is the tool gate (ADR-0034): the API never reaches a provider directly.
@@ -1283,11 +1283,15 @@ describe('the only send path is the tool gate (CV-2)', () => {
     expect(source).toContain('sender.send(');
     expect(source).toContain('createToolGate(');
     expect(source).not.toContain('graph.facebook.com');
+    // The agent's handoff (CV-6B, ADR-0043) is internal: it moves the conversation to a person
+    // and never reaches a channel.
     expect(
       defaultToolRegistry()
         .list()
         .map((t) => t.id),
-    ).toEqual(['message_send']);
+    ).toEqual(['message_send', 'conversation_handoff']);
+    // The API's own runtime (kickoff and resume only) has no executor at all.
+    expect(source).toContain('executors: {},');
   });
 });
 

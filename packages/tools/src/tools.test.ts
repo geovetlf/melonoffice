@@ -15,6 +15,8 @@ import {
 import {
   createToolRegistry,
   defaultToolRegistry,
+  CONVERSATION_HANDOFF_TOOL,
+  HANDOFF_REASON_CODES,
   MESSAGE_SEND_TOOL,
   TOOL_CATALOGUE,
 } from './registry.js';
@@ -181,9 +183,9 @@ describe('tool registry', () => {
     expect(codeOf(() => createToolRegistry([definition()], [version()]))).toBe('accepted');
   });
 
-  it('ships only message_send (CV-2): a real tool with its executor, none invented', () => {
-    expect(TOOL_CATALOGUE.map((t) => t.id)).toEqual(['message_send']);
-    expect(defaultToolRegistry().list()).toEqual([MESSAGE_SEND_TOOL]);
+  it('ships message_send and conversation_handoff: real tools with executors, none invented', () => {
+    expect(TOOL_CATALOGUE.map((t) => t.id)).toEqual(['message_send', 'conversation_handoff']);
+    expect(defaultToolRegistry().list()).toEqual([MESSAGE_SEND_TOOL, CONVERSATION_HANDOFF_TOOL]);
     const v = defaultToolRegistry().resolve('message_send', 1)?.version;
     expect(v).toMatchObject({
       action: 'send',
@@ -200,6 +202,37 @@ describe('tool registry', () => {
       'conversationId',
       'messageId',
     ]);
+  });
+
+  it("gives an agent's replies their own runtime-only versions, never a person's (CV-6B)", () => {
+    const registry = defaultToolRegistry();
+    const supervised = registry.resolve('message_send', 2)?.version;
+    const autonomous = registry.resolve('message_send', 3)?.version;
+    for (const v of [supervised, autonomous]) {
+      expect(v).toMatchObject({
+        action: 'send',
+        permissions: ['conversation.send'],
+        retryPolicy: { maxAttempts: 1, backoffMs: 0 },
+        provider: { kind: 'external', id: 'channel' },
+        environments: ['dev'],
+        invocationModes: ['runtime'],
+      });
+      expect(v?.inputSchema).toEqual(registry.resolve('message_send', 1)?.version.inputSchema);
+    }
+    // A supervised agent's reply always waits on a person's approval.
+    expect(supervised?.approvalPolicy).toBe('approval_required');
+    expect(autonomous?.approvalPolicy).toBe('auto');
+    const handoff = registry.resolve('conversation_handoff', 1)?.version;
+    expect(handoff).toMatchObject({
+      permissions: ['conversation.manage'],
+      credentials: [],
+      invocationModes: ['runtime'],
+      provider: { kind: 'internal', id: 'conversation' },
+    });
+    expect(
+      (handoff?.inputSchema as unknown as { properties: { reason: { enum: readonly string[] } } })
+        .properties.reason.enum,
+    ).toEqual([...HANDOFF_REASON_CODES]);
   });
 });
 

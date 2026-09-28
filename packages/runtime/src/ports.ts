@@ -1,7 +1,7 @@
 import type { AIGateway, AIRequest } from '@melonoffice/ai-gateway';
 import type { ApprovalService } from '@melonoffice/approvals';
 import type { Execution, ExecutionNode, ExecutionRef, JobId } from '@melonoffice/domain';
-import type { ExecutionService, VerificationInput } from '@melonoffice/execution';
+import type { AgentOutputInput, ExecutionService, VerificationInput } from '@melonoffice/execution';
 import type { ToolGate } from '@melonoffice/guardrails';
 import type { JobService } from '@melonoffice/jobs';
 import type { TenantContext } from '@melonoffice/tenancy';
@@ -46,6 +46,30 @@ export interface NodeWorkSource {
     execution: Execution,
     node: ExecutionNode,
   ): Promise<AgentWork | undefined>;
+  /**
+   * Whether a ready node still has work to do, from what the nodes before it stored (ADR-0043):
+   * `false` skips it (`pending → skipped`), and nothing runs for it. Absent, every node runs.
+   * It can only skip: it never runs, completes or fails a node.
+   */
+  needed?(tenant: TenantContext, execution: Execution, node: ExecutionNode): Promise<boolean>;
+}
+
+/**
+ * Keeps an agent node's answer (ADR-0043), so the nodes after it can read it. Written before the
+ * node completes; if it cannot be kept, the node fails as if the model had not answered. Absent,
+ * the answer is discarded and only the request reference is stored, as before.
+ */
+export interface AgentOutputSink {
+  record(tenant: TenantContext, input: AgentOutputInput): Promise<void>;
+}
+
+/**
+ * Told when an execution stops without completing (ADR-0043): it failed, or a node's outcome is
+ * unknown and waits on a person. Never when a person cancelled it. It may only react, for
+ * example by handing a conversation to a person; its errors are logged and change nothing here.
+ */
+export interface ExecutionStopHook {
+  stopped(tenant: TenantContext, execution: Execution, code: string): Promise<void>;
 }
 
 /** What the runtime sets on every AI call, never a work source. */

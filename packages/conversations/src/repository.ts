@@ -41,6 +41,8 @@ export interface ReceiveResult {
   readonly conversation: Conversation;
   /** A new contact and identity were created for an address seen for the first time. */
   readonly newContact: boolean;
+  /** This message started the conversation: it did not exist before (CV-6B). */
+  readonly newConversation: boolean;
 }
 
 /** What reserving an outbound message did: stored it now, or found it already there. */
@@ -154,6 +156,7 @@ export function checkStoredSettings(s: ConversationSettings): ConversationSettin
   if (
     !isUuid(s.organizationId) ||
     !isAutonomyLevel(s.autonomy) ||
+    (s.agentId !== undefined && !isUuid(s.agentId)) ||
     !Number.isSafeInteger(s.revision) ||
     s.revision < 0
   ) {
@@ -210,7 +213,13 @@ export class InMemoryConversationRepository implements ConversationRepository {
     const stored = this.#messages.get(messageId);
     if (stored !== undefined) {
       const conversation = this.#conversations.get(stored.conversationId) as Conversation;
-      return { duplicate: true, message: stored, conversation, newContact: false };
+      return {
+        duplicate: true,
+        message: stored,
+        conversation,
+        newContact: false,
+        newConversation: false,
+      };
     }
     const identity = this.#identities.get(
       channelIdentityIdFor(m.organizationId, m.channel, m.from.externalId),
@@ -239,6 +248,7 @@ export class InMemoryConversationRepository implements ConversationRepository {
       message: records.message,
       conversation: records.conversation,
       newContact: identity === undefined,
+      newConversation: conversation === undefined,
     };
   }
 
