@@ -147,6 +147,37 @@ describe("GIA's Workplace (ADR-0050)", () => {
     expect(sent[0]?.requestKey).not.toBe(sent[1]?.requestKey);
   });
 
+  it('marks a projection as an estimate, by the model or the simple fallback (ADR-0059)', async () => {
+    for (const [model, text] of [
+      ['model', 'Projection by the forecasting model: an estimate, not a fact.'],
+      [
+        'fallback',
+        'Simple estimate from recent averages (the forecasting model was not available): not a fact.',
+      ],
+    ] as const) {
+      open('/gia', (b) => {
+        b.options.gia = {
+          answer: 'El modelo proyecta alrededor de S/ 3,300 en los próximos 30 días.',
+          department: 'sales',
+          screen: null,
+          proposedAction: null,
+          proposedFacts: 0,
+          forecast: { id: 'fc_1', status: 'completed', model },
+          context: { facts: 1, activity: true, missing: [] },
+          replayed: false,
+          generatedBy: 'ai',
+        };
+      });
+      const chat = await screen.findByRole('region', { name: 'Talk to GIA' });
+      fireEvent.change(within(chat).getByRole('textbox', { name: 'Your message to GIA' }), {
+        target: { value: '¿Cuánto venderemos el próximo mes?' },
+      });
+      fireEvent.click(within(chat).getByRole('button', { name: 'Send' }));
+      expect(await within(chat).findByText(text)).toBeTruthy();
+      cleanup();
+    }
+  });
+
   it('offers to add what she does not know yet to the company memory (ADR-0056)', async () => {
     open('/gia', (b) => {
       b.options.gia = {

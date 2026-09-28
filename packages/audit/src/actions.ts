@@ -22,7 +22,8 @@ export interface AuditActionDefinition {
     | 'contact'
     | 'opportunity'
     | 'pipeline'
-    | 'follow_up';
+    | 'follow_up'
+    | 'forecast';
   readonly description: string;
   /** The results this action is recorded with. Anything else is a programming error. */
   readonly results: readonly AuditResult[];
@@ -222,6 +223,24 @@ export const AUDIT_ACTIONS = {
     category: 'follow_up',
     description:
       'A follow-up could not be scheduled or processed (C5); `reason` is the code (`not_scheduled`, `retries_exhausted`).',
+    results: ['failure'],
+  },
+  'forecast.requested': {
+    category: 'forecast',
+    description:
+      'A person asked the Forecasting Engine for a forecast, directly or through GIA (ADR-0059); `reason` is `cache_hit`, `cache_miss` (a run was queued), a data problem (`insufficient_data`, …) or, when denied, the refusal code. Never a value of the series.',
+    results: ['success', 'denied'],
+  },
+  'forecast.completed': {
+    category: 'forecast',
+    description:
+      'A queued forecast finished (ADR-0059); `model` is the model that answered and `reason` is `model` or `fallback`; `reference` is the credits reference of its one charge, when charged. Never a predicted value.',
+    results: ['success'],
+  },
+  'forecast.failed': {
+    category: 'forecast',
+    description:
+      'A queued forecast could not be produced (ADR-0059); `reason` is the failure code (`not_scheduled`, `retries_exhausted`, `credits_insufficient`, a provider code). Nothing was charged.',
     results: ['failure'],
   },
   'pipeline.created': {

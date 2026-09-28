@@ -26,6 +26,7 @@
     "@melonoffice/conversations": "workspace:*",
     "@melonoffice/departments": "workspace:*",
     "@melonoffice/domain": "workspace:*",
+    "@melonoffice/forecasting": "workspace:*",
     "@melonoffice/observability": "workspace:*",
     "@melonoffice/rbac": "workspace:*",
     "@melonoffice/tenancy": "workspace:*"

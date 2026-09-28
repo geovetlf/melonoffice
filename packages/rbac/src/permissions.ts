@@ -203,6 +203,18 @@ export const PERMISSIONS = {
     description:
       'Schedule, change, reschedule, complete and cancel follow-ups, directly: GIA only proposes one, and a person confirms it (C5, ADR-0058). It never sends anything to a contact.',
   },
+  'forecast.read': {
+    resource: 'forecast',
+    action: 'read',
+    description:
+      "See the organization's forecasts (ADR-0059). Each one also needs the permission of the records it was built from. GIA may read them for the person she helps.",
+  },
+  'forecast.run': {
+    resource: 'forecast',
+    action: 'run',
+    description:
+      'Ask the Forecasting Engine for a forecast of a metric one may read, directly or through GIA (ADR-0059). A model run costs credits; it never changes or sends anything.',
+  },
   'pipeline.manage': {
     resource: 'pipeline',
     action: 'manage',

@@ -357,6 +357,15 @@ function GiaReply({ answer }: { readonly answer: GiaAnswerView }) {
         <FormattedMessage id="gia.name" />
       </span>
       <p className="gia-chat__text">{answer.answer}</p>
+      {answer.forecast === null ? null : (
+        <p className="gia-chat__meta">
+          <FormattedMessage
+            id={
+              answer.forecast === 'model' ? 'gia.chat.forecastModel' : 'gia.chat.forecastFallback'
+            }
+          />
+        </p>
+      )}
       {departmentName === undefined ? null : (
         <p className="gia-chat__meta">
           <FormattedMessage id="gia.chat.department" values={{ department: departmentName }} />

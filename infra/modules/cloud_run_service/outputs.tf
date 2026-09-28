@@ -23,6 +23,16 @@ output "env" {
   value       = var.env
 }
 
+output "resources" {
+  description = "CPU, memory, requests per instance and instances: what the service may use."
+  value = {
+    cpu           = var.cpu
+    memory        = var.memory
+    concurrency   = var.concurrency
+    max_instances = var.max_instances
+  }
+}
+
 output "timeout" {
   description = "Longest time one request may take."
   value       = google_cloud_run_v2_service.this.template[0].timeout

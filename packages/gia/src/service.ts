@@ -40,6 +40,13 @@ import {
 } from './catalogue.js';
 import { commercialLinks, type GiaLink } from './commercial.js';
 import { GiaError } from './errors.js';
+import {
+  forecastSummaryOf,
+  readForecast,
+  type GiaForecastContext,
+  type GiaForecastPort,
+  type GiaForecastSummary,
+} from './forecast.js';
 import { giaMessages, giaOutputSchema, type GiaTurn } from './prompt.js';
 
 /**
@@ -84,6 +91,11 @@ export interface GiaAnswer {
    */
   readonly proposedFollowUp: GiaFollowUpProposal | null;
   /**
+   * The projection the person asked for (ADR-0059), made by the Forecasting Engine, never by
+   * GIA: what it is and how it ended. The app reads the figures from the forecast by its id.
+   */
+  readonly forecast: GiaForecastSummary | null;
+  /**
    * What she read: how many facts, whether today's activity and the commercial records, and
    * what is still unknown.
    */
@@ -91,6 +103,7 @@ export interface GiaAnswer {
     readonly facts: number;
     readonly activity: boolean;
     readonly commercial: boolean;
+    readonly forecast: boolean;
     readonly missing: readonly string[];
   };
   readonly replayed: boolean;
@@ -122,6 +135,11 @@ export interface GiaOptions {
    * follow-ups (C5) and the contacts the message names.
    */
   readonly commercial?: Pick<CommercialInsightService, 'read'>;
+  /**
+   * The Forecasting Engine (ADR-0059), asked as the person when their message asks for a
+   * projection. GIA never calls a model herself.
+   */
+  readonly forecasting?: GiaForecastPort;
   readonly departments: Pick<DepartmentRepository, 'list'>;
   readonly authorization: Pick<AuthorizationService, 'authorize'>;
   readonly audit: AuditService;
@@ -304,6 +322,7 @@ export function createGia(options: GiaOptions): GiaService {
     brain,
     activity,
     commercial,
+    forecasting,
     departments,
     authorization,
     audit,
@@ -428,7 +447,7 @@ export function createGia(options: GiaOptions): GiaService {
 
     // What she reads, as this person: each part only with its own permission, and a part she
     // cannot read is simply left out (she says she does not know, never guesses).
-    const [facts, gaps, today, types, insights] = await Promise.all([
+    const [facts, gaps, today, types, insights, projection] = await Promise.all([
       readFacts(tenant, message),
       readGaps(tenant),
       readActivity(tenant),
@@ -438,6 +457,8 @@ export function createGia(options: GiaOptions): GiaService {
         tenant,
         [...history.filter((t) => t.role === 'person').map((t) => t.text), message].join('\n'),
       ),
+      // Only when the person's own words ask for a projection now (ADR-0059).
+      readProjection(tenant, message),
     ]);
     const missing = gaps?.questions.map((q) => q.id) ?? [];
     // What an answer may link to: only the references she was given, never an id she wrote.
@@ -474,6 +495,7 @@ export function createGia(options: GiaOptions): GiaService {
         ...(commercial === undefined
           ? {}
           : { commercial: { insights, canScheduleFollowUps: followUpRecords.length > 0 } }),
+        ...(projection === undefined ? {} : { forecast: projection }),
       }),
       outputModality: 'text',
       maxOutputTokens: GIA_LIMITS.outputTokens,
@@ -505,9 +527,13 @@ export function createGia(options: GiaOptions): GiaService {
       throw new GiaError('ai_invalid_output');
     }
     // Which sources the answer drew on, as a code; never the question, the answer or a figure.
+    const sources = [
+      ...(insights === undefined ? [] : ['commercial']),
+      ...(projection === undefined ? [] : ['forecast']),
+    ];
     await record('success', {
       model,
-      ...(insights === undefined ? {} : { reason: 'commercial_context' }),
+      ...(sources.length === 0 ? {} : { reason: `${sources.join('_')}_context` }),
     });
     const proposedFacts = await propose(tenant, parsed.facts, log);
     const proposedFollowUp =
@@ -526,6 +552,7 @@ export function createGia(options: GiaOptions): GiaService {
       routed: parsed.department !== null,
       commercial: insights !== undefined,
       followUpProposed: proposedFollowUp !== null,
+      forecast: projection?.kind ?? null,
     });
     const links = [...new Set(parsed.links.filter((ref): ref is string => typeof ref === 'string'))]
       .flatMap((ref) => {
@@ -544,10 +571,12 @@ export function createGia(options: GiaOptions): GiaService {
       proposedFacts,
       links: Object.freeze(links),
       proposedFollowUp,
+      forecast: projection === undefined ? null : forecastSummaryOf(projection),
       context: Object.freeze({
         facts: facts.length,
         activity: today !== undefined,
         commercial: insights !== undefined,
+        forecast: projection !== undefined,
         missing: Object.freeze([...missing]),
       }),
       replayed: false,
@@ -612,6 +641,20 @@ export function createGia(options: GiaOptions): GiaService {
     } catch (error) {
       logger.warn('gia.commercial_unavailable', { error: codeOf(error) });
       return undefined;
+    }
+  }
+
+  /** The projection the message asks for, if any; the engine failing is only logged. */
+  async function readProjection(
+    tenant: TenantContext,
+    message: string,
+  ): Promise<GiaForecastContext | undefined> {
+    if (forecasting === undefined) return undefined;
+    try {
+      return (await readForecast(forecasting, tenant, message, authorization))?.context;
+    } catch (error) {
+      logger.warn('gia.forecast_unavailable', { error: codeOf(error) });
+      return { kind: 'unavailable', reason: 'not_available' };
     }
   }
 

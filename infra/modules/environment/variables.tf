@@ -52,6 +52,23 @@ variable "conversation_agents" {
   default     = false
 }
 
+variable "forecasting" {
+  description = "Turn on the Forecasting Engine (ADR-0059): a private forecaster service runs TimesFM 2.5, only the worker may call it, and forecasts reuse the api's access to the execution jobs queue. Needs conversation_agents. Only dev."
+  type        = bool
+  default     = false
+}
+
+variable "forecast_credits_per_run" {
+  description = "Whole credits one forecast run costs (ADR-0059). Null leaves runs refused (forecast_price_not_set) until the owner sets the price; cache hits and the fallback cost nothing."
+  type        = number
+  default     = null
+
+  validation {
+    condition     = var.forecast_credits_per_run == null || (var.forecast_credits_per_run == floor(coalesce(var.forecast_credits_per_run, 0)) && coalesce(var.forecast_credits_per_run, 0) >= 0 && coalesce(var.forecast_credits_per_run, 0) <= 1000)
+    error_message = "forecast_credits_per_run must be a whole number from 0 to 1000, or null."
+  }
+}
+
 variable "whatsapp_channel" {
   description = "Turn on the WhatsApp channel (ADR-0033, ADR-0034): the api and worker read channel secrets from this project's Secret Manager. Needs the runtime. Only dev."
   type        = bool

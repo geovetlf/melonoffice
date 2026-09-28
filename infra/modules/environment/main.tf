@@ -35,6 +35,18 @@ locals {
   # the api hands each turn to the same execution jobs queue (X6d). Needs assisted AI.
   conversation_agents_enabled = var.conversation_agents && local.ai_assist_enabled
 
+  # The Forecasting Engine (ADR-0059): the forecaster runs TimesFM 2.5 on CPU, private. A run is
+  # queued by the api on the execution jobs queue, whose access the api already has for agents,
+  # and the worker calls the forecaster. Its URL is the deterministic run.app one.
+  forecasting_enabled = var.forecasting && local.conversation_agents_enabled
+  forecaster_url      = local.forecasting_enabled ? "https://forecaster-${data.google_project.this[0].number}.${var.region}.run.app" : null
+  # The same on the api (which only needs to know a model is deployed) and the worker (which calls
+  # it). None is a secret; a missing price leaves runs refused.
+  forecasting_env = local.forecasting_enabled ? merge(
+    { FORECASTER_URL = local.forecaster_url },
+    var.forecast_credits_per_run == null ? {} : { FORECAST_CREDITS_PER_RUN = tostring(var.forecast_credits_per_run) },
+  ) : {}
+
   # The WhatsApp channel (ADR-0033, ADR-0034): channel secrets live in this project's Secret
   # Manager, one secret per connection and kind, named `channel-{connectionId}-{kind}`. The api
   # reads them for webhooks and a person's replies; the worker for an agent's replies.
@@ -126,8 +138,12 @@ locals {
   # accepts requests from the deployer alone, which it needs for health checks.
   apps = {
     web = {
-      public = true
-      memory = "256Mi"
+      public        = true
+      cpu           = "1"
+      memory        = "256Mi"
+      concurrency   = 80
+      max_instances = null
+      startup       = 10
       # What /config.json tells the browser (ADR-0036). Neither is a secret: the API's public URL
       # and a browser key restricted to the sign-in APIs and this site.
       env = local.web_sign_in_enabled ? {
@@ -137,8 +153,12 @@ locals {
       timeout = null
     }
     api = {
-      public = true
-      memory = "512Mi"
+      public        = true
+      cpu           = "1"
+      memory        = "512Mi"
+      concurrency   = 80
+      max_instances = null
+      startup       = 10
       # Turns on auth: the project whose Identity Platform issues tokens and whose Firestore
       # holds users (ADR-0017). Not a secret. Only set where Firestore and auth exist.
       env = merge(
@@ -163,12 +183,17 @@ locals {
           JOB_LEASE_MS      = tostring(var.job_lease_seconds * 1000)
         } : {},
         local.whatsapp_env,
+        local.forecasting_env,
       )
       timeout = null
     }
     worker = {
-      public = false
-      memory = "512Mi"
+      public        = false
+      cpu           = "1"
+      memory        = "512Mi"
+      concurrency   = 80
+      max_instances = null
+      startup       = 10
       # With the runtime on, everything the worker needs to run jobs (ADR-0032). None is a secret.
       env = merge(
         { LOG_LEVEL = var.log_level },
@@ -187,11 +212,32 @@ locals {
           VERTEX_AI_LOCATION   = var.region
         } : {},
         local.whatsapp_env,
+        local.forecasting_env,
       )
       # A delivery may run as long as its lease; other services keep the default.
       timeout = local.runtime_enabled ? "${var.job_lease_seconds}s" : null
     }
   }
+
+  # The forecaster (ADR-0059): TimesFM 2.5 on CPU, one forecast at a time per instance, at most
+  # one instance. Measured: about 0.5 s and 1.4 GB per forecast; 2 vCPU and 4 GiB leave room for
+  # loading the weights. Loading takes a while, so its startup probe waits up to 240 s.
+  forecaster_app = local.forecasting_enabled ? {
+    forecaster = {
+      public        = false
+      cpu           = "2"
+      memory        = "4Gi"
+      concurrency   = 1
+      max_instances = 1
+      startup       = 80
+      env = {
+        FORECASTER_MAX_CONTEXT = "1024"
+        FORECASTER_THREADS     = "2"
+      }
+      timeout = "120s"
+    }
+  } : {}
+  deployed_apps = merge(local.apps, local.forecaster_app)
 }
 
 module "services" {
@@ -328,19 +374,22 @@ resource "google_billing_account_iam_member" "planner_budget" {
 
 module "app" {
   source   = "../cloud_run_service"
-  for_each = var.deploy_apps ? local.apps : {}
+  for_each = var.deploy_apps ? local.deployed_apps : {}
 
-  project_id          = var.project_id
-  region              = var.region
-  name                = each.key
-  public              = each.value.public
-  memory              = each.value.memory
-  env                 = each.value.env
-  timeout             = each.value.timeout
-  max_instances       = var.max_instances
-  deletion_protection = var.deletion_protection
-  labels              = local.labels
-  developer_members   = { deployer = local.deployer_member }
+  project_id                = var.project_id
+  region                    = var.region
+  name                      = each.key
+  public                    = each.value.public
+  cpu                       = each.value.cpu
+  memory                    = each.value.memory
+  concurrency               = each.value.concurrency
+  startup_failure_threshold = each.value.startup
+  env                       = each.value.env
+  timeout                   = each.value.timeout
+  max_instances             = coalesce(each.value.max_instances, var.max_instances)
+  deletion_protection       = var.deletion_protection
+  labels                    = local.labels
+  developer_members         = { deployer = local.deployer_member }
   # A private service answers the deployer (health checks). The worker also answers the job
   # dispatch identity, which Cloud Tasks signs its OIDC tokens as.
   invoker_members = each.value.public ? {} : merge(
@@ -633,4 +682,18 @@ resource "google_project_iam_member" "worker_channel_secrets" {
     description = "Channel connection secrets only (channel-{connectionId}-{kind})."
     expression  = "resource.name.startsWith(\"projects/${data.google_project.this[0].number}/secrets/channel-\")"
   }
+}
+
+# ---------------------------------------------------------------------------------------------
+# Forecasting Engine (ADR-0059). The forecaster is private: besides the deployer (health checks),
+# only the worker's runtime identity may call it. The api never does; it queues runs.
+
+resource "google_cloud_run_v2_service_iam_member" "worker_invokes_forecaster" {
+  count = local.forecasting_enabled ? 1 : 0
+
+  project  = var.project_id
+  location = var.region
+  name     = module.app["forecaster"].name
+  role     = "roles/run.invoker"
+  member   = local.worker_member
 }

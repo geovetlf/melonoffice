@@ -45,3 +45,7 @@ crash.log
 # Playwright output
 test-results/
 playwright-report/
+
+# Python (apps/forecaster)
+__pycache__/
+*.pyc

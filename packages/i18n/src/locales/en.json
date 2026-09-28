@@ -522,6 +522,8 @@
   "gia.chat.cost": "Each message to GIA uses 1 credit.",
   "gia.chat.notStored": "This chat is not saved: it clears when you close the app.",
   "gia.chat.suggestion": "Suggestion (you do it): {action}",
+  "gia.chat.forecastModel": "Projection by the forecasting model: an estimate, not a fact.",
+  "gia.chat.forecastFallback": "Simple estimate from recent averages (the forecasting model was not available): not a fact.",
   "gia.chat.facts": "{count, plural, one {GIA noted # fact about your business for you to confirm.} other {GIA noted # facts about your business for you to confirm.}}",
   "gia.chat.department": "This is for {department}.",
   "gia.chat.go": "Go to {place}",

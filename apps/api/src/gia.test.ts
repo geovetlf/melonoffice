@@ -178,11 +178,13 @@ describe.each(STORES)('GIA chat with storage in %s (ADR-0052)', (_name, createSt
         proposedAction: ANSWER.proposedAction,
         proposedFacts: 0,
         proposedFollowUp: null,
+        forecast: null,
         links: [],
         context: {
           facts: 1,
           activity: true,
           commercial: true,
+          forecast: false,
           missing: ['what_you_do', 'main_products', 'customers', 'areas', 'goals', 'tone'],
         },
         replayed: false,

@@ -26,6 +26,7 @@
     "@melonoffice/domain": "workspace:*",
     "@melonoffice/execution": "workspace:*",
     "@melonoffice/firestore": "workspace:*",
+    "@melonoffice/forecasting": "workspace:*",
     "@melonoffice/guardrails": "workspace:*",
     "@melonoffice/integrations": "workspace:*",
     "@melonoffice/jobs": "workspace:*",

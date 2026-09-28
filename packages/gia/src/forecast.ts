@@ -1,0 +1,250 @@
+import {
+  addPeriods,
+  findForecastMetric,
+  forecastIntentOf,
+  isForecastError,
+  type Forecast,
+  type ForecastEngine,
+  type ForecastFrequency,
+  type ForecastIntent,
+} from '@melonoffice/forecasting';
+import type { AuthorizationService } from '@melonoffice/rbac';
+import type { TenantContext } from '@melonoffice/tenancy';
+import type { GiaLocale } from './catalogue.js';
+import { NO_PERMISSION } from './commercial.js';
+
+/**
+ * GIA and the Forecasting Engine (ADR-0059). GIA never runs a model: when the person's own words
+ * ask for a projection of a metric MelonOffice records, she asks the engine, as that person,
+ * like any screen would. The engine checks permissions, reads the records, charges the run and
+ * audits it. What GIA gets back is written for the model as data, the history apart from the
+ * projection, and she words it; she never adds a figure of her own.
+ */
+
+/** The engine as GIA uses it: the same door as the API's. */
+export type GiaForecastPort = Pick<ForecastEngine, 'request'>;
+
+/** What GIA knows about the forecast the person asked for, whatever came of it. */
+export type GiaForecastContext =
+  | { readonly kind: 'forecast'; readonly forecast: Forecast; readonly cache: 'hit' | 'miss' }
+  | {
+      readonly kind: 'insufficient_data';
+      readonly metric: string;
+      readonly frequency: ForecastFrequency;
+      readonly have: number | null;
+      readonly need: number | null;
+      readonly problem: string;
+    }
+  | { readonly kind: 'unsupported'; readonly subject: string }
+  | { readonly kind: 'not_allowed' }
+  | { readonly kind: 'unavailable'; readonly reason: string };
+
+/**
+ * What the answer carries about the forecast, for the app to show beside it: never the history
+ * or the numbers themselves, which the app reads from the forecast by its id.
+ */
+export interface GiaForecastSummary {
+  readonly id: string | null;
+  readonly status:
+    Forecast['status'] | 'insufficient_data' | 'unsupported' | 'not_allowed' | 'unavailable';
+  readonly metric: string | null;
+  readonly frequency: ForecastFrequency | null;
+  readonly horizon: number | null;
+  readonly model: 'model' | 'fallback' | null;
+}
+
+/** Engine refusals the person sees as their own reason; any other is "not available now". */
+const UNAVAILABLE: Readonly<Record<string, string>> = {
+  forecast_credits_insufficient: 'credits_insufficient',
+  forecast_limit_reached: 'busy',
+  horizon_out_of_range: 'horizon_out_of_range',
+};
+
+/**
+ * Asks the engine for the forecast the message asks for, if it asks for one. Only the current
+ * message counts: an earlier turn never starts a run, so repeating or rephrasing does not run
+ * anything the person did not ask for now. Without `forecast.run` and the metric's own read
+ * permission nothing is asked; the engine checks both again.
+ */
+export async function readForecast(
+  port: GiaForecastPort,
+  tenant: TenantContext,
+  message: string,
+  authorization: Pick<AuthorizationService, 'authorize'>,
+): Promise<{ intent: ForecastIntent; context: GiaForecastContext } | undefined> {
+  const intent = forecastIntentOf(message);
+  if (intent === undefined) return undefined;
+  if (intent.kind === 'unsupported') {
+    return { intent, context: { kind: 'unsupported', subject: intent.subject } };
+  }
+  const can = (permission: string) => authorization.authorize(tenant, permission).allowed;
+  const permission = findForecastMetric(intent.metric)?.permission;
+  if (!can('forecast.run') || permission === undefined || !can(permission)) {
+    return { intent, context: { kind: 'not_allowed' } };
+  }
+  try {
+    const outcome = await port.request(tenant, {
+      metric: intent.metric,
+      frequency: intent.frequency,
+      horizon: intent.horizon,
+      wait: true,
+    });
+    if (!('forecast' in outcome)) {
+      return {
+        intent,
+        context: {
+          kind: 'insufficient_data',
+          metric: outcome.metric,
+          frequency: outcome.frequency,
+          have: outcome.have ?? null,
+          need: outcome.need ?? null,
+          problem: outcome.problem,
+        },
+      };
+    }
+    return { intent, context: { kind: 'forecast', ...outcome } };
+  } catch (error) {
+    if (!isForecastError(error)) throw error;
+    if (error.code === 'permission_denied') return { intent, context: { kind: 'not_allowed' } };
+    return {
+      intent,
+      context: { kind: 'unavailable', reason: UNAVAILABLE[error.code] ?? 'not_available' },
+    };
+  }
+}
+
+export function forecastSummaryOf(context: GiaForecastContext): GiaForecastSummary {
+  if (context.kind === 'forecast') {
+    const f = context.forecast;
+    return Object.freeze({
+      id: f.id,
+      status: f.status,
+      metric: f.metric,
+      frequency: f.frequency,
+      horizon: f.horizon,
+      model: f.result?.model.kind ?? null,
+    });
+  }
+  return Object.freeze({
+    id: null,
+    status: context.kind,
+    metric: context.kind === 'insufficient_data' ? context.metric : null,
+    frequency: context.kind === 'insufficient_data' ? context.frequency : null,
+    horizon: null,
+    model: null,
+  });
+}
+
+const METRIC_WORDS: Readonly<Record<string, string>> = {
+  'sales.won_value': 'money from sales won (opportunities closed as won)',
+  'sales.won_count': 'number of sales won (opportunities closed as won)',
+  'opportunities.new': 'new opportunities opened',
+  'leads.new': 'new leads and customers registered',
+  'conversations.new': 'new customer conversations started',
+};
+
+const SUBJECT_WORDS: Readonly<Record<string, string>> = {
+  orders: 'orders',
+  products: 'products',
+  inventory: 'stock or inventory',
+  campaigns: 'campaigns',
+};
+
+function number(value: number, locale: GiaLocale, currency: string | null): string {
+  const tag = locale === 'es' ? 'es-PE' : 'en-US';
+  try {
+    return currency === null
+      ? new Intl.NumberFormat(tag, { maximumFractionDigits: 1 }).format(value)
+      : new Intl.NumberFormat(tag, { style: 'currency', currency }).format(value);
+  } catch {
+    return `${value.toFixed(2)}${currency === null ? '' : ` ${currency}`}`;
+  }
+}
+
+const sum = (values: readonly number[]) => values.reduce((a, b) => a + b, 0);
+
+/**
+ * The forecast as the model reads it: what happened, then what is projected, each labelled.
+ * Totals and averages are calculated here, never by the model. The range of a total adds the
+ * periods' ranges, so it is wide and only approximate; the block says so.
+ */
+export function forecastBlock(context: GiaForecastContext, locale: GiaLocale): string {
+  switch (context.kind) {
+    case 'not_allowed':
+      return `status: not_allowed. The person may NOT see this projection or its records.`;
+    case 'unsupported':
+      return `status: unsupported. MelonOffice has no records of ${SUBJECT_WORDS[context.subject] ?? context.subject} yet, so nothing about them can be projected. No other metric stands in for them.`;
+    case 'unavailable':
+      return `status: unavailable (${context.reason}). No projection now.`;
+    case 'insufficient_data':
+      return [
+        'status: insufficient_data. There is not enough recorded history to project this; no projection was made.',
+        `metric: ${METRIC_WORDS[context.metric] ?? context.metric}, per ${context.frequency}`,
+        context.have === null ? null : `recorded periods: ${context.have}`,
+        context.need === null ? null : `periods needed: ${context.need}`,
+      ]
+        .filter((line) => line !== null)
+        .join('\n');
+    case 'forecast':
+      break;
+  }
+  const f = context.forecast;
+  const currency = f.unit === 'currency' ? f.entity : null;
+  const n = (value: number) => number(value, locale, currency);
+  const header = [
+    `status: ${f.status}`,
+    `metric: ${METRIC_WORDS[f.metric] ?? f.metric}${currency === null ? '' : ` in ${currency}`}, per ${f.frequency}`,
+    `business time zone: ${f.timeZone}`,
+  ];
+  if (f.status === 'queued' || f.status === 'running') {
+    return [...header, 'The projection is still being calculated; no figure yet.'].join('\n');
+  }
+  if (f.status === 'failed' || f.result === undefined) {
+    return [...header, 'The projection could not be calculated; no figure.'].join('\n');
+  }
+  const history = f.input.values;
+  const recent = history.slice(-Math.min(f.horizon, history.length));
+  const predictions = f.result.predictions;
+  const points = predictions.map((p) => p.value);
+  const recentAverage = sum(recent) / recent.length;
+  const projectedAverage = sum(points) / points.length;
+  const change =
+    recentAverage === 0
+      ? null
+      : Math.round(((projectedAverage - recentAverage) / recentAverage) * 100);
+  const first = predictions[0]?.period ?? addPeriods(f.input.end, 1, f.frequency);
+  const last = predictions.at(-1)?.period ?? first;
+  const isFallback = f.result.model.kind === 'fallback';
+  return [
+    ...header,
+    'HISTORY (what was recorded; facts):',
+    `- periods ${f.input.start} to ${f.input.end}: ${history.length} ${f.frequency}s, total ${n(sum(history))}`,
+    `- last ${recent.length} ${f.frequency}s: total ${n(sum(recent))}, average ${n(recentAverage)} per ${f.frequency}`,
+    'PROJECTION (an estimate, not a fact; it can be wrong):',
+    `- next ${predictions.length} ${f.frequency}s, ${first} to ${last}: central estimate ${n(sum(points))} in total, average ${n(projectedAverage)} per ${f.frequency}`,
+    `- approximate range of the total: ${n(sum(predictions.map((p) => p.low)))} to ${n(sum(predictions.map((p) => p.high)))} (adds each ${f.frequency}'s 10%-90% band; wide)`,
+    change === null
+      ? '- trend: no recent history to compare with'
+      : `- trend: projected average is ${change > 0 ? '+' : ''}${change}% against the last ${recent.length} ${f.frequency}s`,
+    isFallback
+      ? '- made by: a simple estimate from recent averages (the forecasting model was not available); say so'
+      : `- made by: the forecasting model ${f.result.model.id}`,
+    `- warnings: ${f.warnings.length === 0 ? 'none' : f.warnings.join(', ')}`,
+  ].join('\n');
+}
+
+/** GIA's rules when a <forecast> is present. */
+export function forecastRules(locale: GiaLocale): readonly string[] {
+  const es = locale === 'es';
+  return [
+    'Projections of the future come only from <forecast>. Use its figures exactly; never calculate, extrapolate or adjust one, and never project anything <forecast> does not project.',
+    'Always keep what happened (HISTORY) apart from what is projected (PROJECTION), in separate sentences.',
+    `Word a projection as an estimate: ${es ? '"el modelo proyecta alrededor de…", "se estima…"' : '"the model projects around…", "an estimate of…"'}, with the central estimate and its approximate range. Never say it will happen, is sure or guaranteed, and never give a confidence or probability percentage.`,
+    'If the warnings in <forecast> include short_history, mostly_zero or outliers_kept, say in plain words that the estimate is less reliable because of it.',
+    'If <forecast> was made by a simple estimate, say it is a simple estimate from recent averages, not the forecasting model.',
+    `If <forecast> says not_allowed, answer exactly "${NO_PERMISSION[locale]}" and nothing about it.`,
+    'If <forecast> says unsupported, say MelonOffice has no records of that yet, so it cannot be projected, and what they could register instead. Never answer with another metric.',
+    'If <forecast> says insufficient_data, say there is not enough history yet to project it (with the recorded and needed periods), and give no figure.',
+    'If <forecast> says the projection is still being calculated, say so and that they can ask again in a moment. If it says unavailable, say projections are not available right now (credits_insufficient: not enough credits; busy: other projections are running).',
+  ];
+}
