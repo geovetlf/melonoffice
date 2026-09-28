@@ -1,9 +1,9 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
 import { Button } from '@melonoffice/ui';
-import { useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type { CustomersClient, CustomerView } from '../customers/customersClient.js';
 import { navigate } from '../identity/router.js';
-import { paths } from '../shell/routes.js';
+import { openedWith, paths } from '../shell/routes.js';
 import { useRead } from '../shell/useRead.js';
 import {
   LOST_REASONS,
@@ -82,7 +82,14 @@ export function OpportunitiesSection({
   const intl = useIntl();
   const [status, setStatus] = useState<OpportunityStatus>('open');
   const [version, setVersion] = useState(0);
-  const [selected, setSelected] = useState<string | undefined>();
+  // An opportunity or the pipeline opened from elsewhere (GIA's links, C4) starts in view.
+  const [selected, setSelected] = useState<string | undefined>(() => openedWith('opportunity'));
+  const section = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (openedWith('opportunity') !== undefined || openedWith('view') === 'pipeline') {
+      section.current?.scrollIntoView?.({ block: 'start' });
+    }
+  }, []);
   const [mode, setMode] = useState<'none' | 'create' | 'stages'>('none');
   const reload = () => setVersion((v) => v + 1);
   const pipeline = useRead(`pipeline:${version}`, () => client.pipeline());
@@ -92,7 +99,11 @@ export function OpportunitiesSection({
   const summary = list.status === 'ready' ? list.value.summary : undefined;
   const openStages = ready?.stages.filter((s) => s.kind === 'open') ?? [];
   return (
-    <section className="dept-office__section customers" aria-labelledby="opportunities-title">
+    <section
+      ref={section}
+      className="dept-office__section customers"
+      aria-labelledby="opportunities-title"
+    >
       <div className="customers__header">
         <h2 id="opportunities-title">
           <FormattedMessage id="opportunities.title" />

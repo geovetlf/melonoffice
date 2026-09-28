@@ -13,12 +13,20 @@ export interface GiaTurnView {
   readonly text: string;
 }
 
+/** Where an answer may take the person in Comercial (C4); the API names only what she read. */
+export type GiaLinkView =
+  | { readonly kind: 'opportunity'; readonly id: string; readonly label: string }
+  | { readonly kind: 'contact'; readonly id: string; readonly label: string | null }
+  | { readonly kind: 'conversation'; readonly id: string; readonly label: string | null }
+  | { readonly kind: 'leads' | 'customers' | 'pipeline' };
+
 export interface GiaAnswerView {
   readonly answer: string;
   readonly department: string | null;
   readonly screen: GiaScreen | null;
   readonly proposedAction: string | null;
   readonly proposedFacts: number;
+  readonly links: readonly GiaLinkView[];
 }
 
 export type GiaFailure = 'credits' | 'not_available' | 'rate_limited' | 'failed';
@@ -34,6 +42,23 @@ export interface GiaClient {
     readonly locale: 'en' | 'es';
     readonly history: readonly GiaTurnView[];
   }): Promise<GiaResult>;
+}
+
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v);
+
+function linksOf(raw: unknown): readonly GiaLinkView[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((link): GiaLinkView[] => {
+    if (!isRecord(link)) return [];
+    const { kind, id, label } = link;
+    if (kind === 'leads' || kind === 'customers' || kind === 'pipeline') return [{ kind }];
+    if (typeof id !== 'string' || id === '') return [];
+    const name = typeof label === 'string' && label !== '' ? label : null;
+    if (kind === 'opportunity' && name !== null) return [{ kind, id, label: name }];
+    if (kind === 'contact' || kind === 'conversation') return [{ kind, id, label: name }];
+    return [];
+  });
 }
 
 const FAILURES: Readonly<Record<string, GiaFailure>> = {
@@ -71,6 +96,7 @@ export function createGiaClient(request: ReplyRequest, organizationId: string): 
           screen: typeof body.screen === 'string' ? (body.screen as GiaScreen) : null,
           proposedAction: typeof body.proposedAction === 'string' ? body.proposedAction : null,
           proposedFacts: typeof body.proposedFacts === 'number' ? body.proposedFacts : 0,
+          links: linksOf(body.links),
         },
       };
     },

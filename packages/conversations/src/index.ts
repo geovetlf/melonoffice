@@ -11,3 +11,4 @@ export * from './customers.js';
 export * from './pipeline.js';
 export * from './opportunities.js';
 export * from './agent-turn.js';
+export * from './insights.js';

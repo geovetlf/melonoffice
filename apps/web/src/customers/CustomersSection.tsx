@@ -51,7 +51,11 @@ export function CustomersSection({
   readonly currentUserId: string;
   readonly timeZone: string;
 }) {
-  const [stage, setStage] = useState<CustomerStage>('lead');
+  // A tab opened from elsewhere (GIA's links, C4) starts selected.
+  const [stage, setStage] = useState<CustomerStage>(() => {
+    const opened = openedWith('stage');
+    return STAGES.find((s) => s === opened) ?? 'lead';
+  });
   const [read, setRead] = useState<{ key: string; load: Load<CustomerList> } | undefined>();
   // A card opened from elsewhere (the Conversations Center, C3) starts open.
   const [selected, setSelected] = useState<string | undefined>(() => openedWith('contact'));

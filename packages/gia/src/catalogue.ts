@@ -35,6 +35,8 @@ export const GIA_LIMITS = Object.freeze({
   /** Today's activity items given to the model. */
   activityItems: 20,
   outputTokens: 1_200,
+  /** Links to Comercial one answer may carry (C4). */
+  links: 4,
 });
 
 /**

@@ -48,6 +48,12 @@ export const paths = {
   conversation: (id: string) => `/conversations?c=${encodeURIComponent(id)}`,
   /** A contact's card in the Comercial office (C3). */
   customer: (contactId: string) => `/office/sales?contact=${encodeURIComponent(contactId)}`,
+  /** An opportunity's card in the Comercial office (C4). */
+  opportunity: (id: string) => `/office/sales?opportunity=${encodeURIComponent(id)}`,
+  /** The Comercial office's leads or customers tab (C4). */
+  contacts: (stage: 'lead' | 'customer') => `/office/sales?stage=${stage}`,
+  /** The Comercial office's pipeline (C4). */
+  pipeline: () => '/office/sales?view=pipeline',
   connections: () => '/settings/connections',
   memory: () => '/memory',
   gia: () => '/gia',
@@ -56,8 +62,13 @@ export const paths = {
     `/office/${encodeURIComponent(slug)}/agent/${encodeURIComponent(agentId)}`,
 } as const;
 
-/** An id a page was opened with (`?c=` or `?contact=`), when it looks like one (C3). */
-export function openedWith(name: 'c' | 'contact'): string | undefined {
+/**
+ * An id a page was opened with (`?c=`, `?contact=` (C3); `?opportunity=`, `?stage=`, `?view=`
+ * (C4)), when it looks like one.
+ */
+export function openedWith(
+  name: 'c' | 'contact' | 'opportunity' | 'stage' | 'view',
+): string | undefined {
   const value = new URLSearchParams(globalThis.location.search).get(name);
   return value !== null && ID.test(value) ? value : undefined;
 }
