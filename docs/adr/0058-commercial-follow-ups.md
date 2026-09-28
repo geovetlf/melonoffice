@@ -47,7 +47,7 @@ Values:
 Service rules (`createFollowUpService`, `packages/conversations/src/follow-ups.ts`):
 
 - The id is `followUpIdFor(org, requestKey)`, so the same request is the same follow-up.
-- The time is required: a date plus a local time, read in the business's zone. Daylight saving is handled in `zonedInstant`.
+- The time is required: a date plus a local time, always read in the business's zone. A zone sent in the request is refused (`invalid_request` / `timeZone`); the server's or browser's zone is never used. Daylight saving is handled in `zonedInstant`.
 - A time more than 5 minutes in the past, or more than 366 days ahead, is refused.
 - A record may have at most 20 open follow-ups.
 - A closed opportunity or an archived contact takes no new follow-up.
@@ -73,6 +73,8 @@ Follow-ups are **not** X1 executions or tool calls. The tool gate needs a specia
 - `runDue` re-reads everything in one Firestore transaction. If the follow-up is still `scheduled`, its time has come and the record is still open, it becomes `due`.
 - If the record ended (opportunity won or lost, contact archived), the follow-up is cancelled with `opportunity_closed` or `contact_archived`.
 - An error answers 503, so Cloud Tasks retries with its own policy. There is no retry loop of our own.
+- A task for a stopped (inactive) organization is not acknowledged either: it is retried, and if the organization is still stopped when the queue gives up, the follow-up is kept as failed.
+- The same create request sent again re-queues a follow-up that is still `scheduled`. This heals a first attempt that stopped between saving and queuing; if a task was already queued, the repeat is a duplicate that does nothing.
 - On the last attempt (`x-cloudtasks-taskretrycount` ≥ 9) the worker calls `failDue`, which marks it `failed` / `retries_exhausted`. It never silently stays `scheduled`.
 - If the task cannot be queued at creation or reschedule, the follow-up is kept as `failed` / `not_scheduled`, and the API answers 503 `follow_up_not_scheduled`. The person sees it and can give it a new time.
 - If no scheduler is configured (staging and prod today), the API answers 503 `follow_up_scheduler_unavailable` and creates nothing. Nothing is ever pretended to be scheduled.

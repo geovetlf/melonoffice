@@ -264,12 +264,12 @@ const CREATE_KEYS = new Set([
   'description',
   'date',
   'time',
-  'timeZone',
   'assignedTo',
   'source',
 ]);
+// No `timeZone`: a date and time are always read in the business's own time zone.
 const UPDATE_KEYS = new Set(['revision', 'title', 'description', 'type', 'assignedTo']);
-const RESCHEDULE_KEYS = new Set(['revision', 'date', 'time', 'timeZone']);
+const RESCHEDULE_KEYS = new Set(['revision', 'date', 'time']);
 const REVISION_KEYS = new Set(['revision']);
 
 type FollowUpAction = Extract<AuditAction, `follow_up.${string}`>;
@@ -354,17 +354,16 @@ export function createFollowUpService(options: FollowUpServiceOptions): FollowUp
     return value as UserId;
   }
 
-  /** A local date and time in a zone, as an instant from now to the horizon. */
+  /**
+   * A local date and time in the business's time zone, as an instant from now to the horizon.
+   * The zone is never the caller's: not the browser's, the server's or one sent in the request.
+   */
   async function instantOf(
     organizationId: OrganizationId,
     input: Record<string, unknown>,
   ): Promise<{ at: Date; timeZone: string }> {
-    const timeZone =
-      input.timeZone === undefined || input.timeZone === null
-        ? await zoneOf(organizationId)
-        : typeof input.timeZone === 'string' && isTimeZone(input.timeZone)
-          ? input.timeZone
-          : bad('timeZone');
+    if (input.timeZone !== undefined) bad('timeZone');
+    const timeZone = await zoneOf(organizationId);
     if (!isLocalDate(input.date)) return bad('date');
     // The time is the person's: never assumed. Without one, the caller asks for it.
     if (!isLocalTime(input.time)) return bad('time');
@@ -709,7 +708,16 @@ export function createFollowUpService(options: FollowUpServiceOptions): FollowUp
           );
         },
       );
-      if (!created) return { followUp, created: false };
+      // The same request again re-queues a follow-up still waiting for its time: if the first
+      // attempt stopped between saving it and queuing its task, this heals it. A task that was
+      // queued already makes this one a duplicate, which does nothing (its `schedule` decides).
+      if (!created) {
+        return {
+          followUp:
+            followUp.status === 'scheduled' ? await queueOrFail(tenant, followUp) : followUp,
+          created: false,
+        };
+      }
       return { followUp: await queueOrFail(tenant, followUp), created: true };
     },
 
@@ -901,10 +909,10 @@ export function createFollowUpService(options: FollowUpServiceOptions): FollowUp
           }
           const at = now();
           const iso = at.toISOString();
-          // The organization stopped: its follow-ups wait, unchanged.
+          // The organization stopped: the task is not acknowledged, so the queue delivers it
+          // again; if it is still stopped when the queue gives up, the follow-up is kept as failed.
           if (organization.status !== 'active') {
-            result = { kind: 'stale' };
-            return { followUp: f, events: [] };
+            throw new ConversationError('organization_inactive');
           }
           // Its record ended before its time came: nothing is left to do, and it says why.
           const ended: FollowUpCancelReason | undefined =

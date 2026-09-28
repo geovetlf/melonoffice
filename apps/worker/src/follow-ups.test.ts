@@ -2,6 +2,8 @@ import { createServiceIdentityVerifier } from '@melonoffice/auth';
 import { ConversationError, type FollowUpTask } from '@melonoffice/conversations';
 import { createLogger } from '@melonoffice/observability';
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT, type JWTPayload } from 'jose';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { createApp, RUN_JOB_PATH } from './app.js';
 import { createCloudTasksScheduler, METADATA_TOKEN_URL } from './dispatcher.js';
@@ -45,6 +47,14 @@ function fakeFollowUps(
 }
 
 describe('follow-up handler (C5)', () => {
+  it('gives up exactly when the queue does: its max_attempts in Terraform', () => {
+    const terraform = readFileSync(
+      join(import.meta.dirname, '../../../infra/modules/environment/main.tf'),
+      'utf8',
+    );
+    expect(/max_attempts\s*=\s*(\d+)/.exec(terraform)?.[1]).toBe(String(FOLLOW_UP_MAX_ATTEMPTS));
+  });
+
   it('hands exactly { organizationId, followUpId, schedule } to the service', async () => {
     const f = fakeFollowUps();
     const handler = createFollowUpHandler({ followUps: f.service });

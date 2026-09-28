@@ -202,6 +202,28 @@ describe('follow-up times (C5)', () => {
     });
   });
 
+  it('7b. near midnight, "today" and "tomorrow" are the business’s days, not UTC’s', async () => {
+    const w = await world();
+    w.advance(11 * 3_600_000 + 40 * 60_000); // 2026-09-29 04:40Z = 2026-09-28 23:40 in Lima
+    const today = localDateTime(w.now(), LIMA).date;
+    expect(today).toBe('2026-09-28');
+    expect(relativeDate('mañana', today)).toBe('2026-09-29');
+    const { followUp } = await w.followUps.create(
+      w.alice,
+      tomorrowAt10(w.juan.id, { date: today, time: '23:50' }),
+    );
+    expect(followUp.scheduledAt).toBe('2026-09-29T04:50:00.000Z');
+    const list = await w.followUps.list(w.alice);
+    expect(list.today).toBe('2026-09-28');
+    expect(list.counts).toMatchObject({ today: 1, upcoming: 0 });
+    // 23:30 Lima is already past: refused, although in UTC it is "tomorrow".
+    expect(
+      await codeOf(
+        w.followUps.create(w.alice, tomorrowAt10(w.juan.id, { date: today, time: '23:30' })),
+      ),
+    ).toBe('invalid_request:date_in_past');
+  });
+
   it('8. resolves relative dates by fixed rules, never the time', () => {
     const today = '2026-09-28'; // a Monday
     expect(relativeDate('Recuérdame llamar a Juan mañana', today)).toBe('2026-09-29');
@@ -274,6 +296,12 @@ describe('follow-ups (C5, ADR-0058)', () => {
     ).toBe('invalid_request:type');
     expect(
       await codeOf(w.followUps.create(w.alice, tomorrowAt10(w.juan.id, { timeZone: 'Mars/Base' }))),
+    ).toBe('invalid_request:timeZone');
+    // The business's zone only: a zone sent in the request is refused, even a real one.
+    expect(
+      await codeOf(
+        w.followUps.create(w.alice, tomorrowAt10(w.juan.id, { timeZone: 'Asia/Tokyo' })),
+      ),
     ).toBe('invalid_request:timeZone');
     expect(w.recorder.tasks).toEqual([]);
   });
@@ -527,7 +555,10 @@ describe('follow-ups (C5, ADR-0058)', () => {
     expect(again).toEqual({ followUp: first.followUp, created: false });
     expect(first.followUp.id).toBe(followUpIdFor(w.orgA, input.requestKey));
     expect((await w.followUps.list(w.alice)).items).toHaveLength(1);
-    expect(w.recorder.tasks).toHaveLength(1);
+    // The same request re-queues the same task (it heals a first attempt that stopped before
+    // queuing); the two deliveries are one: the second finds it done.
+    expect(w.recorder.tasks).toHaveLength(2);
+    expect(w.recorder.tasks[1]).toEqual(w.recorder.tasks[0]);
     expect(actions(w.audit)).toEqual(['follow_up.created']);
 
     w.advance(22 * 3_600_000);
@@ -545,6 +576,29 @@ describe('follow-ups (C5, ADR-0058)', () => {
     });
     expect(await w.followUps.runDue(task)).toEqual({ kind: 'stale' });
     expect(await w.followUps.runDue({ ...task, schedule: 0 })).toEqual({ kind: 'stale' });
+    // A request replayed once the follow-up is done queues nothing more.
+    const done = await w.followUps.create(w.alice, tomorrowAt10(w.rosa.id));
+    await w.followUps.complete(w.alice, done.followUp.id, { revision: 1 });
+    const queued = w.recorder.tasks.length;
+    const replay = tomorrowAt10(w.rosa.id);
+    await w.followUps.create(w.alice, replay);
+    await w.followUps.complete(w.alice, followUpIdFor(w.orgA, replay.requestKey), { revision: 1 });
+    await w.followUps.create(w.alice, replay);
+    expect(w.recorder.tasks.length).toBe(queued + 1);
+  });
+
+  it('a task for a stopped organization is not acknowledged: the queue retries, then it fails', async () => {
+    const w = await world();
+    const { followUp } = await w.followUps.create(w.alice, tomorrowAt10(w.juan.id));
+    const task = { organizationId: w.orgA, followUpId: followUp.id, schedule: 1 };
+    w.advance(22 * 3_600_000);
+    const organization = await found(w.tenancy.findOrganization(w.orgA));
+    w.tenancy.put({ ...organization, status: 'suspended' });
+    expect(await codeOf(w.followUps.runDue(task))).toBe('organization_inactive');
+    expect((await w.repository.findFollowUp(w.orgA, followUp.id))?.status).toBe('scheduled');
+    // The queue's last attempt keeps it as failed, for a person to see and reschedule.
+    expect(await w.followUps.failDue(task)).toBe(true);
+    expect((await w.repository.findFollowUp(w.orgA, followUp.id))?.status).toBe('failed');
   });
 
   it('15. beyond the queue’s horizon, the task hops: it arrives early and queues the next one', async () => {
@@ -730,6 +784,46 @@ describe('follow-ups (C5, ADR-0058)', () => {
     const hidden = await blind.read(w.alice);
     expect(hidden.followUps).toBeNull();
     expect(hidden.records.followUps).toEqual([]);
+  });
+
+  it('C4 through a follow-up’s life: overdue, done, cancelled or none, never invented', async () => {
+    const w = await world();
+    const insights = createCommercialInsights({
+      customers: w.customers,
+      opportunities: w.opportunities,
+      conversations: w.repository,
+      followUps: w.followUps,
+      authorization: createAuthorizationService(ROLES),
+      timeZone: async () => LIMA,
+      currency: async () => 'PEN',
+      now: w.now,
+    });
+    const reasonsOf = async (name: string) => {
+      const read = await insights.read(w.alice);
+      const ref =
+        read.records.opportunities.find((o) => o.title === name)?.ref ??
+        read.records.contacts.find((c) => c.name === name)?.ref;
+      return (read.attention.find((a) => a.ref === ref)?.reasons ?? []).map((r) => r.kind);
+    };
+    // No follow-up: the lead is "without follow-up", the opportunity has no next-action reason.
+    expect(await reasonsOf('Juan Pérez')).toContain('lead_without_follow_up');
+    expect(await reasonsOf('Cena de empresa')).not.toContain('overdue_next_action');
+    const call = (await w.followUps.create(w.alice, tomorrowAt10(w.juan.id))).followUp;
+    const deal = (
+      await w.followUps.create(w.alice, tomorrowAt10(w.rosa.id, { opportunityId: w.deal.id }))
+    ).followUp;
+    expect(await reasonsOf('Juan Pérez')).not.toContain('lead_without_follow_up');
+    // Two days later both are overdue: C4 says so from the mirrored next action.
+    w.advance(2 * 86_400_000);
+    expect(await reasonsOf('Juan Pérez')).toContain('overdue_next_action');
+    expect(await reasonsOf('Cena de empresa')).toContain('overdue_next_action');
+    // Done and cancelled: nothing stale is left behind.
+    await w.followUps.complete(w.alice, deal.id, { revision: 1 });
+    await w.followUps.cancel(w.alice, call.id, { revision: 1 });
+    expect(await reasonsOf('Cena de empresa')).not.toContain('overdue_next_action');
+    expect(await reasonsOf('Juan Pérez')).not.toContain('overdue_next_action');
+    expect(await reasonsOf('Juan Pérez')).toContain('lead_without_follow_up');
+    expect((await w.repository.findOpportunity(w.orgA, w.deal.id))?.nextAction).toBeUndefined();
   });
 
   it('keeps a record to a limited number of open follow-ups', async () => {
