@@ -1,9 +1,11 @@
 """The forecaster's contract and server, with a fake model: no torch needed (ADR-0059)."""
 
+import http.client
 import json
 import threading
 import unittest
 import urllib.error
+import urllib.parse
 import urllib.request
 from http.server import ThreadingHTTPServer
 
@@ -73,6 +75,17 @@ class ServerTest(unittest.TestCase):
         except urllib.error.HTTPError as error:
             return error.code, json.loads(error.read())
 
+    def post_oversized(self, url):
+        # Only the headers: the server refuses on the declared length before reading the body.
+        # Writing the body too would race the refusal and fail with a broken pipe.
+        connection = http.client.HTTPConnection(urllib.parse.urlsplit(url).netloc)
+        self.addCleanup(connection.close)
+        connection.putrequest("POST", "/v1/forecast")
+        connection.putheader("content-type", "application/json")
+        connection.putheader("content-length", str(512 * 1024 + 1))
+        connection.endheaders()
+        return connection.getresponse().status
+
     def test_health_names_the_pinned_model(self):
         url = self.start(FakeModel())
         with urllib.request.urlopen(url + "/health") as response:
@@ -97,7 +110,7 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(self.post(url, {"values": [1], "horizon": 500, "frequency": "day"})[0], 400)
         self.assertEqual(self.post(url, b"{not json")[0], 400)
         self.assertEqual(self.post(url, {"values": [1]}, content_type="text/plain")[0], 415)
-        self.assertEqual(self.post(url, b"x" * (512 * 1024 + 1))[0], 413)
+        self.assertEqual(self.post_oversized(url), 413)
         self.assertEqual(model.calls, [])
 
     def test_a_failing_or_non_finite_model_is_a_500_without_data(self):
