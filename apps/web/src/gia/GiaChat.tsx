@@ -4,7 +4,9 @@ import {
   createContext,
   useCallback,
   useContext,
+  useLayoutEffect,
   useMemo,
+  useRef,
   useState,
   type FormEvent,
   type ReactNode,
@@ -126,11 +128,50 @@ const ERRORS: Readonly<Record<GiaFailure, string>> = {
   failed: 'gia.chat.error.failed',
 };
 
+/** How close to the end of the log still counts as reading the latest message, in pixels. */
+const AT_END_SLACK = 48;
+
+const isAtEnd = (log: HTMLElement) =>
+  log.scrollHeight - log.scrollTop - log.clientHeight <= AT_END_SLACK;
+
+/**
+ * Keeps the newest message in view while the person is at the end of the log, on a phone as on a
+ * desktop. A person reading earlier messages is never moved: a button offers the newest one
+ * instead. What the person sends always brings them back to the end.
+ */
+function useFollowLatest(entries: readonly GiaChatEntry[], pending: boolean) {
+  const log = useRef<HTMLOListElement>(null);
+  const following = useRef(true);
+  const [behind, setBehind] = useState(false);
+  const toEnd = useCallback(() => {
+    const element = log.current;
+    if (element === null) return;
+    element.scrollTop = element.scrollHeight;
+    following.current = true;
+    setBehind(false);
+  }, []);
+  const size = entries.length + (pending ? 1 : 0);
+  const last = entries.at(-1);
+  useLayoutEffect(() => {
+    if (size === 0) return;
+    if (following.current || last?.role === 'person') toEnd();
+    else setBehind(true);
+  }, [size, last, toEnd]);
+  const onScroll = useCallback(() => {
+    const element = log.current;
+    if (element === null) return;
+    following.current = isAtEnd(element);
+    if (following.current) setBehind(false);
+  }, []);
+  return { log, behind, toEnd, onScroll };
+}
+
 /** The conversation and its composer, in GIA's Workplace. */
 export function GiaConversation() {
   const intl = useIntl();
   const chat = useGiaChat();
   const [text, setText] = useState('');
+  const { log, behind, toEnd, onScroll } = useFollowLatest(chat.entries, chat.pending);
   if (!chat.available) {
     return (
       <p className="panel__empty">
@@ -146,7 +187,7 @@ export function GiaConversation() {
   };
   return (
     <div className="gia-chat">
-      <ol className="gia-chat__log" aria-live="polite">
+      <ol className="gia-chat__log" aria-live="polite" ref={log} onScroll={onScroll}>
         {chat.entries.length === 0 ? (
           <li className="panel__empty">
             <FormattedMessage id="gia.chat.empty" />
@@ -176,6 +217,11 @@ export function GiaConversation() {
           </li>
         ) : null}
       </ol>
+      {behind ? (
+        <button type="button" className="gia-chat__latest" onClick={toEnd}>
+          <FormattedMessage id="gia.chat.latest" />
+        </button>
+      ) : null}
       <form className="gia-chat__composer" onSubmit={submit}>
         <textarea
           className="gia-chat__input"
@@ -362,6 +408,22 @@ function GiaReply({ answer }: { readonly answer: GiaAnswerView }) {
           <FormattedMessage
             id={
               answer.forecast === 'model' ? 'gia.chat.forecastModel' : 'gia.chat.forecastFallback'
+            }
+          />
+        </p>
+      )}
+      {answer.forecastGap === null ? null : (
+        <p className="gia-chat__meta">
+          <FormattedMessage
+            id={`gia.chat.forecastGap.${answer.forecastGap.kind}`}
+            values={
+              'have' in answer.forecastGap
+                ? {
+                    have: answer.forecastGap.have,
+                    need: answer.forecastGap.need,
+                    unit: answer.forecastGap.unit,
+                  }
+                : {}
             }
           />
         </p>

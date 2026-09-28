@@ -353,6 +353,7 @@ describe('4. insufficient data', () => {
       problem: 'insufficient_data',
       have: 10,
       need: 28,
+      shortOf: 'periods',
     });
     expect(w.tasks).toHaveLength(0);
     expect(w.model.calls).toHaveLength(0);

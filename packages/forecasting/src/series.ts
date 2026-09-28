@@ -59,6 +59,9 @@ export type SeriesProblem =
   | 'missing_values'
   | 'insufficient_data';
 
+/** What an `insufficient_data` answer's counts are: periods of history, or periods with activity. */
+export type InsufficientCount = 'periods' | 'active_periods';
+
 export type SeriesResult =
   | { readonly ok: true; readonly series: PreparedSeries; readonly quality: DataQuality }
   | {
@@ -67,6 +70,11 @@ export type SeriesResult =
       /** For `insufficient_data`: how many periods there are and how many are needed. */
       readonly have?: number;
       readonly need?: number;
+      /**
+       * For `insufficient_data`, what `have` and `need` count: all periods of history, or only
+       * the periods with at least one recorded event (a mostly empty history).
+       */
+      readonly shortOf?: InsufficientCount;
       readonly quality?: DataQuality;
     };
 
@@ -184,7 +192,13 @@ export function prepareSeries(
   const first = sorted[0];
   const end = options.end ?? sorted.at(-1);
   if (first === undefined || end === undefined || first > end) {
-    return { ok: false, problem: 'insufficient_data', have: 0, need: limits.minHistory[frequency] };
+    return {
+      ok: false,
+      problem: 'insufficient_data',
+      have: 0,
+      need: limits.minHistory[frequency],
+      shortOf: 'periods',
+    };
   }
 
   const length = periodsBetween(first, end, frequency) + 1;
@@ -234,7 +248,14 @@ export function prepareSeries(
   });
   const need = limits.minHistory[frequency];
   if (keptValues.length < need) {
-    return { ok: false, problem: 'insufficient_data', have: keptValues.length, need, quality };
+    return {
+      ok: false,
+      problem: 'insufficient_data',
+      have: keptValues.length,
+      need,
+      shortOf: 'periods',
+      quality,
+    };
   }
   if (nonZero < limits.minNonZero) {
     return {
@@ -242,6 +263,7 @@ export function prepareSeries(
       problem: 'insufficient_data',
       have: nonZero,
       need: limits.minNonZero,
+      shortOf: 'active_periods',
       quality,
     };
   }

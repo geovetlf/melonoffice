@@ -1761,6 +1761,23 @@ a.sidebar__item:hover {
   list-style: none;
 }
 
+.gia-chat__latest {
+  justify-self: center;
+  padding: var(--mo-space-1) var(--mo-space-3);
+  border: 1px solid var(--office-line);
+  border-radius: 999px;
+  background: var(--office-panel);
+  color: var(--office-focus);
+  font: inherit;
+  font-size: var(--mo-font-size-sm);
+  cursor: pointer;
+}
+
+.gia-chat__latest:focus-visible {
+  outline: 2px solid var(--office-focus);
+  outline-offset: 2px;
+}
+
 .gia-chat__turn {
   max-width: 44rem;
   padding: var(--mo-space-3);

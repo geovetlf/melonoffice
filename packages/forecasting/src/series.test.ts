@@ -51,17 +51,33 @@ describe('3. a valid series', () => {
 describe('4. insufficient data', () => {
   it('says how many periods there are and how many are needed, and never pads', () => {
     const result = prepare(days('2026-09-01', 10));
-    expect(result).toMatchObject({ ok: false, problem: 'insufficient_data', have: 10, need: 28 });
+    expect(result).toMatchObject({
+      ok: false,
+      problem: 'insufficient_data',
+      have: 10,
+      need: 28,
+      shortOf: 'periods',
+    });
   });
 
   it('refuses a series that is mostly empty (fewer than 5 non-zero periods)', () => {
     const raw = [...days('2026-08-01', 3), { timestamp: '2026-09-15', value: 0 }];
     const result = prepare(raw);
-    expect(result).toMatchObject({ ok: false, problem: 'insufficient_data', need: 5 });
+    expect(result).toMatchObject({
+      ok: false,
+      problem: 'insufficient_data',
+      need: 5,
+      shortOf: 'active_periods',
+    });
   });
 
   it('refuses an empty series', () => {
-    expect(prepare([])).toMatchObject({ ok: false, problem: 'insufficient_data', have: 0 });
+    expect(prepare([])).toMatchObject({
+      ok: false,
+      problem: 'insufficient_data',
+      have: 0,
+      shortOf: 'periods',
+    });
   });
 });
 

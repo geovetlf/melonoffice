@@ -126,7 +126,14 @@ async function world(
     activity?: ActivityItem[];
     commercial?: (organizationId: string, mentions?: string) => Promise<CommercialInsights>;
     /** The Forecasting Engine, real, over a daily sales history of this many days. */
-    forecast?: { readonly days: number; readonly model?: 'ok' | 'down' };
+    forecast?: {
+      readonly days: number;
+      readonly model?: 'ok' | 'down';
+      /** Only the last this many days have a sale; the others are recorded as zero. */
+      readonly activeDays?: number;
+      /** The company context the engine reads: absent profile, or no currency. */
+      readonly business?: 'none' | 'no_currency';
+    };
   } = {},
 ) {
   const store = new InMemoryAuditStore();
@@ -179,9 +186,10 @@ async function world(
             'sales.won_value': {
               read: async (request) => {
                 const days = options.forecast?.days ?? 0;
+                const active = options.forecast?.activeDays ?? days;
                 return Array.from({ length: days }, (_, i) => ({
                   timestamp: addPeriods(request.end, i - days + 1, 'day'),
-                  value: 100,
+                  value: i >= days - active ? 100 : 0,
                 }));
               },
             },
@@ -202,7 +210,14 @@ async function world(
             },
           },
           creditsPerRun: 1,
-          context: { of: async () => ({ timeZone: 'America/Lima', currency: 'PEN' }) },
+          context: {
+            of: async () =>
+              options.forecast?.business === 'none'
+                ? undefined
+                : options.forecast?.business === 'no_currency'
+                  ? { timeZone: 'America/Lima' }
+                  : { timeZone: 'America/Lima', currency: 'PEN' },
+          },
           tenancy,
           authorization,
           audit,
@@ -986,6 +1001,10 @@ describe('GIA and the Forecasting Engine (ADR-0059)', () => {
       frequency: null,
       horizon: null,
       model: null,
+      have: null,
+      need: null,
+      shortOf: null,
+      reason: null,
     });
     const block = forecastOf(textOf(w.ai.calls[0])) as string;
     expect(block).toContain('no records of orders');
@@ -1000,9 +1019,66 @@ describe('GIA and the Forecasting Engine (ADR-0059)', () => {
     expect(w.charges).toHaveLength(0);
     const block = forecastOf(textOf(w.ai.calls[0])) as string;
     expect(block).toContain('insufficient_data');
-    expect(block).toContain('recorded periods: 10');
-    expect(block).toContain('periods needed: 28');
+    expect(block).toContain('the forecasting model was not run');
+    expect(block).toContain('history recorded: 10 days');
+    expect(block).toContain('history needed: at least 28 days');
+    expect(block).toContain(
+      'this history comes from: opportunities closed as won in Comercial, with their value',
+    );
     expect(block).not.toContain('PROJECTION');
+    // The app gets the engine's own counts, to show beside the answer.
+    expect(answer.forecast).toMatchObject({
+      status: 'insufficient_data',
+      metric: 'sales.won_value',
+      frequency: 'day',
+      have: 10,
+      need: 28,
+      shortOf: 'periods',
+      reason: null,
+    });
+    expect(textOf(w.ai.calls[0])).toContain('never say more is missing than <forecast> says');
+  });
+
+  it('with no sales recorded at all, says 0 of 28 days: nothing is invented', async () => {
+    const w = await world({ forecast: { days: 0 } });
+    const answer = await w.gia.ask(w.alice, ask('¿Cuánto venderemos el próximo mes?'));
+    expect(answer.forecast).toMatchObject({ status: 'insufficient_data', have: 0, need: 28 });
+    expect(w.forecastRuns).toHaveLength(0);
+    expect(w.charges).toHaveLength(0);
+    expect(forecastOf(textOf(w.ai.calls[0]))).toContain('history recorded: 0 days');
+  });
+
+  it('with enough days but almost no sales, says it is short of days with activity, not of days', async () => {
+    const w = await world({ forecast: { days: 60, activeDays: 3 } });
+    const answer = await w.gia.ask(w.alice, ask('¿Cuánto venderemos el próximo mes?'));
+    expect(answer.forecast).toMatchObject({
+      status: 'insufficient_data',
+      have: 3,
+      need: 5,
+      shortOf: 'active_periods',
+    });
+    const block = forecastOf(textOf(w.ai.calls[0])) as string;
+    expect(block).toContain('days with at least one recorded event: 3');
+    expect(block).toContain('days with activity needed: at least 5');
+    expect(block).not.toContain('history needed');
+    expect(w.forecastRuns).toHaveLength(0);
+  });
+
+  it('names the missing company information instead of "not available", and charges nothing', async () => {
+    for (const [business, reason, words] of [
+      ['none', 'business_profile_missing', 'has no business profile yet'],
+      ['no_currency', 'currency_missing', "company's currency is not recorded"],
+    ] as const) {
+      const w = await world({ forecast: { days: 90, business } });
+      const answer = await w.gia.ask(w.alice, ask('¿Cuánto venderemos el próximo mes?'));
+      expect(answer.forecast).toMatchObject({ status: 'unavailable', reason });
+      expect(w.forecastRuns).toHaveLength(0);
+      expect(w.charges).toHaveLength(0);
+      const block = forecastOf(textOf(w.ai.calls[0])) as string;
+      expect(block).toContain(`status: unavailable (${reason})`);
+      expect(block).toContain(words);
+      expect(block).toContain('Company memory, Company information');
+    }
   });
 
   it('respects permissions: without forecast.run or opportunity.read the engine is not asked', async () => {
