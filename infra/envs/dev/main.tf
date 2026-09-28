@@ -15,8 +15,8 @@ module "environment" {
   ai_assist           = true
   conversation_agents = true
   whatsapp_channel    = true
-  # Meta Graph API version for sending; null keeps sending off until the owner sets it.
-  whatsapp_graph_api_version = var.whatsapp_graph_api_version
+  # Meta Graph API version for sending, as Meta shows it for the DEV app (App settings → Advanced).
+  whatsapp_graph_api_version = "v26.0"
   deletion_protection        = false
   terraform_state_bucket     = var.terraform_state_bucket
   budget                     = var.budget
