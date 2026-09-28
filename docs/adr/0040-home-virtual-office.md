@@ -1,6 +1,7 @@
 # ADR-0040: The Home as the virtual office, and the way into each department
 
 - Status: Proposed (pending Geovet's review)
+- Amended by: [ADR-0042](0042-office-ambient-workers.md) (decorative ambient figures may sit at free desks; people with a name, state and profile are still drawn only for real agents)
 - Date: 2026-09-27
 - Builds on:
   - [ADR-0005](0005-initial-departments.md) (the D-11 departments as catalogue data)
