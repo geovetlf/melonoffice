@@ -15,8 +15,10 @@ import { ConnectionsPage, permissionsOf } from '../connections/ConnectionsPage.j
 import { createConnectionsClient } from '../connections/connectionsClient.js';
 import { ConversationsCenter } from '../conversations/ConversationsCenter.js';
 import { createInboxClient } from '../conversations/inboxClient.js';
-import { CustomersSection } from '../customers/CustomersSection.js';
+import { CustomersSection, todayIn } from '../customers/CustomersSection.js';
 import { createCustomersClient } from '../customers/customersClient.js';
+import { OpportunitiesSection } from '../opportunities/OpportunitiesSection.js';
+import { createOpportunitiesClient } from '../opportunities/opportunitiesClient.js';
 import { HomePage } from '../home/HomePage.js';
 import { useAuth, useCan } from '../identity/AuthProvider.js';
 import type { LocaleProps } from '../identity/pages.js';
@@ -49,6 +51,9 @@ export function AppShell(locale: LocaleProps) {
   const canAskGia = useCan('gia.ask');
   const canReadContacts = useCan('contact.read');
   const canManageContacts = useCan('contact.manage');
+  const canReadOpportunities = useCan('opportunity.read');
+  const canManageOpportunities = useCan('opportunity.manage');
+  const canManagePipeline = useCan('pipeline.manage');
   const route = parseRoute(usePath());
   const [menuOpen, setMenuOpen] = useState(false);
   useEffect(() => {
@@ -73,6 +78,7 @@ export function AppShell(locale: LocaleProps) {
             activity: createActivityClient(services.api.request, organizationId),
             gia: createGiaClient(services.api.request, organizationId),
             customers: createCustomersClient(services.api.request, organizationId),
+            opportunities: createOpportunitiesClient(services.api.request, organizationId),
           },
     [services, organizationId],
   );
@@ -130,6 +136,22 @@ export function AppShell(locale: LocaleProps) {
                     canManage={canManageContacts}
                     currentUserId={me.userId}
                     timeZone={timeZone}
+                  />
+                )}
+              </BusinessTimeZone>
+            ) : undefined
+          }
+          opportunities={
+            canReadOpportunities ? (
+              <BusinessTimeZone>
+                {(timeZone) => (
+                  <OpportunitiesSection
+                    client={clients.opportunities}
+                    {...(canReadContacts ? { customers: clients.customers } : {})}
+                    canManage={canManageOpportunities}
+                    canManagePipeline={canManagePipeline}
+                    currentUserId={me.userId}
+                    today={todayIn(timeZone)}
                   />
                 )}
               </BusinessTimeZone>

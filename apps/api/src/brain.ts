@@ -1,6 +1,7 @@
 import {
   isBrainError,
   customerKnowledge,
+  pipelineKnowledge,
   operationalKnowledge,
   organizationKnowledge,
   profileKnowledge,
@@ -53,6 +54,10 @@ export interface BrainSources {
     counts(
       organizationId: OrganizationId,
     ): Promise<{ readonly lead: number; readonly customer: number; readonly inactive: number }>;
+  };
+  /** Where the sales pipeline stands (C2). */
+  readonly opportunities?: {
+    summary(organizationId: OrganizationId): Promise<Parameters<typeof pipelineKnowledge>[0]>;
   };
 }
 
@@ -286,6 +291,12 @@ export async function syncCompanyBrain(
   }
   if (sources.contacts !== undefined) {
     const { source, facts } = customerKnowledge(await sources.contacts.counts(organizationId));
+    count(await brain.ingest(tenant, source, facts));
+  }
+  if (sources.opportunities !== undefined) {
+    const { source, facts } = pipelineKnowledge(
+      await sources.opportunities.summary(organizationId),
+    );
     count(await brain.ingest(tenant, source, facts));
   }
   return { changed };

@@ -17,6 +17,7 @@ import {
   createAuditService,
   InMemoryAuditStore,
   type AuditEvent,
+  type AuditHistoryReader,
   type AuditReader,
   type AuditService,
   type AuditStore,
@@ -147,7 +148,7 @@ export interface Stores {
   /** Business profiles (ADR-0048). */
   readonly businessProfiles: BusinessProfileRepository;
   /** The audit trail's read side (ADR-0049). */
-  readonly auditReader: AuditReader;
+  readonly auditReader: AuditReader & AuditHistoryReader;
   readonly knowledge: KnowledgeRepository;
   /** The department catalogue migration's storage (ADR-0047). */
   readonly departmentMigration: DepartmentMigrationStore;

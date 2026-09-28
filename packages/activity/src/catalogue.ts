@@ -43,11 +43,17 @@ const OFFICE_ACTIONS = [
   'gia.message_answered',
 ] as const satisfies readonly AuditAction[];
 
-/** Customers and leads (C1): a new contact, a stage change and a new responsible person. */
+/**
+ * Customers and leads (C1): a new contact, a stage change and a new responsible person; and
+ * opportunities (C2): opened, won and lost.
+ */
 const CUSTOMER_ACTIONS = [
   'contact.created',
   'contact.stage_changed',
   'contact.owner_changed',
+  'opportunity.created',
+  'opportunity.won',
+  'opportunity.lost',
 ] as const satisfies readonly AuditAction[];
 
 /** The actions of each audit query the activity view runs. */

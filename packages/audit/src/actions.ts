@@ -19,7 +19,9 @@ export interface AuditActionDefinition {
     | 'specialist'
     | 'knowledge'
     | 'gia'
-    | 'contact';
+    | 'contact'
+    | 'opportunity'
+    | 'pipeline';
   readonly description: string;
   /** The results this action is recorded with. Anything else is a programming error. */
   readonly results: readonly AuditResult[];
@@ -136,6 +138,60 @@ export const AUDIT_ACTIONS = {
   'contact.note_added': {
     category: 'contact',
     description: 'A person added a note to a contact (C1). Never its text.',
+    results: ['success'],
+  },
+  'opportunity.created': {
+    category: 'opportunity',
+    description:
+      'A person opened an opportunity for a contact (C2, ADR-0054); `transition` is none → its stage id. Never its title, value or contact data.',
+    results: ['success'],
+  },
+  'opportunity.updated': {
+    category: 'opportunity',
+    description:
+      "A person changed an opportunity's details (C2); `reason` says which (`details`, `value`, `probability`, `expected_close`, `next_action`, `next_action_cleared`), never the values.",
+    results: ['success'],
+  },
+  'opportunity.stage_changed': {
+    category: 'opportunity',
+    description:
+      'A person moved an open opportunity between open stages of the pipeline (C2); `transition` is from → to (stage ids).',
+    results: ['success'],
+  },
+  'opportunity.owner_changed': {
+    category: 'opportunity',
+    description:
+      'A person set or cleared the member responsible for an opportunity (C2); `reason` is `assigned` or `cleared`.',
+    results: ['success'],
+  },
+  'opportunity.won': {
+    category: 'opportunity',
+    description:
+      'A person marked an opportunity won (C2); `transition` is its stage → won. Its contact becomes a customer in the same write.',
+    results: ['success'],
+  },
+  'opportunity.lost': {
+    category: 'opportunity',
+    description:
+      'A person marked an opportunity lost (C2); `transition` is its stage → lost and `reason` the loss code. The contact keeps its stage.',
+    results: ['success'],
+  },
+  'opportunity.reopened': {
+    category: 'opportunity',
+    description:
+      'A person reopened a won or lost opportunity (C2); `transition` is won or lost → the open stage.',
+    results: ['success'],
+  },
+  'pipeline.created': {
+    category: 'pipeline',
+    description:
+      "The organization's pipeline was stored for the first time (C2); `reason` is the template it came from.",
+    results: ['success'],
+  },
+  'pipeline.updated': {
+    category: 'pipeline',
+    description:
+      "A person changed the pipeline's stages (C2): names, order, probabilities, added or removed open stages. Never the names.",
     results: ['success'],
   },
   'membership.create': {

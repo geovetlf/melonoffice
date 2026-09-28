@@ -17,3 +17,4 @@ export type * from './job.js';
 export type * from './conversation.js';
 export type * from './business.js';
 export type * from './knowledge.js';
+export type * from './opportunity.js';

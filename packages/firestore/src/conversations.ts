@@ -15,6 +15,9 @@ import {
   checkInbound,
   checkNextContact,
   checkNextConversation,
+  checkNextOpportunity,
+  checkNextPipeline,
+  removedStages,
   checkNextSettings,
   checkStatusUpdate,
   checkStoredSettings,
@@ -27,9 +30,13 @@ import {
   isConversationId,
   isUuid,
   messageRefKeyFor,
+  pipelineIdFor,
   settleOutbound,
   type ConversationRepository,
   type ContactWrite,
+  type OpportunityRead,
+  type OpportunityWrite,
+  type PipelineWrite,
   type ConversationWrite,
   type DeliveryStatusUpdate,
   type InboundMessage,
@@ -55,7 +62,12 @@ import type {
   Message,
   MessageId,
   MessageTemplateRef,
+  Opportunity,
+  OpportunityId,
   OrganizationId,
+  Pipeline,
+  PipelineId,
+  PipelineStage,
 } from '@melonoffice/domain';
 import { isOrganizationId } from '@melonoffice/tenancy';
 import { AUDIT_LOGS, toAuditDocument } from './audit.js';
@@ -84,6 +96,10 @@ export const MESSAGE_REFS = 'messageRefs';
 export const CONVERSATION_SETTINGS = 'conversationSettings';
 /** Notes about contacts (C1): written once, never edited. */
 export const CONTACT_NOTES = 'contactNotes';
+/** `pipelines/{organizationId}_default`: an organization's sales stages (C2, ADR-0054). */
+export const PIPELINES = 'pipelines';
+/** `opportunities/{id}`: possible sales to contacts (C2, ADR-0054). */
+export const OPPORTUNITIES = 'opportunities';
 
 const ts = (value: IsoTimestamp): FirestoreTimestamp => Timestamp.fromDate(new Date(value));
 const iso = (value: FirestoreTimestamp): IsoTimestamp =>
@@ -165,6 +181,100 @@ function toContact(id: string, d: Doc): Contact {
       ? {}
       : { commercial: toCommercial(d.commercial as Doc) }),
     ...(typeof d.revision === 'number' && d.revision > 0 ? { revision: d.revision } : {}),
+    createdAt: iso(d.createdAt as FirestoreTimestamp),
+    updatedAt: iso(d.updatedAt as FirestoreTimestamp),
+  });
+}
+
+// Pipelines and opportunities (C2) --------------------------------------------------------------
+
+export function toPipelineDocument(p: Pipeline): Doc {
+  return {
+    organizationId: p.organizationId,
+    stages: p.stages.map((stage) => ({
+      id: stage.id,
+      kind: stage.kind,
+      nameKey: stage.nameKey ?? null,
+      name: stage.name ?? null,
+      probability: stage.probability,
+    })),
+    template: p.template,
+    revision: p.revision,
+    createdAt: ts(p.createdAt),
+    updatedAt: ts(p.updatedAt),
+  };
+}
+
+function toPipeline(id: string, d: Doc): Pipeline {
+  return Object.freeze({
+    id: id as PipelineId,
+    organizationId: d.organizationId as OrganizationId,
+    stages: Object.freeze(
+      (d.stages as Doc[]).map((stage) =>
+        Object.freeze({
+          id: stage.id as string,
+          kind: stage.kind as PipelineStage['kind'],
+          ...orAbsent('nameKey', stage.nameKey as PipelineStage['nameKey'] | null),
+          ...orAbsent('name', stage.name as string | null),
+          probability: stage.probability as number,
+        }),
+      ),
+    ),
+    template: d.template as string,
+    revision: d.revision as number,
+    createdAt: iso(d.createdAt as FirestoreTimestamp),
+    updatedAt: iso(d.updatedAt as FirestoreTimestamp),
+  });
+}
+
+export function toOpportunityDocument(o: Opportunity): Doc {
+  return {
+    organizationId: o.organizationId,
+    contactId: o.contactId,
+    pipelineId: o.pipelineId,
+    stageId: o.stageId,
+    status: o.status,
+    title: o.title,
+    value: o.value === undefined ? null : { ...o.value },
+    probability: o.probability,
+    ownerId: o.ownerId ?? null,
+    expectedCloseOn: o.expectedCloseOn ?? null,
+    nextAction: o.nextAction === undefined ? null : { ...o.nextAction },
+    lostReason: o.lostReason ?? null,
+    closedAt: tsOrNull(o.closedAt),
+    stageChangedAt: ts(o.stageChangedAt),
+    revision: o.revision,
+    createdBy: o.createdBy,
+    createdAt: ts(o.createdAt),
+    updatedAt: ts(o.updatedAt),
+  };
+}
+
+function toOpportunity(id: string, d: Doc): Opportunity {
+  const value = d.value as { amountMinor: number; currency: string } | null;
+  const nextAction = d.nextAction as { text: string; dueOn: string } | null;
+  return Object.freeze({
+    id: id as OpportunityId,
+    organizationId: d.organizationId as OrganizationId,
+    contactId: d.contactId as ContactId,
+    pipelineId: d.pipelineId as PipelineId,
+    stageId: d.stageId as string,
+    status: d.status as Opportunity['status'],
+    title: d.title as string,
+    ...(value == null
+      ? {}
+      : { value: Object.freeze({ amountMinor: value.amountMinor, currency: value.currency }) }),
+    probability: d.probability as number,
+    ...orAbsent('ownerId', d.ownerId as Opportunity['ownerId'] | null),
+    ...orAbsent('expectedCloseOn', d.expectedCloseOn as string | null),
+    ...(nextAction == null
+      ? {}
+      : { nextAction: Object.freeze({ text: nextAction.text, dueOn: nextAction.dueOn }) }),
+    ...orAbsent('lostReason', d.lostReason as Opportunity['lostReason'] | null),
+    ...isoOrAbsent('closedAt', d.closedAt as FirestoreTimestamp | null),
+    stageChangedAt: iso(d.stageChangedAt as FirestoreTimestamp),
+    revision: d.revision as number,
+    createdBy: d.createdBy as Opportunity['createdBy'],
     createdAt: iso(d.createdAt as FirestoreTimestamp),
     updatedAt: iso(d.updatedAt as FirestoreTimestamp),
   });
@@ -742,6 +852,129 @@ export class FirestoreConversationRepository implements ConversationRepository {
       })
       .sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0))
       .slice(0, limit);
+  }
+
+  async findPipeline(organizationId: OrganizationId): Promise<Pipeline | undefined> {
+    if (!isOrganizationId(organizationId)) return undefined;
+    const snapshot = await this.db.collection(PIPELINES).doc(pipelineIdFor(organizationId)).get();
+    const data = snapshot.data();
+    return data?.organizationId === organizationId ? toPipeline(snapshot.id, data) : undefined;
+  }
+
+  async savePipeline(
+    organizationId: OrganizationId,
+    change: (current: Pipeline | undefined) => PipelineWrite,
+  ): Promise<Pipeline> {
+    if (!isOrganizationId(organizationId)) throw new ConversationError('invalid_request');
+    const doc = this.db.collection(PIPELINES).doc(pipelineIdFor(organizationId));
+    return this.db.runTransaction(async (t) => {
+      const snapshot = await t.get(doc);
+      const data = snapshot.data();
+      if (data !== undefined && data.organizationId !== organizationId) {
+        throw new ConversationError('pipeline_concurrency_conflict');
+      }
+      const current = data === undefined ? undefined : toPipeline(snapshot.id, data);
+      const { pipeline, events } = change(current);
+      if (pipeline === current) return pipeline;
+      checkNextPipeline(organizationId, current, pipeline);
+      if (pipeline.id !== doc.id) throw new ConversationError('pipeline_concurrency_conflict');
+      // A stage an opportunity is at is never removed: equality filters only, no index.
+      for (const stageId of removedStages(current, pipeline)) {
+        const inUse = await t.get(
+          this.db
+            .collection(OPPORTUNITIES)
+            .where('organizationId', '==', organizationId)
+            .where('stageId', '==', stageId)
+            .limit(1),
+        );
+        if (!inUse.empty) throw new ConversationError('stage_in_use');
+      }
+      t.set(doc, toPipelineDocument(pipeline));
+      this.#append(t, events);
+      return pipeline;
+    });
+  }
+
+  async findOpportunity(
+    organizationId: OrganizationId,
+    id: OpportunityId,
+  ): Promise<Opportunity | undefined> {
+    if (!isOrganizationId(organizationId) || !isUuid(id)) return undefined;
+    const snapshot = await this.db.collection(OPPORTUNITIES).doc(id).get();
+    const data = snapshot.data();
+    return data?.organizationId === organizationId ? toOpportunity(snapshot.id, data) : undefined;
+  }
+
+  async listOpportunities(organizationId: OrganizationId): Promise<readonly Opportunity[]> {
+    if (!isOrganizationId(organizationId)) return [];
+    const snapshot = await this.db
+      .collection(OPPORTUNITIES)
+      .where('organizationId', '==', organizationId)
+      .get();
+    return snapshot.docs
+      .map((doc) => toOpportunity(doc.id, doc.data()))
+      .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0));
+  }
+
+  async writeOpportunity(
+    organizationId: OrganizationId,
+    target: { readonly contactId: ContactId } | { readonly opportunityId: OpportunityId },
+    change: (read: OpportunityRead) => OpportunityWrite,
+  ): Promise<Opportunity> {
+    if (!isOrganizationId(organizationId)) throw new ConversationError('opportunity_not_found');
+    const pipelineDoc = this.db.collection(PIPELINES).doc(pipelineIdFor(organizationId));
+    return this.db.runTransaction(async (t) => {
+      let current: Opportunity | undefined;
+      if ('opportunityId' in target) {
+        if (!isUuid(target.opportunityId)) throw new ConversationError('opportunity_not_found');
+        const snapshot = await t.get(this.db.collection(OPPORTUNITIES).doc(target.opportunityId));
+        const data = snapshot.data();
+        if (data?.organizationId !== organizationId) {
+          throw new ConversationError('opportunity_not_found');
+        }
+        current = toOpportunity(snapshot.id, data);
+      }
+      const contactId = current?.contactId ?? (target as { contactId: ContactId }).contactId;
+      if (!isContactId(contactId)) throw new ConversationError('contact_not_found');
+      const contactDoc = this.db.collection(CONTACTS).doc(contactId);
+      const [contactSnapshot, pipelineSnapshot] = await Promise.all([
+        t.get(contactDoc),
+        t.get(pipelineDoc),
+      ]);
+      const contactData = contactSnapshot.data();
+      if (contactData?.organizationId !== organizationId) {
+        throw new ConversationError('contact_not_found');
+      }
+      const contact = toContact(contactSnapshot.id, contactData);
+      if (current === undefined && contact.status === 'archived') {
+        throw new ConversationError('contact_not_found');
+      }
+      const pipelineData = pipelineSnapshot.data();
+      const pipeline =
+        pipelineData?.organizationId === organizationId
+          ? toPipeline(pipelineSnapshot.id, pipelineData)
+          : undefined;
+      const read = {
+        ...(current === undefined ? {} : { current }),
+        contact,
+        ...(pipeline === undefined ? {} : { pipeline }),
+      };
+      const next = change(read);
+      if (next.opportunity === current) return current;
+      checkNextOpportunity(read, next, organizationId);
+      if (!isUuid(next.opportunity.id)) throw new ConversationError('invalid_request', 'id');
+      const doc = this.db.collection(OPPORTUNITIES).doc(next.opportunity.id);
+      if (current === undefined) t.create(doc, toOpportunityDocument(next.opportunity));
+      else t.set(doc, toOpportunityDocument(next.opportunity));
+      if (next.pipeline !== undefined && next.pipeline !== pipeline) {
+        t.set(pipelineDoc, toPipelineDocument(next.pipeline));
+      }
+      if (next.contact !== undefined && next.contact !== contact) {
+        t.set(contactDoc, toContactDocument(next.contact));
+      }
+      this.#append(t, next.events);
+      return next.opportunity;
+    });
   }
 
   async listIdentities(

@@ -60,6 +60,8 @@ export interface AuditTarget {
     | 'knowledge_document'
     | 'company_knowledge'
     | 'contact'
+    | 'opportunity'
+    | 'pipeline'
     | 'gia';
   readonly id: string;
 }

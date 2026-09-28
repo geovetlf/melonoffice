@@ -26,6 +26,7 @@ import { createCompanyBrain, type KnowledgeExtractor } from './service.js';
 import {
   ingestFromConnection,
   customerKnowledge,
+  pipelineKnowledge,
   operationalKnowledge,
   organizationKnowledge,
   profileKnowledge,
@@ -339,6 +340,34 @@ describe('sources and verification', () => {
         ['inactive_contacts_count', 'calculated'],
       ]),
     );
+  });
+
+  it('knows where the pipeline stands, in totals only', async () => {
+    const w = await world();
+    const { source, facts } = pipelineKnowledge({
+      currency: 'PEN',
+      open: { count: 2, valueMinor: 150000 },
+      won: 1,
+      lost: 0,
+    });
+    await w.brain.ingest(w.alice, source, facts);
+    const items = (await w.brain.list(w.alice)).filter((i) => i.domain === 'commercial');
+    expect(items.map((i) => [i.key, i.verification]).sort()).toEqual([
+      ['lost_opportunities_count', 'calculated'],
+      ['open_opportunities_count', 'calculated'],
+      ['open_pipeline_value', 'calculated'],
+      ['won_opportunities_count', 'calculated'],
+    ]);
+    expect(items.find((i) => i.key === 'open_pipeline_value')?.value).toEqual({
+      type: 'money',
+      amountMinor: 150000,
+      currency: 'PEN',
+    });
+    // Without a known currency, no value is stated.
+    expect(
+      pipelineKnowledge({ currency: null, open: { count: 0, valueMinor: 0 }, won: 0, lost: 0 })
+        .facts,
+    ).toHaveLength(3);
   });
 
   it('syncs from an integration only through its own, connected connection', async () => {

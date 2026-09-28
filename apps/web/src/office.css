@@ -2003,3 +2003,44 @@ a.sidebar__item:hover {
   text-decoration: underline;
   cursor: pointer;
 }
+
+/* Opportunities and pipeline in the Comercial office (C2, ADR-0054). */
+.pipeline-board {
+  display: grid;
+  grid-auto-columns: minmax(12rem, 1fr);
+  grid-auto-flow: column;
+  gap: var(--mo-space-3);
+  overflow-x: auto;
+  padding-bottom: var(--mo-space-2);
+}
+
+.pipeline-board__column {
+  display: grid;
+  align-content: start;
+  gap: var(--mo-space-2);
+  padding: var(--mo-space-3);
+  border: 1px solid var(--office-line);
+  border-radius: 14px;
+  background: var(--office-panel);
+}
+
+.pipeline-board__title {
+  margin: 0;
+  font-size: var(--mo-font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+.stage-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--mo-space-2);
+  align-items: center;
+}
+
+.stage-row .gia-chat__input {
+  flex: 1 1 10rem;
+}
+
+.stage-row .stage-row__probability {
+  flex: 0 0 5rem;
+}

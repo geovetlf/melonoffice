@@ -53,6 +53,13 @@ export interface FakeBackend {
     customers: Record<string, Record<string, unknown>[]>;
     /** Notes of each contact, by contact id. */
     customerNotes: Record<string, Record<string, unknown>[]>;
+    /** Each organization's stored pipeline (C2); absent: the general proposal is served. */
+    pipelines: Record<
+      string,
+      { revision: number; stored: boolean; stages: Record<string, unknown>[] }
+    >;
+    /** Each organization's opportunities (C2), as the API's views. */
+    opportunities: Record<string, Record<string, unknown>[]>;
   };
   apiCalls(): Call[];
 }
@@ -102,6 +109,8 @@ export function fakeBackend(): FakeBackend {
     },
     customers: {},
     customerNotes: {},
+    pipelines: {},
+    opportunities: {},
   };
 
   function issue() {
@@ -311,6 +320,171 @@ export function fakeBackend(): FakeBackend {
     return needs('contact.read') ?? json(200, { ...contact, notes: kept });
   }
 
+  /** The opportunity and pipeline routes (C2), as the API answers them. */
+  function opportunitiesAnswer(
+    organizationId: string,
+    route: string,
+    query: string,
+    method: string,
+    body: string | undefined,
+    needs: (permission: string) => Response | undefined,
+  ) {
+    const stage = (id: string, probability: number, kind = 'open') => ({
+      id,
+      kind,
+      name: null,
+      nameKey: `pipeline.stage.${id}`,
+      probability,
+    });
+    const pipeline = (options.pipelines[organizationId] ??= {
+      revision: 0,
+      stored: false,
+      stages: [
+        stage('new', 10),
+        stage('contacted', 25),
+        stage('proposal', 50),
+        stage('negotiation', 75),
+        stage('won', 100, 'won'),
+        stage('lost', 0, 'lost'),
+      ],
+    });
+    const view = () => ({ id: `${organizationId}_default`, template: 'general', ...pipeline });
+    const all = (options.opportunities[organizationId] ??= []);
+    const input = JSON.parse(body ?? '{}') as Record<string, unknown>;
+    if (route === 'pipeline') {
+      if (method === 'PUT') {
+        const denied = needs('pipeline.manage');
+        if (denied !== undefined) return denied;
+        if (input.revision !== pipeline.revision) {
+          return json(409, { error: 'pipeline_concurrency_conflict' });
+        }
+        const known = new Map(pipeline.stages.map((s) => [s.id as string, s]));
+        let fresh = 0;
+        pipeline.stages = (input.stages as Record<string, unknown>[]).map((s) => {
+          const old = s.id === undefined ? undefined : known.get(s.id as string);
+          return {
+            ...(old ?? {
+              id: `stage_${'abcdefgh'.slice(0, ++fresh)}`,
+              kind: 'open',
+              nameKey: null,
+            }),
+            ...(s.name === undefined ? {} : { name: s.name, nameKey: null }),
+            ...(s.probability === undefined ? {} : { probability: s.probability }),
+          };
+        });
+        pipeline.revision += 1;
+        pipeline.stored = true;
+        return json(200, view());
+      }
+      return needs('opportunity.read') ?? json(200, view());
+    }
+    const summary = () => {
+      const stages: Record<string, { count: number; valueMinor: number }> = {};
+      const open = { count: 0, valueMinor: 0 };
+      let won = 0;
+      let lost = 0;
+      for (const o of all) {
+        const amount = (o.value as { amountMinor: number } | null)?.amountMinor ?? 0;
+        const at = (stages[o.stageId as string] ??= { count: 0, valueMinor: 0 });
+        at.count += 1;
+        at.valueMinor += amount;
+        if (o.status === 'open') {
+          open.count += 1;
+          open.valueMinor += amount;
+        } else if (o.status === 'won') won += 1;
+        else lost += 1;
+      }
+      return { currency: 'PEN', stages, open, won, lost };
+    };
+    const [, id] = route.split('/');
+    if (id === undefined) {
+      if (method === 'POST') {
+        const denied = needs('opportunity.manage');
+        if (denied !== undefined) return denied;
+        const at =
+          pipeline.stages.find((s) => s.id === (input.stageId ?? 'new')) ?? pipeline.stages[0];
+        const created = {
+          id: `opp_${all.length + 1}`,
+          contactId: input.contactId,
+          contactName: 'Rosa',
+          stageId: at?.id,
+          status: 'open',
+          title: input.title,
+          value: input.value === undefined ? null : { ...(input.value as object), currency: 'PEN' },
+          probability: at?.probability,
+          owner: null,
+          expectedCloseOn: input.expectedCloseOn ?? null,
+          nextAction: null,
+          lostReason: null,
+          closedAt: null,
+          revision: 1,
+          updatedAt: '2026-09-28T12:00:00Z',
+        };
+        all.unshift(created);
+        pipeline.stored = true;
+        pipeline.revision = Math.max(pipeline.revision, 1);
+        return json(200, created);
+      }
+      const status = new URLSearchParams(query).get('status');
+      return (
+        needs('opportunity.read') ??
+        json(200, {
+          items: all.filter((o) => status === null || o.status === status),
+          summary: summary(),
+          hasMore: false,
+        })
+      );
+    }
+    const found = all.find((o) => o.id === id);
+    if (found === undefined) return json(404, { error: 'opportunity_not_found' });
+    if (method === 'PATCH') {
+      const denied = needs('opportunity.manage');
+      if (denied !== undefined) return denied;
+      if (input.revision !== found.revision) {
+        return json(409, { error: 'opportunity_concurrency_conflict' });
+      }
+      if (typeof input.stageId === 'string') {
+        const to = pipeline.stages.find((s) => s.id === input.stageId);
+        if (to?.kind === 'lost' && input.lostReason === undefined) {
+          return json(400, { error: 'invalid_request', field: 'lostReason' });
+        }
+        Object.assign(found, {
+          stageId: input.stageId,
+          status: to?.kind === 'open' ? 'open' : to?.kind,
+          probability: to?.probability,
+          lostReason: input.lostReason ?? null,
+        });
+      }
+      if ('ownerId' in input) found.owner = input.ownerId === null ? null : 'you';
+      if (input.value !== undefined) {
+        found.value = input.value === null ? null : { ...(input.value as object), currency: 'PEN' };
+      }
+      if (typeof input.probability === 'number') found.probability = input.probability;
+      if ('nextAction' in input) found.nextAction = input.nextAction;
+      if ('expectedCloseOn' in input) found.expectedCloseOn = input.expectedCloseOn;
+      found.revision = (found.revision as number) + 1;
+      return json(200, found);
+    }
+    return (
+      needs('opportunity.read') ??
+      json(200, {
+        ...found,
+        contact: { id: found.contactId, displayName: found.contactName, stage: 'lead' },
+        conversations: options.permissions.includes('conversation.read') ? [] : null,
+        history: [
+          {
+            id: 'h1',
+            at: '2026-09-28T12:00:00Z',
+            action: 'opportunity.created',
+            transition: { from: 'none', to: 'new' },
+            reason: null,
+            actor: 'you',
+          },
+        ],
+      })
+    );
+  }
+
   /** The inbox routes, as the API answers them: membership first, then the role's permission. */
   function inboxAnswer(organizationId: string, rest: string, method: string, body?: string) {
     if (!options.organizations.some((o) => o.id === organizationId)) {
@@ -391,6 +565,13 @@ export function fakeBackend(): FakeBackend {
       return 'error' in answer && typeof answer.status === 'number'
         ? json(answer.status, { error: answer.error })
         : json(200, answer);
+    }
+    if (
+      route === 'pipeline' ||
+      route === 'opportunities' ||
+      route?.startsWith('opportunities/') === true
+    ) {
+      return opportunitiesAnswer(organizationId, route, query, method, body, needs);
     }
     if (route === 'customers' || route?.startsWith('customers/') === true) {
       return customersAnswer(organizationId, route, query, method, body, needs);

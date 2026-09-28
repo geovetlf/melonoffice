@@ -46,7 +46,14 @@ export type ConversationErrorCode =
   // Customers and leads (C1, ADR-0053).
   | 'duplicate_contact'
   | 'owner_not_member'
-  | 'contact_concurrency_conflict';
+  | 'contact_concurrency_conflict'
+  // Opportunities and pipeline (C2, ADR-0054).
+  | 'opportunity_not_found'
+  | 'opportunity_concurrency_conflict'
+  | 'opportunity_closed'
+  | 'pipeline_concurrency_conflict'
+  | 'stage_not_found'
+  | 'stage_in_use';
 
 export class ConversationError extends Error {
   override readonly name = 'ConversationError';

@@ -1,8 +1,15 @@
 import type { AuditEvent } from './event.js';
-import type { AuditQuery, AuditReader, AuditStore } from './service.js';
+import type { OrganizationId } from '@melonoffice/domain';
+import {
+  MAX_HISTORY_EVENTS,
+  type AuditHistoryReader,
+  type AuditQuery,
+  type AuditReader,
+  type AuditStore,
+} from './service.js';
 
 /** For tests and local runs only. Append only, like every audit store. */
-export class InMemoryAuditStore implements AuditStore, AuditReader {
+export class InMemoryAuditStore implements AuditStore, AuditReader, AuditHistoryReader {
   readonly #events: AuditEvent[] = [];
 
   async append(events: readonly AuditEvent[]): Promise<void> {
@@ -32,6 +39,23 @@ export class InMemoryAuditStore implements AuditStore, AuditReader {
       })
       .sort((a, b) => (a.occurredAt < b.occurredAt ? 1 : a.occurredAt > b.occurredAt ? -1 : 0))
       .slice(0, q.limit);
+  }
+
+  async history(
+    organizationId: OrganizationId,
+    target: { readonly type: string; readonly id: string },
+    limit: number,
+  ): Promise<readonly AuditEvent[]> {
+    return this.#events
+      .filter(
+        (e) =>
+          e.organizationId === organizationId &&
+          e.target?.type === target.type &&
+          e.target.id === target.id,
+      )
+      .slice(-MAX_HISTORY_EVENTS)
+      .reverse()
+      .slice(0, Math.min(limit, MAX_HISTORY_EVENTS));
   }
 
   /** A copy of what was recorded, oldest first. Events are frozen. */

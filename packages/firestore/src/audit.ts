@@ -1,12 +1,15 @@
 import type { Firestore, Timestamp as FirestoreTimestamp } from '@google-cloud/firestore';
 import { Timestamp } from '@google-cloud/firestore';
 import {
+  MAX_HISTORY_EVENTS,
   MAX_QUERY_ACTIONS,
   type AuditEvent,
+  type AuditHistoryReader,
   type AuditQuery,
   type AuditReader,
   type AuditStore,
 } from '@melonoffice/audit';
+import type { OrganizationId } from '@melonoffice/domain';
 
 /** `auditLogs/{eventId}` (ADR-0020). Written only by the API, only with `create`. */
 export const AUDIT_LOGS = 'auditLogs';
@@ -112,7 +115,7 @@ export function toAuditDocument(event: AuditEvent): AuditDocument {
  * Audit events in Firestore. Only `append` exists, and it uses `create`, which fails if the
  * document already exists, so a recorded event is never overwritten. A batch writes all or none.
  */
-export class FirestoreAuditStore implements AuditStore, AuditReader {
+export class FirestoreAuditStore implements AuditStore, AuditReader, AuditHistoryReader {
   constructor(private readonly db: Firestore) {}
 
   /**
@@ -151,6 +154,28 @@ export class FirestoreAuditStore implements AuditStore, AuditReader {
         a.occurredAt < b.occurredAt ? 1 : a.occurredAt > b.occurredAt ? -1 : a.id < b.id ? 1 : -1,
       )
       .slice(0, q.limit);
+  }
+
+  async history(
+    organizationId: OrganizationId,
+    target: { readonly type: string; readonly id: string },
+    limit: number,
+  ): Promise<readonly AuditEvent[]> {
+    if (limit <= 0) return [];
+    // Equality filters only (no composite index); sorted here, at most MAX_HISTORY_EVENTS read.
+    const snapshot = await this.db
+      .collection(AUDIT_LOGS)
+      .where('organizationId', '==', organizationId)
+      .where('targetType', '==', target.type)
+      .where('targetId', '==', target.id)
+      .limit(MAX_HISTORY_EVENTS)
+      .get();
+    return snapshot.docs
+      .map((doc) => fromAuditDocument(doc.id, doc.data() as AuditDocument))
+      .sort((a, b) =>
+        a.occurredAt < b.occurredAt ? 1 : a.occurredAt > b.occurredAt ? -1 : a.id < b.id ? 1 : -1,
+      )
+      .slice(0, Math.min(limit, MAX_HISTORY_EVENTS));
   }
 
   async append(events: readonly AuditEvent[]): Promise<void> {

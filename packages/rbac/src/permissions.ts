@@ -179,6 +179,24 @@ export const PERMISSIONS = {
     action: 'read',
     description: "See the organization's contacts and their channel identities (ADR-0033).",
   },
+  'opportunity.read': {
+    resource: 'opportunity',
+    action: 'read',
+    description:
+      "See the organization's pipeline and opportunities with their totals (C2, ADR-0054). GIA may read them for the person she helps.",
+  },
+  'opportunity.manage': {
+    resource: 'opportunity',
+    action: 'manage',
+    description:
+      'Open opportunities and move them through the pipeline to won or lost: value, probability, responsible member, expected close and next action, directly and never through GIA (C2, ADR-0054).',
+  },
+  'pipeline.manage': {
+    resource: 'pipeline',
+    action: 'manage',
+    description:
+      "Change the organization's pipeline stages: names, order, probabilities, added or removed open stages (C2, ADR-0054).",
+  },
   'channel.read': {
     resource: 'channel',
     action: 'read',

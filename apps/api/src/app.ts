@@ -2,6 +2,7 @@ import { createActivityService } from '@melonoffice/activity';
 import {
   createCompanyBrain,
   createGatewayKnowledgeExtractor,
+  knowledgeItemId,
   organizationKnowledge,
   type KnowledgeRepository,
 } from '@melonoffice/brain';
@@ -15,7 +16,7 @@ import {
   type ProviderRegistry,
 } from '@melonoffice/ai-gateway';
 import { createApprovalService, type ApprovalRepository } from '@melonoffice/approvals';
-import type { AuditReader, AuditService } from '@melonoffice/audit';
+import type { AuditHistoryReader, AuditReader, AuditService } from '@melonoffice/audit';
 import type { AuthDependencies } from '@melonoffice/auth';
 import {
   createBusinessProfileService,
@@ -26,6 +27,8 @@ import { createDepartmentService, type DepartmentRepository } from '@melonoffice
 import {
   createConversationAssistant,
   contactStageCounts,
+  createOpportunityService,
+  pipelineSummary,
   createConversationService,
   createCustomerService,
   type ConversationRepository,
@@ -43,7 +46,7 @@ import {
   type ExecutionRepository,
 } from '@melonoffice/execution';
 import { createGia } from '@melonoffice/gia';
-import type { DeploymentEnvironment } from '@melonoffice/domain';
+import type { DeploymentEnvironment, OrganizationId } from '@melonoffice/domain';
 import { createToolGate } from '@melonoffice/guardrails';
 import {
   createChannelConnectionService,
@@ -80,6 +83,7 @@ import { DEFAULT_ACTIVITY_TIME_ZONE, registerActivityRoutes } from './activity.j
 import { registerBrainRoutes } from './brain.js';
 import { registerBusinessRoutes } from './business.js';
 import { registerCustomerRoutes } from './customers.js';
+import { registerOpportunityRoutes } from './opportunities.js';
 import { registerGiaRoutes } from './gia.js';
 import { registerDepartmentRoutes } from './departments.js';
 import { registerConnectionRoutes } from './connections.js';
@@ -134,7 +138,7 @@ export interface AppOptions {
     readonly specialists: SpecialistRepository;
   };
   /** The audit trail's read side (ADR-0049). Absent: the activity route answers 503. */
-  readonly activity?: AuditReader;
+  readonly activity?: AuditReader & AuditHistoryReader;
   /** Business profiles (ADR-0048). Absent: the profile route answers 503 (fails closed). */
   readonly businessProfiles?: BusinessProfileRepository;
   /** Company Brain (ADR-0051). Absent: the brain routes answer 503 (fails closed). */
@@ -242,6 +246,24 @@ export function createApp({
   webOrigins = [],
 }: AppOptions): Hono<Env> {
   const app = new Hono<Env>();
+
+  /**
+   * A text fact Company Brain holds about the organization (its kind of business, its currency),
+   * or the business profile's while Company Brain has not been fed it (C2, ADR-0054).
+   */
+  async function companyFact(
+    organizationId: OrganizationId,
+    domain: 'identity' | 'finance',
+    key: 'business_type' | 'currency',
+  ): Promise<string | undefined> {
+    const item = await knowledge?.findItem(
+      organizationId,
+      knowledgeItemId(organizationId, domain, key),
+    );
+    if (item?.status === 'active' && item.value.type === 'text') return item.value.text;
+    const profile = await businessProfiles?.find(organizationId);
+    return key === 'business_type' ? profile?.businessType : profile?.currency;
+  }
 
   // Correlate every request with an id (reuse a well-formed incoming one) and log it.
   app.use('*', async (c, next) => {
@@ -395,6 +417,13 @@ export function createApp({
                 contacts: {
                   counts: async (organizationId) =>
                     contactStageCounts(await conversations.repository.listContacts(organizationId)),
+                },
+                opportunities: {
+                  summary: async (organizationId) =>
+                    pipelineSummary(
+                      await conversations.repository.listOpportunities(organizationId),
+                      await companyFact(organizationId, 'finance', 'currency'),
+                    ),
                 },
               }),
         },
@@ -667,6 +696,24 @@ export function createApp({
           organizations: tenancy,
           authorization,
         }),
+        ...(brain === undefined ? {} : { brain }),
+      });
+      // Opportunities and pipeline (C2, ADR-0054): on the same contacts, with stages proposed for
+      // the kind of business Company Brain knows.
+      registerOpportunityRoutes(app, {
+        store: tenancy,
+        authorization,
+        audit,
+        opportunities: createOpportunityService({
+          repository: conversations.repository,
+          organizations: tenancy,
+          authorization,
+          businessType: (organizationId) =>
+            companyFact(organizationId, 'identity', 'business_type'),
+          currency: (organizationId) => companyFact(organizationId, 'finance', 'currency'),
+        }),
+        conversations: conversations.repository,
+        ...(activity === undefined ? {} : { history: activity }),
         ...(brain === undefined ? {} : { brain }),
       });
       // Connections (ADR-0044): the engine's registry names the providers; without an engine
