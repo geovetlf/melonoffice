@@ -1,6 +1,7 @@
 # ADR-0044: The Integration Engine, connections and the first real channel
 
 - Status: Proposed (CV-6C, pending Geovet's review)
+- Amended by: [ADR-0045](0045-channel-delivery-limits-and-retries.md) (limits and retries), [ADR-0046](0046-channel-templates-and-media.md) (templates and media)
 - Date: 2026-09-28
 - Amends:
   - [ADR-0033](0033-conversations-foundation.md) (connections: lifecycle, routes, permissions; `channel.manage` is replaced)
@@ -51,7 +52,7 @@ Meta's official WhatsApp Cloud API only, called directly (no intermediary, no SD
 
 - `X-Hub-Signature-256` HMAC with the connection's app secret, compared in constant time; bounded payload; the payload must name the connection's own phone number id.
 - `validateConnection`/`healthCheck`: `GET graph.facebook.com/{version}/{phoneNumberId}?fields=id` with the access token; valid only when the id matches. Meta's codes map to stable codes; rate limits and temporary errors are `unavailable`, never retried in a loop.
-- Sending needs a configured Graph API version (`WHATSAPP_GRAPH_API_VERSION`, from Terraform); without one it fails closed. Text only, within the 24-hour service window; templates and media are not offered.
+- Sending needs a configured Graph API version (`WHATSAPP_GRAPH_API_VERSION`, from Terraform); without one it fails closed. Text only, within the 24-hour service window; templates and media are not offered (since added by ADR-0046).
 
 ### 6. Permissions
 

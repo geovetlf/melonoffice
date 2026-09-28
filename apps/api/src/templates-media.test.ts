@@ -108,7 +108,7 @@ const inbound = (secondsAgo: number) =>
   });
 
 describe.each(STORES)('templates and media with storage in %s', (_name, createStores) => {
-  async function setup() {
+  async function setup(capabilities: ChannelConnection['capabilities'] = WHATSAPP_CAPABILITIES) {
     const stores: Stores = createStores();
     const ctx = setupApp(stores);
     const aliceId = (await ctx.register('token-alice')) as UserId;
@@ -140,7 +140,7 @@ describe.each(STORES)('templates and media with storage in %s', (_name, createSt
         category: 'messaging',
         channel: 'whatsapp',
         status: 'connected',
-        capabilities: WHATSAPP_CAPABILITIES,
+        capabilities,
         displayName: 'Ventas',
         account: { phoneNumberId: phone },
         secrets: secretRefsFor(PROJECT, id),
@@ -162,6 +162,9 @@ describe.each(STORES)('templates and media with storage in %s', (_name, createSt
     let sendAnswers: (() => Response | Promise<Response>)[] = [];
     let sent = 0;
     ctx.meta.answer = async (url) => {
+      if (url.includes(`/${PHONE_A}?fields=id`)) {
+        return new Response(JSON.stringify({ id: PHONE_A }));
+      }
       if (url.includes(`/${WABA_A}/phone_numbers`)) {
         return new Response(JSON.stringify({ data: [{ id: PHONE_A }] }));
       }
@@ -785,5 +788,38 @@ describe.each(STORES)('templates and media with storage in %s', (_name, createSt
       status: 'invalid',
       statusReason: 'business_account_required',
     });
+  });
+  it('a connection made before phase 2 gains media and templates only by being checked again', async () => {
+    // As stored by CV-6C: text only.
+    const t = await setup({
+      ...WHATSAPP_CAPABILITIES,
+      outboundMedia: false,
+      outboundTemplates: false,
+    });
+    const id = await t.conversation();
+    const image = { type: 'image', url: 'https://cdn.example.com/a.jpg' };
+    const refused = await t.send(id, { clientMessageId: 'old-1', media: image });
+    expect(refused.body).toMatchObject({ error: 'capability_not_available' });
+    expect(t.sends()).toHaveLength(0);
+
+    // Pause and connect again (the web's own buttons): the check takes the adapter's capabilities.
+    expect(
+      (
+        await t.call(
+          'token-alice',
+          'POST',
+          `${t.base(t.orgA)}/channel-connections/${CONNECTION_A}/pause`,
+        )
+      ).status,
+    ).toBe(200);
+    const connected = await t.call(
+      'token-alice',
+      'POST',
+      `${t.base(t.orgA)}/channel-connections/${CONNECTION_A}/connect`,
+    );
+    expect(connected.body).toMatchObject({ status: 'connected' });
+    const sent = await t.send(id, { clientMessageId: 'old-2', media: image });
+    expect(sent.status).toBe(201);
+    expect(t.sends()).toHaveLength(1);
   });
 });

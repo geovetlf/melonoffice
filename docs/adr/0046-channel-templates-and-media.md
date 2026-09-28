@@ -89,6 +89,21 @@ A person's send now also re-checks, before each retry, that the conversation sti
 - No web UI for templates or media: API only.
 - No Terraform change: `channelTemplates` is created on first write, and the services already have Firestore access.
 
+## Activation
+
+- **Existing connections.** A connection stored before this change keeps its old capabilities (text only). It gains media and templates only when it is checked again: pause it, then connect it (the web's own buttons, or `POST …/pause` then `POST …/connect`). No data migration runs by itself.
+- **Templates.** Set the connection's `businessAccountId` once (`PATCH …/channel-connections/:id`), then register each approved template by name and language (`POST …/templates`).
+
+## Implemented, and prepared but not active
+
+| Implemented and active for people                                                                 | Prepared, not active                                                                                                            |
+| ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Text, media (image, document, audio, video) and template sends by a person, through the tool gate | Agents sending media or templates: the content union and the engine accept them, but the executor keeps runtime sends text-only |
+| Template registration, check against Meta, disable (API)                                          | A web screen for templates                                                                                                      |
+| 24-hour window per kind in the engine                                                             | Starting a conversation with a new contact by template                                                                          |
+| Media by public https link                                                                        | MelonOffice media storage or upload                                                                                             |
+|                                                                                                   | Updating a stored template from Meta's send errors (paused, disabled)                                                           |
+
 ## Not in this ADR
 
-Media storage or upload, templates sent by agents, finish/tool actions (phase 3) and a second channel (phase 4).
+Media storage or upload, templates or media sent by agents, conversations started by template, finish/tool actions (phase 3) and a second channel (phase 4).
