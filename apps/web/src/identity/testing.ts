@@ -160,13 +160,12 @@ export function fakeBackend(): FakeBackend {
     return json(404, { error: 'organization_not_found' });
   };
 
-  /** The D-11 catalogue, as the departments route answers it for a new organization. */
+  /** The catalogue (ADR-0047), as the departments route answers it for a new organization. */
   const DEPARTMENT_TYPES = [
     'leadership',
     'operations',
     'sales',
     'marketing',
-    'design_video',
     'research',
     'finance',
   ];

@@ -49,7 +49,7 @@ export function toDepartmentDocument(d: Department): DepartmentDocument {
 }
 
 // Stored values are checked, not trusted: a malformed record is refused, never repaired.
-function toDepartment(id: string, d: DepartmentDocument): Department {
+export function toDepartment(id: string, d: DepartmentDocument): Department {
   const department = {
     id,
     organizationId: d.organizationId,

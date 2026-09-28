@@ -112,7 +112,7 @@ describe.each(STORES)('departments and specialists with storage in %s', (_name, 
   }
 
   describe('provisioning', () => {
-    it('gives a new organization the seven D-11 departments, stored with it', async () => {
+    it('gives a new organization the six catalogue departments (ADR-0047), stored with it, and no retired one', async () => {
       const { get, orgA } = await setup();
       const { status, body } = await get('token-alice', `/v1/organizations/${orgA}/departments`);
       expect(status).toBe(200);
@@ -120,6 +120,8 @@ describe.each(STORES)('departments and specialists with storage in %s', (_name, 
       expect(departments.map((d) => d.typeId).sort()).toEqual(
         DEFAULT_DEPARTMENT_CATALOGUE.types.map((t) => t.id).sort(),
       );
+      expect(departments).toHaveLength(6);
+      expect(departments.some((d) => d.typeId === 'design_video')).toBe(false);
       expect(departments.find((d) => d.typeId === 'finance')).toEqual({
         id: dep(orgA, 'finance'),
         origin: 'catalog',

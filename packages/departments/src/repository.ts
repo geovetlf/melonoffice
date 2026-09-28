@@ -42,6 +42,11 @@ export class InMemoryDepartmentRepository implements DepartmentRepository {
     for (const d of departments) this.#departments.set(d.id, d);
   }
 
+  /** Test hook: every organization that holds a department here. */
+  organizationIds(): readonly OrganizationId[] {
+    return [...new Set([...this.#departments.values()].map((d) => d.organizationId))];
+  }
+
   /** Test hook: stores a record as given, e.g. archived, or corrupted the way bad data would look. */
   put(department: Department): void {
     this.#departments.set(department.id, department);

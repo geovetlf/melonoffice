@@ -52,7 +52,9 @@ export interface AuditTarget {
     | 'conversation'
     | 'channel_connection'
     | 'channel_template'
-    | 'message';
+    | 'message'
+    | 'department'
+    | 'specialist';
   readonly id: string;
 }
 

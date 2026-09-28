@@ -14,7 +14,9 @@ export interface AuditActionDefinition {
     | 'planning'
     | 'workflow'
     | 'conversation'
-    | 'channel';
+    | 'channel'
+    | 'department'
+    | 'specialist';
   readonly description: string;
   /** The results this action is recorded with. Anything else is a programming error. */
   readonly results: readonly AuditResult[];
@@ -54,6 +56,18 @@ export const AUDIT_ACTIONS = {
     category: 'entitlements',
     description:
       "A platform operator set an audited value for one organization's entitlement key, applied after its plan; the plan itself is unchanged (ADR-0044).",
+    results: ['success'],
+  },
+  'department.archived': {
+    category: 'department',
+    description:
+      'A department of a retired catalogue type was archived by the catalogue migration (ADR-0047): kept as history, never deleted; `reference` names the department its work moved to.',
+    results: ['success'],
+  },
+  'specialist.department_changed': {
+    category: 'specialist',
+    description:
+      'A specialist moved to another department of its organization by the catalogue migration (ADR-0047), as a new configuration version (`targetVersion`); earlier versions stay as they were.',
     results: ['success'],
   },
   'billing.subscription_created': {
