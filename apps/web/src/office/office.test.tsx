@@ -125,7 +125,7 @@ describe('the departments of the office', () => {
 });
 
 describe('the Home (ADR-0040)', () => {
-  it('shows the seven D-11 departments as rooms: one Board & Management, Finance on its own', async () => {
+  it('shows the six departments as rooms (ADR-0047): Board on top, Finance on its own, no Design', async () => {
     open('/');
     expect(
       await screen.findByRole('heading', { level: 1, name: 'Your office is ready to work' }),
@@ -137,13 +137,12 @@ describe('the Home (ADR-0040)', () => {
       '/office/operations',
       '/office/sales',
       '/office/marketing',
-      '/office/design-video',
       '/office/research',
       '/office/finance',
     ]);
     expect(
       office.getByRole('link', {
-        name: 'Enter Board & Management. No agents yet. 0 of 4 workstations taken',
+        name: 'Enter Board. No agents yet. 0 of 4 workstations taken',
       }),
     ).toBeTruthy();
     expect(
@@ -158,11 +157,10 @@ describe('the Home (ADR-0040)', () => {
     ).toEqual([
       'Home',
       'GIA',
-      'Board & Management',
+      'Board',
       'Operations',
       'Commercial',
       'Marketing',
-      'Design',
       'Research',
       'Finance',
     ]);
@@ -206,8 +204,12 @@ describe('the Home (ADR-0040)', () => {
   });
 
   it('opens a department’s office directly, as after a refresh, and refuses one that does not exist', async () => {
+    open('/office/marketing');
+    expect(await screen.findByRole('heading', { level: 1, name: 'Marketing' })).toBeTruthy();
+    cleanup();
+    // Design & Video is retired into Marketing (ADR-0047): a new organization has no such room.
     open('/office/design-video');
-    expect(await screen.findByRole('heading', { level: 1, name: 'Design & Video' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'This place does not exist' })).toBeTruthy();
     cleanup();
     open('/office/legal');
     expect(await screen.findByRole('heading', { name: 'This place does not exist' })).toBeTruthy();
@@ -312,7 +314,7 @@ describe('the Home (ADR-0040)', () => {
   it('shows no hard-coded text on the Home: every word comes from the catalog', async () => {
     open('/', undefined, true);
     await screen.findAllByRole('link');
-    await waitFor(() => expect(document.querySelectorAll('.zone').length).toBe(7));
+    await waitFor(() => expect(document.querySelectorAll('.zone').length).toBe(6));
     const home = document.querySelector('.home');
     const texts = [...(home?.querySelectorAll('h1, h2, p, label, button, .zone__name') ?? [])]
       .map((element) => element.textContent?.trim() ?? '')
@@ -480,7 +482,7 @@ describe('ambient figures (ADR-0042)', () => {
 
   it('are drawn only as decoration, the same on the Home and in the office', async () => {
     open('/');
-    await waitFor(() => expect(document.querySelectorAll('.zone').length).toBe(7));
+    await waitFor(() => expect(document.querySelectorAll('.zone').length).toBe(6));
     const marketingZone = [...document.querySelectorAll('.zone')].find((zone) =>
       zone.querySelector('a[href="/office/marketing"]'),
     );
@@ -539,7 +541,7 @@ describe('ambient figures (ADR-0042)', () => {
         zone.querySelector(`a[href="/office/${slug}"]`),
       );
     open('/');
-    await waitFor(() => expect(document.querySelectorAll('.zone').length).toBe(7));
+    await waitFor(() => expect(document.querySelectorAll('.zone').length).toBe(6));
     expect(zoneOf('marketing')?.querySelector('.zone__seats')?.textContent).toBe('0/6');
     cleanup();
 

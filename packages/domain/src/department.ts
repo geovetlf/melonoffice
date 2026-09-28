@@ -8,15 +8,21 @@ import type {
 
 /**
  * A department type from the catalogue. The catalogue is data: the initial
- * seven departments (D-11) are entries in it, and new types can be added
- * without changing this model.
+ * departments (ADR-0047, which replaces D-11's seven with six) are entries in it,
+ * and new types can be added without changing this model.
  */
 export interface DepartmentType {
   readonly id: DepartmentTypeId;
   readonly nameKey: MessageKey;
-  /** Optional short visual name, e.g. "Dirección" for "Consejo y Dirección". */
+  /** Optional short visual name, e.g. "Comercial" for "Comercial y Ventas". */
   readonly shortNameKey?: MessageKey;
   readonly version: number;
+  /**
+   * Set when the type is no longer offered: new organizations do not get it, and an existing
+   * organization's department of this type is archived (kept as history, never deleted) and its
+   * work moves to `mergedInto`. The type stays known so its history keeps its name.
+   */
+  readonly retired?: { readonly mergedInto: DepartmentTypeId };
 }
 
 /**

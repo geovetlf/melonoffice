@@ -78,7 +78,8 @@ export interface SpecialistVersionDocument {
 const ts = (value: IsoTimestamp): FirestoreTimestamp => Timestamp.fromDate(new Date(value));
 const iso = (value: FirestoreTimestamp): IsoTimestamp =>
   value.toDate().toISOString() as IsoTimestamp;
-const versionId = (id: string, version: number): string => `${id}_${version}`;
+export const specialistVersionId = (id: string, version: number): string => `${id}_${version}`;
+const versionId = specialistVersionId;
 
 function toConfigurationDocument(c: SpecialistConfiguration): ConfigurationDocument {
   return {
@@ -143,7 +144,7 @@ export function toSpecialistVersionDocument(v: SpecialistVersion): SpecialistVer
 }
 
 // Stored values are checked, not trusted: a malformed record is refused, never repaired.
-function toSpecialist(id: string, d: SpecialistDocument): Specialist {
+export function toSpecialist(id: string, d: SpecialistDocument): Specialist {
   const specialist = {
     identity: {
       id,

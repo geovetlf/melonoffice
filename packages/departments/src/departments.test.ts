@@ -92,17 +92,25 @@ async function world() {
   return { repository, tenancy, service, a, b, orgA, orgB, tenantA, tenantB };
 }
 
-describe('department catalogue (D-11)', () => {
-  it('holds the seven approved departments, with Finanzas apart from Consejo y Dirección', () => {
+describe('department catalogue (ADR-0047, replacing D-11)', () => {
+  it('holds the six approved departments; Design & Video is retired into Marketing', () => {
     expect(DEFAULT_DEPARTMENT_CATALOGUE.types.map((t) => t.id)).toEqual([
       'leadership',
       'operations',
       'sales',
       'marketing',
-      'design_video',
       'research',
       'finance',
     ]);
+    expect(DEFAULT_DEPARTMENT_CATALOGUE.retired.map((t) => [t.id, t.retired?.mergedInto])).toEqual([
+      ['design_video', 'marketing'],
+    ]);
+    // Retired, but still known: its history keeps its name.
+    expect(DEFAULT_DEPARTMENT_CATALOGUE.find('design_video')?.nameKey).toBe(
+      'department.design_video.name',
+    );
+    // Marketing now also covers design and content: a new version of its definition.
+    expect(DEFAULT_DEPARTMENT_CATALOGUE.find('marketing')?.version).toBe(2);
     const leadership = must(DEFAULT_DEPARTMENT_CATALOGUE.find('leadership'));
     const finance = must(DEFAULT_DEPARTMENT_CATALOGUE.find('finance'));
     expect(leadership.nameKey).toBe('department.leadership.name');
@@ -116,14 +124,35 @@ describe('department catalogue (D-11)', () => {
   it.each(['en', 'es'])('has every name in the %s message catalogue (D-17)', (locale) => {
     const url = new URL(`../../i18n/src/locales/${locale}.json`, import.meta.url);
     const messages = JSON.parse(readFileSync(url, 'utf8')) as Record<string, string>;
-    for (const type of DEFAULT_DEPARTMENT_CATALOGUE.types) {
+    for (const type of [
+      ...DEFAULT_DEPARTMENT_CATALOGUE.types,
+      ...DEFAULT_DEPARTMENT_CATALOGUE.retired,
+    ]) {
       expect(messages[type.nameKey], type.nameKey).toBeTruthy();
       expect(messages[must(type.shortNameKey)], type.shortNameKey).toBeTruthy();
     }
     if (locale === 'es') {
-      expect(messages['department.leadership.name']).toBe('Consejo y Dirección');
+      expect(messages['department.leadership.name']).toBe('Consejo');
+      expect(messages['department.sales.name']).toBe('Comercial');
       expect(messages['department.finance.name']).toBe('Finanzas');
     }
+  });
+
+  it('refuses a retired type that merges into nothing, itself or another retired type', () => {
+    const t = (id: string, mergedInto?: string): DepartmentType => ({
+      id: id as DepartmentType['id'],
+      nameKey: `department.${id}.name` as DepartmentType['nameKey'],
+      version: 1,
+      ...(mergedInto === undefined
+        ? {}
+        : { retired: { mergedInto: mergedInto as DepartmentType['id'] } }),
+    });
+    expect(() => createDepartmentCatalogue([t('a'), t('b', 'missing')])).toThrow();
+    expect(() => createDepartmentCatalogue([t('a'), t('b', 'b')])).toThrow();
+    expect(() => createDepartmentCatalogue([t('a'), t('b', 'c'), t('c', 'a')])).toThrow();
+    const ok = createDepartmentCatalogue([t('a'), t('b', 'a')]);
+    expect(ok.types.map((x) => x.id)).toEqual(['a']);
+    expect(ok.retired.map((x) => x.id)).toEqual(['b']);
   });
 
   it('takes new department types as data, with no code change', () => {
@@ -133,7 +162,7 @@ describe('department catalogue (D-11)', () => {
       version: 1,
     };
     const extended = createDepartmentCatalogue([...DEFAULT_DEPARTMENT_CATALOGUE.types, legal]);
-    expect(extended.types).toHaveLength(8);
+    expect(extended.types).toHaveLength(7);
     expect(extended.find('legal')).toEqual(legal);
     const organization = { id: '33333333-3333-4333-8333-333333333333', createdAt: LATER };
     expect(provisionDepartments(organization as never, extended).map((d) => d.id)).toContain(
@@ -179,8 +208,8 @@ describe('provisioning with the organization', () => {
   it('creates one active department per catalogue type, in the same step', async () => {
     const { repository, orgA, a } = await world();
     const departments = await repository.list(orgA);
-    expect(departments).toHaveLength(7);
-    expect(a.departments).toHaveLength(7);
+    expect(departments).toHaveLength(6);
+    expect(a.departments).toHaveLength(6);
     for (const d of departments) {
       expect(d).toMatchObject({
         organizationId: orgA,
@@ -314,7 +343,7 @@ describe('department service: tenancy', () => {
   it("lists only the tenant's own departments", async () => {
     const { service, tenantA, orgA } = await world();
     const departments = await service.list(tenantA);
-    expect(departments).toHaveLength(7);
+    expect(departments).toHaveLength(6);
     expect(departments.every((d) => d.organizationId === orgA)).toBe(true);
   });
 

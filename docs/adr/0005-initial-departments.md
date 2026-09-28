@@ -1,6 +1,6 @@
 # ADR-0005: Seven initial departments as catalogue data
 
-- Status: Accepted (D-11, closed by Geovet on 2026-09-26)
+- Status: Superseded by [ADR-0047](0047-six-initial-departments.md) (was Accepted: D-11, closed by Geovet on 2026-09-26)
 - Date: 2026-09-26
 
 ## Decision

@@ -1,4 +1,8 @@
 import { InMemoryApprovalRepository, type ApprovalRepository } from '@melonoffice/approvals';
+import {
+  InMemoryDepartmentMigrationStore,
+  type DepartmentMigrationStore,
+} from './department-migration.js';
 import type { ToolRegistry } from '@melonoffice/tools';
 import {
   AuthError,
@@ -75,6 +79,7 @@ import {
   FirestoreExecutionRepository,
   FirestoreApprovalRepository,
   FirestoreSpecialistRepository,
+  FirestoreDepartmentMigrationStore,
   SPECIALISTS,
   SPECIALIST_VERSIONS,
   toSpecialistDocument,
@@ -131,6 +136,8 @@ export interface Stores {
   readonly specialists: SpecialistRepository;
   /** Stores a department or specialist record as given, the way an operator change or bad data would. */
   readonly putStructure: (record: Department | Specialist | SpecialistVersion) => Promise<void>;
+  /** The department catalogue migration's storage (ADR-0047). */
+  readonly departmentMigration: DepartmentMigrationStore;
   readonly credits: CreditStore;
   readonly plans: PlanRepository;
   readonly workflows: WorkflowRepository;
@@ -199,6 +206,12 @@ function memoryStores(): Stores {
     approvals: new InMemoryApprovalRepository(events),
     departments,
     specialists,
+    departmentMigration: new InMemoryDepartmentMigrationStore(
+      departments,
+      specialists,
+      breakable,
+      async () => departments.organizationIds(),
+    ),
     putStructure: async (record) => {
       if ('origin' in record) departments.put(record);
       else specialists.put(record);
@@ -250,6 +263,7 @@ function firestoreStores(): Stores {
     approvals: new FirestoreApprovalRepository(db),
     departments: new FirestoreDepartmentRepository(db),
     specialists: new FirestoreSpecialistRepository(db),
+    departmentMigration: new FirestoreDepartmentMigrationStore(db),
     async putStructure(record) {
       if ('origin' in record) {
         await db.collection(DEPARTMENTS).doc(record.id).set(toDepartmentDocument(record));

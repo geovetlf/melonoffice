@@ -26,6 +26,7 @@ const LOOKS: Readonly<Record<string, DepartmentLook>> = {
   operations: { icon: 'cog', motif: 'dashboard', hue: '#ff9a62' },
   sales: { icon: 'growth', motif: 'growth', hue: '#f5b942' },
   marketing: { icon: 'megaphone', motif: 'social', hue: '#ff7f6e' },
+  // Retired into Marketing (ADR-0047): kept only so an organization not yet migrated draws it.
   design_video: { icon: 'play', motif: 'video', hue: '#f0665a' },
   research: { icon: 'research', motif: 'network', hue: '#ffb27a' },
   finance: { icon: 'coins', motif: 'finance', hue: '#e8a33d' },

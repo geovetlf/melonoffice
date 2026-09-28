@@ -99,6 +99,7 @@ const PROVISIONAL_LAYOUTS: Readonly<Record<string, OfficeLayout>> = {
   operations: { seats: 8, ambient: [1, 2, 4, 6, 7] },
   sales: { seats: 5, ambient: [1, 3, 4] },
   marketing: { seats: 6, ambient: [1, 2, 4] },
+  // Retired into Marketing (ADR-0047): kept only so an organization not yet migrated draws it.
   design_video: { seats: 6, ambient: [1, 3, 5] },
   research: { seats: 4, ambient: [1, 2] },
   finance: { seats: 4, ambient: [1, 3] },
