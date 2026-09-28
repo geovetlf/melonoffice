@@ -531,6 +531,40 @@ describe('ambient figures (ADR-0042)', () => {
     expect(block('(max-width: 40rem)')).toContain('.seat');
   });
 
+  it('count for nothing: the seat counters and the agent counts stay real', async () => {
+    const zoneOf = (slug: string) =>
+      [...document.querySelectorAll('.zone')].find((zone) =>
+        zone.querySelector(`a[href="/office/${slug}"]`),
+      );
+    open('/');
+    await waitFor(() => expect(document.querySelectorAll('.zone').length).toBe(7));
+    expect(zoneOf('marketing')?.querySelector('.zone__seats')?.textContent).toBe('0/6');
+    cleanup();
+
+    open('/', (backend) => {
+      backend.options.specialists.org_1 = [
+        { id: 'spec_ana', name: 'Ana Campañas', type: 'marketing', status: 'active' },
+      ];
+    });
+    await waitFor(() =>
+      expect(zoneOf('marketing')?.querySelector('.zone__seats')?.textContent).toBe('1/6'),
+    );
+    // Two figures still decorate the room; neither is counted.
+    expect(zoneOf('marketing')?.querySelectorAll('.room__worker--ambient')).toHaveLength(2);
+  });
+
+  it('carry no presence, state or focus of their own', async () => {
+    open('/office/marketing');
+    await screen.findByRole('list', { name: 'Workstations' });
+    const figures = document.querySelectorAll('.room__worker--ambient');
+    expect(figures.length).toBeGreaterThan(0);
+    for (const figure of figures) {
+      expect(figure.querySelector('.room__presence')).toBeNull();
+      expect(figure.querySelector('a, button, [tabindex], title, text')).toBeNull();
+      expect(figure.getAttribute('aria-label')).toBeNull();
+    }
+  });
+
   it('are replaced in the office by a real agent, which stays a link to its profile', async () => {
     open('/office/marketing', (backend) => {
       backend.options.specialists.org_1 = [

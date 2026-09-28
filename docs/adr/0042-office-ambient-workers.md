@@ -15,6 +15,8 @@ Geovet asked for the offices to look alive in that case, with seated figures at 
 
 ## Decision
 
+Ambient figures are a purely visual layer of the virtual office. Only real agents represent operational entities of the system.
+
 1. A workstation shows one of three things, in this order:
    - its real agent, when one sits there;
    - else an ambient figure, when the layout says that desk shows one;
@@ -27,7 +29,8 @@ Geovet asked for the offices to look alive in that case, with seated figures at 
 4. An ambient figure is decoration only:
    - it is drawn inside the room's `aria-hidden` SVG;
    - it has no link, name, plate, state, presence dot or activity;
-   - it never counts as an occupied seat, and the agent counts stay real.
+   - it never counts as an occupied seat, and the agent counts stay real;
+   - it creates no data, presence, event, analytics or credit use, and it cannot receive tasks or messages.
 5. A desk with an ambient figure is still a free workstation. It keeps its "Available workstation" control and the same (future) options. Its hover card notes "Ambient figure, not an agent".
 6. The figure is a seated, stylized person in SVG: head, torso, arms and hands on the desk, and the chair. Its only motion is a barely visible breathing, applied only under `prefers-reduced-motion: no-preference`. There is no typing, mouse, messages or tasks.
 
