@@ -29,6 +29,7 @@
     "@melonoffice/audit": "workspace:*",
     "@melonoffice/auth": "workspace:*",
     "@melonoffice/billing": "workspace:*",
+    "@melonoffice/business": "workspace:*",
     "@melonoffice/conversations": "workspace:*",
     "@melonoffice/credits": "workspace:*",
     "@melonoffice/departments": "workspace:*",

@@ -11,6 +11,7 @@ export type RoleCatalogue = Readonly<Record<string, readonly Permission[]>>;
 export const ROLES = {
   owner: [
     'organization.read',
+    'organization.update',
     'entitlement.read',
     'billing.read',
     'execution.read',

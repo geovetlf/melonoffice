@@ -20,6 +20,7 @@
     "@melonoffice/approvals": "workspace:*",
     "@melonoffice/audit": "workspace:*",
     "@melonoffice/auth": "workspace:*",
+    "@melonoffice/business": "workspace:*",
     "@melonoffice/billing": "workspace:*",
     "@melonoffice/conversations": "workspace:*",
     "@melonoffice/credits": "workspace:*",

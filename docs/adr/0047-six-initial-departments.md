@@ -1,6 +1,6 @@
 # ADR-0047: Six initial departments, and retiring a catalogue type
 
-- Status: Proposed (B1, pending Geovet's review)
+- Status: Accepted (B1, PR #51, merged by Geovet on 2026-09-28; the migration has not been run)
 - Date: 2026-09-28
 - Supersedes: [ADR-0005](0005-initial-departments.md) (D-11, seven departments)
 - Amends: [ADR-0025](0025-departments-and-specialists.md) (the catalogue gains retired types; a department is archived by the migration)

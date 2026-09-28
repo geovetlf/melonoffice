@@ -12,7 +12,7 @@ import {
 } from './departments.js';
 import { Icon } from './icons.js';
 import type { DepartmentView, SpecialistView } from './officeClient.js';
-import { readyList, useOfficeData } from './OfficeData.js';
+import { departmentPriority, readyList, useOfficeData } from './OfficeData.js';
 import { RoomArt } from './RoomArt.js';
 import { navigateInto } from './transition.js';
 import { roomSeats, seatAgents, type DepartmentSeating } from './workstations.js';
@@ -23,9 +23,12 @@ import { roomSeats, seatAgents, type DepartmentSeating } from './workstations.js
  */
 export function OfficeScene() {
   const intl = useIntl();
-  const { departments, specialists } = useOfficeData();
+  const { departments, specialists, business } = useOfficeData();
   const agents = readyList(specialists);
-  const { headquarters, floor } = officeDepartments(readyList(departments));
+  const { headquarters, floor } = officeDepartments(
+    readyList(departments),
+    departmentPriority(business),
+  );
   return (
     <section className="office-scene" aria-labelledby="office-scene-title">
       <h2 id="office-scene-title" className="visually-hidden">

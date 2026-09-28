@@ -41,6 +41,8 @@ export interface FakeBackend {
     /** Each organization's conversations: only its members can read them. */
     conversations: Record<string, { id: string; name: string; priority: string }[]>;
     organizationLimitReached?: boolean;
+    /** Each organization's business profile (ADR-0048); absent means not described yet. */
+    businessProfiles: Record<string, Record<string, unknown>>;
   };
   apiCalls(): Call[];
 }
@@ -74,6 +76,7 @@ export function fakeBackend(): FakeBackend {
       org_1: [{ id: 'c1', name: 'Juan Pérez', priority: 'normal' }],
       org_other: [{ id: 'c9', name: 'Another company’s customer', priority: 'normal' }],
     },
+    businessProfiles: {},
   };
 
   function issue() {
@@ -149,6 +152,14 @@ export function fakeBackend(): FakeBackend {
       const created = { id: 'org_new', name: name.trim(), role: 'owner' };
       options.organizations.push(created);
       return json(201, { organization: { id: created.id, name: created.name } });
+    }
+    if (path === '/v1/business-types') {
+      return json(200, {
+        businessTypes: ['restaurant', 'store', 'ecommerce', 'other'].map((id) => ({
+          id,
+          nameKey: `business.type.${id}`,
+        })),
+      });
     }
     const inbox = /^\/v1\/organizations\/([^/]+)\/(.+)$/.exec(path);
     if (inbox !== null) return inboxAnswer(inbox[1] ?? '', inbox[2] ?? '', method, body);
@@ -238,6 +249,37 @@ export function fakeBackend(): FakeBackend {
             : { organizationId, status: 'present', balance, updatedAt: '2026-09-27T12:00:00Z' },
         )
       );
+    }
+    if (route === 'business-profile') {
+      const view = () => {
+        const profile = options.businessProfiles[organizationId];
+        return {
+          profile: profile ?? null,
+          departmentPriority:
+            profile?.businessType === 'restaurant'
+              ? ['sales', 'operations', 'marketing', 'finance', 'leadership', 'research']
+              : ['sales', 'marketing', 'operations', 'finance', 'leadership', 'research'],
+        };
+      };
+      if (method === 'PUT') {
+        const denied = needs('organization.update');
+        if (denied !== undefined) return denied;
+        const input = JSON.parse(body ?? '{}') as Record<string, unknown>;
+        if (input.country === 'AQ')
+          return json(400, { error: 'invalid_profile', field: 'country' });
+        options.businessProfiles[organizationId] = {
+          city: null,
+          employees: null,
+          salesChannels: [],
+          offering: null,
+          needs: null,
+          notes: null,
+          ...input,
+          updatedAt: '2026-09-28T12:00:00Z',
+        };
+        return json(200, view());
+      }
+      return needs('organization.read') ?? json(200, view());
     }
     if (route === 'billing') {
       return (

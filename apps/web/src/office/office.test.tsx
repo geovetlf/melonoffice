@@ -164,9 +164,12 @@ describe('the Home (ADR-0040)', () => {
       'Research',
       'Finance',
     ]);
+    // The tools: Communications and Settings → Business (ADR-0048); the rest are coming.
     expect(
-      within(screen.getByRole('navigation', { name: 'Tools' })).getAllByRole('link'),
-    ).toHaveLength(1);
+      within(screen.getByRole('navigation', { name: 'Tools' }))
+        .getAllByRole('link')
+        .map((link) => link.getAttribute('href')),
+    ).toEqual(['/conversations', '/settings/business']);
   });
 
   it('enters a department’s office on click, and comes back by the breadcrumb or the browser', async () => {

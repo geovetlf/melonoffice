@@ -368,3 +368,52 @@
     grid-column: 1 / -1;
   }
 }
+
+/* The business profile (ADR-0048): the connection form's fields, in one column. */
+.business-form {
+  display: grid;
+  gap: var(--mo-space-3);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.business-form textarea {
+  padding: var(--mo-space-2) var(--mo-space-3);
+  border: 1px solid var(--mo-color-border);
+  border-radius: var(--mo-radius-md);
+  font: inherit;
+  color: var(--mo-color-text-primary);
+  background: var(--mo-color-surface);
+  resize: vertical;
+}
+
+.business-form input[readonly] {
+  background: var(--mo-color-surface-subtle);
+}
+
+.business-form__channels {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr));
+  gap: var(--mo-space-2);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.business-form__channels legend {
+  margin-bottom: var(--mo-space-2);
+  padding: 0;
+}
+
+.connection-form .business-form__check {
+  display: flex;
+  align-items: center;
+  gap: var(--mo-space-2);
+  min-height: var(--mo-min-target-size);
+}
+
+.business-form__check input {
+  min-height: auto;
+}

@@ -77,6 +77,9 @@ importers:
       '@melonoffice/billing':
         specifier: workspace:*
         version: link:../../packages/billing
+      '@melonoffice/business':
+        specifier: workspace:*
+        version: link:../../packages/business
       '@melonoffice/conversations':
         specifier: workspace:*
         version: link:../../packages/conversations
@@ -375,6 +378,34 @@ importers:
         specifier: workspace:*
         version: link:../config
 
+  packages/business:
+    dependencies:
+      '@melonoffice/audit':
+        specifier: workspace:*
+        version: link:../audit
+      '@melonoffice/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@melonoffice/rbac':
+        specifier: workspace:*
+        version: link:../rbac
+      '@melonoffice/tenancy':
+        specifier: workspace:*
+        version: link:../tenancy
+    devDependencies:
+      '@melonoffice/auth':
+        specifier: workspace:*
+        version: link:../auth
+      '@melonoffice/config':
+        specifier: workspace:*
+        version: link:../config
+      '@melonoffice/credits':
+        specifier: workspace:*
+        version: link:../credits
+      '@melonoffice/departments':
+        specifier: workspace:*
+        version: link:../departments
+
   packages/config: {}
 
   packages/conversations:
@@ -516,6 +547,9 @@ importers:
       '@melonoffice/billing':
         specifier: workspace:*
         version: link:../billing
+      '@melonoffice/business':
+        specifier: workspace:*
+        version: link:../business
       '@melonoffice/conversations':
         specifier: workspace:*
         version: link:../conversations

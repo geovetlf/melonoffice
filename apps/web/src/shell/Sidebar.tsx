@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { navigate } from '../identity/router.js';
 import { departmentName, lookOf, officeDepartments, officeSlug } from '../office/departments.js';
 import { Icon, type IconName } from '../office/icons.js';
-import { readyList, useOfficeData } from '../office/OfficeData.js';
+import { departmentPriority, readyList, useOfficeData } from '../office/OfficeData.js';
 import { paths, type Route } from './routes.js';
 
 /**
@@ -27,6 +27,7 @@ export function Sidebar({
   route,
   canReadConversations,
   canReadConnections = false,
+  canReadBusiness = false,
   open,
   onNavigate,
 }: {
@@ -34,12 +35,17 @@ export function Sidebar({
   readonly canReadConversations: boolean;
   /** Settings → Connections, for a person with `channel.read` (ADR-0044). */
   readonly canReadConnections?: boolean;
+  /** Settings → Business, for a member who can read the organization (ADR-0048). */
+  readonly canReadBusiness?: boolean;
   readonly open: boolean;
   readonly onNavigate: () => void;
 }) {
   const intl = useIntl();
-  const { departments } = useOfficeData();
-  const { headquarters, floor } = officeDepartments(readyList(departments));
+  const { departments, business } = useOfficeData();
+  const { headquarters, floor } = officeDepartments(
+    readyList(departments),
+    departmentPriority(business),
+  );
   const go = (path: string) => {
     navigate(path);
     onNavigate();
@@ -123,6 +129,16 @@ export function Sidebar({
               </li>
             ),
           )}
+          {canReadBusiness ? (
+            <NavLink
+              icon="building"
+              path={paths.business()}
+              current={route.kind === 'business_profile'}
+              go={go}
+            >
+              <FormattedMessage id="nav.business" />
+            </NavLink>
+          ) : null}
         </ul>
       </nav>
       <PlanCard />
