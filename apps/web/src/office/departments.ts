@@ -68,15 +68,30 @@ export function departmentName(
   return department.name ?? intl.formatMessage({ id: 'office.department.unnamed' });
 }
 
-/** The departments shown in the office: every one but archived, headquarters first. */
-export function officeDepartments(departments: readonly DepartmentView[]): {
+/**
+ * The departments shown in the office: every one but archived, headquarters first. With a
+ * `priority` (the business profile's suggested order of catalogue types, ADR-0048), the rest are
+ * shown in that order; a department it does not name keeps its place after them. The order only
+ * arranges: no department is ever hidden by it.
+ */
+export function officeDepartments(
+  departments: readonly DepartmentView[],
+  priority: readonly string[] = [],
+): {
   readonly headquarters: readonly DepartmentView[];
   readonly floor: readonly DepartmentView[];
 } {
   const shown = departments.filter((department) => department.status !== 'archived');
+  const rank = (department: DepartmentView) => {
+    const at = department.typeId === null ? -1 : priority.indexOf(department.typeId);
+    return at === -1 ? priority.length : at;
+  };
   return {
     headquarters: shown.filter((department) => lookOf(department).headquarters === true),
-    floor: shown.filter((department) => lookOf(department).headquarters !== true),
+    // Array.prototype.sort is stable: equal ranks keep the API's order.
+    floor: shown
+      .filter((department) => lookOf(department).headquarters !== true)
+      .sort((a, b) => rank(a) - rank(b)),
   };
 }
 

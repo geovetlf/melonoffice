@@ -8,6 +8,12 @@ export const PERMISSIONS = {
     action: 'read',
     description: 'See the organization and your own membership in it.',
   },
+  'organization.update': {
+    resource: 'organization',
+    action: 'update',
+    description:
+      "Fill in or change the organization's business profile, directly and never through GIA (ADR-0048).",
+  },
   'entitlement.read': {
     resource: 'entitlement',
     action: 'read',

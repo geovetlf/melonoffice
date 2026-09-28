@@ -10,6 +10,10 @@ import {
 import { createApprovalService, type ApprovalRepository } from '@melonoffice/approvals';
 import type { AuditService } from '@melonoffice/audit';
 import type { AuthDependencies } from '@melonoffice/auth';
+import {
+  createBusinessProfileService,
+  type BusinessProfileRepository,
+} from '@melonoffice/business';
 import { createBillingService, type BillingStore } from '@melonoffice/billing';
 import { createDepartmentService, type DepartmentRepository } from '@melonoffice/departments';
 import {
@@ -62,6 +66,7 @@ import { registerApprovalRoutes } from './approvals.js';
 import { registerAuthRoutes, type AuthEnv } from './auth.js';
 import { registerCors } from './cors.js';
 import { registerBillingRoutes } from './billing.js';
+import { registerBusinessRoutes } from './business.js';
 import { registerDepartmentRoutes } from './departments.js';
 import { registerConnectionRoutes } from './connections.js';
 import { registerConversationRoutes } from './conversations.js';
@@ -114,6 +119,8 @@ export interface AppOptions {
     readonly departments: DepartmentRepository;
     readonly specialists: SpecialistRepository;
   };
+  /** Business profiles (ADR-0048). Absent: the profile route answers 503 (fails closed). */
+  readonly businessProfiles?: BusinessProfileRepository;
   /** The tool catalogue (ADR-0026). Defaults to the one in code, which is empty until tools exist. */
   readonly tools?: ToolRegistry;
   /** Tool approvals (ADR-0026). Absent: the approval routes answer 503 (fails closed). */
@@ -202,6 +209,7 @@ export function createApp({
   entitlementOverrides,
   executions,
   structure,
+  businessProfiles,
   tools = defaultToolRegistry(),
   approvals,
   credits,
@@ -270,6 +278,22 @@ export function createApp({
             authorization,
           })
         : undefined;
+    if (tenancy !== undefined && businessProfiles !== undefined) {
+      registerBusinessRoutes(app, {
+        store: tenancy,
+        authorization,
+        audit,
+        profiles: createBusinessProfileService({
+          repository: businessProfiles,
+          organizations: tenancy,
+          authorization,
+        }),
+      });
+    } else if (tenancy !== undefined) {
+      app.all('/v1/organizations/:organizationId/business-profile', (c) =>
+        c.json({ error: 'business_not_configured' }, 503),
+      );
+    }
     if (tenancy !== undefined && structure !== undefined && specialists !== undefined) {
       const dependencies = { store: tenancy, authorization, audit };
       registerDepartmentRoutes(app, {

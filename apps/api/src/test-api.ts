@@ -20,6 +20,10 @@ import {
   type AuditStore,
 } from '@melonoffice/audit';
 import { InMemoryBillingStore, type BillingStore } from '@melonoffice/billing';
+import {
+  InMemoryBusinessProfileRepository,
+  type BusinessProfileRepository,
+} from '@melonoffice/business';
 import { InMemoryDepartmentRepository, type DepartmentRepository } from '@melonoffice/departments';
 import {
   InMemoryAgentOutputRepository,
@@ -80,6 +84,7 @@ import {
   FirestoreApprovalRepository,
   FirestoreSpecialistRepository,
   FirestoreDepartmentMigrationStore,
+  FirestoreBusinessProfileRepository,
   SPECIALISTS,
   SPECIALIST_VERSIONS,
   toSpecialistDocument,
@@ -136,6 +141,8 @@ export interface Stores {
   readonly specialists: SpecialistRepository;
   /** Stores a department or specialist record as given, the way an operator change or bad data would. */
   readonly putStructure: (record: Department | Specialist | SpecialistVersion) => Promise<void>;
+  /** Business profiles (ADR-0048). */
+  readonly businessProfiles: BusinessProfileRepository;
   /** The department catalogue migration's storage (ADR-0047). */
   readonly departmentMigration: DepartmentMigrationStore;
   readonly credits: CreditStore;
@@ -206,6 +213,7 @@ function memoryStores(): Stores {
     approvals: new InMemoryApprovalRepository(events),
     departments,
     specialists,
+    businessProfiles: new InMemoryBusinessProfileRepository(breakable),
     departmentMigration: new InMemoryDepartmentMigrationStore(
       departments,
       specialists,
@@ -263,6 +271,7 @@ function firestoreStores(): Stores {
     approvals: new FirestoreApprovalRepository(db),
     departments: new FirestoreDepartmentRepository(db),
     specialists: new FirestoreSpecialistRepository(db),
+    businessProfiles: new FirestoreBusinessProfileRepository(db),
     departmentMigration: new FirestoreDepartmentMigrationStore(db),
     async putStructure(record) {
       if ('origin' in record) {
@@ -391,6 +400,7 @@ export function setupApp(
     billing: stores.billing,
     executions: stores.executions,
     structure: { departments: stores.departments, specialists: stores.specialists },
+    businessProfiles: stores.businessProfiles,
     approvals: stores.approvals,
     credits,
     plans: stores.plans,

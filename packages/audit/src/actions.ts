@@ -42,6 +42,12 @@ export const AUDIT_ACTIONS = {
     description: 'A user created an organization, or was refused or failed trying.',
     results: ['success', 'denied', 'failure'],
   },
+  'organization.profile_updated': {
+    category: 'tenancy',
+    description:
+      "A person created or changed the organization's business profile (ADR-0048); `reference` names the kind of business, never what the owner wrote.",
+    results: ['success'],
+  },
   'membership.create': {
     category: 'tenancy',
     description: 'A membership was created (today: the owner membership of a new organization).',

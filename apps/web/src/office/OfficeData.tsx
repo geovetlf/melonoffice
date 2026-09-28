@@ -1,4 +1,5 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
+import type { BusinessClient, BusinessProfileView } from '../business/businessClient.js';
 import type {
   BillingView,
   CreditsView,
@@ -23,6 +24,8 @@ export interface OfficeData {
   readonly specialists: Loadable<readonly SpecialistView[]>;
   readonly credits: Loadable<CreditsView>;
   readonly billing: Loadable<BillingView>;
+  /** The business profile (ADR-0048): what kind of business, and the order it suggests. */
+  readonly business: Loadable<BusinessProfileView>;
 }
 
 const LOADING: OfficeData = {
@@ -30,11 +33,26 @@ const LOADING: OfficeData = {
   specialists: { status: 'loading' },
   credits: { status: 'loading' },
   billing: { status: 'loading' },
+  business: { status: 'loading' },
 };
 
 const OfficeDataContext = createContext<OfficeData>(LOADING);
+const BusinessSavedContext = createContext<(view: BusinessProfileView) => void>(() => undefined);
 
 export const useOfficeData = (): OfficeData => useContext(OfficeDataContext);
+
+/** Puts the profile the API returned after a save in place of the one read before. */
+export const useBusinessSaved = (): ((view: BusinessProfileView) => void) =>
+  useContext(BusinessSavedContext);
+
+/**
+ * The order the business profile suggests for the departments, once the business is described.
+ * Before that the office keeps its usual order: nothing moves until the owner says what they do.
+ */
+export const departmentPriority = (business: Loadable<BusinessProfileView>): readonly string[] =>
+  business.status === 'ready' && business.value.profile !== null
+    ? business.value.departmentPriority
+    : [];
 
 /** The value, when it is ready; otherwise an empty list. */
 export const readyList = <T,>(loadable: Loadable<readonly T[]>): readonly T[] =>
@@ -42,10 +60,12 @@ export const readyList = <T,>(loadable: Loadable<readonly T[]>): readonly T[] =>
 
 export function OfficeDataProvider({
   client,
+  business,
   can,
   children,
 }: {
   readonly client: OfficeClient;
+  readonly business?: BusinessClient;
   readonly can: (permission: string) => boolean;
   readonly children: ReactNode;
 }) {
@@ -53,6 +73,7 @@ export function OfficeDataProvider({
   const canSpecialists = can('specialist.read');
   const canCredits = can('credits.read');
   const canBilling = can('billing.read');
+  const canBusiness = can('organization.read') && business !== undefined;
   const [data, setData] = useState<OfficeData>(LOADING);
 
   useEffect(() => {
@@ -80,10 +101,23 @@ export function OfficeDataProvider({
     load('specialists', canSpecialists, () => client.specialists());
     load('credits', canCredits, () => client.credits());
     load('billing', canBilling, () => client.billing());
+    load('business', canBusiness, () =>
+      business === undefined ? Promise.reject(new Error('no client')) : business.profile(),
+    );
     return () => {
       live = false;
     };
-  }, [client, canDepartments, canSpecialists, canCredits, canBilling]);
+  }, [client, business, canDepartments, canSpecialists, canCredits, canBilling, canBusiness]);
 
-  return <OfficeDataContext.Provider value={data}>{children}</OfficeDataContext.Provider>;
+  const saved = useCallback(
+    (view: BusinessProfileView) =>
+      setData((current) => ({ ...current, business: { status: 'ready', value: view } })),
+    [],
+  );
+
+  return (
+    <BusinessSavedContext.Provider value={saved}>
+      <OfficeDataContext.Provider value={data}>{children}</OfficeDataContext.Provider>
+    </BusinessSavedContext.Provider>
+  );
 }
