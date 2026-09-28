@@ -94,6 +94,7 @@
   "conversations.control.paused": "AI paused: a person took control",
   "conversations.control.escalated": "Handed to a person",
   "conversations.control.reason": "Reason:",
+  "conversations.control.summary": "Agent’s note:",
   "conversations.control.takeOver": "Take control",
   "conversations.control.handBack": "Hand back to AI",
   "conversations.control.composerLocked": "AI is handling this conversation. Take control to reply yourself.",

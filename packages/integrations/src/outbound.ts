@@ -278,6 +278,16 @@ export function createChannelMessageExecutor(options: ChannelMessageExecutorOpti
         // Nothing left MelonOffice: the credential could not be read.
         return refuse('channel_not_available');
       }
+      if (agent) {
+        // Checked again as the very last step before the provider is called (CV-6B): a person
+        // who took control while the channel was being prepared is never overtaken.
+        const latest = await conversations.findConversation(organizationId, conversationId);
+        const refusal =
+          latest === undefined
+            ? 'conversation_not_found'
+            : await agentReplies?.refusalOf(context, latest, message);
+        if (refusal !== undefined) return refuse(refusal);
+      }
       let externalMessageId: string;
       try {
         ({ externalMessageId } = await adapter.send(connection, accessToken, {

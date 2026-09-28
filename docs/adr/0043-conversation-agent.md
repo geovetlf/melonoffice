@@ -1,6 +1,6 @@
 # ADR-0043: The first conversation agent
 
-- Status: Proposed (pending Geovet's review)
+- Status: Accepted (Geovet, 2026-09-28: D-X6-START extension approved; `specialist.manage` deferred)
 - Date: 2026-09-28
 - Amends:
   - [ADR-0029](0029-runtime-guards.md) (D-X6-START: the runtime may start one kind of execution, as a delegated start)
@@ -48,6 +48,18 @@ ADR-0029 said the runtime never starts an execution. A turn has no person pressi
 
 The person's configuration of an agent is the consent. The `execution.start` description now says so.
 
+**Approved by Geovet (2026-09-28).** The extension of D-X6-START stays minimal and additive:
+
+- a turn starts only from a valid stored inbound message;
+- the specialist is the organization's configured agent for that conversation and channel;
+- the start is attributed to the person who configured the agent, who must hold `execution.start`;
+- no user or actor is invented, and the customer is never an authenticated actor;
+- the organization comes from the conversation and its connection, and stays isolated;
+- starting a turn grants the runtime no extra permission; every tool still goes through the tool gate and every action through permissions and policy;
+- every execution is audited.
+
+A person's own start (`start`) is unchanged.
+
 ### 5. Runtime additions
 
 - `AgentOutputSink` keeps the agent's answer (`agentOutputs/{executionId}_{nodeId}`) before its node completes. If it cannot be kept, the node fails (`output_unavailable`).
@@ -62,9 +74,23 @@ The model receives the fixed system rules as the system message, written in code
 
 The `conversation_agent` model policy allows only Vertex AI Gemini 2.5 Flash-Lite, confidential data, no fallback, at most 2 attempts and a maximum cost of 1 credit per call. Credits are consumed by the AI Gateway under the turn's own request, and a skipped turn consumes nothing.
 
-### 8. Permissions: stop point
+### 8. Hand-off note
 
-Configuring an agent needs a way to create and edit specialists, which has no API. That would need a new `specialist.manage` permission. Following the brief, it was not introduced. Agents can be configured only through the specialist repository (tests, seeds) until Geovet decides.
+When the agent hands off, it may add a short note for the person who takes over: what the customer wants, the details they gave and what it already answered (`summary`, at most 600 characters). The note:
+
+- is kept with the turn's answer (`agentOutputs`), never in the audit log;
+- is dropped if it looks like a secret or carries control characters (the hand-off still happens);
+- is shown only in the conversation's detail (`handoffSummary`), under `conversation.read`, and only when the answer belongs to the same organization.
+
+The conversation, the contact, the reason and the turn that handed off were already kept. The hand-off itself uses the CV-6A transition (`escalate`); there is no second hand-off system.
+
+### 9. The last check before sending
+
+The agent's reply is checked twice: before the channel is prepared, and again as the very last step before the provider is called. A person who took control while the channel's credential was read is never overtaken.
+
+### 10. Permissions: `specialist.manage` deferred
+
+Configuring an agent needs a way to create and edit specialists, which has no API. That would need a new `specialist.manage` permission. Geovet decided (2026-09-28) to leave it for a later, separate phase: no create or edit endpoint, no admin UI and no new permission now. Agents are configured through the specialist repository (tests, seeds) meanwhile.
 
 ## Consequences
 
@@ -73,5 +99,5 @@ Configuring an agent needs a way to create and edit specialists, which has no AP
   - the worker's Vertex and channel secret settings and IAM;
   - the API's Cloud Tasks transport settings.
     None is in this change.
-- A residual race of milliseconds remains between the last control check and the provider's send.
+- A message already handed to the provider cannot be recalled. If a person takes control during that one call, the reply the agent was already sending still arrives, and shows in the conversation as the agent's.
 - Supervised replies wait for approval, but there is no approvals screen yet.

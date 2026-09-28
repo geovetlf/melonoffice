@@ -921,6 +921,36 @@ export function createConversationAgentCheck(
   });
 }
 
+/** What the person who takes over reads about a hand-off (CV-6B). */
+export interface HandoffSummaries {
+  /**
+   * The agent's note on why it handed this conversation over and what it knew: only for a
+   * hand-off an agent's turn made, read from that turn's own kept answer in the tenant's
+   * organization. `undefined` when there is none.
+   */
+  summaryOf(tenant: TenantContext, conversation: Conversation): Promise<string | undefined>;
+}
+
+export function createHandoffSummaries(options: {
+  readonly outputs: Pick<AgentOutputStore, 'find'>;
+}): HandoffSummaries {
+  const { outputs } = options;
+  return Object.freeze({
+    async summaryOf(tenant: TenantContext, conversation: Conversation) {
+      const executionId = conversation.handoff?.executionId;
+      if (executionId === undefined) return undefined;
+      const organizationId = organizationOfTenant(tenant);
+      if (organizationId === undefined || organizationId !== conversation.organizationId) {
+        return undefined;
+      }
+      const record = await outputs.find(tenant, executionId, TURN_NODES.decide);
+      if (record === undefined) return undefined;
+      const decision = parseAgentDecision(record.output);
+      return decision.action === 'handoff' ? decision.summary : undefined;
+    },
+  });
+}
+
 /**
  * The ingress with agents' turns (CV-6B): stores what the channel delivered exactly as before,
  * then starts the agent's turn on it. A turn that cannot start never loses the message: it is

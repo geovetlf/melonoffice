@@ -16,6 +16,7 @@ import {
 import {
   isIntegrationError,
   type ChannelConnectionService,
+  type HandoffSummaries,
   type MessageSendService,
 } from '@melonoffice/integrations';
 import type { Context, Hono } from 'hono';
@@ -44,9 +45,11 @@ export function registerConversationRoutes(
     readonly sender?: MessageSendService;
     /** Assisted AI (ADR-0037). Absent: the assist route answers 503. */
     readonly assistant?: ConversationAssistant;
+    /** An agent's hand-off note (CV-6B, ADR-0043). Absent: the detail shows none. */
+    readonly handoffSummaries?: HandoffSummaries;
   },
 ): void {
-  const { conversations, connections, sender, assistant } = dependencies;
+  const { conversations, connections, sender, assistant, handoffSummaries } = dependencies;
   const base = '/v1/organizations/:organizationId';
   const one = `${base}/conversations/:conversationId`;
   const idOf = (c: Context<AuthEnv>) => c.req.param('conversationId') ?? '';
@@ -95,8 +98,11 @@ export function registerConversationRoutes(
           idOf(c),
           limit === undefined ? {} : { limit },
         );
+        const summary = await handoffSummaries?.summaryOf(tenant, detail.conversation);
         return {
           conversation: toConversationView(detail.conversation),
+          // What the agent knew when it handed over, for the person taking over (CV-6B).
+          handoffSummary: summary ?? null,
           contact: toContactView(detail.contact),
           identity: toIdentityView(detail.identity),
           messages: detail.messages.map(toMessageView),

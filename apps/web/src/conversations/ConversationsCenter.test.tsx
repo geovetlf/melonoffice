@@ -69,7 +69,10 @@ const ASSIST_ANSWERS: Record<AssistResult['type'], AssistResult> = {
 };
 
 /** An inbox held in memory, with the same answers the API gives. */
-function fakeClient(initial: ConversationRow[], options: { readonly aiAllowed?: boolean } = {}) {
+function fakeClient(
+  initial: ConversationRow[],
+  options: { readonly aiAllowed?: boolean; readonly handoffSummary?: string } = {},
+) {
   let rows = initial;
   const update = (id: string, change: Partial<ConversationRow>) => {
     rows = rows.map((r) => (r.id === id ? { ...r, ...change } : r));
@@ -109,6 +112,7 @@ function fakeClient(initial: ConversationRow[], options: { readonly aiAllowed?: 
       },
       identity: { channel: 'whatsapp', externalId: '5215512345678', displayName: null },
       messages: messages[id] ?? [],
+      handoffSummary: options.handoffSummary ?? null,
     })),
     departments: vi.fn(async () => [{ id: SALES, nameKey: 'department.sales.short', name: null }]),
     assign: vi.fn(async (id: string, change: Parameters<InboxClient['assign']>[1]) =>
@@ -525,6 +529,29 @@ describe('Human control (CV-6A)', () => {
     expect(within(article).getByText(/El cliente pidió hablar con una persona/)).toBeTruthy();
     fireEvent.click(within(article).getByRole('button', { name: 'Tomar control' }));
     await waitFor(() => expect(client.takeOver).toHaveBeenCalledWith('c1'));
+  });
+
+  it('shows the agent’s note to the person taking over, as plain text (CV-6B)', async () => {
+    const escalated = {
+      control: { handledBy: 'human', aiState: 'escalated', changedAt: null },
+      handoff: { reason: 'sensitive_operation', requestedAt: '2026-09-27T12:05:00Z' },
+    } as const;
+    const client = fakeClient([row('c1', escalated)], {
+      handoffSummary:
+        'Quiere cambiar la dirección del pedido 1042. <b>Ya</b> dio su código postal.',
+    });
+    center(client);
+    const article = await open('Juan Pérez');
+    expect(within(article).getByText(/Nota del agente:/)).toBeTruthy();
+    expect(within(article).getByText(/Quiere cambiar la dirección/).textContent).toContain(
+      '<b>Ya</b>',
+    );
+    cleanup();
+
+    // No note: nothing is shown.
+    center(fakeClient([row('c1', escalated)]));
+    const plain = await open('Juan Pérez');
+    expect(within(plain).queryByText(/Nota del agente:/)).toBeNull();
   });
 
   it('shows an unknown reason as "could not resolve", never the raw code', async () => {

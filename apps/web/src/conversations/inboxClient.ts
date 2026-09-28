@@ -78,6 +78,8 @@ export interface ConversationDetail {
     readonly displayName: string | null;
   };
   readonly messages: readonly MessageRow[];
+  /** The agent's note for the person taking over (CV-6B); absent from older servers. */
+  readonly handoffSummary?: string | null;
 }
 
 export interface DepartmentOption {
