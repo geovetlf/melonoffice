@@ -1,15 +1,24 @@
-import { actorOf, buildAuditEvent, type AuditService } from '@melonoffice/audit';
+import { actorOf, buildAuditEvent, type AuditMessage, type AuditService } from '@melonoffice/audit';
 import type { ConversationIngress } from '@melonoffice/conversations';
 import type {
   ChannelConnection,
   ChannelConnectionId,
   ChannelSecretKind,
+  ChannelTemplateId,
   Conversation,
   OrganizationId,
+  TemplateValues,
   UserId,
 } from '@melonoffice/domain';
 import type { Logger } from '@melonoffice/observability';
-import type { ChannelAdapter, ConnectionCheck, OutboundText } from './adapter.js';
+import {
+  type ChannelAdapter,
+  type ConnectionCheck,
+  type OutboundKind,
+  type OutboundMedia,
+  type OutboundMessage,
+  type OutboundText,
+} from './adapter.js';
 import {
   connectionEventOf,
   isConnectionId,
@@ -30,6 +39,12 @@ import { IntegrationError, isIntegrationError } from './errors.js';
 import { acceptsHandshake, acceptsInbound, isOperational } from './lifecycle.js';
 import type { IntegrationRegistry } from './registry.js';
 import type { SecretStore } from './secrets.js';
+import {
+  resolveTemplate,
+  type ChannelTemplateRepository,
+  type TemplateCheck,
+  type TemplateChecker,
+} from './templates.js';
 
 /** Where inbound messages go: the conversations' ingress, possibly with agents' turns. */
 export type ConversationIngressPort = Pick<ConversationIngress, 'receive' | 'applyStatus'>;
@@ -81,6 +96,20 @@ export interface AvailabilityQuery {
   readonly channel: Conversation['channel'];
   /** When given, the channel's service window is checked against it. */
   readonly conversation?: Pick<Conversation, 'lastInboundAt'>;
+  /**
+   * What would be sent (ADR-0046): each needs its own capability, and only a template may go
+   * out after the service window closed. Default: text.
+   */
+  readonly kind?: OutboundKind;
+}
+
+/** A template message as the executor asks for it: the stored template's id and its values. */
+export interface OutboundTemplateRequest {
+  readonly kind: 'template';
+  readonly to: string;
+  readonly templateId: ChannelTemplateId;
+  readonly values: TemplateValues;
+  readonly idempotencyKey?: string;
 }
 
 /** Who a send is for: the person, or the person the runtime acts for. */
@@ -92,7 +121,7 @@ export interface OutboundActor {
 /** A text to send, once the tool gate allowed it (ADR-0044). */
 export interface OutboundRequest extends AvailabilityQuery {
   readonly conversation: Pick<Conversation, 'id' | 'lastInboundAt'>;
-  readonly message: OutboundText;
+  readonly message: OutboundText | OutboundMedia | OutboundTemplateRequest;
   readonly actor: OutboundActor;
   /** Ids for the log line only (execution, node, agent, message, request). */
   readonly trace?: Readonly<Record<string, string | undefined>>;
@@ -136,7 +165,7 @@ export type OutboundResult =
  * channel's own costs are the provider's, and MelonOffice charges no price for them (none is
  * decided).
  */
-export interface IntegrationEngine extends WebhookIngress, ConnectionChecker {
+export interface IntegrationEngine extends WebhookIngress, ConnectionChecker, TemplateChecker {
   readonly registry: IntegrationRegistry;
   /** `undefined` when a text could be sent now, or the refusal code. Reads no secret. */
   availability(query: AvailabilityQuery): Promise<ChannelRefusal | undefined>;
@@ -161,6 +190,8 @@ export interface IntegrationEngineOptions {
    * only, which is right for tests and nothing else.
    */
   readonly rateLimiter?: ConnectionRateLimiter;
+  /** The organizations' templates (ADR-0046). Absent: every template message is refused. */
+  readonly templates?: Pick<ChannelTemplateRepository, 'find'>;
   /** Waits between provider calls. */
   readonly sleep?: (ms: number) => Promise<void>;
   /** In [0, 1): the backoff's jitter. */
@@ -185,6 +216,7 @@ export function createIntegrationEngine(options: IntegrationEngineOptions): Inte
     rateLimiter = new InMemoryConnectionRateLimiter(),
     sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
     random = Math.random,
+    templates,
   } = options;
   const policy = checkDeliveryPolicy(options.delivery ?? DEFAULT_DELIVERY_POLICY);
 
@@ -262,15 +294,23 @@ export function createIntegrationEngine(options: IntegrationEngineOptions): Inte
     }
     const adapter = adapterOf(connection);
     if (adapter === undefined) return { code: 'channel_not_available' };
-    if (!connection.capabilities.outboundText || !adapter.capabilities.outboundText) {
+    const kind = query.kind ?? 'text';
+    const capability =
+      kind === 'template'
+        ? 'outboundTemplates'
+        : kind === 'media'
+          ? 'outboundMedia'
+          : 'outboundText';
+    if (!connection.capabilities[capability] || !adapter.capabilities[capability]) {
       return { code: 'capability_not_available' };
     }
     if (
+      kind !== 'template' &&
       query.conversation !== undefined &&
       !withinServiceWindow(query.conversation, connection.capabilities, now())
     ) {
-      // WhatsApp: a free-form message only within 24 hours of the contact's last one, and this
-      // connection sends no templates (ADR-0044). Nothing is sent outside it.
+      // WhatsApp: a free-form message (text or media) only within 24 hours of the contact's last
+      // one; after it, only an approved template (ADR-0046). Decided here, before any adapter.
       return { code: 'outside_messaging_window' };
     }
     return { adapter, connection };
@@ -331,6 +371,7 @@ export function createIntegrationEngine(options: IntegrationEngineOptions): Inte
       readonly result: 'success' | 'failure' | 'denied';
       readonly attempt: number;
       readonly reason?: string;
+      readonly message: AuditMessage;
     },
   ): Promise<void> {
     if (audit === undefined || request.messageId === undefined) return;
@@ -345,6 +386,7 @@ export function createIntegrationEngine(options: IntegrationEngineOptions): Inte
             target: { type: 'message', id: request.messageId },
             reference: `conversation:${request.conversation.id}`,
             attempt: event.attempt,
+            message: event.message,
             ...(event.reason === undefined ? {} : { reason: event.reason }),
             ...(request.requestId === undefined ? {} : { requestId: request.requestId }),
             source: 'api',
@@ -363,6 +405,53 @@ export function createIntegrationEngine(options: IntegrationEngineOptions): Inte
   }
 
   /**
+   * The message an adapter gets (ADR-0046): text and captions within the connection's limit, and a
+   * template resolved from the organization's own record of it, active and on this connection,
+   * with values that fit it exactly. Any refusal is a stable code, and nothing is sent.
+   */
+  async function outboundOf(
+    request: OutboundRequest,
+    connection: ChannelConnection,
+  ): Promise<{ readonly message: OutboundMessage } | { readonly code: string }> {
+    const message = request.message;
+    if (message.kind === 'template') {
+      const template =
+        templates === undefined
+          ? undefined
+          : await templates.find(connection.organizationId, message.templateId);
+      if (
+        template === undefined ||
+        template.organizationId !== connection.organizationId ||
+        template.connectionId !== connection.id ||
+        template.channel !== connection.channel
+      ) {
+        return { code: 'template_not_found' };
+      }
+      try {
+        return {
+          message: {
+            kind: 'template',
+            to: message.to,
+            template: resolveTemplate(template, message.values),
+            ...(message.idempotencyKey === undefined
+              ? {}
+              : { idempotencyKey: message.idempotencyKey }),
+          },
+        };
+      } catch (error) {
+        return {
+          code: isIntegrationError(error) ? (error.detail ?? error.code) : 'invalid_message',
+        };
+      }
+    }
+    const text = message.kind === 'media' ? message.caption : message.text;
+    if (text !== undefined && text.length > connection.capabilities.maxOutboundTextLength) {
+      return { code: 'invalid_message' };
+    }
+    return { message };
+  }
+
+  /**
    * The provider calls of one send (ADR-0045). Before each: the connection's limit, then the
    * last check. A call is repeated only when the provider surely did not take the message, within
    * the attempts and the time allowed; the same stored message is sent each time, so a retry can
@@ -370,6 +459,7 @@ export function createIntegrationEngine(options: IntegrationEngineOptions): Inte
    */
   async function deliverOutbound(
     request: OutboundRequest,
+    message: OutboundMessage,
     adapter: ChannelAdapter,
     connection: ChannelConnection,
     accessToken: string,
@@ -385,6 +475,7 @@ export function createIntegrationEngine(options: IntegrationEngineOptions): Inte
     );
     const key = { organizationId: connection.organizationId, connectionId: connection.id };
     const log = { ...trace, provider: connection.provider };
+    const audited = auditMessageOf(message);
     let attempt = 0;
     for (;;) {
       attempt += 1;
@@ -397,6 +488,7 @@ export function createIntegrationEngine(options: IntegrationEngineOptions): Inte
       if (!slot.allowed) {
         logger?.warn('outbound rate limited', { ...log, attempt });
         await recordDelivery(request, {
+          message: audited,
           action: 'channel.delivery_rate_limited',
           result: 'denied',
           attempt,
@@ -423,11 +515,12 @@ export function createIntegrationEngine(options: IntegrationEngineOptions): Inte
         const { externalMessageId } = await adapter.send(
           connection,
           { accessToken },
-          request.message,
+          message,
           Number.isFinite(remaining) ? { timeoutMs: Math.max(remaining, 1) } : undefined,
         );
         logger?.info('outbound sent', { ...log, attempt, status: 'sent' });
         await recordDelivery(request, {
+          message: audited,
           action: 'channel.delivery_attempted',
           result: 'success',
           attempt,
@@ -438,6 +531,7 @@ export function createIntegrationEngine(options: IntegrationEngineOptions): Inte
         const code = failureCodeOf(error);
         logger?.warn('outbound failed', { ...log, attempt, code: codeOf(error), detail: code });
         await recordDelivery(request, {
+          message: audited,
           action: 'channel.delivery_attempted',
           result: 'failure',
           attempt,
@@ -459,6 +553,7 @@ export function createIntegrationEngine(options: IntegrationEngineOptions): Inte
         }
         logger?.info('outbound retry scheduled', { ...log, attempt, code, waitMs: wait });
         await recordDelivery(request, {
+          message: audited,
           action: 'channel.delivery_retry_scheduled',
           result: 'success',
           attempt,
@@ -591,19 +686,23 @@ export function createIntegrationEngine(options: IntegrationEngineOptions): Inte
         connectionId: request.connectionId,
         channel: request.channel,
         conversationId: request.conversation.id,
+        kind: request.message.kind ?? 'text',
         ...request.trace,
       };
-      const found = await availabilityOf(request);
+      const found = await availabilityOf({ ...request, kind: request.message.kind ?? 'text' });
       if ('code' in found) {
         logger?.info('outbound refused', { ...trace, code: found.code });
         return { status: 'refused', code: found.code };
       }
       const { adapter, connection } = found;
-      if (request.message.text.length > connection.capabilities.maxOutboundTextLength) {
-        return { status: 'refused', code: 'invalid_message' };
+      const built = await outboundOf(request, connection);
+      if ('code' in built) {
+        logger?.info('outbound refused', { ...trace, code: built.code });
+        return { status: 'refused', code: built.code };
       }
+      const { message } = built;
       try {
-        adapter.normalizeOutbound(request.message);
+        adapter.normalizeOutbound(message);
       } catch {
         return { status: 'refused', code: 'invalid_message' };
       }
@@ -615,7 +714,32 @@ export function createIntegrationEngine(options: IntegrationEngineOptions): Inte
         logger?.warn('outbound refused', { ...trace, code: 'secret_unavailable' });
         return { status: 'refused', code: 'channel_not_available' };
       }
-      return deliverOutbound(request, adapter, connection, accessToken, trace);
+      return deliverOutbound(request, message, adapter, connection, accessToken, trace);
+    },
+
+    async checkTemplate(connection, template): Promise<TemplateCheck> {
+      const adapter = adapterOf(connection);
+      if (adapter?.checkTemplate === undefined) {
+        return { status: 'invalid', code: 'capability_not_available' };
+      }
+      let accessToken: string;
+      try {
+        accessToken = await readSecret(connection, 'access_token');
+      } catch (error) {
+        const code = isIntegrationError(error) ? error.code : 'secret_unavailable';
+        return code === 'secret_not_found'
+          ? { status: 'invalid', code }
+          : { status: 'unavailable', code: 'secret_unavailable' };
+      }
+      const check = await adapter.checkTemplate(connection, { accessToken }, template);
+      logger?.info('template checked', {
+        organizationId: connection.organizationId,
+        connectionId: connection.id,
+        provider: connection.provider,
+        status: check.status,
+        ...(check.status === 'approved' ? {} : { code: check.code }),
+      });
+      return check;
     },
 
     async validate(connection): Promise<ConnectionCheck> {
@@ -645,6 +769,19 @@ export function createIntegrationEngine(options: IntegrationEngineOptions): Inte
     },
   };
   return Object.freeze(engine);
+}
+
+/** What a send carries, as audited: its type, and a template's name and language. */
+function auditMessageOf(message: OutboundMessage): AuditMessage {
+  if (message.kind === 'media') return { type: message.media.type };
+  if (message.kind === 'template') {
+    return {
+      type: 'template',
+      template: message.template.name,
+      language: message.template.language,
+    };
+  }
+  return { type: 'text' };
 }
 
 /**

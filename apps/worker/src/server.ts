@@ -21,6 +21,7 @@ import {
   FirestoreApprovalRepository,
   FirestoreAuditStore,
   FirestoreChannelConnectionRepository,
+  FirestoreChannelTemplateRepository,
   FirestoreConnectionRateLimiter,
   FirestoreConversationRepository,
   FirestoreCreditStore,
@@ -98,6 +99,7 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
             // The same limits and retries as the API, and the same shared send limit.
             delivery: deliveryPolicyFromEnv(process.env),
             rateLimiter: new FirestoreConnectionRateLimiter(firestore),
+            templates: new FirestoreChannelTemplateRepository(firestore),
           }),
         }),
     logger: logger.child({ component: 'conversation-agents' }),

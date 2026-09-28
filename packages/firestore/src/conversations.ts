@@ -35,6 +35,8 @@ import {
   type ReserveResult,
   type SettingsWrite,
   type SettleResult,
+  checkMediaRef,
+  checkTemplateRef,
 } from '@melonoffice/conversations';
 import type {
   ChannelIdentity,
@@ -47,6 +49,7 @@ import type {
   IsoTimestamp,
   Message,
   MessageId,
+  MessageTemplateRef,
   OrganizationId,
 } from '@melonoffice/domain';
 import { isOrganizationId } from '@melonoffice/tenancy';
@@ -307,6 +310,20 @@ export function toMessageDocument(m: Message): Doc {
       mimeType: a.mimeType ?? null,
     })),
     replyToExternalId: m.replyToExternalId ?? null,
+    // Outbound media and templates (ADR-0046), stored as given; never logged or audited.
+    media:
+      m.media === undefined
+        ? null
+        : { type: m.media.type, url: m.media.url, filename: m.media.filename ?? null },
+    template:
+      m.template === undefined
+        ? null
+        : {
+            templateId: m.template.templateId,
+            name: m.template.name,
+            language: m.template.language,
+            values: JSON.parse(JSON.stringify(m.template.values)) as Doc,
+          },
     status: m.status,
     failureCode: m.failureCode ?? null,
     sentAt: ts(m.sentAt),
@@ -315,6 +332,13 @@ export function toMessageDocument(m: Message): Doc {
     readAt: tsOrNull(m.readAt),
   };
 }
+
+const mediaOf = (d: Doc) =>
+  checkMediaRef({
+    type: d.type,
+    url: d.url,
+    ...(d.filename == null ? {} : { filename: d.filename }),
+  });
 
 function toMessage(id: string, d: Doc): Message {
   return Object.freeze({
@@ -338,6 +362,17 @@ function toMessage(id: string, d: Doc): Message {
       ),
     ),
     ...orAbsent('replyToExternalId', d.replyToExternalId as string | null),
+    ...(d.media == null ? {} : { media: mediaOf(d.media as Doc) }),
+    ...(d.template == null
+      ? {}
+      : {
+          template: checkTemplateRef({
+            templateId: (d.template as Doc).templateId as MessageTemplateRef['templateId'],
+            name: (d.template as Doc).name as string,
+            language: (d.template as Doc).language as string,
+            values: (d.template as Doc).values as MessageTemplateRef['values'],
+          }),
+        }),
     status: d.status as Message['status'],
     ...orAbsent('failureCode', d.failureCode as string | null),
     sentAt: iso(d.sentAt as FirestoreTimestamp),

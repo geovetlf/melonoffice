@@ -131,12 +131,14 @@ export function registerConversationRoutes(
     `${one}/messages`,
     withPermission('conversation.send', dependencies, async (c, tenant) => {
       if (sender === undefined) return c.json({ error: 'sending_not_configured' }, 503);
-      const body = await bodyOf(c, ['clientMessageId', 'text']);
+      const body = await bodyOf(c, ['clientMessageId', 'text', 'media', 'template']);
       if (body === undefined) return c.json({ error: 'invalid_request' }, 400);
       try {
         const { message, created } = await sender.send(tenant, idOf(c), {
           clientMessageId: body.clientMessageId,
-          text: body.text,
+          ...(body.text === undefined ? {} : { text: body.text }),
+          ...(body.media === undefined ? {} : { media: body.media }),
+          ...(body.template === undefined ? {} : { template: body.template }),
         });
         const view = toMessageView(message);
         if (message.status === 'unknown') {
@@ -156,7 +158,17 @@ export function registerConversationRoutes(
       } catch (error) {
         if (isConversationError(error) && Object.hasOwn(STATUS, error.code)) {
           const code = error.code as keyof typeof STATUS;
-          return c.json({ error: code }, STATUS[code]);
+          // Which value or rule, for a refused message or template; never a value itself.
+          return c.json(
+            {
+              error: code,
+              ...((code === 'invalid_request' || code === 'template_parameters_invalid') &&
+              error.detail !== undefined
+                ? { reason: error.detail }
+                : {}),
+            },
+            STATUS[code],
+          );
         }
         throw error;
       }
@@ -440,10 +452,19 @@ const STATUS = {
   settings_concurrency_conflict: 409,
   // The conversation agent (CV-6B, ADR-0043).
   agent_not_available: 409,
+  // Templates (ADR-0046): refused before anything is reserved or sent.
+  template_not_found: 404,
+  template_not_active: 409,
+  template_parameters_invalid: 422,
 } as const;
 
 /** A send refused before anything left MelonOffice, found once the message was reserved. */
 const SEND_REFUSALS = {
+  template_not_found: 404,
+  template_not_active: 409,
+  template_header_mismatch: 422,
+  template_parameter_missing: 422,
+  template_parameter_extra: 422,
   conversation_closed: 409,
   conversation_handled_by_ai: 409,
   outside_messaging_window: 409,
@@ -539,6 +560,27 @@ export function toMessageView(m: Message) {
       mimeType: a.mimeType ?? null,
     })),
     replyToExternalId: m.replyToExternalId ?? null,
+    // What it carried (ADR-0046): a media message's type and file name, never its link; a
+    // template's name, language and values.
+    media:
+      m.media === undefined ? null : { type: m.media.type, filename: m.media.filename ?? null },
+    template:
+      m.template === undefined
+        ? null
+        : {
+            templateId: m.template.templateId,
+            name: m.template.name,
+            language: m.template.language,
+            values: {
+              header: m.template.values.header ?? [],
+              body: m.template.values.body,
+              buttons: m.template.values.buttons ?? [],
+              headerMedia:
+                m.template.values.headerMedia === undefined
+                  ? null
+                  : { type: m.template.values.headerMedia.type },
+            },
+          },
     status: m.status,
     failureCode: m.failureCode ?? null,
     sentAt: m.sentAt,

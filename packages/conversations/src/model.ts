@@ -15,14 +15,17 @@ import type {
   MessageAttachment,
   MessageId,
   MessageStatus,
+  MessageTemplateRef,
   MessageType,
   OrganizationId,
+  OutboundMediaRef,
   SpecialistId,
   UserId,
 } from '@melonoffice/domain';
 import { nameBasedUuid } from '@melonoffice/execution';
 import { isHandoffReason, isValidControl } from './control.js';
 import { ConversationError } from './errors.js';
+import { checkMediaRef, checkTemplateRef, MAX_CAPTION_LENGTH } from './outbound-content.js';
 
 export const CHANNEL_TYPES = ['whatsapp'] as const satisfies readonly ChannelType[];
 export const CONVERSATION_STATUSES = [
@@ -44,6 +47,7 @@ export const MESSAGE_TYPES = [
   'video',
   'sticker',
   'location',
+  'template',
   'unsupported',
 ] as const satisfies readonly MessageType[];
 
@@ -480,14 +484,30 @@ export const byConversationOrder = (a: Message, b: Message): number =>
 
 // Outbound (CV-2, ADR-0034) ----------------------------------------------------------------------
 
-/** What a person asks to send: text only. The organization and sender come from the tenant. */
+/**
+ * What a person asks to send (ADR-0034, extended in ADR-0046): text; media from a link, with an
+ * optional caption in `text`; or one of the organization's templates with its values. The
+ * organization and sender come from the tenant.
+ */
 export interface OutboundRequest {
   readonly organizationId: OrganizationId;
   readonly conversation: Conversation;
   readonly userId: UserId;
   /** The sender's own key: the same key is the same message, however often it is sent. */
   readonly clientMessageId: string;
-  readonly text: string;
+  readonly text?: string;
+  readonly media?: OutboundMediaRef;
+  readonly template?: MessageTemplateRef;
+}
+
+function checkOutboundText(text: unknown, max: number): string {
+  if (typeof text !== 'string' || text.trim().length === 0) invalid('text');
+  if ((text as string).length > max) invalid('text.max');
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(text as string)) {
+    invalid('text.control');
+  }
+  return text as string;
 }
 
 /**
@@ -496,12 +516,25 @@ export interface OutboundRequest {
  * finds it instead of creating a second one.
  */
 export function newOutboundMessage(request: OutboundRequest, at: Date): Message {
-  const { organizationId, conversation, userId, clientMessageId, text } = request;
+  const { organizationId, conversation, userId, clientMessageId, text, media, template } = request;
   if (conversation.organizationId !== organizationId) invalid('conversation');
-  if (typeof text !== 'string' || text.trim().length === 0) invalid('text');
-  if (text.length > MAX_TEXT_LENGTH) invalid('text.max');
-  // eslint-disable-next-line no-control-regex
-  if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(text)) invalid('text.control');
+  let content: Pick<Message, 'type' | 'text' | 'media' | 'template'>;
+  if (template !== undefined) {
+    // A template carries its own text; nothing is added to it.
+    if (text !== undefined || media !== undefined) invalid('content');
+    content = { type: 'template', template: checkTemplateRef(template) };
+  } else if (media !== undefined) {
+    const ref = checkMediaRef(media);
+    // Audio takes no caption.
+    if (text !== undefined && ref.type === 'audio') invalid('text');
+    content = {
+      type: ref.type,
+      media: ref,
+      ...(text === undefined ? {} : { text: checkOutboundText(text, MAX_CAPTION_LENGTH) }),
+    };
+  } else {
+    content = { type: 'text', text: checkOutboundText(text, MAX_TEXT_LENGTH) };
+  }
   const now = at.toISOString() as IsoTimestamp;
   return Object.freeze({
     id: outboundMessageIdFor(organizationId, conversation.id, clientMessageId),
@@ -512,8 +545,7 @@ export function newOutboundMessage(request: OutboundRequest, at: Date): Message 
     direction: 'outbound',
     clientMessageId,
     sender: Object.freeze({ kind: 'user', userId }),
-    type: 'text',
-    text,
+    ...content,
     attachments: Object.freeze([]),
     status: 'queued',
     sentAt: now,

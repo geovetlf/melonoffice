@@ -51,6 +51,7 @@ export interface AuditTarget {
     | 'workflow'
     | 'conversation'
     | 'channel_connection'
+    | 'channel_template'
     | 'message';
   readonly id: string;
 }
@@ -127,6 +128,11 @@ export interface AuditEvent {
   readonly nodeId?: string;
   /** Which provider call of one send, from 1, for `channel.delivery_*` events (ADR-0045). */
   readonly attempt?: number;
+  /**
+   * What an outbound message carried, for its send events (ADR-0046): its type and, for a
+   * template, the template's name and language. Never its text, values, link or recipient.
+   */
+  readonly message?: AuditMessage;
   /** The model, for `ai.*` events. */
   readonly model?: AuditModel;
   /** The model that could not answer, for `ai.provider_fallback`. */
@@ -147,6 +153,12 @@ export interface AuditEvent {
   readonly source: AuditSource;
 }
 
+export interface AuditMessage {
+  readonly type: string;
+  readonly template?: string;
+  readonly language?: string;
+}
+
 export type AuditEventInput = Omit<AuditEvent, 'id' | 'occurredAt'>;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -162,6 +174,8 @@ const isAuditModel = (m: AuditModel): boolean =>
   PROVIDER_ID.test(m.provider) && MODEL_ID.test(m.id);
 const JOB_NODE = /^[A-Za-z0-9_-]{1,64}$/;
 const REFERENCE = /^[A-Za-z0-9._:-]{1,128}$/;
+const TEMPLATE_NAME = /^[a-z0-9_]{1,512}$/;
+const LANGUAGE = /^[a-z]{2,3}(_[A-Z][a-z]{3})?(_[A-Z]{2})?$/;
 
 /**
  * Builds an event, checking every field so nothing unexpected reaches storage. Untrusted parts
@@ -224,6 +238,14 @@ export function buildAuditEvent(input: AuditEventInput, at: Date): AuditEvent {
     throw new Error('invalid audit node');
   }
   if (
+    input.message !== undefined &&
+    (!CODE.test(input.message.type) ||
+      (input.message.template !== undefined && !TEMPLATE_NAME.test(input.message.template)) ||
+      (input.message.language !== undefined && !LANGUAGE.test(input.message.language)))
+  ) {
+    throw new Error('invalid audit message');
+  }
+  if (
     input.attempt !== undefined &&
     (!Number.isSafeInteger(input.attempt) || input.attempt < 1 || input.attempt > 100)
   ) {
@@ -275,6 +297,15 @@ export function buildAuditEvent(input: AuditEventInput, at: Date): AuditEvent {
         }),
     ...(input.nodeId === undefined ? {} : { nodeId: input.nodeId }),
     ...(input.attempt === undefined ? {} : { attempt: input.attempt }),
+    ...(input.message === undefined
+      ? {}
+      : {
+          message: Object.freeze({
+            type: input.message.type,
+            ...(input.message.template === undefined ? {} : { template: input.message.template }),
+            ...(input.message.language === undefined ? {} : { language: input.message.language }),
+          }),
+        }),
     ...(input.model === undefined
       ? {}
       : { model: Object.freeze({ provider: input.model.provider, id: input.model.id }) }),

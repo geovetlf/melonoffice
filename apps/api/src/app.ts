@@ -37,8 +37,10 @@ import {
   createConversationAgentCheck,
   createHandoffSummaries,
   createIntegrationRegistry,
+  createChannelTemplateService,
   createMessageSendService,
   type ChannelConnectionRepository,
+  type ChannelTemplateRepository,
   type IntegrationEngine,
   type WebhookIngress,
 } from '@melonoffice/integrations';
@@ -129,6 +131,11 @@ export interface AppOptions {
   readonly conversations?: {
     readonly repository: ConversationRepository;
     readonly connections: ChannelConnectionRepository;
+    /**
+     * The organizations' provider-approved templates (ADR-0046). Absent: the template routes
+     * answer 503 and every template message is refused.
+     */
+    readonly templates?: ChannelTemplateRepository;
     /** Where channel secrets live. Unset: no connection can be created. */
     readonly secretProjectId?: string;
     /**
@@ -437,6 +444,9 @@ export function createApp({
               }),
               channels: engine,
               audit,
+              ...(conversations.templates === undefined
+                ? {}
+                : { templates: conversations.templates }),
               logger: logger.child({ component: 'outbound' }),
             })
           : undefined;
@@ -518,6 +528,17 @@ export function createApp({
             ? {}
             : { secretProjectId: conversations.secretProjectId }),
         }),
+        ...(conversations.templates === undefined
+          ? {}
+          : {
+              templates: createChannelTemplateService({
+                repository: conversations.templates,
+                connections: conversations.connections,
+                organizations: tenancy,
+                authorization,
+                ...(engine === undefined ? {} : { checker: engine }),
+              }),
+            }),
       });
     } else if (tenancy !== undefined) {
       const unavailable = (c: Context<Env>) =>

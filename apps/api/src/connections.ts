@@ -1,8 +1,9 @@
-import type { ChannelConnection } from '@melonoffice/domain';
+import type { ChannelConnection, ChannelTemplate } from '@melonoffice/domain';
 import {
   isIntegrationError,
   type ChannelAdapter,
   type ChannelConnectionService,
+  type ChannelTemplateService,
   type IntegrationRegistry,
 } from '@melonoffice/integrations';
 import type { Context, Hono } from 'hono';
@@ -21,9 +22,11 @@ export function registerConnectionRoutes(
   dependencies: AuthorizationDependencies & {
     readonly connections: ChannelConnectionService;
     readonly registry: IntegrationRegistry;
+    /** Templates (ADR-0046). Absent: their routes answer 503. */
+    readonly templates?: ChannelTemplateService;
   },
 ): void {
-  const { connections, registry } = dependencies;
+  const { connections, registry, templates } = dependencies;
   const base = '/v1/organizations/:organizationId';
   const list = `${base}/channel-connections`;
   const one = `${list}/:connectionId`;
@@ -75,15 +78,28 @@ export function registerConnectionRoutes(
     ),
   );
 
+  /**
+   * `{ displayName }` renames it; `{ businessAccountId }` records the provider business account it
+   * was made without (ADR-0046), once. One change per call.
+   */
   app.patch(
     one,
     withPermission('channel.update', dependencies, async (c, tenant) => {
       const body = await jsonOf(c);
-      if (body === undefined || Object.keys(body).some((k) => k !== 'displayName')) {
+      const keys = body === undefined ? [] : Object.keys(body);
+      if (
+        body === undefined ||
+        keys.length !== 1 ||
+        !['displayName', 'businessAccountId'].includes(keys[0] as string)
+      ) {
         return c.json({ error: 'invalid_request' }, 400);
       }
       return answer(c, async () =>
-        toConnectionView(await connections.rename(tenant, idOf(c), body.displayName)),
+        toConnectionView(
+          'businessAccountId' in body
+            ? await connections.setBusinessAccount(tenant, idOf(c), body.businessAccountId)
+            : await connections.rename(tenant, idOf(c), body.displayName),
+        ),
       );
     }),
   );
@@ -107,6 +123,70 @@ export function registerConnectionRoutes(
       answer(c, async () => toConnectionView(await connections.revoke(tenant, idOf(c)))),
     ),
   );
+
+  // Templates (ADR-0046): registered by name and language, checked with the provider. Their
+  // content lives with the provider; nothing here edits or invents one.
+  const templateList = `${one}/templates`;
+  const templateOne = `${templateList}/:templateId`;
+  const templateIdOf = (c: Context<AuthEnv>) => c.req.param('templateId') ?? '';
+  const withTemplates = async (
+    c: Context<AuthEnv>,
+    work: (service: ChannelTemplateService) => Promise<Response>,
+  ): Promise<Response> =>
+    templates === undefined ? c.json({ error: 'templates_not_configured' }, 503) : work(templates);
+
+  app.get(
+    templateList,
+    withPermission('channel.read', dependencies, (c, tenant) =>
+      withTemplates(c, (service) =>
+        answer(c, async () => ({
+          templates: (await service.list(tenant, idOf(c))).map(toTemplateView),
+        })),
+      ),
+    ),
+  );
+
+  app.post(
+    templateList,
+    withPermission('channel.update', dependencies, async (c, tenant) => {
+      const body = await jsonOf(c);
+      if (body === undefined || Object.keys(body).some((k) => k !== 'name' && k !== 'language')) {
+        return c.json({ error: 'invalid_request' }, 400);
+      }
+      return withTemplates(c, (service) =>
+        answer(
+          c,
+          async () =>
+            toTemplateView(
+              await service.register(tenant, idOf(c), { name: body.name, language: body.language }),
+            ),
+          201,
+        ),
+      );
+    }),
+  );
+
+  app.get(
+    templateOne,
+    withPermission('channel.read', dependencies, (c, tenant) =>
+      withTemplates(c, (service) =>
+        answer(c, async () => toTemplateView(await service.get(tenant, idOf(c), templateIdOf(c)))),
+      ),
+    ),
+  );
+
+  for (const action of ['check', 'disable'] as const) {
+    app.post(
+      `${templateOne}/${action}`,
+      withPermission('channel.update', dependencies, (c, tenant) =>
+        withTemplates(c, (service) =>
+          answer(c, async () =>
+            toTemplateView(await service[action](tenant, idOf(c), templateIdOf(c))),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 const STATUS = {
@@ -122,6 +202,8 @@ const STATUS = {
   category_not_allowed: 403,
   entitlements_unavailable: 403,
   secret_unavailable: 503,
+  invalid_template: 400,
+  template_not_found: 404,
 } as const;
 
 async function jsonOf(c: Context<AuthEnv>): Promise<Record<string, unknown> | undefined> {
@@ -149,7 +231,9 @@ async function answer(
       return c.json(
         {
           error: code,
-          ...(code === 'invalid_connection' && error.detail ? { field: error.detail } : {}),
+          ...((code === 'invalid_connection' || code === 'invalid_template') && error.detail
+            ? { field: error.detail }
+            : {}),
         },
         STATUS[code],
       );
@@ -180,6 +264,7 @@ export function toConnectionView(c: ChannelConnection) {
     displayName: c.displayName,
     account: {
       phoneNumberId: c.account.phoneNumberId,
+      businessAccountId: c.account.businessAccountId ?? null,
       displayPhoneNumber: c.account.displayPhoneNumber ?? null,
     },
     capabilities: c.capabilities,
@@ -200,5 +285,23 @@ function setupOf(c: ChannelConnection) {
       Object.entries(c.secrets).map(([kind, ref]) => [kind, ref.split('/')[3] ?? '']),
     ),
     webhookPath: `/webhooks/${c.channel}/${c.id}`,
+  };
+}
+
+/** A template as a person sees it: what it is, whether it can be sent, and what it needs. */
+export function toTemplateView(t: ChannelTemplate) {
+  return {
+    id: t.id,
+    connectionId: t.connectionId,
+    channel: t.channel,
+    name: t.name,
+    language: t.language,
+    status: t.status,
+    statusReason: t.statusReason ?? null,
+    category: t.category ?? null,
+    spec: t.spec ?? null,
+    lastValidatedAt: t.lastValidatedAt ?? null,
+    createdAt: t.createdAt,
+    updatedAt: t.updatedAt,
   };
 }

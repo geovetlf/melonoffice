@@ -41,6 +41,10 @@ export interface AuditDocument {
   readonly nodeId?: string | null;
   /** The provider call of a `channel.delivery_*` event (ADR-0045). */
   readonly attempt?: number | null;
+  /** What an outbound message carried (ADR-0046): type, template name and language only. */
+  readonly messageType?: string | null;
+  readonly templateName?: string | null;
+  readonly templateLanguage?: string | null;
   readonly modelProvider: string | null;
   readonly modelId: string | null;
   readonly previousModelProvider: string | null;
@@ -81,6 +85,9 @@ export function toAuditDocument(event: AuditEvent): AuditDocument {
     jobLeaseId: event.job?.leaseId ?? null,
     nodeId: event.nodeId ?? null,
     attempt: event.attempt ?? null,
+    messageType: event.message?.type ?? null,
+    templateName: event.message?.template ?? null,
+    templateLanguage: event.message?.language ?? null,
     modelProvider: event.model?.provider ?? null,
     modelId: event.model?.id ?? null,
     previousModelProvider: event.previousModel?.provider ?? null,
@@ -145,6 +152,15 @@ export function fromAuditDocument(id: string, d: AuditDocument): AuditEvent {
         }),
     ...(d.nodeId == null ? {} : { nodeId: d.nodeId }),
     ...(d.attempt == null ? {} : { attempt: d.attempt }),
+    ...(d.messageType == null
+      ? {}
+      : {
+          message: {
+            type: d.messageType,
+            ...(d.templateName == null ? {} : { template: d.templateName }),
+            ...(d.templateLanguage == null ? {} : { language: d.templateLanguage }),
+          },
+        }),
     ...(d.modelId == null ? {} : { model: { provider: d.modelProvider, id: d.modelId } }),
     ...(d.previousModelId == null
       ? {}
