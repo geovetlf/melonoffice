@@ -23,6 +23,7 @@ import type {
   ConnectionCredentials,
   NormalizedDelivery,
   OutboundText,
+  SendOptions,
 } from './adapter.js';
 import { IntegrationError } from './errors.js';
 
@@ -211,21 +212,64 @@ const META_ERRORS: Readonly<Record<number, string>> = Object.freeze({
   10: 'channel_unauthorized',
   368: 'policy_restricted',
   131031: 'policy_restricted',
-  131000: 'temporary_provider_error',
+  // "Something went wrong": not documented as temporary, so final, never retried (ADR-0045).
+  131000: 'provider_error',
   131016: 'temporary_provider_error',
   2: 'temporary_provider_error',
 });
 
+/**
+ * The codes under which Meta refused a send and says to try again later (Meta, "Error codes"):
+ * it did not take the message, so the Integration Engine may call again (ADR-0045).
+ */
+const TRANSIENT_CODES: readonly string[] = ['rate_limited', 'temporary_provider_error'];
+
+/**
+ * Network errors raised before the request could reach the provider: nothing was sent. A reset
+ * or a timeout once connected is not here, because the request may already have arrived.
+ */
+const NOT_CONNECTED = new Set([
+  'ECONNREFUSED',
+  'ENOTFOUND',
+  'EAI_AGAIN',
+  'ENETUNREACH',
+  'EHOSTUNREACH',
+  'UND_ERR_CONNECT_TIMEOUT',
+]);
+
+/** Whether a failed call surely never reached the provider (its cause says so). */
+export function neverConnected(error: unknown): boolean {
+  for (let e = error, depth = 0; e !== null && typeof e === 'object' && depth < 4; depth += 1) {
+    const code = (e as { code?: unknown }).code;
+    if (typeof code === 'string' && NOT_CONNECTED.has(code)) return true;
+    e = (e as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
+/** The provider's `Retry-After` (seconds, or an HTTP date), in milliseconds; at most a minute. */
+export function retryAfterHeader(answer: Response, now = Date.now()): number | undefined {
+  const raw = answer.headers.get('retry-after');
+  if (raw === null) return undefined;
+  const ms = /^[0-9]{1,6}$/.test(raw.trim()) ? Number(raw.trim()) * 1000 : Date.parse(raw) - now;
+  return Number.isFinite(ms) && ms >= 0 ? Math.min(ms, 60_000) : undefined;
+}
+
 /** The stable code for a rejected send, from the numeric `error.code` of Meta's answer. */
 async function rejectionOf(answer: Response): Promise<string> {
+  return (await metaCodeOf(answer)) ?? 'provider_rejected';
+}
+
+/** The stable code of Meta's structured error, or `undefined` when there is none we know. */
+async function metaCodeOf(answer: Response): Promise<string | undefined> {
   try {
     const parsed = (await answer.json()) as { error?: { code?: unknown } };
     const code = parsed.error?.code;
     return typeof code === 'number' && Object.hasOwn(META_ERRORS, code)
       ? (META_ERRORS[code] as string)
-      : 'provider_rejected';
+      : undefined;
   } catch {
-    return 'provider_rejected';
+    return undefined;
   }
 }
 
@@ -249,6 +293,7 @@ export interface WhatsAppAdapterOptions {
   /** The Graph API version to send with, e.g. `v23.0`: set by configuration, never guessed. */
   readonly graphApiVersion?: string;
   readonly fetch?: typeof fetch;
+  /** The longest one provider call may take; a send may ask for less (`SendOptions`). */
   readonly timeoutMs?: number;
 }
 
@@ -292,7 +337,7 @@ export function createWhatsAppAdapter(options: WhatsAppAdapterOptions = {}): Cha
     if (answer.status >= 500) return { status: 'unavailable', code: 'server_error' };
     if (!answer.ok) {
       const code = await rejectionOf(answer);
-      if (code === 'rate_limited' || code === 'temporary_provider_error') {
+      if (TRANSIENT_CODES.includes(code) || code === 'provider_error') {
         return { status: 'unavailable', code };
       }
       return {
@@ -427,9 +472,11 @@ export function createWhatsAppAdapter(options: WhatsAppAdapterOptions = {}): Cha
       connection: ChannelConnection,
       credentials: ConnectionCredentials,
       message: OutboundText,
+      sendOptions?: SendOptions,
     ) {
       const version = versionOf();
       const body = adapter.normalizeOutbound(message);
+      const limit = Math.min(timeoutMs, sendOptions?.timeoutMs ?? timeoutMs);
       let answer: Response;
       try {
         answer = await call(
@@ -441,17 +488,36 @@ export function createWhatsAppAdapter(options: WhatsAppAdapterOptions = {}): Cha
               'content-type': 'application/json',
             },
             body: JSON.stringify(body),
-            signal: AbortSignal.timeout(timeoutMs),
+            signal: AbortSignal.timeout(Math.max(limit, 1)),
           },
         );
-      } catch {
-        // No answer (network, timeout): the request may have been accepted all the same.
+      } catch (error) {
+        // The connection never opened: nothing reached Meta, so it can be tried again.
+        if (neverConnected(error))
+          throw new IntegrationError('provider_unavailable', 'not_connected');
+        // No answer (a timeout, a reset): the request may have been accepted all the same.
         throw new IntegrationError('provider_unavailable', 'no_answer');
       }
-      if (answer.status === 429) throw new IntegrationError('provider_unavailable', 'rate_limited');
-      // A server error does not say whether the message went out.
-      if (answer.status >= 500) throw new IntegrationError('provider_unavailable', 'server_error');
-      if (!answer.ok) throw new IntegrationError('provider_rejected', await rejectionOf(answer));
+      if (answer.status === 429) {
+        throw new IntegrationError(
+          'provider_unavailable',
+          'rate_limited',
+          retryAfterHeader(answer),
+        );
+      }
+      if (!answer.ok) {
+        const code = await metaCodeOf(answer);
+        // Meta refused it and says to try later (its rate limits, its temporary errors): not
+        // taken, whatever the status.
+        if (code !== undefined && TRANSIENT_CODES.includes(code)) {
+          throw new IntegrationError('provider_unavailable', code, retryAfterHeader(answer));
+        }
+        // A server error without such a code does not say whether the message went out.
+        if (answer.status >= 500) {
+          throw new IntegrationError('provider_unavailable', 'server_error');
+        }
+        throw new IntegrationError('provider_rejected', code ?? 'provider_rejected');
+      }
       let id: unknown;
       try {
         const parsed = (await answer.json()) as { messages?: { id?: unknown }[] };

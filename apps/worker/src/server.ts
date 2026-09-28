@@ -13,6 +13,7 @@ import {
   VERTEX_AI_MODELS,
   VERTEX_AI_PROVIDER,
 } from '@melonoffice/ai-vertex';
+import { createAuditService } from '@melonoffice/audit';
 import { createServiceIdentityVerifier } from '@melonoffice/auth';
 import { createCreditService } from '@melonoffice/credits';
 import {
@@ -20,6 +21,7 @@ import {
   FirestoreApprovalRepository,
   FirestoreAuditStore,
   FirestoreChannelConnectionRepository,
+  FirestoreConnectionRateLimiter,
   FirestoreConversationRepository,
   FirestoreCreditStore,
   FirestoreDepartmentRepository,
@@ -33,6 +35,7 @@ import {
   createIntegrationRegistry,
   createSecretManagerStore,
   createWhatsAppAdapter,
+  deliveryPolicyFromEnv,
 } from '@melonoffice/integrations';
 import { createLogger } from '@melonoffice/observability';
 import { createToolRegistry, TOOL_CATALOGUE } from '@melonoffice/tools';
@@ -89,7 +92,12 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
             ]),
             connections: new FirestoreChannelConnectionRepository(firestore),
             secrets: createSecretManagerStore(),
+            // Every provider call, retry and limit of a send is audited (ADR-0045).
+            audit: createAuditService(stores.audit),
             logger: logger.child({ component: 'integrations' }),
+            // The same limits and retries as the API, and the same shared send limit.
+            delivery: deliveryPolicyFromEnv(process.env),
+            rateLimiter: new FirestoreConnectionRateLimiter(firestore),
           }),
         }),
     logger: logger.child({ component: 'conversation-agents' }),

@@ -125,6 +125,8 @@ export interface AuditEvent {
   readonly job?: AuditJob;
   /** The node, for `execution.node_changed` and node events of the runtime (ADR-0031). */
   readonly nodeId?: string;
+  /** Which provider call of one send, from 1, for `channel.delivery_*` events (ADR-0045). */
+  readonly attempt?: number;
   /** The model, for `ai.*` events. */
   readonly model?: AuditModel;
   /** The model that could not answer, for `ai.provider_fallback`. */
@@ -222,6 +224,12 @@ export function buildAuditEvent(input: AuditEventInput, at: Date): AuditEvent {
     throw new Error('invalid audit node');
   }
   if (
+    input.attempt !== undefined &&
+    (!Number.isSafeInteger(input.attempt) || input.attempt < 1 || input.attempt > 100)
+  ) {
+    throw new Error('invalid audit attempt');
+  }
+  if (
     input.plan !== undefined &&
     (!PLAN_ID.test(input.plan.id) ||
       !Number.isInteger(input.plan.version) ||
@@ -266,6 +274,7 @@ export function buildAuditEvent(input: AuditEventInput, at: Date): AuditEvent {
           }),
         }),
     ...(input.nodeId === undefined ? {} : { nodeId: input.nodeId }),
+    ...(input.attempt === undefined ? {} : { attempt: input.attempt }),
     ...(input.model === undefined
       ? {}
       : { model: Object.freeze({ provider: input.model.provider, id: input.model.id }) }),

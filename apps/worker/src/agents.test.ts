@@ -307,6 +307,8 @@ describe.each(STORES)('CV-6B conversation agent with storage in %s', (_storage, 
     await connect(orgA, CONNECTION_A);
     await connect(orgB, CONNECTION_B);
     const sends: { url: string; body: string; authorization: string }[] = [];
+    // Meta's next answers, in order (CV-6D); then it accepts.
+    let sendAnswers: (() => Response)[] = [];
     const whatsapp = createWhatsAppAdapter({
       graphApiVersion: 'v23.0',
       fetch: async (url, init) => {
@@ -315,6 +317,8 @@ describe.each(STORES)('CV-6B conversation agent with storage in %s', (_storage, 
           body: String(init?.body ?? ''),
           authorization: String(new Headers(init?.headers).get('authorization') ?? ''),
         });
+        const next = sendAnswers.shift();
+        if (next !== undefined) return next();
         return new Response(JSON.stringify({ messages: [{ id: `wamid.out${sends.length}` }] }));
       },
     });
@@ -357,6 +361,9 @@ describe.each(STORES)('CV-6B conversation agent with storage in %s', (_storage, 
 
     // Runs while the channel's credential is being read: the last moment before the provider.
     let beforeCredential: (() => Promise<void>) | undefined;
+    // Runs while the engine waits before a retry.
+    let duringBackoff: (() => Promise<void>) | undefined;
+    const waits: number[] = [];
     const credentials = {
       async read(ref: Parameters<InMemorySecretStore['read']>[0]) {
         await beforeCredential?.();
@@ -369,7 +376,14 @@ describe.each(STORES)('CV-6B conversation agent with storage in %s', (_storage, 
       registry: createIntegrationRegistry([whatsapp]),
       connections: stores.connections,
       secrets: credentials,
+      audit,
       now,
+      // Waits between provider calls pass at once; a hook runs during them (CV-6D).
+      sleep: async (ms) => {
+        waits.push(ms);
+        await duringBackoff?.();
+      },
+      random: () => 0.5,
     });
     const parts = createConversationAgentParts({
       stores,
@@ -582,6 +596,13 @@ describe.each(STORES)('CV-6B conversation agent with storage in %s', (_storage, 
       beforeCredential: (hook: () => Promise<void>) => {
         beforeCredential = hook;
       },
+      answerSends: (...next: (() => Response)[]) => {
+        sendAnswers = next;
+      },
+      duringBackoff: (hook: () => Promise<void>) => {
+        duringBackoff = hook;
+      },
+      waits,
       outputs: createAgentOutputStore(stores.outputs),
       runtimeTenantA: () => resolveRuntimeTenant(ALICE, orgA, stores.tenancy),
     };
@@ -1336,5 +1357,114 @@ describe.each(STORES)('CV-6B conversation agent with storage in %s', (_storage, 
     expect(await w.conversationOf(conversation.id)).toMatchObject({
       control: { handledBy: 'human', aiState: 'paused' },
     });
+  });
+  // -------------------------------------------------------------------------------------------
+  // CV-6D (ADR-0045): limits and retries of the reply's send, end to end through the gate.
+
+  const metaError = (code: number, status: number) => () =>
+    new Response(JSON.stringify({ error: { code, message: 'x' } }), { status });
+
+  it('36. a transient error is retried by the engine: one message, one charge, sent once (D, G, J)', async () => {
+    const w = await world();
+    await w.configure('autonomous');
+    const { conversation } = await w.customer();
+    w.answerSends(metaError(131016, 503));
+    await w.drive();
+    // Two provider calls for the same stored message, the same request both times.
+    expect(w.sends).toHaveLength(2);
+    expect(w.sends[0]?.body).toBe(w.sends[1]?.body);
+    const replies = await w.agentMessages(conversation.id);
+    expect(replies).toHaveLength(1);
+    expect(replies[0]).toMatchObject({ status: 'sent', externalMessageId: 'wamid.out2' });
+    // One logical operation, one credit charge: the retry is the engine's, never the model's.
+    expect(w.charges.size).toBe(1);
+    expect(w.providerCalls).toHaveLength(1);
+    const events = await w.stores.events();
+    expect(events.filter((e) => e.action === 'conversation.message_sent')).toHaveLength(1);
+    expect(
+      events
+        .filter((e) => e.action.startsWith('channel.delivery_'))
+        .map((e) => [e.action, e.result, e.attempt, e.reason]),
+    ).toEqual([
+      ['channel.delivery_attempted', 'failure', 1, 'temporary_provider_error'],
+      ['channel.delivery_retry_scheduled', 'success', 1, 'temporary_provider_error'],
+      ['channel.delivery_attempted', 'success', 2, 'sent'],
+    ]);
+    expect(w.waits).toEqual([250]);
+  });
+
+  it('37. a permanent error is not retried, and a person takes over (E)', async () => {
+    const w = await world();
+    await w.configure('autonomous');
+    const { conversation } = await w.customer();
+    w.answerSends(metaError(131026, 400));
+    await w.drive();
+    expect(w.sends).toHaveLength(1);
+    expect((await w.agentMessages(conversation.id))[0]).toMatchObject({
+      status: 'failed',
+      failureCode: 'invalid_destination',
+    });
+    expect(w.charges.size).toBe(1);
+  });
+
+  it('38. an unknown outcome is never retried and stays unknown, never resent (F, G)', async () => {
+    const w = await world();
+    await w.configure('autonomous');
+    const { conversation } = await w.customer();
+    w.answerSends(() => new Response('bad gateway', { status: 502 }));
+    await w.drive();
+    expect(w.sends).toHaveLength(1);
+    expect(await w.agentMessages(conversation.id)).toEqual([
+      expect.objectContaining({ status: 'unknown', failureCode: 'outcome_unknown' }),
+    ]);
+    const events = await w.stores.events();
+    expect(events.filter((e) => e.action === 'channel.delivery_retry_scheduled')).toHaveLength(0);
+    expect(events.filter((e) => e.action === 'conversation.message_send_unknown')).toHaveLength(1);
+    // Driving again sends nothing more: the message is no longer queued.
+    await w.drive();
+    expect(w.sends).toHaveLength(1);
+  });
+
+  it('39. a person who takes over during a retry is never overtaken (H, I)', async () => {
+    const w = await world();
+    await w.configure('autonomous');
+    const { conversation } = await w.customer();
+    w.answerSends(() => new Response('{}', { status: 429 }));
+    // The first call is refused by Meta's limit; the person takes control during the wait.
+    w.duringBackoff(async () => {
+      await w.conversations.takeOver(w.tenantA, conversation.id);
+    });
+    await w.drive();
+    expect(w.sends).toHaveLength(1);
+    expect((await w.agentMessages(conversation.id))[0]).toMatchObject({
+      status: 'failed',
+      failureCode: 'conversation_handled_by_human',
+    });
+    expect(await w.conversationOf(conversation.id)).toMatchObject({
+      control: { handledBy: 'human', aiState: 'paused' },
+    });
+  });
+
+  it('40. the audit of each call names the runtime for the person, and no secret or text (K, L)', async () => {
+    const w = await world();
+    await w.configure('autonomous');
+    const { conversation } = await w.customer();
+    w.answerSends(() => new Response('{}', { status: 429 }));
+    await w.drive();
+    const events = await w.stores.events();
+    const delivery = events.filter((e) => e.action.startsWith('channel.delivery_'));
+    expect(delivery).toHaveLength(3);
+    const [reply] = await w.agentMessages(conversation.id);
+    for (const event of delivery) {
+      expect(event).toMatchObject({
+        organizationId: w.orgA,
+        actor: { type: 'system', id: 'runtime', initiatedBy: ALICE, via: 'runtime' },
+        target: { type: 'message', id: reply?.id },
+        reference: `conversation:${conversation.id}`,
+      });
+    }
+    const written = JSON.stringify(events);
+    expect(written).not.toContain(TOKEN_A);
+    expect(written).not.toContain('Hola, con gusto');
   });
 });

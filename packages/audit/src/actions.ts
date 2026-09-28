@@ -415,6 +415,24 @@ export const AUDIT_ACTIONS = {
       "The provider refused a channel connection's credentials during a send: it is in error until a person checks it again (ADR-0044).",
     results: ['failure'],
   },
+  'channel.delivery_attempted': {
+    category: 'channel',
+    description:
+      "One call to a channel's provider for one outbound message: sent, or failed with a stable code; `outcome_unknown` is never retried (ADR-0045).",
+    results: ['success', 'failure'],
+  },
+  'channel.delivery_retry_scheduled': {
+    category: 'channel',
+    description:
+      'The provider surely did not take a message (a transient error), so the Integration Engine will call it again; the reason is the error (ADR-0045).',
+    results: ['success'],
+  },
+  'channel.delivery_rate_limited': {
+    category: 'channel',
+    description:
+      "A connection's send limit stopped an outbound message before its provider was called: nothing was sent (ADR-0045).",
+    results: ['denied'],
+  },
   'credits.grant': {
     category: 'credits',
     description: "Credits were added to an organization's wallet (ADR-0023).",

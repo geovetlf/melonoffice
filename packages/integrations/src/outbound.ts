@@ -98,7 +98,14 @@ export function settlementOfError(error: unknown): OutboundSettlement {
     case 'invalid_outbound':
       return { status: 'failed', failureCode: 'invalid_message' };
     case 'provider_unavailable':
-      if (error.detail === 'rate_limited') return { status: 'failed', failureCode: 'rate_limited' };
+      // Surely not taken by the provider (ADR-0045): failed, never unknown.
+      if (
+        error.detail === 'rate_limited' ||
+        error.detail === 'temporary_provider_error' ||
+        error.detail === 'not_connected'
+      ) {
+        return { status: 'failed', failureCode: error.detail };
+      }
       if (error.detail === 'graph_api_version') {
         return { status: 'failed', failureCode: 'channel_not_available' };
       }
@@ -247,6 +254,9 @@ export function createChannelMessageExecutor(options: ChannelMessageExecutorOpti
             : { idempotencyKey: context.idempotencyKey }),
         },
         actor: { actor: agent ? 'runtime' : 'user', userId },
+        messageId: message.id,
+        ...(context.requestId === undefined ? {} : { requestId: context.requestId }),
+        deadline: context.deadline,
         trace: {
           messageId: message.id,
           executionId: context.executionId,

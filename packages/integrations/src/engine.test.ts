@@ -26,7 +26,13 @@ import {
   createChannelConnectionService,
   InMemoryChannelConnectionRepository,
 } from './connections.js';
-import { createIntegrationEngine } from './engine.js';
+import {
+  DEFAULT_DELIVERY_POLICY,
+  InMemoryConnectionRateLimiter,
+  type ConnectionRateLimiter,
+  type DeliveryPolicy,
+} from './delivery.js';
+import { createIntegrationEngine, type OutboundRequest } from './engine.js';
 import { IntegrationError } from './errors.js';
 import {
   acceptsInbound,
@@ -133,9 +139,13 @@ async function world(
     readonly categories?: readonly string[];
     readonly limit?: number | 'unlimited';
     readonly permissions?: readonly string[];
+    readonly delivery?: DeliveryPolicy;
+    readonly rateLimiter?: ConnectionRateLimiter;
   } = {},
 ) {
   let clock = T0;
+  /** Every wait the engine asked for: it passes on the test clock, instantly. */
+  const waits: number[] = [];
   const now = () => clock;
   const store = new InMemoryAuditStore();
   const audit = createAuditService(store, now);
@@ -172,6 +182,13 @@ async function world(
     audit,
     logger,
     now,
+    ...(options.delivery === undefined ? {} : { delivery: options.delivery }),
+    ...(options.rateLimiter === undefined ? {} : { rateLimiter: options.rateLimiter }),
+    sleep: async (ms) => {
+      waits.push(ms);
+      clock = new Date(clock.getTime() + ms);
+    },
+    random: () => 0.5,
   });
   const entitlements: Pick<EntitlementService, 'entitlementsOf'> = {
     entitlementsOf: async (tenant) => ({
@@ -241,6 +258,7 @@ async function world(
     service,
     graph,
     lines,
+    waits,
     connected,
     deliver,
     advance: (ms: number) => {
@@ -678,6 +696,302 @@ describe('outbound', () => {
       expect(logged).not.toContain(secret);
     }
     expect(JSON.stringify(w.store.events())).not.toContain(ACCESS_TOKEN);
+  });
+});
+
+/** A text to the conversation, as the executor sends it: for a stored message, with a deadline. */
+async function sendMessage(
+  w: World,
+  connection: ChannelConnection,
+  extra: Partial<OutboundRequest> = {},
+) {
+  const [conversation] = await w.conversations.listConversations(connection.organizationId);
+  if (conversation === undefined) throw new Error('no conversation');
+  return w.engine.send({
+    organizationId: connection.organizationId,
+    connectionId: connection.id,
+    channel: 'whatsapp',
+    conversation,
+    message: { to: '15551234567', text: 'Hola Ana' },
+    actor: { actor: 'runtime', userId: ALICE },
+    messageId: 'msg-1',
+    requestId: 'req-1',
+    deadline: new Date(w.now().getTime() + 15_000),
+    ...extra,
+  });
+}
+
+const sends = (w: World) => w.graph.calls.filter((c) => c.url.endsWith('/messages'));
+const deliveryEvents = (w: World) =>
+  w.store
+    .events()
+    .filter((e) => e.action.startsWith('channel.delivery_'))
+    .map((e) => [e.action, e.result, e.attempt, e.reason]);
+
+/** Answers the next sends in order, then a success. */
+function answerSends(w: World, answers: readonly (() => Response)[]) {
+  const queue = [...answers];
+  const previous = w.graph.answer;
+  w.graph.answer = (url) => {
+    if (!url.endsWith('/messages')) return previous(url);
+    const next = queue.shift();
+    return next === undefined ? previous(url) : next();
+  };
+}
+
+const meta = (code: number, status: number, headers?: Record<string, string>) => () =>
+  new Response(JSON.stringify({ error: { code, message: 'x' } }), {
+    status,
+    ...(headers ? { headers } : {}),
+  });
+
+describe('delivery: limits and retries (CV-6D, ADR-0045)', () => {
+  it('A: stops sends past the connection limit before the provider, whoever asks', async () => {
+    const w = await world({
+      delivery: { ...DEFAULT_DELIVERY_POLICY, rateLimit: { windowMs: 60_000, maxSends: 2 } },
+    });
+    const connection = await w.connected();
+    await w.deliver(connection);
+    // A person and two agents' sends: one limit for the connection.
+    expect(
+      (await sendMessage(w, connection, { actor: { actor: 'user', userId: ALICE } })).status,
+    ).toBe('sent');
+    expect((await sendMessage(w, connection, { messageId: 'msg-2' })).status).toBe('sent');
+    // The window has 45 s left, more than the send may wait: refused, nothing sent.
+    w.advance(15_000);
+    expect(await sendMessage(w, connection, { messageId: 'msg-3' })).toEqual({
+      status: 'refused',
+      code: 'rate_limited',
+    });
+    expect(sends(w)).toHaveLength(2);
+    expect(deliveryEvents(w).at(-1)).toEqual([
+      'channel.delivery_rate_limited',
+      'denied',
+      1,
+      'rate_limited',
+    ]);
+    // A new window: sent again.
+    w.advance(45_000);
+    expect((await sendMessage(w, connection, { messageId: 'msg-4' })).status).toBe('sent');
+  });
+
+  it('A: waits for the window when it opens within the time allowed', async () => {
+    const w = await world({
+      delivery: { ...DEFAULT_DELIVERY_POLICY, rateLimit: { windowMs: 2_000, maxSends: 1 } },
+    });
+    const connection = await w.connected();
+    await w.deliver(connection);
+    expect((await sendMessage(w, connection)).status).toBe('sent');
+    expect((await sendMessage(w, connection, { messageId: 'msg-2' })).status).toBe('sent');
+    expect(w.waits).toEqual([2_000]);
+    expect(sends(w)).toHaveLength(2);
+  });
+
+  it('B and C: one limit per organization connection, shared by every sender, never across organizations', async () => {
+    const limiter = new InMemoryConnectionRateLimiter();
+    const delivery = { ...DEFAULT_DELIVERY_POLICY, rateLimit: { windowMs: 60_000, maxSends: 1 } };
+    const w = await world({ delivery, rateLimiter: limiter });
+    const a = await w.connected();
+    await w.deliver(a);
+    const b = await w.connected(w.tenantB);
+    await w.deliver(b);
+    expect((await sendMessage(w, a)).status).toBe('sent');
+    // Another agent of the same organization, same connection: the limit is spent.
+    expect(await sendMessage(w, a, { messageId: 'msg-2', trace: { agentId: 'other' } })).toEqual({
+      status: 'refused',
+      code: 'rate_limited',
+    });
+    // Another organization: its own limit.
+    expect((await sendMessage(w, b, { messageId: 'msg-b' })).status).toBe('sent');
+  });
+
+  it('D: retries a transient error the provider surely did not take, and sends once', async () => {
+    const w = await world();
+    const connection = await w.connected();
+    await w.deliver(connection);
+    answerSends(w, [meta(131016, 503), () => new Response('{}', { status: 429 })]);
+    expect(await sendMessage(w, connection)).toMatchObject({ status: 'sent' });
+    expect(sends(w)).toHaveLength(3);
+    // Every call was the same request: the same stored message, never a second one.
+    expect(new Set(sends(w).map((c) => c.init.body)).size).toBe(1);
+    // Exponential backoff with jitter (random 0.5): 250 ms, then 500 ms.
+    expect(w.waits).toEqual([250, 500]);
+    expect(deliveryEvents(w)).toEqual([
+      ['channel.delivery_attempted', 'failure', 1, 'temporary_provider_error'],
+      ['channel.delivery_retry_scheduled', 'success', 1, 'temporary_provider_error'],
+      ['channel.delivery_attempted', 'failure', 2, 'rate_limited'],
+      ['channel.delivery_retry_scheduled', 'success', 2, 'rate_limited'],
+      ['channel.delivery_attempted', 'success', 3, 'sent'],
+    ]);
+  });
+
+  it("D: honours the provider's Retry-After, and a connection that never opened", async () => {
+    const w = await world();
+    const connection = await w.connected();
+    await w.deliver(connection);
+    answerSends(w, [
+      () => new Response('{}', { status: 429, headers: { 'retry-after': '2' } }),
+      () => {
+        throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNREFUSED' } });
+      },
+    ]);
+    expect(await sendMessage(w, connection)).toMatchObject({ status: 'sent' });
+    expect(w.waits).toEqual([2_000, 500]);
+    expect(deliveryEvents(w).map((e) => e[3])).toEqual([
+      'rate_limited',
+      'rate_limited',
+      'not_connected',
+      'not_connected',
+      'sent',
+    ]);
+  });
+
+  it('D: stops at the attempts and the time allowed, and fails with what surely was not sent', async () => {
+    const w = await world();
+    const connection = await w.connected();
+    await w.deliver(connection);
+    answerSends(w, [meta(2, 500), meta(2, 500), meta(2, 500), meta(2, 500)]);
+    const result = await sendMessage(w, connection);
+    expect(result.status).toBe('failed');
+    expect(sends(w)).toHaveLength(DEFAULT_DELIVERY_POLICY.retry.maxAttempts);
+
+    // Too little time left for another call: no retry.
+    const late = await world();
+    const c = await late.connected();
+    await late.deliver(c);
+    answerSends(late, [meta(2, 500)]);
+    const deadline = new Date(late.now().getTime() + 2_000);
+    expect((await sendMessage(late, c, { deadline })).status).toBe('failed');
+    expect(sends(late)).toHaveLength(1);
+  });
+
+  it('E: never retries a permanent error', async () => {
+    for (const answer of [
+      meta(131026, 400),
+      meta(190, 401),
+      meta(10, 403),
+      meta(131051, 400),
+      meta(131000, 400),
+      () => new Response('{}', { status: 400 }),
+    ]) {
+      const w = await world();
+      const connection = await w.connected();
+      await w.deliver(connection);
+      answerSends(w, [answer]);
+      expect((await sendMessage(w, connection)).status).toBe('failed');
+      expect(sends(w)).toHaveLength(1);
+      expect(w.waits).toEqual([]);
+      expect(deliveryEvents(w).map((e) => e[0])).toEqual(['channel.delivery_attempted']);
+    }
+  });
+
+  it('F: never retries an unknown outcome (no answer, a timeout, a bare server error, a bad answer)', async () => {
+    for (const answer of [
+      () => {
+        throw Object.assign(new Error('timeout'), { name: 'TimeoutError' });
+      },
+      () => {
+        throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNRESET' } });
+      },
+      () => new Response('bad gateway', { status: 502 }),
+      () => new Response(JSON.stringify({ error: { code: 999 } }), { status: 500 }),
+      () => new Response('{"messages":[]}', { status: 200 }),
+    ]) {
+      const w = await world();
+      const connection = await w.connected();
+      await w.deliver(connection);
+      answerSends(w, [answer]);
+      const result = await sendMessage(w, connection);
+      expect(result.status).toBe('failed');
+      expect(sends(w)).toHaveLength(1);
+      expect(deliveryEvents(w)).toEqual([
+        ['channel.delivery_attempted', 'failure', 1, 'outcome_unknown'],
+      ]);
+    }
+  });
+
+  it('H: a person who takes control during the backoff stops the retry', async () => {
+    const w = await world();
+    const connection = await w.connected();
+    await w.deliver(connection);
+    answerSends(w, [meta(131016, 503)]);
+    let checks = 0;
+    const result = await sendMessage(w, connection, {
+      lastCheck: async () => (++checks === 1 ? undefined : 'conversation_handled_by_human'),
+    });
+    expect(result).toEqual({ status: 'refused', code: 'conversation_handled_by_human' });
+    expect(sends(w)).toHaveLength(1);
+    expect(checks).toBe(2);
+  });
+
+  it('never starts a call once the caller stopped waiting', async () => {
+    const w = await world();
+    const connection = await w.connected();
+    await w.deliver(connection);
+    expect(
+      await sendMessage(w, connection, { deadline: new Date(w.now().getTime() + 100) }),
+    ).toEqual({
+      status: 'refused',
+      code: 'deadline_exceeded',
+    });
+    expect(sends(w)).toHaveLength(0);
+  });
+
+  it('K and L: audits each call apart, with codes only: never a secret, a number or the text', async () => {
+    const w = await world();
+    const connection = await w.connected();
+    await w.deliver(connection);
+    answerSends(w, [meta(131016, 503)]);
+    await sendMessage(w, connection);
+    const events = w.store.events().filter((e) => e.action.startsWith('channel.delivery_'));
+    expect(events).toHaveLength(3);
+    for (const event of events) {
+      expect(event).toMatchObject({
+        organizationId: w.orgA,
+        actor: { type: 'system', id: 'runtime', initiatedBy: ALICE },
+        target: { type: 'message', id: 'msg-1' },
+        requestId: 'req-1',
+      });
+      expect(event.reference).toMatch(/^conversation:/);
+    }
+    const recorded = JSON.stringify(w.store.events()) + w.lines.join('\n');
+    for (const secret of [ACCESS_TOKEN, APP_SECRET, VERIFY_TOKEN, 'Hola Ana', '15551234567']) {
+      expect(recorded).not.toContain(secret);
+    }
+  });
+});
+
+describe('delivery policy', () => {
+  it('holds every value in one place, checked, and changed only by configuration', async () => {
+    const { checkDeliveryPolicy, deliveryPolicyFromEnv, DELIVERY_POLICY_ENV } =
+      await import('./delivery.js');
+    expect(deliveryPolicyFromEnv({})).toEqual(DEFAULT_DELIVERY_POLICY);
+    expect(
+      deliveryPolicyFromEnv({
+        [DELIVERY_POLICY_ENV.maxSends]: '10',
+        [DELIVERY_POLICY_ENV.maxAttempts]: '2',
+      }),
+    ).toMatchObject({ rateLimit: { maxSends: 10 }, retry: { maxAttempts: 2 } });
+    expect(() => deliveryPolicyFromEnv({ [DELIVERY_POLICY_ENV.maxAttempts]: '9' })).toThrow();
+    expect(() => deliveryPolicyFromEnv({ [DELIVERY_POLICY_ENV.windowMs]: '-1' })).toThrow();
+    expect(() =>
+      checkDeliveryPolicy({
+        ...DEFAULT_DELIVERY_POLICY,
+        retry: { ...DEFAULT_DELIVERY_POLICY.retry, baseDelayMs: 5_000, maxDelayMs: 1_000 },
+      }),
+    ).toThrow();
+    // The budget stays under the message_send tool's timeout (15 s).
+    expect(DEFAULT_DELIVERY_POLICY.retry.totalBudgetMs).toBeLessThan(15_000);
+  });
+
+  it('backs off exponentially with full jitter, capped, never under Retry-After', async () => {
+    const { backoffDelay } = await import('./delivery.js');
+    const retry = DEFAULT_DELIVERY_POLICY.retry;
+    expect(backoffDelay(retry, 1, () => 1)).toBe(500);
+    expect(backoffDelay(retry, 2, () => 1)).toBe(1_000);
+    expect(backoffDelay(retry, 10, () => 1)).toBe(4_000);
+    expect(backoffDelay(retry, 3, () => 0)).toBe(0);
+    expect(backoffDelay(retry, 1, () => 0, 3_000)).toBe(3_000);
   });
 });
 

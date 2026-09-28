@@ -8,6 +8,7 @@ import {
   createIntegrationRegistry,
   createSecretManagerStore,
   createWhatsAppAdapter,
+  deliveryPolicyFromEnv,
   withAgentTurns,
   type ConversationIngressPort,
 } from '@melonoffice/integrations';
@@ -24,6 +25,7 @@ import {
   FirestoreAuditStore,
   FirestoreBillingStore,
   FirestoreChannelConnectionRepository,
+  FirestoreConnectionRateLimiter,
   FirestoreConversationRepository,
   FirestoreDepartmentRepository,
   FirestoreEntitlementOverrideStore,
@@ -81,6 +83,9 @@ function services(projectId: string) {
           },
           audit,
           logger: logger.child({ component: 'integrations' }),
+          // Limits and retries (ADR-0045): one send limit per connection, shared with the worker.
+          delivery: deliveryPolicyFromEnv(process.env),
+          rateLimiter: new FirestoreConnectionRateLimiter(firestore),
         });
   // Conversation agents (CV-6B, ADR-0043): the API starts an agent's turn after a message is
   // stored and hands jobs to the worker, only where the job transport is configured; without it,

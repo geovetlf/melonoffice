@@ -32,6 +32,8 @@ export class IntegrationError extends Error {
     readonly code: IntegrationErrorCode,
     /** Which field or rule. A code, never data. */
     readonly detail?: string,
+    /** The provider's own wait before calling it again (`Retry-After`), when it gave one. */
+    readonly retryAfterMs?: number,
   ) {
     super(detail === undefined ? code : `${code}: ${detail}`);
   }
