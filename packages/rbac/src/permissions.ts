@@ -20,6 +20,36 @@ export const PERMISSIONS = {
     description:
       "See what happened in the organization's office, read from the audit trail (ADR-0049).",
   },
+  'knowledge.read': {
+    resource: 'knowledge',
+    action: 'read',
+    description:
+      "Read the organization's Company Brain up to confidential knowledge, and give that context to GIA and agents (ADR-0051).",
+  },
+  'knowledge.read_restricted': {
+    resource: 'knowledge',
+    action: 'read_restricted',
+    description:
+      'Also read restricted Company Brain knowledge: costs, margins, finances (ADR-0051).',
+  },
+  'knowledge.propose': {
+    resource: 'knowledge',
+    action: 'propose',
+    description:
+      'Add facts to Company Brain. From GIA or an agent they are proposals; documents are unverified (ADR-0051).',
+  },
+  'knowledge.manage': {
+    resource: 'knowledge',
+    action: 'manage',
+    description:
+      'Confirm, change, invalidate or archive Company Brain facts and decide conflicts, directly and never through GIA (ADR-0051).',
+  },
+  'knowledge.capture': {
+    resource: 'knowledge',
+    action: 'capture',
+    description:
+      'Have GIA extract facts from what you write or from a document, through the AI Gateway, spending credits (ADR-0051).',
+  },
   'entitlement.read': {
     resource: 'entitlement',
     action: 'read',

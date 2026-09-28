@@ -16,7 +16,8 @@ export interface AuditActionDefinition {
     | 'conversation'
     | 'channel'
     | 'department'
-    | 'specialist';
+    | 'specialist'
+    | 'knowledge';
   readonly description: string;
   /** The results this action is recorded with. Anything else is a programming error. */
   readonly results: readonly AuditResult[];
@@ -46,6 +47,52 @@ export const AUDIT_ACTIONS = {
     category: 'tenancy',
     description:
       "A person created or changed the organization's business profile (ADR-0048); `reference` names the kind of business, never what the owner wrote.",
+    results: ['success'],
+  },
+  'knowledge.created': {
+    category: 'knowledge',
+    description:
+      "A fact entered the organization's Company Brain (ADR-0051); `reference` is `{domain}:{sourceType}`, `targetVersion` its revision. Never the value: that is the item's version.",
+    results: ['success'],
+  },
+  'knowledge.updated': {
+    category: 'knowledge',
+    description:
+      'A Company Brain fact took a new value (ADR-0051); the previous value stays as the version before `targetVersion`.',
+    results: ['success'],
+  },
+  'knowledge.confirmed': {
+    category: 'knowledge',
+    description: 'A person, acting directly, confirmed a Company Brain fact (ADR-0051).',
+    results: ['success'],
+  },
+  'knowledge.invalidated': {
+    category: 'knowledge',
+    description:
+      'A person marked a Company Brain fact as no longer true (ADR-0051); it stays as history. `reason` is their code, when given.',
+    results: ['success'],
+  },
+  'knowledge.archived': {
+    category: 'knowledge',
+    description: 'A person set a Company Brain fact aside (ADR-0051); it stays as history.',
+    results: ['success'],
+  },
+  'knowledge.conflict_detected': {
+    category: 'knowledge',
+    description:
+      'Two sources disagree on a Company Brain fact and nothing was chosen (ADR-0051); `reference` names the new source.',
+    results: ['success'],
+  },
+  'knowledge.conflict_resolved': {
+    category: 'knowledge',
+    description:
+      'A person decided a Company Brain conflict (ADR-0051); `reason` is `kept_current`, `took_candidate` or `replaced`.',
+    results: ['success'],
+  },
+  'knowledge.document_ingested': {
+    category: 'knowledge',
+    description:
+      'A document was given to Company Brain (ADR-0051); its facts are extracted as unverified. Never its text.',
     results: ['success'],
   },
   'membership.create': {

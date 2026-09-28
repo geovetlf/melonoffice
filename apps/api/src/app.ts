@@ -1,5 +1,11 @@
 import { createActivityService } from '@melonoffice/activity';
 import {
+  createCompanyBrain,
+  createGatewayKnowledgeExtractor,
+  organizationKnowledge,
+  type KnowledgeRepository,
+} from '@melonoffice/brain';
+import {
   createAIGateway,
   createModelPolicyCatalogue,
   defaultProviderRegistry,
@@ -58,7 +64,7 @@ import {
   createPlanValidator,
   type PlanRepository,
 } from '@melonoffice/planning';
-import type { TenancyStore } from '@melonoffice/tenancy';
+import { resolveTenant, type TenancyStore } from '@melonoffice/tenancy';
 import { defaultToolRegistry, type ToolRegistry } from '@melonoffice/tools';
 import { createWorkflowService, type WorkflowRepository } from '@melonoffice/workflows';
 import { Hono, type Context } from 'hono';
@@ -68,6 +74,7 @@ import { registerAuthRoutes, type AuthEnv } from './auth.js';
 import { registerCors } from './cors.js';
 import { registerBillingRoutes } from './billing.js';
 import { registerActivityRoutes } from './activity.js';
+import { registerBrainRoutes } from './brain.js';
 import { registerBusinessRoutes } from './business.js';
 import { registerDepartmentRoutes } from './departments.js';
 import { registerConnectionRoutes } from './connections.js';
@@ -125,6 +132,8 @@ export interface AppOptions {
   readonly activity?: AuditReader;
   /** Business profiles (ADR-0048). Absent: the profile route answers 503 (fails closed). */
   readonly businessProfiles?: BusinessProfileRepository;
+  /** Company Brain (ADR-0051). Absent: the brain routes answer 503 (fails closed). */
+  readonly knowledge?: KnowledgeRepository;
   /** The tool catalogue (ADR-0026). Defaults to the one in code, which is empty until tools exist. */
   readonly tools?: ToolRegistry;
   /** Tool approvals (ADR-0026). Absent: the approval routes answer 503 (fails closed). */
@@ -214,6 +223,7 @@ export function createApp({
   executions,
   structure,
   businessProfiles,
+  knowledge,
   activity,
   tools = defaultToolRegistry(),
   approvals,
@@ -254,7 +264,13 @@ export function createApp({
   registerWebhookRoutes(app, webhooks);
   registerAuthRoutes(app, auth, audit);
   if (auth !== undefined && audit !== undefined) {
-    registerTenancyRoutes(app, tenancy, authorization, audit);
+    // A new organization's Company Brain starts with its name (ADR-0051).
+    registerTenancyRoutes(app, tenancy, authorization, audit, async (auth, organization) => {
+      if (brain === undefined || tenancy === undefined) return;
+      const tenant = await resolveTenant(auth, organization.id, tenancy);
+      const { source, facts } = organizationKnowledge(organization);
+      await brain.ingest(tenant, source, facts);
+    });
     if (tenancy !== undefined && billing !== undefined) {
       const billingService = createBillingService({ billing, organizations: tenancy });
       const dependencies = { store: tenancy, authorization, audit };
@@ -283,8 +299,47 @@ export function createApp({
             authorization,
           })
         : undefined;
+    // The one AI Gateway (ADR-0027), shared by assisted AI on conversations (ADR-0037) and
+    // Company Brain's extraction (ADR-0051). The execution and specialist stores are there
+    // because the gateway is built whole; an assisted call reads neither. The credits engine
+    // accounts for every call; with no rate it denies all.
+    const aiCredits =
+      ai.credits ??
+      (credits === undefined || tenancy === undefined
+        ? undefined
+        : createCreditService({ store: credits, organizations: tenancy }));
+    const aiGateway =
+      tenancy !== undefined && executions !== undefined && specialists !== undefined
+        ? createAIGateway({
+            executions,
+            organizations: tenancy,
+            specialists,
+            authorization,
+            registry: ai.registry ?? defaultProviderRegistry(),
+            policies: ai.policies ?? createModelPolicyCatalogue([]),
+            environment: ai.environment,
+            ...(aiCredits === undefined
+              ? {}
+              : { credits: { port: aiCredits, rate: ai.creditRate } }),
+            audit,
+            logger: logger.child({ component: 'ai-gateway' }),
+          })
+        : undefined;
+    const brain =
+      tenancy !== undefined && knowledge !== undefined
+        ? createCompanyBrain({
+            repository: knowledge,
+            organizations: tenancy,
+            authorization,
+            ...(aiGateway === undefined
+              ? {}
+              : { extractor: createGatewayKnowledgeExtractor(aiGateway) }),
+            logger: logger.child({ component: 'company-brain' }),
+          })
+        : undefined;
     if (tenancy !== undefined && businessProfiles !== undefined) {
       registerBusinessRoutes(app, {
+        ...(brain === undefined ? {} : { brain }),
         store: tenancy,
         authorization,
         audit,
@@ -314,6 +369,29 @@ export function createApp({
     } else if (tenancy !== undefined) {
       app.all('/v1/organizations/:organizationId/activity', (c) =>
         c.json({ error: 'activity_not_configured' }, 503),
+      );
+    }
+    if (tenancy !== undefined && brain !== undefined) {
+      registerBrainRoutes(app, {
+        store: tenancy,
+        authorization,
+        audit,
+        brain,
+        sources: {
+          organizations: tenancy,
+          ...(businessProfiles === undefined ? {} : { businessProfiles }),
+          ...(structure === undefined
+            ? {}
+            : { departments: structure.departments, specialists: structure.specialists }),
+          ...(conversations === undefined ? {} : { connections: conversations.connections }),
+        },
+      });
+    } else if (tenancy !== undefined) {
+      app.all('/v1/organizations/:organizationId/brain', (c) =>
+        c.json({ error: 'brain_not_configured' }, 503),
+      );
+      app.all('/v1/organizations/:organizationId/brain/*', (c) =>
+        c.json({ error: 'brain_not_configured' }, 503),
       );
     }
     if (tenancy !== undefined && structure !== undefined && specialists !== undefined) {
@@ -505,33 +583,13 @@ export function createApp({
         departments: structure.departments,
         authorization,
       });
-      // Assisted AI (CV-4, ADR-0037): the one AI Gateway, in its assisted mode. The execution and
-      // specialist stores are there because the gateway is built whole; an assisted call reads
-      // neither. The credits engine accounts for every call; with no rate it denies all.
-      const aiCredits =
-        ai.credits ??
-        (credits === undefined
-          ? undefined
-          : createCreditService({ store: credits, organizations: tenancy }));
+      // Assisted AI (CV-4, ADR-0037): the one AI Gateway, in its assisted mode.
       const assistant =
-        executions !== undefined && specialists !== undefined
+        aiGateway !== undefined
           ? createConversationAssistant({
               conversations: conversationService,
               departments: structure.departments,
-              gateway: createAIGateway({
-                executions,
-                organizations: tenancy,
-                specialists,
-                authorization,
-                registry: ai.registry ?? defaultProviderRegistry(),
-                policies: ai.policies ?? createModelPolicyCatalogue([]),
-                environment: ai.environment,
-                ...(aiCredits === undefined
-                  ? {}
-                  : { credits: { port: aiCredits, rate: ai.creditRate } }),
-                audit,
-                logger: logger.child({ component: 'ai-gateway' }),
-              }),
+              gateway: aiGateway,
               authorization,
               audit,
               logger: logger.child({ component: 'conversation-assist' }),

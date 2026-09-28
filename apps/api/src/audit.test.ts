@@ -308,6 +308,8 @@ describe.each(STORES)('audit log with storage in %s', (_name, createStores) => {
         'actor',
         'organizationId',
         'target',
+        // A Company Brain fact's revision (ADR-0051), recorded since an organization's creation.
+        'targetVersion',
         'requestedOrganizationId',
         'permission',
         'plan',

@@ -8,6 +8,7 @@ export * from './credits.js';
 export * from './department-migration.js';
 export * from './departments.js';
 export * from './executions.js';
+export * from './knowledge.js';
 export * from './jobs.js';
 export * from './outputs.js';
 export * from './overrides.js';

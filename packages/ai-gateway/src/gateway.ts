@@ -68,6 +68,8 @@ export interface AIGateway {
  */
 export const ASSIST_PERMISSIONS: Readonly<Record<AssistSubjectType, string>> = Object.freeze({
   conversation: 'conversation.assist',
+  // Extracting Company Brain facts from what a person gives (ADR-0051).
+  company_knowledge: 'knowledge.capture',
 });
 
 /**
@@ -80,6 +82,7 @@ export const ASSIST_MODEL_POLICIES: Readonly<
   Record<AssistSubjectType, { readonly id: string; readonly version: number }>
 > = Object.freeze({
   conversation: Object.freeze({ id: 'conversation_assist', version: 1 }),
+  company_knowledge: Object.freeze({ id: 'company_knowledge_assist', version: 1 }),
 });
 
 export interface AIGatewayOptions {

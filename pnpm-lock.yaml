@@ -80,6 +80,9 @@ importers:
       '@melonoffice/billing':
         specifier: workspace:*
         version: link:../../packages/billing
+      '@melonoffice/brain':
+        specifier: workspace:*
+        version: link:../../packages/brain
       '@melonoffice/business':
         specifier: workspace:*
         version: link:../../packages/business
@@ -409,6 +412,40 @@ importers:
         specifier: workspace:*
         version: link:../config
 
+  packages/brain:
+    dependencies:
+      '@melonoffice/ai-gateway':
+        specifier: workspace:*
+        version: link:../ai-gateway
+      '@melonoffice/audit':
+        specifier: workspace:*
+        version: link:../audit
+      '@melonoffice/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@melonoffice/observability':
+        specifier: workspace:*
+        version: link:../observability
+      '@melonoffice/rbac':
+        specifier: workspace:*
+        version: link:../rbac
+      '@melonoffice/tenancy':
+        specifier: workspace:*
+        version: link:../tenancy
+    devDependencies:
+      '@melonoffice/auth':
+        specifier: workspace:*
+        version: link:../auth
+      '@melonoffice/config':
+        specifier: workspace:*
+        version: link:../config
+      '@melonoffice/credits':
+        specifier: workspace:*
+        version: link:../credits
+      '@melonoffice/departments':
+        specifier: workspace:*
+        version: link:../departments
+
   packages/business:
     dependencies:
       '@melonoffice/audit':
@@ -578,6 +615,9 @@ importers:
       '@melonoffice/billing':
         specifier: workspace:*
         version: link:../billing
+      '@melonoffice/brain':
+        specifier: workspace:*
+        version: link:../brain
       '@melonoffice/business':
         specifier: workspace:*
         version: link:../business
