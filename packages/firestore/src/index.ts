@@ -10,6 +10,7 @@ export * from './jobs.js';
 export * from './outputs.js';
 export * from './overrides.js';
 export * from './plans.js';
+export * from './rate-limits.js';
 export * from './specialists.js';
 export * from './tenancy.js';
 export * from './users.js';

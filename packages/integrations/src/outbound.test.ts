@@ -267,7 +267,21 @@ describe('provider answers', () => {
     expect(await detailOf({ error: { code: 368 } }, 403)).toBe(
       'provider_rejected:policy_restricted',
     );
-    expect(await detailOf({ error: { code: 130429 } })).toBe('provider_rejected:rate_limited');
+    // Meta's rate limits and temporary errors: not taken, so retryable (ADR-0045).
+    expect(await detailOf({ error: { code: 130429 } })).toBe('provider_unavailable:rate_limited');
+    expect(await detailOf({ error: { code: 131056 } })).toBe('provider_unavailable:rate_limited');
+    expect(await detailOf({ error: { code: 131016 } }, 503)).toBe(
+      'provider_unavailable:temporary_provider_error',
+    );
+    expect(await detailOf({ error: { code: 2 } }, 500)).toBe(
+      'provider_unavailable:temporary_provider_error',
+    );
+    // "Something went wrong" is not documented as temporary: final.
+    expect(await detailOf({ error: { code: 131000 } })).toBe('provider_rejected:provider_error');
+    // A server error without Meta's code says nothing about the message: unknown.
+    expect(await detailOf({ error: { code: 999999 } }, 502)).toBe(
+      'provider_unavailable:server_error',
+    );
     expect(await detailOf({ error: { code: 999999 } })).toBe('provider_rejected:provider_rejected');
     expect(await detailOf('not json')).toBe('provider_rejected:provider_rejected');
     expect(await detailOf({}, 429)).toBe('provider_unavailable:rate_limited');
@@ -282,6 +296,12 @@ describe('provider answers', () => {
     expect(settlementOfError(new IntegrationError('provider_unavailable', 'rate_limited'))).toEqual(
       { status: 'failed', failureCode: 'rate_limited' },
     );
+    for (const detail of ['temporary_provider_error', 'not_connected']) {
+      expect(settlementOfError(new IntegrationError('provider_unavailable', detail))).toEqual({
+        status: 'failed',
+        failureCode: detail,
+      });
+    }
     expect(
       settlementOfError(new IntegrationError('provider_unavailable', 'graph_api_version')),
     ).toEqual({ status: 'failed', failureCode: 'channel_not_available' });

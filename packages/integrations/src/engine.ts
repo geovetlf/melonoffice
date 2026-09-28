@@ -16,6 +16,16 @@ import {
   type ChannelConnectionRepository,
   type ConnectionChecker,
 } from './connections.js';
+import {
+  backoffDelay,
+  checkDeliveryPolicy,
+  DEFAULT_DELIVERY_POLICY,
+  InMemoryConnectionRateLimiter,
+  isRetryable,
+  retryAfterOf,
+  type ConnectionRateLimiter,
+  type DeliveryPolicy,
+} from './delivery.js';
 import { IntegrationError, isIntegrationError } from './errors.js';
 import { acceptsHandshake, acceptsInbound, isOperational } from './lifecycle.js';
 import type { IntegrationRegistry } from './registry.js';
@@ -87,8 +97,16 @@ export interface OutboundRequest extends AvailabilityQuery {
   /** Ids for the log line only (execution, node, agent, message, request). */
   readonly trace?: Readonly<Record<string, string | undefined>>;
   /**
-   * Asked as the very last step before the provider is called (CV-6B): a refusal code stops the
-   * send with nothing sent.
+   * The stored message this send is for: the one idempotency key of every provider call made for
+   * it (ADR-0045), and the target of its `channel.delivery_*` events.
+   */
+  readonly messageId?: string;
+  readonly requestId?: string;
+  /** When the caller stops waiting (the tool call's deadline): no provider call starts after it. */
+  readonly deadline?: Date;
+  /**
+   * Asked as the very last step before each provider call, retries included (CV-6B): a refusal
+   * code stops the send with nothing (more) sent.
    */
   readonly lastCheck?: () => Promise<string | undefined>;
 }
@@ -132,11 +150,25 @@ export interface IntegrationEngineOptions {
   readonly secrets: SecretStore;
   /** Where inbound messages are stored. Absent: deliveries are refused (503). */
   readonly inbound?: ConversationIngressPort;
-  /** Records received messages. */
+  /** Records received messages, and every provider call, retry and limit of a send. */
   readonly audit?: Pick<AuditService, 'record'>;
   readonly logger?: Logger;
   readonly now?: () => Date;
+  /** Limits and retries (ADR-0045). Defaults: `DEFAULT_DELIVERY_POLICY`. */
+  readonly delivery?: DeliveryPolicy;
+  /**
+   * The per-connection send limit, shared by every process that sends. Default: in this process
+   * only, which is right for tests and nothing else.
+   */
+  readonly rateLimiter?: ConnectionRateLimiter;
+  /** Waits between provider calls. */
+  readonly sleep?: (ms: number) => Promise<void>;
+  /** In [0, 1): the backoff's jitter. */
+  readonly random?: () => number;
 }
+
+/** Short of the caller's deadline by this much, so its answer is not lost to a race. */
+const DEADLINE_MARGIN_MS = 500;
 
 const refuse = (status: IngressAnswer['status'], error: string): IngressAnswer =>
   Object.freeze({ status, body: Object.freeze({ error }) });
@@ -150,7 +182,11 @@ export function createIntegrationEngine(options: IntegrationEngineOptions): Inte
     audit,
     logger,
     now = () => new Date(),
+    rateLimiter = new InMemoryConnectionRateLimiter(),
+    sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+    random = Math.random,
   } = options;
+  const policy = checkDeliveryPolicy(options.delivery ?? DEFAULT_DELIVERY_POLICY);
 
   /** The connection's registered adapter, when its account still passes that adapter's check. */
   function adapterOf(connection: ChannelConnection): ChannelAdapter | undefined {
@@ -281,6 +317,155 @@ export function createIntegrationEngine(options: IntegrationEngineOptions): Inte
         connectionId: connection.id,
         code: codeOf(error),
       });
+    }
+  }
+
+  /** Records one `channel.delivery_*` event; a failure to record never changes the send. */
+  async function recordDelivery(
+    request: OutboundRequest,
+    event: {
+      readonly action:
+        | 'channel.delivery_attempted'
+        | 'channel.delivery_retry_scheduled'
+        | 'channel.delivery_rate_limited';
+      readonly result: 'success' | 'failure' | 'denied';
+      readonly attempt: number;
+      readonly reason?: string;
+    },
+  ): Promise<void> {
+    if (audit === undefined || request.messageId === undefined) return;
+    try {
+      await audit.record(
+        buildAuditEvent(
+          {
+            action: event.action,
+            result: event.result,
+            actor: actorOf(request.actor),
+            organizationId: request.organizationId,
+            target: { type: 'message', id: request.messageId },
+            reference: `conversation:${request.conversation.id}`,
+            attempt: event.attempt,
+            ...(event.reason === undefined ? {} : { reason: event.reason }),
+            ...(request.requestId === undefined ? {} : { requestId: request.requestId }),
+            source: 'api',
+          },
+          now(),
+        ),
+      );
+    } catch (error) {
+      logger?.error('delivery audit not recorded', {
+        organizationId: request.organizationId,
+        connectionId: request.connectionId,
+        action: event.action,
+        code: codeOf(error),
+      });
+    }
+  }
+
+  /**
+   * The provider calls of one send (ADR-0045). Before each: the connection's limit, then the
+   * last check. A call is repeated only when the provider surely did not take the message, within
+   * the attempts and the time allowed; the same stored message is sent each time, so a retry can
+   * never add a second one. An unknown outcome is returned as it is, never retried.
+   */
+  async function deliverOutbound(
+    request: OutboundRequest,
+    adapter: ChannelAdapter,
+    connection: ChannelConnection,
+    accessToken: string,
+    trace: Readonly<Record<string, unknown>>,
+  ): Promise<OutboundResult> {
+    const { retry, rateLimit } = policy;
+    const startedAt = now().getTime();
+    const endsAt = Math.min(
+      startedAt + retry.totalBudgetMs,
+      request.deadline === undefined
+        ? Number.POSITIVE_INFINITY
+        : request.deadline.getTime() - DEADLINE_MARGIN_MS,
+    );
+    const key = { organizationId: connection.organizationId, connectionId: connection.id };
+    const log = { ...trace, provider: connection.provider };
+    let attempt = 0;
+    for (;;) {
+      attempt += 1;
+      // The one decision before the provider: every caller of this connection shares it.
+      let slot = await rateLimiter.acquire(key, rateLimit, now());
+      while (!slot.allowed && now().getTime() + slot.retryAfterMs <= endsAt) {
+        await sleep(slot.retryAfterMs);
+        slot = await rateLimiter.acquire(key, rateLimit, now());
+      }
+      if (!slot.allowed) {
+        logger?.warn('outbound rate limited', { ...log, attempt });
+        await recordDelivery(request, {
+          action: 'channel.delivery_rate_limited',
+          result: 'denied',
+          attempt,
+          reason: 'rate_limited',
+        });
+        // Nothing (more) was sent. A first call never made is a refusal; after a call the
+        // provider refused, it is that call's failure that stands.
+        return attempt === 1
+          ? { status: 'refused', code: 'rate_limited' }
+          : {
+              status: 'failed',
+              error: new IntegrationError('provider_unavailable', 'rate_limited'),
+            };
+      }
+      const last = await request.lastCheck?.();
+      if (last !== undefined) {
+        if (attempt > 1) logger?.info('outbound retry stopped', { ...log, attempt, code: last });
+        return { status: 'refused', code: last };
+      }
+      const remaining = endsAt - now().getTime();
+      // The caller has stopped waiting: no call starts now, so none can end unknown.
+      if (remaining <= 0) return { status: 'refused', code: 'deadline_exceeded' };
+      try {
+        const { externalMessageId } = await adapter.send(
+          connection,
+          { accessToken },
+          request.message,
+          Number.isFinite(remaining) ? { timeoutMs: Math.max(remaining, 1) } : undefined,
+        );
+        logger?.info('outbound sent', { ...log, attempt, status: 'sent' });
+        await recordDelivery(request, {
+          action: 'channel.delivery_attempted',
+          result: 'success',
+          attempt,
+          reason: 'sent',
+        });
+        return { status: 'sent', externalMessageId };
+      } catch (error) {
+        const code = failureCodeOf(error);
+        logger?.warn('outbound failed', { ...log, attempt, code: codeOf(error), detail: code });
+        await recordDelivery(request, {
+          action: 'channel.delivery_attempted',
+          result: 'failure',
+          attempt,
+          reason: code,
+        });
+        if (
+          isIntegrationError(error) &&
+          error.code === 'provider_rejected' &&
+          error.detail === 'channel_unauthorized'
+        ) {
+          await recordCredentialFailure(connection, request.actor, 'channel_unauthorized');
+        }
+        if (!isRetryable(error) || attempt >= retry.maxAttempts) {
+          return { status: 'failed', error };
+        }
+        const wait = backoffDelay(retry, attempt, random, retryAfterOf(error));
+        if (now().getTime() + wait + retry.minAttemptMs > endsAt) {
+          return { status: 'failed', error };
+        }
+        logger?.info('outbound retry scheduled', { ...log, attempt, code, waitMs: wait });
+        await recordDelivery(request, {
+          action: 'channel.delivery_retry_scheduled',
+          result: 'success',
+          attempt,
+          reason: code,
+        });
+        await sleep(wait);
+      }
     }
   }
 
@@ -430,31 +615,7 @@ export function createIntegrationEngine(options: IntegrationEngineOptions): Inte
         logger?.warn('outbound refused', { ...trace, code: 'secret_unavailable' });
         return { status: 'refused', code: 'channel_not_available' };
       }
-      const last = await request.lastCheck?.();
-      if (last !== undefined) return { status: 'refused', code: last };
-      try {
-        const { externalMessageId } = await adapter.send(
-          connection,
-          { accessToken },
-          request.message,
-        );
-        logger?.info('outbound sent', { ...trace, provider: connection.provider, status: 'sent' });
-        return { status: 'sent', externalMessageId };
-      } catch (error) {
-        if (
-          isIntegrationError(error) &&
-          error.code === 'provider_rejected' &&
-          error.detail === 'channel_unauthorized'
-        ) {
-          await recordCredentialFailure(connection, request.actor, 'channel_unauthorized');
-        }
-        logger?.warn('outbound failed', {
-          ...trace,
-          provider: connection.provider,
-          code: codeOf(error),
-        });
-        return { status: 'failed', error };
-      }
+      return deliverOutbound(request, adapter, connection, accessToken, trace);
     },
 
     async validate(connection): Promise<ConnectionCheck> {
@@ -484,6 +645,21 @@ export function createIntegrationEngine(options: IntegrationEngineOptions): Inte
     },
   };
   return Object.freeze(engine);
+}
+
+/**
+ * The stable code of a failed provider call, as audited: the provider's detail, or
+ * `outcome_unknown` when the message may have gone out.
+ */
+function failureCodeOf(error: unknown): string {
+  if (!isIntegrationError(error)) return 'outcome_unknown';
+  if (error.code === 'provider_unavailable') {
+    return isRetryable(error) || error.detail === 'graph_api_version'
+      ? (error.detail as string)
+      : 'outcome_unknown';
+  }
+  const detail = error.detail ?? error.code;
+  return /^[a-z][a-z_]{0,63}$/.test(detail) ? detail : error.code;
 }
 
 /** A stable code for a log line: never a message, a stack or a payload. */

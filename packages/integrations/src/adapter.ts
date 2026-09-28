@@ -29,6 +29,12 @@ export interface OutboundText {
   readonly idempotencyKey?: string;
 }
 
+/** What the Integration Engine asks of one provider call (ADR-0045). */
+export interface SendOptions {
+  /** The longest this call may take: never more than the adapter's own limit. */
+  readonly timeoutMs?: number;
+}
+
 /** The credentials a check or a send uses: read from the secret store at that moment, then dropped. */
 export interface ConnectionCredentials {
   readonly accessToken: string;
@@ -88,15 +94,18 @@ export interface ChannelAdapter {
    */
   normalizeOutbound(message: OutboundText): Readonly<Record<string, unknown>>;
   /**
-   * Sends a text through the official API. Returns the provider's message id. Throws
-   * `provider_rejected` (the provider refused: nothing was sent; the detail is a stable code) or
-   * `provider_unavailable` (the detail says whether it may have been sent: `no_answer`,
-   * `server_error` and `response` may; `rate_limited` and `graph_api_version` did not).
+   * Sends a text through the official API, once: retrying is the Integration Engine's, never an
+   * adapter's (ADR-0045). Returns the provider's message id. Throws `provider_rejected` (the
+   * provider refused: nothing was sent; the detail is a stable code) or `provider_unavailable`
+   * (the detail says whether it may have been sent: `no_answer`, `server_error` and `response`
+   * may; `rate_limited`, `temporary_provider_error`, `not_connected` and `graph_api_version` did
+   * not). A transient error may carry the provider's `retryAfterMs`.
    */
   send(
     connection: ChannelConnection,
     credentials: ConnectionCredentials,
     message: OutboundText,
+    options?: SendOptions,
   ): Promise<{ readonly externalMessageId: string }>;
   /**
    * Asks the provider whether the connection's credentials open its account, before it is used.

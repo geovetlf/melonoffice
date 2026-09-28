@@ -39,6 +39,8 @@ export interface AuditDocument {
   readonly jobLeaseId?: string | null;
   /** The node of an `execution.node_changed` or runtime node event (ADR-0031). */
   readonly nodeId?: string | null;
+  /** The provider call of a `channel.delivery_*` event (ADR-0045). */
+  readonly attempt?: number | null;
   readonly modelProvider: string | null;
   readonly modelId: string | null;
   readonly previousModelProvider: string | null;
@@ -78,6 +80,7 @@ export function toAuditDocument(event: AuditEvent): AuditDocument {
     jobAttempt: event.job?.attempt ?? null,
     jobLeaseId: event.job?.leaseId ?? null,
     nodeId: event.nodeId ?? null,
+    attempt: event.attempt ?? null,
     modelProvider: event.model?.provider ?? null,
     modelId: event.model?.id ?? null,
     previousModelProvider: event.previousModel?.provider ?? null,
@@ -141,6 +144,7 @@ export function fromAuditDocument(id: string, d: AuditDocument): AuditEvent {
           },
         }),
     ...(d.nodeId == null ? {} : { nodeId: d.nodeId }),
+    ...(d.attempt == null ? {} : { attempt: d.attempt }),
     ...(d.modelId == null ? {} : { model: { provider: d.modelProvider, id: d.modelId } }),
     ...(d.previousModelId == null
       ? {}
