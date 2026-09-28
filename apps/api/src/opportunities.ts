@@ -77,7 +77,7 @@ export function toOpportunityView(o: Opportunity, viewer: UserId) {
 }
 
 /** One entry of an opportunity's history: what happened, when and who, never another's id. */
-const toHistoryView = (event: AuditEvent, viewer: UserId) => ({
+export const toHistoryView = (event: AuditEvent, viewer: UserId) => ({
   id: event.id,
   at: event.occurredAt,
   action: event.action,
@@ -93,7 +93,7 @@ const toHistoryView = (event: AuditEvent, viewer: UserId) => ({
       : 'system',
 });
 
-const toConversationView = (c: Conversation) => ({
+export const toConversationView = (c: Conversation) => ({
   id: c.id,
   channel: c.channel,
   status: c.status,

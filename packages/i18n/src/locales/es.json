@@ -677,5 +677,22 @@
   "pipeline.stage.approval": "Aprobación",
   "pipeline.stage.trial_order": "Pedido de prueba",
   "pipeline.stage.won": "Ganada",
-  "pipeline.stage.lost": "Perdida"
+  "pipeline.stage.lost": "Perdida",
+  "contact.summary": "Contexto comercial",
+  "contact.summary.unavailable": "No se pudo cargar el contexto comercial.",
+  "contact.openCard": "Abrir la ficha completa en Comercial",
+  "contact.conversations": "Conversaciones",
+  "contact.opportunities": "Oportunidades",
+  "contact.opportunities.none": "Aún no hay oportunidades con este contacto.",
+  "contact.opportunities.noneOpen": "No tiene oportunidades abiertas.",
+  "contact.opportunities.hidden": "Tu rol no puede ver oportunidades.",
+  "contact.opportunity.probability": "{value}% de probabilidad",
+  "contact.history": "Historial",
+  "contact.history.none": "Aún no hay nada registrado.",
+  "contact.history.contact.created": "Se registró",
+  "contact.history.contact.updated": "Cambiaron sus datos",
+  "contact.history.contact.stage_changed": "Cambió de etapa",
+  "contact.history.contact.owner_changed": "Cambió el responsable",
+  "contact.history.contact.consent_changed": "Cambió el consentimiento para mensajes",
+  "contact.history.contact.note_added": "Se agregó una nota"
 }

@@ -15,6 +15,9 @@ import {
   type InboxClient,
   type InboxQuery,
 } from './inboxClient.js';
+import { CommercialSummary } from '../customers/ContactContext.js';
+import type { CustomerDetail } from '../customers/customersClient.js';
+import { openedWith } from '../shell/routes.js';
 import { AssistPanel } from './AssistPanel.js';
 import { ReplyComposer } from './ReplyComposer.js';
 
@@ -30,6 +33,15 @@ export interface ConversationsCenterProps {
    * the API decides every call. By default everything is shown.
    */
   readonly can?: (permission: string) => boolean;
+  /**
+   * The contact's commercial context beside the conversation (C3, ADR-0055), for a role that may
+   * read contacts: its stage, opportunities and next action, from its card in Comercial.
+   */
+  readonly commercial?: {
+    readonly read: (contactId: string) => Promise<CustomerDetail>;
+    /** Today in the business's time zone, to mark a next action as overdue. */
+    readonly today: string;
+  };
 }
 
 const everything = () => true;
@@ -109,6 +121,7 @@ export function ConversationsCenter({
   currentUserId,
   newKey,
   can = everything,
+  commercial,
 }: ConversationsCenterProps) {
   const canManage = can('conversation.manage');
   const canSend = can('conversation.send');
@@ -122,7 +135,8 @@ export function ConversationsCenter({
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState<ConversationSort>('last_activity');
   const [rows, setRows] = useState<readonly ConversationRow[]>([]);
-  const [selected, setSelected] = useState<string | undefined>();
+  // A conversation opened from elsewhere (a contact's card, C3) starts open.
+  const [selected, setSelected] = useState<string | undefined>(() => openedWith('c'));
   const [detail, setDetail] = useState<ConversationDetail | undefined>();
   const [departments, setDepartments] = useState<readonly DepartmentOption[]>([]);
   // The organization's agent (CV-6B): shown where it attends a conversation, never invented.
@@ -390,6 +404,14 @@ export function ConversationsCenter({
                 </dt>
                 <dd>{when(conversation.lastMessageAt)}</dd>
               </dl>
+              {commercial === undefined ? null : (
+                <CommercialPanel
+                  key={`${detail.contact.id}:${version}`}
+                  contactId={detail.contact.id}
+                  read={commercial.read}
+                  today={commercial.today}
+                />
+              )}
 
               <div className="inbox__actions" role="status" aria-live="polite">
                 <span>
@@ -684,4 +706,38 @@ export function ConversationsCenter({
       </div>
     </section>
   );
+}
+
+/** The open conversation's contact, as Comercial knows it (C3). Read once per contact shown. */
+function CommercialPanel({
+  contactId,
+  read,
+  today,
+}: {
+  readonly contactId: string;
+  readonly read: (contactId: string) => Promise<CustomerDetail>;
+  readonly today: string;
+}) {
+  const [load, setLoad] = useState<
+    { status: 'loading' } | { status: 'ready'; value: CustomerDetail } | { status: 'error' }
+  >({ status: 'loading' });
+  useEffect(() => {
+    let live = true;
+    read(contactId).then(
+      (value) => live && setLoad({ status: 'ready', value }),
+      () => live && setLoad({ status: 'error' }),
+    );
+    return () => {
+      live = false;
+    };
+  }, [read, contactId]);
+  if (load.status === 'loading') return null;
+  if (load.status === 'error') {
+    return (
+      <p className="panel__empty">
+        <FormattedMessage id="contact.summary.unavailable" />
+      </p>
+    );
+  }
+  return <CommercialSummary detail={load.value} today={today} />;
 }

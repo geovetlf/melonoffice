@@ -60,6 +60,8 @@ export interface FakeBackend {
     >;
     /** Each organization's opportunities (C2), as the API's views. */
     opportunities: Record<string, Record<string, unknown>[]>;
+    /** A contact card's commercial context (C3): conversations, opportunities and history. */
+    contactContext: Record<string, Record<string, unknown>>;
   };
   apiCalls(): Call[];
 }
@@ -111,6 +113,7 @@ export function fakeBackend(): FakeBackend {
     customerNotes: {},
     pipelines: {},
     opportunities: {},
+    contactContext: {},
   };
 
   function issue() {
@@ -317,7 +320,10 @@ export function fakeBackend(): FakeBackend {
       Object.assign(contact, { commercial, revision: (contact.revision as number) + 1 });
       return json(200, contact);
     }
-    return needs('contact.read') ?? json(200, { ...contact, notes: kept });
+    return (
+      needs('contact.read') ??
+      json(200, { ...contact, notes: kept, ...(options.contactContext[id] ?? {}) })
+    );
   }
 
   /** The opportunity and pipeline routes (C2), as the API answers them. */

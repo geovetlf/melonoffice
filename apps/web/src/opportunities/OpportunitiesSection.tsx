@@ -66,7 +66,7 @@ export function toMinor(text: string, currency: string): number | undefined {
   return Number(whole) * 10 ** digits + Number(fraction.padEnd(digits, '0') || '0');
 }
 
-const formatMoney = (intl: IntlShape, money: Money) =>
+export const formatMoney = (intl: IntlShape, money: Money) =>
   intl.formatNumber(money.amountMinor / 10 ** minorDigits(money.currency), {
     style: 'currency',
     currency: money.currency,
@@ -720,10 +720,10 @@ function OpportunityCard({
             <li key={c.id}>
               <a
                 className="customers__link"
-                href={paths.conversations()}
+                href={paths.conversation(c.id)}
                 onClick={(event) => {
                   event.preventDefault();
-                  navigate(paths.conversations());
+                  navigate(paths.conversation(c.id));
                 }}
               >
                 {c.channel} ·{' '}

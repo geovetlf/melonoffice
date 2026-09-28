@@ -1,6 +1,8 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
 import { Button } from '@melonoffice/ui';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { openedWith } from '../shell/routes.js';
+import { ContactConversations, ContactHistory, ContactOpportunities } from './ContactContext.js';
 import {
   CONSENTS,
   CustomerRequestError,
@@ -51,7 +53,8 @@ export function CustomersSection({
 }) {
   const [stage, setStage] = useState<CustomerStage>('lead');
   const [read, setRead] = useState<{ key: string; load: Load<CustomerList> } | undefined>();
-  const [selected, setSelected] = useState<string | undefined>();
+  // A card opened from elsewhere (the Conversations Center, C3) starts open.
+  const [selected, setSelected] = useState<string | undefined>(() => openedWith('contact'));
   const [creating, setCreating] = useState(false);
   const [version, setVersion] = useState(0);
   const reload = useCallback(() => setVersion((v) => v + 1), []);
@@ -480,6 +483,8 @@ function CustomerCard({
           <FormattedMessage id={error} />
         </p>
       )}
+      <ContactConversations detail={c} />
+      <ContactOpportunities detail={c} today={today} />
       <h4>
         <FormattedMessage id="customers.notes" />
       </h4>
@@ -515,6 +520,7 @@ function CustomerCard({
           </Button>
         </form>
       ) : null}
+      <ContactHistory detail={c} />
     </article>
   );
 }
