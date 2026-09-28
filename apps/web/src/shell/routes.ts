@@ -12,7 +12,7 @@ export type Route =
   | { readonly kind: 'home' }
   | { readonly kind: 'conversations' }
   | { readonly kind: 'connections' }
-  | { readonly kind: 'business_profile' }
+  | { readonly kind: 'memory' }
   | { readonly kind: 'gia' }
   | { readonly kind: 'office'; readonly slug: string }
   | { readonly kind: 'agent'; readonly slug: string; readonly agentId: string }
@@ -27,7 +27,9 @@ export function parseRoute(path: string): Route {
   if (trimmed === '/' || trimmed === '/home') return { kind: 'home' };
   if (trimmed === '/conversations') return { kind: 'conversations' };
   if (trimmed === '/settings/connections') return { kind: 'connections' };
-  if (trimmed === '/settings/business') return { kind: 'business_profile' };
+  // The company's memory (ADR-0056). Its first section is the business profile, which lived at
+  // Settings → Business (ADR-0048): that address still opens it.
+  if (trimmed === '/memory' || trimmed === '/settings/business') return { kind: 'memory' };
   if (trimmed === '/gia') return { kind: 'gia' };
   const parts = trimmed.split('/').slice(1);
   const [first, slug, third, agentId] = parts;
@@ -47,7 +49,7 @@ export const paths = {
   /** A contact's card in the Comercial office (C3). */
   customer: (contactId: string) => `/office/sales?contact=${encodeURIComponent(contactId)}`,
   connections: () => '/settings/connections',
-  business: () => '/settings/business',
+  memory: () => '/memory',
   gia: () => '/gia',
   office: (slug: string) => `/office/${encodeURIComponent(slug)}`,
   agent: (slug: string, agentId: string) =>

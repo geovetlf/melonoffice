@@ -183,7 +183,7 @@ function placeOf(
   answer: GiaAnswerView,
   departmentName: string | undefined,
   intl: ReturnType<typeof useIntl>,
-): { readonly path: string; readonly label: string } | undefined {
+): { readonly path: string; readonly label: string; readonly add?: boolean } | undefined {
   switch (answer.screen) {
     case 'home':
       return { path: paths.home(), label: intl.formatMessage({ id: 'nav.home' }) };
@@ -195,7 +195,8 @@ function placeOf(
     case 'connections':
       return { path: paths.connections(), label: intl.formatMessage({ id: 'nav.connections' }) };
     case 'business_profile':
-      return { path: paths.business(), label: intl.formatMessage({ id: 'nav.business' }) };
+      // GIA points here when it asks for something the company memory does not have yet.
+      return { path: paths.memory(), label: intl.formatMessage({ id: 'nav.memory' }), add: true };
     case 'department':
       return answer.department === null || departmentName === undefined
         ? undefined
@@ -232,7 +233,17 @@ function GiaReply({ answer }: { readonly answer: GiaAnswerView }) {
       )}
       {answer.proposedFacts > 0 ? (
         <p className="gia-chat__meta">
-          <FormattedMessage id="gia.chat.facts" values={{ count: answer.proposedFacts }} />
+          <FormattedMessage id="gia.chat.facts" values={{ count: answer.proposedFacts }} />{' '}
+          <a
+            className="gia-chat__go"
+            href={paths.memory()}
+            onClick={(event) => {
+              event.preventDefault();
+              navigate(paths.memory());
+            }}
+          >
+            <FormattedMessage id="gia.chat.reviewFacts" />
+          </a>
         </p>
       ) : null}
       {place === undefined ? null : (
@@ -244,7 +255,11 @@ function GiaReply({ answer }: { readonly answer: GiaAnswerView }) {
             navigate(place.path);
           }}
         >
-          <FormattedMessage id="gia.chat.go" values={{ place: place.label }} />
+          {place.add === true ? (
+            <FormattedMessage id="gia.chat.addToMemory" />
+          ) : (
+            <FormattedMessage id="gia.chat.go" values={{ place: place.label }} />
+          )}
         </a>
       )}
       <p className="gia-chat__generated">

@@ -157,6 +157,7 @@ describe('the Home (ADR-0040)', () => {
     ).toEqual([
       'Home',
       'GIA',
+      'Company memory',
       'Board',
       'Operations',
       'Commercial',
@@ -164,12 +165,13 @@ describe('the Home (ADR-0040)', () => {
       'Research',
       'Finance',
     ]);
-    // The tools: Communications and Settings → Business (ADR-0048); the rest are coming.
+    // The tools: Communications; the rest are coming. The business lives in the company
+    // memory, next to the rooms (ADR-0056).
     expect(
       within(screen.getByRole('navigation', { name: 'Tools' }))
         .getAllByRole('link')
         .map((link) => link.getAttribute('href')),
-    ).toEqual(['/conversations', '/settings/business']);
+    ).toEqual(['/conversations']);
   });
 
   it('enters a department’s office on click, and comes back by the breadcrumb or the browser', async () => {

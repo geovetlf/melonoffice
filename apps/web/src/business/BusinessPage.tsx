@@ -14,8 +14,8 @@ import {
 import { currencyAfterCountryChange, startingValues } from './defaults.js';
 
 /**
- * The business profile (ADR-0048): Settings → Business, and the onboarding step a new owner sees
- * before the Home. Name, kind of business, country, currency, city and time zone are required; the
+ * The business profile (ADR-0048), shown as the first section of the company's memory
+ * (ADR-0056); it no longer stands in front of the Home. Name, kind of business, country, currency, city and time zone are required; the
  * rest is optional. The name is the organization's own, chosen when it was created. Only a person
  * with `organization.update` edits; everyone else who can read sees the values.
  *
@@ -117,13 +117,10 @@ export function BusinessPage({
   client,
   organizationName,
   canEdit,
-  onboarding = false,
 }: {
   readonly client: BusinessClient;
   readonly organizationName: string;
   readonly canEdit: boolean;
-  /** Shown before the Home, while the business is not described yet. */
-  readonly onboarding?: boolean;
 }) {
   const intl = useIntl();
   const { business } = useOfficeData();
@@ -165,20 +162,15 @@ export function BusinessPage({
     setForm(profile === undefined ? undefined : formOf(profile));
   }
 
-  const titleId = onboarding ? 'business.onboarding.title' : 'business.title';
+  // A section of the company's memory (ADR-0056), under the page's own title.
   const header = (
     <header className="connections__header">
       <div>
-        {onboarding ? null : (
-          <p className="connections__eyebrow">
-            <FormattedMessage id="business.eyebrow" />
-          </p>
-        )}
-        <h1 id="business-title">
-          <FormattedMessage id={titleId} />
-        </h1>
+        <h2 id="business-title">
+          <FormattedMessage id="business.title" />
+        </h2>
         <p>
-          <FormattedMessage id={onboarding ? 'business.onboarding.intro' : 'business.intro'} />
+          <FormattedMessage id="business.intro" />
         </p>
       </div>
     </header>

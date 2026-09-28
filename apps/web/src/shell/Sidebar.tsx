@@ -27,7 +27,7 @@ export function Sidebar({
   route,
   canReadConversations,
   canReadConnections = false,
-  canReadBusiness = false,
+  canReadMemory = false,
   open,
   onNavigate,
 }: {
@@ -35,8 +35,8 @@ export function Sidebar({
   readonly canReadConversations: boolean;
   /** Settings → Connections, for a person with `channel.read` (ADR-0044). */
   readonly canReadConnections?: boolean;
-  /** Settings → Business, for a member who can read the organization (ADR-0048). */
-  readonly canReadBusiness?: boolean;
+  /** The company's memory (ADR-0056), for a member who may read the business or its knowledge. */
+  readonly canReadMemory?: boolean;
   readonly open: boolean;
   readonly onNavigate: () => void;
 }) {
@@ -72,6 +72,11 @@ export function Sidebar({
           <NavLink icon="gia" path={paths.gia()} current={route.kind === 'gia'} go={go}>
             <FormattedMessage id="gia.name" />
           </NavLink>
+          {canReadMemory ? (
+            <NavLink icon="memory" path={paths.memory()} current={route.kind === 'memory'} go={go}>
+              <FormattedMessage id="nav.memory" />
+            </NavLink>
+          ) : null}
           {[...headquarters, ...floor].map((department) => {
             const slug = officeSlug(department);
             return (
@@ -129,16 +134,6 @@ export function Sidebar({
               </li>
             ),
           )}
-          {canReadBusiness ? (
-            <NavLink
-              icon="building"
-              path={paths.business()}
-              current={route.kind === 'business_profile'}
-              go={go}
-            >
-              <FormattedMessage id="nav.business" />
-            </NavLink>
-          ) : null}
         </ul>
       </nav>
       <PlanCard />

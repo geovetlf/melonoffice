@@ -1,9 +1,10 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
 import { Button } from '@melonoffice/ui';
-import { useEffect, useState, type FormEvent } from 'react';
+import { useState, type FormEvent } from 'react';
 import type { CustomersClient, CustomerView } from '../customers/customersClient.js';
 import { navigate } from '../identity/router.js';
 import { paths } from '../shell/routes.js';
+import { useRead } from '../shell/useRead.js';
 import {
   LOST_REASONS,
   OpportunityRequestError,
@@ -20,29 +21,6 @@ import {
 } from './opportunitiesClient.js';
 
 type IntlShape = ReturnType<typeof useIntl>;
-
-type Load<T> =
-  | { readonly status: 'loading' }
-  | { readonly status: 'ready'; readonly value: T }
-  | { readonly status: 'error' };
-
-/** A read keyed by what it was for: an older one shows as loading until the new one answers. */
-function useRead<T>(key: string, read: () => Promise<T>): Load<T> {
-  const [state, setState] = useState<{ key: string; load: Load<T> } | undefined>();
-  useEffect(() => {
-    let live = true;
-    read().then(
-      (value) => live && setState({ key, load: { status: 'ready', value } }),
-      () => live && setState({ key, load: { status: 'error' } }),
-    );
-    return () => {
-      live = false;
-    };
-    // The key names the read: `read` changes with it.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key]);
-  return state?.key === key ? state.load : { status: 'loading' };
-}
 
 /** How many minor units a currency's major unit has (2 for soles, 0 for yen). */
 export function minorDigits(currency: string): number {
