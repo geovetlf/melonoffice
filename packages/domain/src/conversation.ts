@@ -1,3 +1,4 @@
+import type { NextAction } from './follow-up.js';
 import type { ExecutionId, ExecutionRef } from './execution.js';
 import type {
   Brand,
@@ -90,7 +91,7 @@ export interface ContactCommercial {
     readonly recordedBy?: 'contact' | 'member';
   };
   /** What to do next and by when (a date in the business's time zone). */
-  readonly nextAction?: { readonly text: string; readonly dueOn: string };
+  readonly nextAction?: NextAction;
   readonly stageChangedAt: IsoTimestamp;
 }
 

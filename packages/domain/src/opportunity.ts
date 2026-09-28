@@ -1,3 +1,4 @@
+import type { NextAction } from './follow-up.js';
 import type { ContactId } from './conversation.js';
 import type { Brand, IsoTimestamp, MessageKey, OrganizationId, UserId } from './ids.js';
 
@@ -67,7 +68,7 @@ export interface Opportunity {
   readonly ownerId?: UserId;
   /** When it is expected to close (a date in the business's time zone). */
   readonly expectedCloseOn?: string;
-  readonly nextAction?: { readonly text: string; readonly dueOn: string };
+  readonly nextAction?: NextAction;
   readonly lostReason?: LostReason;
   readonly closedAt?: IsoTimestamp;
   readonly stageChangedAt: IsoTimestamp;

@@ -12,7 +12,7 @@ import {
   withAgentTurns,
   type ConversationIngressPort,
 } from '@melonoffice/integrations';
-import { createCloudTasksDispatcher } from '@melonoffice/runtime';
+import { createCloudTasksDispatcher, createCloudTasksScheduler } from '@melonoffice/runtime';
 import { defaultToolRegistry } from '@melonoffice/tools';
 import { createAgentTurns } from './agent-turns.js';
 import { createLogger } from '@melonoffice/observability';
@@ -150,6 +150,19 @@ function services(projectId: string) {
       agentOutputs: new FirestoreAgentOutputRepository(firestore),
       ...(secretProjectId === undefined ? {} : { secretProjectId }),
       ...(engine === undefined ? {} : { engine }),
+      // Follow-ups' tasks (C5, ADR-0058) go to the worker through the same queue and invoker,
+      // held by Cloud Tasks until their time. Without the transport none can be scheduled.
+      ...(transport === undefined
+        ? {}
+        : {
+            followUpScheduler: createCloudTasksScheduler({
+              queue: transport.queue,
+              targetUrl: `${transport.workerUrl}/internal/follow-ups/run`,
+              audience: transport.workerUrl,
+              invokerEmail: transport.invokerEmail,
+              dispatchDeadlineSeconds: Math.ceil(transport.leaseMs / 1000),
+            }),
+          }),
       // A person's replies (ADR-0034) only where the engine and the environment are both
       // configured (DEV, from Terraform); anywhere else sending stays off (fails closed).
       ...(engine === undefined || environment === undefined ? {} : { outbound: { environment } }),

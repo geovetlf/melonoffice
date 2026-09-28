@@ -21,7 +21,8 @@ export interface AuditActionDefinition {
     | 'gia'
     | 'contact'
     | 'opportunity'
-    | 'pipeline';
+    | 'pipeline'
+    | 'follow_up';
   readonly description: string;
   /** The results this action is recorded with. Anything else is a programming error. */
   readonly results: readonly AuditResult[];
@@ -181,6 +182,47 @@ export const AUDIT_ACTIONS = {
     description:
       'A person reopened a won or lost opportunity (C2); `transition` is won or lost → the open stage.',
     results: ['success'],
+  },
+  'follow_up.created': {
+    category: 'follow_up',
+    description:
+      'A person scheduled a follow-up for a contact or an opportunity (C5, ADR-0058); `reason` is its type and `reference` its source (`manual` or `gia`). Never its title, description or contact data.',
+    results: ['success'],
+  },
+  'follow_up.updated': {
+    category: 'follow_up',
+    description:
+      "A person changed a follow-up's details (C5); `reason` says which (`details`, `type`, `assignee`), never the values.",
+    results: ['success'],
+  },
+  'follow_up.rescheduled': {
+    category: 'follow_up',
+    description:
+      'A person moved a follow-up to another time, or reopened a completed, cancelled or failed one (C5); `transition` is the status before → scheduled. The earlier times stay in its history.',
+    results: ['success'],
+  },
+  'follow_up.completed': {
+    category: 'follow_up',
+    description: 'A person marked a follow-up done (C5); `transition` is its status → completed.',
+    results: ['success'],
+  },
+  'follow_up.cancelled': {
+    category: 'follow_up',
+    description:
+      'A follow-up was cancelled and kept (C5); `reason` is `person`, or `opportunity_closed` or `contact_archived` when its time came and its record had ended.',
+    results: ['success'],
+  },
+  'follow_up.due': {
+    category: 'follow_up',
+    description:
+      "A follow-up's time came: the scheduler's task marked it due, which is the internal notice to its assignee (C5). Nothing is sent to the contact.",
+    results: ['success'],
+  },
+  'follow_up.failed': {
+    category: 'follow_up',
+    description:
+      'A follow-up could not be scheduled or processed (C5); `reason` is the code (`not_scheduled`, `retries_exhausted`).',
+    results: ['failure'],
   },
   'pipeline.created': {
     category: 'pipeline',

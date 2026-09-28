@@ -12,3 +12,5 @@ export * from './pipeline.js';
 export * from './opportunities.js';
 export * from './agent-turn.js';
 export * from './insights.js';
+export * from './follow-up-time.js';
+export * from './follow-ups.js';

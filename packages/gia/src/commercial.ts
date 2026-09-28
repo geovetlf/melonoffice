@@ -4,9 +4,15 @@ import type {
   InsightAmount,
   InsightContact,
   InsightConversation,
+  InsightFollowUp,
   InsightOpportunity,
 } from '@melonoffice/conversations';
-import { INSIGHT_RULES } from '@melonoffice/conversations';
+import {
+  dateGrid,
+  FOLLOW_UP_LIMITS,
+  FOLLOW_UP_TYPES,
+  INSIGHT_RULES,
+} from '@melonoffice/conversations';
 import type { GiaLocale } from './catalogue.js';
 
 /**
@@ -21,9 +27,11 @@ export type GiaLink =
   | { readonly kind: 'opportunity'; readonly id: string; readonly label: string }
   | { readonly kind: 'contact'; readonly id: string; readonly label: string | null }
   | { readonly kind: 'conversation'; readonly id: string; readonly label: string | null }
+  | { readonly kind: 'follow_up'; readonly id: string; readonly label: string }
   | { readonly kind: 'leads' }
   | { readonly kind: 'customers' }
-  | { readonly kind: 'pipeline' };
+  | { readonly kind: 'pipeline' }
+  | { readonly kind: 'follow_ups' };
 
 /** What GIA says when the person may not read what they asked about. */
 export const NO_PERMISSION: Readonly<Record<GiaLocale, string>> = {
@@ -45,6 +53,10 @@ export function commercialLinks(insights: CommercialInsights): ReadonlyMap<strin
     links.set('customers', { kind: 'customers' });
   }
   if (insights.opportunities !== null) links.set('pipeline', { kind: 'pipeline' });
+  if (insights.followUps !== null) links.set('follow_ups', { kind: 'follow_ups' });
+  for (const f of insights.records.followUps) {
+    links.set(f.ref, { kind: 'follow_up', id: f.id, label: f.title });
+  }
   const contacts = new Map(insights.records.contacts.map((c) => [c.ref, c]));
   for (const o of insights.records.opportunities) {
     links.set(o.ref, { kind: 'opportunity', id: o.id, label: o.title });
@@ -138,6 +150,27 @@ function contactLine(c: InsightContact): string {
   ].join(', ');
 }
 
+function followUpLine(f: InsightFollowUp): string {
+  const when =
+    f.when === 'overdue'
+      ? `overdue by ${-f.days} days`
+      : f.when === 'today'
+        ? f.status === 'due'
+          ? 'due now'
+          : 'today'
+        : `in ${f.days} days`;
+  return [
+    `- ${f.ref} follow-up ${f.type} ${quoted(f.title)}`,
+    `${f.date} ${f.time} (${when})`,
+    `assigned to ${f.assignee}`,
+    f.contact === null ? null : `contact ${f.contact}`,
+    f.opportunity === null ? null : `opportunity ${f.opportunity}`,
+    f.status === 'failed' ? 'could not be scheduled: needs a new time' : null,
+  ]
+    .filter((part) => part !== null)
+    .join(', ');
+}
+
 const conversationLine = (v: InsightConversation) =>
   `- ${v.ref} conversation${v.contact === null ? '' : ` with ${v.contact}`}, waiting for an answer since ${v.waitingSince}`;
 
@@ -188,6 +221,17 @@ export function commercialContext(
       ? 'Conversations: the person may NOT read them.'
       : `Conversations waiting for an answer: ${i.conversations.waitingReply}.`,
   );
+  const f = i.followUps;
+  lines.push(
+    f === null
+      ? 'Follow-ups: the person may NOT read them.'
+      : `Follow-ups open: ${f.open}; overdue ${f.overdue}; today ${f.today}; next ${FOLLOW_UP_LIMITS.upcomingDays} days ${f.upcoming}. Assigned to the person: overdue ${f.mine.overdue}, today ${f.mine.today}.${f.partial ? ' (Only the latest follow-ups were read.)' : ''}`,
+  );
+  if (f !== null) {
+    lines.push(
+      `Follow-ups listed (overdue, today and coming, soonest first): ${f.listed.join(', ') || 'none'}`,
+    );
+  }
   lines.push('Attention (most pressing first):');
   lines.push(
     ...(i.attention.length === 0
@@ -206,10 +250,16 @@ export function commercialContext(
     list('- inactive customers', i.lists.inactiveCustomers),
     list('- quiet opportunities', i.lists.quiet),
     list('- latest wins', i.lists.recentWins),
+    list('- named in the message', i.lists.mentioned),
     'Records:',
     ...i.records.opportunities.map((r) => opportunityLine(r, locale)),
     ...i.records.contacts.map(contactLine),
     ...i.records.conversations.map(conversationLine),
+    ...i.records.followUps.map(followUpLine),
+    'Dates (for a follow-up date, pick one of these; never compute one):',
+    ...dateGrid(i.today).map(
+      (d, n) => `- ${d.date} ${d.weekday}${n === 0 ? ' (today)' : n === 1 ? ' (tomorrow)' : ''}`,
+    ),
   );
   return lines.join('\n');
 }
@@ -227,5 +277,20 @@ export function commercialRules(locale: GiaLocale): readonly string[] {
     'You never create, change, move, assign, win, lose, close or price a lead, customer, opportunity, stage or owner, and never send messages or call. Suggest what the person can do in Comercial, in proposedAction.',
     'links: up to 4 references from <commercial_context> (like o_a, c_b, v_a) or leads, customers, pipeline, for what your answer names; the app shows them as links. Never write references, ids or web addresses in answer.',
     'Ask at most one question, only when neither <company_context> nor <commercial_context> answers it.',
+  ];
+}
+
+/**
+ * GIA's rules for follow-ups (C5): she lists them, and proposes one only when asked; the person
+ * confirms it in the app. `canSchedule` says whether this person may schedule follow-ups.
+ */
+export function followUpRules(canSchedule: boolean): readonly string[] {
+  return [
+    "When asked what to do today or what is pending, start with the follow-ups due today and overdue from <commercial_context> (with their time and who they are assigned to, the person's own first), then the Attention items.",
+    canSchedule
+      ? `followUp: only when the person asks you to remind them of, schedule or follow up something about a contact or opportunity in <commercial_context> (usually one "named in the message"), propose it: record is its reference (the opportunity when the person talks about that sale), type one of ${FOLLOW_UP_TYPES.join(', ')}, title a short imperative like "Llamar a Juan" in the answer language, date one of the Dates the person said (null when they said no day). Otherwise followUp is null.`
+      : 'followUp is always null: this person may not schedule follow-ups. If asked, say they cannot schedule them.',
+    'Never say a follow-up is created, scheduled or saved: you only prepare it, and the app asks the person to confirm it. Never state a time the person did not write; the app asks for it.',
+    'If two contacts named in the message match, set followUp to null and ask which one.',
   ];
 }

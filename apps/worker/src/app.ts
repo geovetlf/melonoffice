@@ -1,6 +1,7 @@
 import { isAuthError, readBearerToken, type ServiceIdentityVerifier } from '@melonoffice/auth';
 import type { Logger } from '@melonoffice/observability';
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
+import { RETRY_COUNT_HEADER, RUN_FOLLOW_UP_PATH, type FollowUpHandler } from './follow-ups.js';
 import type { JobHandler } from './handler.js';
 import { registerHealth } from './health.js';
 
@@ -23,6 +24,11 @@ export interface AppOptions {
     readonly handler: JobHandler;
     /** Checks the caller is the job invoker service account, with this worker as audience. */
     readonly invoker: ServiceIdentityVerifier;
+    /**
+     * Marks follow-ups due when their scheduled task arrives (C5, ADR-0058), behind the same
+     * invoker check. Absent: follow-up deliveries are refused with 503.
+     */
+    readonly followUps?: FollowUpHandler;
   };
 }
 
@@ -55,40 +61,64 @@ export function createApp({ logger, version, jobs }: AppOptions): Hono<Env> {
 
   registerHealth(app, { service: SERVICE_NAME, version });
 
-  app.post(RUN_JOB_PATH, async (c) => {
-    if (jobs === undefined) return c.json({ error: 'runtime_not_configured' }, 503);
-
+  /** The invoker's token and a small JSON body, or the answer that refuses the delivery. */
+  async function delivery(c: Context<Env>): Promise<{ body: unknown } | { refused: Response }> {
+    if (jobs === undefined) {
+      return { refused: c.json({ error: 'runtime_not_configured' }, 503) };
+    }
     // Cloud Run only lets the invoker identity through; the worker checks the token again, so
     // a misconfigured service or a direct call never runs a job (defence in depth).
     const token = readBearerToken(c.req.header('authorization'));
-    if (token === undefined || token === null) return c.json({ error: 'missing_token' }, 401);
+    if (token === undefined || token === null) {
+      return { refused: c.json({ error: 'missing_token' }, 401) };
+    }
     try {
       await jobs.invoker.verify(token);
     } catch (error) {
       if (isAuthError(error) && error.code === 'verifier_unavailable') {
-        return c.json({ error: 'verifier_unavailable' }, 503);
+        return { refused: c.json({ error: 'verifier_unavailable' }, 503) };
       }
       c.get('logger').warn('job delivery unauthenticated', {
         code: isAuthError(error) ? error.code : 'invalid_token',
       });
-      return c.json({ error: 'forbidden' }, 403);
+      return { refused: c.json({ error: 'forbidden' }, 403) };
     }
 
     const type = c.req.header('content-type') ?? '';
     if (!/^application\/json(;|$)/i.test(type)) {
-      return c.json({ result: 'invalid_request', code: 'content_type' }, 400);
+      return { refused: c.json({ result: 'invalid_request', code: 'content_type' }, 400) };
     }
     const raw = await c.req.text();
     if (Buffer.byteLength(raw) > MAX_BODY_BYTES) {
-      return c.json({ result: 'invalid_request', code: 'body_too_large' }, 400);
+      return { refused: c.json({ result: 'invalid_request', code: 'body_too_large' }, 400) };
     }
-    let body: unknown;
     try {
-      body = JSON.parse(raw);
+      return { body: JSON.parse(raw) as unknown };
     } catch {
-      return c.json({ result: 'invalid_request', code: 'invalid_json' }, 400);
+      return { refused: c.json({ result: 'invalid_request', code: 'invalid_json' }, 400) };
     }
-    const result = await jobs.handler.run(body, c.get('requestId'));
+  }
+
+  app.post(RUN_JOB_PATH, async (c) => {
+    const read = await delivery(c);
+    if ('refused' in read) return read.refused;
+    const result = await (jobs as NonNullable<typeof jobs>).handler.run(
+      read.body,
+      c.get('requestId'),
+    );
+    return c.json(result.body, result.status);
+  });
+
+  // A follow-up's scheduled task (C5): same invoker, same checks, its own small body.
+  app.post(RUN_FOLLOW_UP_PATH, async (c) => {
+    if (jobs?.followUps === undefined) return c.json({ error: 'follow_ups_not_configured' }, 503);
+    const read = await delivery(c);
+    if ('refused' in read) return read.refused;
+    const retries = Number(c.req.header(RETRY_COUNT_HEADER) ?? '0');
+    const result = await jobs.followUps.run(
+      read.body,
+      Number.isSafeInteger(retries) && retries >= 0 ? retries : 0,
+    );
     return c.json(result.body, result.status);
   });
 

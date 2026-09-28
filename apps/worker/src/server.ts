@@ -20,6 +20,7 @@ import {
   FirestoreAgentOutputRepository,
   FirestoreApprovalRepository,
   FirestoreAuditStore,
+  FirestoreBusinessProfileRepository,
   FirestoreChannelConnectionRepository,
   FirestoreChannelTemplateRepository,
   FirestoreConnectionRateLimiter,
@@ -38,13 +39,16 @@ import {
   createWhatsAppAdapter,
   deliveryPolicyFromEnv,
 } from '@melonoffice/integrations';
+import { createFollowUpService } from '@melonoffice/conversations';
 import { createLogger } from '@melonoffice/observability';
+import { createAuthorizationService } from '@melonoffice/rbac';
 import { createToolRegistry, TOOL_CATALOGUE } from '@melonoffice/tools';
 import { createConversationAgentParts } from './agents.js';
 import { randomUUID } from 'node:crypto';
 import { createApp, RUN_JOB_PATH, SERVICE_NAME, type AppOptions } from './app.js';
 import { loadConfig, type RuntimeConfig } from './config.js';
-import { createCloudTasksDispatcher } from './dispatcher.js';
+import { createCloudTasksDispatcher, createCloudTasksScheduler } from './dispatcher.js';
+import { createFollowUpHandler, RUN_FOLLOW_UP_PATH } from './follow-ups.js';
 import { createJobHandler } from './handler.js';
 import { createWorkerRuntime } from './runtime.js';
 
@@ -155,8 +159,29 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
     }),
     logger,
   });
+  // Follow-ups (C5, ADR-0058): their tasks come through the same queue and invoker. The hop to
+  // a time beyond the queue's horizon is queued the same way.
+  const businessProfiles = new FirestoreBusinessProfileRepository(firestore);
+  const followUps = createFollowUpService({
+    repository: new FirestoreConversationRepository(firestore),
+    organizations: tenancy,
+    authorization: createAuthorizationService(),
+    timeZone: async (organizationId) =>
+      (await businessProfiles.find(organizationId))?.timeZone ?? 'America/Lima',
+    scheduler: createCloudTasksScheduler({
+      queue: runtime.queue,
+      targetUrl: `${runtime.workerUrl}${RUN_FOLLOW_UP_PATH}`,
+      audience: runtime.workerUrl,
+      invokerEmail: runtime.invokerEmail,
+      dispatchDeadlineSeconds: Math.ceil(runtime.leaseMs / 1000),
+    }),
+  });
   return {
     handler: createJobHandler({ jobs: jobService, runtime: engine, workerId, logger }),
+    followUps: createFollowUpHandler({
+      followUps,
+      logger: logger.child({ component: 'follow-ups' }),
+    }),
     invoker: createServiceIdentityVerifier({
       audience: runtime.workerUrl,
       allowedEmails: [runtime.invokerEmail],

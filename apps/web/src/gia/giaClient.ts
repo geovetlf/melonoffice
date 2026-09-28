@@ -18,7 +18,24 @@ export type GiaLinkView =
   | { readonly kind: 'opportunity'; readonly id: string; readonly label: string }
   | { readonly kind: 'contact'; readonly id: string; readonly label: string | null }
   | { readonly kind: 'conversation'; readonly id: string; readonly label: string | null }
-  | { readonly kind: 'leads' | 'customers' | 'pipeline' };
+  | { readonly kind: 'follow_up'; readonly id: string; readonly label: string }
+  | { readonly kind: 'leads' | 'customers' | 'pipeline' | 'follow_ups' };
+
+/**
+ * A follow-up GIA prepared (C5): nothing is scheduled until the person confirms it. `time` is
+ * null when the person wrote none, and the app asks for it.
+ */
+export interface GiaFollowUpProposalView {
+  readonly contactId: string;
+  readonly contactLabel: string | null;
+  readonly opportunityId: string | null;
+  readonly opportunityLabel: string | null;
+  readonly type: 'follow_up' | 'call' | 'message' | 'review' | 'check_in';
+  readonly title: string;
+  readonly date: string | null;
+  readonly time: string | null;
+  readonly timeZone: string;
+}
 
 export interface GiaAnswerView {
   readonly answer: string;
@@ -27,6 +44,7 @@ export interface GiaAnswerView {
   readonly proposedAction: string | null;
   readonly proposedFacts: number;
   readonly links: readonly GiaLinkView[];
+  readonly proposedFollowUp: GiaFollowUpProposalView | null;
 }
 
 export type GiaFailure = 'credits' | 'not_available' | 'rate_limited' | 'failed';
@@ -52,13 +70,43 @@ function linksOf(raw: unknown): readonly GiaLinkView[] {
   return raw.flatMap((link): GiaLinkView[] => {
     if (!isRecord(link)) return [];
     const { kind, id, label } = link;
-    if (kind === 'leads' || kind === 'customers' || kind === 'pipeline') return [{ kind }];
+    if (kind === 'leads' || kind === 'customers' || kind === 'pipeline' || kind === 'follow_ups') {
+      return [{ kind }];
+    }
     if (typeof id !== 'string' || id === '') return [];
     const name = typeof label === 'string' && label !== '' ? label : null;
-    if (kind === 'opportunity' && name !== null) return [{ kind, id, label: name }];
+    if ((kind === 'opportunity' || kind === 'follow_up') && name !== null) {
+      return [{ kind, id, label: name }];
+    }
     if (kind === 'contact' || kind === 'conversation') return [{ kind, id, label: name }];
     return [];
   });
+}
+
+const TYPES = ['follow_up', 'call', 'message', 'review', 'check_in'] as const;
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+const CLOCK = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+function proposalOf(raw: unknown): GiaFollowUpProposalView | null {
+  if (!isRecord(raw)) return null;
+  const { contactId, contactLabel, opportunityId, opportunityLabel, type, title, date, time } = raw;
+  const text = (v: unknown) => (typeof v === 'string' && v !== '' ? v : null);
+  if (text(contactId) === null || text(title) === null || typeof raw.timeZone !== 'string') {
+    return null;
+  }
+  return {
+    contactId: contactId as string,
+    contactLabel: text(contactLabel),
+    opportunityId: text(opportunityId),
+    opportunityLabel: text(opportunityLabel),
+    type: (TYPES as readonly unknown[]).includes(type)
+      ? (type as (typeof TYPES)[number])
+      : 'follow_up',
+    title: title as string,
+    date: typeof date === 'string' && DAY.test(date) ? date : null,
+    time: typeof time === 'string' && CLOCK.test(time) ? time : null,
+    timeZone: raw.timeZone,
+  };
 }
 
 const FAILURES: Readonly<Record<string, GiaFailure>> = {
@@ -97,6 +145,7 @@ export function createGiaClient(request: ReplyRequest, organizationId: string): 
           proposedAction: typeof body.proposedAction === 'string' ? body.proposedAction : null,
           proposedFacts: typeof body.proposedFacts === 'number' ? body.proposedFacts : 0,
           links: linksOf(body.links),
+          proposedFollowUp: proposalOf(body.proposedFollowUp),
         },
       };
     },

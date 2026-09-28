@@ -68,6 +68,10 @@ export interface FakeBackend {
     knowledgeConflicts: Record<string, Record<string, unknown>[]>;
     /** Company Brain's onboarding questions still unanswered. */
     knowledgeQuestions: Record<string, Record<string, unknown>[]>;
+    /** Each organization's follow-ups (C5), as the API's views. */
+    followUps: Record<string, Record<string, unknown>[]>;
+    /** Scheduling a follow-up fails with this code and status (C5). */
+    followUpFails?: { readonly error: string; readonly status: number };
   };
   apiCalls(): Call[];
 }
@@ -123,6 +127,7 @@ export function fakeBackend(): FakeBackend {
     knowledge: {},
     knowledgeConflicts: {},
     knowledgeQuestions: {},
+    followUps: {},
   };
 
   function issue() {
@@ -621,6 +626,88 @@ export function fakeBackend(): FakeBackend {
     );
   }
 
+  /** Follow-ups (C5): list, schedule, complete, cancel and reschedule, as the API answers. */
+  function followUpsAnswer(
+    organizationId: string,
+    route: string,
+    query: string,
+    method: string,
+    body: string | undefined,
+    needs: (permission: string) => Response | undefined,
+  ) {
+    const all = (options.followUps[organizationId] ??= []);
+    const input = JSON.parse(body ?? '{}') as Record<string, unknown>;
+    if (route === 'follow-ups' && method === 'GET') {
+      const q = new URLSearchParams(query);
+      const items = all.filter(
+        (f) =>
+          (q.get('open') !== 'true' ||
+            ['scheduled', 'due', 'failed'].includes(f.status as string)) &&
+          (q.get('contact') === null || f.contactId === q.get('contact')) &&
+          (q.get('opportunity') === null || f.opportunityId === q.get('opportunity')) &&
+          (q.get('assignee') !== 'me' || f.assignee === 'you'),
+      );
+      const count = (when: string) => items.filter((f) => f.when === when).length;
+      return (
+        needs('follow_up.read') ??
+        json(200, {
+          timeZone: 'America/Lima',
+          today: '2026-09-28',
+          counts: {
+            overdue: count('overdue'),
+            today: count('today'),
+            upcoming: count('upcoming'),
+            open: items.length,
+          },
+          items,
+          hasMore: false,
+        })
+      );
+    }
+    const denied = needs('follow_up.manage');
+    if (denied !== undefined) return denied;
+    if (route === 'follow-ups' && method === 'POST') {
+      if (options.followUpFails !== undefined) {
+        return json(options.followUpFails.status, { error: options.followUpFails.error });
+      }
+      const created = {
+        id: `fu_${all.length + 1}`,
+        contactId: input.contactId,
+        contactName: null,
+        opportunityId: input.opportunityId ?? null,
+        assignee: 'you',
+        type: input.type,
+        title: input.title,
+        description: null,
+        scheduledAt: `${input.date as string}T15:00:00.000Z`,
+        timeZone: 'America/Lima',
+        date: input.date,
+        time: input.time,
+        when: 'upcoming',
+        days: 1,
+        status: 'scheduled',
+        source: input.source ?? 'manual',
+        cancelReason: null,
+        failure: null,
+        revision: 1,
+      };
+      all.push(created);
+      return json(201, { ...created, created: true });
+    }
+    const [, id, action] = route.split('/');
+    const found = all.find((f) => f.id === id);
+    if (found === undefined) return json(404, { error: 'follow_up_not_found' });
+    if (action === 'complete') found.status = 'completed';
+    if (action === 'cancel') found.status = 'cancelled';
+    if (action === 'reschedule') {
+      found.date = input.date;
+      found.time = input.time;
+      found.status = 'scheduled';
+    }
+    found.revision = (found.revision as number) + 1;
+    return json(200, found);
+  }
+
   /** The inbox routes, as the API answers them: membership first, then the role's permission. */
   function inboxAnswer(organizationId: string, rest: string, method: string, body?: string) {
     if (!options.organizations.some((o) => o.id === organizationId)) {
@@ -711,6 +798,9 @@ export function fakeBackend(): FakeBackend {
     }
     if (route === 'brain' || route?.startsWith('brain/') === true) {
       return brainAnswer(organizationId, route, query, method, body, needs);
+    }
+    if (route === 'follow-ups' || route?.startsWith('follow-ups/') === true) {
+      return followUpsAnswer(organizationId, route, query, method, body, needs);
     }
     if (route === 'customers' || route?.startsWith('customers/') === true) {
       return customersAnswer(organizationId, route, query, method, body, needs);

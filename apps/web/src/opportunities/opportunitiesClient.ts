@@ -49,7 +49,12 @@ export interface OpportunityView {
   readonly probability: number;
   readonly owner: 'you' | 'member' | null;
   readonly expectedCloseOn: string | null;
-  readonly nextAction: { readonly text: string; readonly dueOn: string } | null;
+  readonly nextAction: {
+    readonly text: string;
+    readonly dueOn: string;
+    /** Set when it is the record's earliest open follow-up (C5): it changes only through it. */
+    readonly followUpId?: string;
+  } | null;
   readonly lostReason: LostReason | null;
   readonly closedAt: string | null;
   readonly revision: number;

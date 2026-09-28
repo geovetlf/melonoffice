@@ -3,7 +3,8 @@ import type { AIMessage, AIOutputSchema } from '@melonoffice/ai-gateway';
 import { FACT_CANDIDATE_SCHEMA, FACT_RULES, type ContextFact } from '@melonoffice/brain';
 import type { CommercialInsights } from '@melonoffice/conversations';
 import { GIA_LIMITS, GIA_SCREENS, type GiaLocale } from './catalogue.js';
-import { commercialContext, commercialRules } from './commercial.js';
+import { FOLLOW_UP_LIMITS, FOLLOW_UP_TYPES } from '@melonoffice/conversations';
+import { commercialContext, commercialRules, followUpRules } from './commercial.js';
 
 /**
  * What GIA's chat sends to the model and what it accepts back (ADR-0052). The model sees only
@@ -31,7 +32,11 @@ export interface GiaPromptInput {
    * The commercial insights (C4), when GIA reads commercial records: `insights` is undefined
    * when they could not be read now. Absent, the chat has no commercial part.
    */
-  readonly commercial?: { readonly insights: CommercialInsights | undefined };
+  readonly commercial?: {
+    readonly insights: CommercialInsights | undefined;
+    /** The person may schedule follow-ups (C5): GIA may then propose one. */
+    readonly canScheduleFollowUps?: boolean;
+  };
 }
 
 /**
@@ -41,6 +46,7 @@ export interface GiaPromptInput {
 export function giaOutputSchema(
   departments: readonly string[],
   links: readonly string[] = [],
+  followUpRecords: readonly string[] = [],
 ): AIOutputSchema {
   return {
     type: 'object',
@@ -63,6 +69,22 @@ export function giaOutputSchema(
               items: { type: 'string', enum: [...links] },
             },
           }),
+      // A follow-up she proposes (C5), for one of the records she was given; a person confirms it.
+      ...(followUpRecords.length === 0
+        ? {}
+        : {
+            followUp: {
+              type: 'object',
+              nullable: true,
+              properties: {
+                record: { type: 'string', enum: [...followUpRecords] },
+                type: { type: 'string', enum: [...FOLLOW_UP_TYPES] },
+                title: { type: 'string', maxLength: FOLLOW_UP_LIMITS.titleLength },
+                date: { type: 'string', maxLength: 10, nullable: true },
+              },
+              required: ['record', 'type', 'title', 'date'],
+            },
+          }),
     },
     required: ['answer', 'department', 'screen', 'facts'],
   };
@@ -73,7 +95,12 @@ const LANGUAGE: Readonly<Record<GiaLocale, string>> = {
   es: 'Spanish (simple and warm, as spoken in Peru)',
 };
 
-function system(locale: GiaLocale, departments: readonly string[], commercial: boolean): string {
+function system(
+  locale: GiaLocale,
+  departments: readonly string[],
+  commercial: boolean,
+  canScheduleFollowUps: boolean,
+): string {
   return [
     "You are GIA, the assistant of one small business's virtual office in MelonOffice. You help its owner with warmth and professionalism.",
     `Always answer in ${LANGUAGE[locale]}, briefly and clearly.`,
@@ -87,7 +114,8 @@ function system(locale: GiaLocale, departments: readonly string[], commercial: b
     'facts: only facts about the business that the person states in <person_message> itself, to be proposed for the owner to confirm. Never facts you inferred, never from context. Usually empty.',
     ...FACT_RULES,
     ...(commercial ? commercialRules(locale) : []),
-    `Answer with exactly one JSON object with answer, department, screen, proposedAction (or null)${commercial ? ', facts and links' : ' and facts'}.`,
+    ...(commercial ? followUpRules(canScheduleFollowUps) : []),
+    `Answer with exactly one JSON object with answer, department, screen, proposedAction (or null)${commercial ? ', facts, links and followUp (or null)' : ' and facts'}.`,
   ].join('\n');
 }
 
@@ -140,7 +168,14 @@ export function giaMessages(input: GiaPromptInput): readonly AIMessage[] {
   return [
     {
       role: 'system',
-      content: text(system(input.locale, input.departments, input.commercial !== undefined)),
+      content: text(
+        system(
+          input.locale,
+          input.departments,
+          input.commercial !== undefined,
+          input.commercial?.canScheduleFollowUps === true,
+        ),
+      ),
     },
     ...history,
     { role: 'user', content: text(data) },

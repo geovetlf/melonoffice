@@ -8,6 +8,8 @@ import type {
   Conversation,
   ConversationId,
   ConversationSettings,
+  FollowUp,
+  FollowUpId,
   Message,
   MessageId,
   Opportunity,
@@ -100,6 +102,27 @@ export interface OpportunityRead {
   readonly contact: Contact;
   /** Absent until the organization's pipeline is stored. */
   readonly pipeline?: Pipeline;
+}
+
+/**
+ * What a follow-up change reads first, in the same transaction (C5, ADR-0058): the follow-up
+ * (absent when creating), its contact, its opportunity when it has one, and the other follow-ups
+ * of the same record (its opportunity, or its contact when it has none), to keep the record's next
+ * action in step and to count the open ones.
+ */
+export interface FollowUpRead {
+  readonly current?: FollowUp;
+  readonly contact: Contact;
+  readonly opportunity?: Opportunity;
+  readonly open: readonly FollowUp[];
+}
+
+/** A follow-up's next state, its record's when its next action moves, and the audit events. */
+export interface FollowUpWrite {
+  readonly followUp: FollowUp;
+  readonly contact?: Contact;
+  readonly opportunity?: Opportunity;
+  readonly events: readonly AuditEvent[];
 }
 
 /** The organization's new conversation settings and the audit events that record the change. */
@@ -198,6 +221,26 @@ export interface ConversationRepository {
     target: { readonly contactId: ContactId } | { readonly opportunityId: OpportunityId },
     change: (read: OpportunityRead) => OpportunityWrite,
   ): Promise<Opportunity>;
+  /** One follow-up (C5), or undefined when it is absent or another organization's. */
+  findFollowUp(organizationId: OrganizationId, id: FollowUpId): Promise<FollowUp | undefined>;
+  /** The organization's follow-ups. Order and filters are the caller's. */
+  listFollowUps(organizationId: OrganizationId): Promise<readonly FollowUp[]>;
+  /**
+   * Creates (`contactId` given) or changes a follow-up (C5): reads it, its contact, its
+   * opportunity and the other follow-ups of the same record, and writes what `change` returns in
+   * one transaction. Creating an id that exists hands `change` the stored one (the same request
+   * again). Changing an absent or another organization's follow-up is `follow_up_not_found`; its
+   * contact, `contact_not_found`; its opportunity, `opportunity_not_found`.
+   */
+  writeFollowUp(
+    organizationId: OrganizationId,
+    target: {
+      readonly followUpId: FollowUpId;
+      readonly contactId?: ContactId;
+      readonly opportunityId?: OpportunityId;
+    },
+    change: (read: FollowUpRead) => FollowUpWrite,
+  ): Promise<FollowUp>;
   /** A contact's channel identities. Empty for another organization's contact. */
   listIdentities(
     organizationId: OrganizationId,
@@ -344,6 +387,45 @@ export function checkNextOpportunity(
     throw new ConversationError('stage_not_found');
 }
 
+/**
+ * A follow-up's next state must be the same one (or a new one) in the same organization and for
+ * the same record, exactly one revision ahead; its record's, one revision ahead too (C5).
+ */
+export function checkNextFollowUp(
+  read: FollowUpRead,
+  next: FollowUpWrite,
+  organizationId: OrganizationId,
+): void {
+  const { current, contact, opportunity } = read;
+  const f = next.followUp;
+  if (
+    f.organizationId !== organizationId ||
+    f.contactId !== contact.id ||
+    f.opportunityId !== opportunity?.id ||
+    (current !== undefined &&
+      (f.id !== current.id ||
+        f.createdAt !== current.createdAt ||
+        f.contactId !== current.contactId ||
+        f.opportunityId !== current.opportunityId)) ||
+    f.revision !== (current?.revision ?? 0) + 1 ||
+    !isUuid(f.id)
+  ) {
+    throw new ConversationError('follow_up_concurrency_conflict');
+  }
+  if (next.contact !== undefined && next.contact !== contact)
+    checkNextContact(contact, next.contact);
+  if (next.opportunity !== undefined && next.opportunity !== opportunity) {
+    if (
+      opportunity === undefined ||
+      next.opportunity.id !== opportunity.id ||
+      next.opportunity.organizationId !== organizationId ||
+      next.opportunity.revision !== opportunity.revision + 1
+    ) {
+      throw new ConversationError('opportunity_concurrency_conflict');
+    }
+  }
+}
+
 /** The stages a new pipeline drops that some opportunity is still at. */
 export function removedStages(current: Pipeline | undefined, next: Pipeline): readonly string[] {
   if (current === undefined) return [];
@@ -363,6 +445,7 @@ export class InMemoryConversationRepository implements ConversationRepository {
   readonly #notes: ContactNote[] = [];
   readonly #pipelines = new Map<string, Pipeline>();
   readonly #opportunities = new Map<string, Opportunity>();
+  readonly #followUps = new Map<string, FollowUp>();
 
   constructor(private readonly audit?: InMemoryAuditStore) {}
 
@@ -596,6 +679,68 @@ export class InMemoryConversationRepository implements ConversationRepository {
     if (next.contact !== undefined) this.#contacts.set(contact.id, next.contact);
     this.#opportunities.set(next.opportunity.id, next.opportunity);
     return next.opportunity;
+  }
+
+  async findFollowUp(
+    organizationId: OrganizationId,
+    id: FollowUpId,
+  ): Promise<FollowUp | undefined> {
+    const f = this.#followUps.get(id);
+    return f?.organizationId === organizationId ? f : undefined;
+  }
+
+  async listFollowUps(organizationId: OrganizationId): Promise<readonly FollowUp[]> {
+    return [...this.#followUps.values()].filter((f) => f.organizationId === organizationId);
+  }
+
+  async writeFollowUp(
+    organizationId: OrganizationId,
+    target: {
+      readonly followUpId: FollowUpId;
+      readonly contactId?: ContactId;
+      readonly opportunityId?: OpportunityId;
+    },
+    change: (read: FollowUpRead) => FollowUpWrite,
+  ): Promise<FollowUp> {
+    const current = await this.findFollowUp(organizationId, target.followUpId);
+    if (current === undefined && target.contactId === undefined) {
+      throw new ConversationError('follow_up_not_found');
+    }
+    const contactId = current?.contactId ?? (target.contactId as ContactId);
+    const opportunityId = current === undefined ? target.opportunityId : current.opportunityId;
+    const contact = await this.findContact(organizationId, contactId);
+    if (contact === undefined) throw new ConversationError('contact_not_found');
+    let opportunity: Opportunity | undefined;
+    if (opportunityId !== undefined) {
+      opportunity = await this.findOpportunity(organizationId, opportunityId);
+      if (opportunity?.contactId !== contact.id) {
+        throw new ConversationError('opportunity_not_found');
+      }
+    }
+    const subject =
+      opportunityId === undefined ? `contact:${contactId}` : `opportunity:${opportunityId}`;
+    const open = [...this.#followUps.values()].filter(
+      (f) =>
+        f.organizationId === organizationId &&
+        (f.opportunityId === undefined
+          ? `contact:${f.contactId}`
+          : `opportunity:${f.opportunityId}`) === subject,
+    );
+    const read: FollowUpRead = {
+      ...(current === undefined ? {} : { current }),
+      contact,
+      ...(opportunity === undefined ? {} : { opportunity }),
+      open,
+    };
+    const next = change(read);
+    if (next.followUp === current) return current;
+    checkNextFollowUp(read, next, organizationId);
+    this.audit?.append(next.events);
+    if (next.contact !== undefined) this.#contacts.set(contact.id, next.contact);
+    if (next.opportunity !== undefined)
+      this.#opportunities.set(next.opportunity.id, next.opportunity);
+    this.#followUps.set(next.followUp.id, next.followUp);
+    return next.followUp;
   }
 
   async listIdentities(

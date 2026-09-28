@@ -15,7 +15,7 @@ export interface ActivityItemView {
   readonly action: string;
   readonly result: string;
   readonly actor: ActivityActor;
-  readonly link?: { readonly kind: 'conversation'; readonly id: string };
+  readonly link?: { readonly kind: 'conversation' | 'follow_up'; readonly id: string };
 }
 
 export interface ActivityPageView {

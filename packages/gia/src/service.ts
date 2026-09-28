@@ -7,9 +7,24 @@ import {
   type ContextFact,
   type KnowledgeGaps,
 } from '@melonoffice/brain';
-import type { CommercialInsights, CommercialInsightService } from '@melonoffice/conversations';
+import {
+  daysBetween,
+  FOLLOW_UP_LIMITS,
+  FOLLOW_UP_TYPES,
+  isLocalDate,
+  relativeDate,
+  relativeTime,
+  type CommercialInsights,
+  type CommercialInsightService,
+} from '@melonoffice/conversations';
 import type { DepartmentRepository } from '@melonoffice/departments';
-import type { OrganizationId, UserId } from '@melonoffice/domain';
+import type {
+  ContactId,
+  FollowUpType,
+  OpportunityId,
+  OrganizationId,
+  UserId,
+} from '@melonoffice/domain';
 import { withCorrelation, type Logger } from '@melonoffice/observability';
 import type { AuthorizationService } from '@melonoffice/rbac';
 import { isResolvedTenant, type TenantContext } from '@melonoffice/tenancy';
@@ -63,6 +78,12 @@ export interface GiaAnswer {
   /** Records and screens of Comercial the answer names (C4): only ones she was given. */
   readonly links: readonly GiaLink[];
   /**
+   * A follow-up she prepared (C5), for the person to confirm in the app: nothing is scheduled
+   * until they do. The date and time come from what the person wrote; `time` is null when they
+   * wrote none, and the app asks for it.
+   */
+  readonly proposedFollowUp: GiaFollowUpProposal | null;
+  /**
    * What she read: how many facts, whether today's activity and the commercial records, and
    * what is still unknown.
    */
@@ -75,6 +96,18 @@ export interface GiaAnswer {
   readonly replayed: boolean;
 }
 
+export interface GiaFollowUpProposal {
+  readonly contactId: ContactId;
+  readonly contactLabel: string | null;
+  readonly opportunityId: OpportunityId | null;
+  readonly opportunityLabel: string | null;
+  readonly type: FollowUpType;
+  readonly title: string;
+  readonly date: string | null;
+  readonly time: string | null;
+  readonly timeZone: string;
+}
+
 /** Today's activity as the person may read it (ADR-0049), in the business's time zone. */
 export interface GiaActivityPort {
   today(tenant: TenantContext): Promise<readonly ActivityItem[]>;
@@ -84,7 +117,10 @@ export interface GiaOptions {
   readonly gateway: Pick<AIGateway, 'assist'>;
   readonly brain?: Pick<CompanyBrainService, 'context' | 'gaps' | 'ingest'>;
   readonly activity?: GiaActivityPort;
-  /** The commercial insights (C4), read as the person through the C1/C2 services. */
+  /**
+   * The commercial insights (C4), read as the person through the C1/C2 services, with the
+   * follow-ups (C5) and the contacts the message names.
+   */
   readonly commercial?: Pick<CommercialInsightService, 'read'>;
   readonly departments: Pick<DepartmentRepository, 'list'>;
   readonly authorization: Pick<AuthorizationService, 'authorize'>;
@@ -176,6 +212,7 @@ function parseAnswer(
       action: string | null;
       facts: unknown[];
       links: unknown[];
+      followUp: unknown;
     }
   | undefined {
   let output: unknown = response.output.structured;
@@ -187,7 +224,7 @@ function parseAnswer(
     }
   }
   if (!isRecord(output)) return undefined;
-  const { answer, department, screen, proposedAction, facts, links } = output;
+  const { answer, department, screen, proposedAction, facts, links, followUp } = output;
   if (typeof answer !== 'string' || answer.trim() === '') return undefined;
   if (answer.length > GIA_LIMITS.answerLength) return undefined;
   if (typeof screen !== 'string' || !(GIA_SCREENS as readonly string[]).includes(screen)) {
@@ -209,7 +246,56 @@ function parseAnswer(
     action,
     facts: Array.isArray(facts) ? facts.slice(0, GIA_LIMITS.facts) : [],
     links: Array.isArray(links) ? links : [],
+    followUp,
   };
+}
+
+/**
+ * The follow-up she proposed, checked against what she was given (C5): its record must be one
+ * of the references, its type one of the catalogue's. The date is the one the person's own words
+ * name, by fixed rules; failing that, the model's pick if it is a real date from today on. The
+ * time is only ever read from the person's words. Anything else is no proposal.
+ */
+export function followUpProposalOf(
+  raw: unknown,
+  insights: CommercialInsights,
+  said: { readonly message: string; readonly earlier: readonly string[] },
+): GiaFollowUpProposal | null {
+  if (!isRecord(raw)) return null;
+  const { record, type, title, date } = raw;
+  if (typeof record !== 'string' || typeof title !== 'string') return null;
+  const name = title.normalize('NFC').trim().replace(/\s+/g, ' ');
+  if (name === '' || [...name].length > FOLLOW_UP_LIMITS.titleLength) return null;
+  const opportunity = insights.records.opportunities.find((o) => o.ref === record);
+  const contact = insights.records.contacts.find((c) => c.ref === record);
+  if (opportunity === undefined && contact === undefined) return null;
+  if (opportunity !== undefined && opportunity.status !== 'open') return null;
+  const contactId = opportunity?.contactId ?? (contact as NonNullable<typeof contact>).id;
+  const contactLabel = insights.records.contacts.find((c) => c.id === contactId)?.name ?? null;
+  const today = insights.today;
+  // The person's words first, the newest first; then the model's pick, only if it is a date.
+  const texts = [said.message, ...said.earlier.toReversed()];
+  const saidDate = texts.map((t) => relativeDate(t, today)).find((d) => d !== undefined);
+  const modelDate =
+    isLocalDate(date) &&
+    daysBetween(today, date) >= 0 &&
+    daysBetween(today, date) <= FOLLOW_UP_LIMITS.horizonDays
+      ? date
+      : undefined;
+  const saidTime = texts.map((t) => relativeTime(t)).find((t) => t !== undefined);
+  return Object.freeze({
+    contactId,
+    contactLabel,
+    opportunityId: opportunity?.id ?? null,
+    opportunityLabel: opportunity?.title ?? null,
+    type: (FOLLOW_UP_TYPES as readonly unknown[]).includes(type)
+      ? (type as FollowUpType)
+      : 'follow_up',
+    title: name,
+    date: saidDate ?? modelDate ?? null,
+    time: saidTime ?? null,
+    timeZone: insights.timeZone,
+  });
 }
 
 export function createGia(options: GiaOptions): GiaService {
@@ -347,12 +433,26 @@ export function createGia(options: GiaOptions): GiaService {
       readGaps(tenant),
       readActivity(tenant),
       activeTypes(organizationId),
-      readCommercial(tenant),
+      // The names the person wrote, now and in earlier turns, bring those contacts in (C5).
+      readCommercial(
+        tenant,
+        [...history.filter((t) => t.role === 'person').map((t) => t.text), message].join('\n'),
+      ),
     ]);
     const missing = gaps?.questions.map((q) => q.id) ?? [];
     // What an answer may link to: only the references she was given, never an id she wrote.
     const linkable =
       insights === undefined ? new Map<string, GiaLink>() : commercialLinks(insights);
+    // What a follow-up may be proposed for (C5): the contacts and open opportunities she was
+    // given, only to someone who may schedule follow-ups.
+    const canSchedule = can(tenant, 'follow_up.manage');
+    const followUpRecords =
+      insights === undefined || !canSchedule
+        ? []
+        : [
+            ...insights.records.contacts.map((c) => c.ref),
+            ...insights.records.opportunities.filter((o) => o.status === 'open').map((o) => o.ref),
+          ].slice(0, 50);
 
     const started = performance.now();
     const response = await gateway.assist(tenant, {
@@ -362,7 +462,7 @@ export function createGia(options: GiaOptions): GiaService {
       capability: 'text_generation',
       requirements: { structuredOutput: true },
       // The gateway takes at most 50 codes in a list: the general screens and the first records.
-      outputSchema: giaOutputSchema(types, [...linkable.keys()].slice(0, 50)),
+      outputSchema: giaOutputSchema(types, [...linkable.keys()].slice(0, 50), followUpRecords),
       messages: giaMessages({
         locale,
         facts,
@@ -371,7 +471,9 @@ export function createGia(options: GiaOptions): GiaService {
         departments: types,
         history,
         message,
-        ...(commercial === undefined ? {} : { commercial: { insights } }),
+        ...(commercial === undefined
+          ? {}
+          : { commercial: { insights, canScheduleFollowUps: followUpRecords.length > 0 } }),
       }),
       outputModality: 'text',
       maxOutputTokens: GIA_LIMITS.outputTokens,
@@ -408,6 +510,13 @@ export function createGia(options: GiaOptions): GiaService {
       ...(insights === undefined ? {} : { reason: 'commercial_context' }),
     });
     const proposedFacts = await propose(tenant, parsed.facts, log);
+    const proposedFollowUp =
+      insights === undefined || followUpRecords.length === 0
+        ? null
+        : followUpProposalOf(parsed.followUp, insights, {
+            message,
+            earlier: history.filter((t) => t.role === 'person').map((t) => t.text),
+          });
     log.info('gia.message_answered', {
       latencyMs,
       facts: facts.length,
@@ -416,6 +525,7 @@ export function createGia(options: GiaOptions): GiaService {
       credits: response.credits.consumed,
       routed: parsed.department !== null,
       commercial: insights !== undefined,
+      followUpProposed: proposedFollowUp !== null,
     });
     const links = [...new Set(parsed.links.filter((ref): ref is string => typeof ref === 'string'))]
       .flatMap((ref) => {
@@ -433,6 +543,7 @@ export function createGia(options: GiaOptions): GiaService {
       proposedAction: parsed.action,
       proposedFacts,
       links: Object.freeze(links),
+      proposedFollowUp,
       context: Object.freeze({
         facts: facts.length,
         activity: today !== undefined,
@@ -491,10 +602,13 @@ export function createGia(options: GiaOptions): GiaService {
   }
 
   /** The commercial insights, as this person may read them; a failure is only logged. */
-  async function readCommercial(tenant: TenantContext): Promise<CommercialInsights | undefined> {
+  async function readCommercial(
+    tenant: TenantContext,
+    mentions: string,
+  ): Promise<CommercialInsights | undefined> {
     if (commercial === undefined) return undefined;
     try {
-      return await commercial.read(tenant);
+      return await commercial.read(tenant, { mentions });
     } catch (error) {
       logger.warn('gia.commercial_unavailable', { error: codeOf(error) });
       return undefined;

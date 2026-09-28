@@ -485,8 +485,19 @@ export function createCustomerService(options: CustomerServiceOptions): Customer
           };
           if (ownerId === null) delete base.ownerId;
           else if (ownerId !== undefined) base.ownerId = ownerId;
+          // A next action that comes from a follow-up changes only through it (ADR-0058).
+          if (
+            nextAction !== undefined &&
+            before?.nextAction?.followUpId !== undefined &&
+            (nextAction?.text !== before.nextAction.text ||
+              nextAction?.dueOn !== before.nextAction.dueOn)
+          ) {
+            throw new ConversationError('next_action_from_follow_up');
+          }
           if (nextAction === null) delete base.nextAction;
-          else if (nextAction !== undefined) base.nextAction = nextAction;
+          else if (nextAction !== undefined && before?.nextAction?.followUpId === undefined) {
+            base.nextAction = nextAction;
+          }
           if (consent !== undefined) base.consent = consent;
           commercial = Object.freeze(base) as unknown as ContactCommercial;
 

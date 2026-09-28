@@ -38,6 +38,8 @@ import {
   createConversationIngress,
   InMemoryConversationRepository,
   type ConversationRepository,
+  type FollowUpScheduler,
+  type FollowUpTask,
 } from '@melonoffice/conversations';
 import {
   createIntegrationEngine,
@@ -372,10 +374,13 @@ export function setupApp(
     sending = true,
     webOrigins,
     ai,
+    followUpScheduler,
   }: {
     readonly sending?: boolean;
     readonly webOrigins?: readonly string[];
     readonly ai?: AppOptions['ai'];
+    /** Follow-ups' scheduler (C5): a recording one unless a test passes its own, or `null`. */
+    readonly followUpScheduler?: FollowUpScheduler | null;
   } = {},
 ) {
   const lines: string[] = [];
@@ -403,6 +408,12 @@ export function setupApp(
     // Retries (ADR-0045) wait no time here: the jitter is always zero.
     random: () => 0,
   });
+  // Stands in for Cloud Tasks: every scheduled follow-up task is recorded, nothing is queued.
+  const scheduled: { readonly task: FollowUpTask; readonly at: Date }[] = [];
+  const scheduler =
+    followUpScheduler === undefined
+      ? { schedule: async (task: FollowUpTask, at: Date) => void scheduled.push({ task, at }) }
+      : followUpScheduler;
   const app = createApp({
     logger,
     version: 'test',
@@ -427,6 +438,7 @@ export function setupApp(
       agentOutputs,
       engine,
       ...(sending ? { outbound: { environment: 'dev' as const } } : {}),
+      ...(scheduler === null ? {} : { followUpScheduler: scheduler }),
     },
     webhooks: engine,
     ...(tools ? { tools } : {}),
@@ -445,5 +457,5 @@ export function setupApp(
         userId: string;
       }
     ).userId;
-  return { app, lines, as, register, meta, agentOutputs, ...stores };
+  return { app, lines, as, register, meta, agentOutputs, scheduled, ...stores };
 }

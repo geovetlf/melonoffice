@@ -53,7 +53,15 @@ export type ConversationErrorCode =
   | 'opportunity_closed'
   | 'pipeline_concurrency_conflict'
   | 'stage_not_found'
-  | 'stage_in_use';
+  | 'stage_in_use'
+  // Follow-ups (C5, ADR-0058).
+  | 'follow_up_not_found'
+  | 'follow_up_concurrency_conflict'
+  | 'follow_up_closed'
+  | 'follow_up_limit_reached'
+  | 'follow_up_not_scheduled'
+  | 'follow_up_scheduler_unavailable'
+  | 'next_action_from_follow_up';
 
 export class ConversationError extends Error {
   override readonly name = 'ConversationError';

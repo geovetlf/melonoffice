@@ -54,6 +54,10 @@ export const paths = {
   contacts: (stage: 'lead' | 'customer') => `/office/sales?stage=${stage}`,
   /** The Comercial office's pipeline (C4). */
   pipeline: () => '/office/sales?view=pipeline',
+  /** The Comercial office's pending follow-ups (C5). */
+  followUps: () => '/office/sales?view=follow-ups',
+  /** One follow-up, marked among Comercial's pending ones (C5). */
+  followUp: (id: string) => `/office/sales?view=follow-ups&followUp=${encodeURIComponent(id)}`,
   connections: () => '/settings/connections',
   memory: () => '/memory',
   gia: () => '/gia',
@@ -64,10 +68,10 @@ export const paths = {
 
 /**
  * An id a page was opened with (`?c=`, `?contact=` (C3); `?opportunity=`, `?stage=`, `?view=`
- * (C4)), when it looks like one.
+ * (C4); `?followUp=` (C5)), when it looks like one.
  */
 export function openedWith(
-  name: 'c' | 'contact' | 'opportunity' | 'stage' | 'view',
+  name: 'c' | 'contact' | 'opportunity' | 'stage' | 'view' | 'followUp',
 ): string | undefined {
   const value = new URLSearchParams(globalThis.location.search).get(name);
   return value !== null && ID.test(value) ? value : undefined;
