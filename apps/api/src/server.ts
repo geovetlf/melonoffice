@@ -25,6 +25,7 @@ import {
   FirestoreAuditStore,
   FirestoreBillingStore,
   FirestoreChannelConnectionRepository,
+  FirestoreChannelTemplateRepository,
   FirestoreConnectionRateLimiter,
   FirestoreConversationRepository,
   FirestoreDepartmentRepository,
@@ -49,6 +50,7 @@ function services(projectId: string) {
   const firestore = new Firestore({ projectId });
   const conversations = new FirestoreConversationRepository(firestore);
   const connections = new FirestoreChannelConnectionRepository(firestore);
+  const templates = new FirestoreChannelTemplateRepository(firestore);
   const secretProjectId = config.channelSecretsProjectId;
   const environment = config.deploymentEnvironment;
   const tenancy = new FirestoreTenancyStore(firestore);
@@ -86,6 +88,8 @@ function services(projectId: string) {
           // Limits and retries (ADR-0045): one send limit per connection, shared with the worker.
           delivery: deliveryPolicyFromEnv(process.env),
           rateLimiter: new FirestoreConnectionRateLimiter(firestore),
+          // The organizations' approved templates (ADR-0046).
+          templates,
         });
   // Conversation agents (CV-6B, ADR-0043): the API starts an agent's turn after a message is
   // stored and hands jobs to the worker, only where the job transport is configured; without it,

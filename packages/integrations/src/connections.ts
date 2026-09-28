@@ -190,10 +190,22 @@ export class InMemoryChannelConnectionRepository implements ChannelConnectionRep
 
 /**
  * What a change may alter: the name, the status (along an allowed transition), its reason and
- * when it was last checked. Never the organization, the provider, the channel, the account, the
- * capabilities or where the secrets are. One revision at a time.
+ * when it was last checked. Never the organization, the provider, the channel or where the
+ * secrets are. The account only gains the business account id it lacked, once (ADR-0046); the
+ * capabilities are taken again from the provider's adapter only when a check connects it, so a
+ * connection made before its adapter could do more learns it by being checked again. One
+ * revision at a time.
  */
 export function checkNextConnection(current: ChannelConnection, next: ChannelConnection): void {
+  const accountChanged = JSON.stringify(next.account) !== JSON.stringify(current.account);
+  const accountGained =
+    current.account.businessAccountId === undefined &&
+    next.account.businessAccountId !== undefined &&
+    JSON.stringify({ ...next.account, businessAccountId: undefined }) ===
+      JSON.stringify({ ...current.account, businessAccountId: undefined });
+  const capabilitiesChanged =
+    JSON.stringify(next.capabilities) !== JSON.stringify(current.capabilities);
+  const connecting = current.status === 'connecting' && next.status === 'connected';
   if (
     next.id !== current.id ||
     next.organizationId !== current.organizationId ||
@@ -203,8 +215,8 @@ export function checkNextConnection(current: ChannelConnection, next: ChannelCon
     next.revision !== current.revision + 1 ||
     next.createdAt !== current.createdAt ||
     next.createdBy !== current.createdBy ||
-    JSON.stringify(next.account) !== JSON.stringify(current.account) ||
-    JSON.stringify(next.capabilities) !== JSON.stringify(current.capabilities) ||
+    (accountChanged && !accountGained) ||
+    (capabilitiesChanged && !connecting) ||
     JSON.stringify(next.secrets) !== JSON.stringify(current.secrets)
   ) {
     throw new IntegrationError('invalid_connection', 'concurrency');
@@ -250,6 +262,15 @@ export interface ChannelConnectionService {
   rename(tenant: TenantContext, id: string, displayName: unknown): Promise<ChannelConnection>;
   /** Checks the credentials with the provider: `connected`, or `error` with the provider's code. */
   connect(tenant: TenantContext, id: string): Promise<ChannelConnection>;
+  /**
+   * Records the provider business account a connection was made without (ADR-0046): once, never
+   * changed after. Templates are read from it.
+   */
+  setBusinessAccount(
+    tenant: TenantContext,
+    id: string,
+    businessAccountId: unknown,
+  ): Promise<ChannelConnection>;
   pause(tenant: TenantContext, id: string): Promise<ChannelConnection>;
   disconnect(tenant: TenantContext, id: string): Promise<ChannelConnection>;
   /** Deletes it: `revoked`, kept only as history. Its secrets are deleted by an operator. */
@@ -370,7 +391,10 @@ export function createChannelConnectionService({
       at: Date,
     ) => {
       readonly next: Partial<
-        Pick<ChannelConnection, 'status' | 'displayName' | 'lastValidatedAt'>
+        Pick<
+          ChannelConnection,
+          'status' | 'displayName' | 'lastValidatedAt' | 'capabilities' | 'account'
+        >
       > & {
         readonly statusReason?: string | undefined;
       };
@@ -535,12 +559,15 @@ export function createChannelConnectionService({
         if (latest.status !== 'connecting' || latest.revision !== connecting.revision) {
           throw new IntegrationError('invalid_transition', 'concurrent_change');
         }
+        const adapter = registry.find(latest.provider);
         return check.status === 'valid'
           ? {
               next: {
                 status: 'connected',
                 statusReason: undefined,
                 lastValidatedAt: at.toISOString() as IsoTimestamp,
+                // What its provider's adapter can do now (ADR-0046).
+                ...(adapter === undefined ? {} : { capabilities: adapter.capabilities }),
               },
               action: 'channel.connection_checked',
               reason: 'connected',
@@ -551,6 +578,24 @@ export function createChannelConnectionService({
               result: 'failure',
               reason: check.code,
             };
+      });
+    },
+
+    setBusinessAccount(tenant, id, businessAccountId) {
+      return change(tenant, 'channel.update', id, (current) => {
+        if (current.status === 'revoked') throw new IntegrationError('connection_revoked');
+        if (current.account.businessAccountId !== undefined) {
+          throw new IntegrationError('invalid_connection', 'account.businessAccountId');
+        }
+        const adapter = registry.find(current.provider);
+        if (adapter === undefined) throw new IntegrationError('invalid_connection', 'provider');
+        // The adapter checks the account as it would a new one.
+        const account = adapter.checkAccount({ ...current.account, businessAccountId });
+        return {
+          next: { account },
+          action: 'channel.connection_updated',
+          reason: 'business_account_set',
+        };
       });
     },
 

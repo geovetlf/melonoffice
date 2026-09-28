@@ -23,7 +23,10 @@ export type IntegrationErrorCode =
   | 'handshake_refused'
   | 'provider_unavailable'
   | 'provider_rejected'
-  | 'invalid_outbound';
+  | 'invalid_outbound'
+  // Templates (ADR-0046).
+  | 'invalid_template'
+  | 'template_not_found';
 
 export class IntegrationError extends Error {
   override readonly name = 'IntegrationError';

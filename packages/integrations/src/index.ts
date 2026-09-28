@@ -9,3 +9,4 @@ export * from './whatsapp.js';
 export * from './outbound.js';
 export * from './agent-turns.js';
 export * from './delivery.js';
+export * from './templates.js';

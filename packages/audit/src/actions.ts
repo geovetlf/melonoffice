@@ -415,6 +415,23 @@ export const AUDIT_ACTIONS = {
       "The provider refused a channel connection's credentials during a send: it is in error until a person checks it again (ADR-0044).",
     results: ['failure'],
   },
+  'channel.template_registered': {
+    category: 'channel',
+    description:
+      "A person registered one of the organization's provider-approved templates on a connection, by name and language; nothing is sent until the provider confirms it (ADR-0046).",
+    results: ['success'],
+  },
+  'channel.template_checked': {
+    category: 'channel',
+    description:
+      'A template was checked with its provider: active (approved, parameters recorded) or invalid with a stable code (ADR-0046).',
+    results: ['success', 'failure'],
+  },
+  'channel.template_disabled': {
+    category: 'channel',
+    description: 'A person turned a template off: it is never sent until checked again (ADR-0046).',
+    results: ['success'],
+  },
   'channel.delivery_attempted': {
     category: 'channel',
     description:

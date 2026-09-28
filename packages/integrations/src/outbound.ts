@@ -1,10 +1,15 @@
 import { actorOf, buildAuditEvent, type AuditEvent, type AuditService } from '@melonoffice/audit';
 import {
+  checkTemplateValues,
+  contentKeyOf,
   ConversationError,
   isClientMessageId,
   isConversationId,
+  isTemplateId,
   newOutboundMessage,
+  outboundMessageIdFor,
   personMaySend,
+  type ConversationErrorCode,
   type ConversationRepository,
   type OutboundSettlement,
 } from '@melonoffice/conversations';
@@ -14,6 +19,7 @@ import type {
   Execution,
   Message,
   MessageId,
+  MessageTemplateRef,
   OrganizationId,
   UserId,
 } from '@melonoffice/domain';
@@ -28,8 +34,9 @@ import {
   type ToolExecutorOutcome,
   type ToolResult,
 } from '@melonoffice/tools';
-import type { IntegrationEngine } from './engine.js';
+import type { IntegrationEngine, OutboundRequest } from './engine.js';
 import { isIntegrationError } from './errors.js';
+import { resolveTemplate, type ChannelTemplateRepository } from './templates.js';
 
 /**
  * A person's reply in a conversation (CV-2, ADR-0034). There is one way out of MelonOffice for
@@ -49,7 +56,8 @@ export const SEND_NODE = 'send';
 export function messageEventOf(
   userId: UserId,
   organizationId: OrganizationId,
-  message: Pick<Message, 'id' | 'conversationId' | 'channel'>,
+  message: Pick<Message, 'id' | 'conversationId' | 'channel'> &
+    Partial<Pick<Message, 'type' | 'template'>>,
   settlement: OutboundSettlement | { readonly status: 'denied'; readonly failureCode: string },
   at: Date,
   requestId?: string,
@@ -79,11 +87,60 @@ export function messageEventOf(
       reference: `conversation:${message.conversationId}`,
       reason: settlement.status === 'sent' ? message.channel : settlement.failureCode,
       tool: { id: MESSAGE_SEND.toolId, version: agent?.toolVersion ?? MESSAGE_SEND.version },
+      ...(message.type === undefined
+        ? {}
+        : {
+            message: auditedContentOf({
+              type: message.type,
+              ...(message.template === undefined ? {} : { template: message.template }),
+            }),
+          }),
       ...(requestId === undefined ? {} : { requestId }),
       source: 'api',
     },
     at,
   );
+}
+
+/**
+ * What the Integration Engine is asked to send for a stored message (ADR-0046): its text, its
+ * media with the caption, or its template's id and values. `undefined` for anything else.
+ */
+export function contentOf(message: Message, to: string): OutboundRequest['message'] | undefined {
+  if (message.type === 'template') {
+    return message.template === undefined
+      ? undefined
+      : {
+          kind: 'template',
+          to,
+          templateId: message.template.templateId,
+          values: message.template.values,
+        };
+  }
+  if (message.media !== undefined) {
+    return message.media.type !== message.type
+      ? undefined
+      : {
+          kind: 'media',
+          to,
+          media: message.media,
+          ...(message.text === undefined ? {} : { caption: message.text }),
+        };
+  }
+  return message.type === 'text' && message.text !== undefined
+    ? { to, text: message.text }
+    : undefined;
+}
+
+/** What an outbound message carried, for its audit events (ADR-0046): never its content. */
+export function auditedContentOf(message: Pick<Message, 'type' | 'template'>): {
+  readonly type: string;
+  readonly template?: string;
+  readonly language?: string;
+} {
+  return message.type === 'template' && message.template !== undefined
+    ? { type: 'template', template: message.template.name, language: message.template.language }
+    : { type: message.type };
 }
 
 /**
@@ -191,7 +248,9 @@ export function createChannelMessageExecutor(options: ChannelMessageExecutorOpti
             message.sender.specialistId === context.specialistId &&
             message.sender.executionId === context.executionId
           : message.sender.kind === 'user' && message.sender.userId === userId) ||
-        message.text === undefined
+        // An agent replies with text only; a person may also send media or a template.
+        (agent && message.type !== 'text') ||
+        contentOf(message, '') === undefined
       ) {
         return { status: 'failure', code: 'message_not_sendable' };
       }
@@ -247,8 +306,7 @@ export function createChannelMessageExecutor(options: ChannelMessageExecutorOpti
         channel: conversation.channel,
         conversation,
         message: {
-          to: identity.externalId,
-          text: message.text,
+          ...(contentOf(message, identity.externalId) as NonNullable<ReturnType<typeof contentOf>>),
           ...(context.idempotencyKey === undefined
             ? {}
             : { idempotencyKey: context.idempotencyKey }),
@@ -276,7 +334,16 @@ export function createChannelMessageExecutor(options: ChannelMessageExecutorOpti
                   : agentReplies?.refusalOf(context, latest, message);
               },
             }
-          : {}),
+          : {
+              // A person's message is checked again before each provider call too (ADR-0046):
+              // an agent that took the conversation during a retry's wait is never overtaken.
+              lastCheck: async () => {
+                const latest = await conversations.findConversation(organizationId, conversationId);
+                if (latest === undefined) return 'conversation_not_found';
+                if (latest.status === 'closed') return 'conversation_closed';
+                return personMaySend(latest) ? undefined : 'conversation_handled_by_ai';
+              },
+            }),
       });
       if (result.status === 'refused') return refuse(result.code);
       if (result.status === 'failed') return settle(settlementOfError(result.error));
@@ -286,10 +353,17 @@ export function createChannelMessageExecutor(options: ChannelMessageExecutorOpti
   };
 }
 
-/** What a person sends: their own key for the message, and its text. Nothing else. */
+/**
+ * What a person sends: their own key for the message and one content (ADR-0046): a text; media
+ * from a link, with an optional caption as `text`; or a template of the organization with its
+ * values. Nothing else.
+ */
 export interface SendRequest {
   readonly clientMessageId: unknown;
-  readonly text: unknown;
+  readonly text?: unknown;
+  readonly media?: unknown;
+  /** `{ templateId, values }`. */
+  readonly template?: unknown;
 }
 
 /** The message as it is after the send, and whether this call created it. */
@@ -317,6 +391,8 @@ export interface MessageSendServiceOptions {
   readonly channels: Pick<IntegrationEngine, 'availability'>;
   /** Records refusals made before a message is reserved. */
   readonly audit: AuditService;
+  /** The organizations' templates (ADR-0046). Absent: template messages are refused. */
+  readonly templates?: Pick<ChannelTemplateRepository, 'find'>;
   readonly logger?: Logger;
   readonly now?: () => Date;
   readonly requestId?: string;
@@ -349,6 +425,7 @@ export function createMessageSendService(options: MessageSendServiceOptions): Me
     logger,
     now = () => new Date(),
     requestId,
+    templates,
   } = options;
   const log = (event: string, fields: Record<string, unknown>) =>
     logger?.info(event, { ...fields, ...(requestId === undefined ? {} : { requestId }) });
@@ -483,33 +560,130 @@ export function createMessageSendService(options: MessageSendServiceOptions): Me
     });
   }
 
+  /** A template message's reference: the organization's active template, with fitting values. */
+  async function templateRefOf(
+    organizationId: OrganizationId,
+    conversation: Conversation,
+    raw: unknown,
+  ): Promise<
+    MessageTemplateRef | { readonly refusal: ConversationErrorCode; readonly detail?: string }
+  > {
+    if (
+      typeof raw !== 'object' ||
+      raw === null ||
+      Array.isArray(raw) ||
+      Object.keys(raw).some((k) => k !== 'templateId' && k !== 'values')
+    ) {
+      throw new ConversationError('invalid_request', 'template');
+    }
+    const { templateId, values: rawValues } = raw as Record<string, unknown>;
+    if (!isTemplateId(templateId))
+      throw new ConversationError('invalid_request', 'template.templateId');
+    const values = checkTemplateValues(rawValues);
+    const template =
+      templates === undefined ? undefined : await templates.find(organizationId, templateId);
+    if (
+      template === undefined ||
+      template.organizationId !== organizationId ||
+      template.connectionId !== conversation.connectionId ||
+      template.channel !== conversation.channel
+    ) {
+      return { refusal: 'template_not_found' };
+    }
+    if (template.status !== 'active') return { refusal: 'template_not_active' };
+    try {
+      resolveTemplate(template, values);
+    } catch (error) {
+      if (!isIntegrationError(error)) throw error;
+      return { refusal: 'template_parameters_invalid', detail: error.detail ?? error.code };
+    }
+    return { templateId: template.id, name: template.name, language: template.language, values };
+  }
+
   const service: MessageSendService = {
     async send(tenant, conversationId, request) {
       const organizationId = await organizationOf(tenant);
       const user = tenant as TenantContext & { readonly userId: UserId };
-      const { clientMessageId, text } = request;
-      if (!isClientMessageId(clientMessageId) || typeof text !== 'string') {
+      const { clientMessageId, text, media, template: rawTemplate } = request;
+      if (
+        !isClientMessageId(clientMessageId) ||
+        (text !== undefined && typeof text !== 'string') ||
+        (text === undefined && media === undefined && rawTemplate === undefined)
+      ) {
         throw new ConversationError('invalid_request', 'message');
       }
       if (!isConversationId(conversationId)) throw new ConversationError('conversation_not_found');
       const conversation = await conversations.findConversation(organizationId, conversationId);
       if (conversation === undefined) throw new ConversationError('conversation_not_found');
+      const id = outboundMessageIdFor(organizationId, conversation.id, clientMessageId);
 
-      // Built first, so a malformed text is refused before anything else is decided.
-      const candidate = newOutboundMessage(
-        { organizationId, conversation, userId: user.userId, clientMessageId, text },
-        now(),
-      );
-      const id = candidate.id;
-      const stored = await conversations.findMessage(organizationId, id);
-      if (stored !== undefined && stored.text !== text) {
-        // The same key names one message: a different text under it is refused, never sent.
+      /** A refusal before anything is reserved: audited, and nothing leaves. */
+      const deny = async (
+        code: ConversationErrorCode,
+        content: Pick<Message, 'type'> & Partial<Pick<Message, 'template'>>,
+        detail?: string,
+      ): Promise<never> => {
+        await audit.record(
+          messageEventOf(
+            user.userId,
+            organizationId,
+            { id, conversationId: conversation.id, channel: conversation.channel, ...content },
+            { status: 'denied', failureCode: detail ?? code },
+            now(),
+            requestId,
+          ),
+        );
+        log('human_message_send_failure', {
+          organizationId,
+          conversationId: conversation.id,
+          messageId: id,
+          code: detail ?? code,
+        });
+        throw new ConversationError(code, detail);
+      };
+
+      // Already settled by an earlier attempt: answered as it is, never sent again, whatever
+      // became of its template since.
+      const earlier = await conversations.findMessage(organizationId, id);
+      let template: MessageTemplateRef | undefined;
+      if (rawTemplate !== undefined && (earlier === undefined || earlier.status === 'queued')) {
+        const ref = await templateRefOf(organizationId, conversation, rawTemplate);
+        if ('refusal' in ref) return deny(ref.refusal, { type: 'template' }, ref.detail);
+        template = ref;
+      } else if (rawTemplate !== undefined) {
+        template = earlier?.template;
+      }
+
+      // Built first, so a malformed message is refused before anything else is decided.
+      const candidate =
+        rawTemplate !== undefined && template === undefined
+          ? undefined
+          : newOutboundMessage(
+              {
+                organizationId,
+                conversation,
+                userId: user.userId,
+                clientMessageId,
+                ...(text === undefined ? {} : { text: text as string }),
+                ...(media === undefined ? {} : { media: media as never }),
+                ...(template === undefined ? {} : { template }),
+              },
+              now(),
+            );
+      const stored = earlier;
+      if (
+        stored !== undefined &&
+        (candidate === undefined || contentKeyOf(stored) !== contentKeyOf(candidate))
+      ) {
+        // The same key names one message: different content under it is refused, never sent.
         throw new ConversationError('duplicate_request');
       }
+      if (candidate === undefined) throw new ConversationError('invalid_request', 'template');
       // Already settled by an earlier attempt: answered as it is, never sent again.
       if (stored !== undefined && stored.status !== 'queued') {
         return { message: stored, created: false };
       }
+      const kind = candidate.type === 'template' ? 'template' : candidate.media ? 'media' : 'text';
 
       const fields = { organizationId, conversationId: conversation.id, messageId: id };
       log('human_message_send_attempt', { ...fields, channel: conversation.channel });
@@ -526,24 +700,19 @@ export function createMessageSendService(options: MessageSendServiceOptions): Me
                   connectionId: conversation.connectionId,
                   channel: conversation.channel,
                   conversation,
+                  kind,
                 });
         if (refusal !== undefined) {
-          await audit.record(
-            messageEventOf(
-              user.userId,
-              organizationId,
-              { id, conversationId: conversation.id, channel: conversation.channel },
-              { status: 'denied', failureCode: refusal },
-              now(),
-              requestId,
-            ),
-          );
-          log('human_message_send_failure', { ...fields, code: refusal });
-          throw new ConversationError(refusal);
+          return deny(refusal, {
+            type: candidate.type,
+            ...(candidate.template === undefined ? {} : { template: candidate.template }),
+          });
         }
         const reserved = await conversations.reserveOutbound(candidate);
         message = reserved.message;
-        if (message.text !== text) throw new ConversationError('duplicate_request');
+        if (contentKeyOf(message) !== contentKeyOf(candidate)) {
+          throw new ConversationError('duplicate_request');
+        }
         if (message.status !== 'queued') return { message, created: false };
       }
 

@@ -12,6 +12,7 @@ export * from './overrides.js';
 export * from './plans.js';
 export * from './rate-limits.js';
 export * from './specialists.js';
+export * from './templates.js';
 export * from './tenancy.js';
 export * from './users.js';
 export * from './workflows.js';

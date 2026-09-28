@@ -33,8 +33,10 @@ import {
   createIntegrationRegistry,
   createWhatsAppAdapter,
   InMemoryChannelConnectionRepository,
+  InMemoryChannelTemplateRepository,
   InMemorySecretStore,
   type ChannelConnectionRepository,
+  type ChannelTemplateRepository,
 } from '@melonoffice/integrations';
 import { InMemoryPlanRepository, type PlanRepository } from '@melonoffice/planning';
 import { InMemoryWorkflowRepository, type WorkflowRepository } from '@melonoffice/workflows';
@@ -88,6 +90,7 @@ import {
   FirestoreUserDirectory,
   CHANNEL_CONNECTIONS,
   FirestoreChannelConnectionRepository,
+  FirestoreChannelTemplateRepository,
   FirestoreConversationRepository,
   putOutboundMessage,
   toConnectionDocument,
@@ -141,6 +144,8 @@ export interface Stores {
   readonly removeWallet: (organizationId: OrganizationId) => Promise<void>;
   readonly conversations: ConversationRepository;
   readonly connections: ChannelConnectionRepository;
+  /** The organizations' templates (ADR-0046). */
+  readonly templates: ChannelTemplateRepository;
   /** Stores a channel connection as given, the way the server-side setup would. */
   readonly putConnection: (connection: ChannelConnection) => Promise<void>;
   /** Stores an outbound message as given (nothing sends in CV-1), to test delivery statuses. */
@@ -180,6 +185,7 @@ function memoryStores(): Stores {
   return {
     conversations,
     connections,
+    templates: new InMemoryChannelTemplateRepository(events),
     putConnection: async (c) => connections.put(c),
     putOutbound: async (m) => conversations.putOutbound(m),
     secrets: new InMemorySecretStore(),
@@ -221,6 +227,7 @@ function firestoreStores(): Stores {
   return {
     conversations: new FirestoreConversationRepository(db),
     connections: new FirestoreChannelConnectionRepository(db),
+    templates: new FirestoreChannelTemplateRepository(db),
     async putConnection(c) {
       await db.collection(CHANNEL_CONNECTIONS).doc(c.id).set(toConnectionDocument(c));
     },
@@ -307,7 +314,7 @@ export const STORES: [string, () => Stores][] = [
  */
 export interface FakeGraphApi {
   readonly calls: { readonly url: string; readonly init: RequestInit }[];
-  answer: () => Promise<Response>;
+  answer: (url: string, init: RequestInit) => Promise<Response>;
 }
 
 /** A successful send, with a new provider id each time, as Meta answers. */
@@ -346,7 +353,7 @@ export function setupApp(
     graphApiVersion: 'v23.0',
     fetch: (async (url: string | URL | Request, init?: RequestInit) => {
       meta.calls.push({ url: String(url), init: init ?? {} });
-      return meta.answer();
+      return meta.answer(String(url), init ?? {});
     }) as typeof fetch,
   });
   // One Integration Engine for webhooks, sends and connection checks (ADR-0044), over the fake
@@ -358,6 +365,9 @@ export function setupApp(
     inbound: createConversationIngress({ repository: stores.conversations }),
     audit: stores.audit,
     logger,
+    templates: stores.templates,
+    // Retries (ADR-0045) wait no time here: the jitter is always zero.
+    random: () => 0,
   });
   const app = createApp({
     logger,
@@ -375,6 +385,7 @@ export function setupApp(
     conversations: {
       repository: stores.conversations,
       connections: stores.connections,
+      templates: stores.templates,
       secretProjectId: 'melonoffice-test',
       agentOutputs,
       engine,

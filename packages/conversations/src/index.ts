@@ -1,5 +1,6 @@
 export * from './errors.js';
 export * from './model.js';
+export * from './outbound-content.js';
 export * from './repository.js';
 export * from './service.js';
 export * from './assist-context.js';

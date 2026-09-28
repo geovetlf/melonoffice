@@ -5,8 +5,10 @@ import type {
   ChannelType,
   IntegrationCategory,
   IntegrationProviderId,
+  OutboundMediaRef,
   WhatsAppAccount,
 } from '@melonoffice/domain';
+import type { ResolvedTemplate, TemplateCheck } from './templates.js';
 
 /**
  * What one channel delivered, normalized: no provider types reach the conversations domain.
@@ -21,6 +23,7 @@ export interface NormalizedDelivery {
 
 /** A text to send to one address of a conversation. */
 export interface OutboundText {
+  readonly kind?: 'text';
   /** The contact's address on the channel (the identity's external id). */
   readonly to: string;
   readonly text: string;
@@ -28,6 +31,32 @@ export interface OutboundText {
   /** Passed to the provider where it supports one, so a repeat sends once. */
   readonly idempotencyKey?: string;
 }
+
+/** Media from a link, with an optional caption (ADR-0046). */
+export interface OutboundMedia {
+  readonly kind: 'media';
+  readonly to: string;
+  readonly media: OutboundMediaRef;
+  readonly caption?: string;
+  readonly replyToExternalId?: string;
+  readonly idempotencyKey?: string;
+}
+
+/** An approved template with every value it needs, already checked (ADR-0046). */
+export interface OutboundTemplate {
+  readonly kind: 'template';
+  readonly to: string;
+  readonly template: ResolvedTemplate;
+  readonly idempotencyKey?: string;
+}
+
+/** Anything an adapter may be asked to send. The Integration Engine decides whether it may. */
+export type OutboundMessage = OutboundText | OutboundMedia | OutboundTemplate;
+
+/** What kind of message it is, as the engine's channel policy sees it. */
+export type OutboundKind = 'text' | 'media' | 'template';
+
+export const outboundKindOf = (message: OutboundMessage): OutboundKind => message.kind ?? 'text';
 
 /** What the Integration Engine asks of one provider call (ADR-0045). */
 export interface SendOptions {
@@ -92,7 +121,7 @@ export interface ChannelAdapter {
    * The provider's request body for a text, checked. Pure: nothing is sent. Throws
    * `invalid_outbound` on a text or address the provider would refuse.
    */
-  normalizeOutbound(message: OutboundText): Readonly<Record<string, unknown>>;
+  normalizeOutbound(message: OutboundMessage): Readonly<Record<string, unknown>>;
   /**
    * Sends a text through the official API, once: retrying is the Integration Engine's, never an
    * adapter's (ADR-0045). Returns the provider's message id. Throws `provider_rejected` (the
@@ -104,9 +133,18 @@ export interface ChannelAdapter {
   send(
     connection: ChannelConnection,
     credentials: ConnectionCredentials,
-    message: OutboundText,
+    message: OutboundMessage,
     options?: SendOptions,
   ): Promise<{ readonly externalMessageId: string }>;
+  /**
+   * Asks the provider whether a template exists on the connection's account in that language,
+   * is approved, and what it needs (ADR-0046). Reads only. Absent: the provider has no templates.
+   */
+  checkTemplate?(
+    connection: ChannelConnection,
+    credentials: ConnectionCredentials,
+    template: { readonly name: string; readonly language: string },
+  ): Promise<TemplateCheck>;
   /**
    * Asks the provider whether the connection's credentials open its account, before it is used.
    * Reads only; never sends a message.

@@ -20,6 +20,8 @@ export type ChannelIdentityId = Brand<string, 'ChannelIdentityId'>;
 export type ConversationId = Brand<string, 'ConversationId'>;
 export type MessageId = Brand<string, 'MessageId'>;
 export type ChannelConnectionId = Brand<string, 'ChannelConnectionId'>;
+/** One organization's message template on one connection (ADR-0046). */
+export type ChannelTemplateId = Brand<string, 'ChannelTemplateId'>;
 
 /**
  * The channels MelonOffice can speak on. A closed list, extended one adapter at a time: WhatsApp
@@ -203,9 +205,54 @@ export interface Conversation {
 
 export type MessageDirection = 'inbound' | 'outbound';
 
-/** What a message carries. CV-1 stores text; the others are kept as typed placeholders. */
+/**
+ * What a message carries. Inbound: text, or media referenced by the provider's id. Outbound
+ * (CV-6D phase 2, ADR-0046): text, media from a link, or an approved template.
+ */
 export type MessageType =
-  'text' | 'image' | 'document' | 'audio' | 'video' | 'sticker' | 'location' | 'unsupported';
+  | 'text'
+  | 'image'
+  | 'document'
+  | 'audio'
+  | 'video'
+  | 'sticker'
+  | 'location'
+  | 'template'
+  | 'unsupported';
+
+/** The media an outbound message can carry, whatever the channel (ADR-0046). */
+export type OutboundMediaType = 'image' | 'document' | 'audio' | 'video';
+
+/**
+ * Where an outbound message's media comes from: an `https` link the organization gives, which the
+ * provider fetches. Never logged or audited: a link may carry a signed, private token.
+ */
+export interface OutboundMediaRef {
+  readonly type: OutboundMediaType;
+  readonly url: string;
+  /** For documents: the name the contact sees. */
+  readonly filename?: string;
+}
+
+/**
+ * The values of one template's placeholders, in order (`{{1}}`, `{{2}}` …). Plain text only; a
+ * header of media takes a link instead.
+ */
+export interface TemplateValues {
+  readonly header?: readonly string[];
+  readonly headerMedia?: OutboundMediaRef;
+  readonly body: readonly string[];
+  /** A dynamic URL button's suffix, by the button's index in the template. */
+  readonly buttons?: readonly { readonly index: number; readonly text: string }[];
+}
+
+/** An outbound template message: which of the organization's templates, and its values. */
+export interface MessageTemplateRef {
+  readonly templateId: ChannelTemplateId;
+  readonly name: string;
+  readonly language: string;
+  readonly values: TemplateValues;
+}
 
 /**
  * Where a message is. Inbound messages are `received`. Outbound ones go `queued` → `sent` →
@@ -249,6 +296,10 @@ export interface Message {
   readonly attachments: readonly MessageAttachment[];
   /** The external id of the message this one answers, when the channel says so. */
   readonly replyToExternalId?: string;
+  /** An outbound media message's media (ADR-0046). `text` is then its caption. */
+  readonly media?: OutboundMediaRef;
+  /** An outbound template message's template and values (ADR-0046). */
+  readonly template?: MessageTemplateRef;
   readonly status: MessageStatus;
   /** A stable code, for `failed` and `unknown`. */
   readonly failureCode?: string;
@@ -357,6 +408,53 @@ export interface ChannelConnection {
    */
   readonly updatedBy: UserId;
   /** When the provider last confirmed its credentials. */
+  readonly lastValidatedAt?: IsoTimestamp;
+  readonly revision: number;
+}
+
+/**
+ * Where a template is (ADR-0046). `pending`: registered, not yet checked with the provider.
+ * `active`: the provider confirmed it approved, in that language, with the parameters recorded
+ * here; only an active template is sent. `invalid`: the provider did not confirm it (the reason
+ * says why). `disabled`: a person turned it off.
+ */
+export type ChannelTemplateStatus = 'pending' | 'active' | 'invalid' | 'disabled';
+
+/** What a template needs, as its provider describes it: how many values, and where. */
+export interface ChannelTemplateSpec {
+  /** `none`, a text header with this many values, or a media header. */
+  readonly header:
+    | { readonly format: 'none' }
+    | { readonly format: 'text'; readonly parameters: number }
+    | { readonly format: 'image' | 'document' | 'video' };
+  readonly bodyParameters: number;
+  /** Buttons that take a value (a dynamic URL), by index. */
+  readonly urlButtons: readonly { readonly index: number }[];
+}
+
+/**
+ * An organization's message template on one connection (ADR-0046): registered by name and
+ * language by a person, then checked with the provider, which says whether it is approved and what
+ * it needs. MelonOffice never invents or edits a template: they are created and approved in the
+ * provider's own tools.
+ */
+export interface ChannelTemplate {
+  readonly id: ChannelTemplateId;
+  readonly organizationId: OrganizationId;
+  readonly connectionId: ChannelConnectionId;
+  readonly channel: ChannelType;
+  readonly name: string;
+  readonly language: string;
+  readonly status: ChannelTemplateStatus;
+  readonly statusReason?: string;
+  /** The provider's category (e.g. `utility`, `marketing`), once checked. */
+  readonly category?: string;
+  /** What it needs, once checked. */
+  readonly spec?: ChannelTemplateSpec;
+  readonly createdAt: IsoTimestamp;
+  readonly createdBy: UserId;
+  readonly updatedAt: IsoTimestamp;
+  readonly updatedBy: UserId;
   readonly lastValidatedAt?: IsoTimestamp;
   readonly revision: number;
 }

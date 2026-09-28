@@ -38,7 +38,11 @@ export type ConversationErrorCode =
   | 'conversation_handled_by_ai'
   | 'settings_concurrency_conflict'
   // The conversation agent (CV-6B, ADR-0043).
-  | 'agent_not_available';
+  | 'agent_not_available'
+  // Templates (CV-6D phase 2, ADR-0046): refused before anything is reserved or sent.
+  | 'template_not_found'
+  | 'template_not_active'
+  | 'template_parameters_invalid';
 
 export class ConversationError extends Error {
   override readonly name = 'ConversationError';

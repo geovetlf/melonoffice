@@ -1,5 +1,6 @@
 import {
   checkInbound,
+  checkMediaRef,
   isConversationError,
   isE164,
   isExternalId,
@@ -10,10 +11,12 @@ import {
 import type {
   ChannelCapabilities,
   ChannelConnection,
+  ChannelTemplateSpec,
   IntegrationProviderId,
   IsoTimestamp,
   MessageAttachment,
   MessageType,
+  OutboundMediaRef,
   WhatsAppAccount,
 } from '@melonoffice/domain';
 import { createHmac, timingSafeEqual } from 'node:crypto';
@@ -22,9 +25,10 @@ import type {
   ConnectionCheck,
   ConnectionCredentials,
   NormalizedDelivery,
-  OutboundText,
+  OutboundMessage,
   SendOptions,
 } from './adapter.js';
+import type { TemplateCheck } from './templates.js';
 import { IntegrationError } from './errors.js';
 
 /**
@@ -214,6 +218,16 @@ const META_ERRORS: Readonly<Record<number, string>> = Object.freeze({
   131031: 'policy_restricted',
   // "Something went wrong": not documented as temporary, so final, never retried (ADR-0045).
   131000: 'provider_error',
+  // Media and templates (ADR-0046): all final, never retried.
+  131052: 'media_download_failed',
+  131053: 'media_upload_failed',
+  132000: 'template_parameter_mismatch',
+  132001: 'template_not_found',
+  132005: 'template_text_too_long',
+  132007: 'template_policy_violation',
+  132012: 'template_parameter_mismatch',
+  132015: 'template_paused',
+  132016: 'template_disabled',
   131016: 'temporary_provider_error',
   2: 'temporary_provider_error',
 });
@@ -274,16 +288,16 @@ async function metaCodeOf(answer: Response): Promise<string | undefined> {
 }
 
 /**
- * What a WhatsApp Cloud API connection can do in MelonOffice today: text both ways, media in,
- * delivery statuses, within the 24-hour service window. No media out and no templates yet, so
- * nothing is ever sent outside the window.
+ * What a WhatsApp Cloud API connection can do in MelonOffice: text both ways, media in and out
+ * (out from a link), approved templates, delivery statuses. Text and media only within the
+ * 24-hour service window; outside it, only a template (ADR-0046).
  */
 export const WHATSAPP_CAPABILITIES: ChannelCapabilities = Object.freeze({
   inboundText: true,
   inboundMedia: true,
   outboundText: true,
-  outboundMedia: false,
-  outboundTemplates: false,
+  outboundMedia: true,
+  outboundTemplates: true,
   deliveryStatus: true,
   maxOutboundTextLength: MAX_TEXT_LENGTH,
   serviceWindowMs: WHATSAPP_SERVICE_WINDOW_MS,
@@ -295,6 +309,128 @@ export interface WhatsAppAdapterOptions {
   readonly fetch?: typeof fetch;
   /** The longest one provider call may take; a send may ask for less (`SendOptions`). */
   readonly timeoutMs?: number;
+}
+
+/** The longest media caption Meta accepts. */
+const MAX_CAPTION = 1024;
+
+/**
+ * A media reference checked again right before it leaves: an https link to a public host, never
+ * a private address or one with credentials. What reached the adapter any other way is refused.
+ */
+function mediaObject(media: OutboundMediaRef, caption?: string): Record<string, unknown> {
+  try {
+    checkMediaRef(media);
+  } catch {
+    throw new IntegrationError('invalid_outbound');
+  }
+  return {
+    link: media.url,
+    ...(caption === undefined ? {} : { caption }),
+    ...(media.filename === undefined ? {} : { filename: media.filename }),
+  };
+}
+
+const textParameters = (values: readonly string[]) =>
+  values.map((text) => ({ type: 'text', text }));
+
+/** Meta's `template` object for a resolved template: its values in the components' order. */
+function templateBody(message: Extract<OutboundMessage, { kind: 'template' }>) {
+  const { template } = message;
+  const components: Record<string, unknown>[] = [];
+  if (template.header?.type === 'text') {
+    components.push({ type: 'header', parameters: textParameters(template.header.values) });
+  } else if (template.header?.type === 'media') {
+    const { media } = template.header;
+    components.push({
+      type: 'header',
+      parameters: [{ type: media.type, [media.type]: mediaObject(media) }],
+    });
+  }
+  if (template.body.length > 0) {
+    components.push({ type: 'body', parameters: textParameters(template.body) });
+  }
+  for (const button of template.buttons) {
+    components.push({
+      type: 'button',
+      sub_type: 'url',
+      index: String(button.index),
+      parameters: [{ type: 'text', text: button.text }],
+    });
+  }
+  return {
+    type: 'template',
+    template: {
+      name: template.name,
+      language: { code: template.language },
+      ...(components.length === 0 ? {} : { components }),
+    },
+  };
+}
+
+/** Positional placeholders `{{1}}`…`{{n}}` in a text: their count, or a refusal code. */
+function placeholdersOf(text: unknown): number | string {
+  if (text === undefined) return 0;
+  if (typeof text !== 'string') return 'template_unsupported';
+  const all = [...text.matchAll(/\{\{\s*([^{}]*?)\s*\}\}/g)].map((m) => m[1] as string);
+  if (all.some((p) => !/^[0-9]{1,2}$/.test(p))) return 'template_named_parameters';
+  const numbers = [...new Set(all.map(Number))].sort((a, b) => a - b);
+  // Exactly 1…n: anything else is not a template MelonOffice can fill without guessing.
+  if (numbers.some((n, i) => n !== i + 1)) return 'template_unsupported';
+  return numbers.length;
+}
+
+/** What an approved Meta template needs, from its components; or why it cannot be sent. */
+function specOf(record: Record<string, unknown>): TemplateCheck {
+  if (record.parameter_format !== undefined && record.parameter_format !== 'POSITIONAL') {
+    return { status: 'invalid', code: 'template_named_parameters' };
+  }
+  const components = Array.isArray(record.components) ? record.components.filter(isObject) : [];
+  let header: ChannelTemplateSpec['header'] = { format: 'none' };
+  let bodyParameters = 0;
+  const urlButtons: { index: number }[] = [];
+  for (const c of components) {
+    if (c.type === 'HEADER') {
+      if (c.format === 'TEXT') {
+        const n = placeholdersOf(c.text);
+        if (typeof n === 'string') return { status: 'invalid', code: n };
+        header = { format: 'text', parameters: n };
+      } else if (c.format === 'IMAGE' || c.format === 'DOCUMENT' || c.format === 'VIDEO') {
+        header = { format: c.format.toLowerCase() as 'image' | 'document' | 'video' };
+      } else {
+        return { status: 'invalid', code: 'template_header_unsupported' };
+      }
+    } else if (c.type === 'BODY') {
+      const n = placeholdersOf(c.text);
+      if (typeof n === 'string') return { status: 'invalid', code: n };
+      bodyParameters = n;
+    } else if (c.type === 'BUTTONS') {
+      const buttons = Array.isArray(c.buttons) ? c.buttons : [];
+      for (const [index, b] of buttons.entries()) {
+        if (!isObject(b)) return { status: 'invalid', code: 'template_button_unsupported' };
+        if (b.type === 'URL') {
+          const n = placeholdersOf(b.url);
+          if (typeof n === 'string' || n > 1) {
+            return { status: 'invalid', code: 'template_button_unsupported' };
+          }
+          if (n === 1) urlButtons.push({ index });
+        } else if (b.type !== 'QUICK_REPLY' && b.type !== 'PHONE_NUMBER') {
+          return { status: 'invalid', code: 'template_button_unsupported' };
+        }
+      }
+    } else if (c.type !== 'FOOTER') {
+      return { status: 'invalid', code: 'template_component_unsupported' };
+    }
+  }
+  const category =
+    typeof record.category === 'string' && /^[A-Z_]{1,32}$/.test(record.category)
+      ? record.category.toLowerCase()
+      : undefined;
+  return {
+    status: 'approved',
+    ...(category === undefined ? {} : { category }),
+    spec: Object.freeze({ header, bodyParameters, urlButtons: Object.freeze(urlButtons) }),
+  };
 }
 
 export function createWhatsAppAdapter(options: WhatsAppAdapterOptions = {}): ChannelAdapter {
@@ -445,33 +581,59 @@ export function createWhatsAppAdapter(options: WhatsAppAdapterOptions = {}): Cha
       return Object.freeze(deliveries);
     },
 
-    normalizeOutbound(message: OutboundText) {
+    normalizeOutbound(message: OutboundMessage) {
+      if (typeof message.to !== 'string' || !WA_ID.test(message.to)) {
+        throw new IntegrationError('invalid_outbound');
+      }
+      const base = {
+        messaging_product: 'whatsapp',
+        recipient_type: 'individual',
+        to: message.to,
+      } as const;
+      if (message.kind === 'template') return Object.freeze({ ...base, ...templateBody(message) });
+      const replyTo = message.replyToExternalId;
+      if (replyTo !== undefined && !isExternalId(replyTo)) {
+        throw new IntegrationError('invalid_outbound');
+      }
+      const context = replyTo === undefined ? {} : { context: { message_id: replyTo } };
+      if (message.kind === 'media') {
+        const { media, caption } = message;
+        if (
+          (caption !== undefined &&
+            (typeof caption !== 'string' ||
+              caption.length === 0 ||
+              caption.length > MAX_CAPTION ||
+              media.type === 'audio')) ||
+          (media.filename !== undefined && media.type !== 'document')
+        ) {
+          throw new IntegrationError('invalid_outbound');
+        }
+        return Object.freeze({
+          ...base,
+          type: media.type,
+          [media.type]: mediaObject(media, caption),
+          ...context,
+        });
+      }
       if (
-        typeof message.to !== 'string' ||
-        !WA_ID.test(message.to) ||
         typeof message.text !== 'string' ||
         message.text.length === 0 ||
-        message.text.length > MAX_TEXT_LENGTH ||
-        (message.replyToExternalId !== undefined && !isExternalId(message.replyToExternalId))
+        message.text.length > MAX_TEXT_LENGTH
       ) {
         throw new IntegrationError('invalid_outbound');
       }
       return Object.freeze({
-        messaging_product: 'whatsapp',
-        recipient_type: 'individual',
-        to: message.to,
+        ...base,
         type: 'text',
         text: { body: message.text, preview_url: false },
-        ...(message.replyToExternalId === undefined
-          ? {}
-          : { context: { message_id: message.replyToExternalId } }),
+        ...context,
       });
     },
 
     async send(
       connection: ChannelConnection,
       credentials: ConnectionCredentials,
-      message: OutboundText,
+      message: OutboundMessage,
       sendOptions?: SendOptions,
     ) {
       const version = versionOf();
@@ -531,6 +693,77 @@ export function createWhatsAppAdapter(options: WhatsAppAdapterOptions = {}): Cha
 
     validateConnection: check,
     healthCheck: check,
+
+    /**
+     * Meta's own record of the template (Graph API, "Message Templates" of the WhatsApp Business
+     * Account), read with the connection's token: it must be on the account that owns this
+     * connection's number, in that language, and `APPROVED`. What it needs is taken from its
+     * components; anything MelonOffice cannot fill exactly is refused, never guessed.
+     */
+    async checkTemplate(connection, credentials, template) {
+      let version: string;
+      try {
+        version = versionOf();
+      } catch {
+        return { status: 'unavailable', code: 'graph_api_version' };
+      }
+      const waba = connection.account.businessAccountId;
+      if (waba === undefined) return { status: 'invalid', code: 'business_account_required' };
+      const get = async (path: string): Promise<{ data?: unknown } | TemplateCheck> => {
+        let answer: Response;
+        try {
+          answer = await call(`${GRAPH_API_URL}/${version}/${path}`, {
+            headers: { authorization: `Bearer ${credentials.accessToken}` },
+            signal: AbortSignal.timeout(timeoutMs),
+          });
+        } catch {
+          return { status: 'unavailable', code: 'no_answer' };
+        }
+        if (answer.status === 429) return { status: 'unavailable', code: 'rate_limited' };
+        if (answer.status >= 500) return { status: 'unavailable', code: 'server_error' };
+        if (!answer.ok) {
+          const code = await rejectionOf(answer);
+          return TRANSIENT_CODES.includes(code)
+            ? { status: 'unavailable', code }
+            : {
+                status: 'invalid',
+                code: code === 'provider_rejected' ? 'account_not_accessible' : code,
+              };
+        }
+        try {
+          return (await answer.json()) as { data?: unknown };
+        } catch {
+          return { status: 'unavailable', code: 'response' };
+        }
+      };
+      // The number must belong to that account: templates of another account are never used.
+      const numbers = await get(`${waba}/phone_numbers?fields=id&limit=100`);
+      if ('status' in numbers) return numbers;
+      const ids = Array.isArray(numbers.data)
+        ? numbers.data.map((n) => (isObject(n) ? n.id : undefined))
+        : [];
+      if (!ids.includes(connection.account.phoneNumberId)) {
+        return { status: 'invalid', code: 'account_mismatch' };
+      }
+      const found = await get(
+        `${waba}/message_templates?name=${encodeURIComponent(template.name)}` +
+          '&fields=name,language,status,category,components,parameter_format&limit=100',
+      );
+      if ('status' in found) return found;
+      const all = Array.isArray(found.data) ? found.data.filter(isObject) : [];
+      const named = all.filter((t) => t.name === template.name);
+      if (named.length === 0) return { status: 'invalid', code: 'template_not_found' };
+      const record = named.find((t) => t.language === template.language);
+      if (record === undefined) return { status: 'invalid', code: 'template_language_not_found' };
+      if (record.status !== 'APPROVED') {
+        const status = typeof record.status === 'string' ? record.status.toLowerCase() : '';
+        return {
+          status: 'invalid',
+          code: /^[a-z_]{1,32}$/.test(status) ? `template_${status}` : 'template_not_approved',
+        };
+      }
+      return specOf(record);
+    },
   };
   return Object.freeze(adapter);
 }
