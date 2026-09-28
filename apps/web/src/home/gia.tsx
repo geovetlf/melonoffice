@@ -3,6 +3,7 @@ import { useState, type FormEvent } from 'react';
 import { navigate } from '../identity/router.js';
 import { Icon, type IconName } from '../office/icons.js';
 import { paths } from '../shell/routes.js';
+import { GiaAvatar } from '../gia/GiaAvatar.js';
 
 /**
  * GIA's place on the Home (ADR-0040). GIA is not built yet: the command bar, the attachments, the
@@ -20,9 +21,7 @@ export function GiaCard() {
         navigate(paths.gia());
       }}
     >
-      <span className="gia-card__mark" aria-hidden="true">
-        <Icon name="gia" size={22} />
-      </span>
+      <GiaAvatar size={44} decorative className="gia-card__mark" />
       <span className="gia-card__text">
         <span className="gia-card__name">
           <FormattedMessage id="gia.name" />

@@ -18,7 +18,8 @@ import { HomePage } from '../home/HomePage.js';
 import { useAuth, useCan } from '../identity/AuthProvider.js';
 import type { LocaleProps } from '../identity/pages.js';
 import { usePath } from '../identity/router.js';
-import { AgentPlace, DepartmentOffice, GiaPlace, NotFound } from '../office/DepartmentOffice.js';
+import { GiaWorkplace } from '../gia/GiaWorkplace.js';
+import { AgentPlace, DepartmentOffice, NotFound } from '../office/DepartmentOffice.js';
 import { createOfficeClient } from '../office/officeClient.js';
 import { OfficeDataProvider, useOfficeData } from '../office/OfficeData.js';
 import { parseRoute } from './routes.js';
@@ -113,7 +114,7 @@ export function AppShell(locale: LocaleProps) {
       page = <AgentPlace slug={route.slug} agentId={route.agentId} />;
       break;
     case 'gia':
-      page = <GiaPlace />;
+      page = <GiaWorkplace />;
       break;
     case 'conversations':
       page = canReadConversations ? (
