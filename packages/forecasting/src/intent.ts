@@ -49,11 +49,13 @@ const FUTURE = [
   /\btendencia/,
   /\bcomo viene/,
   /\bcomo van\b/,
+  /\bevolucion/,
   /\bforecast/,
   /\bproject/,
   /\bpredict/,
   /\bexpect/,
   /\btrend/,
+  /\bevolv/,
   /\bwill we\b/,
   /\bcrecimiento\b|\bcrec(en|iendo)\b|\bgrowth\b|\bgrowing\b/,
 ];
@@ -66,7 +68,9 @@ const TREND = [
   /\btendencia/,
   /\bcomo viene/,
   /\bcomo van\b/,
+  /\bevolucion/,
   /\btrend/,
+  /\bevolv/,
   /\bcrecimiento\b/,
   /\bgrowth\b/,
 ];
