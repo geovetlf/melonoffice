@@ -7,6 +7,8 @@ describe("15. reading a forecast request from the person's words", () => {
     ['Proyecta nuestras ventas de los próximos 30 días.', 'sales.won_value', 'day', 30, false],
     ['¿Cuál es la tendencia de nuestras ventas?', 'sales.won_value', 'day', 30, true],
     ['¿Cómo viene la tendencia de ventas?', 'sales.won_value', 'day', 30, true],
+    ['¿Cómo podrían evolucionar nuestras ventas?', 'sales.won_value', 'day', 30, true],
+    ['How could our sales evolve?', 'sales.won_value', 'day', 30, true],
     ['Proyecta los leads de las próximas 8 semanas', 'leads.new', 'week', 8, false],
     ['¿Cuántas conversaciones esperamos la próxima semana?', 'conversations.new', 'day', 7, false],
     ['Pronóstico de ingresos del trimestre', 'sales.won_value', 'day', 90, false],

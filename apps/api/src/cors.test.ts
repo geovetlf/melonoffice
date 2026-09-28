@@ -29,6 +29,20 @@ describe('the web app calling the API from a browser (ADR-0036)', () => {
     expect(other.headers.get('access-control-allow-origin')).toBeNull();
   });
 
+  it('allows every method the web app sends, so saving a profile is not blocked', async () => {
+    const t = setupApp(memory(), undefined, undefined, undefined, undefined, {
+      webOrigins: [WEB],
+    });
+    for (const method of ['PUT', 'PATCH', 'DELETE']) {
+      const response = await t.app.request('/v1/organizations/x/business-profile', {
+        method: 'OPTIONS',
+        headers: { origin: WEB, 'access-control-request-method': method },
+      });
+      expect(response.status).toBe(204);
+      expect(response.headers.get('access-control-allow-methods')?.split(', ')).toContain(method);
+    }
+  });
+
   it('still authenticates every call: the origin grants nothing', async () => {
     const t = setupApp(memory(), undefined, undefined, undefined, undefined, {
       webOrigins: [WEB],
