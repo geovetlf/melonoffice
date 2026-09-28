@@ -1,5 +1,7 @@
 import { FormattedMessage } from '@melonoffice/i18n';
 import { useEffect, useMemo, useState } from 'react';
+import { ConnectionsPage, permissionsOf } from '../connections/ConnectionsPage.js';
+import { createConnectionsClient } from '../connections/connectionsClient.js';
 import { ConversationsCenter } from '../conversations/ConversationsCenter.js';
 import { createInboxClient } from '../conversations/inboxClient.js';
 import { HomePage } from '../home/HomePage.js';
@@ -16,13 +18,14 @@ import { TopBar } from './TopBar.js';
 /**
  * The signed-in frame (ADR-0036, ADR-0040): the sidebar and top bar around the page the path
  * names: the Home (the office), a department's office, GIA, or the Conversations Center
- * (ADR-0035). Every page reaches the API only through the session's authenticated client, for the
+ * (ADR-0035), or Settings → Connections (ADR-0044). Every page reaches the API only through the session's authenticated client, for the
  * organization the API gave this user; none has sign-in, tenant choice or permission rules of its
  * own.
  */
 export function AppShell(locale: LocaleProps) {
   const { state, services, signOut } = useAuth();
   const canReadConversations = useCan('conversation.read');
+  const canReadConnections = useCan('channel.read');
   const route = parseRoute(usePath());
   const [menuOpen, setMenuOpen] = useState(false);
   useEffect(() => {
@@ -42,6 +45,7 @@ export function AppShell(locale: LocaleProps) {
         : {
             inbox: createInboxClient(services.api.request, organizationId),
             office: createOfficeClient(services.api.request, organizationId),
+            connections: createConnectionsClient(services.api.request, organizationId),
           },
     [services, organizationId],
   );
@@ -82,6 +86,19 @@ export function AppShell(locale: LocaleProps) {
         </div>
       );
       break;
+    case 'connections':
+      page = canReadConnections ? (
+        <div className="light-surface">
+          <ConnectionsPage
+            client={clients.connections}
+            permissions={permissionsOf(can)}
+            apiUrl={services.api.baseUrl}
+          />
+        </div>
+      ) : (
+        <NotFound />
+      );
+      break;
     default:
       page = <NotFound />;
   }
@@ -92,6 +109,7 @@ export function AppShell(locale: LocaleProps) {
         <Sidebar
           route={route}
           canReadConversations={canReadConversations}
+          canReadConnections={canReadConnections}
           open={menuOpen}
           onNavigate={() => setMenuOpen(false)}
         />

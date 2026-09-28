@@ -11,6 +11,7 @@
 export type Route =
   | { readonly kind: 'home' }
   | { readonly kind: 'conversations' }
+  | { readonly kind: 'connections' }
   | { readonly kind: 'gia' }
   | { readonly kind: 'office'; readonly slug: string }
   | { readonly kind: 'agent'; readonly slug: string; readonly agentId: string }
@@ -24,6 +25,7 @@ export function parseRoute(path: string): Route {
   const trimmed = path.length > 1 && path.endsWith('/') ? path.slice(0, -1) : path;
   if (trimmed === '/' || trimmed === '/home') return { kind: 'home' };
   if (trimmed === '/conversations') return { kind: 'conversations' };
+  if (trimmed === '/settings/connections') return { kind: 'connections' };
   if (trimmed === '/gia') return { kind: 'gia' };
   const parts = trimmed.split('/').slice(1);
   const [first, slug, third, agentId] = parts;
@@ -38,6 +40,7 @@ export function parseRoute(path: string): Route {
 export const paths = {
   home: () => '/',
   conversations: () => '/conversations',
+  connections: () => '/settings/connections',
   gia: () => '/gia',
   office: (slug: string) => `/office/${encodeURIComponent(slug)}`,
   agent: (slug: string, agentId: string) =>

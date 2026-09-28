@@ -30,6 +30,8 @@ export class ApiError extends Error {
 }
 
 export interface ApiClient {
+  /** The API's address, e.g. to show a webhook URL. Not a secret. */
+  readonly baseUrl: string;
   /** A raw request, authenticated. Same shape as `fetch`, for clients such as the inbox's. */
   request(path: string, init?: RequestInit): Promise<Response>;
   /** A JSON request: the parsed body, or an `ApiError`. */
@@ -60,6 +62,7 @@ export function createApiClient(
   }
 
   return {
+    baseUrl: apiUrl,
     request,
     async json<T>(path: string, init: RequestInit = {}): Promise<T> {
       const response = await request(path, init);

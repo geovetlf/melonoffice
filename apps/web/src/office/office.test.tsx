@@ -73,6 +73,8 @@ describe('routes (ADR-0040)', () => {
     ['/home', { kind: 'home' }],
     ['/conversations', { kind: 'conversations' }],
     ['/gia', { kind: 'gia' }],
+    ['/settings/connections', { kind: 'connections' }],
+    ['/settings', { kind: 'not_found' }],
     ['/office/marketing', { kind: 'office', slug: 'marketing' }],
     ['/office/design-video/', { kind: 'office', slug: 'design-video' }],
     ['/office/marketing/agent/spec_1', { kind: 'agent', slug: 'marketing', agentId: 'spec_1' }],

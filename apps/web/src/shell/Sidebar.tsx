@@ -26,11 +26,14 @@ const TOOLS: readonly { readonly id: string; readonly icon: IconName }[] = [
 export function Sidebar({
   route,
   canReadConversations,
+  canReadConnections = false,
   open,
   onNavigate,
 }: {
   readonly route: Route;
   readonly canReadConversations: boolean;
+  /** Settings → Connections, for a person with `channel.read` (ADR-0044). */
+  readonly canReadConnections?: boolean;
   readonly open: boolean;
   readonly onNavigate: () => void;
 }) {
@@ -92,6 +95,16 @@ export function Sidebar({
                 icon={tool.icon}
                 path={paths.conversations()}
                 current={route.kind === 'conversations'}
+                go={go}
+              >
+                <FormattedMessage id={`nav.${tool.id}`} />
+              </NavLink>
+            ) : tool.id === 'settings' && canReadConnections ? (
+              <NavLink
+                key={tool.id}
+                icon={tool.icon}
+                path={paths.connections()}
+                current={route.kind === 'connections'}
                 go={go}
               >
                 <FormattedMessage id={`nav.${tool.id}`} />

@@ -113,4 +113,5 @@ Another organization on the same plan still gets nothing. Prod gets no DEV confi
 
 - A new channel is one adapter registered in the engine plus its capabilities; no route, tool or agent code changes.
 - Connections can be created only through an audited override until D-12 gives plans integration allotments.
-- Pending: per-connection throughput limits, templates and media, a connections UI, delivery-status driven retries (CV-6D and later).
+- Settings → Connections (web, `/settings/connections`) is the screen over these routes: it lists the registry's providers and the organization's connections, offers each action only with its own permission (the API still decides), asks only for non-secret account fields, and shows the secret names and webhook URL to set up, never a secret value.
+- Pending: per-connection throughput limits, templates and media, delivery-status driven retries (CV-6D and later).
