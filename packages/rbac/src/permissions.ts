@@ -14,6 +14,12 @@ export const PERMISSIONS = {
     description:
       "Fill in or change the organization's business profile, directly and never through GIA (ADR-0048).",
   },
+  'activity.read': {
+    resource: 'activity',
+    action: 'read',
+    description:
+      "See what happened in the organization's office, read from the audit trail (ADR-0049).",
+  },
   'entitlement.read': {
     resource: 'entitlement',
     action: 'read',

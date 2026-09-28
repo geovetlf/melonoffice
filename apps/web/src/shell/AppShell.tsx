@@ -1,5 +1,13 @@
-import { FormattedMessage, I18nProvider, type Locale } from '@melonoffice/i18n';
+import {
+  FormattedMessage,
+  I18nProvider,
+  useIntl,
+  type Locale,
+  type Messages,
+} from '@melonoffice/i18n';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { ActivityProvider } from '../activity/ActivityFeed.js';
+import { createActivityClient } from '../activity/activityClient.js';
 import { BusinessPage } from '../business/BusinessPage.js';
 import { createBusinessClient } from '../business/businessClient.js';
 import { ConnectionsPage, permissionsOf } from '../connections/ConnectionsPage.js';
@@ -20,7 +28,8 @@ import { TopBar } from './TopBar.js';
 /**
  * The signed-in frame (ADR-0036, ADR-0040): the sidebar and top bar around the page the path
  * names: the Home (the office), a department's office, GIA, or the Conversations Center
- * (ADR-0035), Settings → Connections (ADR-0044) or Settings → Business (ADR-0048). Every page reaches the API only through the session's authenticated client, for the
+ * (ADR-0035), Settings → Connections (ADR-0044) or Settings → Business (ADR-0048). The office's activity (ADR-0049) is read only by a role
+ * that may read it. Every page reaches the API only through the session's authenticated client, for the
  * organization the API gave this user; none has sign-in, tenant choice or permission rules of its
  * own.
  */
@@ -30,6 +39,7 @@ export function AppShell(locale: LocaleProps) {
   const canReadConnections = useCan('channel.read');
   const canReadBusiness = useCan('organization.read');
   const canEditBusiness = useCan('organization.update');
+  const canReadActivity = useCan('activity.read');
   const route = parseRoute(usePath());
   const [menuOpen, setMenuOpen] = useState(false);
   useEffect(() => {
@@ -51,6 +61,7 @@ export function AppShell(locale: LocaleProps) {
             office: createOfficeClient(services.api.request, organizationId),
             connections: createConnectionsClient(services.api.request, organizationId),
             business: createBusinessClient(services.api.request, organizationId),
+            activity: createActivityClient(services.api.request, organizationId),
           },
     [services, organizationId],
   );
@@ -139,34 +150,36 @@ export function AppShell(locale: LocaleProps) {
 
   return (
     <OfficeDataProvider client={clients.office} business={clients.business} can={can}>
-      <BusinessFormats locale={locale.locale}>
-        <div className="app">
-          <Sidebar
-            route={route}
-            canReadConversations={canReadConversations}
-            canReadConnections={canReadConnections}
-            canReadBusiness={canReadBusiness}
-            open={menuOpen}
-            onNavigate={() => setMenuOpen(false)}
-          />
-          {menuOpen ? (
-            <div className="app__scrim" aria-hidden="true" onClick={() => setMenuOpen(false)} />
-          ) : null}
-          <div className="app__body">
-            <TopBar
-              organizationName={workspace.organization.name}
-              email={me.email ?? me.userId}
-              onSignOut={signOut}
-              menuOpen={menuOpen}
-              onMenu={() => setMenuOpen((open) => !open)}
-              locale={locale}
+      <ActivityProvider client={canReadActivity ? clients.activity : undefined}>
+        <BusinessFormats locale={locale.locale}>
+          <div className="app">
+            <Sidebar
+              route={route}
+              canReadConversations={canReadConversations}
+              canReadConnections={canReadConnections}
+              canReadBusiness={canReadBusiness}
+              open={menuOpen}
+              onNavigate={() => setMenuOpen(false)}
             />
-            <main className="app__main" key={route.kind === 'office' ? route.slug : route.kind}>
-              {page}
-            </main>
+            {menuOpen ? (
+              <div className="app__scrim" aria-hidden="true" onClick={() => setMenuOpen(false)} />
+            ) : null}
+            <div className="app__body">
+              <TopBar
+                organizationName={workspace.organization.name}
+                email={me.email ?? me.userId}
+                onSignOut={signOut}
+                menuOpen={menuOpen}
+                onMenu={() => setMenuOpen((open) => !open)}
+                locale={locale}
+              />
+              <main className="app__main" key={route.kind === 'office' ? route.slug : route.kind}>
+                {page}
+              </main>
+            </div>
           </div>
-        </div>
-      </BusinessFormats>
+        </BusinessFormats>
+      </ActivityProvider>
     </OfficeDataProvider>
   );
 }
@@ -202,13 +215,19 @@ function BusinessFormats({
   readonly children: ReactNode;
 }) {
   const { business } = useOfficeData();
+  // The words stay the ones already chosen above (the language's catalog, or a test's own).
+  const { messages } = useIntl();
   const country =
     business.status === 'ready' && business.value.profile !== null
       ? business.value.profile.country
       : undefined;
   // Always the same element, so the page below is never remounted when the profile arrives.
   return (
-    <I18nProvider locale={locale} {...(country === undefined ? {} : { region: country })}>
+    <I18nProvider
+      locale={locale}
+      messages={messages as Messages}
+      {...(country === undefined ? {} : { region: country })}
+    >
       {children}
     </I18nProvider>
   );

@@ -135,6 +135,7 @@ function services(projectId: string) {
     approvals,
     structure,
     businessProfiles: new FirestoreBusinessProfileRepository(firestore),
+    activity: new FirestoreAuditStore(firestore),
     credits: new FirestoreCreditStore(firestore),
     plans: new FirestorePlanRepository(firestore),
     workflows: new FirestoreWorkflowRepository(firestore),

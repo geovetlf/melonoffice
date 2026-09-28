@@ -1,9 +1,18 @@
 import type { Firestore, Timestamp as FirestoreTimestamp } from '@google-cloud/firestore';
 import { Timestamp } from '@google-cloud/firestore';
-import type { AuditEvent, AuditStore } from '@melonoffice/audit';
+import {
+  MAX_QUERY_ACTIONS,
+  type AuditEvent,
+  type AuditQuery,
+  type AuditReader,
+  type AuditStore,
+} from '@melonoffice/audit';
 
 /** `auditLogs/{eventId}` (ADR-0020). Written only by the API, only with `create`. */
 export const AUDIT_LOGS = 'auditLogs';
+
+/** How many actions one Firestore read filters on (see `query`). */
+const ACTIONS_PER_READ = 10;
 
 /**
  * The stored shape: flat, so organization, actor, action and time can be queried directly.
@@ -103,8 +112,46 @@ export function toAuditDocument(event: AuditEvent): AuditDocument {
  * Audit events in Firestore. Only `append` exists, and it uses `create`, which fails if the
  * document already exists, so a recorded event is never overwritten. A batch writes all or none.
  */
-export class FirestoreAuditStore implements AuditStore {
+export class FirestoreAuditStore implements AuditStore, AuditReader {
   constructor(private readonly db: Firestore) {}
+
+  /**
+   * The activity read (ADR-0049): one organization, the listed actions, a time window, newest
+   * first. Served by the composite index `organizationId ASC, action ASC, occurredAt DESC`
+   * (Terraform, `google_firestore_index.audit_activity`). Firestore expands an `in` filter into
+   * one branch per value and caps the filters of a query, so the actions are read in groups of
+   * ten, each group newest first, and merged.
+   */
+  async query(q: AuditQuery): Promise<readonly AuditEvent[]> {
+    if (q.actions.length === 0 || q.limit <= 0) return [];
+    if (q.actions.length > MAX_QUERY_ACTIONS)
+      throw new Error('too many audit actions in one query');
+    const groups: string[][] = [];
+    for (let i = 0; i < q.actions.length; i += ACTIONS_PER_READ) {
+      groups.push(q.actions.slice(i, i + ACTIONS_PER_READ));
+    }
+    const snapshots = await Promise.all(
+      groups.map((actions) =>
+        this.db
+          .collection(AUDIT_LOGS)
+          .where('organizationId', '==', q.organizationId)
+          .where('action', 'in', actions)
+          .where('occurredAt', '>=', Timestamp.fromDate(q.from))
+          .where('occurredAt', '<', Timestamp.fromDate(q.to))
+          .orderBy('occurredAt', 'desc')
+          .limit(q.limit)
+          .get(),
+      ),
+    );
+    return snapshots
+      .flatMap((snapshot) =>
+        snapshot.docs.map((doc) => fromAuditDocument(doc.id, doc.data() as AuditDocument)),
+      )
+      .sort((a, b) =>
+        a.occurredAt < b.occurredAt ? 1 : a.occurredAt > b.occurredAt ? -1 : a.id < b.id ? 1 : -1,
+      )
+      .slice(0, q.limit);
+  }
 
   async append(events: readonly AuditEvent[]): Promise<void> {
     const batch = this.db.batch();

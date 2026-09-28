@@ -867,6 +867,42 @@ a.sidebar__item:hover {
   color: var(--office-accent);
 }
 
+/* Today / this week / this month, for the real activity (ADR-0049). */
+.period-picker {
+  display: flex;
+  gap: var(--mo-space-1);
+  margin-bottom: var(--mo-space-3);
+}
+
+.period-picker__option {
+  min-height: 32px;
+  padding: 0 var(--mo-space-3);
+  border: 1px solid var(--office-line);
+  border-radius: var(--mo-radius-pill);
+  background: transparent;
+  color: var(--office-muted);
+  font: inherit;
+  font-size: var(--mo-font-size-xs);
+  cursor: pointer;
+}
+
+.period-picker__option[aria-pressed='true'] {
+  border-color: var(--office-accent);
+  background: var(--office-accent-soft);
+  color: var(--office-accent);
+}
+
+.activity__link {
+  display: flex;
+  min-width: 0;
+  color: inherit;
+  text-decoration: none;
+}
+
+.activity__link:hover .task__title {
+  text-decoration: underline;
+}
+
 .timeline__item {
   position: relative;
 }

@@ -12,6 +12,7 @@ export const ROLES = {
   owner: [
     'organization.read',
     'organization.update',
+    'activity.read',
     'entitlement.read',
     'billing.read',
     'execution.read',

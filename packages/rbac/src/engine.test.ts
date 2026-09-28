@@ -105,6 +105,7 @@ describe('catalogue', () => {
     expect(ROLES.owner).toEqual([
       'organization.read',
       'organization.update',
+      'activity.read',
       'entitlement.read',
       'billing.read',
       'execution.read',

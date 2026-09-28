@@ -221,7 +221,8 @@ describe('AuditService and InMemoryAuditStore', () => {
     const store = new InMemoryAuditStore();
     const event = await createAuditService(store).record(signIn);
     const methods = Object.getOwnPropertyNames(Object.getPrototypeOf(store));
-    expect(methods.sort()).toEqual(['append', 'appendNow', 'constructor', 'events']);
+    // `query` only reads (ADR-0049).
+    expect(methods.sort()).toEqual(['append', 'appendNow', 'constructor', 'events', 'query']);
     expect(() => {
       (event as { result: string }).result = 'denied';
     }).toThrow();

@@ -144,7 +144,7 @@ run "staging_is_isolated_and_minimal" {
   }
 
   assert {
-    condition     = length(google_firestore_database.default) == 0 && length(google_identity_platform_config.default) == 0 && length(google_project_iam_member.api_firestore) == 0
+    condition     = length(google_firestore_database.default) == 0 && length(google_firestore_index.audit_activity) == 0 && length(google_identity_platform_config.default) == 0 && length(google_project_iam_member.api_firestore) == 0
     error_message = "Firestore and Identity Platform are dev only."
   }
 
@@ -189,7 +189,7 @@ run "prod_is_isolated_and_minimal" {
   }
 
   assert {
-    condition     = length(google_firestore_database.default) == 0 && length(google_identity_platform_config.default) == 0 && length(google_project_iam_member.api_firestore) == 0
+    condition     = length(google_firestore_database.default) == 0 && length(google_firestore_index.audit_activity) == 0 && length(google_identity_platform_config.default) == 0 && length(google_project_iam_member.api_firestore) == 0
     error_message = "Firestore and Identity Platform are dev only."
   }
 
@@ -250,6 +250,11 @@ run "dev_gets_firestore_and_auth" {
   assert {
     condition     = google_firestore_database.default[0].deletion_policy == "ABANDON"
     error_message = "Terraform must never delete the Firestore database."
+  }
+
+  assert {
+    condition     = google_firestore_index.audit_activity[0].collection == "auditLogs" && [for f in google_firestore_index.audit_activity[0].fields : "${f.field_path}:${f.order}"] == ["organizationId:ASCENDING", "action:ASCENDING", "occurredAt:DESCENDING"]
+    error_message = "Dev must have the activity index on auditLogs (organizationId, action, occurredAt desc)."
   }
 
   assert {
@@ -472,8 +477,15 @@ run "planner_is_least_privilege" {
   }
 
   assert {
-    condition     = length([for p in google_project_iam_custom_role.planner.permissions : p if can(regex("^datastore\\.(entities|indexes|statistics)\\.", p))]) == 0
+    condition     = length([for p in google_project_iam_custom_role.planner.permissions : p if can(regex("^datastore\\.(entities|statistics)\\.", p))]) == 0
     error_message = "The planner must not read or list Firestore documents."
+  }
+
+  # ADR-0049: index definitions are metadata (fields and order), not documents. The planner reads
+  # them only to refresh the activity index, and never anything else under datastore.indexes.
+  assert {
+    condition     = length([for p in google_project_iam_custom_role.planner.permissions : p if can(regex("^datastore\\.indexes\\.", p)) && !contains(["datastore.indexes.get", "datastore.indexes.list"], p)]) == 0
+    error_message = "The planner may only get and list Firestore index definitions."
   }
 
   assert {

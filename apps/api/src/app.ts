@@ -1,3 +1,4 @@
+import { createActivityService } from '@melonoffice/activity';
 import {
   createAIGateway,
   createModelPolicyCatalogue,
@@ -8,7 +9,7 @@ import {
   type ProviderRegistry,
 } from '@melonoffice/ai-gateway';
 import { createApprovalService, type ApprovalRepository } from '@melonoffice/approvals';
-import type { AuditService } from '@melonoffice/audit';
+import type { AuditReader, AuditService } from '@melonoffice/audit';
 import type { AuthDependencies } from '@melonoffice/auth';
 import {
   createBusinessProfileService,
@@ -66,6 +67,7 @@ import { registerApprovalRoutes } from './approvals.js';
 import { registerAuthRoutes, type AuthEnv } from './auth.js';
 import { registerCors } from './cors.js';
 import { registerBillingRoutes } from './billing.js';
+import { registerActivityRoutes } from './activity.js';
 import { registerBusinessRoutes } from './business.js';
 import { registerDepartmentRoutes } from './departments.js';
 import { registerConnectionRoutes } from './connections.js';
@@ -119,6 +121,8 @@ export interface AppOptions {
     readonly departments: DepartmentRepository;
     readonly specialists: SpecialistRepository;
   };
+  /** The audit trail's read side (ADR-0049). Absent: the activity route answers 503. */
+  readonly activity?: AuditReader;
   /** Business profiles (ADR-0048). Absent: the profile route answers 503 (fails closed). */
   readonly businessProfiles?: BusinessProfileRepository;
   /** The tool catalogue (ADR-0026). Defaults to the one in code, which is empty until tools exist. */
@@ -210,6 +214,7 @@ export function createApp({
   executions,
   structure,
   businessProfiles,
+  activity,
   tools = defaultToolRegistry(),
   approvals,
   credits,
@@ -292,6 +297,23 @@ export function createApp({
     } else if (tenancy !== undefined) {
       app.all('/v1/organizations/:organizationId/business-profile', (c) =>
         c.json({ error: 'business_not_configured' }, 503),
+      );
+    }
+    if (tenancy !== undefined && activity !== undefined) {
+      registerActivityRoutes(app, {
+        store: tenancy,
+        authorization,
+        audit,
+        activity: createActivityService({
+          reader: activity,
+          organizations: tenancy,
+          authorization,
+        }),
+        ...(businessProfiles === undefined ? {} : { businessProfiles }),
+      });
+    } else if (tenancy !== undefined) {
+      app.all('/v1/organizations/:organizationId/activity', (c) =>
+        c.json({ error: 'activity_not_configured' }, 503),
       );
     }
     if (tenancy !== undefined && structure !== undefined && specialists !== undefined) {

@@ -16,6 +16,7 @@ import {
   createAuditService,
   InMemoryAuditStore,
   type AuditEvent,
+  type AuditReader,
   type AuditService,
   type AuditStore,
 } from '@melonoffice/audit';
@@ -143,6 +144,8 @@ export interface Stores {
   readonly putStructure: (record: Department | Specialist | SpecialistVersion) => Promise<void>;
   /** Business profiles (ADR-0048). */
   readonly businessProfiles: BusinessProfileRepository;
+  /** The audit trail's read side (ADR-0049). */
+  readonly auditReader: AuditReader;
   /** The department catalogue migration's storage (ADR-0047). */
   readonly departmentMigration: DepartmentMigrationStore;
   readonly credits: CreditStore;
@@ -214,6 +217,7 @@ function memoryStores(): Stores {
     departments,
     specialists,
     businessProfiles: new InMemoryBusinessProfileRepository(breakable),
+    auditReader: events,
     departmentMigration: new InMemoryDepartmentMigrationStore(
       departments,
       specialists,
@@ -272,6 +276,7 @@ function firestoreStores(): Stores {
     departments: new FirestoreDepartmentRepository(db),
     specialists: new FirestoreSpecialistRepository(db),
     businessProfiles: new FirestoreBusinessProfileRepository(db),
+    auditReader: new FirestoreAuditStore(db),
     departmentMigration: new FirestoreDepartmentMigrationStore(db),
     async putStructure(record) {
       if ('origin' in record) {
@@ -401,6 +406,7 @@ export function setupApp(
     executions: stores.executions,
     structure: { departments: stores.departments, specialists: stores.specialists },
     businessProfiles: stores.businessProfiles,
+    activity: stores.auditReader,
     approvals: stores.approvals,
     credits,
     plans: stores.plans,

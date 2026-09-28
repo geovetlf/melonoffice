@@ -271,9 +271,13 @@ describe('the Home (ADR-0040)', () => {
     expect(await screen.findByText('Entrepreneur plan')).toBeTruthy();
     expect(screen.getByText('498 credits available')).toBeTruthy();
     expect(screen.queryByRole('button', { name: /upgrade|improve/i })).toBeNull();
-    for (const name of ["Today's tasks", 'Recent activity', 'Upcoming meetings']) {
+    for (const name of ["Today's tasks", 'Upcoming meetings']) {
       expect(within(screen.getByRole('region', { name })).getByText('Example')).toBeTruthy();
     }
+    // Activity is the audit trail's (ADR-0049), never an example.
+    expect(
+      within(screen.getByRole('region', { name: 'Recent activity' })).queryByText('Example'),
+    ).toBeNull();
   });
 
   it('reads nothing the role does not allow', async () => {
@@ -283,7 +287,7 @@ describe('the Home (ADR-0040)', () => {
     await rooms();
     expect(screen.queryByRole('region', { name: 'Credit use' })).toBeNull();
     const reads = backend.apiCalls().map((call) => call.url);
-    expect(reads.some((url) => /specialists|credits|billing/.test(url))).toBe(false);
+    expect(reads.some((url) => /specialists|credits|billing|activity/.test(url))).toBe(false);
   });
 
   it('keeps GIA honest: the bar says GIA is not connected yet and calls nothing', async () => {

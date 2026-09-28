@@ -105,6 +105,8 @@ locals {
     firestore_and_auth = [
       "datastore.databases.get",         # Firestore database metadata, never documents
       "datastore.databases.getMetadata", # Firestore database metadata, never documents
+      "datastore.indexes.get",           # Firestore index definitions, never documents
+      "datastore.indexes.list",          # Firestore index definitions, never documents
       "firebaseauth.configs.get",        # Identity Platform configuration, never users
     ]
     budget = [
@@ -362,6 +364,30 @@ resource "google_firestore_database" "default" {
   deletion_policy         = "ABANDON"
 
   depends_on = [module.services]
+}
+
+# The office's activity (ADR-0049) reads one organization's audit events of a few actions, newest
+# first. Firestore needs this composite index for that query.
+resource "google_firestore_index" "audit_activity" {
+  count = var.firestore_and_auth ? 1 : 0
+
+  project     = var.project_id
+  database    = google_firestore_database.default[0].name
+  collection  = "auditLogs"
+  query_scope = "COLLECTION"
+
+  fields {
+    field_path = "organizationId"
+    order      = "ASCENDING"
+  }
+  fields {
+    field_path = "action"
+    order      = "ASCENDING"
+  }
+  fields {
+    field_path = "occurredAt"
+    order      = "DESCENDING"
+  }
 }
 
 # Enables Identity Platform with email and password sign-in only. Other providers and MFA are
