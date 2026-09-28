@@ -1,7 +1,9 @@
 import type { Hono } from 'hono';
 import type { AuthEnv } from './auth.js';
 
-const ALLOWED_METHODS = 'GET, POST, OPTIONS';
+// Every method the web app sends: saving the business profile and the pipeline (PUT), editing a
+// contact, an opportunity or a connection (PATCH) and removing a connection (DELETE) included.
+const ALLOWED_METHODS = 'GET, POST, PUT, PATCH, DELETE, OPTIONS';
 const ALLOWED_HEADERS = 'authorization, content-type, x-request-id';
 const EXPOSED_HEADERS = 'x-request-id, www-authenticate';
 
