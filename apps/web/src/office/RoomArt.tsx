@@ -195,43 +195,30 @@ function Desk({
   occupant: SeatOccupant;
   scale: number;
 }) {
-  const person = PEOPLE[look % PEOPLE.length] ?? PEOPLE[0];
   return (
     <g
       transform={`translate(${x} ${y}) scale(${scale})`}
       className={occupant === null ? 'room__desk room__desk--free' : 'room__desk'}
     >
       {occupant === null ? (
-        // An empty workstation: its chair, waiting.
+        // A free workstation: its empty chair, waiting.
         <g className="room__chair" opacity="0.8">
           <rect
-            x="-9"
-            y="-24"
-            width="18"
-            height="16"
-            rx="4"
+            x="-11"
+            y="-28"
+            width="22"
+            height="22"
+            rx="5"
             fill="#4a2a20"
             stroke={hue}
             strokeOpacity="0.55"
           />
-          <rect x="-11" y="-9" width="22" height="5" rx="2" fill="#3b2019" />
+          <rect x="-12" y="-9" width="24" height="5" rx="2" fill="#3b2019" />
         </g>
       ) : (
-        // The agent, seen over the monitor: dimmed when paused, faded when offline.
-        <g
-          className={`room__agent room__agent--${occupant}`}
-          opacity={occupant === 'present' ? 1 : occupant === 'paused' ? 0.55 : 0.32}
-        >
-          <path d="M-15 -4 Q-15 -24 0 -24 Q15 -24 15 -4 Z" fill={person.shirt} />
-          <rect x="-2.5" y="-28" width="5" height="5" fill={person.skin} />
-          <circle cx="0" cy="-33" r="7" fill={person.skin} />
-          <path
-            d="M-7.2 -33 Q-7 -42 0 -42 Q7 -42 7.2 -33 Q4 -37.5 0 -37.5 Q-4 -37.5 -7.2 -33Z"
-            fill={person.hair}
-          />
-        </g>
+        <VisualWorker look={look} occupant={occupant} hue={hue} />
       )}
-      {/* Monitor: lit only for a present agent; no one is shown working. */}
+      {/* Monitor: lit when someone sits at it. It shows no content: nobody is shown working. */}
       <rect
         x="-10"
         y="-17"
@@ -249,13 +236,69 @@ function Desk({
         height="9"
         rx="1"
         fill={hue}
-        opacity={occupant === 'present' ? 0.45 : 0.12}
+        opacity={occupant === 'present' ? 0.45 : occupant === 'ambient' ? 0.3 : 0.12}
       />
       <rect x="-1.5" y="-5" width="3" height="3" fill="#1c110d" />
-      {/* Desk. */}
+      {/* Desk, with its keyboard. */}
       <path d="M-30 -2 H30 L26 4 H-26 Z" fill="#f4e3d6" />
+      <rect x="-7" y="-2.8" width="14" height="1.8" rx="0.6" fill="#d8c1b1" />
       <rect x="-24" y="4" width="3" height="12" fill="#c9ad9b" />
       <rect x="21" y="4" width="3" height="12" fill="#c9ad9b" />
+    </g>
+  );
+}
+
+/**
+ * A person seated at a desk, facing the room over the monitor, hands on the desk (ADR-0042). The
+ * same figure draws a real agent and an ambient one: an ambient figure is decoration, drawn a
+ * little softer and with no presence light; a real agent carries the department's light above,
+ * and fades when paused or offline. It never types, clicks or writes: its only motion is the
+ * room's slow breathing, and only when motion is welcome.
+ */
+export function VisualWorker({
+  look,
+  occupant,
+  hue,
+}: {
+  readonly look: number;
+  readonly occupant: Exclude<SeatOccupant, null>;
+  readonly hue: string;
+}) {
+  const person = PEOPLE[look % PEOPLE.length] ?? PEOPLE[0];
+  const opacity =
+    occupant === 'paused' ? 0.55 : occupant === 'offline' ? 0.32 : occupant === 'ambient' ? 0.9 : 1;
+  return (
+    <g
+      className={`room__worker room__worker--${occupant === 'ambient' ? 'ambient' : 'agent'}`}
+      opacity={opacity}
+    >
+      {/* Chair back. */}
+      <rect x="-13" y="-30" width="26" height="26" rx="6" fill="#2d1914" />
+      <g className="room__breath">
+        {/* Torso and shoulders. */}
+        <path d="M-13 -5 Q-14.5 -21 -8 -23.5 L8 -23.5 Q14.5 -21 13 -5 Z" fill={person.shirt} />
+        {/* Arms reaching to the desk, hands resting beside the monitor. */}
+        <path
+          d="M-11 -20 Q-16.5 -12 -12.5 -3.5 M11 -20 Q16.5 -12 12.5 -3.5"
+          stroke={person.shirt}
+          strokeWidth="4.2"
+          strokeLinecap="round"
+          fill="none"
+        />
+        <circle cx="-12" cy="-3" r="2" fill={person.skin} />
+        <circle cx="12" cy="-3" r="2" fill={person.skin} />
+        {/* Neck, head and hair. */}
+        <rect x="-2.3" y="-28" width="4.6" height="5" fill={person.skin} />
+        <circle cx="0" cy="-33.5" r="6.6" fill={person.skin} />
+        <path
+          d="M-6.8 -33.5 Q-6.6 -41.8 0 -41.8 Q6.6 -41.8 6.8 -33.5 Q3.8 -37.6 0 -37.6 Q-3.8 -37.6 -6.8 -33.5Z"
+          fill={person.hair}
+        />
+      </g>
+      {occupant === 'ambient' ? null : (
+        // A real agent's presence light, in the department's color.
+        <circle cx="0" cy="-47" r="2.2" fill={hue} className="room__presence" />
+      )}
     </g>
   );
 }

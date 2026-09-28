@@ -29,10 +29,24 @@ export interface Workstation {
   readonly number: number;
   readonly position: SeatPosition;
   readonly facing: SeatFacing;
-  /** The agent at this workstation, if any. */
-  readonly agentId: string | null;
-  readonly status: 'available' | 'occupied';
+  /** Who the office shows at this workstation (see `WorkstationOccupant`); `null` is a free desk. */
+  readonly occupant: WorkstationOccupant | null;
 }
+
+/**
+ * Who sits at a workstation, as the office shows it (ADR-0042):
+ * - `agent`: a real agent of the organization (a specialist record), with its own controls;
+ * - `ambient`: a decorative figure that keeps an unstaffed office from looking empty. It is not an
+ *   agent, has no name, state or activity, and the workstation stays free: a real agent takes it
+ *   over, and the figure is gone.
+ */
+export type WorkstationOccupant =
+  | { readonly kind: 'agent'; readonly agentId: string }
+  | { readonly kind: 'ambient'; readonly visualId: string };
+
+/** The real agent at a workstation, if any: ambient figures are not agents. */
+export const agentAt = (workstation: Pick<Workstation, 'occupant'>): string | null =>
+  workstation.occupant?.kind === 'agent' ? workstation.occupant.agentId : null;
 
 /**
  * What an agent is doing, when the runtime reports it. Nothing produces this yet: every agent's
@@ -68,31 +82,40 @@ export interface AgentPresence {
 /** How a department's office is laid out. */
 export interface OfficeLayout {
   readonly seats: number;
+  /**
+   * The workstations (1-based numbers) that show an ambient figure while no real agent sits there
+   * (ADR-0042). Never all of them: an office keeps free desks.
+   */
+  readonly ambient: readonly number[];
 }
 
 /**
- * Provisional seat counts per catalogue type: examples to draw the offices with, not a product
- * decision. They live here only until layouts are configurable and stored.
+ * Provisional layouts per catalogue type: examples to draw the offices with, not a product
+ * decision. This is the one place both the Home and the department offices read them from, until
+ * layouts are configurable and stored.
  */
-const PROVISIONAL_SEATS: Readonly<Record<string, number>> = {
-  leadership: 4,
-  operations: 8,
-  sales: 5,
-  marketing: 6,
-  design_video: 6,
-  research: 4,
-  finance: 4,
+const PROVISIONAL_LAYOUTS: Readonly<Record<string, OfficeLayout>> = {
+  leadership: { seats: 4, ambient: [1, 3] },
+  operations: { seats: 8, ambient: [1, 2, 4, 6, 7] },
+  sales: { seats: 5, ambient: [1, 3, 4] },
+  marketing: { seats: 6, ambient: [1, 2, 4] },
+  design_video: { seats: 6, ambient: [1, 3, 5] },
+  research: { seats: 4, ambient: [1, 2] },
+  finance: { seats: 4, ambient: [1, 3] },
 };
 
-const DEFAULT_SEATS = 4;
+const DEFAULT_LAYOUT: OfficeLayout = { seats: 4, ambient: [1, 3] };
 /** No room is drawn with more desks than this; a bigger team scrolls in the list. */
 export const MAX_SEATS = 12;
 
 export function layoutOf(department: Pick<DepartmentView, 'typeId'>): OfficeLayout {
-  const seats =
-    (department.typeId === null ? undefined : PROVISIONAL_SEATS[department.typeId]) ??
-    DEFAULT_SEATS;
-  return { seats: Math.min(Math.max(seats, 1), MAX_SEATS) };
+  const layout =
+    (department.typeId === null ? undefined : PROVISIONAL_LAYOUTS[department.typeId]) ??
+    DEFAULT_LAYOUT;
+  const seats = Math.min(Math.max(layout.seats, 1), MAX_SEATS);
+  // At least one desk always stays visibly free.
+  const ambient = layout.ambient.filter((n) => n >= 1 && n <= seats).slice(0, seats - 1);
+  return { seats, ambient };
 }
 
 /**
@@ -138,7 +161,8 @@ export interface DepartmentSeating {
 
 /**
  * The department's workstations and who sits where. Only this department's specialists can take
- * a seat, so an agent of another department, or another organization, never appears here.
+ * a seat, so an agent of another department, or another organization, never appears here. Each
+ * workstation shows, in order: its real agent; else the layout's ambient figure; else nobody.
  */
 export function seatAgents(
   department: Pick<DepartmentView, 'id' | 'typeId'>,
@@ -149,14 +173,20 @@ export function seatAgents(
   const positions = arrangeSeats(layout.seats);
   const workstations = positions.map((position, i): Workstation => {
     const agent = agents[i];
+    const number = i + 1;
+    const occupant: WorkstationOccupant | null =
+      agent !== undefined
+        ? { kind: 'agent', agentId: agent.id }
+        : layout.ambient.includes(number)
+          ? { kind: 'ambient', visualId: `ambient-${number}` }
+          : null;
     return {
-      id: `${department.id}:seat-${i + 1}`,
+      id: `${department.id}:seat-${number}`,
       departmentId: department.id,
-      number: i + 1,
+      number,
       position,
       facing: 'front',
-      agentId: agent?.id ?? null,
-      status: agent === undefined ? 'available' : 'occupied',
+      occupant,
     };
   });
   return {
@@ -197,7 +227,10 @@ export function roomSeats(
   specialists: readonly SpecialistView[],
 ): readonly { readonly position: SeatPosition; readonly occupant: RoomOccupant }[] {
   return seating.workstations.map((workstation) => {
-    const agent = specialists.find((s) => s.id === workstation.agentId);
+    if (workstation.occupant?.kind === 'ambient') {
+      return { position: workstation.position, occupant: 'ambient' };
+    }
+    const agent = specialists.find((s) => s.id === agentAt(workstation));
     if (agent === undefined) return { position: workstation.position, occupant: null };
     const { state } = presenceOf(agent, workstation.id);
     return {
@@ -207,4 +240,5 @@ export function roomSeats(
   });
 }
 
-export type RoomOccupant = 'present' | 'paused' | 'offline' | null;
+/** Who the drawing puts at a desk: a real agent by its record state, an ambient figure, or no one. */
+export type RoomOccupant = 'present' | 'paused' | 'offline' | 'ambient' | null;

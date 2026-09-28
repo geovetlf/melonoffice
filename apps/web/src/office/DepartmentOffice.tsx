@@ -8,7 +8,7 @@ import { Icon } from './icons.js';
 import { readyList, useOfficeData } from './OfficeData.js';
 import { agentsSummary, seatsSummary } from './OfficeScene.js';
 import { agentRole, WorkstationMap } from './WorkstationMap.js';
-import { presenceOf, seatAgents } from './workstations.js';
+import { agentAt, presenceOf, seatAgents } from './workstations.js';
 
 /**
  * A department's office (ADR-0040, level 2): the room from the Home, entered. Its workstations
@@ -106,7 +106,7 @@ export function AgentPlace({ slug, agentId }: { readonly slug: string; readonly 
     return <NotFound />;
   }
   const workstation = seatAgents(department, everyone).workstations.find(
-    (w) => w.agentId === agent.id,
+    (w) => agentAt(w) === agent.id,
   );
   const presence = presenceOf(agent, workstation?.id ?? null);
   const role = agentRole(agent);

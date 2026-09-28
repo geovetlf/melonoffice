@@ -1354,6 +1354,17 @@ a.sidebar__item:hover {
     animation: mo-glow 9s ease-in-out infinite alternate;
   }
 
+  /* A seated figure barely breathes; ambient figures and agents alike, never typing or moving. */
+  .room__breath {
+    transform-box: fill-box;
+    transform-origin: 50% 100%;
+    animation: mo-breath 6s ease-in-out infinite;
+  }
+
+  .room__presence {
+    animation: mo-glow 7s ease-in-out infinite alternate;
+  }
+
   ::view-transition-group(mo-room) {
     animation-duration: 380ms;
     animation-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
@@ -1604,5 +1615,16 @@ a.sidebar__item:hover {
     transform: none;
     box-shadow: none;
     pointer-events: auto;
+  }
+}
+
+@keyframes mo-breath {
+  0%,
+  100% {
+    transform: scaleY(1);
+  }
+
+  50% {
+    transform: scaleY(1.012);
   }
 }

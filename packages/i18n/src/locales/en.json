@@ -335,5 +335,6 @@
   "office.profile.projects": "Projects",
   "office.profile.noProjects": "No projects",
   "office.area.actions": "Actions",
-  "office.seats.freeShort": "Available"
+  "office.seats.freeShort": "Available",
+  "office.seats.ambientNote": "Ambient figure, not an agent"
 }
