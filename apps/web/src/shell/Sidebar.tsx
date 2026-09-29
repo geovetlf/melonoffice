@@ -1,5 +1,6 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
 import type { ReactNode } from 'react';
+import { useBrand } from '../brand/brand.js';
 import { navigate } from '../identity/router.js';
 import { departmentName, lookOf, officeDepartments, officeSlug } from '../office/departments.js';
 import { Icon, type IconName } from '../office/icons.js';
@@ -73,6 +74,7 @@ export function Sidebar({
   readonly onNavigate: () => void;
 }) {
   const intl = useIntl();
+  const brand = useBrand();
   const { departments, business } = useOfficeData();
   const { headquarters, floor } = officeDepartments(
     readyList(departments),
@@ -87,7 +89,7 @@ export function Sidebar({
     <aside id="app-sidebar" className={`sidebar${open ? ' sidebar--open' : ''}`}>
       <div className="sidebar__brand">
         <span className="sidebar__logo">
-          <FormattedMessage id="app.logo" />
+          {brand?.productName ?? <FormattedMessage id="app.logo" />}
         </span>
         <span className="sidebar__tagline">
           <FormattedMessage id="app.tagline" />

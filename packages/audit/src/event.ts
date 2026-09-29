@@ -70,7 +70,9 @@ export interface AuditTarget {
     | 'event'
     | 'commercial_account'
     | 'commercial_membership'
-    | 'customer_relationship';
+    | 'customer_relationship'
+    | 'brand_config'
+    | 'domain_binding';
   readonly id: string;
 }
 

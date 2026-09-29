@@ -45,9 +45,10 @@ const apiPaths = (backend: FakeBackend) =>
 
 describe('the public page', () => {
   const loading = () => new Promise<undefined>(() => {});
+  const noBrand = () => Promise.resolve(undefined);
 
   it('renders in English', () => {
-    render(<Root initialLocale="en" loadIdentity={loading} />);
+    render(<Root initialLocale="en" loadIdentity={loading} loadBrand={noBrand} />);
     expect(screen.getByRole('heading', { level: 1, name: 'MelonOffice' })).toBeTruthy();
     expect(screen.getByText('Your intelligent office')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'English', pressed: true })).toBeTruthy();
@@ -55,7 +56,7 @@ describe('the public page', () => {
   });
 
   it('renders in Spanish and switches language without reloading', () => {
-    render(<Root initialLocale="es" loadIdentity={loading} />);
+    render(<Root initialLocale="es" loadIdentity={loading} loadBrand={noBrand} />);
     expect(screen.getByText('Tu oficina inteligente')).toBeTruthy();
     expect(document.documentElement.lang).toBe('es');
     fireEvent.click(screen.getByRole('button', { name: 'English' }));
@@ -63,7 +64,13 @@ describe('the public page', () => {
   });
 
   it('says when sign-in is not set up on this site', async () => {
-    render(<Root initialLocale="en" loadIdentity={() => Promise.resolve(undefined)} />);
+    render(
+      <Root
+        initialLocale="en"
+        loadIdentity={() => Promise.resolve(undefined)}
+        loadBrand={noBrand}
+      />,
+    );
     expect(await screen.findByText('Sign-in is not set up on this site yet.')).toBeTruthy();
     expect(screen.getByRole('heading', { level: 1, name: 'MelonOffice' })).toBeTruthy();
   });

@@ -121,6 +121,8 @@ import { registerApprovalRoutes } from './approvals.js';
 import { registerAuthRoutes, type AuthEnv } from './auth.js';
 import { registerCors } from './cors.js';
 import { registerBillingRoutes } from './billing.js';
+import type { BrandRepository } from '@melonoffice/branding';
+import { registerBrandingRoutes, registerPublicBrandRoute } from './branding.js';
 import { registerCommercialRoutes } from './commercial.js';
 import { DEFAULT_ACTIVITY_TIME_ZONE, registerActivityRoutes } from './activity.js';
 import { registerBrainRoutes } from './brain.js';
@@ -340,6 +342,11 @@ export interface AppOptions {
    * customers. Absent: its routes answer 503.
    */
   readonly commercialAccounts?: CommercialRepository;
+  /**
+   * Brands and domains (ADR-0087). Absent, or without the commercial layer: their routes answer
+   * 503.
+   */
+  readonly brands?: BrandRepository;
 }
 
 type Env = AuthEnv;
@@ -379,6 +386,7 @@ export function createApp({
   webOrigins = [],
   platformAdmins = [],
   commercialAccounts,
+  brands,
 }: AppOptions): Hono<Env> {
   const app = new Hono<Env>();
 
@@ -424,6 +432,30 @@ export function createApp({
   registerCors(app, webOrigins);
   // Outside /v1: providers sign deliveries, they have no user token.
   registerWebhookRoutes(app, webhooks);
+  // Before authentication: a page shows its brand before anyone signs in (ADR-0087).
+  const branding =
+    brands !== undefined && commercialAccounts !== undefined && tenancy !== undefined
+      ? {
+          brands,
+          commercial: commercialAccounts,
+          organizations: tenancy,
+          businessFacts: async (organizationId: OrganizationId) => {
+            const profile = await businessProfiles?.find(organizationId);
+            return profile === undefined
+              ? undefined
+              : {
+                  timeZone: profile.timeZone,
+                  currency: profile.currency,
+                  country: profile.country,
+                };
+          },
+        }
+      : undefined;
+  if (branding !== undefined) {
+    registerPublicBrandRoute(app, branding);
+  } else {
+    app.get('/v1/public/brand', (c) => c.json({ error: 'branding_not_configured' }, 503));
+  }
   registerAuthRoutes(app, auth, audit);
   if (auth !== undefined && audit !== undefined) {
     // A new organization's Company Brain starts with its name (ADR-0051).
@@ -1264,6 +1296,20 @@ export function createApp({
       app.all('/v1/commercial/*', unavailable);
       app.all('/v1/organizations/:organizationId/commercial-relationships', unavailable);
       app.all('/v1/organizations/:organizationId/commercial-relationships/*', unavailable);
+    }
+    if (branding !== undefined) {
+      registerBrandingRoutes(app, {
+        ...branding,
+        admins: new Set(platformAdmins),
+        authorization,
+        commercialAuthorization: createCommercialAuthorization(),
+        audit,
+      });
+    } else {
+      const unavailable = (c: Context<Env>) => c.json({ error: 'branding_not_configured' }, 503);
+      app.all('/v1/organizations/:organizationId/brand', unavailable);
+      app.all('/v1/platform/domain-bindings', unavailable);
+      app.all('/v1/platform/domain-bindings/*', unavailable);
     }
     registerPlatformRoutes(app, {
       admins: new Set(platformAdmins),

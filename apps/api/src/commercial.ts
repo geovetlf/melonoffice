@@ -131,10 +131,15 @@ const relationshipView = (r: CustomerRelationship) => ({
   updatedAt: r.updatedAt,
 });
 
-export function registerCommercialRoutes(app: Hono<AuthEnv>, deps: CommercialDependencies) {
-  const { commercial, organizations, admins, audit, commercialAuthorization } = deps;
-  const now = deps.now ?? (() => new Date());
-
+/**
+ * The guard every route inside a partner's or agency's account goes through (ADR-0086), shared by
+ * the commercial and branding routes.
+ */
+export function createCommercialGuard({
+  commercial,
+  audit,
+  commercialAuthorization,
+}: Pick<CommercialDependencies, 'commercial' | 'audit' | 'commercialAuthorization'>) {
   /** Runs a write whose events it builds; tenancy's codes answer as themselves. */
   const guarded = async (c: Context<AuthEnv>, work: () => Promise<Response>): Promise<Response> => {
     try {
@@ -146,6 +151,57 @@ export function registerCommercialRoutes(app: Hono<AuthEnv>, deps: CommercialDep
       throw error;
     }
   };
+
+  /**
+   * Resolves the caller in the account of the path and checks the permission. Every refusal is
+   * `commercial_account_forbidden` (not a member, inactive, unknown account) or
+   * `permission_denied` (a member whose role does not allow it), both audited.
+   */
+  const inAccount =
+    (
+      permission: Permission,
+      handler: (c: Context<AuthEnv>, context: CommercialContext) => Promise<Response>,
+    ) =>
+    async (c: Context<AuthEnv>) => {
+      const auth = c.get('auth');
+      let context: CommercialContext;
+      try {
+        context = await resolveCommercialContext(auth, c.req.param('accountId'), commercial);
+      } catch (error) {
+        if (!isTenancyError(error)) throw error;
+        await recordOutcome(c, audit, {
+          action: 'commercial.access',
+          result: 'denied',
+          actor: actorOf(auth),
+          permission,
+          reason: error.code,
+          ...requestFields(c),
+        });
+        return c.json({ error: error.code }, 403);
+      }
+      const decision = commercialAuthorization.authorize(context, permission);
+      if (!decision.allowed) {
+        await recordOutcome(c, audit, {
+          action: 'commercial.access',
+          result: 'denied',
+          actor: actorOf(auth),
+          commercialAccountId: context.commercialAccountId,
+          permission,
+          reason: decision.reason,
+          ...requestFields(c),
+        });
+        return c.json({ error: 'permission_denied' }, 403);
+      }
+      return guarded(c, () => handler(c, context));
+    };
+
+  return { guarded, inAccount };
+}
+
+export function registerCommercialRoutes(app: Hono<AuthEnv>, deps: CommercialDependencies) {
+  const { commercial, organizations, admins, audit, commercialAuthorization } = deps;
+  const now = deps.now ?? (() => new Date());
+  const { guarded, inAccount } = createCommercialGuard(deps);
 
   const event = (input: AuditEventInput, at: Date) => buildAuditEvent(input, at);
 
@@ -245,49 +301,6 @@ export function registerCommercialRoutes(app: Hono<AuthEnv>, deps: CommercialDep
   });
 
   // ---------------------------------------------------------------- partner and agency
-
-  /**
-   * Resolves the caller in the account of the path and checks the permission. Every refusal is
-   * `commercial_account_forbidden` (not a member, inactive, unknown account) or
-   * `permission_denied` (a member whose role does not allow it), both audited.
-   */
-  const inAccount =
-    (
-      permission: Permission,
-      handler: (c: Context<AuthEnv>, context: CommercialContext) => Promise<Response>,
-    ) =>
-    async (c: Context<AuthEnv>) => {
-      const auth = c.get('auth');
-      let context: CommercialContext;
-      try {
-        context = await resolveCommercialContext(auth, c.req.param('accountId'), commercial);
-      } catch (error) {
-        if (!isTenancyError(error)) throw error;
-        await recordOutcome(c, audit, {
-          action: 'commercial.access',
-          result: 'denied',
-          actor: actorOf(auth),
-          permission,
-          reason: error.code,
-          ...requestFields(c),
-        });
-        return c.json({ error: error.code }, 403);
-      }
-      const decision = commercialAuthorization.authorize(context, permission);
-      if (!decision.allowed) {
-        await recordOutcome(c, audit, {
-          action: 'commercial.access',
-          result: 'denied',
-          actor: actorOf(auth),
-          commercialAccountId: context.commercialAccountId,
-          permission,
-          reason: decision.reason,
-          ...requestFields(c),
-        });
-        return c.json({ error: 'permission_denied' }, 403);
-      }
-      return guarded(c, () => handler(c, context));
-    };
 
   // The accounts the caller belongs to: active memberships in active accounts, their own only.
   app.get('/v1/commercial/accounts', async (c) => {

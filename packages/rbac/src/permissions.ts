@@ -311,6 +311,12 @@ export const PERMISSIONS = {
     description:
       "Accept a partner's or agency's request, choose which scopes it gets, change them, or end the relationship (ADR-0086).",
   },
+  'brand.manage': {
+    resource: 'brand',
+    action: 'manage',
+    description:
+      "Change the organization's own brand: its name, logo, colors, contacts, links and company facts (ADR-0087).",
+  },
   // Commercial permissions (ADR-0086): held through a commercial membership (COMMERCIAL_ROLES),
   // never through an organization role, and checked by `authorizeCommercial` only.
   'commercial.read': {
@@ -336,6 +342,18 @@ export const PERMISSIONS = {
     action: 'read_summary',
     description:
       "See a customer's name, status, plan and subscription status, only when the customer granted the `summary` scope (ADR-0086).",
+  },
+  'commercial.manage_brand': {
+    resource: 'commercial',
+    action: 'manage_brand',
+    description:
+      "Change your partner or agency account's own brand, which its white-label customers show (ADR-0087).",
+  },
+  'customer.manage_brand': {
+    resource: 'customer',
+    action: 'manage_brand',
+    description:
+      'See and change the brand shown to one white-label customer, only while that customer grants the `branding` scope (ADR-0087).',
   },
 } as const satisfies Record<string, PermissionDefinition>;
 

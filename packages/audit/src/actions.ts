@@ -28,7 +28,8 @@ export interface AuditActionDefinition {
     | 'decision'
     | 'event'
     | 'platform'
-    | 'commercial';
+    | 'commercial'
+    | 'branding';
   readonly description: string;
   /** The results this action is recorded with. Anything else is a programming error. */
   readonly results: readonly AuditResult[];
@@ -778,6 +779,24 @@ export const AUDIT_ACTIONS = {
     description:
       'A person asked to act in a commercial account, or in one of its customers, and was refused (ADR-0086); `permission` is what they asked for.',
     results: ['denied'],
+  },
+  'brand_config.updated': {
+    category: 'branding',
+    description:
+      "An owner changed their brand configuration (ADR-0087): an organization's owner its own, a partner's admin the partner's or one white-label customer's; `reference` names the level.",
+    results: ['success'],
+  },
+  'domain_binding.created': {
+    category: 'branding',
+    description:
+      'The platform administrator registered a domain for a commercial account or an organization (ADR-0087); it starts pending verification. Denied when the caller is not a platform administrator.',
+    results: ['success', 'denied'],
+  },
+  'domain_binding.status_changed': {
+    category: 'branding',
+    description:
+      "The platform administrator changed a domain's status (ADR-0087); `transition` is the change. Only an active domain resolves.",
+    results: ['success', 'denied'],
   },
   'tenancy.resolve': {
     category: 'tenancy',

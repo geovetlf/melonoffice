@@ -1,5 +1,6 @@
 import { FormattedMessage, SUPPORTED_LOCALES, useIntl, type Locale } from '@melonoffice/i18n';
 import { Button } from '@melonoffice/ui';
+import { useBrand } from '../brand/brand.js';
 import { useEffect, useId, useState, type FormEvent, type ReactNode } from 'react';
 import { useAuth } from './AuthProvider.js';
 import type { IdentityErrorCode } from './identityPlatform.js';
@@ -37,12 +38,11 @@ export function PublicFrame({
   children,
   ...locale
 }: LocaleProps & { readonly children: ReactNode }) {
+  const brand = useBrand();
   return (
     <main className="public">
       <header className="public__header">
-        <h1>
-          <FormattedMessage id="app.name" />
-        </h1>
+        <h1>{brand?.productName ?? <FormattedMessage id="app.name" />}</h1>
         <p className="public__tagline">
           <FormattedMessage id="app.tagline" />
         </p>
