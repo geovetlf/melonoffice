@@ -2514,7 +2514,7 @@ a.sidebar__item:hover {
   font-size: 0.875rem;
 }
 
-/* AI usage and cost (ADR-0074, ADR-0081). */
+/* AI usage and credits (ADR-0074, ADR-0081). */
 .panel__link {
   display: inline-block;
   margin-top: var(--mo-space-2);
@@ -2724,4 +2724,48 @@ a.sidebar__item:hover {
 .command-center__list {
   margin: 0;
   padding-left: var(--mo-space-4);
+}
+
+/* The platform AI view (ADR-0082): the platform administrator's only. */
+.platform__providers,
+.platform__policies {
+  display: grid;
+  gap: var(--mo-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.platform__provider,
+.platform__policies li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--mo-space-1) var(--mo-space-2);
+  padding: var(--mo-space-2);
+  border: 1px solid var(--office-line);
+  border-radius: 8px;
+}
+
+.platform__name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.platform__badge {
+  padding: 0 var(--mo-space-2);
+  border-radius: 999px;
+  border: 1px solid currentcolor;
+  font-size: 0.75rem;
+}
+
+.platform__provider[data-health='degraded'] .platform__badge,
+.platform__provider[data-health='unavailable'] .platform__badge {
+  font-weight: 700;
+}
+
+/* A wide table scrolls inside its own box, never the page. */
+.platform__scroll {
+  max-width: 100%;
+  overflow-x: auto;
 }

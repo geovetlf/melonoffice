@@ -177,6 +177,8 @@ describe.each(STORES)('assisted AI on Vertex AI with storage in %s (ADR-0038)', 
       assist,
       balanceOf,
       tenantOf,
+      aliceId,
+      ai,
     };
   }
 
@@ -195,31 +197,33 @@ describe.each(STORES)('assisted AI on Vertex AI with storage in %s (ADR-0038)', 
     };
     const summary = await read('token-alice', t.test, `?from=${today}&to=${today}`);
     expect(summary.status).toBe(200);
-    expect(summary.body).toMatchObject({
-      scope: t.test,
-      currency: 'USD',
-      totals: { operations: 1, costMicroUsd: 830, unpricedOperations: 0, credits: 1 },
+    // The company sees what it was charged and where it went, never the provider, the model or
+    // what it cost MelonOffice: those are the platform administrator's.
+    expect(summary.body).toEqual({
+      from: today,
+      to: today,
+      totals: { operations: 1, credits: 1 },
       by: {
-        capability: { llm: { operations: 1 } },
-        provider: { 'google-vertex-ai': { costMicroUsd: 830 } },
-        model: { 'google-vertex-ai/gemini-2.5-flash-lite': { operations: 1 } },
-        actor: { user: { operations: 1 } },
+        capability: { llm: { operations: 1, credits: 1 } },
+        actor: { user: { operations: 1, credits: 1 } },
+        user: expect.any(Object),
+        agent: {},
+        department: {},
+        workflow: {},
+        task_type: expect.any(Object),
       },
       quantities: { llm: { input_tokens: 3_500, output_tokens: 1_200 } },
     });
     const events = await read('token-alice', t.test, '/events?limit=10');
     expect(events.status).toBe(200);
     expect(events.body).toMatchObject({
-      events: [
-        {
-          capability: 'llm',
-          source: 'llm_router',
-          attribution: { subject: { type: 'conversation', id } },
-          cost: { actualMicroUsd: 830, costBasis: 'provider_price_list' },
-        },
-      ],
+      events: [{ capability: 'llm', outcome: 'completed', credits: 1 }],
       nextCursor: null,
     });
+    for (const hidden of ['vertex', 'gemini', 'provider', 'model', 'MicroUsd', 'cost']) {
+      expect(JSON.stringify(summary.body)).not.toContain(hidden);
+      expect(JSON.stringify(events.body)).not.toContain(hidden);
+    }
     expect(JSON.stringify(events.body)).not.toContain('melones');
     // Another organization's owner sees nothing of it, and their own is empty.
     expect((await read('token-bob', t.test)).status).toBe(403);
@@ -229,6 +233,81 @@ describe.each(STORES)('assisted AI on Vertex AI with storage in %s (ADR-0038)', 
     expect((await read('token-alice', t.test, '?from=yesterday')).status).toBe(400);
     expect((await read('token-alice', t.test, '/events?limit=1000')).status).toBe(400);
     expect((await read('token-alice', t.test, '/events?cursor=x')).status).toBe(400);
+  });
+
+  it('shows providers, models, routing, health and internal cost to the platform administrator only (ADR-0082)', async () => {
+    const t = await setup();
+    await t.grant('dev');
+    const id = await t.receive(t.test, 'Hola, ¿cuánto cuestan los melones?');
+    await t.assist('token-alice', t.test, id, { operation: 'summary', requestKey: 'click-0001' });
+    const today = new Date().toISOString().slice(0, 10);
+    // The same stores, served with Alice as the platform administrator; Bob is not one.
+    const platform = setupApp(t.stores, undefined, undefined, undefined, undefined, {
+      ai: t.ai,
+      platformAdmins: [t.aliceId],
+    });
+    const read = async (token: string, path: string) => {
+      const response = await platform.app.request(path, platform.as(token));
+      return { status: response.status, body: (await response.json()) as Json };
+    };
+    expect((await read('token-alice', '/v1/platform/access')).body).toEqual({
+      platformAdmin: true,
+    });
+    expect((await read('token-bob', '/v1/platform/access')).body).toEqual({
+      platformAdmin: false,
+    });
+
+    const ai = await read('token-alice', '/v1/platform/ai');
+    expect(ai.status).toBe(200);
+    expect(ai.body).toMatchObject({
+      environment: 'dev',
+      providers: [{ id: 'google-vertex-ai', health: 'available' }],
+      models: expect.arrayContaining([
+        expect.objectContaining({
+          providerId: 'google-vertex-ai',
+          modelId: 'gemini-2.5-flash-lite',
+          pricing: expect.objectContaining({ status: 'known' }),
+        }),
+      ]),
+      policies: expect.arrayContaining([
+        expect.objectContaining({ id: 'default_model', fallback: 'compatible' }),
+      ]),
+    });
+    // Never where a key lives, let alone a key.
+    expect(JSON.stringify(ai.body)).not.toMatch(/credential|secret|access_token|"scopes"/i);
+
+    const usage = await read('token-alice', `/v1/platform/ai-usage?from=${today}&to=${today}`);
+    expect(usage.status).toBe(200);
+    expect(usage.body).toMatchObject({
+      scope: 'platform',
+      totals: { operations: 1, costMicroUsd: 830, credits: 1 },
+      by: { provider: { 'google-vertex-ai': { costMicroUsd: 830 } } },
+      byOrganization: [
+        { organizationId: t.test, name: 'MOpruebas', operations: 1, costMicroUsd: 830 },
+      ],
+    });
+    expect((await read('token-alice', '/v1/platform/ai-usage?from=x')).status).toBe(400);
+
+    // A company owner who is not a platform administrator gets nothing, and it is recorded.
+    for (const path of ['/v1/platform/ai', `/v1/platform/ai-usage?from=${today}`]) {
+      const refused = await read('token-bob', path);
+      expect(refused).toEqual({ status: 403, body: { error: 'platform_forbidden' } });
+    }
+    // Nor does anyone on the app without administrators configured.
+    const none = await t.app.request('/v1/platform/ai', t.as('token-alice'));
+    expect(none.status).toBe(403);
+    const reads = (await t.stores.auditEvents()).filter((e) => e.action === 'platform.ai_read');
+    expect(reads.map((e) => [e.result, e.reference])).toEqual([
+      ['success', 'ai'],
+      ['success', 'ai_usage'],
+      // The refused range was still an administrator's read of the view.
+      ['success', 'ai_usage'],
+      ['denied', 'ai'],
+      ['denied', 'ai_usage'],
+      ['denied', 'ai'],
+    ]);
+    // Without a token, nothing at all.
+    expect((await platform.app.request('/v1/platform/access')).status).toBe(401);
   });
 
   it('grants MOpruebas 500 DEV credits once, audited, and no other organization anything', async () => {

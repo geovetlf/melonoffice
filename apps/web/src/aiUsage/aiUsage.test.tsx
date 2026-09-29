@@ -10,43 +10,28 @@ import { periodDays } from './aiUsageClient.js';
 afterEach(cleanup);
 beforeEach(() => globalThis.history.replaceState(null, '', '/'));
 
-const bucket = (operations: number, costMicroUsd: number, credits: number, unpriced = 0) => ({
-  operations,
-  costMicroUsd,
-  unpricedOperations: unpriced,
-  credits,
-});
+const bucket = (operations: number, credits: number) => ({ operations, credits });
 
-/** Two Gemini calls charged 1 credit each, and one free NVIDIA call: internal cost apart. */
+/** Three calls, two charged 1 credit each, as the API gives a company its usage (ADR-0082). */
 const SUMMARY = {
-  scope: 'org_1',
-  currency: 'USD',
-  totals: bucket(3, 1_250, 2),
+  from: '2026-09-29',
+  to: '2026-09-29',
+  totals: bucket(3, 2),
   by: {
-    capability: { llm: bucket(3, 1_250, 2) },
-    provider: { vertex: bucket(2, 1_250, 2), nvidia: bucket(1, 0, 0) },
-    model: {
-      'vertex/gemini-2.5-flash-lite': bucket(2, 1_250, 2),
-      'nvidia/nemotron-3-nano-30b-a3b': bucket(1, 0, 0),
-    },
+    capability: { llm: bucket(3, 2) },
+    department: { org_1_marketing: bucket(1, 0) },
+    task_type: { summary: bucket(2, 2) },
   },
   quantities: {},
 };
 
-const event = (id: string, provider: string, model: string, cost: number, credits: number) => ({
+const event = (id: string, credits: number, departmentId?: string) => ({
   id,
   occurredAt: '2026-09-29T12:00:00.000Z',
   capability: 'llm',
-  provider,
-  model,
-  modelVersion: 'current',
-  operation: 'text_generation',
   outcome: 'completed',
   credits,
-  cost: { actualMicroUsd: cost },
-  attribution: { organizationId: 'org_1', actor: 'user' },
-  source: 'llm_router',
-  requestId: id,
+  attribution: { actor: 'user', ...(departmentId === undefined ? {} : { departmentId }) },
 });
 
 function open(at: string, configure?: (backend: ReturnType<typeof fakeBackend>) => void) {
@@ -59,10 +44,7 @@ function open(at: string, configure?: (backend: ReturnType<typeof fakeBackend>) 
   backend.options.aiUsage = {
     org_1: {
       summary: SUMMARY,
-      events: [
-        event('e1', 'vertex', 'gemini-2.5-flash-lite', 625, 1),
-        event('e2', 'nvidia', 'nemotron-3-nano-30b-a3b', 0, 0),
-      ],
+      events: [event('e1', 1), event('e2', 0, 'org_1_marketing')],
     },
   };
   configure?.(backend);
@@ -78,37 +60,36 @@ function open(at: string, configure?: (backend: ReturnType<typeof fakeBackend>) 
 const usageCalls = (backend: ReturnType<typeof fakeBackend>) =>
   backend.apiCalls().filter((c) => c.url.includes('/ai-usage'));
 
-describe('AI usage and cost (ADR-0074, ADR-0081)', () => {
-  it('shows internal cost and credits apart, and a breakdown by capability, provider and model', async () => {
+describe('AI usage and credits (ADR-0074, ADR-0081, ADR-0082)', () => {
+  it('shows credits and operations by capability and department, never provider, model or internal cost', async () => {
     open('/ai-usage');
     expect(
-      await screen.findByRole('heading', { level: 1, name: 'AI usage and cost' }),
+      await screen.findByRole('heading', { level: 1, name: 'AI usage and credits' }),
     ).toBeTruthy();
-    const totals = await screen.findByText('Internal AI cost', { selector: 'dt' });
-    expect(within(totals.parentElement as HTMLElement).getByText('$0.00125')).toBeTruthy();
-    const credits = screen.getByText('Credits used', { selector: 'dt' });
+    const credits = await screen.findByText('Credits used', { selector: 'dt' });
     expect(within(credits.parentElement as HTMLElement).getByText('2')).toBeTruthy();
-    const providers = screen.getByRole('region', { name: 'By provider' });
-    expect(within(providers).getByRole('button', { name: 'nvidia' })).toBeTruthy();
     const capability = screen.getByRole('region', { name: 'By capability' });
     expect(within(capability).getByRole('button', { name: 'Text AI (LLM)' })).toBeTruthy();
+    expect(screen.queryByText('Internal AI cost')).toBeNull();
+    expect(screen.queryByRole('region', { name: 'By provider' })).toBeNull();
+    expect(screen.queryByRole('region', { name: 'By model' })).toBeNull();
+    expect(document.body.textContent).not.toMatch(/\$|vertex|gemini|nvidia/i);
   });
 
   it('filters the recent operations by a breakdown row', async () => {
     open('/ai-usage');
-    await screen.findByText('Text AI (LLM) · nvidia/nemotron-3-nano-30b-a3b');
-    expect(screen.getByText('Text AI (LLM) · vertex/gemini-2.5-flash-lite')).toBeTruthy();
-    const providers = screen.getByRole('region', { name: 'By provider' });
-    fireEvent.click(within(providers).getByRole('button', { name: 'nvidia' }));
-    expect(screen.getByText(/Showing the loaded operations for By provider: nvidia/)).toBeTruthy();
-    expect(screen.queryByText('Text AI (LLM) · vertex/gemini-2.5-flash-lite')).toBeNull();
+    const department = await screen.findByRole('region', { name: 'By department' });
+    expect(await screen.findAllByText('Text AI (LLM)', { selector: 'span' })).toHaveLength(2);
+    fireEvent.click(within(department).getAllByRole('button')[0] as HTMLElement);
+    expect(screen.getByText(/Showing the loaded operations for By department/)).toBeTruthy();
+    expect(screen.getAllByText('Text AI (LLM)', { selector: 'span' })).toHaveLength(1);
     fireEvent.click(screen.getByRole('button', { name: 'Show all' }));
-    expect(screen.getByText('Text AI (LLM) · vertex/gemini-2.5-flash-lite')).toBeTruthy();
+    expect(screen.getAllByText('Text AI (LLM)', { selector: 'span' })).toHaveLength(2);
   });
 
   it('reads the chosen period from the ledger', async () => {
     const backend = open('/ai-usage');
-    await screen.findByText('Internal AI cost', { selector: 'dt' });
+    await screen.findByText('Credits used', { selector: 'dt' });
     fireEvent.click(screen.getByRole('button', { name: 'This month' }));
     await vi.waitFor(() =>
       expect(usageCalls(backend).some((c) => /from=\d{4}-\d{2}-01/.test(c.url))).toBe(true),
@@ -129,7 +110,7 @@ describe('AI usage and cost (ADR-0074, ADR-0081)', () => {
 
   it('opens from the Home credits panel', async () => {
     open('/');
-    fireEvent.click(await screen.findByRole('link', { name: 'See AI usage and cost' }));
+    fireEvent.click(await screen.findByRole('link', { name: 'See AI usage and credits' }));
     expect(globalThis.location.pathname).toBe('/ai-usage');
   });
 
@@ -138,10 +119,10 @@ describe('AI usage and cost (ADR-0074, ADR-0081)', () => {
       b.options.permissions = b.options.permissions.filter((p) => p !== 'ai_usage.read');
     });
     await screen.findByRole('heading', { level: 1 });
-    expect(screen.queryByRole('heading', { level: 1, name: 'AI usage and cost' })).toBeNull();
+    expect(screen.queryByRole('heading', { level: 1, name: 'AI usage and credits' })).toBeNull();
     const sidebar = screen.getByRole('navigation', { name: 'Tools' });
     expect(within(sidebar).queryByText('AI usage')).toBeNull();
-    expect(screen.queryByRole('link', { name: 'See AI usage and cost' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'See AI usage and credits' })).toBeNull();
     expect(usageCalls(backend)).toHaveLength(0);
   });
 

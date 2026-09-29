@@ -87,7 +87,7 @@ export function CreditsUsage({
 }: {
   readonly credits: Loadable<CreditsView>;
   readonly extras?: CreditUsageExtras;
-  /** A link to AI usage and cost (ADR-0074), for a person who may read it. */
+  /** A link to AI usage and credits (ADR-0074), for a person who may read it. */
   readonly showUsage?: boolean;
 }) {
   const intl = useIntl();

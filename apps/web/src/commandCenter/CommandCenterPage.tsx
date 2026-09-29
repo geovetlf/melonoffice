@@ -1,6 +1,5 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
 import { useEffect, useState, type ReactNode } from 'react';
-import { usd } from '../aiUsage/AIUsagePage.js';
 import { periodDays, type AIUsageClient, type UsageSummary } from '../aiUsage/aiUsageClient.js';
 import type { ApprovalsClient } from '../approvals/approvalsClient.js';
 import type { AutomationsClient, PlanView } from '../automations/automationsClient.js';
@@ -10,7 +9,7 @@ import { paths } from '../shell/routes.js';
 
 /**
  * The AI Command Center (block 9): the company's AI operation on one screen, read from the
- * systems that already hold it: AI usage and cost (ADR-0074/0081), the credit wallet (ADR-0023),
+ * systems that already hold it: AI usage in credits (ADR-0074/0081; never provider, model or internal cost, ADR-0082), the credit wallet (ADR-0023),
  * approvals waiting (ADR-0026), agents by state (ADR-0025) and plans in flight (ADR-0028). Each
  * card reads with the person's own permission and opens the screen where the work is done. It
  * holds no data of its own and decides nothing.
@@ -92,10 +91,6 @@ export function CommandCenterPage({
             ) : (
               <>
                 <dl className="command-center__figures">
-                  <Figure
-                    labelId="aiUsage.internalCost"
-                    value={usd(intl, usage.totals.costMicroUsd)}
-                  />
                   <Figure
                     labelId="aiUsage.credits"
                     value={intl.formatNumber(usage.totals.credits)}

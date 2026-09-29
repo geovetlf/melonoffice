@@ -87,6 +87,11 @@ export interface ModelPolicyCatalogue {
   resolve(
     reference: { readonly id: string; readonly version: number } | undefined,
   ): ModelPolicy | undefined;
+  /**
+   * Every policy, the default first (ADR-0082): what the platform administrator reads to see how
+   * calls are routed. Never shown to a company.
+   */
+  list(): readonly ModelPolicy[];
 }
 
 export function createModelPolicyCatalogue(
@@ -106,6 +111,9 @@ export function createModelPolicyCatalogue(
       // A specialist that names a policy gets exactly that version, or nothing: never a guess.
       if (reference === undefined) return defaultPolicy;
       return byKey.get(`${reference.id}@${reference.version}`);
+    },
+    list() {
+      return [...byKey.values()];
     },
   });
 }

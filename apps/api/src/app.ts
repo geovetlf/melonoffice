@@ -16,6 +16,7 @@ import {
   createAIGateway,
   createModelPolicyCatalogue,
   defaultProviderRegistry,
+  createProviderHealthTracker,
   type AICreditsPort,
   type CreditRate,
   type ModelPolicyCatalogue,
@@ -130,6 +131,7 @@ import { registerConnectionRoutes } from './connections.js';
 import { registerConversationRoutes } from './conversations.js';
 import { registerCreditRoutes } from './credits.js';
 import { registerAIUsageRoutes } from './ai-usage.js';
+import { registerPlatformRoutes } from './platform.js';
 import { registerEntitlementRoutes } from './entitlements.js';
 import { registerExecutionRoutes } from './executions.js';
 import { registerHealth } from './health.js';
@@ -322,6 +324,11 @@ export interface AppOptions {
    * absent: no CORS header is ever sent.
    */
   readonly webOrigins?: readonly string[];
+  /**
+   * The MelonOffice platform administrators' user ids (ADR-0082): only they read the platform AI
+   * view (`/v1/platform/*`). Empty or absent: nobody.
+   */
+  readonly platformAdmins?: readonly string[];
 }
 
 type Env = AuthEnv;
@@ -359,6 +366,7 @@ export function createApp({
   agentTurns,
   agentTasks,
   webOrigins = [],
+  platformAdmins = [],
 }: AppOptions): Hono<Env> {
   const app = new Hono<Env>();
 
@@ -451,6 +459,10 @@ export function createApp({
       (credits === undefined || tenancy === undefined
         ? undefined
         : createCreditService({ store: credits, organizations: tenancy }));
+    // The gateway's health tracker, also read by the platform AI view (ADR-0082).
+    const aiHealth = createProviderHealthTracker();
+    const aiRegistry = ai.registry ?? defaultProviderRegistry();
+    const aiPolicies = ai.policies ?? createModelPolicyCatalogue([]);
     const aiGateway =
       tenancy !== undefined && executions !== undefined && specialists !== undefined
         ? createAIGateway({
@@ -458,8 +470,9 @@ export function createApp({
             organizations: tenancy,
             specialists,
             authorization,
-            registry: ai.registry ?? defaultProviderRegistry(),
-            policies: ai.policies ?? createModelPolicyCatalogue([]),
+            registry: aiRegistry,
+            policies: aiPolicies,
+            health: aiHealth,
             environment: ai.environment,
             ...(aiCredits === undefined
               ? {}
@@ -1204,6 +1217,16 @@ export function createApp({
         c.json({ error: 'credits_not_configured' }, 503),
       );
     }
+    registerPlatformRoutes(app, {
+      admins: new Set(platformAdmins),
+      audit,
+      environment: ai.environment,
+      registry: aiRegistry,
+      policies: aiPolicies,
+      health: aiHealth,
+      ledger: usageLedger,
+      organizations: tenancy,
+    });
     if (tenancy !== undefined && usageLedger !== undefined) {
       registerAIUsageRoutes(app, { store: tenancy, authorization, audit, ledger: usageLedger });
     } else if (tenancy !== undefined) {

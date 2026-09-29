@@ -44,6 +44,8 @@ import { createAgentsClient } from '../agents/agentsClient.js';
 import { ApprovalsPage } from '../approvals/ApprovalsPage.js';
 import { createApprovalsClient } from '../approvals/approvalsClient.js';
 import { createAIUsageClient } from '../aiUsage/aiUsageClient.js';
+import { PlatformPage } from '../platform/PlatformPage.js';
+import { createPlatformClient } from '../platform/platformClient.js';
 import { DocumentsPage } from '../documents/DocumentsPage.js';
 import { createDocumentsClient } from '../documents/documentsClient.js';
 import { createMemoryClient } from '../memory/memoryClient.js';
@@ -94,6 +96,19 @@ export function AppShell(locale: LocaleProps) {
   const canManageWorkflows = useCan('workflow.manage');
   const route = parseRoute(usePath());
   const [menuOpen, setMenuOpen] = useState(false);
+  // The platform AI view (ADR-0082) is the MelonOffice platform administrator's, never a
+  // company role: the server says who that is, and refuses everyone else whatever this shows.
+  const signedIn = state.status === 'signed_in';
+  const platform = useMemo(() => createPlatformClient(services.api.request), [services]);
+  const [platformAdmin, setPlatformAdmin] = useState(false);
+  useEffect(() => {
+    if (!signedIn) return;
+    let live = true;
+    void platform.access().then((admin) => live && setPlatformAdmin(admin));
+    return () => {
+      live = false;
+    };
+  }, [platform, signedIn]);
   useEffect(() => {
     if (!menuOpen) return;
     const close = (event: KeyboardEvent) => {
@@ -297,6 +312,15 @@ export function AppShell(locale: LocaleProps) {
           <NotFound />
         );
       break;
+    case 'platform':
+      page = platformAdmin ? (
+        <div className="light-surface">
+          <PlatformPage client={platform} />
+        </div>
+      ) : (
+        <NotFound />
+      );
+      break;
     case 'aiUsage':
       page = canReadAIUsage ? (
         <div className="light-surface">
@@ -390,6 +414,7 @@ export function AppShell(locale: LocaleProps) {
                 canReadReports={canReadReports}
                 canReadDocuments={canReadDocuments}
                 canReadAIUsage={canReadAIUsage}
+                platformAdmin={platformAdmin}
                 canReadApprovals={canReadApprovals}
                 canReadAgents={canReadAgents}
                 canReadAutomations={canReadWorkflows || canReadPlans}

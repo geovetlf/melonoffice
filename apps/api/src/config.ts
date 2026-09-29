@@ -29,6 +29,12 @@ export interface ServiceConfig {
    */
   readonly webOrigins?: readonly string[];
   /**
+   * The MelonOffice platform administrators (ADR-0082), as exact user ids comma-separated in
+   * `PLATFORM_ADMIN_USER_IDS`: only they see AI providers, models, routing and internal cost.
+   * Unset or empty: nobody does.
+   */
+  readonly platformAdminUserIds?: readonly string[];
+  /**
    * Where Vertex AI runs the approved model (D-7, ADR-0038): `VERTEX_AI_PROJECT_ID` and
    * `VERTEX_AI_LOCATION`, both or neither. Unset: no AI provider is registered and every AI call
    * is denied.
@@ -113,6 +119,9 @@ const BUCKET = /^[a-z0-9][a-z0-9_-]{1,61}[a-z0-9]$/;
 const ORIGIN =
   /^(https:\/\/[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+|http:\/\/(localhost|127\.0\.0\.1))(:[0-9]{1,5})?$/;
 
+/** A user id as MelonOffice creates them (a UUID). */
+const USER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
 /** Reads configuration from environment variables only; nothing is hard-coded per environment. */
 export function loadConfig(env: Readonly<Record<string, string | undefined>>): ServiceConfig {
   const port = Number(env.PORT ?? '8080');
@@ -143,6 +152,13 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): S
     .filter((origin) => origin !== '');
   for (const origin of webOrigins) {
     if (!ORIGIN.test(origin)) throw new Error(`Invalid WEB_ORIGINS entry: ${origin}`);
+  }
+  const platformAdminUserIds = (env.PLATFORM_ADMIN_USER_IDS ?? '')
+    .split(',')
+    .map((id) => id.trim())
+    .filter((id) => id !== '');
+  for (const id of platformAdminUserIds) {
+    if (!USER_ID.test(id)) throw new Error('Invalid PLATFORM_ADMIN_USER_IDS entry');
   }
   const jobTransport = loadJobTransport(env);
   const vertexProjectId = env.VERTEX_AI_PROJECT_ID;
@@ -182,6 +198,7 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): S
       ? {}
       : { deploymentEnvironment: deploymentEnvironment as DeploymentEnvironment }),
     ...(webOrigins.length === 0 ? {} : { webOrigins }),
+    ...(platformAdminUserIds.length === 0 ? {} : { platformAdminUserIds }),
     ...(vertexProjectId === undefined || vertexLocation === undefined
       ? {}
       : { vertexAI: { projectId: vertexProjectId, location: vertexLocation } }),

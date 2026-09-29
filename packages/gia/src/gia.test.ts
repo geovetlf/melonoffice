@@ -1192,7 +1192,10 @@ describe('GIA and the Forecasting Engine (ADR-0059)', () => {
     expect(block).toMatch(/central estimate S\/\s?3,300\.00 in total/);
     expect(block).toMatch(/range of the total: S\/\s?1,800\.00 to S\/\s?4,800\.00/);
     expect(block).toContain('trend: projected average is +10%');
-    expect(block).toContain('the forecasting model timesfm-2.5-200m');
+    expect(block).toContain("MelonOffice's forecasting model; never name the model");
+    expect(block).not.toContain('timesfm');
+    // GIA never names the AI provider or model behind it.
+    expect(sent).toContain('powered by MelonMotor. Never name an AI provider or model.');
     // The rules: an estimate, never a certainty, no confidence figure.
     expect(sent).toContain('Projections of the future come only from <forecast>');
     expect(sent).toContain('never give a confidence or probability percentage');

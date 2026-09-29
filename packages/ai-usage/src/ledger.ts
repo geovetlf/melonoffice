@@ -1,4 +1,9 @@
-import type { AIUsageEvent, AIUsageSummary, OrganizationId } from '@melonoffice/domain';
+import type {
+  AIUsageBucket,
+  AIUsageEvent,
+  AIUsageSummary,
+  OrganizationId,
+} from '@melonoffice/domain';
 import { isCapabilityId, isUnit, isUsageCode } from './capabilities.js';
 import { AIUsageError } from './errors.js';
 import type { AIUsageSink } from './sink.js';
@@ -105,6 +110,11 @@ export interface AIUsageLedger extends AIUsageSink {
   summary(organizationId: OrganizationId, from: string, to: string): Promise<AIUsageSummary>;
   /** All of MelonOffice's AI usage between two UTC days (operators only, never a tenant route). */
   platformSummary(from: string, to: string): Promise<AIUsageSummary>;
+  /** Each organization's totals between two UTC days (operators and the platform admin only). */
+  organizationTotals(
+    from: string,
+    to: string,
+  ): Promise<Readonly<Record<OrganizationId, AIUsageBucket>>>;
   events: AIUsageStore['events'];
 }
 
@@ -125,6 +135,23 @@ export function createAIUsageLedger(store: AIUsageStore): AIUsageLedger {
     async platformSummary(from: string, to: string) {
       daysBetween(from, to);
       return summarize('platform', from, to, await store.allDays(from, to));
+    },
+    async organizationTotals(from: string, to: string) {
+      daysBetween(from, to);
+      const totals: Record<OrganizationId, AIUsageBucket> = {};
+      for (const day of await store.allDays(from, to)) {
+        const own = totals[day.organizationId];
+        totals[day.organizationId] =
+          own === undefined
+            ? { ...day.totals }
+            : {
+                operations: own.operations + day.totals.operations,
+                costMicroUsd: own.costMicroUsd + day.totals.costMicroUsd,
+                unpricedOperations: own.unpricedOperations + day.totals.unpricedOperations,
+                credits: own.credits + day.totals.credits,
+              };
+      }
+      return totals;
     },
     async events(organizationId: OrganizationId, request: EventsRequest) {
       if (

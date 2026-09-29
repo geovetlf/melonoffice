@@ -34,24 +34,19 @@ function open(
   return backend;
 }
 
-const bucket = (operations: number, costMicroUsd: number, credits: number) => ({
-  operations,
-  costMicroUsd,
-  unpricedOperations: 0,
-  credits,
-});
+const bucket = (operations: number, credits: number) => ({ operations, credits });
 
 describe('the AI Command Center (block 9)', () => {
-  it('shows AI cost and credits, approvals, agents and plans, and opens each place', async () => {
+  it('shows AI credits, approvals, agents and plans, and opens each place', async () => {
     open(['ai_usage.read', 'approval.read', 'plan.read'], (b) => {
       b.options.aiUsage.org_1 = {
         events: [],
         summary: {
           from: '2026-09-01',
           to: '2026-09-29',
-          totals: bucket(5, 2_500_000, 250),
+          totals: bucket(5, 250),
           by: {
-            capability: { text_generation: bucket(4, 2_000_000, 200), ocr: bucket(1, 500_000, 50) },
+            capability: { text_generation: bucket(4, 200), ocr: bucket(1, 50) },
           },
           quantities: {},
         },
@@ -69,8 +64,9 @@ describe('the AI Command Center (block 9)', () => {
       await screen.findByRole('heading', { level: 1, name: 'AI Command Center' }),
     ).toBeTruthy();
     const ai = within(await screen.findByRole('region', { name: 'AI this month' }));
-    expect(await ai.findByText('$2.50')).toBeTruthy();
-    expect(ai.getByText('250')).toBeTruthy();
+    expect(await ai.findByText('250')).toBeTruthy();
+    // Never MelonOffice's internal cost: that is the platform administrator's.
+    expect(ai.queryByText(/\$/)).toBeNull();
     const approvals = within(screen.getByRole('region', { name: 'Approvals' }));
     expect(await approvals.findByText('1 waiting for you')).toBeTruthy();
     const plans = within(screen.getByRole('region', { name: 'Plans' }));

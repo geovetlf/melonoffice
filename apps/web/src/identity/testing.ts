@@ -110,6 +110,16 @@ export interface FakeBackend {
     >;
     /** Documents (DOC-3): each organization's files as the API lists them. */
     documents: Record<string, Record<string, unknown>[]>;
+    /**
+     * The platform AI view (ADR-0082) as the API gives it to a platform administrator. Absent:
+     * the person is not one, and every platform route but access answers 403.
+     */
+    platform?: {
+      ai: Record<string, unknown>;
+      usage: Record<string, unknown>;
+      /** The AI view answers 500. */
+      aiFails?: boolean;
+    };
     /** Uploading a document fails with this code and status. */
     documentUploadFails?: { readonly error: string; readonly status: number };
     metrics: Record<
@@ -268,6 +278,24 @@ export function fakeBackend(): FakeBackend {
       const created = { id: 'org_new', name: name.trim(), role: 'owner' };
       options.organizations.push(created);
       return json(201, { organization: { id: created.id, name: created.name } });
+    }
+    const platformPath = path.split('?')[0];
+    if (platformPath === '/v1/platform/access') {
+      return json(200, { platformAdmin: options.platform !== undefined });
+    }
+    if (platformPath === '/v1/platform/ai' || platformPath === '/v1/platform/ai-usage') {
+      if (options.platform === undefined) return json(403, { error: 'platform_forbidden' });
+      if (platformPath === '/v1/platform/ai') {
+        return options.platform.aiFails === true
+          ? json(500, { error: 'internal' })
+          : json(200, options.platform.ai);
+      }
+      const params = new URLSearchParams(path.split('?')[1] ?? '');
+      return json(200, {
+        ...options.platform.usage,
+        from: params.get('from'),
+        to: params.get('to'),
+      });
     }
     if (path === '/v1/business-types') {
       return json(200, {
@@ -1256,7 +1284,7 @@ export function fakeBackend(): FakeBackend {
       const params = new URLSearchParams(query);
       return json(200, {
         ...(usage?.summary ?? {
-          totals: { operations: 0, costMicroUsd: 0, unpricedOperations: 0, credits: 0 },
+          totals: { operations: 0, credits: 0 },
           by: {},
         }),
         from: params.get('from'),

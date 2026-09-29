@@ -1,5 +1,5 @@
 import { parseAgentAnswer } from '@melonoffice/agents';
-import type { Plan, PlanStep, PlanVersion } from '@melonoffice/domain';
+import type { Plan, PlanEstimate, PlanStep, PlanVersion } from '@melonoffice/domain';
 import type { AgentOutputStore, ExecutionService } from '@melonoffice/execution';
 import {
   isPlanningError,
@@ -227,8 +227,11 @@ const stepView = (s: PlanStep) => ({
       ? null
       : { maxAttempts: s.retry.maxAttempts, backoffMs: s.retry.backoffMs },
   approvalRequired: s.approvalRequired,
-  estimate: s.estimate === undefined ? null : { ...s.estimate },
+  estimate: s.estimate === undefined ? null : creditEstimate(s.estimate),
 });
+
+/** An estimate as a company sees it: in credits, never MelonOffice's internal cost (ADR-0082). */
+const creditEstimate = (e: PlanEstimate) => ({ status: e.status, credits: e.credits });
 
 /**
  * One version, with the digest a user sends back to approve exactly it. Estimates are shown as
@@ -242,18 +245,11 @@ export function toVersionView(v: PlanVersion) {
     steps: v.steps.map(stepView),
     riskLevel: v.riskLevel,
     approvalRequired: v.approvalRequired,
-    estimate: { ...v.estimate },
+    estimate: creditEstimate(v.estimate),
     source:
       v.source.kind === 'planner'
-        ? {
-            kind: 'planner',
-            model: {
-              provider: v.source.model.provider,
-              id: v.source.model.id,
-              version: v.source.model.version,
-            },
-            policy: { id: v.source.policy.id, version: v.source.policy.version },
-          }
+        ? // Which provider, model and policy wrote the plan is the platform's, not the company's.
+          { kind: 'planner' }
         : {
             kind: 'workflow',
             workflowId: v.source.workflowId,

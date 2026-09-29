@@ -25,6 +25,7 @@ const TOOLS: readonly { readonly id: string; readonly icon: IconName }[] = [
   { id: 'agents', icon: 'user' },
   { id: 'apps', icon: 'apps' },
   { id: 'settings', icon: 'settings' },
+  { id: 'platform', icon: 'cog' },
 ];
 
 export function Sidebar({
@@ -35,6 +36,7 @@ export function Sidebar({
   canReadReports = false,
   canReadDocuments = false,
   canReadAIUsage = false,
+  platformAdmin = false,
   canReadApprovals = false,
   canReadAgents = false,
   canReadAutomations = false,
@@ -52,8 +54,13 @@ export function Sidebar({
   readonly canReadReports?: boolean;
   /** Documents (DOC-3), for a person with `document.read`. */
   readonly canReadDocuments?: boolean;
-  /** AI usage and cost (ADR-0074), for a person with `ai_usage.read`. */
+  /** AI usage and credits (ADR-0074), for a person with `ai_usage.read`. */
   readonly canReadAIUsage?: boolean;
+  /**
+   * The platform AI view (ADR-0082), only for the MelonOffice platform administrator; never
+   * listed, not even as coming, for anyone else.
+   */
+  readonly platformAdmin?: boolean;
   /** The approval center (ADR-0026), for a person with `approval.read`. */
   readonly canReadApprovals?: boolean;
   /** Agents (ADR-0062), for a person with `specialist.read`. */
@@ -176,6 +183,18 @@ export function Sidebar({
                   icon={tool.icon}
                   path={paths.commandCenter()}
                   current={route.kind === 'commandCenter'}
+                  go={go}
+                >
+                  <FormattedMessage id={`nav.${tool.id}`} />
+                </NavLink>
+              ) : null
+            ) : tool.id === 'platform' ? (
+              platformAdmin ? (
+                <NavLink
+                  key={tool.id}
+                  icon={tool.icon}
+                  path={paths.platform()}
+                  current={route.kind === 'platform'}
                   go={go}
                 >
                   <FormattedMessage id={`nav.${tool.id}`} />

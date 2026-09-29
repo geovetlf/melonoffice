@@ -26,7 +26,8 @@ export interface AuditActionDefinition {
     | 'follow_up'
     | 'forecast'
     | 'decision'
-    | 'event';
+    | 'event'
+    | 'platform';
   readonly description: string;
   /** The results this action is recorded with. Anything else is a programming error. */
   readonly results: readonly AuditResult[];
@@ -735,6 +736,12 @@ export const AUDIT_ACTIONS = {
     category: 'credits',
     description: 'Credits were given back for an earlier consume.',
     results: ['success'],
+  },
+  'platform.ai_read': {
+    category: 'platform',
+    description:
+      "Someone read the platform AI view (ADR-0082): providers, models, routing and health, or every organization's AI usage and internal cost; `reference` names the view. Denied when they are not a platform administrator.",
+    results: ['success', 'denied'],
   },
   'tenancy.resolve': {
     category: 'tenancy',
