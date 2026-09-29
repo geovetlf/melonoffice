@@ -35,6 +35,7 @@ export const ROLES = {
     'approval.approve',
     'ai.generate',
     'credits.read',
+    'ai_usage.read',
     'plan.read',
     'plan.create',
     'workflow.read',

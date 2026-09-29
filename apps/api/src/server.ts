@@ -42,6 +42,7 @@ import {
   FirestoreForecastRepository,
   FirestoreJobRepository,
   FirestoreSpecialistRepository,
+  FirestoreAIUsageStore,
   FirestoreCreditStore,
   FirestorePlanRepository,
   FirestoreTenancyStore,
@@ -152,6 +153,11 @@ function services(projectId: string) {
     knowledge: new FirestoreKnowledgeRepository(firestore),
     activity: new FirestoreAuditStore(firestore),
     credits: new FirestoreCreditStore(firestore),
+    // Every AI call's usage and cost (ADR-0074). Until its index exists, the event list is read
+    // without it and the gap logged.
+    aiUsage: new FirestoreAIUsageStore(firestore, {
+      onIndexMissing: (query) => logger.warn('firestore.index_missing', { query }),
+    }),
     plans: new FirestorePlanRepository(firestore),
     // Approving a plan starts it (ADR-0070): its steps are queued through the same runtime.
     planRuntime: agentTurns,

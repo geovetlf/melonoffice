@@ -14,3 +14,6 @@ export class AIUsageError extends Error {
     super(detail === undefined ? code : `${code}: ${detail}`);
   }
 }
+
+export const isAIUsageError = (error: unknown): error is AIUsageError =>
+  error instanceof AIUsageError;

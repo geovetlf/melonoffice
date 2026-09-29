@@ -129,3 +129,43 @@ export interface AIUsageEvent {
   readonly source: string;
   readonly requestId: string;
 }
+
+/** What AI usage can be totalled by (ADR-0074). */
+export type AIUsageDimension =
+  | 'capability'
+  | 'provider'
+  | 'model'
+  | 'operation'
+  | 'actor'
+  | 'user'
+  | 'agent'
+  | 'department'
+  | 'workflow'
+  | 'task_type';
+
+/** The totals of some operations. Amounts in millionths of a US dollar. */
+export interface AIUsageBucket {
+  readonly operations: number;
+  readonly costMicroUsd: number;
+  /** Operations whose price was unknown: counted, never given a cost. */
+  readonly unpricedOperations: number;
+  readonly credits: number;
+}
+
+/**
+ * The Financial Integration Contract's summary (ADR-0074): AI usage and cost over whole UTC days,
+ * for one organization or the whole platform, in total and by every dimension, with each
+ * capability's quantities in its own units. The Financial Backend reads this and the events.
+ */
+export interface AIUsageSummary {
+  /** An organization, or `platform` for all of them. */
+  readonly scope: OrganizationId | 'platform';
+  /** First and last UTC day, `YYYY-MM-DD`, both included. */
+  readonly from: string;
+  readonly to: string;
+  readonly currency: 'USD';
+  readonly totals: AIUsageBucket;
+  readonly by: Readonly<Record<AIUsageDimension, Readonly<Record<string, AIUsageBucket>>>>;
+  /** Per capability, the quantity used of each unit. */
+  readonly quantities: Readonly<Record<string, Readonly<Record<string, number>>>>;
+}

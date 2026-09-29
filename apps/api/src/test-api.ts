@@ -1,3 +1,4 @@
+import { InMemoryAIUsageStore, type AIUsageStore } from '@melonoffice/ai-usage';
 import { InMemoryKnowledgeRepository, type KnowledgeRepository } from '@melonoffice/brain';
 import { InMemoryApprovalRepository, type ApprovalRepository } from '@melonoffice/approvals';
 import {
@@ -97,6 +98,7 @@ import {
   toSpecialistDocument,
   toSpecialistVersionDocument,
   CREDIT_WALLETS,
+  FirestoreAIUsageStore,
   FirestoreCreditStore,
   FirestorePlanRepository,
   FirestoreAgentTaskRepository,
@@ -159,6 +161,8 @@ export interface Stores {
   /** The department catalogue migration's storage (ADR-0047). */
   readonly departmentMigration: DepartmentMigrationStore;
   readonly credits: CreditStore;
+  /** The AI Usage Ledger (ADR-0074). */
+  readonly aiUsage: AIUsageStore;
   readonly plans: PlanRepository;
   readonly workflows: WorkflowRepository;
   /** Changes a stored plan version's label behind the digest's back, as corrupted data would. */
@@ -241,6 +245,7 @@ function memoryStores(): Stores {
       else specialists.put(record);
     },
     credits,
+    aiUsage: new InMemoryAIUsageStore(),
     plans,
     workflows: new InMemoryWorkflowRepository(events),
     async tamperPlanVersion(organizationId, planId, version) {
@@ -308,6 +313,7 @@ function firestoreStores(): Stores {
       await db.collection(BILLING_ACCOUNTS).doc(organizationId).delete();
     },
     credits: new FirestoreCreditStore(db),
+    aiUsage: new FirestoreAIUsageStore(db),
     plans: new FirestorePlanRepository(db),
     workflows: new FirestoreWorkflowRepository(db),
     async tamperPlanVersion(organizationId, planId, version) {
@@ -447,6 +453,7 @@ export function setupApp(
     knowledge: stores.knowledge,
     approvals: stores.approvals,
     credits,
+    aiUsage: stores.aiUsage,
     plans: stores.plans,
     ...(runPlans ? { planRuntime: kickoff } : {}),
     workflows: stores.workflows,

@@ -542,6 +542,26 @@ resource "google_firestore_index" "agent_tasks" {
   }
 }
 
+# An organization's AI usage events are listed one page at a time, newest first (ADR-0074).
+# Until this index exists, the API reads them without it (at most 500) and logs it.
+resource "google_firestore_index" "ai_usage_events" {
+  count = var.firestore_and_auth ? 1 : 0
+
+  project     = var.project_id
+  database    = google_firestore_database.default[0].name
+  collection  = "aiUsageEvents"
+  query_scope = "COLLECTION"
+
+  fields {
+    field_path = "organizationId"
+    order      = "ASCENDING"
+  }
+  fields {
+    field_path = "occurredAt"
+    order      = "DESCENDING"
+  }
+}
+
 # Enables Identity Platform with email and password sign-in only. Other providers and MFA are
 # added when the auth work needs them. Identity Platform cannot be disabled once enabled; a
 # destroy only removes it from state.

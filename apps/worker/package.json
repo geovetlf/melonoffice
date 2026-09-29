@@ -18,6 +18,7 @@
     "@melonoffice/agents": "workspace:*",
     "@melonoffice/ai-gateway": "workspace:*",
     "@melonoffice/ai-deepseek": "workspace:*",
+    "@melonoffice/ai-usage": "workspace:*",
     "@melonoffice/ai-vertex": "workspace:*",
     "@melonoffice/approvals": "workspace:*",
     "@melonoffice/audit": "workspace:*",

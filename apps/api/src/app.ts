@@ -1,3 +1,4 @@
+import { createAIUsageLedger, type AIUsageStore } from '@melonoffice/ai-usage';
 import { createActivityService } from '@melonoffice/activity';
 import {
   createAgentTaskService,
@@ -121,6 +122,7 @@ import { registerDepartmentRoutes } from './departments.js';
 import { registerConnectionRoutes } from './connections.js';
 import { registerConversationRoutes } from './conversations.js';
 import { registerCreditRoutes } from './credits.js';
+import { registerAIUsageRoutes } from './ai-usage.js';
 import { registerEntitlementRoutes } from './entitlements.js';
 import { registerExecutionRoutes } from './executions.js';
 import { registerHealth } from './health.js';
@@ -183,6 +185,11 @@ export interface AppOptions {
   readonly approvals?: ApprovalRepository;
   /** Credit wallets and their ledger (ADR-0023). Absent: the credits route answers 503. */
   readonly credits?: CreditStore;
+  /**
+   * The AI Usage Ledger (ADR-0074): the AI Gateway records every completed call's usage and cost
+   * in it, and the usage routes read it. Absent: nothing is recorded and those routes answer 503.
+   */
+  readonly aiUsage?: AIUsageStore;
   /** Plans (ADR-0028). Absent: the plan routes answer 503 (fails closed). */
   readonly plans?: PlanRepository;
   /**
@@ -319,6 +326,7 @@ export function createApp({
   tools = defaultToolRegistry(),
   approvals,
   credits,
+  aiUsage,
   plans,
   planRuntime,
   workflows,
@@ -415,6 +423,7 @@ export function createApp({
     // Company Brain's extraction (ADR-0051). The execution and specialist stores are there
     // because the gateway is built whole; an assisted call reads neither. The credits engine
     // accounts for every call; with no rate it denies all.
+    const usageLedger = aiUsage === undefined ? undefined : createAIUsageLedger(aiUsage);
     const aiCredits =
       ai.credits ??
       (credits === undefined || tenancy === undefined
@@ -435,6 +444,7 @@ export function createApp({
               : { credits: { port: aiCredits, rate: ai.creditRate } }),
             audit,
             logger: logger.child({ component: 'ai-gateway' }),
+            ...(usageLedger === undefined ? {} : { usage: usageLedger }),
           })
         : undefined;
     const brain =
@@ -1146,6 +1156,13 @@ export function createApp({
       app.all('/v1/organizations/:organizationId/credits', (c) =>
         c.json({ error: 'credits_not_configured' }, 503),
       );
+    }
+    if (tenancy !== undefined && usageLedger !== undefined) {
+      registerAIUsageRoutes(app, { store: tenancy, authorization, audit, ledger: usageLedger });
+    } else if (tenancy !== undefined) {
+      const unavailable = (c: Context<Env>) => c.json({ error: 'ai_usage_not_configured' }, 503);
+      app.all('/v1/organizations/:organizationId/ai-usage', unavailable);
+      app.all('/v1/organizations/:organizationId/ai-usage/*', unavailable);
     }
   }
 

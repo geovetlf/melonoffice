@@ -1,3 +1,4 @@
+import { createAIUsageLedger } from '@melonoffice/ai-usage';
 import { Firestore } from '@google-cloud/firestore';
 import { serve } from '@hono/node-server';
 import {
@@ -23,6 +24,7 @@ import { createAuditService } from '@melonoffice/audit';
 import { createServiceIdentityVerifier } from '@melonoffice/auth';
 import { createCreditService } from '@melonoffice/credits';
 import {
+  FirestoreAIUsageStore,
   FirestoreAgentOutputRepository,
   FirestoreAgentTaskRepository,
   FirestoreApprovalRepository,
@@ -203,6 +205,8 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
             rate: CREDIT_RATE,
           },
           policies: createModelPolicyCatalogue([CONVERSATION_AGENT_POLICY, AGENT_TASK_POLICY]),
+          // Every agent's model call is recorded in the AI Usage Ledger (ADR-0074).
+          usage: createAIUsageLedger(new FirestoreAIUsageStore(firestore)),
         }
       : {}),
     work: routed.work,
