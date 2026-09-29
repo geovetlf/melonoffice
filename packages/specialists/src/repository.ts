@@ -1,3 +1,4 @@
+import type { InMemoryAuditStore } from '@melonoffice/audit';
 import type {
   OrganizationId,
   Specialist,
@@ -51,6 +52,9 @@ export class InMemorySpecialistRepository implements SpecialistRepository {
   readonly #specialists = new Map<string, Specialist>();
   readonly #versions = new Map<string, SpecialistVersion>();
 
+  /** `audit` receives a change's events (ADR-0062); a change with events needs one. */
+  constructor(private readonly audit?: Pick<InMemoryAuditStore, 'appendNow'>) {}
+
   async find(organizationId: OrganizationId, id: SpecialistId): Promise<Specialist | undefined> {
     const specialist = this.#specialists.get(id);
     return specialist?.organizationId === organizationId
@@ -99,12 +103,19 @@ export class InMemorySpecialistRepository implements SpecialistRepository {
     return write.specialist;
   }
 
-  #store({ specialist, version }: SpecialistWrite): void {
+  #store({ specialist, version, events = [] }: SpecialistWrite): void {
     if (version !== undefined) {
       const key = versionKey(version.specialistId, version.version);
       // Versions are written once: an existing one is never replaced.
       if (this.#versions.has(key)) throw new SpecialistError('specialist_concurrency_conflict');
-      this.#versions.set(key, version);
+    }
+    if (events.length > 0) {
+      if (this.audit === undefined) throw new Error('no audit store for specialist events');
+      // The audit events first: if they cannot be stored, nothing of the change is.
+      this.audit.appendNow(events);
+    }
+    if (version !== undefined) {
+      this.#versions.set(versionKey(version.specialistId, version.version), version);
     }
     this.#specialists.set(specialist.identity.id, specialist);
   }

@@ -19,6 +19,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@melonoffice/audit": "workspace:*",
     "@melonoffice/departments": "workspace:*",
     "@melonoffice/domain": "workspace:*",
     "@melonoffice/execution": "workspace:*",
@@ -26,7 +27,6 @@
     "@melonoffice/tenancy": "workspace:*"
   },
   "devDependencies": {
-    "@melonoffice/audit": "workspace:*",
     "@melonoffice/auth": "workspace:*",
     "@melonoffice/config": "workspace:*",
     "@melonoffice/credits": "workspace:*"

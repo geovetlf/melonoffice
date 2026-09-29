@@ -256,14 +256,13 @@ describe.each(STORES)('departments and specialists with storage in %s', (_name, 
       ]);
     });
 
-    it('has no route that creates, changes, deletes or runs a specialist', async () => {
+    // Creating and changing an agent is `specialist.manage` (ADR-0062, agents.test.ts).
+    it('has no route that replaces, deletes or runs a specialist', async () => {
       const { app, as, orgA, seed } = await setup();
       const s = await seed(orgA);
       const base = `/v1/organizations/${orgA}/specialists`;
       const attempts: [string, string][] = [
-        ['POST', base],
         ['PUT', `${base}/${s.identity.id}`],
-        ['PATCH', `${base}/${s.identity.id}`],
         ['DELETE', `${base}/${s.identity.id}`],
         ['POST', `${base}/${s.identity.id}/execute`],
         ['POST', `${base}/${s.identity.id}/run`],

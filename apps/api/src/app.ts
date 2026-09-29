@@ -75,7 +75,12 @@ import {
 } from '@melonoffice/integrations';
 import type { Logger } from '@melonoffice/observability';
 import { createAuthorizationService, type AuthorizationService } from '@melonoffice/rbac';
-import { createSpecialistService, type SpecialistRepository } from '@melonoffice/specialists';
+import {
+  createSkillCatalogue,
+  createSpecialistManagement,
+  createSpecialistService,
+  type SpecialistRepository,
+} from '@melonoffice/specialists';
 import {
   createPlanCancellationCascade,
   createPlanService,
@@ -108,7 +113,7 @@ import { registerEntitlementRoutes } from './entitlements.js';
 import { registerExecutionRoutes } from './executions.js';
 import { registerHealth } from './health.js';
 import { registerPlanRoutes } from './plans.js';
-import { registerSpecialistRoutes } from './specialists.js';
+import { registerSpecialistRoutes, toolLookupOf } from './specialists.js';
 import { registerTenancyRoutes } from './tenancy.js';
 import { registerToolRoutes } from './tools.js';
 import { registerWebhookRoutes } from './webhooks.js';
@@ -636,7 +641,22 @@ export function createApp({
           organizations: tenancy,
         }),
       });
-      registerSpecialistRoutes(app, { ...dependencies, specialists });
+      const skills = createSkillCatalogue();
+      registerSpecialistRoutes(app, {
+        ...dependencies,
+        specialists,
+        skills,
+        tools,
+        // Agent management (ADR-0062): owner only, a person directly, audited with each change.
+        management: createSpecialistManagement({
+          repository: structure.specialists,
+          departments: structure.departments,
+          organizations: tenancy,
+          authorization,
+          skills,
+          tools: toolLookupOf(tools),
+        }),
+      });
     } else if (tenancy !== undefined) {
       const unavailable = (c: Context<Env>) => c.json({ error: 'structure_not_configured' }, 503);
       app.all('/v1/organizations/:organizationId/departments', unavailable);

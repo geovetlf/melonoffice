@@ -40,7 +40,7 @@ export interface DepartmentMigrationState {
 /** What it writes for one organization: all of it, or nothing. */
 export interface DepartmentMigrationWrite {
   readonly departments: readonly Department[];
-  readonly specialists: readonly Required<SpecialistWrite>[];
+  readonly specialists: readonly Required<Omit<SpecialistWrite, 'events'>>[];
   readonly events: readonly AuditEvent[];
 }
 
@@ -103,7 +103,7 @@ export function planDepartmentMigration(
   );
   const specialists = state.specialists.filter((s) => s.organizationId === organizationId);
   const writes: Department[] = [];
-  const moves: Required<SpecialistWrite>[] = [];
+  const moves: Required<Omit<SpecialistWrite, 'events'>>[] = [];
   const events: AuditEvent[] = [];
   const actor = { type: 'user', userId: by, via: 'direct' } as const;
 
@@ -123,7 +123,7 @@ export function planDepartmentMigration(
       throw new Skip('merge_target_unavailable', retiredId);
     }
     for (const specialist of staying) {
-      let move: Required<SpecialistWrite>;
+      let move: Required<Omit<SpecialistWrite, 'events'>>;
       try {
         move = reviseSpecialist(
           specialist,

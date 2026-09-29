@@ -199,7 +199,7 @@ function memoryStores(): Stores {
   const breakable = new Breakable(events);
   const billing = new InMemoryBillingStore();
   const departments = new InMemoryDepartmentRepository();
-  const specialists = new InMemorySpecialistRepository();
+  const specialists = new InMemorySpecialistRepository(events);
   const credits = new InMemoryCreditStore(events);
   const tenancy = new InMemoryTenancyStore(undefined, events, billing, departments, credits);
   const plans = new InMemoryPlanRepository(events);

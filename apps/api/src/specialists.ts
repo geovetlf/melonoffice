@@ -1,20 +1,110 @@
 import type { Specialist } from '@melonoffice/domain';
-import { isSpecialistError, type SpecialistService } from '@melonoffice/specialists';
-import type { Hono } from 'hono';
+import { PERMISSIONS, type Permission } from '@melonoffice/rbac';
+import {
+  AGENT_TEMPLATES,
+  agentCapabilities,
+  isSpecialistError,
+  type SkillCatalogue,
+  type SpecialistError,
+  type SpecialistManagement,
+  type SpecialistService,
+  type ToolLookup,
+} from '@melonoffice/specialists';
+import type { ToolRegistry } from '@melonoffice/tools';
+import type { Context, Hono } from 'hono';
 import type { AuthEnv } from './auth.js';
 import { withPermission, type AuthorizationDependencies } from './authorization.js';
 
 /**
- * Specialist routes (ADR-0025). Read only: there is no route that creates, changes or runs a
- * specialist yet. Tenancy picks the organization from the caller's membership, RBAC checks
- * `specialist.read`, and only then are specialists read, from the resolved tenant. A specialist
- * of another organization answers exactly like one that does not exist.
+ * Specialist routes (ADR-0025, ADR-0062). Tenancy picks the organization from the caller's
+ * membership, RBAC checks the permission, and only then are specialists read or changed, from the
+ * resolved tenant. A specialist of another organization answers exactly like one that does not
+ * exist. Reading is `specialist.read`; creating an agent from a template, changing its
+ * configuration and its status is `specialist.manage`, which the management service checks again.
+ * No route runs an agent.
  */
 export function registerSpecialistRoutes(
   app: Hono<AuthEnv>,
-  dependencies: AuthorizationDependencies & { readonly specialists: SpecialistService },
+  dependencies: AuthorizationDependencies & {
+    readonly specialists: SpecialistService;
+    readonly management: SpecialistManagement;
+    readonly skills: SkillCatalogue;
+    readonly tools: ToolRegistry;
+  },
 ): void {
-  const { specialists } = dependencies;
+  const { specialists, management, skills, authorization } = dependencies;
+  const tools = toolLookupOf(dependencies.tools);
+
+  app.get(
+    '/v1/organizations/:organizationId/agents/catalogue',
+    withPermission('specialist.read', dependencies, async (c) =>
+      c.json({
+        templates: AGENT_TEMPLATES.map((t) => ({
+          id: t.id,
+          departmentTypeId: t.departmentTypeId,
+          nameKey: t.nameKey,
+          role: { id: t.mainRoleId, version: t.roleVersion },
+          purpose: t.purpose,
+          skills: t.skills.map(({ id, version }) => ({ id, version })),
+        })),
+        skills: skills.list().map((s) => ({
+          id: s.id,
+          version: s.version,
+          nameKey: s.nameKey,
+          descriptionKey: s.descriptionKey,
+          tools: [...s.toolIds],
+          reads: [...s.reads],
+        })),
+      }),
+    ),
+  );
+
+  app.post(
+    '/v1/organizations/:organizationId/specialists',
+    withPermission('specialist.manage', dependencies, async (c, tenant) =>
+      answer(c, 201, async () => management.create(tenant, await bodyOf(c))),
+    ),
+  );
+
+  app.patch(
+    '/v1/organizations/:organizationId/specialists/:specialistId',
+    withPermission('specialist.manage', dependencies, async (c, tenant) =>
+      answer(c, 200, async () =>
+        management.revise(tenant, c.req.param('specialistId') ?? '', await bodyOf(c)),
+      ),
+    ),
+  );
+
+  app.post(
+    '/v1/organizations/:organizationId/specialists/:specialistId/status',
+    withPermission('specialist.manage', dependencies, async (c, tenant) =>
+      answer(c, 200, async () =>
+        management.setStatus(tenant, c.req.param('specialistId') ?? '', await bodyOf(c)),
+      ),
+    ),
+  );
+
+  app.get(
+    '/v1/organizations/:organizationId/specialists/:specialistId/capabilities',
+    withPermission('specialist.read', dependencies, async (c, tenant) => {
+      try {
+        const specialist = await specialists.get(tenant, c.req.param('specialistId') ?? '');
+        // What the caller holds: the agent acts for a person, never beyond what they may do.
+        const held = new Set(
+          (Object.keys(PERMISSIONS) as Permission[]).filter(
+            (p) => authorization.authorize(tenant, p).allowed,
+          ),
+        );
+        const found = agentCapabilities(specialist, { skills, tools, held });
+        return c.json({ id: specialist.identity.id, version: specialist.version, ...found });
+      } catch (error) {
+        if (isSpecialistError(error) && error.code === 'specialist_not_found') {
+          return c.json({ error: 'specialist_not_found' }, 404);
+        }
+        throw error;
+      }
+    }),
+  );
 
   app.get(
     '/v1/organizations/:organizationId/specialists',
@@ -61,4 +151,58 @@ export function toSpecialistView(specialist: Specialist) {
     createdAt: identity.createdAt,
     updatedAt: specialist.updatedAt,
   };
+}
+
+/** What the capabilities resolver needs of a tool, from the one registry the tool gate uses. */
+export const toolLookupOf =
+  (registry: ToolRegistry): ToolLookup =>
+  (id, version) => {
+    const found = registry.resolve(id, version);
+    if (found === undefined) return undefined;
+    return {
+      riskLevel: found.version.riskLevel,
+      approval: found.version.approvalPolicy,
+      permissions: found.version.permissions,
+    };
+  };
+
+const bodyOf = async (c: Context<AuthEnv>): Promise<Record<string, unknown>> => {
+  const body: unknown = await c.req.json().catch(() => undefined);
+  return (
+    typeof body === 'object' && body !== null && !Array.isArray(body) ? body : null
+  ) as Record<string, unknown>;
+};
+
+const STATUS: Partial<Record<SpecialistError['code'], 400 | 403 | 404 | 409>> = {
+  invalid_specialist: 400,
+  department_not_assignable: 400,
+  permission_denied: 403,
+  unresolved_tenant: 403,
+  organization_inactive: 409,
+  specialist_not_found: 404,
+  invalid_specialist_transition: 409,
+  specialist_archived: 409,
+  specialist_concurrency_conflict: 409,
+};
+
+async function answer(
+  c: Context<AuthEnv>,
+  ok: 200 | 201,
+  run: () => Promise<Specialist>,
+): Promise<Response> {
+  try {
+    return c.json(toSpecialistView(await run()), ok);
+  } catch (error) {
+    const status = isSpecialistError(error) ? STATUS[error.code] : undefined;
+    if (status === undefined || !isSpecialistError(error)) throw error;
+    return c.json(
+      {
+        error: error.code,
+        ...(error.code === 'invalid_specialist' && error.detail !== undefined
+          ? { field: error.detail }
+          : {}),
+      },
+      status,
+    );
+  }
 }
