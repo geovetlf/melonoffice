@@ -10,3 +10,4 @@ export * from './credits.js';
 export * from './router.js';
 export * from './gateway.js';
 export * from './health.js';
+export * from './tools.js';

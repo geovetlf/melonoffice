@@ -1,7 +1,8 @@
 import type { AIRoutingStrategy } from '@melonoffice/domain';
-import type { FinishReason, ProviderOutcome, ProviderUsage } from './adapter.js';
+import type { AIOutput, FinishReason, ProviderOutcome, ProviderUsage } from './adapter.js';
 import type { AICreditState } from './credits.js';
 import { looksLikeSecretText } from './secrets.js';
+import { checkToolCalls, type AIToolDefinition } from './tools.js';
 
 /** Which versions answered, for reproducibility: adapter, exact model, and policy. */
 export interface AIVersions {
@@ -21,7 +22,7 @@ export type AIResponse =
       readonly provider: string;
       readonly model: string;
       readonly versions: AIVersions;
-      readonly output: { readonly text?: string; readonly structured?: unknown };
+      readonly output: AIOutput;
       readonly usage: ProviderUsage;
       readonly latencyMs: number;
       readonly finishReason: FinishReason;
@@ -68,11 +69,24 @@ const count = (v: unknown): boolean =>
  */
 export function checkProviderSuccess(
   outcome: Extract<ProviderOutcome, { status: 'success' }>,
+  tools?: readonly AIToolDefinition[],
 ): boolean {
   const { output, usage, finishReason, providerRequestId } = outcome;
   if (typeof output !== 'object' || output === null) return false;
-  if (Object.keys(output).some((k) => k !== 'text' && k !== 'structured')) return false;
-  if (output.text === undefined && output.structured === undefined) return false;
+  if (Object.keys(output).some((k) => !['text', 'structured', 'toolCalls'].includes(k))) {
+    return false;
+  }
+  if (
+    output.text === undefined &&
+    output.structured === undefined &&
+    output.toolCalls === undefined
+  ) {
+    return false;
+  }
+  // Tool calls only to the tools this request offered, with arguments their schema accepts, and
+  // `tool_use` only with calls (R3, ADR-0076).
+  if (output.toolCalls !== undefined && !checkToolCalls(output.toolCalls, tools)) return false;
+  if ((finishReason === 'tool_use') !== (output.toolCalls !== undefined)) return false;
   if (output.text !== undefined && typeof output.text !== 'string') return false;
   if (output.text !== undefined && looksLikeSecretText(output.text)) return false;
   if (output.structured !== undefined) {

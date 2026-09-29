@@ -348,11 +348,12 @@ export function createAIGateway(options: AIGatewayOptions): AIGateway {
           maxOutputTokens: request.maxOutputTokens,
           structuredOutput: request.requirements?.structuredOutput ?? false,
           ...(request.outputSchema === undefined ? {} : { outputSchema: request.outputSchema }),
+          ...(request.tools === undefined ? {} : { tools: request.tools }),
           credential: candidate.provider.credential,
           deadline: new Date(now().getTime() + timeoutMs),
         });
         let outcome = await withDeadline(candidate.adapter.generate(call), timeoutMs);
-        if (outcome.status === 'success' && !checkProviderSuccess(outcome)) {
+        if (outcome.status === 'success' && !checkProviderSuccess(outcome, request.tools)) {
           outcome = { status: 'error', kind: 'invalid_response' };
         }
         health.record(
