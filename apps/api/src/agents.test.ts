@@ -119,7 +119,13 @@ describe.each(STORES)('agents with storage in %s', (_name, createStores) => {
       version: 2,
       ready: true,
       permissions: {
-        required: ['contact.read', 'follow_up.read', 'opportunity.read', 'report.read'],
+        required: [
+          'contact.read',
+          'follow_up.read',
+          'knowledge.read',
+          'opportunity.read',
+          'report.read',
+        ],
         missing: [],
       },
     });

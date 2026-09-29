@@ -26,6 +26,7 @@ import { createApp, SERVICE_NAME } from './app.js';
 import { loadConfig } from './config.js';
 import {
   FirestoreAgentOutputRepository,
+  FirestoreAgentTaskRepository,
   FirestoreApprovalRepository,
   FirestoreAuditStore,
   FirestoreBillingStore,
@@ -155,6 +156,14 @@ function services(projectId: string) {
     workflows: new FirestoreWorkflowRepository(firestore),
     audit,
     agentTurns,
+    // Agent tasks (ADR-0063): queued for the worker through the same runtime as agents' turns.
+    agentTasks: {
+      repository: new FirestoreAgentTaskRepository(firestore, {
+        onIndexMissing: (query) => logger.warn('firestore.index_missing', { query }),
+      }),
+      outputs: new FirestoreAgentOutputRepository(firestore),
+      runtime: agentTurns,
+    },
     entitlementOverrides: new FirestoreEntitlementOverrideStore(firestore),
     conversations: {
       repository: conversations,

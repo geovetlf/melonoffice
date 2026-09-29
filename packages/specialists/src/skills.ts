@@ -36,6 +36,8 @@ export const SKILL_CATALOGUE: readonly AgentSkill[] = Object.freeze([
     tools: ['message_send', 'conversation_handoff'],
     reads: ['conversation.read'],
   }),
+  // What the company knows (Company Brain, ADR-0051), for the agent's department only (ADR-0063).
+  skill('company_knowledge', { reads: ['knowledge.read'] }),
   skill('customer_follow_up', { reads: ['contact.read', 'opportunity.read', 'follow_up.read'] }),
   skill('pipeline_analysis', { reads: ['opportunity.read', 'report.read'] }),
   skill('campaign_analysis', { reads: ['contact.read', 'report.read'] }),

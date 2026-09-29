@@ -1,5 +1,10 @@
 import { createActivityService } from '@melonoffice/activity';
 import {
+  createAgentTaskService,
+  type AgentTaskRepository,
+  type TaskKickoff,
+} from '@melonoffice/agents';
+import {
   createCompanyBrain,
   createGatewayKnowledgeExtractor,
   knowledgeItemId,
@@ -114,6 +119,7 @@ import { registerExecutionRoutes } from './executions.js';
 import { registerHealth } from './health.js';
 import { registerPlanRoutes } from './plans.js';
 import { registerSpecialistRoutes, toolLookupOf } from './specialists.js';
+import { registerAgentTaskRoutes } from './agent-tasks.js';
 import { registerTenancyRoutes } from './tenancy.js';
 import { registerToolRoutes } from './tools.js';
 import { registerWebhookRoutes } from './webhooks.js';
@@ -251,6 +257,20 @@ export interface AppOptions {
    */
   readonly agentTurns?: Pick<AgentTurns, 'afterDecision'>;
   /**
+   * Agent tasks (ADR-0063): what people ask the organization's agents. They also need executions
+   * and `structure`. Absent: the task routes answer 503 (fails closed).
+   */
+  readonly agentTasks?: {
+    readonly repository: AgentTaskRepository;
+    /** Where the worker keeps agents' answers. Absent: tasks show no answer. */
+    readonly outputs?: AgentOutputRepository;
+    /**
+     * Queues a started task's first job for the worker (`createAgentTurns`). Absent: a task is
+     * created and started, and its job is never queued (nothing runs here).
+     */
+    readonly runtime?: TaskKickoff;
+  };
+  /**
    * The web app's exact origins, allowed to call `/v1` from a browser (ADR-0036). Empty or
    * absent: no CORS header is ever sent.
    */
@@ -287,6 +307,7 @@ export function createApp({
   forecasting,
   webhooks,
   agentTurns,
+  agentTasks,
   webOrigins = [],
 }: AppOptions): Hono<Env> {
   const app = new Hono<Env>();
@@ -689,6 +710,43 @@ export function createApp({
       app.all('/v1/organizations/:organizationId/executions/*', (c) =>
         c.json({ error: 'executions_not_configured' }, 503),
       );
+    }
+    if (
+      tenancy !== undefined &&
+      executions !== undefined &&
+      structure !== undefined &&
+      specialists !== undefined &&
+      agentTasks !== undefined
+    ) {
+      const taskExecutions = executions;
+      registerAgentTaskRoutes(app, {
+        store: tenancy,
+        authorization,
+        audit,
+        tasksFor: (requestId) =>
+          createAgentTaskService({
+            tasks: agentTasks.repository,
+            specialists: structure.specialists,
+            executions: createExecutionService({
+              repository: taskExecutions,
+              organizations: tenancy,
+              assignments: specialists.assignments,
+              authorization,
+              audit,
+              ...(requestId === undefined ? {} : { requestId }),
+            }),
+            authorization,
+            ...(agentTasks.runtime === undefined ? {} : { runtime: agentTasks.runtime }),
+            ...(requestId === undefined ? {} : { requestId }),
+          }),
+        ...(agentTasks.outputs === undefined
+          ? {}
+          : { outputs: createAgentOutputStore(agentTasks.outputs) }),
+      });
+    } else if (tenancy !== undefined) {
+      const unavailable = (c: Context<Env>) => c.json({ error: 'agent_tasks_not_configured' }, 503);
+      app.all('/v1/organizations/:organizationId/specialists/:specialistId/tasks', unavailable);
+      app.all('/v1/organizations/:organizationId/agent-tasks/*', unavailable);
     }
     // Tools are listed, never run, over HTTP: only the tool gate runs them, on the server.
     if (tenancy !== undefined) {

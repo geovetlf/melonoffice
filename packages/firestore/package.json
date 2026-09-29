@@ -25,6 +25,7 @@
   },
   "dependencies": {
     "@google-cloud/firestore": "8.7.1",
+    "@melonoffice/agents": "workspace:*",
     "@melonoffice/approvals": "workspace:*",
     "@melonoffice/audit": "workspace:*",
     "@melonoffice/auth": "workspace:*",

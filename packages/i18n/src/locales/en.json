@@ -27,6 +27,8 @@
   "agents.template.research.name": "Research agent",
   "agents.skill.conversation_reply.name": "Reply to conversations",
   "agents.skill.conversation_reply.description": "Answers customers in the conversations assigned to it, and hands them to a person when needed.",
+  "agents.skill.company_knowledge.name": "Company knowledge",
+  "agents.skill.company_knowledge.description": "Reads what the company's memory says, for its department.",
   "agents.skill.customer_follow_up.name": "Customer follow-up",
   "agents.skill.customer_follow_up.description": "Keeps track of customers, opportunities and pending follow-ups.",
   "agents.skill.pipeline_analysis.name": "Pipeline analysis",

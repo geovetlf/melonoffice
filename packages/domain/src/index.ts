@@ -19,3 +19,4 @@ export type * from './business.js';
 export type * from './knowledge.js';
 export type * from './opportunity.js';
 export type * from './follow-up.js';
+export type * from './agent-task.js';

@@ -185,7 +185,7 @@ export function createSpecialistManagement(
           skills: template.skills,
           tools: [],
           permissions: [...reads].sort(),
-          policies: {},
+          policies: template.policies,
         },
         organizationId,
       );

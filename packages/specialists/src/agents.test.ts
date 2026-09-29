@@ -187,6 +187,7 @@ describe('agent management', () => {
     expect(agent.configuration.permissions).toEqual([
       'contact.read',
       'follow_up.read',
+      'knowledge.read',
       'opportunity.read',
       'report.read',
     ]);
@@ -352,7 +353,7 @@ describe('what an agent may do', () => {
     const draft = agentCapabilities(agent, { skills: w.skills, tools: TOOLS, held: all });
     expect(draft.ready).toBe(false);
     expect(draft.problems).toEqual([{ kind: 'not_active', status: 'draft' }]);
-    expect(draft.permissions.required).toEqual(['credits.read', 'report.read']);
+    expect(draft.permissions.required).toEqual(['credits.read', 'knowledge.read', 'report.read']);
 
     const active = await w.management.setStatus(w.tenantA, agent.identity.id, {
       from: 'draft',
@@ -364,7 +365,7 @@ describe('what an agent may do', () => {
     const without = agentCapabilities(active, {
       skills: w.skills,
       tools: TOOLS,
-      held: new Set(['report.read']),
+      held: new Set(['report.read', 'knowledge.read']),
     });
     expect(without.ready).toBe(false);
     expect(without.permissions.missing).toEqual(['credits.read']);

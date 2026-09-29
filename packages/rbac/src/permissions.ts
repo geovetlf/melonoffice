@@ -100,6 +100,12 @@ export const PERMISSIONS = {
     description:
       "Create the organization's agents from a template, change their configuration as a new version and change their status (ADR-0062). A person directly, never GIA or the runtime.",
   },
+  'specialist.task': {
+    resource: 'specialist',
+    action: 'task',
+    description:
+      "Ask one of the organization's active agents to do a task (ADR-0063). A person directly, never GIA or the runtime; the agent answers, it does not act.",
+  },
   'tool.read': {
     resource: 'tool',
     action: 'read',
