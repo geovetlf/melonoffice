@@ -1,4 +1,5 @@
-import type { DeploymentEnvironment } from '@melonoffice/domain';
+import type { DeploymentEnvironment, SecretRef } from '@melonoffice/domain';
+import { isAISecretRef } from '@melonoffice/integrations';
 import { isLogLevel, type LogLevel } from '@melonoffice/observability';
 
 export interface ServiceConfig {
@@ -33,6 +34,12 @@ export interface ServiceConfig {
    * is denied.
    */
   readonly vertexAI?: { readonly projectId: string; readonly location: string };
+  /**
+   * DeepSeek's official API (ADR-0072): `DEEPSEEK_API_KEY_SECRET`, the Secret Manager reference
+   * of its key (`projects/{project}/secrets/ai-{name}/versions/latest`), never the key itself.
+   * Unset: DeepSeek is not registered.
+   */
+  readonly deepSeek?: { readonly keySecret: SecretRef };
   /**
    * Where an agent's first job is handed to the worker (CV-6B, ADR-0043): `JOB_QUEUE`,
    * `WORKER_URL`, `JOB_INVOKER_EMAIL` and `JOB_LEASE_MS`, all or none, the worker's own values.
@@ -135,10 +142,16 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): S
   if (vertexLocation !== undefined && !LOCATION.test(vertexLocation)) {
     throw new Error(`Invalid VERTEX_AI_LOCATION: ${vertexLocation}`);
   }
+  const deepSeekKeySecret = env.DEEPSEEK_API_KEY_SECRET || undefined;
+  if (deepSeekKeySecret !== undefined && !isAISecretRef(deepSeekKeySecret)) {
+    // The reference, not the value, is shown: a key pasted here by mistake is not echoed.
+    throw new Error('Invalid DEEPSEEK_API_KEY_SECRET: expected a Secret Manager ai-* reference');
+  }
   return {
     port,
     logLevel: level,
     version: env.SERVICE_VERSION ?? 'dev',
+    ...(deepSeekKeySecret === undefined ? {} : { deepSeek: { keySecret: deepSeekKeySecret } }),
     ...(identityProjectId === undefined ? {} : { identityProjectId }),
     ...(channelSecretsProjectId === undefined ? {} : { channelSecretsProjectId }),
     ...(whatsappGraphApiVersion === undefined ? {} : { whatsappGraphApiVersion }),

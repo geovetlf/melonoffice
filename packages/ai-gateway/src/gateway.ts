@@ -5,7 +5,16 @@ import {
   type AuditService,
   type AuditTarget,
 } from '@melonoffice/audit';
+import {
+  createAICostEngine,
+  LLM_CAPABILITY,
+  llmPricing,
+  llmUsage,
+  type AIUsageSink,
+} from '@melonoffice/ai-usage';
 import type {
+  AIUsageAttribution,
+  AIUsageEvent,
   DeploymentEnvironment,
   ExecutionStatus,
   ModelPolicy,
@@ -26,6 +35,7 @@ import {
 } from './adapter.js';
 import { costMicroUsd, creditsFor, type CreditRate } from './cost.js';
 import { creditReferenceOf, type AICreditsPort } from './credits.js';
+import { createProviderHealthTracker, type ProviderHealthTracker } from './health.js';
 import type { ModelPolicyCatalogue } from './policy.js';
 import { modelKey, type ProviderRegistry } from './registry.js';
 import {
@@ -108,6 +118,16 @@ export interface AIGatewayOptions {
   readonly credits?: { readonly port: AICreditsPort; readonly rate: CreditRate | undefined };
   readonly audit: AuditService;
   readonly logger?: Logger;
+  /**
+   * What this server has seen of each provider lately (ADR-0072). Absent: a tracker of its own,
+   * with the default thresholds.
+   */
+  readonly health?: ProviderHealthTracker;
+  /**
+   * Where each completed call's usage and cost go, in the AI Usage Layer's shape shared by every
+   * AI capability (ADR-0073). Absent: none is emitted. A failed emit never fails the call.
+   */
+  readonly usage?: AIUsageSink;
   /** How long one attempt may take. */
   readonly timeoutMs?: number;
   readonly now?: () => Date;
@@ -147,6 +167,9 @@ export function createAIGateway(options: AIGatewayOptions): AIGateway {
     sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
   } = options;
   const logger = options.logger ?? silent;
+  const health = options.health ?? createProviderHealthTracker();
+  const usageSink = options.usage;
+  const costEngine = createAICostEngine();
 
   async function organizationOf(tenant: TenantContext): Promise<OrganizationId | undefined> {
     if (!isResolvedTenant(tenant)) return undefined;
@@ -158,7 +181,12 @@ export function createAIGateway(options: AIGatewayOptions): AIGateway {
 
   /** One call's audit and log context, filled in as the request is checked. */
   function callContext(tenant: TenantContext, organizationId: OrganizationId, requestId: string) {
-    const known: { target?: AuditTarget; model?: AuditModel } = {};
+    const known: {
+      target?: AuditTarget;
+      model?: AuditModel;
+      /** Who and what the call's usage belongs to, as far as it is known (ADR-0073). */
+      attribution: Omit<AIUsageAttribution, 'organizationId' | 'actor' | 'userId' | 'taskType'>;
+    } = { attribution: {} };
     let log = withCorrelation(logger, { requestId, organizationId });
     const record = async (
       action: Extract<AuditAction, `ai.${string}`>,
@@ -225,7 +253,7 @@ export function createAIGateway(options: AIGatewayOptions): AIGateway {
     // environment is checked by every caller before this point.
     const deployment = environment as DeploymentEnvironment;
     const organizationId = tenant.organizationId;
-    const log = ctx.log;
+    let log = ctx.log;
 
     // 4. Credits must be able to account for the call before anything is sent.
     if (credits === undefined || credits.rate === undefined) {
@@ -234,32 +262,43 @@ export function createAIGateway(options: AIGatewayOptions): AIGateway {
     const { port, rate } = credits;
     // 5. Route.
     const estimatedInputTokens = estimateInputTokens(request);
-    const route = routeModel(registry, policy, deployment, {
-      capability: request.capability,
-      inputModalities: inputModalitiesOf(request),
-      outputModality: request.outputModality,
-      ...(request.quality === undefined ? {} : { quality: request.quality }),
-      ...(request.latency === undefined ? {} : { latency: request.latency }),
-      ...(request.maxCostMicroUsd === undefined
-        ? {}
-        : { maxCostMicroUsd: request.maxCostMicroUsd }),
-      sensitivity: request.sensitivity,
-      estimatedInputTokens,
-      maxOutputTokens: request.maxOutputTokens,
-      ...(request.requirements?.minContextTokens === undefined
-        ? {}
-        : { minContextTokens: request.requirements.minContextTokens }),
-      ...(request.requirements?.structuredOutput === undefined
-        ? {}
-        : { structuredOutput: request.requirements.structuredOutput }),
-      ...(request.requirements?.toolUse === undefined
-        ? {}
-        : { toolUse: request.requirements.toolUse }),
-      ...(request.requirements?.streaming === undefined
-        ? {}
-        : { streaming: request.requirements.streaming }),
-    });
+    const route = routeModel(
+      registry,
+      policy,
+      deployment,
+      {
+        capability: request.capability,
+        inputModalities: inputModalitiesOf(request),
+        outputModality: request.outputModality,
+        ...(request.quality === undefined ? {} : { quality: request.quality }),
+        ...(request.latency === undefined ? {} : { latency: request.latency }),
+        ...(request.maxCostMicroUsd === undefined
+          ? {}
+          : { maxCostMicroUsd: request.maxCostMicroUsd }),
+        sensitivity: request.sensitivity,
+        estimatedInputTokens,
+        maxOutputTokens: request.maxOutputTokens,
+        ...(request.requirements?.minContextTokens === undefined
+          ? {}
+          : { minContextTokens: request.requirements.minContextTokens }),
+        ...(request.requirements?.structuredOutput === undefined
+          ? {}
+          : { structuredOutput: request.requirements.structuredOutput }),
+        ...(request.requirements?.toolUse === undefined
+          ? {}
+          : { toolUse: request.requirements.toolUse }),
+        ...(request.requirements?.streaming === undefined
+          ? {}
+          : { streaming: request.requirements.streaming }),
+        ...(request.strategy === undefined ? {} : { strategy: request.strategy }),
+      },
+      health.unavailable(),
+      (id) => health.status(id),
+    );
     if (route.status === 'none') return deny(route.reason);
+    const { strategy } = route;
+    ctx.correlate({ taskType: request.taskType, routingStrategy: strategy });
+    log = ctx.log;
 
     // Only models whose cost can be accounted for, within the request's credit limit.
     const creditsOf = (c: RouteCandidate) =>
@@ -283,8 +322,12 @@ export function createAIGateway(options: AIGatewayOptions): AIGateway {
     let attempts = 0;
     let lastKind: ProviderErrorKind = 'unavailable';
     let previous: AuditModel | undefined;
+    let fallbacks = 0;
     const [first] = candidates;
     for (const candidate of candidates) {
+      // A fallback is checked again: a provider that just failed repeatedly is not tried twice.
+      if (candidate !== first && health.status(candidate.provider.id) === 'unavailable') continue;
+      if (candidate !== first) fallbacks += 1;
       known.model = { provider: candidate.provider.id, id: candidate.model.modelId };
       const model = known.model;
       const key = modelKey(candidate.provider.id, candidate.model.modelId);
@@ -312,6 +355,10 @@ export function createAIGateway(options: AIGatewayOptions): AIGateway {
         if (outcome.status === 'success' && !checkProviderSuccess(outcome)) {
           outcome = { status: 'error', kind: 'invalid_response' };
         }
+        health.record(
+          candidate.provider.id,
+          outcome.status === 'success' ? 'success' : outcome.kind,
+        );
         if (outcome.status === 'success') {
           const latencyMs = Math.round(performance.now() - started);
           const actual = costMicroUsd(candidate.model.pricing, outcome.usage) ?? 0;
@@ -330,13 +377,52 @@ export function createAIGateway(options: AIGatewayOptions): AIGateway {
               return failedResponse(requestId, 'credits_charge_failed', model, attempts, latencyMs);
             }
           }
+          if (usageSink !== undefined) {
+            try {
+              await usageSink.record(
+                usageEventOf({
+                  id: idempotencyKey,
+                  occurredAt: now().toISOString(),
+                  attribution: {
+                    organizationId,
+                    actor: USAGE_ACTORS[tenant.actor] ?? 'system',
+                    userId: tenant.userId,
+                    taskType: request.taskType,
+                    ...known.attribution,
+                  },
+                  provider: candidate.provider.id,
+                  model: candidate.model.modelId,
+                  modelVersion: candidate.model.version,
+                  operation: request.capability,
+                  cost: costEngine.cost({
+                    capability: LLM_CAPABILITY,
+                    provider: candidate.provider.id,
+                    model: candidate.model.modelId,
+                    operation: request.capability,
+                    pricing: llmPricing(candidate.model.pricing),
+                    usage: llmUsage(candidate.model.pricing, outcome.usage),
+                    estimatedMicroUsd: candidate.estimatedCostMicroUsd ?? null,
+                  }),
+                  credits: charge,
+                  requestId: request.requestId,
+                }),
+              );
+            } catch {
+              // Already charged and audited: the usage ledger is told again by a later reconcile.
+              callLog.warn('ai usage not recorded');
+            }
+          }
           callLog.info('ai request completed', {
             status: 'completed',
             attempts,
+            retries: attempts - fallbacks - 1,
+            fallbacks,
             latencyMs,
             // Usage is logged as units: the logger redacts any key named like a token.
             inputUnits: outcome.usage.inputTokens,
             outputUnits: outcome.usage.outputTokens,
+            cachedInputUnits: outcome.usage.cachedInputTokens ?? 0,
+            estimatedCostMicroUsd: candidate.estimatedCostMicroUsd ?? null,
             costMicroUsd: actual,
             credits: charge,
           });
@@ -369,6 +455,7 @@ export function createAIGateway(options: AIGatewayOptions): AIGateway {
               first === undefined || candidate === first
                 ? null
                 : modelKey(first.provider.id, first.model.modelId),
+            strategy,
           });
         }
         lastKind = outcome.kind;
@@ -383,7 +470,13 @@ export function createAIGateway(options: AIGatewayOptions): AIGateway {
     }
     const latencyMs = Math.round(performance.now() - started);
     await record('ai.request_failed', lastKind);
-    log.error('ai request failed', { kind: lastKind, attempts, latencyMs });
+    log.error('ai request failed', {
+      kind: lastKind,
+      attempts,
+      retries: attempts - fallbacks - 1,
+      fallbacks,
+      latencyMs,
+    });
     return failedResponse(requestId, lastKind, known.model, attempts, latencyMs);
   }
 
@@ -414,6 +507,10 @@ export function createAIGateway(options: AIGatewayOptions): AIGateway {
         : undefined;
       if (execution === undefined) return deny('execution_not_found');
       ctx.known.target = { type: 'execution', id: execution.id };
+      ctx.known.attribution = {
+        executionId: execution.id,
+        ...(execution.workflowId === undefined ? {} : { workflowId: execution.workflowId }),
+      };
       ctx.correlate({
         executionId: execution.id,
         ...(request.nodeId === undefined ? {} : { nodeId: request.nodeId }),
@@ -436,6 +533,8 @@ export function createAIGateway(options: AIGatewayOptions): AIGateway {
         version: specialistVersion,
       });
       if (!eligibility.eligible) return deny('specialist_not_eligible');
+      ctx.correlate({ departmentId });
+      ctx.known.attribution = { ...ctx.known.attribution, specialistId, departmentId };
       const version = await specialists.getVersion(tenant, specialistId, specialistVersion);
 
       // 3. Policy: the specialist's model policy, or the default.
@@ -462,6 +561,9 @@ export function createAIGateway(options: AIGatewayOptions): AIGateway {
       const problem = checkAssistedAIRequest(request);
       if (problem !== undefined) return deny(problem);
       ctx.known.target = { type: request.subject.type, id: request.subject.id };
+      ctx.known.attribution = {
+        subject: { type: request.subject.type, id: request.subject.id },
+      };
       if (request.subject.type === 'conversation') {
         ctx.correlate({ conversationId: request.subject.id });
       }
@@ -481,6 +583,24 @@ export function createAIGateway(options: AIGatewayOptions): AIGateway {
     },
   });
 }
+
+const USAGE_ACTORS: Readonly<Record<string, AIUsageAttribution['actor']>> = {
+  user: 'user',
+  gia: 'gia',
+  runtime: 'runtime',
+};
+
+/** The LLM Router's usage event: one source of the AI Usage Layer (ADR-0073). */
+const usageEventOf = (
+  event: Omit<AIUsageEvent, 'capability' | 'outcome' | 'source'>,
+): AIUsageEvent =>
+  Object.freeze({
+    ...event,
+    attribution: Object.freeze(event.attribution),
+    capability: LLM_CAPABILITY,
+    outcome: 'completed',
+    source: 'llm_router',
+  });
 
 const deniedResponse = (requestId: string, code: string): AIResponse =>
   Object.freeze({ status: 'denied', requestId, code });

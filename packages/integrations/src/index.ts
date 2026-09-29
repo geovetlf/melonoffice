@@ -5,6 +5,7 @@ export * from './connections.js';
 export * from './engine.js';
 export * from './errors.js';
 export * from './secrets.js';
+export * from './ai-credentials.js';
 export * from './whatsapp.js';
 export * from './outbound.js';
 export * from './agent-turns.js';

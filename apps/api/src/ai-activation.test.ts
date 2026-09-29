@@ -4,6 +4,7 @@ import type {
   IsoTimestamp,
   Organization,
   OrganizationId,
+  SecretRef,
   UserId,
 } from '@melonoffice/domain';
 import { createConversationIngress } from '@melonoffice/conversations';
@@ -418,6 +419,45 @@ describe('AI configuration (ADR-0038)', () => {
       fallback: 'none',
       maxAttempts: 2,
     });
+  });
+
+  it('registers DeepSeek only with its key reference, and the existing policies still pin Gemini (ADR-0072)', () => {
+    const keySecret = 'projects/melonoffice/secrets/ai-deepseek-api-key/versions/latest';
+    expect(loadConfig({ DEEPSEEK_API_KEY_SECRET: keySecret }).deepSeek).toEqual({ keySecret });
+    expect(loadConfig({}).deepSeek).toBeUndefined();
+    // A key pasted by mistake, or a channel secret, is refused and never echoed.
+    const pasted = ['sk', '-not-a-reference-000000001'].join('');
+    expect(() => loadConfig({ DEEPSEEK_API_KEY_SECRET: pasted })).toThrow(
+      'Invalid DEEPSEEK_API_KEY_SECRET',
+    );
+    try {
+      loadConfig({ DEEPSEEK_API_KEY_SECRET: pasted });
+    } catch (error) {
+      expect(String(error)).not.toContain(pasted);
+    }
+    const both = aiConfigurationOf({
+      deploymentEnvironment: 'dev',
+      vertexAI: { projectId: 'melonoffice-dev-test', location: 'us-central1' },
+      deepSeek: { keySecret: keySecret as SecretRef },
+    });
+    expect(
+      both.registry
+        ?.models()
+        .map((m) => m.model.modelId)
+        .sort(),
+    ).toEqual(['deepseek-chat', 'deepseek-reasoner', 'gemini-2.5-flash-lite']);
+    // Registering DeepSeek allows nothing by itself: GIA, conversations, Brain and decisions
+    // still reach exactly one model.
+    for (const id of [
+      'conversation_assist',
+      'company_knowledge_assist',
+      'gia_assist',
+      'decision_assist',
+    ]) {
+      expect(both.policies?.resolve({ id, version: 1 })?.allowedProviders).toEqual([
+        'google-vertex-ai',
+      ]);
+    }
   });
 
   it('reads the Vertex AI settings together and checks them', () => {

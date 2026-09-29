@@ -65,6 +65,9 @@ importers:
       '@melonoffice/agents':
         specifier: workspace:*
         version: link:../../packages/agents
+      '@melonoffice/ai-deepseek':
+        specifier: workspace:*
+        version: link:../../packages/ai-deepseek
       '@melonoffice/ai-gateway':
         specifier: workspace:*
         version: link:../../packages/ai-gateway
@@ -205,6 +208,9 @@ importers:
       '@melonoffice/agents':
         specifier: workspace:*
         version: link:../../packages/agents
+      '@melonoffice/ai-deepseek':
+        specifier: workspace:*
+        version: link:../../packages/ai-deepseek
       '@melonoffice/ai-gateway':
         specifier: workspace:*
         version: link:../../packages/ai-gateway
@@ -359,8 +365,24 @@ importers:
         specifier: workspace:*
         version: link:../departments
 
+  packages/ai-deepseek:
+    dependencies:
+      '@melonoffice/ai-gateway':
+        specifier: workspace:*
+        version: link:../ai-gateway
+      '@melonoffice/domain':
+        specifier: workspace:*
+        version: link:../domain
+    devDependencies:
+      '@melonoffice/config':
+        specifier: workspace:*
+        version: link:../config
+
   packages/ai-gateway:
     dependencies:
+      '@melonoffice/ai-usage':
+        specifier: workspace:*
+        version: link:../ai-usage
       '@melonoffice/audit':
         specifier: workspace:*
         version: link:../audit
@@ -398,6 +420,16 @@ importers:
       '@melonoffice/departments':
         specifier: workspace:*
         version: link:../departments
+
+  packages/ai-usage:
+    dependencies:
+      '@melonoffice/domain':
+        specifier: workspace:*
+        version: link:../domain
+    devDependencies:
+      '@melonoffice/config':
+        specifier: workspace:*
+        version: link:../config
 
   packages/ai-vertex:
     dependencies:

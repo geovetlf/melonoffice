@@ -20,3 +20,4 @@ export type * from './knowledge.js';
 export type * from './opportunity.js';
 export type * from './follow-up.js';
 export type * from './agent-task.js';
+export type * from './ai-usage.js';

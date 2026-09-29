@@ -14,6 +14,11 @@ import {
   VERTEX_AI_MODELS,
   VERTEX_AI_PROVIDER,
 } from '@melonoffice/ai-vertex';
+import {
+  createDeepSeekAdapter,
+  DEEPSEEK_MODELS,
+  DEEPSEEK_PROVIDER,
+} from '@melonoffice/ai-deepseek';
 import { createAuditService } from '@melonoffice/audit';
 import { createServiceIdentityVerifier } from '@melonoffice/auth';
 import { createCreditService } from '@melonoffice/credits';
@@ -41,9 +46,11 @@ import {
 import {
   createIntegrationEngine,
   createIntegrationRegistry,
+  aiProviderKeysFromSecrets,
   createSecretManagerStore,
   createWhatsAppAdapter,
   deliveryPolicyFromEnv,
+  isAISecretRef,
 } from '@melonoffice/integrations';
 import { createFollowUpService } from '@melonoffice/conversations';
 import { createEventBus } from '@melonoffice/events';
@@ -90,7 +97,7 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
     jobs: new FirestoreJobRepository(firestore),
     audit: new FirestoreAuditStore(firestore),
   };
-  const { vertexAI, channelSecretsProjectId, whatsappGraphApiVersion } = config.agents;
+  const { vertexAI, deepSeek, channelSecretsProjectId, whatsappGraphApiVersion } = config.agents;
   const agentOutputs = new FirestoreAgentOutputRepository(firestore);
   // Conversation agents (CV-6B, ADR-0043): their tools' executors, work source, verifier, answer
   // store and stop hook. The reply's executor exists only where channel secrets are configured;
@@ -143,6 +150,39 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
       logger: logger.child({ component: 'agent-tasks' }),
     }),
   );
+  // The model providers (ADR-0038, ADR-0072), each only where its own settings are set: Vertex AI
+  // with its project and location, DeepSeek with the Secret Manager reference of its key. A
+  // provider being registered allows nothing by itself: the agents' policies still pin Gemini.
+  const aiProviders = [];
+  const aiModels = [];
+  const aiAdapters = [];
+  if (vertexAI !== undefined) {
+    aiProviders.push(VERTEX_AI_PROVIDER);
+    aiModels.push(...VERTEX_AI_MODELS);
+    aiAdapters.push(
+      createVertexAIAdapter({ projectId: vertexAI.projectId, location: vertexAI.location }),
+    );
+  }
+  if (deepSeek !== undefined) {
+    aiProviders.push(DEEPSEEK_PROVIDER);
+    aiModels.push(...DEEPSEEK_MODELS);
+    aiAdapters.push(
+      createDeepSeekAdapter({
+        credentials: aiProviderKeysFromSecrets(
+          createSecretManagerStore({ accepts: isAISecretRef }),
+          { [DEEPSEEK_PROVIDER.credential.provider]: deepSeek.keySecret },
+        ),
+      }),
+    );
+  }
+  const aiRegistered = aiProviders.length > 0;
+  const aiRegistry = aiRegistered
+    ? createProviderRegistry({ providers: aiProviders, models: aiModels, adapters: aiAdapters })
+    : createProviderRegistry({
+        providers: AI_PROVIDER_CATALOGUE,
+        models: AI_MODEL_CATALOGUE,
+        adapters: [],
+      });
   const { jobs: jobService, runtime: engine } = createWorkerRuntime({
     stores,
     environment: runtime.environment,
@@ -152,26 +192,9 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
     // sets the Vertex AI project; anywhere else no provider is registered and every model call
     // is denied before reaching one.
     tools: { registry: createToolRegistry(TOOL_CATALOGUE), executors: agents.executors },
-    ai:
-      vertexAI === undefined
-        ? createProviderRegistry({
-            providers: AI_PROVIDER_CATALOGUE,
-            models: AI_MODEL_CATALOGUE,
-            adapters: [],
-          })
-        : createProviderRegistry({
-            providers: [VERTEX_AI_PROVIDER],
-            models: VERTEX_AI_MODELS,
-            adapters: [
-              createVertexAIAdapter({
-                projectId: vertexAI.projectId,
-                location: vertexAI.location,
-              }),
-            ],
-          }),
-    ...(vertexAI === undefined
-      ? {}
-      : {
+    ai: aiRegistry,
+    ...(aiRegistered
+      ? {
           credits: {
             port: createCreditService({
               store: new FirestoreCreditStore(firestore),
@@ -180,7 +203,8 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
             rate: CREDIT_RATE,
           },
           policies: createModelPolicyCatalogue([CONVERSATION_AGENT_POLICY, AGENT_TASK_POLICY]),
-        }),
+        }
+      : {}),
     work: routed.work,
     verifier: routed.verifier,
     outputs: agents.outputs,
@@ -294,7 +318,7 @@ logger.info('forecasting', {
   priced: forecasting.creditsPerRun !== undefined,
 });
 logger.info('conversation agents', {
-  ai: config.agents.vertexAI !== undefined,
+  ai: config.agents.vertexAI !== undefined || config.agents.deepSeek !== undefined,
   sending: config.agents.channelSecretsProjectId !== undefined,
 });
 const app = createApp({

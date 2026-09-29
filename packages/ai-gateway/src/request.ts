@@ -3,6 +3,7 @@ import type {
   AILatencyTier,
   AIModality,
   AIQualityTier,
+  AIRoutingStrategy,
   DataSensitivity,
 } from '@melonoffice/domain';
 import { isForbiddenField } from '@melonoffice/tools';
@@ -36,6 +37,14 @@ export const LATENCY_TIERS = [
   'standard',
   'slow',
 ] as const satisfies readonly AILatencyTier[];
+
+export const AI_ROUTING_STRATEGIES = [
+  'cost_optimized',
+  'balanced',
+  'quality_first',
+  'latency_first',
+  'reliability_first',
+] as const satisfies readonly AIRoutingStrategy[];
 
 export const MAX_MESSAGES = 200;
 export const MAX_TEXT_LENGTH = 400_000;
@@ -117,6 +126,11 @@ export interface AIRequest {
   readonly outputModality: AIModality;
   readonly quality?: AIQualityTier;
   readonly latency?: AILatencyTier;
+  /**
+   * How to order the models that fit, when the caller has a reason (ADR-0072): a task that needs
+   * speed, or a person's preference. Only the order; the policy's own strategy otherwise.
+   */
+  readonly strategy?: AIRoutingStrategy;
   /** The most this call may cost, in millionths of a US dollar. */
   readonly maxCostMicroUsd?: number;
   /** The most credits this call may spend. */
@@ -182,6 +196,7 @@ const REQUEST_KEYS = new Set([
   'outputModality',
   'quality',
   'latency',
+  'strategy',
   'maxCostMicroUsd',
   'maxCredits',
   'maxOutputTokens',
@@ -359,6 +374,9 @@ function checkCommon(request: Record<string, unknown>): void {
     refuse('invalid_request');
   }
   if (request.latency !== undefined && !oneOf(LATENCY_TIERS, request.latency)) {
+    refuse('invalid_request');
+  }
+  if (request.strategy !== undefined && !oneOf(AI_ROUTING_STRATEGIES, request.strategy)) {
     refuse('invalid_request');
   }
   if (!count(request.maxOutputTokens, 1, MAX_OUTPUT_TOKENS)) refuse('invalid_request');

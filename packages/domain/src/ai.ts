@@ -29,6 +29,21 @@ export type DataSensitivity = 'public' | 'internal' | 'confidential' | 'restrict
 export type AIQualityTier = 'basic' | 'standard' | 'high';
 export type AILatencyTier = 'fast' | 'standard' | 'slow';
 
+/**
+ * How the router orders the models that meet every requirement of a call (LLM Router, ADR-0072).
+ * Only the order: a strategy never lets a call reach a model its policy, budget, sensitivity or
+ * environment rules out.
+ *
+ * - `balanced` (default): the cheapest model of at least `standard` quality when one fits,
+ *   otherwise the cheapest that fits.
+ * - `cost_optimized`: the cheapest that fits.
+ * - `quality_first`: the highest quality, then the cheapest.
+ * - `latency_first`: the fastest, then the cheapest.
+ * - `reliability_first`: providers in good health first, then the model's priority, then cost.
+ */
+export type AIRoutingStrategy =
+  'cost_optimized' | 'balanced' | 'quality_first' | 'latency_first' | 'reliability_first';
+
 /** Where a provider or model is in its life. Only `active` ones are routed to. */
 export type AIStatus = 'active' | 'paused' | 'disabled' | 'retired';
 
@@ -44,6 +59,11 @@ export type AIModelPricing =
       readonly currency: 'USD';
       readonly inputMicroUsdPerMillionTokens: number;
       readonly outputMicroUsdPerMillionTokens: number;
+      /**
+       * The price of input the provider served from its cache, when it has one. Absent: cached
+       * input is charged as any other input, so a call is never under-charged.
+       */
+      readonly cachedInputMicroUsdPerMillionTokens?: number;
       /** Where the price was taken from, e.g. the provider's published price list. */
       readonly source: string;
       readonly asOf: string;
@@ -75,6 +95,8 @@ export interface AIModelDefinition {
   readonly providerId: string;
   readonly modelId: string;
   readonly version: string;
+  /** How people see it, e.g. in a future control center. Never used to route. */
+  readonly displayName?: string;
   readonly status: AIStatus;
   readonly capabilities: readonly AICapability[];
   readonly inputModalities: readonly AIModality[];
@@ -90,6 +112,8 @@ export interface AIModelDefinition {
   readonly environments: readonly DeploymentEnvironment[];
   /** The highest data sensitivity this model may receive; never above its provider's. */
   readonly maxSensitivity: DataSensitivity;
+  /** Lower first among otherwise equal models, and first under `reliability_first`. */
+  readonly priority?: number;
 }
 
 /**
@@ -118,4 +142,6 @@ export interface ModelPolicy {
   readonly backoffMs: number;
   /** Models to prefer, in order (`provider/model`). Otherwise the router's fixed order applies. */
   readonly preferred?: readonly string[];
+  /** How the router orders the models that fit (ADR-0072). Absent: `balanced`. */
+  readonly strategy?: AIRoutingStrategy;
 }

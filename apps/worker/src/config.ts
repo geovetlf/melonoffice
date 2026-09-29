@@ -1,4 +1,5 @@
-import type { DeploymentEnvironment } from '@melonoffice/domain';
+import type { DeploymentEnvironment, SecretRef } from '@melonoffice/domain';
+import { isAISecretRef } from '@melonoffice/integrations';
 import { isLogLevel, type LogLevel } from '@melonoffice/observability';
 
 /**
@@ -27,6 +28,8 @@ export interface RuntimeConfig {
  */
 export interface AgentConfig {
   readonly vertexAI?: { readonly projectId: string; readonly location: string };
+  /** DeepSeek's key as a Secret Manager `ai-*` reference (ADR-0072). Unset: not registered. */
+  readonly deepSeek?: { readonly keySecret: SecretRef };
   readonly channelSecretsProjectId?: string;
   readonly whatsappGraphApiVersion?: string;
 }
@@ -93,10 +96,15 @@ function loadAgentConfig(env: Readonly<Record<string, string | undefined>>): Age
   if (graph !== undefined && !/^v\d{1,3}\.\d$/.test(graph)) {
     throw new Error(`Invalid WHATSAPP_GRAPH_API_VERSION: ${graph}`);
   }
+  const deepSeekKeySecret = env.DEEPSEEK_API_KEY_SECRET || undefined;
+  if (deepSeekKeySecret !== undefined && !isAISecretRef(deepSeekKeySecret)) {
+    throw new Error('Invalid DEEPSEEK_API_KEY_SECRET: expected a Secret Manager ai-* reference');
+  }
   return {
     ...(projectId === undefined || location === undefined
       ? {}
       : { vertexAI: { projectId, location } }),
+    ...(deepSeekKeySecret === undefined ? {} : { deepSeek: { keySecret: deepSeekKeySecret } }),
     ...(secrets === undefined ? {} : { channelSecretsProjectId: secrets }),
     ...(graph === undefined ? {} : { whatsappGraphApiVersion: graph }),
   };
