@@ -27,4 +27,6 @@ module "environment" {
   deletion_protection        = false
   terraform_state_bucket     = var.terraform_state_bucket
   budget                     = var.budget
+  # NVIDIA's API key secret (ADR-0080), once the owner has created it. Null: NVIDIA is off.
+  nvidia_api_key_secret = var.nvidia_api_key_secret
 }

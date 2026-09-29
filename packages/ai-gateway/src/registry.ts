@@ -142,7 +142,75 @@ export function checkModel(
   ) {
     invalid(`${at}.maxSensitivity`);
   }
+  if (m.terms !== undefined) checkTerms(m, at);
   return m;
+}
+
+export const AI_OFFERINGS = [
+  'free_endpoint',
+  'free_prototyping',
+  'paid',
+  'commercial_license',
+  'not_allowed',
+  'unavailable',
+  'unknown',
+] as const;
+
+const HTTPS_URL = /^https:\/\/[^\s]{1,500}$/;
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * A model's recorded terms (ADR-0080), and what they mean for where it may run and what it may
+ * receive: only terms that allow production let a model be registered for `prod`; a model the
+ * terms do not let MelonOffice use cannot be active; and one whose provider may use what it is
+ * sent receives `public` data only.
+ */
+function checkTerms(m: AIModelDefinition, at: string): void {
+  const t = m.terms as unknown as Record<string, unknown>;
+  if (typeof t !== 'object' || t === null) invalid(`${at}.terms`);
+  const allowed = [
+    'offering',
+    'production',
+    'contentUse',
+    'source',
+    'verifiedAt',
+    'documentationUrl',
+  ];
+  if (Object.keys(t).some((k) => !allowed.includes(k))) invalid(`${at}.terms`);
+  if (!(AI_OFFERINGS as readonly unknown[]).includes(t.offering)) invalid(`${at}.terms.offering`);
+  if (!['allowed', 'not_allowed', 'requires_license', 'unknown'].includes(t.production as string)) {
+    invalid(`${at}.terms.production`);
+  }
+  if (!['not_used', 'may_be_used', 'unknown'].includes(t.contentUse as string)) {
+    invalid(`${at}.terms.contentUse`);
+  }
+  if (typeof t.source !== 'string' || !HTTPS_URL.test(t.source)) invalid(`${at}.terms.source`);
+  if (
+    typeof t.verifiedAt !== 'string' ||
+    !DAY.test(t.verifiedAt) ||
+    Number.isNaN(Date.parse(t.verifiedAt))
+  ) {
+    invalid(`${at}.terms.verifiedAt`);
+  }
+  if (
+    t.documentationUrl !== undefined &&
+    (typeof t.documentationUrl !== 'string' || !HTTPS_URL.test(t.documentationUrl))
+  ) {
+    invalid(`${at}.terms.documentationUrl`);
+  }
+  const terms = m.terms as NonNullable<AIModelDefinition['terms']>;
+  if (terms.production !== 'allowed' && m.environments.includes('prod')) {
+    invalid(`${at}.terms.production`);
+  }
+  if (
+    (terms.offering === 'not_allowed' || terms.offering === 'unavailable') &&
+    m.status === 'active'
+  ) {
+    invalid(`${at}.terms.offering`);
+  }
+  if (terms.contentUse !== 'not_used' && m.maxSensitivity !== 'public') {
+    invalid(`${at}.terms.contentUse`);
+  }
 }
 
 /** A model with its provider and the adapter that serves it. */

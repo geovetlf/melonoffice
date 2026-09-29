@@ -7,8 +7,9 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   ...vitestPreset,
   // Worker tests also run against one shared Firestore emulator, file by file in parallel; the first
-  // test of a file can wait on it well past Vitest's 5 s default on a busy CI runner.
-  test: { ...vitestPreset.test, testTimeout: 20_000 },
+  // test of a file can wait on it well past Vitest's 5 s default on a busy CI runner (a first plan
+  // run on the emulator has taken over 20 s there).
+  test: { ...vitestPreset.test, testTimeout: 40_000 },
   ssr: {
     ...vitestPreset.ssr,
     resolve: {

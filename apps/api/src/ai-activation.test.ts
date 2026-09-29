@@ -590,6 +590,47 @@ describe('AI configuration (ADR-0038)', () => {
     }
   });
 
+  it('registers NVIDIA only with its key reference; GIA and every existing policy still pin Gemini (ADR-0080)', () => {
+    const keySecret = 'projects/melonoffice/secrets/ai-nvidia-api-key/versions/latest';
+    expect(loadConfig({ NVIDIA_API_KEY_SECRET: keySecret }).nvidia).toEqual({ keySecret });
+    expect(loadConfig({}).nvidia).toBeUndefined();
+    const pasted = ['nv', 'api-not-a-reference-000000001'].join('');
+    expect(() => loadConfig({ NVIDIA_API_KEY_SECRET: pasted })).toThrow(
+      'Invalid NVIDIA_API_KEY_SECRET',
+    );
+    try {
+      loadConfig({ NVIDIA_API_KEY_SECRET: pasted });
+    } catch (error) {
+      expect(String(error)).not.toContain(pasted);
+    }
+    const all = aiConfigurationOf({
+      deploymentEnvironment: 'dev',
+      vertexAI: { projectId: 'melonoffice-dev-test', location: 'us-central1' },
+      nvidia: { keySecret: keySecret as SecretRef },
+    });
+    expect(
+      all.registry
+        ?.models()
+        .map((m) => `${m.provider.id}/${m.model.modelId}`)
+        .sort(),
+    ).toEqual(['google-vertex-ai/gemini-2.5-flash-lite', 'nvidia/nemotron-3-nano-30b-a3b']);
+    for (const id of [
+      'conversation_assist',
+      'company_knowledge_assist',
+      'gia_assist',
+      'decision_assist',
+      'document_read',
+    ]) {
+      expect(all.policies?.resolve({ id, version: 1 })?.allowedProviders).toEqual([
+        'google-vertex-ai',
+      ]);
+    }
+    // Nor anywhere but DEV: the model's terms keep it out of production.
+    expect(all.registry?.model('nvidia', 'nemotron-3-nano-30b-a3b')?.model.environments).toEqual([
+      'dev',
+    ]);
+  });
+
   it('reads the Vertex AI settings together and checks them', () => {
     expect(
       loadConfig({ VERTEX_AI_PROJECT_ID: 'melonoffice', VERTEX_AI_LOCATION: 'us-central1' })

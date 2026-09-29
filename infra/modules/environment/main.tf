@@ -56,6 +56,16 @@ locals {
     var.whatsapp_graph_api_version == null ? {} : { WHATSAPP_GRAPH_API_VERSION = var.whatsapp_graph_api_version },
   ) : {}
 
+  # NVIDIA's hosted API (ADR-0080): the key lives in one Secret Manager secret the owner creates.
+  # The api (with assisted AI) and the worker (with conversation agents) may read that secret only,
+  # and are told its reference. Registering NVIDIA allows nothing by itself: models and policies
+  # decide which calls may reach it (public data only, DEV only).
+  nvidia_api_enabled    = var.nvidia_api_key_secret != null && local.ai_assist_enabled
+  nvidia_worker_enabled = var.nvidia_api_key_secret != null && local.conversation_agents_enabled
+  nvidia_env = var.nvidia_api_key_secret == null ? {} : {
+    NVIDIA_API_KEY_SECRET = "projects/${var.project_id}/secrets/${var.nvidia_api_key_secret}/versions/latest"
+  }
+
   # Document uploads (ADR-0078): the api keeps uploaded files in a private bucket of this project,
   # with its own identity. Records are in Firestore and the api is the only reader and writer, so
   # the bucket exists only where the apps and Firestore do (the runtime's condition).
@@ -195,6 +205,8 @@ locals {
         local.forecasting_env,
         # Where uploaded documents are kept (ADR-0078). A bucket name, not a secret.
         local.document_storage_enabled ? { DOCUMENTS_BUCKET = local.documents_bucket_name } : {},
+        # Where NVIDIA's key is kept (ADR-0080): a reference, never the key.
+        local.nvidia_api_enabled ? local.nvidia_env : {},
       )
       timeout = null
     }
@@ -224,6 +236,7 @@ locals {
         } : {},
         local.whatsapp_env,
         local.forecasting_env,
+        local.nvidia_worker_enabled ? local.nvidia_env : {},
       )
       # A delivery may run as long as its lease; other services keep the default.
       timeout = local.runtime_enabled ? "${var.job_lease_seconds}s" : null
@@ -837,6 +850,28 @@ resource "google_project_iam_member" "worker_channel_secrets" {
     description = "Channel connection secrets only (channel-{connectionId}-{kind})."
     expression  = "resource.name.startsWith(\"projects/${data.google_project.this[0].number}/secrets/channel-\")"
   }
+}
+
+# ---------------------------------------------------------------------------------------------
+# NVIDIA's API key (ADR-0080). Terraform never holds the value: the owner creates the secret. The
+# api and worker may read that one secret only, never list, create or change any secret.
+
+resource "google_secret_manager_secret_iam_member" "api_nvidia_key" {
+  count = local.nvidia_api_enabled ? 1 : 0
+
+  project   = var.project_id
+  secret_id = var.nvidia_api_key_secret
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${module.app["api"].runtime_service_account}"
+}
+
+resource "google_secret_manager_secret_iam_member" "worker_nvidia_key" {
+  count = local.nvidia_worker_enabled ? 1 : 0
+
+  project   = var.project_id
+  secret_id = var.nvidia_api_key_secret
+  role      = "roles/secretmanager.secretAccessor"
+  member    = local.worker_member
 }
 
 # ---------------------------------------------------------------------------------------------

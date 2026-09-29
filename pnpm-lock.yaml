@@ -71,6 +71,9 @@ importers:
       '@melonoffice/ai-gateway':
         specifier: workspace:*
         version: link:../../packages/ai-gateway
+      '@melonoffice/ai-nvidia':
+        specifier: workspace:*
+        version: link:../../packages/ai-nvidia
       '@melonoffice/ai-usage':
         specifier: workspace:*
         version: link:../../packages/ai-usage
@@ -220,6 +223,9 @@ importers:
       '@melonoffice/ai-gateway':
         specifier: workspace:*
         version: link:../../packages/ai-gateway
+      '@melonoffice/ai-nvidia':
+        specifier: workspace:*
+        version: link:../../packages/ai-nvidia
       '@melonoffice/ai-usage':
         specifier: workspace:*
         version: link:../../packages/ai-usage
@@ -432,6 +438,22 @@ importers:
       '@melonoffice/departments':
         specifier: workspace:*
         version: link:../departments
+
+  packages/ai-nvidia:
+    dependencies:
+      '@melonoffice/ai-gateway':
+        specifier: workspace:*
+        version: link:../ai-gateway
+      '@melonoffice/domain':
+        specifier: workspace:*
+        version: link:../domain
+    devDependencies:
+      '@melonoffice/ai-usage':
+        specifier: workspace:*
+        version: link:../ai-usage
+      '@melonoffice/config':
+        specifier: workspace:*
+        version: link:../config
 
   packages/ai-usage:
     dependencies:

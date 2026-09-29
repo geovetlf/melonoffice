@@ -87,6 +87,16 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ DEEPSEEK_API_KEY_SECRET: 'plain-key-value' })).toThrow(
       'Invalid DEEPSEEK_API_KEY_SECRET',
     );
+    expect(
+      loadConfig({
+        NVIDIA_API_KEY_SECRET: 'projects/melonoffice/secrets/ai-nvidia-api-key/versions/latest',
+      }).agents,
+    ).toEqual({
+      nvidia: { keySecret: 'projects/melonoffice/secrets/ai-nvidia-api-key/versions/latest' },
+    });
+    expect(() => loadConfig({ NVIDIA_API_KEY_SECRET: 'plain-key-value' })).toThrow(
+      'Invalid NVIDIA_API_KEY_SECRET',
+    );
     expect(() => loadConfig({ VERTEX_AI_PROJECT_ID: 'melonoffice' })).toThrow('set together');
     expect(() =>
       loadConfig({ VERTEX_AI_PROJECT_ID: 'Bad_Id', VERTEX_AI_LOCATION: 'us-central1' }),

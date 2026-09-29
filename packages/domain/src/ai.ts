@@ -73,6 +73,47 @@ export type AIModelPricing =
     };
 
 /**
+ * How a provider offers a model, as its official terms say (ADR-0080). Recorded, never assumed:
+ * a free endpoint is not unlimited and not, by itself, allowed in production.
+ *
+ * - `free_endpoint`: offered at no charge, under the provider's own conditions;
+ * - `free_prototyping`: at no charge for prototyping, development, testing or evaluation only;
+ * - `paid`: charged by the provider, at a known price;
+ * - `commercial_license`: needs a licence or subscription bought from the provider;
+ * - `not_allowed`: the terms do not let MelonOffice use it;
+ * - `unavailable`: the provider does not serve it now;
+ * - `unknown`: not published, or not yet checked.
+ */
+export type AIOffering =
+  | 'free_endpoint'
+  | 'free_prototyping'
+  | 'paid'
+  | 'commercial_license'
+  | 'not_allowed'
+  | 'unavailable'
+  | 'unknown';
+
+/**
+ * A model's terms of use, from the provider's official sources, with where and when they were
+ * read. The registry enforces them: a model whose terms do not allow production cannot be
+ * registered for `prod`, and a model whose provider may use what it is sent can only receive
+ * `public` data.
+ */
+export interface AIModelTerms {
+  readonly offering: AIOffering;
+  /** `requires_license`: production needs a licence the organization does not have yet. */
+  readonly production: 'allowed' | 'not_allowed' | 'requires_license' | 'unknown';
+  /** Whether the provider may keep or use what it is sent, e.g. to improve its models. */
+  readonly contentUse: 'not_used' | 'may_be_used' | 'unknown';
+  /** The official page or document the terms were read from (`https://`). */
+  readonly source: string;
+  /** When they were read (`YYYY-MM-DD`). */
+  readonly verifiedAt: string;
+  /** The model's official documentation (`https://`), when it has one. */
+  readonly documentationUrl?: string;
+}
+
+/**
  * An official AI provider (ADR-0027). MelonOffice talks to providers through their own official
  * API only: aggregators and intermediaries are refused by the registry. No secret is kept here,
  * only a reference to where the credential lives.
@@ -117,6 +158,8 @@ export interface AIModelDefinition {
   readonly maxSensitivity: DataSensitivity;
   /** Lower first among otherwise equal models, and first under `reliability_first`. */
   readonly priority?: number;
+  /** Its terms of use, when recorded (ADR-0080). Absent: none recorded. */
+  readonly terms?: AIModelTerms;
 }
 
 /**

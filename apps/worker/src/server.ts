@@ -20,6 +20,7 @@ import {
   DEEPSEEK_MODELS,
   DEEPSEEK_PROVIDER,
 } from '@melonoffice/ai-deepseek';
+import { createNvidiaAdapter, NVIDIA_MODELS, NVIDIA_PROVIDER } from '@melonoffice/ai-nvidia';
 import { createAuditService } from '@melonoffice/audit';
 import { createServiceIdentityVerifier } from '@melonoffice/auth';
 import { createCreditService } from '@melonoffice/credits';
@@ -100,7 +101,8 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
     jobs: new FirestoreJobRepository(firestore),
     audit: new FirestoreAuditStore(firestore),
   };
-  const { vertexAI, deepSeek, channelSecretsProjectId, whatsappGraphApiVersion } = config.agents;
+  const { vertexAI, deepSeek, nvidia, channelSecretsProjectId, whatsappGraphApiVersion } =
+    config.agents;
   const agentOutputs = new FirestoreAgentOutputRepository(firestore);
   // Conversation agents (CV-6B, ADR-0043): their tools' executors, work source, verifier, answer
   // store and stop hook. The reply's executor exists only where channel secrets are configured;
@@ -154,7 +156,8 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
     }),
   );
   // The model providers (ADR-0038, ADR-0072), each only where its own settings are set: Vertex AI
-  // with its project and location, DeepSeek with the Secret Manager reference of its key. A
+  // with its project and location, DeepSeek and NVIDIA with the Secret Manager reference of their
+  // keys. A
   // provider being registered allows nothing by itself: the agents' policies still pin Gemini.
   const aiProviders = [];
   const aiModels = [];
@@ -174,6 +177,18 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
         credentials: aiProviderKeysFromSecrets(
           createSecretManagerStore({ accepts: isAISecretRef }),
           { [DEEPSEEK_PROVIDER.credential.provider]: deepSeek.keySecret },
+        ),
+      }),
+    );
+  }
+  if (nvidia !== undefined) {
+    aiProviders.push(NVIDIA_PROVIDER);
+    aiModels.push(...NVIDIA_MODELS);
+    aiAdapters.push(
+      createNvidiaAdapter({
+        credentials: aiProviderKeysFromSecrets(
+          createSecretManagerStore({ accepts: isAISecretRef }),
+          { [NVIDIA_PROVIDER.credential.provider]: nvidia.keySecret },
         ),
       }),
     );
@@ -332,7 +347,10 @@ logger.info('forecasting', {
   priced: forecasting.creditsPerRun !== undefined,
 });
 logger.info('conversation agents', {
-  ai: config.agents.vertexAI !== undefined || config.agents.deepSeek !== undefined,
+  ai:
+    config.agents.vertexAI !== undefined ||
+    config.agents.deepSeek !== undefined ||
+    config.agents.nvidia !== undefined,
   sending: config.agents.channelSecretsProjectId !== undefined,
 });
 const app = createApp({

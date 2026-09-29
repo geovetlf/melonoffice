@@ -30,6 +30,8 @@ export interface AgentConfig {
   readonly vertexAI?: { readonly projectId: string; readonly location: string };
   /** DeepSeek's key as a Secret Manager `ai-*` reference (ADR-0072). Unset: not registered. */
   readonly deepSeek?: { readonly keySecret: SecretRef };
+  /** NVIDIA's key as a Secret Manager `ai-*` reference (ADR-0080). Unset: not registered. */
+  readonly nvidia?: { readonly keySecret: SecretRef };
   readonly channelSecretsProjectId?: string;
   readonly whatsappGraphApiVersion?: string;
 }
@@ -100,11 +102,16 @@ function loadAgentConfig(env: Readonly<Record<string, string | undefined>>): Age
   if (deepSeekKeySecret !== undefined && !isAISecretRef(deepSeekKeySecret)) {
     throw new Error('Invalid DEEPSEEK_API_KEY_SECRET: expected a Secret Manager ai-* reference');
   }
+  const nvidiaKeySecret = env.NVIDIA_API_KEY_SECRET || undefined;
+  if (nvidiaKeySecret !== undefined && !isAISecretRef(nvidiaKeySecret)) {
+    throw new Error('Invalid NVIDIA_API_KEY_SECRET: expected a Secret Manager ai-* reference');
+  }
   return {
     ...(projectId === undefined || location === undefined
       ? {}
       : { vertexAI: { projectId, location } }),
     ...(deepSeekKeySecret === undefined ? {} : { deepSeek: { keySecret: deepSeekKeySecret } }),
+    ...(nvidiaKeySecret === undefined ? {} : { nvidia: { keySecret: nvidiaKeySecret } }),
     ...(secrets === undefined ? {} : { channelSecretsProjectId: secrets }),
     ...(graph === undefined ? {} : { whatsappGraphApiVersion: graph }),
   };
