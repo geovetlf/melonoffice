@@ -1815,6 +1815,55 @@ a.sidebar__item:hover {
   font-size: var(--mo-font-size-xs);
 }
 
+.gia-chat__priorities {
+  display: grid;
+  gap: var(--mo-space-2);
+}
+
+.gia-chat__priority-list {
+  display: grid;
+  gap: var(--mo-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.gia-chat__priority {
+  padding: var(--mo-space-2) var(--mo-space-3);
+  border: 1px solid var(--office-line);
+  border-left: 3px solid var(--office-line);
+  border-radius: 0.5rem;
+  background: var(--office-panel);
+}
+
+.gia-chat__priority--high {
+  border-left-color: var(--office-accent);
+}
+
+.gia-chat__priority--medium {
+  border-left-color: var(--office-highlight);
+}
+
+.gia-chat__priority-head {
+  margin: 0;
+  font-weight: 600;
+}
+
+.gia-chat__priority-level {
+  color: var(--office-muted);
+  font-weight: 500;
+}
+
+.gia-chat__priority-approval {
+  color: var(--office-highlight);
+}
+
+.gia-chat__priority-reasons {
+  margin: var(--mo-space-1) 0;
+  padding-left: var(--mo-space-4);
+  color: var(--office-muted);
+}
+
 .gia-chat__links {
   display: flex;
   flex-wrap: wrap;

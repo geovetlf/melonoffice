@@ -49,6 +49,22 @@ export interface GiaAgentTaskProposalView {
   readonly request: string;
 }
 
+/**
+ * What needs attention first, as the Decision Engine ranked it (ADR-0065): each item with its
+ * reason and data, its record, the next step and whether it needs approval. Only shown.
+ */
+export interface GiaPriorityView {
+  readonly priority: 'high' | 'medium' | 'low' | null;
+  readonly outcome: string;
+  readonly reasons: readonly {
+    readonly code: string;
+    readonly params: Readonly<Record<string, string | number>>;
+  }[];
+  readonly link: GiaLinkView | null;
+  readonly nextStep: string | null;
+  readonly requiredApproval: boolean;
+}
+
 export interface GiaAnswerView {
   readonly answer: string;
   readonly department: string | null;
@@ -58,6 +74,8 @@ export interface GiaAnswerView {
   readonly links: readonly GiaLinkView[];
   readonly proposedFollowUp: GiaFollowUpProposalView | null;
   readonly proposedAgentTask: GiaAgentTaskProposalView | null;
+  /** The ranking the answer is about, when it is about one. */
+  readonly priorities: readonly GiaPriorityView[];
   /** The answer carries a finished projection (ADR-0059): by the model or the simple fallback. */
   readonly forecast: 'model' | 'fallback' | null;
   /** What the Forecasting Engine said is missing for a projection, from its own result. */
@@ -166,6 +184,46 @@ function agentTaskOf(raw: unknown): GiaAgentTaskProposalView | null {
   return { agentId, agentName, department, request };
 }
 
+const CODE = /^[a-z][a-z_]{0,63}$/;
+const LEVELS = ['high', 'medium', 'low'] as const;
+
+function paramsOf(raw: unknown): Readonly<Record<string, string | number>> {
+  if (!isRecord(raw)) return {};
+  return Object.fromEntries(
+    Object.entries(raw).filter(
+      (entry): entry is [string, string | number] =>
+        typeof entry[1] === 'string' || (typeof entry[1] === 'number' && Number.isFinite(entry[1])),
+    ),
+  );
+}
+
+export function prioritiesOf(raw: unknown): readonly GiaPriorityView[] {
+  if (!isRecord(raw) || !Array.isArray(raw.items)) return [];
+  return raw.items.flatMap((item): GiaPriorityView[] => {
+    if (!isRecord(item) || typeof item.outcome !== 'string' || !CODE.test(item.outcome)) return [];
+    const reasons = Array.isArray(item.reasons)
+      ? item.reasons.flatMap((r) =>
+          isRecord(r) && typeof r.code === 'string' && CODE.test(r.code)
+            ? [{ code: r.code, params: paramsOf(r.params) }]
+            : [],
+        )
+      : [];
+    const next = isRecord(item.recommendedAction) ? item.recommendedAction.code : undefined;
+    return [
+      {
+        priority: (LEVELS as readonly unknown[]).includes(item.priority)
+          ? (item.priority as (typeof LEVELS)[number])
+          : null,
+        outcome: item.outcome,
+        reasons,
+        link: linksOf([item.link])[0] ?? null,
+        nextStep: typeof next === 'string' && CODE.test(next) ? next : null,
+        requiredApproval: item.requiredApproval === true,
+      },
+    ];
+  });
+}
+
 function forecastOf(raw: unknown): GiaAnswerView['forecast'] {
   if (!isRecord(raw) || raw.status !== 'completed') return null;
   return raw.model === 'model' || raw.model === 'fallback' ? raw.model : null;
@@ -236,6 +294,7 @@ export function createGiaClient(request: ReplyRequest, organizationId: string): 
           links: linksOf(body.links),
           proposedFollowUp: proposalOf(body.proposedFollowUp),
           proposedAgentTask: agentTaskOf(body.proposedAgentTask),
+          priorities: prioritiesOf(body.priorities),
           forecast: forecastOf(body.forecast),
           forecastGap: forecastGapOf(body.forecast),
         },

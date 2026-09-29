@@ -179,6 +179,7 @@ describe.each(STORES)('GIA chat with storage in %s (ADR-0052)', (_name, createSt
         proposedFacts: 0,
         proposedFollowUp: null,
         proposedAgentTask: null,
+        priorities: null,
         forecast: null,
         links: [],
         context: {

@@ -14,6 +14,7 @@ export const ROLES = {
     'organization.update',
     'activity.read',
     'gia.ask',
+    'decision.evaluate',
     'knowledge.read',
     'knowledge.read_restricted',
     'knowledge.propose',

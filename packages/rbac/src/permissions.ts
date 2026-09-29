@@ -26,6 +26,12 @@ export const PERMISSIONS = {
     description:
       'Talk to GIA: she answers from what you may read, through the AI Gateway, spending credits; she changes nothing (ADR-0052).',
   },
+  'decision.evaluate': {
+    resource: 'decision',
+    action: 'evaluate',
+    description:
+      'Ask the Decision Engine what to attend to, whether an action needs approval and which agent fits, from what you may read; it decides and explains, and runs nothing (ADR-0065).',
+  },
   'knowledge.read': {
     resource: 'knowledge',
     action: 'read',

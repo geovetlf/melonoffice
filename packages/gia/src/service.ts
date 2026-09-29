@@ -17,6 +17,12 @@ import {
   type CommercialInsights,
   type CommercialInsightService,
 } from '@melonoffice/conversations';
+import {
+  commercialPrioritiesDecider,
+  createDecisionEngine,
+  type DecisionEngine,
+  type DecisionResult,
+} from '@melonoffice/decisions';
 import type { DepartmentRepository } from '@melonoffice/departments';
 import type {
   ContactId,
@@ -55,6 +61,12 @@ import {
   type GiaAgentsPort,
   type GiaAgentTaskProposal,
 } from './agents.js';
+import {
+  GIA_PRIORITY_LIMIT,
+  prioritiesBlock,
+  prioritiesOf,
+  type GiaPriorities,
+} from './priorities.js';
 import { giaMessages, giaOutputSchema, type GiaTurn } from './prompt.js';
 
 /**
@@ -103,6 +115,11 @@ export interface GiaAnswer {
    * confirm in the app: nothing is assigned until they do.
    */
   readonly proposedAgentTask: GiaAgentTaskProposal | null;
+  /**
+   * What needs attention first, as the Decision Engine ranked it (ADR-0065), when the answer is
+   * about it: each item with its reason, its link and its next step. Nothing in it is run.
+   */
+  readonly priorities: GiaPriorities | null;
   /**
    * The projection the person asked for (ADR-0059), made by the Forecasting Engine, never by
    * GIA: what it is and how it ended. The app reads the figures from the forecast by its id.
@@ -160,6 +177,12 @@ export interface GiaOptions {
    * (`specialist.task`). GIA prepares a task; the person assigns it.
    */
   readonly agents?: GiaAgentsPort;
+  /**
+   * The Decision Engine (DE-1, ADR-0065): which actions she may prepare for this person, and
+   * what needs attention first (`commercial.priorities`, over the insights she read). Absent,
+   * one over the same authorization and audit, with each action set up when its port is.
+   */
+  readonly decisions?: Pick<DecisionEngine, 'offers' | 'evaluateDecision'>;
   readonly departments: Pick<DepartmentRepository, 'list'>;
   readonly authorization: Pick<AuthorizationService, 'authorize'>;
   readonly audit: AuditService;
@@ -252,6 +275,7 @@ function parseAnswer(
       links: unknown[];
       followUp: unknown;
       agentTask: unknown;
+      priorities: boolean;
     }
   | undefined {
   let output: unknown = response.output.structured;
@@ -263,7 +287,17 @@ function parseAnswer(
     }
   }
   if (!isRecord(output)) return undefined;
-  const { answer, department, screen, proposedAction, facts, links, followUp, agentTask } = output;
+  const {
+    answer,
+    department,
+    screen,
+    proposedAction,
+    facts,
+    links,
+    followUp,
+    agentTask,
+    priorities,
+  } = output;
   if (typeof answer !== 'string' || answer.trim() === '') return undefined;
   if (answer.length > GIA_LIMITS.answerLength) return undefined;
   if (typeof screen !== 'string' || !(GIA_SCREENS as readonly string[]).includes(screen)) {
@@ -287,6 +321,7 @@ function parseAnswer(
     links: Array.isArray(links) ? links : [],
     followUp,
     agentTask,
+    priorities: priorities === true,
   };
 }
 
@@ -356,6 +391,22 @@ export function createGia(options: GiaOptions): GiaService {
   const logger = options.logger ?? silent;
   const can = (tenant: TenantContext, permission: string) =>
     authorization.authorize(tenant, permission).allowed;
+  // What she may prepare for the person: one answer for every proposal (ADR-0065).
+  const decisions =
+    options.decisions ??
+    createDecisionEngine({
+      authorization,
+      deciders: [commercialPrioritiesDecider],
+      audit,
+      configured: (action) =>
+        action === 'knowledge.propose_fact'
+          ? brain !== undefined
+          : action === 'follow_up.schedule'
+            ? commercial !== undefined
+            : action === 'agent_task.assign'
+              ? agents !== undefined
+              : false,
+    });
 
   const answered = new Map<string, { readonly at: number; readonly answer: GiaAnswer }>();
   const running = new Map<string, Promise<GiaAnswer>>();
@@ -491,7 +542,9 @@ export function createGia(options: GiaOptions): GiaService {
       insights === undefined ? new Map<string, GiaLink>() : commercialLinks(insights);
     // What a follow-up may be proposed for (C5): the contacts and open opportunities she was
     // given, only to someone who may schedule follow-ups.
-    const canSchedule = can(tenant, 'follow_up.manage');
+    const canSchedule = decisions.offers(tenant, 'follow_up.schedule');
+    // What needs attention first: ranked by the Decision Engine's rules, never by the model.
+    const ranking = await rankPriorities(tenant, insights, requestId);
     const followUpRecords =
       insights === undefined || !canSchedule
         ? []
@@ -513,6 +566,7 @@ export function createGia(options: GiaOptions): GiaService {
         [...linkable.keys()].slice(0, 50),
         followUpRecords,
         (team ?? []).map((_, index) => agentRefOf(index)),
+        ranking !== undefined,
       ),
       messages: giaMessages({
         locale,
@@ -527,6 +581,9 @@ export function createGia(options: GiaOptions): GiaService {
           : { commercial: { insights, canScheduleFollowUps: followUpRecords.length > 0 } }),
         ...(projection === undefined ? {} : { forecast: projection }),
         ...(team === undefined ? {} : { agents: team }),
+        ...(ranking === undefined || insights === undefined
+          ? {}
+          : { priorities: prioritiesBlock(ranking, insights, locale) }),
       }),
       outputModality: 'text',
       maxOutputTokens: GIA_LIMITS.outputTokens,
@@ -586,6 +643,7 @@ export function createGia(options: GiaOptions): GiaService {
       commercial: insights !== undefined,
       followUpProposed: proposedFollowUp !== null,
       agentTaskProposed: proposedAgentTask !== null,
+      priorities: ranking === undefined ? null : parsed.priorities,
       forecast: projection?.kind ?? null,
     });
     const links = [...new Set(parsed.links.filter((ref): ref is string => typeof ref === 'string'))]
@@ -606,6 +664,7 @@ export function createGia(options: GiaOptions): GiaService {
       links: Object.freeze(links),
       proposedFollowUp,
       proposedAgentTask,
+      priorities: ranking !== undefined && parsed.priorities ? prioritiesOf(ranking) : null,
       forecast: projection === undefined ? null : forecastSummaryOf(projection),
       context: Object.freeze({
         facts: facts.length,
@@ -617,6 +676,29 @@ export function createGia(options: GiaOptions): GiaService {
       }),
       replayed: false,
     });
+  }
+
+  /**
+   * The Decision Engine's ranking over the insights she read (ADR-0065), as this person; audited
+   * there. A person who may not ask for decisions, or a failure, only leaves it out.
+   */
+  async function rankPriorities(
+    tenant: TenantContext,
+    insights: CommercialInsights | undefined,
+    requestId: string,
+  ): Promise<DecisionResult | undefined> {
+    if (insights === undefined || !can(tenant, 'decision.evaluate')) return undefined;
+    try {
+      return await decisions.evaluateDecision(tenant, {
+        type: 'commercial.priorities',
+        input: { limit: GIA_PRIORITY_LIMIT },
+        preload: { commercial: insights },
+        requestId,
+      });
+    } catch (error) {
+      logger.warn('gia.priorities_unavailable', { error: codeOf(error) });
+      return undefined;
+    }
   }
 
   async function readFacts(
@@ -696,7 +778,7 @@ export function createGia(options: GiaOptions): GiaService {
 
   /** The active agents, as this person may task them; a failure is only logged. */
   async function readAgents(tenant: TenantContext): Promise<readonly GiaAgent[] | undefined> {
-    if (agents === undefined || !can(tenant, 'specialist.task')) return undefined;
+    if (agents === undefined || !decisions.offers(tenant, 'agent_task.assign')) return undefined;
     try {
       return (await agents.active(tenant)).slice(0, GIA_AGENT_LIMITS.agents);
     } catch (error) {
@@ -719,7 +801,8 @@ export function createGia(options: GiaOptions): GiaService {
     raw: readonly unknown[],
     log: Logger,
   ): Promise<number> {
-    if (brain === undefined || raw.length === 0 || !can(tenant, 'knowledge.propose')) return 0;
+    if (brain === undefined || raw.length === 0) return 0;
+    if (!decisions.offers(tenant, 'knowledge.propose_fact')) return 0;
     const candidates = raw
       .map(candidateOf)
       .filter((c): c is Record<string, unknown> => c !== undefined);

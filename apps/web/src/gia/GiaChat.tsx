@@ -16,6 +16,7 @@ import type { FollowUpView, FollowUpsClient } from '../followUps/followUpsClient
 import { navigate } from '../identity/router.js';
 import { errorKey, MAX_REQUEST, newRequestKey } from '../office/AgentTasks.js';
 import type { AgentTaskView, AgentTasksClient } from '../office/agentTasksClient.js';
+import { formatMoney } from '../opportunities/OpportunitiesSection.js';
 import { paths } from '../shell/routes.js';
 import { GiaAvatar } from './GiaAvatar.js';
 import type {
@@ -23,6 +24,7 @@ import type {
   GiaClient,
   GiaFailure,
   GiaLinkView,
+  GiaPriorityView,
   GiaTurnView,
 } from './giaClient.js';
 
@@ -400,6 +402,107 @@ function FollowUpProposal({ answer }: { readonly answer: GiaAnswerView }) {
  * A task GIA prepared for one of the agents (AE-3), for the person to read, edit and confirm:
  * nothing is sent until they do, and the chat says it was sent only once the API took it.
  */
+/** A catalogue message when the app has one for this code; otherwise nothing is shown. */
+const known = (intl: ReturnType<typeof useIntl>, id: string) => intl.messages[id] !== undefined;
+
+/** One reason in the person's words, with its data (days, time, amount). */
+function reasonText(
+  intl: ReturnType<typeof useIntl>,
+  reason: GiaPriorityView['reasons'][number],
+): string | null {
+  const id = `gia.chat.priorities.reason.${reason.code}`;
+  if (!known(intl, id)) return null;
+  const { amountMinor, currency } = reason.params;
+  const amount =
+    typeof amountMinor === 'number' && typeof currency === 'string'
+      ? formatMoney(intl, { amountMinor, currency })
+      : null;
+  const values = Object.fromEntries(
+    Object.entries(reason.params).map(([k, v]) => [k, typeof v === 'number' ? Math.abs(v) : v]),
+  );
+  const text = intl.formatMessage({ id }, values);
+  return amount === null
+    ? text
+    : `${text} · ${intl.formatMessage({ id: 'gia.chat.priorities.value' }, { amount })}`;
+}
+
+/**
+ * What to attend to first, as the Decision Engine ranked it (ADR-0065): each item with its
+ * decision, its reason and data, its record and the next step. Nothing here is run: the person
+ * does it, and an item that needs approval says so.
+ */
+function Priorities({ answer }: { readonly answer: GiaAnswerView }) {
+  const intl = useIntl();
+  if (answer.priorities.length === 0) return null;
+  return (
+    <section
+      className="gia-chat__priorities"
+      aria-label={intl.formatMessage({ id: 'gia.chat.priorities.title' })}
+    >
+      <p className="gia-chat__meta">
+        <strong>
+          <FormattedMessage id="gia.chat.priorities.title" />
+        </strong>{' '}
+        <FormattedMessage id="gia.chat.priorities.rule" />
+      </p>
+      <ol className="gia-chat__priority-list">
+        {answer.priorities.map((item, index) => {
+          const to = item.link === null ? undefined : linkOf(item.link, intl);
+          const outcome = `gia.chat.priorities.outcome.${item.outcome}`;
+          const next = `gia.chat.priorities.next.${item.nextStep ?? ''}`;
+          return (
+            <li
+              key={`${item.outcome}:${String(index)}`}
+              className={`gia-chat__priority gia-chat__priority--${item.priority ?? 'none'}`}
+            >
+              <p className="gia-chat__priority-head">
+                {item.priority === null ? null : (
+                  <span className="gia-chat__priority-level">
+                    <FormattedMessage id={`gia.chat.priorities.level.${item.priority}`} />
+                  </span>
+                )}{' '}
+                {known(intl, outcome) ? <FormattedMessage id={outcome} /> : item.outcome}
+                {item.requiredApproval ? (
+                  <span className="gia-chat__priority-approval">
+                    {' '}
+                    <FormattedMessage id="gia.chat.priorities.approval" />
+                  </span>
+                ) : null}
+              </p>
+              <ul className="gia-chat__priority-reasons">
+                {item.reasons.flatMap((reason, n) => {
+                  const text = reasonText(intl, reason);
+                  return text === null ? [] : [<li key={`${reason.code}:${String(n)}`}>{text}</li>];
+                })}
+              </ul>
+              {item.nextStep === null || !known(intl, next) ? null : (
+                <p className="gia-chat__meta">
+                  <FormattedMessage
+                    id="gia.chat.priorities.next"
+                    values={{ action: intl.formatMessage({ id: next }) }}
+                  />
+                </p>
+              )}
+              {to === undefined ? null : (
+                <a
+                  className="gia-chat__go"
+                  href={to.path}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    navigate(to.path);
+                  }}
+                >
+                  {to.label}
+                </a>
+              )}
+            </li>
+          );
+        })}
+      </ol>
+    </section>
+  );
+}
+
 function AgentTaskProposal({ answer }: { readonly answer: GiaAnswerView }) {
   const chat = useGiaChat();
   const proposal = answer.proposedAgentTask;
@@ -593,6 +696,7 @@ function GiaReply({ answer }: { readonly answer: GiaAnswerView }) {
           })}
         </ul>
       )}
+      <Priorities answer={answer} />
       <FollowUpProposal answer={answer} />
       <AgentTaskProposal answer={answer} />
       {place === undefined ? null : (

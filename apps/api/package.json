@@ -27,6 +27,7 @@
     "@melonoffice/business": "workspace:*",
     "@melonoffice/conversations": "workspace:*",
     "@melonoffice/credits": "workspace:*",
+    "@melonoffice/decisions": "workspace:*",
     "@melonoffice/departments": "workspace:*",
     "@melonoffice/entitlements": "workspace:*",
     "@melonoffice/execution": "workspace:*",

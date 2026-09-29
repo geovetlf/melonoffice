@@ -65,6 +65,17 @@ export const GIA_ASSIST_POLICY: ModelPolicy = Object.freeze({
   version: ASSIST_MODEL_POLICIES.gia.version,
 });
 
+/**
+ * The model policy of the Decision Engine (ADR-0065), for the few decisions a rule cannot settle
+ * (choosing among several fitting agents): the request and the candidates are the business's own
+ * (`confidential`). Same model, environment, cost ceiling (1 credit) and no fallback; its own name.
+ */
+export const DECISION_ASSIST_POLICY: ModelPolicy = Object.freeze({
+  ...CONVERSATION_ASSIST_POLICY,
+  id: ASSIST_MODEL_POLICIES.decision.id as PolicyId,
+  version: ASSIST_MODEL_POLICIES.decision.version,
+});
+
 /** What the AI Gateway is built with on this server; see `AppOptions['ai']`. */
 export interface AIConfiguration {
   readonly environment?: DeploymentEnvironment;
@@ -104,6 +115,7 @@ export function aiConfigurationOf(config: {
       CONVERSATION_ASSIST_POLICY,
       COMPANY_KNOWLEDGE_ASSIST_POLICY,
       GIA_ASSIST_POLICY,
+      DECISION_ASSIST_POLICY,
     ]),
     creditRate: CREDIT_RATE,
   };
