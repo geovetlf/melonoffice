@@ -95,6 +95,9 @@ importers:
       '@melonoffice/brain':
         specifier: workspace:*
         version: link:../../packages/brain
+      '@melonoffice/branding':
+        specifier: workspace:*
+        version: link:../../packages/branding
       '@melonoffice/business':
         specifier: workspace:*
         version: link:../../packages/business
@@ -582,6 +585,25 @@ importers:
         specifier: workspace:*
         version: link:../departments
 
+  packages/branding:
+    dependencies:
+      '@melonoffice/audit':
+        specifier: workspace:*
+        version: link:../audit
+      '@melonoffice/business':
+        specifier: workspace:*
+        version: link:../business
+      '@melonoffice/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@melonoffice/tenancy':
+        specifier: workspace:*
+        version: link:../tenancy
+    devDependencies:
+      '@melonoffice/config':
+        specifier: workspace:*
+        version: link:../config
+
   packages/business:
     dependencies:
       '@melonoffice/audit':
@@ -871,6 +893,9 @@ importers:
       '@melonoffice/brain':
         specifier: workspace:*
         version: link:../brain
+      '@melonoffice/branding':
+        specifier: workspace:*
+        version: link:../branding
       '@melonoffice/business':
         specifier: workspace:*
         version: link:../business

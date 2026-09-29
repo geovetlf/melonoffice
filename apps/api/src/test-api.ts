@@ -1,3 +1,4 @@
+import { InMemoryBrandRepository } from '@melonoffice/branding';
 import { InMemoryAIUsageStore, type AIUsageStore } from '@melonoffice/ai-usage';
 import { InMemoryKnowledgeRepository, type KnowledgeRepository } from '@melonoffice/brain';
 import { InMemoryApprovalRepository, type ApprovalRepository } from '@melonoffice/approvals';
@@ -118,6 +119,7 @@ import {
   PLAN_VERSIONS,
   FirestoreWorkflowRepository,
   FirestoreTenancyStore,
+  FirestoreBrandStore,
   FirestoreCommercialStore,
   MEMBERSHIPS,
   ORGANIZATIONS,
@@ -159,6 +161,8 @@ export interface Stores {
   readonly tenancy: TenancyStore;
   /** Partner and agency accounts (ADR-0086). */
   readonly commercial: CommercialRepository;
+  /** Brands and domains (ADR-0087). */
+  readonly brands: InMemoryBrandRepository | FirestoreBrandStore;
   /** Stores a record as given, e.g. a suspended membership, the way an operator change would. */
   readonly put: (record: Organization | Membership) => Promise<void>;
   readonly billing: BillingStore;
@@ -246,6 +250,7 @@ function memoryStores(): Stores {
     users: new InMemoryUserDirectory(),
     tenancy,
     commercial: new InMemoryCommercialStore(events),
+    brands: new InMemoryBrandRepository(events),
     put: async (r) => tenancy.put(r),
     billing,
     putBilling: async (r) => billing.put(r),
@@ -303,6 +308,7 @@ function firestoreStores(): Stores {
     users: new FirestoreUserDirectory(db),
     tenancy: new FirestoreTenancyStore(db),
     commercial: new FirestoreCommercialStore(db),
+    brands: new FirestoreBrandStore(db),
     billing: new FirestoreBillingStore(db),
     async putBilling(record) {
       if ('status' in record) {
@@ -482,6 +488,7 @@ export function setupApp(
     auth: { verifier, users: stores.users },
     tenancy: stores.tenancy,
     commercialAccounts: stores.commercial,
+    brands: stores.brands,
     billing: stores.billing,
     executions: stores.executions,
     structure: { departments: stores.departments, specialists: stores.specialists },

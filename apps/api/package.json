@@ -26,6 +26,7 @@
     "@melonoffice/audit": "workspace:*",
     "@melonoffice/auth": "workspace:*",
     "@melonoffice/billing": "workspace:*",
+    "@melonoffice/branding": "workspace:*",
     "@melonoffice/brain": "workspace:*",
     "@melonoffice/business": "workspace:*",
     "@melonoffice/conversations": "workspace:*",

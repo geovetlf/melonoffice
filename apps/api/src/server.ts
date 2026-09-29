@@ -48,6 +48,7 @@ import {
   FirestoreCreditStore,
   FirestorePlanRepository,
   FirestoreTenancyStore,
+  FirestoreBrandStore,
   FirestoreCommercialStore,
   FirestoreUserDirectory,
   FirestoreWorkflowRepository,
@@ -150,6 +151,8 @@ function services(projectId: string) {
     tenancy,
     // Partner and agency accounts (ADR-0086): three collections, equality queries only.
     commercialAccounts: new FirestoreCommercialStore(firestore),
+    // Brands and domains (ADR-0087): two collections, read by id.
+    brands: new FirestoreBrandStore(firestore),
     billing: new FirestoreBillingStore(firestore),
     executions,
     approvals,

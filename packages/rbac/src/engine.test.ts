@@ -162,6 +162,7 @@ describe('catalogue', () => {
       'channel.delete',
       'relationship.read',
       'relationship.manage',
+      'brand.manage',
     ]);
     // An organization role never holds a commercial permission (ADR-0086).
     expect(ROLES.owner.some((p) => p.startsWith('commercial.') || p.startsWith('customer.'))).toBe(
@@ -469,7 +470,9 @@ describe('commercial authorization (ADR-0086)', () => {
     const admin = await contextAs('partner.admin');
     const support = await contextAs('partner.support');
     for (const permission of COMMERCIAL_ROLES['partner.admin']) {
-      expect(commercial.authorize(admin, permission, access(['summary'])).allowed).toBe(true);
+      expect(commercial.authorize(admin, permission, access(['summary', 'branding'])).allowed).toBe(
+        true,
+      );
     }
     expect(commercial.authorize(support, 'commercial.read').allowed).toBe(true);
     expect(commercial.authorize(support, 'commercial.manage_members')).toEqual({
@@ -496,6 +499,30 @@ describe('commercial authorization (ADR-0086)', () => {
         access(['summary'], 'bbbbbbbb-0000-4000-8000-00000000000b' as never),
       ),
     ).toEqual({ allowed: false, reason: 'cross_account' });
+  });
+
+  it("changes a white-label customer's brand only with its branding scope, and never as an agency or support (ADR-0087)", async () => {
+    const admin = await contextAs('partner.admin');
+    expect(commercial.authorize(admin, 'customer.manage_brand', access(['summary']))).toEqual({
+      allowed: false,
+      reason: 'scope_not_granted',
+    });
+    expect(commercial.authorize(admin, 'customer.manage_brand', access(['branding'])).allowed).toBe(
+      true,
+    );
+    expect(
+      commercial.authorize(
+        admin,
+        'customer.manage_brand',
+        access(['branding'], 'bbbbbbbb-0000-4000-8000-00000000000b' as never),
+      ),
+    ).toEqual({ allowed: false, reason: 'cross_account' });
+    const support = await contextAs('partner.support');
+    expect(commercial.authorize(support, 'customer.manage_brand', access(['branding']))).toEqual({
+      allowed: false,
+      reason: 'permission_denied',
+    });
+    expect(COMMERCIAL_ROLES['agency.admin']).not.toContain('customer.manage_brand');
   });
 
   it('refuses a role of another account type, an unknown role, a forged context and organization permissions', async () => {

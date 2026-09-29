@@ -63,6 +63,7 @@ export const ROLES = {
     'channel.delete',
     'relationship.read',
     'relationship.manage',
+    'brand.manage',
   ],
 } as const satisfies RoleCatalogue;
 
@@ -80,6 +81,8 @@ export const COMMERCIAL_ROLES = {
     'commercial.manage_members',
     'commercial.invite_customer',
     'customer.read_summary',
+    'commercial.manage_brand',
+    'customer.manage_brand',
   ],
   'partner.support': ['commercial.read', 'customer.read_summary'],
   'agency.admin': [
@@ -87,6 +90,7 @@ export const COMMERCIAL_ROLES = {
     'commercial.manage_members',
     'commercial.invite_customer',
     'customer.read_summary',
+    'commercial.manage_brand',
   ],
   'agency.manager': ['commercial.read', 'customer.read_summary'],
 } as const satisfies RoleCatalogue;
