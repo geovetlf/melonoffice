@@ -294,13 +294,18 @@ describe('DeepSeek adapter', () => {
           { status: 400 },
         ),
     );
-    const adapter = createDeepSeekAdapter({ credentials: resolver().credentials, fetch: fetchFn });
+    const adapter = createDeepSeekAdapter({
+      now: () => T0,
+      credentials: resolver().credentials,
+      fetch: fetchFn,
+    });
     expect(await adapter.generate(call())).toEqual({
       status: 'error',
       kind: 'context_overflow',
       httpStatus: 400,
     });
     const other = createDeepSeekAdapter({
+      now: () => T0,
       credentials: resolver().credentials,
       fetch: network(() => new Response('{"error":{"message":"bad"}}', { status: 422 })).fetchFn,
     });
@@ -330,6 +335,7 @@ describe('DeepSeek adapter', () => {
 
   it('turns a network failure and a rate limit into retryable kinds', async () => {
     const down = createDeepSeekAdapter({
+      now: () => T0,
       credentials: resolver().credentials,
       fetch: (async () => {
         throw new TypeError('fetch failed');
@@ -337,6 +343,7 @@ describe('DeepSeek adapter', () => {
     });
     expect(await down.generate(call())).toEqual({ status: 'error', kind: 'network' });
     const busy = createDeepSeekAdapter({
+      now: () => T0,
       credentials: resolver().credentials,
       fetch: network(() => new Response('{}', { status: 429 })).fetchFn,
     });

@@ -2420,3 +2420,53 @@ a.sidebar__item:hover {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+/* Documents (DOC-3). */
+.documents__lead,
+.documents__hint {
+  margin: var(--mo-space-2) 0 0;
+}
+
+.documents__picker {
+  display: grid;
+  gap: var(--mo-space-2);
+  margin-top: var(--mo-space-3);
+}
+
+.documents__picker input {
+  max-width: 100%;
+}
+
+.documents__list {
+  display: grid;
+  gap: var(--mo-space-2);
+  margin: var(--mo-space-3) 0;
+  padding: 0;
+  list-style: none;
+}
+
+.documents__item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--mo-space-2);
+  padding: var(--mo-space-3);
+  border: 1px solid var(--office-line);
+  border-radius: 12px;
+}
+
+.documents__main {
+  display: grid;
+  gap: var(--mo-space-1);
+  min-width: 0;
+}
+
+.documents__name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.documents__meta {
+  font-size: 0.875rem;
+}

@@ -1,4 +1,8 @@
-import { InMemoryUsageSink, type AIUsageSink } from '@melonoffice/ai-usage';
+import {
+  InMemoryUsageSink,
+  type AIUsageSink,
+  type CustomerCreditPolicy,
+} from '@melonoffice/ai-usage';
 import { createCreditService, InMemoryCreditStore, openWallet } from '@melonoffice/credits';
 import { createAuditService, InMemoryAuditStore } from '@melonoffice/audit';
 import type { AuthenticatedContext } from '@melonoffice/auth';
@@ -263,6 +267,7 @@ interface WorldOptions {
   readonly realCredits?: boolean;
   readonly usage?: AIUsageSink;
   readonly streams?: StreamScript;
+  readonly creditPolicy?: CustomerCreditPolicy;
 }
 
 async function world(options: WorldOptions = {}) {
@@ -340,6 +345,7 @@ async function world(options: WorldOptions = {}) {
           credits: {
             port: options.realCredits ? creditService : credits.port,
             rate: options.credits === 'no_rate' ? undefined : { microUsdPerCredit: 1_000 },
+            ...(options.creditPolicy === undefined ? {} : { policy: options.creditPolicy }),
           },
         }),
     audit: createAuditService(audit, now),
@@ -1154,6 +1160,92 @@ describe('AI gateway: assisted calls (ADR-0037)', () => {
       ).toMatchObject({ status: 'denied', code });
     }
     expect(w.calls).toHaveLength(1);
+  });
+});
+
+describe('AI gateway: customer credit pricing (ADR-0081)', () => {
+  const FREE_PRICING = {
+    status: 'known',
+    currency: 'USD',
+    inputMicroUsdPerMillionTokens: 0,
+    outputMicroUsdPerMillionTokens: 0,
+    source: 'test fixture',
+    asOf: '2026-09-01',
+  } as const;
+  const onlyFree = [model('alpha', 'alpha-small', { pricing: FREE_PRICING })];
+
+  it('records a free call in full: provider cost 0 and customer credits 0, kept apart', async () => {
+    const usage = new InMemoryUsageSink();
+    const { w, call } = await setup({ usage, models: onlyFree });
+    const answer = await call();
+    expect(answer).toMatchObject({
+      status: 'completed',
+      cost: { actualMicroUsd: 0 },
+      credits: { state: 'free', consumed: 0 },
+    });
+    expect(usage.events).toHaveLength(1);
+    expect(usage.events[0]).toMatchObject({
+      provider: 'alpha',
+      model: 'alpha-small',
+      outcome: 'completed',
+      requestId: 'req-1',
+      attribution: { organizationId: w.orgA, userId: ALICE },
+      cost: { actualMicroUsd: 0, costBasis: 'provider_price_list' },
+      credits: 0,
+      creditPolicy: { id: 'provider_cost_at_rate', version: '1000' },
+    });
+    expect(usage.events[0]?.cost.usage.quantities.length).toBeGreaterThan(0);
+    expect(usage.events[0]).not.toHaveProperty('fallbackFrom');
+  });
+
+  it('charges what a pricing policy says, without touching the provider cost', async () => {
+    const usage = new InMemoryUsageSink();
+    const seen: string[] = [];
+    const minimum: CustomerCreditPolicy = {
+      id: 'minimum_one',
+      version: 'v1',
+      credits: (input) => {
+        seen.push(`${input.capability}:${input.provider}:${input.model}:${input.operation}`);
+        return Math.max(1, Math.ceil(input.providerCostMicroUsd / 1_000));
+      },
+    };
+    const { call } = await setup({ usage, models: onlyFree, creditPolicy: minimum });
+    expect(await call()).toMatchObject({
+      status: 'completed',
+      cost: { actualMicroUsd: 0 },
+      credits: { state: 'consumed', consumed: 1 },
+    });
+    expect(usage.events[0]).toMatchObject({
+      cost: { actualMicroUsd: 0 },
+      credits: 1,
+      creditPolicy: { id: 'minimum_one', version: 'v1' },
+    });
+    expect(seen).toContain('llm:alpha:alpha-small:text_generation');
+  });
+
+  it('never routes to or passes on a call its policy cannot price', async () => {
+    const broken: CustomerCreditPolicy = { id: 'broken', version: 'v1', credits: () => -1 };
+    const { call } = await setup({ creditPolicy: broken });
+    expect(await call()).toMatchObject({ status: 'denied', code: 'price_unknown' });
+  });
+
+  it('records the model a fallback answered for', async () => {
+    const usage = new InMemoryUsageSink();
+    const { call } = await setup({
+      usage,
+      script: {
+        'alpha-small': [
+          () => ({ status: 'error', kind: 'rate_limited' }),
+          () => ({ status: 'error', kind: 'rate_limited' }),
+          () => ({ status: 'error', kind: 'rate_limited' }),
+        ],
+      },
+    });
+    expect(await call()).toMatchObject({ status: 'completed', provider: 'beta' });
+    expect(usage.events[0]).toMatchObject({
+      provider: 'beta',
+      fallbackFrom: 'alpha/alpha-small',
+    });
   });
 });
 

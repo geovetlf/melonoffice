@@ -92,6 +92,10 @@ export interface FakeBackend {
      * Reports (ADR-0060): each organization's metrics as the API lists them, and each read by
      * `metric:frequency`, as the API's body or an error with its status.
      */
+    /** Documents (DOC-3): each organization's files as the API lists them. */
+    documents: Record<string, Record<string, unknown>[]>;
+    /** Uploading a document fails with this code and status. */
+    documentUploadFails?: { readonly error: string; readonly status: number };
     metrics: Record<
       string,
       {
@@ -105,6 +109,8 @@ export interface FakeBackend {
     >;
   };
   apiCalls(): Call[];
+  /** Files uploaded to Documents (DOC-3), with the type and name they were sent with. */
+  readonly uploads: { readonly contentType: string | null; readonly name: string | null }[];
 }
 
 const json = (status: number, body: unknown) =>
@@ -164,8 +170,10 @@ export function fakeBackend(): FakeBackend {
     plans: {},
     planSteps: {},
     pageSize: 50,
+    documents: {},
     metrics: {},
   };
+  const uploads: FakeBackend['uploads'] = [];
 
   function issue() {
     issued += 1;
@@ -176,11 +184,13 @@ export function fakeBackend(): FakeBackend {
     return { idToken, refreshToken };
   }
 
+  let currentContentType: string | null = null;
   const fetcher: typeof fetch = async (input, init = {}) => {
     const url = typeof input === 'string' ? input : input.toString();
     const headers = new Headers(init.headers);
     const body = typeof init.body === 'string' ? init.body : undefined;
     const method = init.method ?? 'GET';
+    currentContentType = headers.get('content-type');
     calls.push({ url, method, authorization: headers.get('authorization'), body });
 
     if (url === `${SIGN_IN_URL}?key=${KEY}`) {
@@ -943,6 +953,36 @@ export function fakeBackend(): FakeBackend {
         hasMore: false,
       });
     }
+    if (route === 'documents') {
+      const denied = needs(method === 'POST' ? 'document.upload' : 'document.read');
+      if (denied !== undefined) return denied;
+      const list = (options.documents[organizationId] ??= []);
+      if (method !== 'POST') return json(200, { documents: list, nextCursor: null });
+      if (options.documentUploadFails !== undefined) {
+        return json(options.documentUploadFails.status, {
+          error: options.documentUploadFails.error,
+        });
+      }
+      const name = new URLSearchParams(query).get('name');
+      uploads.push({ contentType: currentContentType, name });
+      const document = {
+        id: `doc_${list.length + 1}`,
+        name: name ?? '',
+        contentType: currentContentType ?? '',
+        sizeBytes: 2048,
+        sha256: 'a'.repeat(64),
+        status: 'ingested',
+        ingestion: null,
+        knowledgeDocumentId: `k_${list.length + 1}`,
+        textSource: 'library',
+        pages: 3,
+        uploadedBy: 'user_ana',
+        createdAt: '2026-09-29T12:00:00.000Z',
+        updatedAt: '2026-09-29T12:00:00.000Z',
+      };
+      list.unshift(document);
+      return json(201, { document, duplicate: false });
+    }
     if (route === 'metrics' || route?.startsWith('metrics/') === true) {
       const denied = needs('report.read');
       if (denied !== undefined) return denied;
@@ -1071,6 +1111,7 @@ export function fakeBackend(): FakeBackend {
     calls,
     options,
     apiCalls: () => calls.filter((call) => call.url.startsWith(API)),
+    uploads,
   };
 }
 

@@ -59,6 +59,13 @@ export function checkUsageEvent(event: AIUsageEvent): void {
   if (event.cost.provider !== event.provider || event.cost.model !== event.model) fail('cost');
   if (event.outcome !== 'completed' && event.outcome !== 'failed') fail('outcome');
   if (!Number.isSafeInteger(event.credits) || event.credits < 0) fail('credits');
+  if (
+    event.creditPolicy !== undefined &&
+    (!isUsageCode(event.creditPolicy.id) || !isUsageCode(event.creditPolicy.version))
+  ) {
+    fail('creditPolicy');
+  }
+  if (event.fallbackFrom !== undefined && !isUsageCode(event.fallbackFrom)) fail('fallbackFrom');
   const actual = event.cost.actualMicroUsd;
   if (actual !== null && (!Number.isSafeInteger(actual) || actual < 0)) fail('cost');
   for (const q of event.cost.usage.quantities) {

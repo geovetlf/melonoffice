@@ -7,10 +7,13 @@ import {
 } from '@melonoffice/audit';
 import {
   createAICostEngine,
+  customerCreditsOf,
   LLM_CAPABILITY,
   llmPricing,
   llmUsage,
+  providerCostCreditPolicy,
   type AIUsageSink,
+  type CustomerCreditPolicy,
 } from '@melonoffice/ai-usage';
 import type {
   AIRoutingStrategy,
@@ -36,7 +39,7 @@ import {
   type ProviderOutcome,
   type ProviderStreamEvent,
 } from './adapter.js';
-import { costMicroUsd, creditsFor, type CreditRate } from './cost.js';
+import { costMicroUsd, type CreditRate } from './cost.js';
 import { creditReferenceOf, type AICreditsPort } from './credits.js';
 import { createProviderHealthTracker, type ProviderHealthTracker } from './health.js';
 import type { ModelPolicyCatalogue } from './policy.js';
@@ -157,9 +160,14 @@ export interface AIGatewayOptions {
   readonly environment: DeploymentEnvironment | undefined;
   /**
    * The Credits engine and the credit rate (D-12). Either missing: every call is denied, so no
-   * real model is ever used without being accounted for.
+   * real model is ever used without being accounted for. `policy` prices the customer's credits
+   * (ADR-0081); absent, the provider's cost at the rate (`providerCostCreditPolicy`).
    */
-  readonly credits?: { readonly port: AICreditsPort; readonly rate: CreditRate | undefined };
+  readonly credits?: {
+    readonly port: AICreditsPort;
+    readonly rate: CreditRate | undefined;
+    readonly policy?: CustomerCreditPolicy;
+  };
   readonly audit: AuditService;
   readonly logger?: Logger;
   /**
@@ -325,7 +333,7 @@ export function createAIGateway(options: AIGatewayOptions): AIGateway {
   interface Prepared {
     readonly candidates: readonly RouteCandidate[];
     readonly port: AICreditsPort;
-    readonly rate: CreditRate;
+    readonly pricing: CustomerCreditPolicy;
     readonly strategy: AIRoutingStrategy;
     readonly idempotencyKey: string;
     readonly creditsOf: (candidate: RouteCandidate) => number | undefined;
@@ -352,6 +360,8 @@ export function createAIGateway(options: AIGatewayOptions): AIGateway {
       return deny('credits_not_configured');
     }
     const { port, rate } = credits;
+    const pricing = credits.policy ?? pricingAt(rate);
+    if (pricing === undefined) return deny('credits_not_configured');
     // 5. Route.
     const estimatedInputTokens = estimateInputTokens(request);
     const streams = streaming || request.requirements?.streaming === true;
@@ -397,7 +407,9 @@ export function createAIGateway(options: AIGatewayOptions): AIGateway {
     if (routed.length === 0) return deny('no_compatible_model');
     // Only models whose cost can be accounted for, within the request's credit limit.
     const creditsOf = (c: RouteCandidate) =>
-      c.estimatedCostMicroUsd === undefined ? undefined : creditsFor(c.estimatedCostMicroUsd, rate);
+      c.estimatedCostMicroUsd === undefined
+        ? undefined
+        : customerCreditsFor(pricing, c, request.capability, c.estimatedCostMicroUsd);
     const priced = routed.filter((c) => creditsOf(c) !== undefined);
     if (priced.length === 0) return deny('price_unknown');
     const affordable = priced.filter(
@@ -413,7 +425,7 @@ export function createAIGateway(options: AIGatewayOptions): AIGateway {
     return {
       candidates,
       port,
-      rate,
+      pricing,
       strategy,
       idempotencyKey: digestOf({ organizationId, requestId: request.requestId }),
       creditsOf,
@@ -445,12 +457,17 @@ export function createAIGateway(options: AIGatewayOptions): AIGateway {
     callLog: Logger,
   ): Promise<AIResponse> {
     const { tenant, requestId, known, record } = ctx;
-    const { port, rate, strategy, idempotencyKey, creditsOf } = prepared;
+    const { port, pricing, strategy, idempotencyKey, creditsOf } = prepared;
     const { attempts, fallbacks, started, first } = progress;
     const model = known.model;
     const latencyMs = Math.round(performance.now() - started);
     const actual = costMicroUsd(candidate.model.pricing, outcome.usage) ?? 0;
-    const charge = creditsFor(actual, rate);
+    const charge = customerCreditsFor(pricing, candidate, request.capability, actual);
+    if (charge === undefined) {
+      await record('ai.request_failed', 'credits_charge_failed');
+      callLog.error('ai credits not priced', { attempts, latencyMs });
+      return failedResponse(requestId, 'credits_charge_failed', model, attempts, latencyMs);
+    }
     if (charge > 0) {
       try {
         await port.consume(tenant, {
@@ -492,6 +509,10 @@ export function createAIGateway(options: AIGatewayOptions): AIGateway {
               estimatedMicroUsd: candidate.estimatedCostMicroUsd ?? null,
             }),
             credits: charge,
+            creditPolicy: { id: pricing.id, version: pricing.version },
+            ...(first === undefined || candidate === first
+              ? {}
+              : { fallbackFrom: modelKey(first.provider.id, first.model.modelId) }),
             requestId: request.requestId,
           }),
         );
@@ -973,6 +994,38 @@ const USAGE_ACTORS: Readonly<Record<string, AIUsageAttribution['actor']>> = {
   gia: 'gia',
   runtime: 'runtime',
 };
+
+/** The default customer pricing at a credit rate; undefined for a rate that is not one. */
+function pricingAt(rate: CreditRate): CustomerCreditPolicy | undefined {
+  try {
+    return providerCostCreditPolicy(rate.microUsdPerCredit);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The customer's credits for a call on a model, from the pricing policy (ADR-0081); undefined
+ * when the policy cannot price it, so the call is neither routed there nor passed on unpriced.
+ */
+function customerCreditsFor(
+  policy: CustomerCreditPolicy,
+  candidate: RouteCandidate,
+  operation: string,
+  providerCostMicroUsd: number,
+): number | undefined {
+  try {
+    return customerCreditsOf(policy, {
+      capability: LLM_CAPABILITY,
+      provider: candidate.provider.id,
+      model: candidate.model.modelId,
+      operation,
+      providerCostMicroUsd,
+    });
+  } catch {
+    return undefined;
+  }
+}
 
 /** The LLM Router's usage event: one source of the AI Usage Layer (ADR-0073). */
 const usageEventOf = (
