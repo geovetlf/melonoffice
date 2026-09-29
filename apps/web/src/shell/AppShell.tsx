@@ -36,6 +36,8 @@ import { createAgentTasksClient } from '../office/agentTasksClient.js';
 import { MemoryPage } from '../memory/MemoryPage.js';
 import { ReportsPage, ReportsSection } from '../reports/Reports.js';
 import { createReportsClient } from '../reports/reportsClient.js';
+import { AIUsagePage } from '../aiUsage/AIUsagePage.js';
+import { createAIUsageClient } from '../aiUsage/aiUsageClient.js';
 import { DocumentsPage } from '../documents/DocumentsPage.js';
 import { createDocumentsClient } from '../documents/documentsClient.js';
 import { createMemoryClient } from '../memory/memoryClient.js';
@@ -71,6 +73,7 @@ export function AppShell(locale: LocaleProps) {
   const canReadReports = useCan('report.read');
   const canReadDocuments = useCan('document.read');
   const canUploadDocuments = useCan('document.upload');
+  const canReadAIUsage = useCan('ai_usage.read');
   // Agent tasks (ADR-0063): read with the agents, asked only with `specialist.task`.
   const canReadAgents = useCan('specialist.read');
   const canAskAgents = useCan('specialist.task');
@@ -108,6 +111,7 @@ export function AppShell(locale: LocaleProps) {
             memory: createMemoryClient(services.api.request, organizationId),
             reports: createReportsClient(services.api.request, organizationId),
             documents: createDocumentsClient(services.api.request, organizationId),
+            aiUsage: createAIUsageClient(services.api.request, organizationId),
             agentTasks: createAgentTasksClient(services.api.request, organizationId),
             automations: createAutomationsClient(services.api.request, organizationId),
           },
@@ -129,7 +133,7 @@ export function AppShell(locale: LocaleProps) {
     case 'home':
       // The Home is always the first screen: describing the business lives in the company's
       // memory (ADR-0056), never in front of the Home.
-      page = <HomePage />;
+      page = <HomePage canReadAIUsage={canReadAIUsage} />;
       break;
     case 'memory':
       page =
@@ -232,6 +236,15 @@ export function AppShell(locale: LocaleProps) {
         <NotFound />
       );
       break;
+    case 'aiUsage':
+      page = canReadAIUsage ? (
+        <div className="light-surface">
+          <AIUsagePage client={clients.aiUsage} />
+        </div>
+      ) : (
+        <NotFound />
+      );
+      break;
     case 'automations':
       page =
         canReadWorkflows || canReadPlans ? (
@@ -313,6 +326,7 @@ export function AppShell(locale: LocaleProps) {
                 canReadMemory={canReadBusiness || canReadKnowledge}
                 canReadReports={canReadReports}
                 canReadDocuments={canReadDocuments}
+                canReadAIUsage={canReadAIUsage}
                 canReadAutomations={canReadWorkflows || canReadPlans}
                 open={menuOpen}
                 onNavigate={() => setMenuOpen(false)}

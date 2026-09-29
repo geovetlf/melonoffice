@@ -6,6 +6,8 @@ import { Icon, type IconName } from '../office/icons.js';
 import type { CreditsView } from '../office/officeClient.js';
 import type { Loadable } from '../office/OfficeData.js';
 import type { MeetingItem, TaskItem } from './sampleData.js';
+import { navigate } from '../identity/router.js';
+import { paths } from '../shell/routes.js';
 
 /**
  * The Home's panels under the office (ADR-0040). They complement the office; they are not the
@@ -160,9 +162,12 @@ export interface CreditUsageExtras {
 export function CreditsUsage({
   credits,
   extras = {},
+  showUsage = false,
 }: {
   readonly credits: Loadable<CreditsView>;
   readonly extras?: CreditUsageExtras;
+  /** A link to AI usage and cost (ADR-0074), for a person who may read it. */
+  readonly showUsage?: boolean;
 }) {
   const intl = useIntl();
   if (credits.status === 'hidden') return null;
@@ -217,6 +222,18 @@ export function CreditsUsage({
           )}
         </div>
       )}
+      {showUsage ? (
+        <a
+          className="panel__link"
+          href={paths.aiUsage()}
+          onClick={(event) => {
+            event.preventDefault();
+            navigate(paths.aiUsage());
+          }}
+        >
+          <FormattedMessage id="home.credits.usage" />
+        </a>
+      ) : null}
     </Panel>
   );
 }

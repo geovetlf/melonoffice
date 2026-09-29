@@ -16,6 +16,7 @@ export type Route =
   | { readonly kind: 'gia' }
   | { readonly kind: 'reports' }
   | { readonly kind: 'documents' }
+  | { readonly kind: 'aiUsage' }
   | { readonly kind: 'automations' }
   | { readonly kind: 'office'; readonly slug: string }
   | { readonly kind: 'agent'; readonly slug: string; readonly agentId: string }
@@ -38,6 +39,8 @@ export function parseRoute(path: string): Route {
   if (trimmed === '/reports') return { kind: 'reports' };
   // Documents (DOC-3): the organization's uploaded files.
   if (trimmed === '/documents') return { kind: 'documents' };
+  // AI usage and cost (ADR-0074, ADR-0081).
+  if (trimmed === '/ai-usage') return { kind: 'aiUsage' };
   // Automations (WF-3, ADR-0071): workflows and their plans.
   if (trimmed === '/automations') return { kind: 'automations' };
   const parts = trimmed.split('/').slice(1);
@@ -72,6 +75,7 @@ export const paths = {
   gia: () => '/gia',
   reports: () => '/reports',
   documents: () => '/documents',
+  aiUsage: () => '/ai-usage',
   automations: () => '/automations',
   office: (slug: string) => `/office/${encodeURIComponent(slug)}`,
   agent: (slug: string, agentId: string) =>

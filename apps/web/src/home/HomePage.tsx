@@ -9,7 +9,7 @@ import { SAMPLE_MEETINGS, SAMPLE_TASKS } from './sampleData.js';
  * The Home (ADR-0040, level 1): the organization's office, seen whole, with GIA at hand and the
  * day's context underneath. The office is the page; the panels complement it.
  */
-export function HomePage() {
+export function HomePage({ canReadAIUsage = false }: { readonly canReadAIUsage?: boolean }) {
   const { specialists, credits } = useOfficeData();
   const active = readyList(specialists).filter((s) => s.status === 'active').length;
   return (
@@ -39,7 +39,7 @@ export function HomePage() {
         <TodayTasks tasks={SAMPLE_TASKS} sample />
         <RecentActivity />
         <UpcomingMeetings meetings={SAMPLE_MEETINGS} sample />
-        <CreditsUsage credits={credits} />
+        <CreditsUsage credits={credits} showUsage={canReadAIUsage} />
       </div>
     </div>
   );

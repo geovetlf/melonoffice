@@ -92,6 +92,11 @@ export interface FakeBackend {
      * Reports (ADR-0060): each organization's metrics as the API lists them, and each read by
      * `metric:frequency`, as the API's body or an error with its status.
      */
+    /** AI usage (ADR-0074): each organization's summary and events, as the API gives them. */
+    aiUsage: Record<
+      string,
+      { summary: Record<string, unknown>; events: Record<string, unknown>[] } | { status: number }
+    >;
     /** Documents (DOC-3): each organization's files as the API lists them. */
     documents: Record<string, Record<string, unknown>[]>;
     /** Uploading a document fails with this code and status. */
@@ -170,6 +175,7 @@ export function fakeBackend(): FakeBackend {
     plans: {},
     planSteps: {},
     pageSize: 50,
+    aiUsage: {},
     documents: {},
     metrics: {},
   };
@@ -951,6 +957,25 @@ export function fakeBackend(): FakeBackend {
         to: '2026-09-28T15:00:00.000Z',
         items: options.activity[organizationId] ?? [],
         hasMore: false,
+      });
+    }
+    if (route === 'ai-usage' || route === 'ai-usage/events') {
+      const denied = needs('ai_usage.read');
+      if (denied !== undefined) return denied;
+      const usage = options.aiUsage[organizationId];
+      if (usage !== undefined && 'status' in usage)
+        return json(usage.status, { error: 'internal' });
+      if (route === 'ai-usage/events') {
+        return json(200, { events: usage?.events ?? [], nextCursor: null });
+      }
+      const params = new URLSearchParams(query);
+      return json(200, {
+        ...(usage?.summary ?? {
+          totals: { operations: 0, costMicroUsd: 0, unpricedOperations: 0, credits: 0 },
+          by: {},
+        }),
+        from: params.get('from'),
+        to: params.get('to'),
       });
     }
     if (route === 'documents') {

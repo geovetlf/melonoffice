@@ -19,6 +19,7 @@ const TOOLS: readonly { readonly id: string; readonly icon: IconName }[] = [
   { id: 'communications', icon: 'communications' },
   { id: 'automations', icon: 'automations' },
   { id: 'reports', icon: 'reports' },
+  { id: 'aiUsage', icon: 'coins' },
   { id: 'apps', icon: 'apps' },
   { id: 'settings', icon: 'settings' },
 ];
@@ -30,6 +31,7 @@ export function Sidebar({
   canReadMemory = false,
   canReadReports = false,
   canReadDocuments = false,
+  canReadAIUsage = false,
   canReadAutomations = false,
   open,
   onNavigate,
@@ -44,6 +46,8 @@ export function Sidebar({
   readonly canReadReports?: boolean;
   /** Documents (DOC-3), for a person with `document.read`. */
   readonly canReadDocuments?: boolean;
+  /** AI usage and cost (ADR-0074), for a person with `ai_usage.read`. */
+  readonly canReadAIUsage?: boolean;
   /** Automations (WF-3), for a person who may read workflows or plans. */
   readonly canReadAutomations?: boolean;
   readonly open: boolean;
@@ -129,6 +133,19 @@ export function Sidebar({
               >
                 <FormattedMessage id={`nav.${tool.id}`} />
               </NavLink>
+            ) : tool.id === 'aiUsage' ? (
+              // Not a coming tool: it exists, and is listed only for who may read it.
+              canReadAIUsage ? (
+                <NavLink
+                  key={tool.id}
+                  icon={tool.icon}
+                  path={paths.aiUsage()}
+                  current={route.kind === 'aiUsage'}
+                  go={go}
+                >
+                  <FormattedMessage id={`nav.${tool.id}`} />
+                </NavLink>
+              ) : null
             ) : tool.id === 'documents' && canReadDocuments ? (
               <NavLink
                 key={tool.id}

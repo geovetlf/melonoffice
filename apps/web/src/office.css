@@ -2470,3 +2470,110 @@ a.sidebar__item:hover {
 .documents__meta {
   font-size: 0.875rem;
 }
+
+/* AI usage and cost (ADR-0074, ADR-0081). */
+.panel__link {
+  display: inline-block;
+  margin-top: var(--mo-space-2);
+  font-weight: 600;
+  color: inherit;
+}
+
+.ai-usage__lead,
+.ai-usage__range,
+.ai-usage__filter {
+  margin: var(--mo-space-2) 0;
+}
+
+.ai-usage__totals {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 12rem), 1fr));
+  gap: var(--mo-space-3);
+  margin: var(--mo-space-3) 0;
+}
+
+.ai-usage__total {
+  padding: var(--mo-space-3);
+  border: 1px solid var(--office-line);
+  border-radius: 12px;
+}
+
+.ai-usage__total dt {
+  font-size: 0.875rem;
+}
+
+.ai-usage__total dd {
+  margin: var(--mo-space-1) 0 0;
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+
+.ai-usage__note {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 0.875rem;
+}
+
+.ai-usage__breakdowns {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 20rem), 1fr));
+  gap: var(--mo-space-3);
+}
+
+.ai-usage__breakdown {
+  overflow-x: auto;
+}
+
+.ai-usage__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.ai-usage__table th,
+.ai-usage__table td {
+  padding: var(--mo-space-1) var(--mo-space-2);
+  text-align: right;
+  border-bottom: 1px solid var(--office-line);
+}
+
+.ai-usage__table th:first-child {
+  text-align: left;
+}
+
+.ai-usage__row {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  text-decoration: underline;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.ai-usage__row[aria-pressed='true'] {
+  font-weight: 700;
+}
+
+.ai-usage__events {
+  display: grid;
+  gap: var(--mo-space-2);
+  margin: var(--mo-space-3) 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ai-usage__event {
+  display: grid;
+  gap: var(--mo-space-1);
+  padding: var(--mo-space-3);
+  border: 1px solid var(--office-line);
+  border-radius: 12px;
+}
+
+.ai-usage__event-main {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
