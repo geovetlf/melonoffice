@@ -8,6 +8,7 @@ export * from './conversations.js';
 export * from './credits.js';
 export * from './department-migration.js';
 export * from './departments.js';
+export * from './documents.js';
 export * from './events.js';
 export * from './executions.js';
 export * from './forecasts.js';

@@ -58,6 +58,7 @@ export interface AuditTarget {
     | 'knowledge_item'
     | 'knowledge_conflict'
     | 'knowledge_document'
+    | 'document'
     | 'company_knowledge'
     | 'contact'
     | 'opportunity'

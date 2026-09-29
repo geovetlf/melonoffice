@@ -29,6 +29,7 @@ const SERVER_ONLY = [
       '@melonoffice/firestore',
       '@melonoffice/jobs',
       '@melonoffice/runtime',
+      '@melonoffice/documents',
     ],
     message: 'Server-only package.',
   },

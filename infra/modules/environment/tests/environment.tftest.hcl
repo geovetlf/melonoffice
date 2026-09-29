@@ -144,7 +144,7 @@ run "staging_is_isolated_and_minimal" {
   }
 
   assert {
-    condition     = length(google_firestore_database.default) == 0 && length(google_firestore_index.audit_activity) == 0 && length(google_firestore_index.commercial) == 0 && length(google_firestore_index.agent_tasks) == 0 && length(google_firestore_index.ai_usage_events) == 0 && length(google_identity_platform_config.default) == 0 && length(google_project_iam_member.api_firestore) == 0
+    condition     = length(google_firestore_database.default) == 0 && length(google_firestore_index.audit_activity) == 0 && length(google_firestore_index.commercial) == 0 && length(google_firestore_index.agent_tasks) == 0 && length(google_firestore_index.ai_usage_events) == 0 && length(google_firestore_index.documents) == 0 && length(google_storage_bucket.documents) == 0 && length(google_identity_platform_config.default) == 0 && length(google_project_iam_member.api_firestore) == 0
     error_message = "Firestore and Identity Platform are dev only."
   }
 
@@ -189,7 +189,7 @@ run "prod_is_isolated_and_minimal" {
   }
 
   assert {
-    condition     = length(google_firestore_database.default) == 0 && length(google_firestore_index.audit_activity) == 0 && length(google_firestore_index.commercial) == 0 && length(google_firestore_index.agent_tasks) == 0 && length(google_firestore_index.ai_usage_events) == 0 && length(google_identity_platform_config.default) == 0 && length(google_project_iam_member.api_firestore) == 0
+    condition     = length(google_firestore_database.default) == 0 && length(google_firestore_index.audit_activity) == 0 && length(google_firestore_index.commercial) == 0 && length(google_firestore_index.agent_tasks) == 0 && length(google_firestore_index.ai_usage_events) == 0 && length(google_firestore_index.documents) == 0 && length(google_storage_bucket.documents) == 0 && length(google_identity_platform_config.default) == 0 && length(google_project_iam_member.api_firestore) == 0
     error_message = "Firestore and Identity Platform are dev only."
   }
 
@@ -270,6 +270,16 @@ run "dev_gets_firestore_and_auth" {
   assert {
     condition     = google_firestore_index.ai_usage_events[0].collection == "aiUsageEvents" && [for f in google_firestore_index.ai_usage_events[0].fields : "${f.field_path}:${f.order}"] == ["organizationId:ASCENDING", "occurredAt:DESCENDING"]
     error_message = "Dev must have the AI usage events index (ADR-0074): per organization, newest first."
+  }
+
+  assert {
+    condition     = google_firestore_index.documents[0].collection == "documents" && [for f in google_firestore_index.documents[0].fields : "${f.field_path}:${f.order}"] == ["organizationId:ASCENDING", "createdAt:DESCENDING"]
+    error_message = "Dev must have the documents index (ADR-0078): per organization, newest first."
+  }
+
+  assert {
+    condition     = length(google_storage_bucket.documents) == 0 && length(google_storage_bucket_iam_member.api_documents_creator) == 0 && !contains(keys(module.app["api"].env), "DOCUMENTS_BUCKET") && !contains(module.services.services, "storage.googleapis.com")
+    error_message = "Without document_storage there is no documents bucket, grant or setting."
   }
 
   assert {
@@ -835,6 +845,76 @@ run "no_agents_or_channel_outside_dev_setups" {
   assert {
     condition     = length(google_project_iam_member.worker_vertex_ai) == 0 && length(google_project_iam_member.api_channel_secrets) == 0 && length(google_project_iam_member.worker_channel_secrets) == 0 && !contains(module.services.services, "secretmanager.googleapis.com")
     error_message = "Without the apps and Firestore, agents and the channel create nothing."
+  }
+}
+
+# Document uploads (ADR-0078): one private bucket in the environment's region, whose objects only
+# the api's runtime identity may create and read, never replace or delete.
+run "dev_stores_documents" {
+  command = apply
+
+  variables {
+    environment         = "dev"
+    deploy_apps         = true
+    deletion_protection = false
+    firestore_and_auth  = true
+    document_storage    = true
+  }
+
+  assert {
+    condition     = google_storage_bucket.documents[0].name == "test-project-documents" && google_storage_bucket.documents[0].location == "test-region"
+    error_message = "The documents bucket is named after the project, in the environment's region."
+  }
+
+  assert {
+    condition     = google_storage_bucket.documents[0].uniform_bucket_level_access && google_storage_bucket.documents[0].public_access_prevention == "enforced"
+    error_message = "The documents bucket must use IAM only and can never be made public."
+  }
+
+  assert {
+    condition     = !google_storage_bucket.documents[0].force_destroy && !google_storage_bucket.documents[0].versioning[0].enabled
+    error_message = "Terraform must never empty the documents bucket, and objects are not versioned."
+  }
+
+  assert {
+    condition     = google_storage_bucket_iam_member.api_documents_creator[0].role == "roles/storage.objectCreator" && google_storage_bucket_iam_member.api_documents_viewer[0].role == "roles/storage.objectViewer"
+    error_message = "The api may create and read documents, never replace or delete them."
+  }
+
+  assert {
+    condition = alltrue([for m in [google_storage_bucket_iam_member.api_documents_creator[0], google_storage_bucket_iam_member.api_documents_viewer[0]] :
+      m.member == "serviceAccount:${module.app["api"].runtime_service_account}" && m.bucket == google_storage_bucket.documents[0].name
+    ])
+    error_message = "Only the api's runtime identity gets access, on the documents bucket only."
+  }
+
+  assert {
+    condition     = module.app["api"].env["DOCUMENTS_BUCKET"] == "test-project-documents" && !contains(keys(module.app["worker"].env), "DOCUMENTS_BUCKET") && !contains(keys(module.app["web"].env), "DOCUMENTS_BUCKET")
+    error_message = "Only the api learns where documents are kept."
+  }
+
+  assert {
+    condition     = contains(module.services.services, "storage.googleapis.com")
+    error_message = "Document uploads need the Cloud Storage API."
+  }
+
+  assert {
+    condition     = contains(google_project_iam_custom_role.planner.permissions, "storage.buckets.get") && contains(google_project_iam_custom_role.planner.permissions, "storage.buckets.getIamPolicy") && length([for p in google_project_iam_custom_role.planner.permissions : p if startswith(p, "storage.objects.")]) == 0
+    error_message = "The planner reads the bucket and its policy, never its objects."
+  }
+}
+
+run "no_document_storage_without_apps_and_firestore" {
+  command = plan
+
+  variables {
+    environment      = "staging"
+    document_storage = true
+  }
+
+  assert {
+    condition     = length(google_storage_bucket.documents) == 0 && length(google_storage_bucket_iam_member.api_documents_viewer) == 0 && !contains(module.services.services, "storage.googleapis.com")
+    error_message = "Without the apps and Firestore, document_storage creates nothing."
   }
 }
 

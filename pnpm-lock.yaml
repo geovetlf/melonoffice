@@ -107,6 +107,9 @@ importers:
       '@melonoffice/departments':
         specifier: workspace:*
         version: link:../../packages/departments
+      '@melonoffice/documents':
+        specifier: workspace:*
+        version: link:../../packages/documents
       '@melonoffice/entitlements':
         specifier: workspace:*
         version: link:../../packages/entitlements
@@ -702,6 +705,43 @@ importers:
         specifier: workspace:*
         version: link:../credits
 
+  packages/documents:
+    dependencies:
+      '@melonoffice/audit':
+        specifier: workspace:*
+        version: link:../audit
+      '@melonoffice/brain':
+        specifier: workspace:*
+        version: link:../brain
+      '@melonoffice/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@melonoffice/execution':
+        specifier: workspace:*
+        version: link:../execution
+      '@melonoffice/observability':
+        specifier: workspace:*
+        version: link:../observability
+      '@melonoffice/rbac':
+        specifier: workspace:*
+        version: link:../rbac
+      '@melonoffice/tenancy':
+        specifier: workspace:*
+        version: link:../tenancy
+    devDependencies:
+      '@melonoffice/auth':
+        specifier: workspace:*
+        version: link:../auth
+      '@melonoffice/config':
+        specifier: workspace:*
+        version: link:../config
+      '@melonoffice/credits':
+        specifier: workspace:*
+        version: link:../credits
+      '@melonoffice/departments':
+        specifier: workspace:*
+        version: link:../departments
+
   packages/domain:
     devDependencies:
       '@melonoffice/config':
@@ -812,6 +852,9 @@ importers:
       '@melonoffice/departments':
         specifier: workspace:*
         version: link:../departments
+      '@melonoffice/documents':
+        specifier: workspace:*
+        version: link:../documents
       '@melonoffice/domain':
         specifier: workspace:*
         version: link:../domain

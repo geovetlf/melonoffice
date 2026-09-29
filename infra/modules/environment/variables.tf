@@ -69,6 +69,12 @@ variable "forecast_credits_per_run" {
   }
 }
 
+variable "document_storage" {
+  description = "Turn on document uploads (ADR-0078): a private Cloud Storage bucket for uploaded documents, which only the api may create and read objects in. Needs the apps and Firestore. Only dev."
+  type        = bool
+  default     = false
+}
+
 variable "whatsapp_channel" {
   description = "Turn on the WhatsApp channel (ADR-0033, ADR-0034): the api and worker read channel secrets from this project's Secret Manager. Needs the runtime. Only dev."
   type        = bool

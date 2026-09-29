@@ -62,6 +62,18 @@ export const PERMISSIONS = {
     description:
       'Have GIA extract facts from what you write or from a document, through the AI Gateway, spending credits (ADR-0051).',
   },
+  'document.read': {
+    resource: 'document',
+    action: 'read',
+    description:
+      "See the organization's uploaded documents and download them (ADR-0078). Never another organization's.",
+  },
+  'document.upload': {
+    resource: 'document',
+    action: 'upload',
+    description:
+      'Upload a document (text, Markdown, CSV, PDF or Word) to the organization, directly and never through GIA or the runtime (ADR-0078). A text file is also given to Company Brain when you may add knowledge.',
+  },
   'entitlement.read': {
     resource: 'entitlement',
     action: 'read',

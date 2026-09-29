@@ -41,6 +41,11 @@ export interface ServiceConfig {
    */
   readonly deepSeek?: { readonly keySecret: SecretRef };
   /**
+   * The Cloud Storage bucket that holds uploaded documents (ADR-0078): `DOCUMENTS_BUCKET`, from
+   * Terraform. Unset: uploads and downloads answer 503 (`storage_unavailable`).
+   */
+  readonly documentsBucket?: string;
+  /**
    * Where an agent's first job is handed to the worker (CV-6B, ADR-0043): `JOB_QUEUE`,
    * `WORKER_URL`, `JOB_INVOKER_EMAIL` and `JOB_LEASE_MS`, all or none, the worker's own values.
    * Unset: a turn is started and its job stays queued (nothing runs in the API).
@@ -95,6 +100,9 @@ const LOCATION = /^[a-z]+-[a-z]+[0-9]{1,2}$/;
 
 const GRAPH_VERSION = /^v[0-9]{1,3}\.[0-9]$/;
 
+/** A bucket name without dots, as Terraform names it (`{project}-documents`). */
+const BUCKET = /^[a-z0-9][a-z0-9_-]{1,61}[a-z0-9]$/;
+
 /** An exact origin: https, or http only for a local development host. No path, no wildcard. */
 const ORIGIN =
   /^(https:\/\/[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+|http:\/\/(localhost|127\.0\.0\.1))(:[0-9]{1,5})?$/;
@@ -142,6 +150,10 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): S
   if (vertexLocation !== undefined && !LOCATION.test(vertexLocation)) {
     throw new Error(`Invalid VERTEX_AI_LOCATION: ${vertexLocation}`);
   }
+  const documentsBucket = env.DOCUMENTS_BUCKET || undefined;
+  if (documentsBucket !== undefined && !BUCKET.test(documentsBucket)) {
+    throw new Error(`Invalid DOCUMENTS_BUCKET: ${documentsBucket}`);
+  }
   const deepSeekKeySecret = env.DEEPSEEK_API_KEY_SECRET || undefined;
   if (deepSeekKeySecret !== undefined && !isAISecretRef(deepSeekKeySecret)) {
     // The reference, not the value, is shown: a key pasted here by mistake is not echoed.
@@ -163,5 +175,6 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): S
       ? {}
       : { vertexAI: { projectId: vertexProjectId, location: vertexLocation } }),
     ...(jobTransport === undefined ? {} : { jobTransport }),
+    ...(documentsBucket === undefined ? {} : { documentsBucket }),
   };
 }

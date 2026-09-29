@@ -31,6 +31,7 @@
     "@melonoffice/credits": "workspace:*",
     "@melonoffice/decisions": "workspace:*",
     "@melonoffice/departments": "workspace:*",
+    "@melonoffice/documents": "workspace:*",
     "@melonoffice/entitlements": "workspace:*",
     "@melonoffice/execution": "workspace:*",
     "@melonoffice/firestore": "workspace:*",

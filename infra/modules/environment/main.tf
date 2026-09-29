@@ -56,6 +56,12 @@ locals {
     var.whatsapp_graph_api_version == null ? {} : { WHATSAPP_GRAPH_API_VERSION = var.whatsapp_graph_api_version },
   ) : {}
 
+  # Document uploads (ADR-0078): the api keeps uploaded files in a private bucket of this project,
+  # with its own identity. Records are in Firestore and the api is the only reader and writer, so
+  # the bucket exists only where the apps and Firestore do (the runtime's condition).
+  document_storage_enabled = var.document_storage && local.runtime_enabled
+  documents_bucket_name    = "${var.project_id}-documents"
+
   base_services = [
     "artifactregistry.googleapis.com",
     "cloudresourcemanager.googleapis.com",
@@ -83,6 +89,9 @@ locals {
   ]
   whatsapp_channel_services = [
     "secretmanager.googleapis.com",
+  ]
+  document_storage_services = [
+    "storage.googleapis.com",
   ]
   budget_services = [
     "billingbudgets.googleapis.com",
@@ -184,6 +193,8 @@ locals {
         } : {},
         local.whatsapp_env,
         local.forecasting_env,
+        # Where uploaded documents are kept (ADR-0078). A bucket name, not a secret.
+        local.document_storage_enabled ? { DOCUMENTS_BUCKET = local.documents_bucket_name } : {},
       )
       timeout = null
     }
@@ -252,6 +263,7 @@ module "services" {
     local.web_sign_in_enabled ? local.web_sign_in_services : [],
     local.ai_assist_enabled ? local.ai_assist_services : [],
     local.whatsapp_channel_enabled ? local.whatsapp_channel_services : [],
+    local.document_storage_enabled ? local.document_storage_services : [],
   )
 }
 
@@ -562,6 +574,26 @@ resource "google_firestore_index" "ai_usage_events" {
   }
 }
 
+# An organization's documents are listed one page at a time, newest first (ADR-0078). Until this
+# index exists, the API reads them without it (at most 500) and logs it.
+resource "google_firestore_index" "documents" {
+  count = var.firestore_and_auth ? 1 : 0
+
+  project     = var.project_id
+  database    = google_firestore_database.default[0].name
+  collection  = "documents"
+  query_scope = "COLLECTION"
+
+  fields {
+    field_path = "organizationId"
+    order      = "ASCENDING"
+  }
+  fields {
+    field_path = "createdAt"
+    order      = "DESCENDING"
+  }
+}
+
 # Enables Identity Platform with email and password sign-in only. Other providers and MFA are
 # added when the auth work needs them. Identity Platform cannot be disabled once enabled; a
 # destroy only removes it from state.
@@ -819,4 +851,49 @@ resource "google_cloud_run_v2_service_iam_member" "worker_invokes_forecaster" {
   name     = module.app["forecaster"].name
   role     = "roles/run.invoker"
   member   = local.worker_member
+}
+
+# ---------------------------------------------------------------------------------------------
+# Document uploads (ADR-0078). One private bucket; object names are built by the api only
+# (`organizations/{organizationId}/documents/{documentId}`). Nothing is public, and no one but the
+# api's runtime identity gets access to objects through Terraform.
+
+resource "google_storage_bucket" "documents" {
+  count = local.document_storage_enabled ? 1 : 0
+
+  project                     = var.project_id
+  name                        = local.documents_bucket_name
+  location                    = var.region
+  uniform_bucket_level_access = true
+  public_access_prevention    = "enforced"
+  # Never emptied by Terraform: a destroy fails while documents are in it, whatever
+  # deletion_protection says. Removing people's documents is a decision, not a side effect.
+  force_destroy = false
+  labels        = local.labels
+
+  # The api never replaces an object (it creates each once), so there is nothing to version.
+  versioning {
+    enabled = false
+  }
+
+  depends_on = [module.services]
+}
+
+# The api uploads each document once: objectCreator creates objects and cannot overwrite or
+# delete one (that needs storage.objects.delete).
+resource "google_storage_bucket_iam_member" "api_documents_creator" {
+  count = local.document_storage_enabled ? 1 : 0
+
+  bucket = google_storage_bucket.documents[0].name
+  role   = "roles/storage.objectCreator"
+  member = "serviceAccount:${module.app["api"].runtime_service_account}"
+}
+
+# The api reads a document back to hand it to its organization's people.
+resource "google_storage_bucket_iam_member" "api_documents_viewer" {
+  count = local.document_storage_enabled ? 1 : 0
+
+  bucket = google_storage_bucket.documents[0].name
+  role   = "roles/storage.objectViewer"
+  member = "serviceAccount:${module.app["api"].runtime_service_account}"
 }
