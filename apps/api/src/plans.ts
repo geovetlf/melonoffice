@@ -14,9 +14,10 @@ import type { AuthEnv } from './auth.js';
 import { withPermission, type AuthorizationDependencies } from './authorization.js';
 
 /**
- * Plan routes (ADR-0028, ADR-0070). Plans are made by the planner or a workflow on the server,
- * never by a client: there is no route that creates or delegates a plan by itself. Approving one
- * is what starts it, when the plan conductor is configured. A user may read plans
+ * Plan routes (ADR-0028, ADR-0070). Plans are made by the planner, or by a person planning a
+ * workflow (ADR-0071, workflow routes), never from a client's steps: no route here creates or
+ * delegates a plan by itself. Approving one is what starts it, when the plan conductor is
+ * configured. A user may read plans
  * (`plan.read`) and approve or reject one exact version (`approval.approve`, acting directly,
  * never through GIA). The decision body carries only the version and digest the user saw; any
  * other field is refused. Another organization's plan answers exactly like a missing one.

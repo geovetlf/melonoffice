@@ -11,7 +11,8 @@ export type WorkflowErrorCode =
   | 'invalid_workflow_transition'
   | 'workflow_concurrency_conflict'
   | 'workflow_not_active'
-  | 'assignee_unavailable';
+  | 'assignee_unavailable'
+  | 'workflow_plan_ended';
 
 export class WorkflowError extends Error {
   override readonly name = 'WorkflowError';

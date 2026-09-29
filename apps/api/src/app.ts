@@ -890,6 +890,7 @@ export function createApp({
           workflows: createWorkflowService({
             repository: workflows,
             plans: planService,
+            executions: executionService,
             specialists,
             departments: structure.departments,
             organizations: tenancy,
