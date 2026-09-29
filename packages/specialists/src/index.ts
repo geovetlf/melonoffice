@@ -4,3 +4,7 @@ export * from './model.js';
 export * from './repository.js';
 export * from './eligibility.js';
 export * from './service.js';
+export * from './skills.js';
+export * from './templates.js';
+export * from './capabilities.js';
+export * from './management.js';

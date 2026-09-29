@@ -94,6 +94,12 @@ export const PERMISSIONS = {
     description:
       "See the organization's specialists: role, department, status and version (ADR-0025).",
   },
+  'specialist.manage': {
+    resource: 'specialist',
+    action: 'manage',
+    description:
+      "Create the organization's agents from a template, change their configuration as a new version and change their status (ADR-0062). A person directly, never GIA or the runtime.",
+  },
   'tool.read': {
     resource: 'tool',
     action: 'read',

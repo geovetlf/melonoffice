@@ -119,6 +119,7 @@ describe('catalogue', () => {
       'execution.cancel',
       'department.read',
       'specialist.read',
+      'specialist.manage',
       'tool.read',
       'tool.execute',
       'approval.read',

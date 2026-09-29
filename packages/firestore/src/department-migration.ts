@@ -28,7 +28,7 @@ interface State {
 
 interface Write {
   readonly departments: readonly Department[];
-  readonly specialists: readonly Required<SpecialistWrite>[];
+  readonly specialists: readonly Required<Omit<SpecialistWrite, 'events'>>[];
   readonly events: readonly AuditEvent[];
 }
 

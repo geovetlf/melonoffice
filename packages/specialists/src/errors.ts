@@ -10,7 +10,8 @@ export type SpecialistErrorCode =
   | 'invalid_specialist_transition'
   | 'specialist_archived'
   | 'specialist_concurrency_conflict'
-  | 'department_not_assignable';
+  | 'department_not_assignable'
+  | 'permission_denied';
 
 export class SpecialistError extends Error {
   override readonly name = 'SpecialistError';

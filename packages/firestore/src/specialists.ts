@@ -23,6 +23,7 @@ import {
   type SpecialistWrite,
 } from '@melonoffice/specialists';
 import { isOrganizationId } from '@melonoffice/tenancy';
+import { AUDIT_LOGS, toAuditDocument } from './audit.js';
 
 /**
  * `specialists/{specialistId}` holds each specialist with its current configuration, and
@@ -264,7 +265,11 @@ export class FirestoreSpecialistRepository implements SpecialistRepository {
     });
   }
 
-  #createVersion(t: Transaction, { version }: SpecialistWrite): void {
+  #createVersion(t: Transaction, { version, events = [] }: SpecialistWrite): void {
+    // The change's audit events are part of the same transaction (ADR-0062).
+    for (const event of events) {
+      t.create(this.db.collection(AUDIT_LOGS).doc(event.id), toAuditDocument(event));
+    }
     if (version === undefined) return;
     t.create(
       this.db.collection(SPECIALIST_VERSIONS).doc(versionId(version.specialistId, version.version)),

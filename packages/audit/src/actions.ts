@@ -283,6 +283,23 @@ export const AUDIT_ACTIONS = {
       'A specialist moved to another department of its organization by the catalogue migration (ADR-0047), as a new configuration version (`targetVersion`); earlier versions stay as they were.',
     results: ['success'],
   },
+  'specialist.created': {
+    category: 'specialist',
+    description:
+      'A person created an agent from a template (ADR-0062), in `draft`, as version 1 (`targetVersion`). Never its name or purpose.',
+    results: ['success'],
+  },
+  'specialist.version_created': {
+    category: 'specialist',
+    description:
+      "A person changed an agent's configuration (ADR-0062) as a new immutable version (`targetVersion`); earlier versions stay as they were.",
+    results: ['success'],
+  },
+  'specialist.status_changed': {
+    category: 'specialist',
+    description: "A person changed an agent's status (ADR-0062); `transition` is from → to.",
+    results: ['success'],
+  },
   'billing.subscription_created': {
     category: 'billing',
     description:

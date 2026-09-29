@@ -1,3 +1,4 @@
+import type { AuditEvent } from '@melonoffice/audit';
 import { acceptsAssignments, organizationOfDepartmentId } from '@melonoffice/departments';
 import type {
   ConversationAgentProfile,
@@ -232,6 +233,8 @@ function checkAssignable(department: Department, configuration: SpecialistConfig
 export interface SpecialistWrite {
   readonly specialist: Specialist;
   readonly version?: SpecialistVersion;
+  /** The audit events of the change (ADR-0062): stored with it, or nothing is. */
+  readonly events?: readonly AuditEvent[];
 }
 
 export interface NewSpecialist {
@@ -251,7 +254,7 @@ export function newSpecialist(
   department: Department,
   by: UserId,
   at: IsoTimestamp,
-): Required<SpecialistWrite> {
+): Required<Omit<SpecialistWrite, 'events'>> {
   const configuration = checkConfiguration(request.configuration, request.organizationId);
   checkAssignable(department, configuration);
   const id = randomUUID() as SpecialistId;
@@ -305,7 +308,7 @@ export function reviseSpecialist(
   change: ConfigurationChange,
   by: UserId,
   now: IsoTimestamp,
-): Required<SpecialistWrite> {
+): Required<Omit<SpecialistWrite, 'events'>> {
   if (current.status === 'archived') throw new SpecialistError('specialist_archived');
   if (current.version !== change.fromVersion) {
     throw new SpecialistError('specialist_concurrency_conflict');
