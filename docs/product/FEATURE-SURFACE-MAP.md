@@ -83,7 +83,7 @@ These have no screen on purpose, because a person never acts on them directly:
 
 These must never pass for real data:
 
-- **Home "Today's tasks" and "Meetings"** are example data with an "Example" badge. Tasks should come from real agent tasks. Meetings wait for a calendar.
+- ~~Home "Today's tasks" and "Meetings" example data~~: removed in block 8. Today's work shows real follow-ups and approvals; Meetings says no calendar is connected.
 - **Home quick actions, and the GIA bar's attach and voice buttons**, are marked "Soon".
 - **Seat actions** (assign, move, remove) are "Soon". They need a seating permission decision (ADR-0041).
 - **Department "coming" areas** are "Soon".

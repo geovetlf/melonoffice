@@ -2518,8 +2518,30 @@ a.sidebar__item:hover {
 .panel__link {
   display: inline-block;
   margin-top: var(--mo-space-2);
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
   font-weight: 600;
   color: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* A Home task that opens where it is done (block 8). */
+.task__link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.task__link:hover .task__title,
+.task__link:focus-visible .task__title {
+  text-decoration: underline;
 }
 
 .ai-usage__lead,
@@ -2631,4 +2653,39 @@ a.sidebar__item:hover {
   padding: var(--mo-space-3);
   border: 1px solid var(--office-line);
   border-radius: 12px;
+}
+
+/* Ctrl+K: ask GIA from anywhere (block 8). */
+.gia-quick {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: start center;
+  padding: 15vh var(--mo-space-4) 0;
+}
+
+.gia-quick__scrim {
+  position: absolute;
+  inset: 0;
+  background: rgb(0 0 0 / 40%);
+}
+
+.gia-quick__box {
+  position: relative;
+  width: min(560px, 100%);
+  padding: var(--mo-space-4);
+  border-radius: 16px;
+  background: var(--office-panel-strong);
+  color: inherit;
+  box-shadow: 0 16px 48px rgb(0 0 0 / 25%);
+}
+
+.gia-quick__title {
+  margin: 0 0 var(--mo-space-2);
+  font-size: var(--mo-font-size-md, 1rem);
+}
+
+.gia-quick__box .gia-bar__input {
+  width: 100%;
 }

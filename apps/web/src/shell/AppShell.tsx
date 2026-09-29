@@ -28,6 +28,7 @@ import { useAuth, useCan } from '../identity/AuthProvider.js';
 import type { LocaleProps } from '../identity/pages.js';
 import { usePath } from '../identity/router.js';
 import { GiaChatProvider } from '../gia/GiaChat.js';
+import { GiaQuickAsk } from '../gia/GiaQuickAsk.js';
 import { createGiaClient } from '../gia/giaClient.js';
 import { GiaWorkplace } from '../gia/GiaWorkplace.js';
 import { AgentPlace, DepartmentOffice, NotFound } from '../office/DepartmentOffice.js';
@@ -143,7 +144,13 @@ export function AppShell(locale: LocaleProps) {
     case 'home':
       // The Home is always the first screen: describing the business lives in the company's
       // memory (ADR-0056), never in front of the Home.
-      page = <HomePage canReadAIUsage={canReadAIUsage} />;
+      page = (
+        <HomePage
+          canReadAIUsage={canReadAIUsage}
+          followUps={canReadFollowUps ? clients.followUps : undefined}
+          approvals={canReadApprovals ? clients.approvals : undefined}
+        />
+      );
       break;
     case 'memory':
       page =
@@ -391,6 +398,7 @@ export function AppShell(locale: LocaleProps) {
                 </main>
               </div>
             </div>
+            <GiaQuickAsk />
           </GiaChatProvider>
         </BusinessFormats>
       </ActivityProvider>

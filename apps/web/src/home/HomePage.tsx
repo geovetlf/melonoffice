@@ -2,14 +2,26 @@ import { FormattedMessage } from '@melonoffice/i18n';
 import { OfficeScene } from '../office/OfficeScene.js';
 import { readyList, useOfficeData } from '../office/OfficeData.js';
 import { GiaCard, GiaCommandBar, QuickActions } from './gia.js';
-import { CreditsUsage, RecentActivity, TodayTasks, UpcomingMeetings } from './panels.js';
-import { SAMPLE_MEETINGS, SAMPLE_TASKS } from './sampleData.js';
+import { CreditsUsage, RecentActivity, UpcomingMeetings } from './panels.js';
+import type { ApprovalsClient } from '../approvals/approvalsClient.js';
+import type { FollowUpsClient } from '../followUps/followUpsClient.js';
+import { TodayWork } from './TodayWork.js';
 
 /**
  * The Home (ADR-0040, level 1): the organization's office, seen whole, with GIA at hand and the
  * day's context underneath. The office is the page; the panels complement it.
  */
-export function HomePage({ canReadAIUsage = false }: { readonly canReadAIUsage?: boolean }) {
+export function HomePage({
+  canReadAIUsage = false,
+  followUps,
+  approvals,
+}: {
+  readonly canReadAIUsage?: boolean;
+  /** Today's follow-ups, for a person with `follow_up.read`. */
+  readonly followUps?: FollowUpsClient | undefined;
+  /** Approvals waiting, for a person with `approval.read`. */
+  readonly approvals?: ApprovalsClient | undefined;
+}) {
   const { specialists, credits } = useOfficeData();
   const active = readyList(specialists).filter((s) => s.status === 'active').length;
   return (
@@ -36,9 +48,9 @@ export function HomePage({ canReadAIUsage = false }: { readonly canReadAIUsage?:
         <QuickActions />
       </div>
       <div className="home__panels">
-        <TodayTasks tasks={SAMPLE_TASKS} sample />
+        <TodayWork followUps={followUps} approvals={approvals} />
         <RecentActivity />
-        <UpcomingMeetings meetings={SAMPLE_MEETINGS} sample />
+        <UpcomingMeetings />
         <CreditsUsage credits={credits} showUsage={canReadAIUsage} />
       </div>
     </div>

@@ -265,7 +265,7 @@ describe('the Home (ADR-0040)', () => {
     expect(await screen.findByRole('heading', { name: 'This place does not exist' })).toBeTruthy();
   });
 
-  it('shows the real credit balance and plan, offers no upgrade, and marks examples as examples', async () => {
+  it('shows the real credit balance and plan, offers no upgrade, and shows no example data', async () => {
     open('/');
     const credits = await screen.findByRole('region', { name: 'Credit use' });
     expect(await within(credits).findByText('498')).toBeTruthy();
@@ -273,9 +273,13 @@ describe('the Home (ADR-0040)', () => {
     expect(await screen.findByText('Entrepreneur plan')).toBeTruthy();
     expect(screen.getByText('498 credits available')).toBeTruthy();
     expect(screen.queryByRole('button', { name: /upgrade|improve/i })).toBeNull();
-    for (const name of ["Today's tasks", 'Upcoming meetings']) {
-      expect(within(screen.getByRole('region', { name })).getByText('Example')).toBeTruthy();
-    }
+    // No panel shows example data: meetings wait for a calendar connection.
+    expect(screen.queryByText('Example')).toBeNull();
+    expect(
+      within(screen.getByRole('region', { name: 'Upcoming meetings' })).getByText(
+        /No calendar is connected yet/,
+      ),
+    ).toBeTruthy();
     // Activity is the audit trail's (ADR-0049), never an example.
     expect(
       within(screen.getByRole('region', { name: 'Recent activity' })).queryByText('Example'),

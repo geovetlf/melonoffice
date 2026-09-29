@@ -5,25 +5,23 @@ import type { ActivityPeriod } from '../activity/activityClient.js';
 import { Icon, type IconName } from '../office/icons.js';
 import type { CreditsView } from '../office/officeClient.js';
 import type { Loadable } from '../office/OfficeData.js';
-import type { MeetingItem, TaskItem } from './sampleData.js';
 import { navigate } from '../identity/router.js';
 import { paths } from '../shell/routes.js';
 
 /**
  * The Home's panels under the office (ADR-0040). They complement the office; they are not the
  * page. Each says where its content comes from: credits are the organization's real balance and
- * activity is the audit trail's (ADR-0049); the other panels show examples, marked as such, until their data exists.
+ * activity is the audit trail's (ADR-0049), today's work is the real follow-ups and approvals,
+ * and meetings wait for a calendar connection. No panel shows example data.
  */
 
 export function Panel({
   titleId,
   icon,
-  sample = false,
   children,
 }: {
   readonly titleId: string;
   readonly icon: IconName;
-  readonly sample?: boolean;
   readonly children: ReactNode;
 }) {
   const id = `panel-${titleId.replaceAll('.', '-')}`;
@@ -34,67 +32,9 @@ export function Panel({
         <h2 id={id} className="panel__title">
           <FormattedMessage id={titleId} />
         </h2>
-        {sample ? (
-          <span className="panel__sample">
-            <FormattedMessage id="home.sample.badge" />
-          </span>
-        ) : null}
       </header>
       {children}
     </section>
-  );
-}
-
-const useDepartmentName = () => {
-  const intl = useIntl();
-  return (typeId: string) => {
-    const key = `department.${typeId}.short`;
-    return intl.messages[key] === undefined ? typeId : intl.formatMessage({ id: key });
-  };
-};
-
-/** A local time of day, `HH:MM`, in the person's locale. */
-function useTimeOfDay() {
-  const intl = useIntl();
-  return (at: string) => {
-    const [hours = 0, minutes = 0] = at.split(':').map(Number);
-    const date = new Date(2000, 0, 1, hours, minutes);
-    return intl.formatTime(date, { hour: 'numeric', minute: '2-digit' });
-  };
-}
-
-export function TodayTasks({
-  tasks,
-  sample,
-}: {
-  readonly tasks: readonly TaskItem[];
-  readonly sample: boolean;
-}) {
-  const intl = useIntl();
-  const department = useDepartmentName();
-  const time = useTimeOfDay();
-  return (
-    <Panel titleId="home.tasks.title" icon="check" sample={sample}>
-      {tasks.length === 0 ? (
-        <p className="panel__empty">
-          <FormattedMessage id="home.tasks.empty" />
-        </p>
-      ) : (
-        <ul className="panel__list">
-          {tasks.map((task) => (
-            <li key={task.id} className="task">
-              <span className="task__box" aria-hidden="true" />
-              <span className="task__body">
-                <span className="task__title">{intl.formatMessage({ id: task.titleKey })}</span>
-                <span className="task__meta">
-                  {department(task.departmentTypeId)} · {time(task.at)}
-                </span>
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
-    </Panel>
   );
 }
 
@@ -115,35 +55,16 @@ export function RecentActivity() {
   );
 }
 
-export function UpcomingMeetings({
-  meetings,
-  sample,
-}: {
-  readonly meetings: readonly MeetingItem[];
-  readonly sample: boolean;
-}) {
-  const intl = useIntl();
-  const department = useDepartmentName();
-  const time = useTimeOfDay();
+/**
+ * Meetings come from a calendar, and MelonOffice has no calendar connection yet: the panel says
+ * so rather than show examples.
+ */
+export function UpcomingMeetings() {
   return (
-    <Panel titleId="home.meetings.title" icon="calendar" sample={sample}>
-      {meetings.length === 0 ? (
-        <p className="panel__empty">
-          <FormattedMessage id="home.meetings.empty" />
-        </p>
-      ) : (
-        <ol className="timeline">
-          {meetings.map((meeting) => (
-            <li key={meeting.id} className="timeline__item">
-              <span className="timeline__time">{time(meeting.at)}</span>
-              <span className="task__body">
-                <span className="task__title">{intl.formatMessage({ id: meeting.titleKey })}</span>
-                <span className="task__meta">{department(meeting.departmentTypeId)}</span>
-              </span>
-            </li>
-          ))}
-        </ol>
-      )}
+    <Panel titleId="home.meetings.title" icon="calendar">
+      <p className="panel__empty">
+        <FormattedMessage id="home.meetings.noCalendar" />
+      </p>
     </Panel>
   );
 }
