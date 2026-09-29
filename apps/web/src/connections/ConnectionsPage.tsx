@@ -9,6 +9,7 @@ import {
   type ConnectionsClient,
   type ProviderView,
 } from './connectionsClient.js';
+import { TemplatesPanel } from './TemplatesPanel.js';
 
 /**
  * Settings → Connections (ADR-0044): the organization's connections to outside services, made
@@ -81,6 +82,7 @@ export function ConnectionsPage({
   const [busy, setBusy] = useState<Busy>();
   const [confirmDelete, setConfirmDelete] = useState<string | undefined>();
   const [renaming, setRenaming] = useState<string | undefined>();
+  const [templatesFor, setTemplatesFor] = useState<string | undefined>();
 
   useEffect(() => {
     let live = true;
@@ -232,6 +234,15 @@ export function ConnectionsPage({
                 <Button variant="secondary" onClick={() => void showSetup(c.id)}>
                   <FormattedMessage id="connections.action.setup" />
                 </Button>
+                {c.channel === 'whatsapp' ? (
+                  <Button
+                    variant="secondary"
+                    aria-expanded={templatesFor === c.id}
+                    onClick={() => setTemplatesFor(templatesFor === c.id ? undefined : c.id)}
+                  >
+                    <FormattedMessage id="connections.action.templates" />
+                  </Button>
+                ) : null}
                 {permissions.update && c.status !== 'connected' && c.status !== 'connecting' ? (
                   <Button
                     disabled={busy !== undefined}
@@ -289,6 +300,13 @@ export function ConnectionsPage({
                 </div>
               ) : null}
               {setup?.id === c.id ? <SetupPanel setup={setup.value} apiUrl={apiUrl} /> : null}
+              {templatesFor === c.id ? (
+                <TemplatesPanel
+                  client={client}
+                  connectionId={c.id}
+                  canUpdate={permissions.update}
+                />
+              ) : null}
             </li>
           ))}
           {/* Each registered provider without a connection yet, as a place to start one. */}

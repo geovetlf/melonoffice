@@ -55,6 +55,27 @@ export class ConnectionsError extends Error {
   }
 }
 
+/** A message template on a connection (ADR-0046), as the provider confirmed it. */
+export type TemplateStatus = 'pending' | 'active' | 'invalid' | 'disabled';
+
+export interface TemplateView {
+  readonly id: string;
+  readonly name: string;
+  readonly language: string;
+  readonly status: TemplateStatus;
+  readonly statusReason: string | null;
+  readonly category: string | null;
+  readonly spec: {
+    readonly header:
+      | { readonly format: 'none' }
+      | { readonly format: 'text'; readonly parameters: number }
+      | { readonly format: 'image' | 'document' | 'video' };
+    readonly bodyParameters: number;
+    readonly urlButtons: readonly { readonly index: number }[];
+  } | null;
+  readonly lastValidatedAt: string | null;
+}
+
 export interface ConnectionsClient {
   providers(): Promise<readonly ProviderView[]>;
   list(): Promise<readonly ConnectionView[]>;
@@ -65,6 +86,14 @@ export interface ConnectionsClient {
   pause(id: string): Promise<ConnectionView>;
   disconnect(id: string): Promise<ConnectionView>;
   remove(id: string): Promise<ConnectionView>;
+  templates(id: string): Promise<readonly TemplateView[]>;
+  /** Registers a template made and approved in the provider's tools, then checks it there. */
+  registerTemplate(
+    id: string,
+    template: { readonly name: string; readonly language: string },
+  ): Promise<TemplateView>;
+  checkTemplate(id: string, templateId: string): Promise<TemplateView>;
+  disableTemplate(id: string, templateId: string): Promise<TemplateView>;
 }
 
 type Request = (path: string, init?: RequestInit) => Promise<Response>;
@@ -110,5 +139,12 @@ export function createConnectionsClient(
     pause: (id) => send('POST', `${one(id)}/pause`),
     disconnect: (id) => send('POST', `${one(id)}/disconnect`),
     remove: (id) => send('DELETE', one(id)),
+    templates: async (id) =>
+      (await call<{ templates: TemplateView[] }>(`${one(id)}/templates`)).templates,
+    registerTemplate: (id, template) => send('POST', `${one(id)}/templates`, template),
+    checkTemplate: (id, templateId) =>
+      send('POST', `${one(id)}/templates/${encodeURIComponent(templateId)}/check`),
+    disableTemplate: (id, templateId) =>
+      send('POST', `${one(id)}/templates/${encodeURIComponent(templateId)}/disable`),
   };
 }

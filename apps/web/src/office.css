@@ -2425,6 +2425,12 @@ a.sidebar__item:hover {
   flex-basis: 100%;
 }
 
+/* WhatsApp templates in Connections (block 7). */
+.connection-card__templates {
+  flex-basis: 100%;
+  margin-top: var(--mo-space-3);
+}
+
 /* Skills and tools catalogue (block 6). */
 .capabilities__versions {
   display: grid;
