@@ -1,6 +1,6 @@
 import type { Specialist, SpecialistConfiguration } from '@melonoffice/domain';
 import { canTakeNewWork } from './lifecycle.js';
-import type { SkillCatalogue } from './skills.js';
+import { grantsOf, toolKey, type SkillCatalogue } from './skills.js';
 
 /**
  * What an agent may do, worked out the way the engines will decide it (ADR-0062): no AI and no
@@ -22,6 +22,8 @@ export type CapabilityProblem =
   | { readonly kind: 'unknown_skill'; readonly skill: string }
   | { readonly kind: 'unknown_tool'; readonly tool: string }
   | { readonly kind: 'skill_tool_not_assigned'; readonly skill: string; readonly tool: string }
+  /** A tool on the agent that none of its skills grants at that version (SK-1, ADR-0069). */
+  | { readonly kind: 'tool_not_granted_by_skill'; readonly tool: string }
   | { readonly kind: 'permission_not_held'; readonly permission: string }
   | { readonly kind: 'not_active'; readonly status: string };
 
@@ -31,6 +33,8 @@ export interface AgentCapabilities {
     readonly version: number;
     readonly known: boolean;
     readonly tools: readonly string[];
+    /** The Decision Engine actions it grants (SK-1). */
+    readonly actions: readonly string[];
     readonly reads: readonly string[];
   }[];
   readonly tools: readonly {
@@ -62,24 +66,32 @@ export function configurationCapabilities(
   },
 ): Omit<AgentCapabilities, 'ready'> {
   const problems: CapabilityProblem[] = [];
-  const assigned = new Set(configuration.tools.map((t) => t.id as string));
+  const assigned = new Set(configuration.tools.map((t) => toolKey(t.id, t.version)));
   const skills = configuration.skills.map(({ id, version }) => {
     const found = options.skills.resolve(id, version);
     if (found === undefined) problems.push({ kind: 'unknown_skill', skill: id });
-    for (const tool of found?.toolIds ?? []) {
-      if (!assigned.has(tool)) problems.push({ kind: 'skill_tool_not_assigned', skill: id, tool });
+    for (const grant of found?.tools ?? []) {
+      if (!grant.versions.some((v) => assigned.has(toolKey(grant.id, v)))) {
+        problems.push({ kind: 'skill_tool_not_assigned', skill: id, tool: grant.id });
+      }
     }
     return Object.freeze({
       id: id as string,
       version,
       known: found !== undefined,
-      tools: Object.freeze([...(found?.toolIds ?? [])] as string[]),
+      tools: Object.freeze((found?.tools ?? []).map((t) => t.id as string)),
+      actions: Object.freeze([...(found?.actions ?? [])]),
       reads: Object.freeze([...(found?.reads ?? [])] as string[]),
     });
   });
+  const granted = grantsOf(configuration.skills, options.skills).tools;
   const tools = configuration.tools.map(({ id, version }) => {
     const found = options.tools(id, version);
     if (found === undefined) problems.push({ kind: 'unknown_tool', tool: id });
+    // SK-1 (ADR-0069): a tool no skill of the agent grants at this version.
+    if (!granted.has(toolKey(id, version))) {
+      problems.push({ kind: 'tool_not_granted_by_skill', tool: id });
+    }
     return Object.freeze({
       id: id as string,
       version,

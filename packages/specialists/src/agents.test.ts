@@ -71,13 +71,11 @@ async function codeOf(run: () => Promise<unknown>): Promise<string> {
 
 /** The two tools that exist today, as the tool registry describes them. */
 const TOOLS: ToolLookup = (id, version) =>
-  version !== 1
-    ? undefined
-    : id === 'message_send'
-      ? { riskLevel: 'medium', approval: 'auto', permissions: ['conversation.send'] }
-      : id === 'conversation_handoff'
-        ? { riskLevel: 'low', approval: 'auto', permissions: ['conversation.read'] }
-        : undefined;
+  id === 'message_send' && version >= 1 && version <= 3
+    ? { riskLevel: 'medium', approval: 'auto', permissions: ['conversation.send'] }
+    : id === 'conversation_handoff' && version === 1
+      ? { riskLevel: 'low', approval: 'auto', permissions: ['conversation.read'] }
+      : undefined;
 
 async function world(roles: Record<string, readonly string[]> = ROLES) {
   const audit = new InMemoryAuditStore();
@@ -293,6 +291,30 @@ describe('agent management', () => {
           },
         }),
       ),
+    ).toBe('invalid_specialist:tools.not_granted');
+    // Even with the skill that grants it (SK-1), a revision never adds a tool that reaches out.
+    expect(
+      await codeOf(() =>
+        w.management.revise(w.tenantA, id, {
+          fromVersion: 2,
+          configuration: {
+            ...configuration,
+            skills: [...configuration.skills, { id: 'conversation_reply', version: 1 }],
+            tools: [
+              { id: 'message_send', version: 2 },
+              { id: 'conversation_handoff', version: 1 },
+            ],
+            permissions: [
+              ...new Set([
+                ...configuration.permissions,
+                'conversation.read',
+                'conversation.send',
+                'conversation.manage',
+              ]),
+            ].sort(),
+          },
+        }),
+      ),
     ).toBe('invalid_specialist:tools');
     expect(
       await codeOf(() =>
@@ -388,13 +410,17 @@ describe('what an agent may do', () => {
       } as never,
       { skills, tools: TOOLS, held: new Set(['conversation.read', 'conversation.send']) },
     );
+    // The skill grants the reply at versions 2 and 3 only (SK-1): version 1 is a person's.
     expect(found.problems).toEqual([
+      { kind: 'skill_tool_not_assigned', skill: 'conversation_reply', tool: 'message_send' },
       {
         kind: 'skill_tool_not_assigned',
         skill: 'conversation_reply',
         tool: 'conversation_handoff',
       },
+      { kind: 'tool_not_granted_by_skill', tool: 'message_send' },
       { kind: 'unknown_tool', tool: 'web_search' },
+      { kind: 'tool_not_granted_by_skill', tool: 'web_search' },
     ]);
     expect(found.tools[0]).toEqual({
       id: 'message_send',

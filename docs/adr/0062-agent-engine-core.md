@@ -34,7 +34,7 @@ What was missing:
 ### 1. Skills are catalogue data
 
 - `SKILL_CATALOGUE` in `packages/specialists/src/skills.ts` is versioned and resolved by exact version, with no "latest".
-- A skill grants nothing. It names:
+- A skill grants nothing (amended by ADR-0069: a skill is now the only source of an agent's tools and Decision Engine actions, still with no authority of its own). It names:
   - the catalogue tools it uses (the agent's version must also have them, and the gate still decides every call);
   - the permissions that read the records it works from.
 - No code assumes how many skills exist.

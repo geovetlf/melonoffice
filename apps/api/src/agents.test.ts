@@ -71,7 +71,11 @@ describe.each(STORES)('agents with storage in %s', (_name, createStores) => {
       version: 1,
       nameKey: 'agents.skill.conversation_reply.name',
       descriptionKey: 'agents.skill.conversation_reply.description',
-      tools: ['message_send', 'conversation_handoff'],
+      tools: [
+        { id: 'message_send', versions: [2, 3] },
+        { id: 'conversation_handoff', versions: [1] },
+      ],
+      actions: [],
       reads: ['conversation.read'],
     });
   });
