@@ -518,6 +518,30 @@ resource "google_firestore_index" "commercial" {
   }
 }
 
+# An agent's tasks are listed one page at a time, newest first (ADR-0063). Until this index exists,
+# the API reads the agent's tasks without it (at most 500) and logs it, like Comercial's lists.
+resource "google_firestore_index" "agent_tasks" {
+  count = var.firestore_and_auth ? 1 : 0
+
+  project     = var.project_id
+  database    = google_firestore_database.default[0].name
+  collection  = "agentTasks"
+  query_scope = "COLLECTION"
+
+  fields {
+    field_path = "organizationId"
+    order      = "ASCENDING"
+  }
+  fields {
+    field_path = "specialistId"
+    order      = "ASCENDING"
+  }
+  fields {
+    field_path = "createdAt"
+    order      = "DESCENDING"
+  }
+}
+
 # Enables Identity Platform with email and password sign-in only. Other providers and MFA are
 # added when the auth work needs them. Identity Platform cannot be disabled once enabled; a
 # destroy only removes it from state.

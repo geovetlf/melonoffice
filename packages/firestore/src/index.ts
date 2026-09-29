@@ -1,3 +1,4 @@
+export * from './agent-tasks.js';
 export * from './approvals.js';
 export * from './audit.js';
 export * from './billing.js';

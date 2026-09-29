@@ -1,4 +1,10 @@
-import type { DepartmentTypeId, MessageKey, SkillId } from '@melonoffice/domain';
+import type {
+  DepartmentTypeId,
+  MessageKey,
+  PolicyId,
+  SkillId,
+  SpecialistPolicies,
+} from '@melonoffice/domain';
 import { SKILL_CATALOGUE, type AgentSkill } from './skills.js';
 
 /**
@@ -20,7 +26,15 @@ export interface AgentTemplate {
   /** Why the agent exists, in the organization's language: stored as its `purpose`. */
   readonly purpose: Readonly<Record<AgentLocale, string>>;
   readonly skills: readonly { readonly id: SkillId; readonly version: number }[];
+  /** The model policy the agent's tasks use (ADR-0063). */
+  readonly policies: SpecialistPolicies;
 }
+
+/**
+ * The model policy of an agent's tasks (ADR-0063): named here so an agent never falls back to
+ * the default policy. The policy itself is configuration of the worker (Vertex AI, DEV only).
+ */
+export const AGENT_TASK_POLICY_REF = Object.freeze({ id: 'agent_task' as PolicyId, version: 1 });
 
 export const AGENT_LOCALES = ['es', 'en'] as const;
 export type AgentLocale = (typeof AGENT_LOCALES)[number];
@@ -44,7 +58,9 @@ const template = (
     mainRoleId: `${id}_agent`,
     roleVersion: 1,
     purpose: Object.freeze(purpose),
-    skills: Object.freeze(skills.map(skillRef)),
+    // Every agent can read what the company knows for its department (ADR-0063).
+    skills: Object.freeze(['company_knowledge', ...skills].map(skillRef)),
+    policies: Object.freeze({ model: AGENT_TASK_POLICY_REF }),
   });
 
 export const AGENT_TEMPLATES: readonly AgentTemplate[] = Object.freeze([

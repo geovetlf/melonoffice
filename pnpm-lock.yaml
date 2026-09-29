@@ -62,6 +62,9 @@ importers:
       '@melonoffice/activity':
         specifier: workspace:*
         version: link:../../packages/activity
+      '@melonoffice/agents':
+        specifier: workspace:*
+        version: link:../../packages/agents
       '@melonoffice/ai-gateway':
         specifier: workspace:*
         version: link:../../packages/ai-gateway
@@ -196,6 +199,9 @@ importers:
       '@hono/node-server':
         specifier: 2.1.1
         version: 2.1.1(hono@4.13.9)
+      '@melonoffice/agents':
+        specifier: workspace:*
+        version: link:../../packages/agents
       '@melonoffice/ai-gateway':
         specifier: workspace:*
         version: link:../../packages/ai-gateway
@@ -211,6 +217,9 @@ importers:
       '@melonoffice/auth':
         specifier: workspace:*
         version: link:../../packages/auth
+      '@melonoffice/brain':
+        specifier: workspace:*
+        version: link:../../packages/brain
       '@melonoffice/conversations':
         specifier: workspace:*
         version: link:../../packages/conversations
@@ -285,6 +294,46 @@ importers:
         specifier: workspace:*
         version: link:../tenancy
     devDependencies:
+      '@melonoffice/auth':
+        specifier: workspace:*
+        version: link:../auth
+      '@melonoffice/config':
+        specifier: workspace:*
+        version: link:../config
+      '@melonoffice/credits':
+        specifier: workspace:*
+        version: link:../credits
+      '@melonoffice/departments':
+        specifier: workspace:*
+        version: link:../departments
+
+  packages/agents:
+    dependencies:
+      '@melonoffice/ai-gateway':
+        specifier: workspace:*
+        version: link:../ai-gateway
+      '@melonoffice/brain':
+        specifier: workspace:*
+        version: link:../brain
+      '@melonoffice/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@melonoffice/execution':
+        specifier: workspace:*
+        version: link:../execution
+      '@melonoffice/rbac':
+        specifier: workspace:*
+        version: link:../rbac
+      '@melonoffice/specialists':
+        specifier: workspace:*
+        version: link:../specialists
+      '@melonoffice/tenancy':
+        specifier: workspace:*
+        version: link:../tenancy
+    devDependencies:
+      '@melonoffice/audit':
+        specifier: workspace:*
+        version: link:../audit
       '@melonoffice/auth':
         specifier: workspace:*
         version: link:../auth
@@ -612,6 +661,9 @@ importers:
       '@google-cloud/firestore':
         specifier: 8.7.1
         version: 8.7.1
+      '@melonoffice/agents':
+        specifier: workspace:*
+        version: link:../agents
       '@melonoffice/approvals':
         specifier: workspace:*
         version: link:../approvals

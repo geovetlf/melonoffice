@@ -52,6 +52,7 @@ import {
   type ChannelTemplateRepository,
 } from '@melonoffice/integrations';
 import { InMemoryPlanRepository, type PlanRepository } from '@melonoffice/planning';
+import { InMemoryAgentTaskRepository, type AgentTaskRepository } from '@melonoffice/agents';
 import { InMemoryWorkflowRepository, type WorkflowRepository } from '@melonoffice/workflows';
 import type {
   BillingAccount,
@@ -98,6 +99,7 @@ import {
   CREDIT_WALLETS,
   FirestoreCreditStore,
   FirestorePlanRepository,
+  FirestoreAgentTaskRepository,
   PLAN_VERSIONS,
   FirestoreWorkflowRepository,
   FirestoreTenancyStore,
@@ -152,6 +154,8 @@ export interface Stores {
   /** The audit trail's read side (ADR-0049). */
   readonly auditReader: AuditReader & AuditHistoryReader;
   readonly knowledge: KnowledgeRepository;
+  /** What people asked agents (ADR-0063). */
+  readonly agentTasks: AgentTaskRepository;
   /** The department catalogue migration's storage (ADR-0047). */
   readonly departmentMigration: DepartmentMigrationStore;
   readonly credits: CreditStore;
@@ -225,6 +229,7 @@ function memoryStores(): Stores {
     businessProfiles: new InMemoryBusinessProfileRepository(breakable),
     auditReader: events,
     knowledge: new InMemoryKnowledgeRepository(breakable),
+    agentTasks: new InMemoryAgentTaskRepository(),
     departmentMigration: new InMemoryDepartmentMigrationStore(
       departments,
       specialists,
@@ -285,6 +290,7 @@ function firestoreStores(): Stores {
     businessProfiles: new FirestoreBusinessProfileRepository(db),
     auditReader: new FirestoreAuditStore(db),
     knowledge: new FirestoreKnowledgeRepository(db),
+    agentTasks: new FirestoreAgentTaskRepository(db),
     departmentMigration: new FirestoreDepartmentMigrationStore(db),
     async putStructure(record) {
       if ('origin' in record) {
@@ -411,6 +417,11 @@ export function setupApp(
     // Retries (ADR-0045) wait no time here: the jitter is always zero.
     random: () => 0,
   });
+  // Stands in for the runtime's kickoff (ADR-0063): every queued agent task is recorded.
+  const kicked: string[] = [];
+  const kickoff = {
+    kickoff: async (_tenant: unknown, executionId: string) => void kicked.push(executionId),
+  };
   // Stands in for Cloud Tasks: every scheduled follow-up task is recorded, nothing is queued.
   const scheduled: { readonly task: FollowUpTask; readonly at: Date }[] = [];
   const scheduler =
@@ -444,6 +455,7 @@ export function setupApp(
       ...(scheduler === null ? {} : { followUpScheduler: scheduler }),
     },
     webhooks: engine,
+    agentTasks: { repository: stores.agentTasks, outputs: agentOutputs, runtime: kickoff },
     ...(forecasting ? { forecasting } : {}),
     ...(tools ? { tools } : {}),
     ...(webOrigins ? { webOrigins } : {}),
@@ -461,5 +473,5 @@ export function setupApp(
         userId: string;
       }
     ).userId;
-  return { app, lines, as, register, meta, agentOutputs, scheduled, ...stores };
+  return { app, lines, as, register, meta, agentOutputs, scheduled, kicked, ...stores };
 }

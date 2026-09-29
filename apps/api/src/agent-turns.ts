@@ -58,6 +58,11 @@ export interface AgentTurns {
    * is already stored, and a job that cannot be handed back stays queued.
    */
   afterDecision(tenant: TenantContext, approval: Approval): Promise<void>;
+  /**
+   * Queues a started execution's first node and hands it to the worker (an agent task, ADR-0063).
+   * The runtime refuses one that already ran (`execution_in_progress`).
+   */
+  kickoff(tenant: TenantContext, executionId: string, correlationId?: string): Promise<unknown>;
 }
 
 /**
@@ -158,6 +163,8 @@ export function createAgentTurns(options: AgentTurnsOptions): AgentTurns {
 
   return Object.freeze({
     trigger,
+    kickoff: (tenant: TenantContext, executionId: string, correlationId?: string) =>
+      runtime.kickoff(tenant, executionId, correlationId),
     async afterDecision(tenant: TenantContext, approval: Approval) {
       try {
         const execution = await options.executions.find(

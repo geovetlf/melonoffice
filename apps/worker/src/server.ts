@@ -8,6 +8,7 @@ import {
   CREDIT_RATE,
 } from '@melonoffice/ai-gateway';
 import {
+  AGENT_TASK_POLICY,
   CONVERSATION_AGENT_POLICY,
   createVertexAIAdapter,
   VERTEX_AI_MODELS,
@@ -18,6 +19,7 @@ import { createServiceIdentityVerifier } from '@melonoffice/auth';
 import { createCreditService } from '@melonoffice/credits';
 import {
   FirestoreAgentOutputRepository,
+  FirestoreAgentTaskRepository,
   FirestoreApprovalRepository,
   FirestoreAuditStore,
   FirestoreBusinessProfileRepository,
@@ -30,6 +32,7 @@ import {
   FirestoreExecutionRepository,
   FirestoreForecastRepository,
   FirestoreJobRepository,
+  FirestoreKnowledgeRepository,
   FirestoreSpecialistRepository,
   FirestoreTenancyStore,
 } from '@melonoffice/firestore';
@@ -51,7 +54,7 @@ import {
 import { createLogger } from '@melonoffice/observability';
 import { createAuthorizationService } from '@melonoffice/rbac';
 import { createToolRegistry, TOOL_CATALOGUE } from '@melonoffice/tools';
-import { createConversationAgentParts } from './agents.js';
+import { createAgentTaskParts, createConversationAgentParts, routeAgentWork } from './agents.js';
 import { randomUUID } from 'node:crypto';
 import { createApp, RUN_JOB_PATH, SERVICE_NAME, type AppOptions } from './app.js';
 import { loadConfig, type RuntimeConfig } from './config.js';
@@ -84,6 +87,7 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
     audit: new FirestoreAuditStore(firestore),
   };
   const { vertexAI, channelSecretsProjectId, whatsappGraphApiVersion } = config.agents;
+  const agentOutputs = new FirestoreAgentOutputRepository(firestore);
   // Conversation agents (CV-6B, ADR-0043): their tools' executors, work source, verifier, answer
   // store and stop hook. The reply's executor exists only where channel secrets are configured;
   // without it a reply fails at the gate and the conversation goes to a person.
@@ -91,7 +95,7 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
     stores: {
       ...stores,
       conversations: new FirestoreConversationRepository(firestore),
-      outputs: new FirestoreAgentOutputRepository(firestore),
+      outputs: agentOutputs,
     },
     ...(channelSecretsProjectId === undefined
       ? {}
@@ -119,6 +123,20 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
         }),
     logger: logger.child({ component: 'conversation-agents' }),
   });
+  // Agent tasks (ADR-0063): the same runtime runs them, with Company Brain as their context.
+  const routed = routeAgentWork(
+    agents,
+    createAgentTaskParts({
+      stores: {
+        tenancy,
+        specialists: stores.specialists,
+        tasks: new FirestoreAgentTaskRepository(firestore),
+        knowledge: new FirestoreKnowledgeRepository(firestore),
+        outputs: agentOutputs,
+      },
+      logger: logger.child({ component: 'agent-tasks' }),
+    }),
+  );
   const { jobs: jobService, runtime: engine } = createWorkerRuntime({
     stores,
     environment: runtime.environment,
@@ -155,12 +173,12 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
             }),
             rate: CREDIT_RATE,
           },
-          policies: createModelPolicyCatalogue([CONVERSATION_AGENT_POLICY]),
+          policies: createModelPolicyCatalogue([CONVERSATION_AGENT_POLICY, AGENT_TASK_POLICY]),
         }),
-    work: agents.work,
-    verifier: agents.verifier,
+    work: routed.work,
+    verifier: routed.verifier,
     outputs: agents.outputs,
-    onStopped: agents.onStopped,
+    onStopped: routed.onStopped,
     dispatcher: createCloudTasksDispatcher({
       queue: runtime.queue,
       targetUrl: `${runtime.workerUrl}${RUN_JOB_PATH}`,

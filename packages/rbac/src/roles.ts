@@ -27,6 +27,7 @@ export const ROLES = {
     'department.read',
     'specialist.read',
     'specialist.manage',
+    'specialist.task',
     'tool.read',
     'tool.execute',
     'approval.read',

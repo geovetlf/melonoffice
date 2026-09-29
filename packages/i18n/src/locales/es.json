@@ -27,6 +27,8 @@
   "agents.template.research.name": "Agente de investigación",
   "agents.skill.conversation_reply.name": "Responder conversaciones",
   "agents.skill.conversation_reply.description": "Responde a los clientes en las conversaciones asignadas y las pasa a una persona cuando hace falta.",
+  "agents.skill.company_knowledge.name": "Conocimiento de la empresa",
+  "agents.skill.company_knowledge.description": "Lee lo que dice la memoria de la empresa, para su departamento.",
   "agents.skill.customer_follow_up.name": "Seguimiento de clientes",
   "agents.skill.customer_follow_up.description": "Lleva el control de clientes, oportunidades y seguimientos pendientes.",
   "agents.skill.pipeline_analysis.name": "Análisis del embudo",
