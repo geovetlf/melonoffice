@@ -14,6 +14,8 @@ import {
 import { FollowUpForm } from '../followUps/FollowUps.js';
 import type { FollowUpView, FollowUpsClient } from '../followUps/followUpsClient.js';
 import { navigate } from '../identity/router.js';
+import { errorKey, MAX_REQUEST, newRequestKey } from '../office/AgentTasks.js';
+import type { AgentTaskView, AgentTasksClient } from '../office/agentTasksClient.js';
 import { paths } from '../shell/routes.js';
 import { GiaAvatar } from './GiaAvatar.js';
 import type {
@@ -45,6 +47,8 @@ export interface GiaChat {
   send(text: string): void;
   /** Where a follow-up GIA prepared is confirmed (C5); absent when the role may not schedule. */
   readonly followUps?: FollowUpsClient;
+  /** Where a task GIA prepared for an agent is sent (AE-3); absent when the role may not. */
+  readonly agentTasks?: AgentTasksClient;
 }
 
 const UNAVAILABLE: GiaChat = {
@@ -60,11 +64,14 @@ const newKey = () => globalThis.crypto.randomUUID();
 export function GiaChatProvider({
   client,
   followUps,
+  agentTasks,
   children,
 }: {
   readonly client: GiaClient | undefined;
   /** Follow-ups (C5), for a role that may schedule them: GIA's proposals are confirmed here. */
   readonly followUps?: FollowUpsClient;
+  /** Agent tasks (AE-3), for a role that may give them: GIA's prepared tasks are sent here. */
+  readonly agentTasks?: AgentTasksClient;
   readonly children: ReactNode;
 }) {
   const intl = useIntl();
@@ -113,8 +120,9 @@ export function GiaChatProvider({
             pending,
             send,
             ...(followUps === undefined ? {} : { followUps }),
+            ...(agentTasks === undefined ? {} : { agentTasks }),
           },
-    [client, entries, pending, send, followUps],
+    [client, entries, pending, send, followUps, agentTasks],
   );
   return <GiaChatContext.Provider value={value}>{children}</GiaChatContext.Provider>;
 }
@@ -388,6 +396,111 @@ function FollowUpProposal({ answer }: { readonly answer: GiaAnswerView }) {
   );
 }
 
+/**
+ * A task GIA prepared for one of the agents (AE-3), for the person to read, edit and confirm:
+ * nothing is sent until they do, and the chat says it was sent only once the API took it.
+ */
+function AgentTaskProposal({ answer }: { readonly answer: GiaAnswerView }) {
+  const chat = useGiaChat();
+  const proposal = answer.proposedAgentTask;
+  const [text, setText] = useState(proposal?.request ?? '');
+  const [state, setState] = useState<'open' | 'sending' | 'discarded' | AgentTaskView>('open');
+  const [error, setError] = useState<string>();
+  // One key per proposal: a retry after a failure is the same task, never a second one.
+  const key = useRef(newRequestKey());
+  if (proposal === null) return null;
+  const name = proposal.agentName;
+  if (chat.agentTasks === undefined) {
+    return (
+      <p className="gia-chat__meta">
+        <FormattedMessage id="gia.chat.agentTask.notAllowed" />
+      </p>
+    );
+  }
+  if (state === 'discarded') {
+    return (
+      <p className="gia-chat__meta">
+        <FormattedMessage id="gia.chat.agentTask.discarded" />
+      </p>
+    );
+  }
+  if (state !== 'open' && state !== 'sending') {
+    const place = paths.agent(proposal.department.replaceAll('_', '-'), proposal.agentId);
+    return (
+      <p className="gia-chat__meta" role="status">
+        <FormattedMessage id="gia.chat.agentTask.sent" values={{ name }} />{' '}
+        <a
+          className="gia-chat__go"
+          href={place}
+          onClick={(event) => {
+            event.preventDefault();
+            navigate(place);
+          }}
+        >
+          <FormattedMessage id="gia.chat.agentTask.see" values={{ name }} />
+        </a>
+      </p>
+    );
+  }
+  const client = chat.agentTasks;
+  const confirm = async (event: FormEvent) => {
+    event.preventDefault();
+    const request = text.trim();
+    if (request === '' || state === 'sending') return;
+    setState('sending');
+    setError(undefined);
+    try {
+      setState(await client.assign(proposal.agentId, request, key.current));
+    } catch (failure) {
+      setError(errorKey(failure));
+      setState('open');
+    }
+  };
+  return (
+    <form className="gia-chat__proposal" aria-label="agent task proposal" onSubmit={confirm}>
+      <p className="gia-chat__meta">
+        <FormattedMessage id="gia.chat.agentTask.prepared" values={{ name }} />
+      </p>
+      <label>
+        <FormattedMessage id="gia.chat.agentTask.request" values={{ name }} />
+        <textarea
+          className="gia-chat__input"
+          value={text}
+          maxLength={MAX_REQUEST}
+          rows={3}
+          onChange={(event) => {
+            setText(event.target.value);
+            setError(undefined);
+          }}
+        />
+      </label>
+      <p className="gia-chat__meta">
+        <FormattedMessage id="gia.chat.agentTask.hint" />
+      </p>
+      {error === undefined ? null : (
+        <p className="gia-chat__error" role="alert">
+          <FormattedMessage id={error} />
+        </p>
+      )}
+      <div className="customers__actions">
+        <Button type="submit" disabled={state === 'sending' || text.trim() === ''}>
+          <FormattedMessage
+            id={state === 'sending' ? 'gia.chat.agentTask.sending' : 'gia.chat.agentTask.confirm'}
+          />
+        </Button>
+        <Button
+          type="button"
+          variant="secondary"
+          disabled={state === 'sending'}
+          onClick={() => setState('discarded')}
+        >
+          <FormattedMessage id="gia.chat.agentTask.discard" />
+        </Button>
+      </div>
+    </form>
+  );
+}
+
 function GiaReply({ answer }: { readonly answer: GiaAnswerView }) {
   const intl = useIntl();
   const key = answer.department === null ? undefined : `department.${answer.department}.short`;
@@ -481,6 +594,7 @@ function GiaReply({ answer }: { readonly answer: GiaAnswerView }) {
         </ul>
       )}
       <FollowUpProposal answer={answer} />
+      <AgentTaskProposal answer={answer} />
       {place === undefined ? null : (
         <a
           className="gia-chat__go"

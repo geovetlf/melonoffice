@@ -178,6 +178,7 @@ describe.each(STORES)('GIA chat with storage in %s (ADR-0052)', (_name, createSt
         proposedAction: ANSWER.proposedAction,
         proposedFacts: 0,
         proposedFollowUp: null,
+        proposedAgentTask: null,
         forecast: null,
         links: [],
         context: {
@@ -185,6 +186,7 @@ describe.each(STORES)('GIA chat with storage in %s (ADR-0052)', (_name, createSt
           activity: true,
           commercial: true,
           forecast: false,
+          agents: true,
           missing: ['what_you_do', 'main_products', 'customers', 'areas', 'goals', 'tone'],
         },
         replayed: false,
@@ -290,6 +292,70 @@ describe.each(STORES)('GIA chat with storage in %s (ADR-0052)', (_name, createSt
         expect.objectContaining({ key: 'description', verification: 'proposed' }),
       ]),
     );
+  });
+
+  it('prepares a task for an active agent; only the person’s confirmation assigns it (AE-3)', async () => {
+    const t = await setup();
+    const base = `/v1/organizations/${t.orgA}`;
+    const created = await t.post('token-alice', `${base}/specialists`, {
+      templateId: 'commercial',
+      displayName: 'Lucía',
+    });
+    const agentId = created.body.id as string;
+    // A draft agent is not offered to GIA.
+    const draft = await t.ask('token-alice', t.orgA, body('Hola', 'click-ae3-00'));
+    expect(JSON.stringify(t.provider.calls[0])).toContain('(no active agents)');
+    expect(draft.body.proposedAgentTask).toBeNull();
+    await t.post('token-alice', `${base}/specialists/${agentId}/status`, {
+      from: 'draft',
+      to: 'active',
+    });
+    t.provider.state.answer = () => ({
+      status: 'success',
+      output: {
+        text: JSON.stringify({
+          ...ANSWER,
+          answer: 'Le preparé la tarea a Lucía. Confírmala para enviársela.',
+          agentTask: {
+            agent: 'a_a',
+            request: 'Prepara una propuesta de catering para 50 personas.',
+          },
+        }),
+      },
+      usage: { inputTokens: 1_000, outputTokens: 500 },
+      finishReason: 'stop',
+    });
+    const answer = await t.ask(
+      'token-alice',
+      t.orgA,
+      body('Pídele a Lucía una propuesta de catering para 50 personas', 'click-ae3-01'),
+    );
+    expect(answer.body).toMatchObject({
+      proposedAgentTask: {
+        agentId,
+        agentName: 'Lucía',
+        department: 'sales',
+        request: 'Prepara una propuesta de catering para 50 personas.',
+      },
+      context: { agents: true },
+    });
+    const sent = JSON.stringify(t.provider.calls[1]);
+    expect(sent).toContain('a_a \\"Lucía\\" (department sales)');
+    expect(sent).not.toContain(agentId);
+    // Nothing was assigned: the agent has no task until the person confirms.
+    const list = async () =>
+      (await (
+        await t.app.request(`${base}/specialists/${agentId}/tasks`, t.as('token-alice'))
+      ).json()) as { tasks: { request: string }[] };
+    expect((await list()).tasks).toEqual([]);
+    const confirmed = await t.post('token-alice', `${base}/specialists/${agentId}/tasks`, {
+      request: (answer.body.proposedAgentTask as { request: string }).request,
+      idempotencyKey: 'gia-click-ae3-01',
+    });
+    expect(confirmed.status).toBe(202);
+    expect((await list()).tasks.map((task) => task.request)).toEqual([
+      'Prepara una propuesta de catering para 50 personas.',
+    ]);
   });
 
   // C4: GIA's commercial intelligence, on the real C1/C2 services and storage.

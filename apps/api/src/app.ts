@@ -119,7 +119,7 @@ import { registerExecutionRoutes } from './executions.js';
 import { registerHealth } from './health.js';
 import { registerPlanRoutes } from './plans.js';
 import { registerSpecialistRoutes, toolLookupOf } from './specialists.js';
-import { registerAgentTaskRoutes } from './agent-tasks.js';
+import { giaAgentsOf, registerAgentTaskRoutes } from './agent-tasks.js';
 import { registerTenancyRoutes } from './tenancy.js';
 import { registerToolRoutes } from './tools.js';
 import { registerWebhookRoutes } from './webhooks.js';
@@ -645,6 +645,12 @@ export function createApp({
                     }),
                 ...(commercial === undefined ? {} : { commercial: commercial.insights }),
                 ...(forecastEngine === undefined ? {} : { forecasting: forecastEngine }),
+                // AE-3: GIA prepares tasks for the agents only where they can be assigned.
+                ...(agentTasks === undefined ||
+                executions === undefined ||
+                specialists === undefined
+                  ? {}
+                  : { agents: giaAgentsOf(structure) }),
                 departments: structure.departments,
                 authorization,
                 audit,

@@ -37,6 +37,18 @@ export interface GiaFollowUpProposalView {
   readonly timeZone: string;
 }
 
+/**
+ * A task GIA prepared for one of the organization's active agents (AE-3): nothing is sent until
+ * the person confirms it, through the agent tasks API, as themselves.
+ */
+export interface GiaAgentTaskProposalView {
+  readonly agentId: string;
+  readonly agentName: string;
+  /** The catalogue type of the agent's department, which names its office. */
+  readonly department: string;
+  readonly request: string;
+}
+
 export interface GiaAnswerView {
   readonly answer: string;
   readonly department: string | null;
@@ -45,6 +57,7 @@ export interface GiaAnswerView {
   readonly proposedFacts: number;
   readonly links: readonly GiaLinkView[];
   readonly proposedFollowUp: GiaFollowUpProposalView | null;
+  readonly proposedAgentTask: GiaAgentTaskProposalView | null;
   /** The answer carries a finished projection (ADR-0059): by the model or the simple fallback. */
   readonly forecast: 'model' | 'fallback' | null;
   /** What the Forecasting Engine said is missing for a projection, from its own result. */
@@ -133,6 +146,26 @@ function proposalOf(raw: unknown): GiaFollowUpProposalView | null {
   };
 }
 
+const DEPARTMENT_TYPE = /^[a-z][a-z_]{0,63}$/;
+
+function agentTaskOf(raw: unknown): GiaAgentTaskProposalView | null {
+  if (!isRecord(raw)) return null;
+  const { agentId, agentName, department, request } = raw;
+  if (
+    typeof agentId !== 'string' ||
+    agentId === '' ||
+    typeof agentName !== 'string' ||
+    agentName === '' ||
+    typeof department !== 'string' ||
+    !DEPARTMENT_TYPE.test(department) ||
+    typeof request !== 'string' ||
+    request.trim() === ''
+  ) {
+    return null;
+  }
+  return { agentId, agentName, department, request };
+}
+
 function forecastOf(raw: unknown): GiaAnswerView['forecast'] {
   if (!isRecord(raw) || raw.status !== 'completed') return null;
   return raw.model === 'model' || raw.model === 'fallback' ? raw.model : null;
@@ -202,6 +235,7 @@ export function createGiaClient(request: ReplyRequest, organizationId: string): 
           proposedFacts: typeof body.proposedFacts === 'number' ? body.proposedFacts : 0,
           links: linksOf(body.links),
           proposedFollowUp: proposalOf(body.proposedFollowUp),
+          proposedAgentTask: agentTaskOf(body.proposedAgentTask),
           forecast: forecastOf(body.forecast),
           forecastGap: forecastGapOf(body.forecast),
         },

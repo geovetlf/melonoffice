@@ -6,11 +6,59 @@ import {
   type AgentTaskService,
   type TaskWithExecution,
 } from '@melonoffice/agents';
+import type { DepartmentRepository } from '@melonoffice/departments';
 import { isExecutionError, type AgentOutputStore } from '@melonoffice/execution';
+import type { GiaAgentsPort } from '@melonoffice/gia';
+import type { SpecialistRepository } from '@melonoffice/specialists';
 import type { TenantContext } from '@melonoffice/tenancy';
 import type { Context, Hono } from 'hono';
 import type { AuthEnv } from './auth.js';
 import { withPermission, type AuthorizationDependencies } from './authorization.js';
+
+/**
+ * The organization's agents GIA may prepare a task for (AE-3, ADR-0064): active agents of an
+ * active catalogue department, by name, department type and purpose. Nothing else of an agent
+ * reaches GIA, and she assigns nothing: the person confirms through the routes below.
+ */
+export function giaAgentsOf(structure: {
+  readonly departments: Pick<DepartmentRepository, 'list'>;
+  readonly specialists: Pick<SpecialistRepository, 'list'>;
+}): GiaAgentsPort {
+  return {
+    async active(tenant) {
+      const organizationId = tenant.organizationId;
+      const [departments, agents] = await Promise.all([
+        structure.departments.list(organizationId),
+        structure.specialists.list(organizationId),
+      ]);
+      const types = new Map(
+        departments.flatMap((d) =>
+          d.organizationId === organizationId &&
+          d.status === 'active' &&
+          d.origin.kind === 'catalog'
+            ? [[d.id as string, d.origin.typeId as string] as const]
+            : [],
+        ),
+      );
+      return agents
+        .filter((a) => a.organizationId === organizationId && a.status === 'active')
+        .flatMap((a) => {
+          const department = types.get(a.configuration.departmentId);
+          if (department === undefined) return [];
+          const purpose = a.configuration.purpose?.trim();
+          return [
+            {
+              id: a.identity.id,
+              name: a.identity.displayName,
+              department,
+              purpose: purpose === undefined || purpose === '' ? null : purpose,
+            },
+          ];
+        })
+        .sort((x, y) => x.name.localeCompare(y.name) || x.id.localeCompare(y.id));
+    },
+  };
+}
 
 /**
  * Agent task routes (ADR-0063). A person asks one of the organization's agents for a task
