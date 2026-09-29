@@ -72,7 +72,10 @@ export interface FakeBackend {
     followUps: Record<string, Record<string, unknown>[]>;
     /** Each agent's tasks (ADR-0063), newest first, as the API's views. */
     agentTasks: Record<string, Record<string, unknown>[]>;
-    /** Each organization's workflows (WF-3), as the API lists them. */
+    /**
+     * Each organization's workflows (WF-3), as the API lists them. A `steps` field is the current
+     * version's steps for `GET workflows/:id`; writes keep what was sent there.
+     */
     workflows: Record<string, Record<string, unknown>[]>;
     /**
      * Each organization's plans (WF-3), as the API shows one (with `current`), and each plan's
@@ -854,10 +857,83 @@ export function fakeBackend(): FakeBackend {
         (found === undefined ? json(404, { error: 'task_not_found' }) : json(200, found))
       );
     }
+    if (route === 'workflows' && method === 'POST') {
+      const denied = needs('workflow.manage');
+      if (denied !== undefined) return denied;
+      const input = JSON.parse(body ?? '{}') as { name?: string; steps?: unknown[] };
+      if (typeof input.name !== 'string' || input.name.trim() === '') {
+        return json(400, { error: 'invalid_workflow', detail: 'name' });
+      }
+      const list = (options.workflows[organizationId] ??= []);
+      const created = {
+        id: `wf-${list.length + 1}`,
+        name: input.name,
+        status: 'draft',
+        version: 1,
+        createdAt: '2026-09-29T12:00:00Z',
+        createdBy: 'user-1',
+        updatedAt: '2026-09-29T12:00:00Z',
+        steps: input.steps,
+      };
+      list.push(created);
+      return json(201, created);
+    }
     if (route === 'workflows') {
       return (
         needs('workflow.read') ?? json(200, { workflows: options.workflows[organizationId] ?? [] })
       );
+    }
+    const oneWorkflow = route?.match(/^workflows\/([^/]+)(?:\/(versions|status))?$/);
+    if (oneWorkflow?.[1] !== undefined) {
+      const workflow = (options.workflows[organizationId] ?? []).find(
+        (w) => w.id === oneWorkflow[1],
+      );
+      const action = oneWorkflow[2];
+      if (action === undefined && method === 'GET') {
+        const denied = needs('workflow.read');
+        if (denied !== undefined) return denied;
+        if (workflow === undefined) return json(404, { error: 'workflow_not_found' });
+        const steps = (workflow.steps as Record<string, unknown>[] | undefined) ?? [
+          {
+            id: 'research',
+            kind: 'specialist',
+            label: 'Research',
+            dependsOn: [],
+            assignee: { departmentTypeId: 'research', roleId: 'research_agent' },
+          },
+        ];
+        return json(200, {
+          ...workflow,
+          current: {
+            version: workflow.version,
+            name: workflow.name,
+            steps: steps.map((s) => ({
+              performedBy: null,
+              tool: null,
+              ...s,
+              assignee: s.assignee ?? null,
+              approvalRequired: s.approvalRequired ?? false,
+            })),
+          },
+        });
+      }
+      if (action !== undefined && method === 'POST') {
+        const denied = needs('workflow.manage');
+        if (denied !== undefined) return denied;
+        if (workflow === undefined) return json(404, { error: 'workflow_not_found' });
+        const input = JSON.parse(body ?? '{}') as Record<string, unknown>;
+        if (action === 'status') {
+          if (input.from !== workflow.status) {
+            return json(409, { error: 'workflow_concurrency_conflict' });
+          }
+          workflow.status = input.to;
+        } else {
+          workflow.version = (workflow.version as number) + 1;
+          if (typeof input.name === 'string') workflow.name = input.name;
+          workflow.steps = input.steps;
+        }
+        return json(action === 'status' ? 200 : 201, workflow);
+      }
     }
     const planWorkflow = route?.match(/^workflows\/([^/]+)\/plans$/);
     if (planWorkflow?.[1] !== undefined && method === 'POST') {

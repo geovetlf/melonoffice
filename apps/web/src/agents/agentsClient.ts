@@ -11,6 +11,7 @@ export interface AgentTemplateView {
   readonly id: string;
   readonly departmentTypeId: string;
   readonly nameKey: string;
+  readonly role: { readonly id: string; readonly version: number };
   readonly purpose: Readonly<Record<string, string>>;
   readonly skills: readonly { readonly id: string; readonly version: number }[];
 }

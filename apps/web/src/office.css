@@ -2421,6 +2421,35 @@ a.sidebar__item:hover {
   overflow-wrap: anywhere;
 }
 
+.automations__detail {
+  flex-basis: 100%;
+}
+
+/* Writing a workflow (block 4). */
+.workflow-editor__steps {
+  display: grid;
+  gap: var(--mo-space-3);
+  margin: var(--mo-space-3) 0;
+  padding-left: var(--mo-space-4);
+}
+
+.workflow-editor__step {
+  padding: var(--mo-space-3);
+  border: 1px solid var(--office-line);
+  border-radius: 12px;
+}
+
+.workflow-editor__step select {
+  max-width: 100%;
+}
+
+.workflow-editor__check {
+  display: flex;
+  align-items: center;
+  gap: var(--mo-space-2);
+  margin-top: var(--mo-space-3);
+}
+
 /* Documents (DOC-3). */
 .documents__lead,
 .documents__hint {

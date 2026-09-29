@@ -88,6 +88,7 @@ export function AppShell(locale: LocaleProps) {
   const canReadPlans = useCan('plan.read');
   const canPlanWorkflows = useCan('plan.create');
   const canDecidePlans = useCan('approval.approve');
+  const canManageWorkflows = useCan('workflow.manage');
   const route = parseRoute(usePath());
   const [menuOpen, setMenuOpen] = useState(false);
   useEffect(() => {
@@ -289,7 +290,9 @@ export function AppShell(locale: LocaleProps) {
                 readPlans: canReadPlans,
                 planWorkflows: canPlanWorkflows,
                 decidePlans: canDecidePlans,
+                manageWorkflows: canManageWorkflows,
               }}
+              templates={canReadAgents ? clients.agents.templates : undefined}
             />
           </div>
         ) : (

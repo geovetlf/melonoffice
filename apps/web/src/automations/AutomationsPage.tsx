@@ -1,16 +1,22 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
 import { Button } from '@melonoffice/ui';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type { AgentTemplateView } from '../agents/agentsClient.js';
 import { newRequestKey } from '../office/AgentTasks.js';
 import {
   AutomationsError,
   isRunningPlan,
+  WORKFLOW_TRANSITIONS,
   type AutomationsClient,
   type PlanDetail,
   type PlanStepProgress,
   type PlanView,
+  type WorkflowDetail,
+  type WorkflowStatus,
+  type WorkflowStepDraft,
   type WorkflowView,
 } from './automationsClient.js';
+import { draftsOf, WorkflowEditor } from './WorkflowEditor.js';
 
 /**
  * Automations (WF-3, ADR-0071): the organization's workflows and the plans made from them or by
@@ -25,7 +31,18 @@ export interface AutomationsPermissions {
   readonly readPlans: boolean;
   readonly planWorkflows: boolean;
   readonly decidePlans: boolean;
+  /** `workflow.manage`: create, version and move workflows. */
+  readonly manageWorkflows?: boolean;
 }
+
+type Editing =
+  | { readonly mode: 'create' }
+  | {
+      readonly mode: 'version';
+      readonly id: string;
+      readonly name: string;
+      readonly steps: readonly WorkflowStepDraft[];
+    };
 
 type Load<T> =
   | { readonly status: 'loading' }
@@ -57,9 +74,12 @@ const newestFirst = (a: PlanView, b: PlanView) => (a.createdAt < b.createdAt ? 1
 export function AutomationsPage({
   client,
   permissions,
+  templates,
 }: {
   readonly client: AutomationsClient;
   readonly permissions: AutomationsPermissions;
+  /** The agent catalogue, for who does each step; without it workflows are not written here. */
+  readonly templates?: (() => Promise<readonly AgentTemplateView[]>) | undefined;
 }) {
   const [workflows, setWorkflows] = useState<Load<readonly WorkflowView[]>>({ status: 'loading' });
   const [plans, setPlans] = useState<Load<readonly PlanView[]>>({ status: 'loading' });
@@ -67,6 +87,10 @@ export function AutomationsPage({
   const [error, setError] = useState<string>();
   const [refused, setRefused] = useState<string>();
   const [pending, setPending] = useState<string>();
+  const [editing, setEditing] = useState<Editing>();
+  const [openWorkflow, setOpenWorkflow] = useState<string>();
+  const [notice, setNotice] = useState<string>();
+  const canWrite = permissions.manageWorkflows === true && templates !== undefined;
   // One key per workflow and press: a retry after a network failure is the same plan.
   const keys = useRef(new Map<string, string>());
 
@@ -77,6 +101,14 @@ export function AutomationsPage({
       () => setPlans({ status: 'error' }),
     );
   }, [client, permissions.readPlans]);
+
+  const loadWorkflows = useCallback(() => {
+    if (!permissions.readWorkflows) return;
+    client.workflows().then(
+      (value) => setWorkflows({ status: 'ready', value }),
+      () => setWorkflows({ status: 'error' }),
+    );
+  }, [client, permissions.readWorkflows]);
 
   useEffect(() => {
     let live = true;
@@ -91,6 +123,44 @@ export function AutomationsPage({
       live = false;
     };
   }, [client, permissions.readWorkflows, loadPlans]);
+
+  const save = useCallback(
+    (name: string, steps: readonly WorkflowStepDraft[], workflowId?: string) =>
+      workflowId === undefined
+        ? client.createWorkflow(name, steps)
+        : client.publishVersion(workflowId, name, steps),
+    [client],
+  );
+
+  async function move(workflow: WorkflowView, to: WorkflowStatus) {
+    if (pending !== undefined) return;
+    if (
+      to === 'archived' &&
+      !globalThis.confirm(intl.formatMessage({ id: 'automations.archiveConfirm' }))
+    ) {
+      return;
+    }
+    setPending(workflow.id);
+    setError(undefined);
+    setNotice(undefined);
+    try {
+      await client.changeStatus(workflow.id, workflow.status, to);
+      setNotice(`automations.moved.${to}`);
+    } catch (failure) {
+      setError(
+        failure instanceof AutomationsError &&
+          (failure.code === 'workflow_concurrency_conflict' ||
+            failure.code === 'invalid_workflow_transition')
+          ? 'automations.editor.error.changed'
+          : errorKey(failure),
+      );
+    } finally {
+      setPending(undefined);
+      loadWorkflows();
+    }
+  }
+
+  const intl = useIntl();
 
   async function plan(workflow: WorkflowView) {
     if (pending !== undefined) return;
@@ -128,6 +198,28 @@ export function AutomationsPage({
           <FormattedMessage id={error} />
         </p>
       )}
+      {notice === undefined ? null : (
+        <p className="panel__empty" role="status">
+          <FormattedMessage id={notice} />
+        </p>
+      )}
+      {editing === undefined || templates === undefined ? null : (
+        <WorkflowEditor
+          key={editing.mode === 'create' ? 'create' : editing.id}
+          editing={editing.mode === 'create' ? undefined : editing}
+          templates={templates}
+          save={save}
+          onSaved={(saved) => {
+            setEditing(undefined);
+            setOpenWorkflow(undefined);
+            setNotice(
+              saved.version > 1 ? 'automations.editor.versioned' : 'automations.editor.created',
+            );
+            loadWorkflows();
+          }}
+          onCancel={() => setEditing(undefined)}
+        />
+      )}
       {refused === undefined ? null : (
         <p className="gia-chat__error" role="alert">
           <FormattedMessage id="automations.refused" values={{ reason: refused }} />
@@ -138,6 +230,13 @@ export function AutomationsPage({
           <h2 id="automations-workflows">
             <FormattedMessage id="automations.workflows" />
           </h2>
+          {canWrite && editing === undefined ? (
+            <div className="customers__actions">
+              <Button onClick={() => setEditing({ mode: 'create' })}>
+                <FormattedMessage id="automations.editor.open" />
+              </Button>
+            </div>
+          ) : null}
           {workflows.status === 'loading' ? (
             <p className="panel__empty" role="status">
               <FormattedMessage id="automations.loading" />
@@ -160,16 +259,55 @@ export function AutomationsPage({
                     {' · '}
                     <FormattedMessage id="automations.version" values={{ version: w.version }} />
                   </span>
-                  {w.status === 'active' && permissions.planWorkflows ? (
+                  <div className="customers__actions">
                     <Button
                       variant="secondary"
-                      disabled={pending !== undefined}
-                      onClick={() => void plan(w)}
+                      aria-expanded={openWorkflow === w.id}
+                      onClick={() => setOpenWorkflow(openWorkflow === w.id ? undefined : w.id)}
                     >
-                      <FormattedMessage
-                        id={pending === w.id ? 'automations.planning' : 'automations.plan'}
-                      />
+                      <FormattedMessage id="automations.steps" />
                     </Button>
+                    {w.status === 'active' && permissions.planWorkflows ? (
+                      <Button
+                        variant="secondary"
+                        disabled={pending !== undefined}
+                        onClick={() => void plan(w)}
+                      >
+                        <FormattedMessage
+                          id={pending === w.id ? 'automations.planning' : 'automations.plan'}
+                        />
+                      </Button>
+                    ) : null}
+                    {permissions.manageWorkflows === true
+                      ? WORKFLOW_TRANSITIONS[w.status].map((to) => (
+                          <Button
+                            key={to}
+                            variant="secondary"
+                            disabled={pending !== undefined}
+                            onClick={() => void move(w, to)}
+                          >
+                            <FormattedMessage id={`automations.move.${to}`} />
+                          </Button>
+                        ))
+                      : null}
+                  </div>
+                  {openWorkflow === w.id ? (
+                    <WorkflowSteps
+                      key={`${w.id}:${w.version}`}
+                      client={client}
+                      workflow={w}
+                      onVersion={
+                        canWrite && w.status !== 'archived' && editing === undefined
+                          ? (drafts, detail) =>
+                              setEditing({
+                                mode: 'version',
+                                id: w.id,
+                                name: detail.current.name,
+                                steps: drafts,
+                              })
+                          : undefined
+                      }
+                    />
                   ) : null}
                 </li>
               ))}
@@ -220,6 +358,103 @@ export function AutomationsPage({
       ) : null}
     </div>
   );
+}
+
+/** A workflow's current version: its steps, who does each, and which wait for approval. */
+function WorkflowSteps({
+  client,
+  workflow,
+  onVersion,
+}: {
+  readonly client: AutomationsClient;
+  readonly workflow: WorkflowView;
+  readonly onVersion:
+    ((drafts: readonly WorkflowStepDraft[], detail: WorkflowDetail) => void) | undefined;
+}) {
+  const intl = useIntl();
+  const [detail, setDetail] = useState<Load<WorkflowDetail>>({ status: 'loading' });
+  useEffect(() => {
+    let live = true;
+    client.workflow(workflow.id).then(
+      (value) => live && setDetail({ status: 'ready', value }),
+      () => live && setDetail({ status: 'error' }),
+    );
+    return () => {
+      live = false;
+    };
+  }, [client, workflow.id]);
+
+  if (detail.status === 'loading') {
+    return (
+      <p className="panel__empty" role="status">
+        <FormattedMessage id="automations.loading" />
+      </p>
+    );
+  }
+  if (detail.status === 'error') {
+    return (
+      <p className="panel__empty" role="alert">
+        <FormattedMessage id="automations.error.generic" />
+      </p>
+    );
+  }
+  const current = detail.value.current;
+  const drafts = draftsOf(current.steps);
+  return (
+    <div className="automations__detail">
+      <ol className="automations__steps">
+        {current.steps.map((step) => (
+          <li key={step.id}>
+            <span className="automations__name">{step.label}</span>
+            <span className="customers__meta">
+              {' · '}
+              {step.assignee === null ? (
+                <FormattedMessage id={`automations.stepKind.${stepKindOf(step.kind)}`} />
+              ) : (
+                <FormattedMessage
+                  id="automations.doneBy"
+                  values={{ role: roleLabel(intl, step.assignee.roleId) }}
+                />
+              )}
+              {step.approvalRequired ? (
+                <>
+                  {' · '}
+                  <FormattedMessage id="automations.needsApproval" />
+                </>
+              ) : null}
+            </span>
+          </li>
+        ))}
+      </ol>
+      {onVersion === undefined ? null : drafts === undefined ? (
+        <p className="customers__meta">
+          <FormattedMessage id="automations.editor.notEditable" />
+        </p>
+      ) : (
+        <div className="customers__actions">
+          <Button variant="secondary" onClick={() => onVersion(drafts, detail.value)}>
+            <FormattedMessage id="automations.editor.edit" />
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const STEP_KINDS = new Set([
+  'specialist',
+  'tool',
+  'approval',
+  'verification',
+  'condition',
+  'parallel',
+]);
+const stepKindOf = (kind: string): string => (STEP_KINDS.has(kind) ? kind : 'other');
+
+/** A role's name: a catalogue role is `<template>_agent`, named like its template; else its id. */
+function roleLabel(intl: ReturnType<typeof useIntl>, roleId: string): string {
+  const key = `agents.template.${roleId.replace(/_agent$/, '')}.name`;
+  return intl.messages[key] === undefined ? roleId : intl.formatMessage({ id: key });
 }
 
 function PlanRow({

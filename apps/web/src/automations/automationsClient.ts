@@ -16,6 +16,55 @@ export interface WorkflowView {
   readonly updatedAt: string;
 }
 
+/** A workflow step as the API gives it back (ADR-0028). */
+export interface WorkflowStepView {
+  readonly id: string;
+  readonly kind: string;
+  readonly label: string;
+  readonly dependsOn: readonly string[];
+  readonly assignee: { readonly departmentTypeId: string; readonly roleId: string } | null;
+  readonly approvalRequired: boolean;
+}
+
+export interface WorkflowDetail extends WorkflowView {
+  readonly current: {
+    readonly version: number;
+    readonly name: string;
+    readonly steps: readonly WorkflowStepView[];
+  };
+}
+
+/** One step a person writes: an agent with this role does it, optionally after their approval. */
+export interface WorkflowStepDraft {
+  readonly label: string;
+  readonly departmentTypeId: string;
+  readonly roleId: string;
+  readonly approvalRequired: boolean;
+}
+
+export const WORKFLOW_TRANSITIONS: Readonly<Record<WorkflowStatus, readonly WorkflowStatus[]>> = {
+  draft: ['active', 'archived'],
+  active: ['paused', 'archived'],
+  paused: ['active', 'archived'],
+  archived: [],
+};
+
+/**
+ * The steps as the API takes them: one after another, each done by an agent with the role, and
+ * checked the way agent steps are checked (the agent's answer is kept and well formed).
+ */
+export function workflowStepsOf(drafts: readonly WorkflowStepDraft[]): readonly unknown[] {
+  return drafts.map((d, i) => ({
+    id: `step_${i + 1}`,
+    kind: 'specialist',
+    label: d.label.trim(),
+    dependsOn: i === 0 ? [] : [`step_${i}`],
+    assignee: { departmentTypeId: d.departmentTypeId, roleId: d.roleId },
+    verification: { policy: 'output_schema', expectedOutput: 'agent_answer', requiredChecks: [] },
+    ...(d.approvalRequired ? { approvalRequired: true } : {}),
+  }));
+}
+
 export type PlanStatus =
   | 'draft'
   | 'ready'
@@ -75,6 +124,15 @@ export type WorkflowPlanOutcome =
 
 export interface AutomationsClient {
   workflows(): Promise<readonly WorkflowView[]>;
+  workflow(workflowId: string): Promise<WorkflowDetail>;
+  createWorkflow(name: string, steps: readonly WorkflowStepDraft[]): Promise<WorkflowView>;
+  /** A new version: the one before it stays as it was, and plans made from it keep it. */
+  publishVersion(
+    workflowId: string,
+    name: string,
+    steps: readonly WorkflowStepDraft[],
+  ): Promise<WorkflowView>;
+  changeStatus(workflowId: string, from: WorkflowStatus, to: WorkflowStatus): Promise<WorkflowView>;
   /** The same `requestKey` is the same plan: a retry never plans twice. */
   planWorkflow(workflowId: string, requestKey: string): Promise<WorkflowPlanOutcome>;
   plans(): Promise<readonly PlanView[]>;
@@ -93,6 +151,8 @@ export class AutomationsError extends Error {
   constructor(
     readonly status: number,
     readonly code: string,
+    /** For an invalid workflow: which field, a code. */
+    readonly detail?: string,
   ) {
     super(`automations request failed: ${status} ${code}`);
   }
@@ -110,10 +170,14 @@ export function createAutomationsClient(
   async function call(path: string, init: RequestInit = {}): Promise<Response> {
     const response = await request(`${base}${path}`, init);
     if (!response.ok && response.status !== 422) {
-      const body = (await response.json().catch(() => ({}))) as { error?: unknown };
+      const body = (await response.json().catch(() => ({}))) as {
+        error?: unknown;
+        detail?: unknown;
+      };
       throw new AutomationsError(
         response.status,
         typeof body.error === 'string' ? body.error : 'unexpected',
+        typeof body.detail === 'string' ? body.detail : undefined,
       );
     }
     return response;
@@ -125,10 +189,28 @@ export function createAutomationsClient(
       body: JSON.stringify(body),
     });
   const plan = (id: string) => `/plans/${encodeURIComponent(id)}`;
+  const workflow = (id: string) => `/workflows/${encodeURIComponent(id)}`;
   return {
     async workflows() {
       const body = (await (await call('/workflows')).json()) as { workflows?: WorkflowView[] };
       return body.workflows ?? [];
+    },
+    async workflow(id) {
+      return (await (await call(workflow(id))).json()) as WorkflowDetail;
+    },
+    async createWorkflow(name, steps) {
+      const response = await post('/workflows', { name, steps: workflowStepsOf(steps) });
+      return (await response.json()) as WorkflowView;
+    },
+    async publishVersion(id, name, steps) {
+      const response = await post(`${workflow(id)}/versions`, {
+        name,
+        steps: workflowStepsOf(steps),
+      });
+      return (await response.json()) as WorkflowView;
+    },
+    async changeStatus(id, from, to) {
+      return (await (await post(`${workflow(id)}/status`, { from, to })).json()) as WorkflowView;
     },
     async planWorkflow(workflowId, requestKey) {
       const response = await post(`/workflows/${encodeURIComponent(workflowId)}/plans`, {
