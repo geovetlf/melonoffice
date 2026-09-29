@@ -29,6 +29,7 @@ export function Sidebar({
   canReadConnections = false,
   canReadMemory = false,
   canReadReports = false,
+  canReadAutomations = false,
   open,
   onNavigate,
 }: {
@@ -40,6 +41,8 @@ export function Sidebar({
   readonly canReadMemory?: boolean;
   /** Reports (ADR-0060), for a person with `report.read`. */
   readonly canReadReports?: boolean;
+  /** Automations (WF-3), for a person who may read workflows or plans. */
+  readonly canReadAutomations?: boolean;
   readonly open: boolean;
   readonly onNavigate: () => void;
 }) {
@@ -119,6 +122,16 @@ export function Sidebar({
                 icon={tool.icon}
                 path={paths.reports()}
                 current={route.kind === 'reports'}
+                go={go}
+              >
+                <FormattedMessage id={`nav.${tool.id}`} />
+              </NavLink>
+            ) : tool.id === 'automations' && canReadAutomations ? (
+              <NavLink
+                key={tool.id}
+                icon={tool.icon}
+                path={paths.automations()}
+                current={route.kind === 'automations'}
                 go={go}
               >
                 <FormattedMessage id={`nav.${tool.id}`} />

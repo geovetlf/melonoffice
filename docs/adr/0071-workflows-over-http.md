@@ -56,5 +56,5 @@ Nothing runs here. The plan waits in `approval_required` until the person approv
 
 ## Open
 
-- There is no web screen yet (WF-3).
+- Web (WF-3): the Automations page (`/automations`) lists workflows and plans, plans an active workflow, shows a plan's steps and answers, and approves or rejects the exact version shown. Creating and editing workflow steps on the web is not built yet.
 - `condition` steps through the Decision Engine (WF-4) and triggers (WF-5).

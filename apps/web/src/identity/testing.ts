@@ -72,6 +72,16 @@ export interface FakeBackend {
     followUps: Record<string, Record<string, unknown>[]>;
     /** Each agent's tasks (ADR-0063), newest first, as the API's views. */
     agentTasks: Record<string, Record<string, unknown>[]>;
+    /** Each organization's workflows (WF-3), as the API lists them. */
+    workflows: Record<string, Record<string, unknown>[]>;
+    /**
+     * Each organization's plans (WF-3), as the API shows one (with `current`), and each plan's
+     * steps as `GET plans/:id/steps` reads them.
+     */
+    plans: Record<string, Record<string, unknown>[]>;
+    planSteps: Record<string, Record<string, unknown>[]>;
+    /** Planning a workflow is refused with this reason (422), instead of making a plan. */
+    planRefusal?: string;
     /** Records per page of Comercial's lists (ADR-0061), unless the request asks a `limit`. */
     pageSize: number;
     /** Every page after the first fails (ADR-0061). */
@@ -150,6 +160,9 @@ export function fakeBackend(): FakeBackend {
     knowledgeQuestions: {},
     followUps: {},
     agentTasks: {},
+    workflows: {},
+    plans: {},
+    planSteps: {},
     pageSize: 50,
     metrics: {},
   };
@@ -819,6 +832,74 @@ export function fakeBackend(): FakeBackend {
         needs('specialist.read') ??
         (found === undefined ? json(404, { error: 'task_not_found' }) : json(200, found))
       );
+    }
+    if (route === 'workflows') {
+      return (
+        needs('workflow.read') ?? json(200, { workflows: options.workflows[organizationId] ?? [] })
+      );
+    }
+    const planWorkflow = route?.match(/^workflows\/([^/]+)\/plans$/);
+    if (planWorkflow?.[1] !== undefined && method === 'POST') {
+      const denied = needs('plan.create');
+      if (denied !== undefined) return denied;
+      const workflow = (options.workflows[organizationId] ?? []).find(
+        (w) => w.id === planWorkflow[1],
+      );
+      if (workflow === undefined) return json(404, { error: 'workflow_not_found' });
+      if (workflow.status !== 'active') return json(409, { error: 'workflow_not_active' });
+      if (options.planRefusal !== undefined) {
+        return json(422, { error: 'plan_refused', stage: 'plan', reason: options.planRefusal });
+      }
+      const input = JSON.parse(body ?? '{}') as { requestKey?: string };
+      const plans = (options.plans[organizationId] ??= []);
+      const existing = plans.find((p) => p.key === input.requestKey);
+      if (existing !== undefined) return json(201, existing);
+      const plan = {
+        id: `plan-${plans.length + 1}`,
+        key: input.requestKey,
+        status: 'approval_required',
+        version: 1,
+        createdAt: '2026-09-29T12:00:00Z',
+        current: {
+          version: 1,
+          digest: 'a'.repeat(64),
+          request: { summary: workflow.name, objective: workflow.name },
+          steps: [{ id: 'research', kind: 'specialist', label: 'Research', dependsOn: [] }],
+          riskLevel: 'low',
+          source: { kind: 'workflow', workflowId: workflow.id, workflowVersion: workflow.version },
+        },
+      };
+      plans.push(plan);
+      return json(201, plan);
+    }
+    if (route === 'plans') {
+      return needs('plan.read') ?? json(200, { plans: options.plans[organizationId] ?? [] });
+    }
+    const onePlan = route?.match(/^plans\/([^/]+)(?:\/(steps|approve|reject))?$/);
+    if (onePlan?.[1] !== undefined) {
+      const plan = (options.plans[organizationId] ?? []).find((p) => p.id === onePlan[1]);
+      const action = onePlan[2];
+      if (action === 'approve' || action === 'reject') {
+        const denied = needs('approval.approve');
+        if (denied !== undefined) return denied;
+        if (plan === undefined) return json(404, { error: 'plan_not_found' });
+        if (plan.status !== 'approval_required') {
+          return json(409, { error: 'invalid_plan_transition' });
+        }
+        plan.status = action === 'approve' ? 'executing' : 'rejected';
+        return json(200, plan);
+      }
+      const denied = needs('plan.read');
+      if (denied !== undefined) return denied;
+      if (plan === undefined) return json(404, { error: 'plan_not_found' });
+      if (action === 'steps') {
+        return json(200, {
+          planId: plan.id,
+          status: plan.status,
+          steps: options.planSteps[plan.id as string] ?? [],
+        });
+      }
+      return json(200, plan);
     }
     if (route === 'specialists') {
       return (

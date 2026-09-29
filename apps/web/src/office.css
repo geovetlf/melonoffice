@@ -2366,3 +2366,57 @@ a.sidebar__item:hover {
 .agent-task--failed .agent-task__status {
   color: var(--office-muted);
 }
+
+/* Automations (WF-3): workflows and their plans. */
+.automations__list {
+  display: grid;
+  gap: var(--mo-space-2);
+  margin: var(--mo-space-3) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.automations__item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--mo-space-2);
+}
+
+.automations__name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.automations__row {
+  width: 100%;
+  padding: var(--mo-space-2) var(--mo-space-3);
+  border: 1px solid var(--office-line);
+  border-radius: 12px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.automations__row[aria-expanded='true'] {
+  border-color: currentColor;
+}
+
+.automations__plan {
+  margin-top: var(--mo-space-3);
+}
+
+.automations__steps {
+  display: grid;
+  gap: var(--mo-space-2);
+  margin: var(--mo-space-2) 0;
+  padding-left: var(--mo-space-4);
+}
+
+.automations__answer {
+  margin: var(--mo-space-1) 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
