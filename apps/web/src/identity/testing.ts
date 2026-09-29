@@ -922,6 +922,93 @@ export function fakeBackend(): FakeBackend {
       }
       return json(200, plan);
     }
+    if (route === 'agents/catalogue') {
+      return (
+        needs('specialist.read') ??
+        json(200, {
+          templates: [
+            {
+              id: 'commercial',
+              departmentTypeId: 'sales',
+              nameKey: 'agents.template.commercial.name',
+              role: { id: 'commercial_agent', version: 1 },
+              purpose: { es: 'Atiende clientes.', en: 'Serves customers.' },
+              skills: [{ id: 'conversation_reply', version: 1 }],
+            },
+          ],
+          skills: [],
+        })
+      );
+    }
+    if (route === 'specialists' && method === 'POST') {
+      const denied = needs('specialist.manage');
+      if (denied !== undefined) return denied;
+      const input = JSON.parse(body ?? '{}') as { templateId?: string; displayName?: string };
+      if (typeof input.displayName !== 'string' || input.displayName.trim() === '') {
+        return json(400, { error: 'invalid_specialist' });
+      }
+      const list = (options.specialists[organizationId] ??= []);
+      const created = {
+        id: `spec_new_${list.length + 1}`,
+        name: input.displayName,
+        type: 'sales',
+        status: 'draft',
+      };
+      list.push(created);
+      return json(201, {
+        id: created.id,
+        departmentId: `${organizationId}_sales`,
+        displayName: created.name,
+        status: 'draft',
+        purpose: 'Serves customers.',
+        version: 1,
+      });
+    }
+    const agentStatus = route?.match(/^specialists\/([^/]+)\/status$/);
+    if (agentStatus !== null && agentStatus !== undefined && method === 'POST') {
+      const denied = needs('specialist.manage');
+      if (denied !== undefined) return denied;
+      const found = (options.specialists[organizationId] ?? []).find(
+        (s) => s.id === agentStatus[1],
+      );
+      if (found === undefined) return json(404, { error: 'specialist_not_found' });
+      const { from, to } = JSON.parse(body ?? '{}') as { from?: string; to?: string };
+      if (from !== found.status) return json(409, { error: 'specialist_concurrency_conflict' });
+      found.status = to ?? found.status;
+      return json(200, {
+        id: found.id,
+        departmentId: `${organizationId}_${found.type}`,
+        displayName: found.name,
+        status: found.status,
+        purpose: found.purpose ?? null,
+      });
+    }
+    const agentCapabilities = route?.match(/^specialists\/([^/]+)\/capabilities$/);
+    if (agentCapabilities !== null && agentCapabilities !== undefined) {
+      const denied = needs('specialist.read');
+      if (denied !== undefined) return denied;
+      const found = (options.specialists[organizationId] ?? []).find(
+        (s) => s.id === agentCapabilities[1],
+      );
+      if (found === undefined) return json(404, { error: 'specialist_not_found' });
+      return json(200, {
+        id: found.id,
+        version: 2,
+        ready: found.status === 'active',
+        skills: [{ id: 'conversation_reply', version: 1, known: true }],
+        tools: [
+          {
+            id: 'message_send',
+            version: 1,
+            known: true,
+            riskLevel: 'high',
+            approval: 'approval_required',
+          },
+        ],
+        permissions: { required: [], missing: [] },
+        problems: found.status === 'active' ? [] : [{ kind: 'not_active', status: found.status }],
+      });
+    }
     if (route === 'specialists') {
       return (
         needs('specialist.read') ??

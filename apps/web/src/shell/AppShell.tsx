@@ -37,6 +37,8 @@ import { MemoryPage } from '../memory/MemoryPage.js';
 import { ReportsPage, ReportsSection } from '../reports/Reports.js';
 import { createReportsClient } from '../reports/reportsClient.js';
 import { AIUsagePage } from '../aiUsage/AIUsagePage.js';
+import { AgentsPage } from '../agents/AgentsPage.js';
+import { createAgentsClient } from '../agents/agentsClient.js';
 import { ApprovalsPage } from '../approvals/ApprovalsPage.js';
 import { createApprovalsClient } from '../approvals/approvalsClient.js';
 import { createAIUsageClient } from '../aiUsage/aiUsageClient.js';
@@ -77,6 +79,7 @@ export function AppShell(locale: LocaleProps) {
   const canUploadDocuments = useCan('document.upload');
   const canReadAIUsage = useCan('ai_usage.read');
   const canReadApprovals = useCan('approval.read');
+  const canManageAgents = useCan('specialist.manage');
   // Agent tasks (ADR-0063): read with the agents, asked only with `specialist.task`.
   const canReadAgents = useCan('specialist.read');
   const canAskAgents = useCan('specialist.task');
@@ -116,6 +119,7 @@ export function AppShell(locale: LocaleProps) {
             documents: createDocumentsClient(services.api.request, organizationId),
             aiUsage: createAIUsageClient(services.api.request, organizationId),
             approvals: createApprovalsClient(services.api.request, organizationId),
+            agents: createAgentsClient(services.api.request, organizationId),
             agentTasks: createAgentTasksClient(services.api.request, organizationId),
             automations: createAutomationsClient(services.api.request, organizationId),
           },
@@ -220,9 +224,21 @@ export function AppShell(locale: LocaleProps) {
           slug={route.slug}
           agentId={route.agentId}
           {...(canReadAgents
-            ? { tasks: { client: clients.agentTasks, canAsk: canAskAgents } }
+            ? {
+                tasks: { client: clients.agentTasks, canAsk: canAskAgents },
+                agents: clients.agents,
+              }
             : {})}
         />
+      );
+      break;
+    case 'agents':
+      page = canReadAgents ? (
+        <div className="light-surface">
+          <AgentsPage client={clients.agents} canManage={canManageAgents} />
+        </div>
+      ) : (
+        <NotFound />
       );
       break;
     case 'gia':
@@ -345,6 +361,7 @@ export function AppShell(locale: LocaleProps) {
                 canReadDocuments={canReadDocuments}
                 canReadAIUsage={canReadAIUsage}
                 canReadApprovals={canReadApprovals}
+                canReadAgents={canReadAgents}
                 canReadAutomations={canReadWorkflows || canReadPlans}
                 open={menuOpen}
                 onNavigate={() => setMenuOpen(false)}

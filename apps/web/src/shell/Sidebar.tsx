@@ -21,6 +21,7 @@ const TOOLS: readonly { readonly id: string; readonly icon: IconName }[] = [
   { id: 'reports', icon: 'reports' },
   { id: 'aiUsage', icon: 'coins' },
   { id: 'approvals', icon: 'check' },
+  { id: 'agents', icon: 'user' },
   { id: 'apps', icon: 'apps' },
   { id: 'settings', icon: 'settings' },
 ];
@@ -34,6 +35,7 @@ export function Sidebar({
   canReadDocuments = false,
   canReadAIUsage = false,
   canReadApprovals = false,
+  canReadAgents = false,
   canReadAutomations = false,
   open,
   onNavigate,
@@ -52,6 +54,8 @@ export function Sidebar({
   readonly canReadAIUsage?: boolean;
   /** The approval center (ADR-0026), for a person with `approval.read`. */
   readonly canReadApprovals?: boolean;
+  /** Agents (ADR-0062), for a person with `specialist.read`. */
+  readonly canReadAgents?: boolean;
   /** Automations (WF-3), for a person who may read workflows or plans. */
   readonly canReadAutomations?: boolean;
   readonly open: boolean;
@@ -137,6 +141,18 @@ export function Sidebar({
               >
                 <FormattedMessage id={`nav.${tool.id}`} />
               </NavLink>
+            ) : tool.id === 'agents' ? (
+              canReadAgents ? (
+                <NavLink
+                  key={tool.id}
+                  icon={tool.icon}
+                  path={paths.agents()}
+                  current={route.kind === 'agents'}
+                  go={go}
+                >
+                  <FormattedMessage id={`nav.${tool.id}`} />
+                </NavLink>
+              ) : null
             ) : tool.id === 'approvals' ? (
               canReadApprovals ? (
                 <NavLink

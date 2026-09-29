@@ -38,12 +38,20 @@ const LOADING: OfficeData = {
 
 const OfficeDataContext = createContext<OfficeData>(LOADING);
 const BusinessSavedContext = createContext<(view: BusinessProfileView) => void>(() => undefined);
+const SpecialistSavedContext = createContext<(view: SpecialistView) => void>(() => undefined);
 
 export const useOfficeData = (): OfficeData => useContext(OfficeDataContext);
 
 /** Puts the profile the API returned after a save in place of the one read before. */
 export const useBusinessSaved = (): ((view: BusinessProfileView) => void) =>
   useContext(BusinessSavedContext);
+
+/**
+ * Puts an agent the API returned after a change (created, or its status moved) in the office's
+ * list, so the office, the top bar and the agents page show it at once.
+ */
+export const useSpecialistSaved = (): ((view: SpecialistView) => void) =>
+  useContext(SpecialistSavedContext);
 
 /**
  * The order the business profile suggests for the departments, once the business is described.
@@ -115,9 +123,21 @@ export function OfficeDataProvider({
     [],
   );
 
+  const specialistSaved = useCallback(
+    (view: SpecialistView) =>
+      setData((current) => {
+        if (current.specialists.status !== 'ready') return current;
+        const others = current.specialists.value.filter((s) => s.id !== view.id);
+        return { ...current, specialists: { status: 'ready', value: [...others, view] } };
+      }),
+    [],
+  );
+
   return (
     <BusinessSavedContext.Provider value={saved}>
-      <OfficeDataContext.Provider value={data}>{children}</OfficeDataContext.Provider>
+      <SpecialistSavedContext.Provider value={specialistSaved}>
+        <OfficeDataContext.Provider value={data}>{children}</OfficeDataContext.Provider>
+      </SpecialistSavedContext.Provider>
     </BusinessSavedContext.Provider>
   );
 }
