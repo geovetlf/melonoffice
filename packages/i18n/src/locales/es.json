@@ -1402,5 +1402,22 @@
   "home.tasks.all": "Ver los {count} seguimientos pendientes",
   "home.meetings.noCalendar": "Todavía no hay un calendario conectado. Las reuniones aparecerán aquí cuando lo esté.",
   "gia.quick.title": "Pregúntale a GIA",
-  "gia.quick.hint": "Enter lo envía y abre el espacio de GIA (1 crédito). Esc cierra."
+  "gia.quick.hint": "Enter lo envía y abre el espacio de GIA (1 crédito). Esc cierra.",
+  "nav.commandCenter": "Centro de mando IA",
+  "commandCenter.title": "Centro de mando IA",
+  "commandCenter.lead": "El trabajo de IA de tu empresa de un vistazo: cuánto costó, qué te espera y cómo van tus agentes y planes. Cada tarjeta abre donde se hace el trabajo.",
+  "commandCenter.error": "No se pudo cargar.",
+  "commandCenter.ai.title": "IA este mes",
+  "commandCenter.ai.none": "No hay uso de IA registrado este mes.",
+  "commandCenter.ai.row": "{operations, plural, one {# operación} other {# operaciones}}, {credits, plural, one {# crédito} other {# créditos}}",
+  "commandCenter.ai.open": "Abrir uso y costo de IA",
+  "commandCenter.credits.title": "Créditos",
+  "commandCenter.credits.balance": "{balance, plural, one {# crédito disponible} other {# créditos disponibles}}",
+  "commandCenter.approvals.title": "Aprobaciones",
+  "commandCenter.approvals.count": "{count, plural, =0 {Nada te espera} one {# te espera} other {# te esperan}}",
+  "commandCenter.approvals.open": "Abrir el centro de aprobaciones",
+  "commandCenter.agents.title": "Agentes",
+  "commandCenter.agents.open": "Gestionar agentes",
+  "commandCenter.plans.title": "Planes",
+  "commandCenter.plans.open": "Abrir automatizaciones"
 }

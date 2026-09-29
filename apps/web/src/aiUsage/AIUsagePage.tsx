@@ -29,7 +29,7 @@ type Load<T> =
   | { readonly status: 'ready'; readonly value: T }
   | { readonly status: 'error' };
 
-const usd = (intl: IntlShape, micro: number) =>
+export const usd = (intl: IntlShape, micro: number) =>
   intl.formatNumber(micro / 1_000_000, {
     style: 'currency',
     currency: 'USD',

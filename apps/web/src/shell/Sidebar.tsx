@@ -17,6 +17,7 @@ const TOOLS: readonly { readonly id: string; readonly icon: IconName }[] = [
   { id: 'documents', icon: 'documents' },
   { id: 'calendar', icon: 'calendar' },
   { id: 'communications', icon: 'communications' },
+  { id: 'commandCenter', icon: 'gia' },
   { id: 'automations', icon: 'automations' },
   { id: 'reports', icon: 'reports' },
   { id: 'aiUsage', icon: 'coins' },
@@ -37,6 +38,7 @@ export function Sidebar({
   canReadApprovals = false,
   canReadAgents = false,
   canReadAutomations = false,
+  canReadCommandCenter = false,
   open,
   onNavigate,
 }: {
@@ -58,6 +60,8 @@ export function Sidebar({
   readonly canReadAgents?: boolean;
   /** Automations (WF-3), for a person who may read workflows or plans. */
   readonly canReadAutomations?: boolean;
+  /** The AI Command Center (block 9), for a person who may read any of its cards. */
+  readonly canReadCommandCenter?: boolean;
   readonly open: boolean;
   readonly onNavigate: () => void;
 }) {
@@ -160,6 +164,18 @@ export function Sidebar({
                   icon={tool.icon}
                   path={paths.approvals()}
                   current={route.kind === 'approvals'}
+                  go={go}
+                >
+                  <FormattedMessage id={`nav.${tool.id}`} />
+                </NavLink>
+              ) : null
+            ) : tool.id === 'commandCenter' ? (
+              canReadCommandCenter ? (
+                <NavLink
+                  key={tool.id}
+                  icon={tool.icon}
+                  path={paths.commandCenter()}
+                  current={route.kind === 'commandCenter'}
                   go={go}
                 >
                   <FormattedMessage id={`nav.${tool.id}`} />

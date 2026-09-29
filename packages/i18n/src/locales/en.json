@@ -1402,5 +1402,22 @@
   "home.tasks.all": "See all {count} due follow-ups",
   "home.meetings.noCalendar": "No calendar is connected yet. Meetings will show here once one is.",
   "gia.quick.title": "Ask GIA",
-  "gia.quick.hint": "Enter sends it and opens GIA's workplace (1 credit). Esc closes."
+  "gia.quick.hint": "Enter sends it and opens GIA's workplace (1 credit). Esc closes.",
+  "nav.commandCenter": "AI Command Center",
+  "commandCenter.title": "AI Command Center",
+  "commandCenter.lead": "Your company's AI work at a glance: what it cost, what waits for you, and how your agents and plans are doing. Each card opens where the work is done.",
+  "commandCenter.error": "This could not be loaded.",
+  "commandCenter.ai.title": "AI this month",
+  "commandCenter.ai.none": "No AI use recorded this month.",
+  "commandCenter.ai.row": "{operations, plural, one {# operation} other {# operations}}, {credits, plural, one {# credit} other {# credits}}",
+  "commandCenter.ai.open": "Open AI usage and cost",
+  "commandCenter.credits.title": "Credits",
+  "commandCenter.credits.balance": "{balance, plural, one {# credit available} other {# credits available}}",
+  "commandCenter.approvals.title": "Approvals",
+  "commandCenter.approvals.count": "{count, plural, =0 {Nothing waiting for you} one {# waiting for you} other {# waiting for you}}",
+  "commandCenter.approvals.open": "Open the approval center",
+  "commandCenter.agents.title": "Agents",
+  "commandCenter.agents.open": "Manage agents",
+  "commandCenter.plans.title": "Plans",
+  "commandCenter.plans.open": "Open automations"
 }

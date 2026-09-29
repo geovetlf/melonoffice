@@ -38,6 +38,7 @@ import { MemoryPage } from '../memory/MemoryPage.js';
 import { ReportsPage, ReportsSection } from '../reports/Reports.js';
 import { createReportsClient } from '../reports/reportsClient.js';
 import { AIUsagePage } from '../aiUsage/AIUsagePage.js';
+import { CommandCenterPage } from '../commandCenter/CommandCenterPage.js';
 import { AgentsPage } from '../agents/AgentsPage.js';
 import { createAgentsClient } from '../agents/agentsClient.js';
 import { ApprovalsPage } from '../approvals/ApprovalsPage.js';
@@ -282,6 +283,20 @@ export function AppShell(locale: LocaleProps) {
         <NotFound />
       );
       break;
+    case 'commandCenter':
+      page =
+        canReadAIUsage || canReadApprovals || canReadAgents || canReadPlans ? (
+          <div className="light-surface">
+            <CommandCenterPage
+              aiUsage={canReadAIUsage ? clients.aiUsage : undefined}
+              approvals={canReadApprovals ? clients.approvals : undefined}
+              automations={canReadPlans ? clients.automations : undefined}
+            />
+          </div>
+        ) : (
+          <NotFound />
+        );
+      break;
     case 'aiUsage':
       page = canReadAIUsage ? (
         <div className="light-surface">
@@ -378,6 +393,9 @@ export function AppShell(locale: LocaleProps) {
                 canReadApprovals={canReadApprovals}
                 canReadAgents={canReadAgents}
                 canReadAutomations={canReadWorkflows || canReadPlans}
+                canReadCommandCenter={
+                  canReadAIUsage || canReadApprovals || canReadAgents || canReadPlans
+                }
                 open={menuOpen}
                 onNavigate={() => setMenuOpen(false)}
               />

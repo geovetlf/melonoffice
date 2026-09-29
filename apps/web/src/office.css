@@ -2689,3 +2689,39 @@ a.sidebar__item:hover {
 .gia-quick__box .gia-bar__input {
   width: 100%;
 }
+
+/* AI Command Center (block 9). */
+.command-center__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--mo-space-3);
+}
+
+.command-center__figures {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--mo-space-4);
+  margin: var(--mo-space-2) 0;
+}
+
+.command-center__figure dt {
+  font-size: var(--mo-font-size-xs);
+  opacity: 0.8;
+}
+
+.command-center__figure dd {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+.command-center__big {
+  margin: var(--mo-space-2) 0;
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+.command-center__list {
+  margin: 0;
+  padding-left: var(--mo-space-4);
+}
