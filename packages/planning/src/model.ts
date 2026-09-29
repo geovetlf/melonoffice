@@ -3,6 +3,7 @@ import type {
   IsoTimestamp,
   OrganizationId,
   Plan,
+  PlanConditionResult,
   PlanDecision,
   PlanDelegation,
   PlanDelegationState,
@@ -248,6 +249,13 @@ export function checkStoredPlan(plan: Plan): Plan {
     invalid('delegations');
   }
   checkDelegationState(plan);
+  if (plan.conditions !== undefined) {
+    if (!Array.isArray(plan.conditions)) invalid('conditions');
+    for (const c of plan.conditions) checkConditionResult(c);
+    if (new Set(plan.conditions.map((c) => c.stepId)).size !== plan.conditions.length) {
+      invalid('conditions');
+    }
+  }
   const { decision } = plan;
   if (decision !== undefined) {
     if (decision.decision !== 'approved' && decision.decision !== 'rejected') invalid('decision');
@@ -308,6 +316,65 @@ function checkDelegationState(plan: Plan): void {
     failed: ['failed'],
   };
   if (!allowed[state].includes(plan.status)) invalid('delegationState');
+}
+
+const CONDITION_RESULTS: readonly PlanConditionResult['result'][] = [
+  'continue',
+  'stop',
+  'await_approval',
+  'failed',
+];
+const DECISION_ID = /^dec_[0-9a-f]{32}$/;
+const DECISION_TYPE = /^[a-z][a-z_]*(\.[a-z][a-z_]*)+$/;
+const OUTCOME = /^[a-z][a-z0-9_]{0,63}$/;
+
+/** A condition's result must say what happened and, when a decision was made, which one. */
+function checkConditionResult(result: PlanConditionResult): void {
+  if (typeof result.stepId !== 'string' || result.stepId.length === 0) invalid('conditions');
+  if (!CONDITION_RESULTS.includes(result.result)) invalid('conditions');
+  if ((result.result === 'failed') !== (result.failure !== undefined)) invalid('conditions');
+  if (result.failure !== undefined && !isPlanReason(result.failure)) invalid('conditions');
+  // A decision was made for every result but a failure; a failure may still name one.
+  if (result.result !== 'failed' && result.decision === undefined) invalid('conditions');
+  const { decision } = result;
+  if (
+    decision !== undefined &&
+    (!DECISION_ID.test(decision.id) ||
+      !DECISION_TYPE.test(decision.type) ||
+      !Number.isSafeInteger(decision.version) ||
+      decision.version < 1 ||
+      !OUTCOME.test(decision.outcome))
+  ) {
+    invalid('conditions');
+  }
+}
+
+/**
+ * Records what a condition step did (WF-4, ADR-0075), once: a plan that already holds a result
+ * for that step is a concurrent evaluation, and the result already recorded stands.
+ */
+export function recordCondition(
+  plan: Plan,
+  result: Omit<PlanConditionResult, 'evaluatedAt'>,
+  at: IsoTimestamp,
+): Plan {
+  if (plan.status !== 'executing') throw new PlanningError('invalid_plan_transition');
+  if ((plan.conditions ?? []).some((c) => c.stepId === result.stepId)) {
+    throw new PlanningError('plan_concurrency_conflict');
+  }
+  const next = nextRevision(plan, at);
+  const recorded: PlanConditionResult = Object.freeze({
+    stepId: result.stepId,
+    result: result.result,
+    ...(result.decision === undefined ? {} : { decision: Object.freeze({ ...result.decision }) }),
+    ...(result.failure === undefined ? {} : { failure: result.failure }),
+    evaluatedAt: next.updatedAt,
+  });
+  checkConditionResult(recorded);
+  return Object.freeze({
+    ...next,
+    conditions: Object.freeze([...(plan.conditions ?? []), recorded]),
+  });
 }
 
 /** A cancellation or failure code, as the audit log stores it. */

@@ -209,9 +209,10 @@ describe('worker architecture', () => {
       expect(Object.keys(manifest.dependencies)).not.toContain(forbidden);
     }
     // The worker never plans: from planning it takes only the plan conductor, which starts the
-    // steps of a plan a person approved and closes it (ADR-0070). No planner, validator,
-    // delegation or plan decision is reachable from its code.
-    const PLAN_RUNS = ['PlanRepository', 'createPlanConductor', 'planStepOf'];
+    // steps of a plan a person approved and closes it (ADR-0070), and the shape of the evaluator
+    // that decides its condition steps through the Decision Engine (ADR-0075). No planner,
+    // validator, delegation or plan decision is reachable from its code.
+    const PLAN_RUNS = ['PlanRepository', 'createPlanConductor', 'planStepOf', 'ConditionEvaluator'];
     for (const file of sources) {
       // Providers are reached only through their @melonoffice adapter packages, never an SDK.
       expect(text(file)).not.toMatch(

@@ -57,6 +57,44 @@ export interface PlanCondition {
   readonly outcome: 'completed' | 'failed';
 }
 
+/**
+ * A condition decided by the Decision Engine (WF-4, ADR-0075): when the steps it depends on have
+ * completed, the decision type is evaluated with this input, and the plan goes on only when its
+ * outcome is one of `continueOn`. The same shape as the Decision Engine's workflow contract
+ * (ADR-0065), so there is one decision path.
+ */
+export interface PlanDecisionCondition {
+  /** The decision type, e.g. `action.policy_check`. */
+  readonly decision: string;
+  /** Outcomes that let the steps after this one run. Any other skips them. */
+  readonly continueOn: readonly string[];
+  /** The decision's input: short codes and numbers, fixed when the plan is made. Never content. */
+  readonly input?: Readonly<Record<string, string | number | boolean>>;
+}
+
+/**
+ * What a condition step did (WF-4, ADR-0075), recorded once on the plan:
+ * - `continue`: the steps after it may run;
+ * - `stop`: the steps after it are skipped, and the rest of the plan goes on;
+ * - `await_approval`: the decision needs an approval, which a plan cannot wait for yet, so the
+ *   plan stops;
+ * - `failed`: the decision could not be made (`failure` says why), so the plan stops.
+ */
+export interface PlanConditionResult {
+  readonly stepId: string;
+  readonly result: 'continue' | 'stop' | 'await_approval' | 'failed';
+  /** The decision, when one was made: its id links to its audit event. */
+  readonly decision?: {
+    readonly id: string;
+    readonly type: string;
+    readonly version: number;
+    readonly outcome: string;
+  };
+  /** On `failed`: a stable code. */
+  readonly failure?: string;
+  readonly evaluatedAt: IsoTimestamp;
+}
+
 export interface PlanRetry {
   readonly maxAttempts: number;
   readonly backoffMs: number;
@@ -100,8 +138,10 @@ export interface PlanStep {
   readonly outputContract?: ToolSchema;
   /** Required on `specialist` and `verification` steps. */
   readonly verification?: PlanVerification;
-  /** On `condition` steps. */
+  /** On `condition` steps that depend on how another step ended. */
   readonly condition?: PlanCondition;
+  /** On `condition` steps the Decision Engine decides (WF-4). */
+  readonly decision?: PlanDecisionCondition;
   readonly retry?: PlanRetry;
   /** Whether a human must approve before this step runs. Decided by the system, never lowered by a model. */
   readonly approvalRequired: boolean;
@@ -196,6 +236,8 @@ export interface Plan {
   /** Why a `failed` delegation failed: a stable code. */
   readonly delegationFailure?: string;
   readonly decision?: PlanDecision;
+  /** What each condition step did, once evaluated (WF-4). */
+  readonly conditions?: readonly PlanConditionResult[];
   readonly revision: number;
   readonly createdAt: IsoTimestamp;
   readonly createdBy: UserId;

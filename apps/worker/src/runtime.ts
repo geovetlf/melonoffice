@@ -16,7 +16,12 @@ import { createExecutionService, type ExecutionRepository } from '@melonoffice/e
 import { createToolGate } from '@melonoffice/guardrails';
 import { createJobService, type JobRepository, type JobService } from '@melonoffice/jobs';
 import type { Logger } from '@melonoffice/observability';
-import { createPlanConductor, planStepOf, type PlanRepository } from '@melonoffice/planning';
+import {
+  createPlanConductor,
+  planStepOf,
+  type ConditionEvaluator,
+  type PlanRepository,
+} from '@melonoffice/planning';
 import { createAuthorizationService } from '@melonoffice/rbac';
 import {
   createRuntime,
@@ -80,6 +85,11 @@ export interface WorkerRuntimeOptions {
    * steps start, or the plan closes. Absent: a plan step ends and nothing follows.
    */
   readonly plans?: PlanRepository;
+  /**
+   * Decides the condition steps of those plans (WF-4, ADR-0075). Absent: a condition step fails
+   * with `condition_not_configured` and its plan stops.
+   */
+  readonly conditions?: ConditionEvaluator;
   readonly logger?: Logger;
   readonly now?: () => Date;
 }
@@ -195,6 +205,7 @@ export function createWorkerRuntime(options: WorkerRuntimeOptions): {
                   await runtime.kickoff(runtimeTenant, executionId);
                 },
               },
+              ...(options.conditions === undefined ? {} : { conditions: options.conditions }),
               requestId: execution.id,
               ...clock,
               ...(logger === undefined ? {} : { logger: logger.child({ component: 'plans' }) }),

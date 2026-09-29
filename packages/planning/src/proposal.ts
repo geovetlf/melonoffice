@@ -1,6 +1,7 @@
 import type {
   PlanBudget,
   PlanCondition,
+  PlanDecisionCondition,
   PlanRetry,
   PlanStepKind,
   PlanVerification,
@@ -21,6 +22,10 @@ export const MAX_OBJECTIVE_LENGTH = 1_000;
 export const MAX_BUDGET_TOKENS = 1_000_000;
 export const MAX_RETRY_ATTEMPTS = 5;
 export const MAX_RETRY_BACKOFF_MS = 60_000;
+/** A decision condition's limits (WF-4): a few outcomes and a small input of short values. */
+export const MAX_CONTINUE_ON = 10;
+export const MAX_DECISION_INPUT_KEYS = 10;
+export const MAX_DECISION_INPUT_TEXT = 100;
 
 export const PLAN_STEP_KINDS = [
   'specialist',
@@ -62,6 +67,8 @@ export interface ProposalStep {
   readonly outputContract?: ToolSchema;
   readonly verification?: PlanVerification;
   readonly condition?: PlanCondition;
+  /** On `condition` steps the Decision Engine decides (WF-4, ADR-0075). */
+  readonly decision?: PlanDecisionCondition;
   readonly retry?: PlanRetry;
   /** A proposal may ask for a human approval. It can never remove one the system requires. */
   readonly approvalRequired?: boolean;
@@ -101,6 +108,7 @@ const STEP_KEYS = new Set([
   'outputContract',
   'verification',
   'condition',
+  'decision',
   'retry',
   'approvalRequired',
   'budget',
@@ -113,6 +121,9 @@ const CODE = /^[a-z][a-z0-9_]{0,63}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const REF_ID = /^[A-Za-z0-9._:-]{1,128}$/;
 const TOOL_ID = /^[a-z][a-z0-9_]{0,63}$/;
+/** A decision type, as the Decision Engine names them (`action.policy_check`). */
+const DECISION_TYPE = /^[a-z][a-z_]*(\.[a-z][a-z_]*)+$/;
+const INPUT_KEY = /^[a-z][A-Za-z0-9]{0,31}$/;
 // eslint-disable-next-line no-control-regex
 const CONTROL = /[\u0000-\u001f\u007f]/;
 
@@ -200,6 +211,55 @@ function verificationOf(value: unknown, field: string): PlanVerification {
       ? {}
       : { outputSchema: contract(value.outputSchema, `${field}.outputSchema`) }),
     requiredChecks: [...(requiredChecks as string[])],
+  };
+}
+
+/**
+ * A decision condition (WF-4): a decision type, the outcomes that let the plan go on, and a small
+ * fixed input of short codes and numbers. The Decision Engine checks the input again when it
+ * decides; this only keeps content, authority and credentials out of the plan.
+ */
+function decisionOf(value: unknown, field: string): PlanDecisionCondition {
+  if (!isRecord(value)) return invalid(field);
+  closed(value, new Set(['decision', 'continueOn', 'input']), field);
+  const { decision, continueOn, input } = value;
+  if (typeof decision !== 'string' || decision.length > 64 || !DECISION_TYPE.test(decision)) {
+    invalid(`${field}.decision`);
+  }
+  if (
+    !Array.isArray(continueOn) ||
+    continueOn.length === 0 ||
+    continueOn.length > MAX_CONTINUE_ON ||
+    continueOn.some((o) => typeof o !== 'string' || !CODE.test(o)) ||
+    new Set(continueOn).size !== continueOn.length
+  ) {
+    invalid(`${field}.continueOn`);
+  }
+  let inputOf: Record<string, string | number | boolean> | undefined;
+  if (input !== undefined) {
+    if (!isRecord(input) || Object.keys(input).length > MAX_DECISION_INPUT_KEYS) {
+      return invalid(`${field}.input`);
+    }
+    inputOf = {};
+    for (const [key, item] of Object.entries(input)) {
+      if (isForbiddenField(key)) refuse('authority_in_proposal', `${field}.input.${key}`);
+      if (!INPUT_KEY.test(key)) invalid(`${field}.input.${key}`);
+      if (typeof item === 'string') {
+        if (item.length === 0 || item.length > MAX_DECISION_INPUT_TEXT || CONTROL.test(item)) {
+          invalid(`${field}.input.${key}`);
+        }
+      } else if (typeof item === 'number') {
+        if (!Number.isFinite(item)) invalid(`${field}.input.${key}`);
+      } else if (typeof item !== 'boolean') {
+        invalid(`${field}.input.${key}`);
+      }
+      inputOf[key] = item as string | number | boolean;
+    }
+  }
+  return {
+    decision: decision as string,
+    continueOn: [...(continueOn as string[])],
+    ...(inputOf === undefined ? {} : { input: inputOf }),
   };
 }
 
@@ -297,6 +357,9 @@ function stepOf(value: unknown, index: number): ProposalStep {
       ? {}
       : { verification: verificationOf(value.verification, `${field}.verification`) }),
     ...(conditionOf === undefined ? {} : { condition: conditionOf }),
+    ...(value.decision === undefined
+      ? {}
+      : { decision: decisionOf(value.decision, `${field}.decision`) }),
     ...(retryOf === undefined ? {} : { retry: retryOf }),
     ...(approvalRequired === undefined ? {} : { approvalRequired: approvalRequired as boolean }),
     ...(budgetOf === undefined ? {} : { budget: budgetOf }),

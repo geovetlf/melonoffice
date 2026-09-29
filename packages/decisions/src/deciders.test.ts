@@ -38,7 +38,7 @@ import { createDecisionEngine, type Decider, type DecisionEngineOptions } from '
 import { DecisionError, type DecisionResult } from './model.js';
 import type { DecisionAgent, DecisionPorts } from './ports.js';
 import { RECOMMENDED_ACTION_TOOLS, toolRequestOf } from './tools.js';
-import { workflowStepOf } from './workflow.js';
+import { planConditionEvaluator, workflowStepOf } from './workflow.js';
 
 const ALICE = '11111111-1111-4111-8111-111111111111' as UserId;
 const BOB = '22222222-2222-4222-8222-222222222222' as UserId;
@@ -687,6 +687,62 @@ describe('9. workflows and the Tool Engine', () => {
     ).toBe('await_approval');
     expect(workflowStepOf(condition, result({ outcome: 'not_allowed' }))).toBe('stop');
     expect(workflowStepOf(condition, result({ type: 'commercial.priorities' }))).toBe('stop');
+  });
+
+  it('decides a plan condition as the runtime, through the engine, audited (WF-4)', async () => {
+    const w = await world();
+    const evaluator = planConditionEvaluator(engineOf(w));
+    const gate = {
+      decision: 'action.policy_check',
+      continueOn: ['allowed'],
+      input: { action: 'opportunity.offer_discount', proposer: 'agent' },
+    };
+    const go = await evaluator.evaluate(w.runtime, gate, 'plan-request-1');
+    expect(go).toEqual({
+      result: 'continue',
+      decision: {
+        id: expect.stringMatching(/^dec_[0-9a-f]{32}$/),
+        type: 'action.policy_check',
+        version: 1,
+        outcome: 'allowed',
+      },
+    });
+    expect(decisions(w).at(-1)).toMatchObject({
+      actor: expect.objectContaining({ type: 'system', via: 'runtime' }),
+      target: { type: 'decision', id: 'decision' in go ? go.decision.id : undefined },
+      reason: 'allowed',
+      requestId: 'plan-request-1',
+    });
+    // GIA's proposer needs a person asking directly: for the runtime it is not allowed, so the
+    // plan's branch stops.
+    expect(
+      (
+        await evaluator.evaluate(w.runtime, {
+          ...gate,
+          input: { action: 'opportunity.offer_discount' },
+        })
+      ).result,
+    ).toBe('stop');
+  });
+
+  it('turns a decision the engine refuses into a failed condition with its code', async () => {
+    const w = await world();
+    const evaluator = planConditionEvaluator(engineOf(w));
+    const gate = { decision: 'action.policy_check', continueOn: ['allowed'] };
+    expect(await evaluator.evaluate(w.runtime, { ...gate, decision: 'unknown.type' })).toEqual({
+      result: 'failed',
+      failure: 'condition_unknown_decision_type',
+    });
+    expect(await evaluator.evaluate(w.runtime, gate)).toEqual({
+      result: 'failed',
+      failure: 'condition_invalid_input',
+    });
+    const denied = planConditionEvaluator(
+      engineOf(w, { authorization: without('decision.evaluate') }),
+    );
+    expect(
+      await denied.evaluate(w.runtime, { ...gate, input: { action: 'follow_up.schedule' } }),
+    ).toEqual({ result: 'failed', failure: 'condition_permission_denied' });
   });
 
   it('no recommended action becomes a tool request yet: the person does it', () => {

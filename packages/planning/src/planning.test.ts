@@ -152,6 +152,50 @@ describe('proposal schema', () => {
   });
 });
 
+describe('decision conditions (WF-4)', () => {
+  const s = { identity: { id: '33333333-3333-4333-8333-333333333333' } } as Specialist;
+  const gate = (decision: unknown, extra: Record<string, unknown> = {}) =>
+    proposal([
+      specialistStep('research', s),
+      { id: 'gate', kind: 'condition', label: 'Gate', dependsOn: ['research'], decision, ...extra },
+    ]);
+  const ok = {
+    decision: 'action.policy_check',
+    continueOn: ['allowed'],
+    input: { action: 'opportunity.offer_discount', discountPercent: 10, strict: true },
+  };
+
+  it('accepts a decision type, its outcomes and a small fixed input', () => {
+    const result = checkProposal(gate(ok));
+    expect(result.ok && result.proposal.steps[1]?.decision).toEqual(ok);
+  });
+
+  it('refuses authority and credentials in the input, and malformed conditions', () => {
+    const authority = checkProposal(gate({ ...ok, input: { organizationId: 'x' } }));
+    expect(authority.ok ? 'accepted' : authority.reason).toBe('authority_in_proposal');
+    const leaked = checkProposal(
+      gate({ ...ok, input: { note: fake('sk', '-abcdefghijklmnopqrstuvwxyz123456') } }),
+    );
+    expect(leaked.ok ? 'accepted' : leaked.reason).toBe('secret_in_proposal');
+    for (const bad of [
+      { ...ok, decision: 'policy' },
+      { ...ok, decision: 'Action.Policy' },
+      { ...ok, continueOn: [] },
+      { ...ok, continueOn: ['allowed', 'allowed'] },
+      { ...ok, continueOn: ['Allowed!'] },
+      { ...ok, input: { nested: { a: 1 } } },
+      { ...ok, input: { list: [1] } },
+      { ...ok, input: { text: 'x'.repeat(101) } },
+      { ...ok, input: { 'bad-key': 'x' } },
+      { ...ok, input: Object.fromEntries(Array.from({ length: 11 }, (_, i) => [`k${i}`, i])) },
+      { ...ok, extra: true },
+    ]) {
+      const result = checkProposal(gate(bad));
+      expect(result.ok ? 'accepted' : result.reason).toBe('invalid_proposal');
+    }
+  });
+});
+
 describe('plan validation pipeline', () => {
   it('validates a multi-specialist plan and decides approval itself', async () => {
     const w = await setup();
@@ -332,6 +376,29 @@ describe('plan validation pipeline', () => {
         ]),
       ),
     ).toBe('plan:invalid_condition');
+    // A condition is either how a step ended or a decision, never both nor neither, and a
+    // decision waits on at least one step.
+    const decision = { decision: 'action.policy_check', continueOn: ['allowed'] };
+    for (const step of [
+      { id: 'c', kind: 'condition', label: 'If', dependsOn: ['a'] },
+      {
+        id: 'c',
+        kind: 'condition',
+        label: 'If',
+        dependsOn: ['a'],
+        condition: { step: 'a', outcome: 'completed' },
+        decision,
+      },
+      { id: 'c', kind: 'condition', label: 'If', dependsOn: [], decision },
+    ]) {
+      expect(await refusal(w, proposal([specialistStep('a', r), step]))).toMatch(
+        /^schema:invalid_proposal$/,
+      );
+    }
+    // A decision only belongs on a condition step.
+    expect(await refusal(w, proposal([specialistStep('a', r, { decision })]))).toBe(
+      'schema:invalid_proposal',
+    );
     expect(
       await refusal(
         w,

@@ -97,6 +97,29 @@ export const planStepRequest = (version: PlanVersion, step: PlanStep): string =>
   `Plan objective: ${version.request.objective}\nYour step in this plan: ${step.label}`;
 
 /**
+ * The steps whose answers a step reads: the steps it depends on, looking through condition steps
+ * (WF-4), which decide and have no answer of their own, to the steps they depend on. Each once, in
+ * order. `undefined` when a step is missing from the version.
+ */
+export function answeringSteps(
+  version: PlanVersion,
+  step: PlanStep,
+): readonly string[] | undefined {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const visit = (id: string): boolean => {
+    if (seen.has(id)) return true;
+    seen.add(id);
+    const before = version.steps.find((s) => s.id === id);
+    if (before === undefined) return false;
+    if (before.kind === 'condition') return before.dependsOn.every(visit);
+    out.push(id);
+    return true;
+  };
+  return step.dependsOn.every(visit) ? out : undefined;
+}
+
+/**
  * What a plan step's agent node works on. Anything missing (the plan, the step, the agent's
  * version, the answer of a step it depends on): nothing is asked of a model (`input_unavailable`).
  */
@@ -126,8 +149,10 @@ export function createPlanStepWork(options: PlanStepWorkOptions): AgentTaskWork 
       if (agentVersion === undefined || agent === undefined) return undefined;
 
       // The answers of the steps before this one, as data. One missing: nothing is invented.
+      const answering = answeringSteps(version, step);
+      if (answering === undefined) return undefined;
       const previous: AgentContextBlock[] = [];
-      for (const id of step.dependsOn) {
+      for (const id of answering) {
         const before = version.steps.find((s) => s.id === id);
         const child = facts.children.get(id);
         if (before === undefined || child === undefined) return undefined;

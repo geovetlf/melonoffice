@@ -99,7 +99,7 @@ const FIELDS: Readonly<Record<PlanStep['kind'], readonly (keyof ProposalStep)[]>
   tool: ['performedBy', 'tool', 'retry', 'approvalRequired'],
   approval: [],
   verification: ['verification', 'outputContract', 'approvalRequired'],
-  condition: ['condition', 'approvalRequired'],
+  condition: ['condition', 'decision', 'approvalRequired'],
   parallel: [],
 };
 const OPTIONAL_FIELDS = new Set<keyof ProposalStep>(['id', 'kind', 'label', 'dependsOn']);
@@ -125,7 +125,10 @@ function checkShape(step: ProposalStep, field: string): void {
       need(step.dependsOn.length > 0, 'dependsOn');
       break;
     case 'condition':
-      need(step.condition !== undefined, 'condition');
+      // Either how another step ended, or a decision (WF-4), never both. A decision is made on
+      // the plan's progress: it waits on at least one step.
+      need((step.condition === undefined) !== (step.decision === undefined), 'condition');
+      if (step.decision !== undefined) need(step.dependsOn.length > 0, 'dependsOn');
       break;
     case 'approval':
     case 'parallel':
@@ -397,6 +400,7 @@ export function createPlanValidator(options: PlanValidatorOptions): PlanValidato
               : {}),
             ...(step.verification === undefined ? {} : { verification: step.verification }),
             ...(step.condition === undefined ? {} : { condition: step.condition }),
+            ...(step.decision === undefined ? {} : { decision: step.decision }),
             ...(step.retry === undefined ? {} : { retry: step.retry }),
             approvalRequired,
             ...(step.budget === undefined ? {} : { budget: step.budget }),
