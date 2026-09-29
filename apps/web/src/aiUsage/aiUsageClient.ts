@@ -1,25 +1,20 @@
 import type { ReplyRequest } from '../conversations/sendReply.js';
 
 /**
- * AI usage and cost through the API (ADR-0074, ADR-0081): what the organization's AI use cost
- * MelonOffice (internal cost, from the provider's price) and what it charged in credits, kept
- * apart. Every figure is the ledger's; the screen adds nothing up beyond what the API returns.
+ * AI usage through the API (ADR-0074, ADR-0081, ADR-0082): what the organization's AI use charged
+ * it in credits and where it went. The provider, the model and what it cost MelonOffice are the
+ * platform administrator's and never reach a company. Every figure is the ledger's; the screen
+ * adds nothing up beyond what the API returns.
  */
 
 export interface UsageBucket {
   readonly operations: number;
-  /** Internal cost, in millionths of a US dollar. */
-  readonly costMicroUsd: number;
-  /** Operations whose provider price was unknown: counted, never given a cost. */
-  readonly unpricedOperations: number;
   /** Customer credits charged. */
   readonly credits: number;
 }
 
 export const USAGE_DIMENSIONS = [
   'capability',
-  'provider',
-  'model',
   'department',
   'agent',
   'workflow',
@@ -38,13 +33,8 @@ export interface UsageEvent {
   readonly id: string;
   readonly occurredAt: string;
   readonly capability: string;
-  readonly provider: string;
-  readonly model: string;
-  readonly operation: string;
   readonly outcome: 'completed' | 'failed';
   readonly credits: number;
-  readonly fallbackFrom?: string;
-  readonly cost: { readonly actualMicroUsd: number | null };
   readonly attribution: {
     readonly actor: string;
     readonly specialistId?: string;
@@ -113,10 +103,6 @@ export function eventKey(event: UsageEvent, dimension: UsageDimension): string |
   switch (dimension) {
     case 'capability':
       return event.capability;
-    case 'provider':
-      return event.provider;
-    case 'model':
-      return `${event.provider}/${event.model}`;
     case 'department':
       return a.departmentId;
     case 'agent':

@@ -151,6 +151,10 @@ describe('AI usage ledger', () => {
     const platform = await ledger.platformSummary('2026-09-29', '2026-09-29');
     expect(platform.scope).toBe('platform');
     expect(platform.totals.operations).toBe(4);
+    const byOrganization = await ledger.organizationTotals('2026-09-29', '2026-09-29');
+    expect(Object.keys(byOrganization).sort()).toEqual([ORG_A, ORG_B].sort());
+    expect(byOrganization[ORG_A]?.operations).toBe(3);
+    expect(byOrganization[ORG_B]?.operations).toBe(1);
     const b = await ledger.summary(ORG_B, '2026-09-29', '2026-09-29');
     expect(b.totals.operations).toBe(1);
   });

@@ -15,9 +15,11 @@ import {
 } from './aiUsageClient.js';
 
 /**
- * AI usage and cost (ADR-0074, ADR-0081): what the organization's AI use cost MelonOffice and
- * what it charged in credits, never mixed. Every figure is the usage ledger's, over whole UTC
- * days; a breakdown row filters the recent operations below it to that row.
+ * AI usage (ADR-0074, ADR-0081, ADR-0082): what the organization's AI use charged it in credits
+ * and where it went, by capability, department, agent, workflow and task. Which provider or model
+ * MelonMotor used, and what it cost MelonOffice, are the platform administrator's and never shown
+ * here. Every figure is the usage ledger's, over whole UTC days; a breakdown row filters the
+ * recent operations below it to that row.
  */
 
 type IntlShape = ReturnType<typeof useIntl>;
@@ -202,16 +204,10 @@ export function AIUsagePage({
   );
 }
 
-/** Internal cost and customer credits, side by side and never added together. */
+/** Credits charged and how many operations they paid for. */
 function Totals({ intl, totals }: { readonly intl: IntlShape; readonly totals: UsageBucket }) {
   return (
     <dl className="ai-usage__totals">
-      <div className="ai-usage__total">
-        <dt>
-          <FormattedMessage id="aiUsage.internalCost" />
-        </dt>
-        <dd>{usd(intl, totals.costMicroUsd)}</dd>
-      </div>
       <div className="ai-usage__total">
         <dt>
           <FormattedMessage id="aiUsage.credits" />
@@ -224,11 +220,6 @@ function Totals({ intl, totals }: { readonly intl: IntlShape; readonly totals: U
         </dt>
         <dd>{intl.formatNumber(totals.operations)}</dd>
       </div>
-      {totals.unpricedOperations > 0 ? (
-        <p className="ai-usage__note">
-          <FormattedMessage id="aiUsage.unpriced" values={{ count: totals.unpricedOperations }} />
-        </p>
-      ) : null}
     </dl>
   );
 }
@@ -249,7 +240,7 @@ function Breakdown({
   readonly onSelect: (key: string) => void;
 }) {
   const entries = Object.entries(rows).sort(
-    ([, a], [, b]) => b.costMicroUsd - a.costMicroUsd || b.operations - a.operations,
+    ([, a], [, b]) => b.credits - a.credits || b.operations - a.operations,
   );
   if (entries.length === 0) return null;
   const titleId = `ai-usage-by-${dimension}`;
@@ -266,9 +257,6 @@ function Breakdown({
             </th>
             <th scope="col">
               <FormattedMessage id="aiUsage.operations" />
-            </th>
-            <th scope="col">
-              <FormattedMessage id="aiUsage.internalCost" />
             </th>
             <th scope="col">
               <FormattedMessage id="aiUsage.credits" />
@@ -289,10 +277,6 @@ function Breakdown({
                 </button>
               </th>
               <td>{intl.formatNumber(bucket.operations)}</td>
-              <td>
-                {usd(intl, bucket.costMicroUsd)}
-                {bucket.unpricedOperations > 0 ? ' *' : ''}
-              </td>
               <td>{intl.formatNumber(bucket.credits)}</td>
             </tr>
           ))}
@@ -341,12 +325,9 @@ function Events({
   return (
     <ul className="ai-usage__events">
       {shown.map((e) => {
-        const cost = e.cost.actualMicroUsd;
         return (
           <li key={e.id} className="ai-usage__event">
-            <span className="ai-usage__event-main">
-              {name('capability', e.capability)} · {e.provider}/{e.model}
-            </span>
+            <span className="ai-usage__event-main">{name('capability', e.capability)}</span>
             <span className="documents__meta">
               {intl.formatDate(new Date(e.occurredAt), {
                 dateStyle: 'medium',
@@ -360,8 +341,6 @@ function Events({
                 : ` · ${name('department', e.attribution.departmentId)}`}
             </span>
             <span className="documents__meta">
-              <FormattedMessage id="aiUsage.internalCost" />:{' '}
-              {cost === null ? <FormattedMessage id="aiUsage.priceUnknown" /> : usd(intl, cost)} ·{' '}
               <FormattedMessage id="aiUsage.credits" />: {intl.formatNumber(e.credits)}
               {e.outcome === 'failed' ? (
                 <>
@@ -369,12 +348,6 @@ function Events({
                   <FormattedMessage id="aiUsage.failed" />
                 </>
               ) : null}
-              {e.fallbackFrom === undefined ? null : (
-                <>
-                  {' · '}
-                  <FormattedMessage id="aiUsage.fallback" values={{ from: e.fallbackFrom }} />
-                </>
-              )}
             </span>
           </li>
         );

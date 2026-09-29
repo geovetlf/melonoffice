@@ -404,6 +404,7 @@ export function setupApp(
     runPlans = false,
     files = new InMemoryFileStore(),
     extractor,
+    platformAdmins,
   }: {
     readonly sending?: boolean;
     readonly webOrigins?: readonly string[];
@@ -420,6 +421,8 @@ export function setupApp(
     readonly files?: FileStore | null;
     /** Reads PDF and DOCX text (ADR-0079). Absent: those files are only stored. */
     readonly extractor?: TextExtractor;
+    /** The platform administrators' user ids (ADR-0082). Absent: nobody. */
+    readonly platformAdmins?: readonly string[];
   } = {},
 ) {
   const lines: string[] = [];
@@ -497,6 +500,7 @@ export function setupApp(
     ...(forecasting ? { forecasting } : {}),
     ...(tools ? { tools } : {}),
     ...(webOrigins ? { webOrigins } : {}),
+    ...(platformAdmins ? { platformAdmins } : {}),
     ...(ai ? { ai } : {}),
     ...(authorization ? { authorization } : {}),
     ...(entitlements ? { entitlements } : {}),

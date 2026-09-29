@@ -110,6 +110,16 @@ export interface FakeBackend {
     >;
     /** Documents (DOC-3): each organization's files as the API lists them. */
     documents: Record<string, Record<string, unknown>[]>;
+    /**
+     * The platform AI view (ADR-0082) as the API gives it to a platform administrator. Absent:
+     * the person is not one, and every platform route but access answers 403.
+     */
+    platform?: {
+      ai: Record<string, unknown>;
+      usage: Record<string, unknown>;
+      /** The AI view answers 500. */
+      aiFails?: boolean;
+    };
     /** Uploading a document fails with this code and status. */
     documentUploadFails?: { readonly error: string; readonly status: number };
     metrics: Record<
@@ -127,6 +137,8 @@ export interface FakeBackend {
   apiCalls(): Call[];
   /** Files uploaded to Documents (DOC-3), with the type and name they were sent with. */
   readonly uploads: { readonly contentType: string | null; readonly name: string | null }[];
+  /** Executions (plans, agent tasks) a person asked to stop, by id. */
+  readonly cancelled: string[];
 }
 
 const json = (status: number, body: unknown) =>
@@ -192,6 +204,7 @@ export function fakeBackend(): FakeBackend {
     metrics: {},
   };
   const uploads: FakeBackend['uploads'] = [];
+  const cancelled: string[] = [];
 
   function issue() {
     issued += 1;
@@ -268,6 +281,24 @@ export function fakeBackend(): FakeBackend {
       const created = { id: 'org_new', name: name.trim(), role: 'owner' };
       options.organizations.push(created);
       return json(201, { organization: { id: created.id, name: created.name } });
+    }
+    const platformPath = path.split('?')[0];
+    if (platformPath === '/v1/platform/access') {
+      return json(200, { platformAdmin: options.platform !== undefined });
+    }
+    if (platformPath === '/v1/platform/ai' || platformPath === '/v1/platform/ai-usage') {
+      if (options.platform === undefined) return json(403, { error: 'platform_forbidden' });
+      if (platformPath === '/v1/platform/ai') {
+        return options.platform.aiFails === true
+          ? json(500, { error: 'internal' })
+          : json(200, options.platform.ai);
+      }
+      const params = new URLSearchParams(path.split('?')[1] ?? '');
+      return json(200, {
+        ...options.platform.usage,
+        from: params.get('from'),
+        to: params.get('to'),
+      });
     }
     if (path === '/v1/business-types') {
       return json(200, {
@@ -891,6 +922,25 @@ export function fakeBackend(): FakeBackend {
       }
       return needs('specialist.read') ?? json(200, { tasks, nextCursor: null });
     }
+    // Stopping a plan or an agent task (ADR-0029): both are executions, by the same id.
+    const cancel = route?.match(/^executions\/([^/]+)\/cancel$/);
+    if (cancel?.[1] !== undefined && method === 'POST') {
+      const denied = needs('execution.cancel');
+      if (denied !== undefined) return denied;
+      const { reason } = JSON.parse(body ?? '{}') as { reason?: string };
+      if (reason !== 'director_request') return json(400, { error: 'invalid_request' });
+      cancelled.push(cancel[1]);
+      const target = [
+        ...(options.plans[organizationId] ?? []),
+        ...Object.values(options.agentTasks).flat(),
+      ].find((x) => x.id === cancel[1]);
+      if (target === undefined) return json(404, { error: 'execution_not_found' });
+      if (['completed', 'failed', 'cancelled', 'rejected'].includes(target.status as string)) {
+        return json(409, { error: 'execution_already_terminal' });
+      }
+      target.status = 'cancelled';
+      return json(200, { id: cancel[1], status: 'cancelled' });
+    }
     const oneTask = route?.match(/^agent-tasks\/([^/]+)$/);
     if (oneTask?.[1] !== undefined) {
       const found = Object.values(options.agentTasks)
@@ -1256,7 +1306,7 @@ export function fakeBackend(): FakeBackend {
       const params = new URLSearchParams(query);
       return json(200, {
         ...(usage?.summary ?? {
-          totals: { operations: 0, costMicroUsd: 0, unpricedOperations: 0, credits: 0 },
+          totals: { operations: 0, credits: 0 },
           by: {},
         }),
         from: params.get('from'),
@@ -1422,6 +1472,7 @@ export function fakeBackend(): FakeBackend {
     options,
     apiCalls: () => calls.filter((call) => call.url.startsWith(API)),
     uploads,
+    cancelled,
   };
 }
 

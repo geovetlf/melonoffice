@@ -386,7 +386,8 @@ export function forecastBlock(context: GiaForecastContext, locale: GiaLocale): s
       : `- trend: projected average is ${change > 0 ? '+' : ''}${change}% against the last ${recent.length} ${f.frequency}s`,
     isFallback
       ? '- made by: a simple estimate from recent averages (the forecasting model was not available); say so'
-      : `- made by: the forecasting model ${f.result.model.id}`,
+      : // Which model it was is the platform's to know, not the person's (only the audit names it).
+        "- made by: MelonOffice's forecasting model; never name the model",
     `- warnings: ${f.warnings.length === 0 ? 'none' : f.warnings.join(', ')}`,
   ].join('\n');
 }

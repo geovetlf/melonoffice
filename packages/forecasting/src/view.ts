@@ -29,7 +29,9 @@ export function forecastViewOf(f: Forecast, cache: 'hit' | 'miss' | null = null)
     interval:
       f.result === undefined ? null : { low: 'quantile_0.1', high: 'quantile_0.9' as const },
     confidence: null,
-    model: f.result?.model ?? null,
+    // Only whether the forecasting model or the simple fallback made it: which model it is, is
+    // the platform's to know (ADR-0082).
+    model: f.result?.model.kind ?? null,
     generatedAt: f.result?.generatedAt ?? null,
     dataQuality: f.dataQuality,
     warnings: f.warnings,

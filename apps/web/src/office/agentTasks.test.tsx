@@ -88,6 +88,28 @@ describe('agent tasks in the app (ADR-0063)', () => {
     expect(paused.queryByRole('textbox')).toBeNull();
   });
 
+  it('stops a task still working after the person confirms, only with execution.cancel', async () => {
+    const confirm = vi.spyOn(globalThis, 'confirm').mockReturnValue(true);
+    const backend = open('/office/sales/agent/spec_ana', (b) => {
+      b.options.permissions.push('execution.cancel');
+      b.options.agentTasks.spec_ana = [{ ...task() }];
+    });
+    const region = within(await screen.findByRole('region', { name: 'Tasks' }));
+    fireEvent.click(await region.findByRole('button', { name: 'Stop task' }));
+    expect(await region.findByText('Cancelled')).toBeTruthy();
+    expect(backend.cancelled).toEqual(['task-1']);
+    expect(region.queryByRole('button', { name: 'Stop task' })).toBeNull();
+    confirm.mockRestore();
+
+    cleanup();
+    open('/office/sales/agent/spec_ana', (b) => {
+      b.options.agentTasks.spec_ana = [{ ...task() }];
+    });
+    const readOnly = within(await screen.findByRole('region', { name: 'Tasks' }));
+    expect(await readOnly.findByText('In progress')).toBeTruthy();
+    expect(readOnly.queryByRole('button', { name: 'Stop task' })).toBeNull();
+  });
+
   it('shows no tasks at all to a role that cannot read agents', async () => {
     const backend = open('/office/sales', (b) => {
       b.options.permissions = ['organization.read', 'department.read'];

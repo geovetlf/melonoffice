@@ -34,6 +34,7 @@ import { GiaWorkplace } from '../gia/GiaWorkplace.js';
 import { AgentPlace, DepartmentOffice, NotFound } from '../office/DepartmentOffice.js';
 import { createOfficeClient } from '../office/officeClient.js';
 import { createAgentTasksClient } from '../office/agentTasksClient.js';
+import { createExecutionsClient } from '../executions/executionsClient.js';
 import { MemoryPage } from '../memory/MemoryPage.js';
 import { ReportsPage, ReportsSection } from '../reports/Reports.js';
 import { createReportsClient } from '../reports/reportsClient.js';
@@ -44,6 +45,8 @@ import { createAgentsClient } from '../agents/agentsClient.js';
 import { ApprovalsPage } from '../approvals/ApprovalsPage.js';
 import { createApprovalsClient } from '../approvals/approvalsClient.js';
 import { createAIUsageClient } from '../aiUsage/aiUsageClient.js';
+import { PlatformPage } from '../platform/PlatformPage.js';
+import { createPlatformClient } from '../platform/platformClient.js';
 import { DocumentsPage } from '../documents/DocumentsPage.js';
 import { createDocumentsClient } from '../documents/documentsClient.js';
 import { createMemoryClient } from '../memory/memoryClient.js';
@@ -92,8 +95,23 @@ export function AppShell(locale: LocaleProps) {
   const canPlanWorkflows = useCan('plan.create');
   const canDecidePlans = useCan('approval.approve');
   const canManageWorkflows = useCan('workflow.manage');
+  // Stopping a plan or an agent task under way (ADR-0029).
+  const canCancelExecutions = useCan('execution.cancel');
   const route = parseRoute(usePath());
   const [menuOpen, setMenuOpen] = useState(false);
+  // The platform AI view (ADR-0082) is the MelonOffice platform administrator's, never a
+  // company role: the server says who that is, and refuses everyone else whatever this shows.
+  const signedIn = state.status === 'signed_in';
+  const platform = useMemo(() => createPlatformClient(services.api.request), [services]);
+  const [platformAdmin, setPlatformAdmin] = useState(false);
+  useEffect(() => {
+    if (!signedIn) return;
+    let live = true;
+    void platform.access().then((admin) => live && setPlatformAdmin(admin));
+    return () => {
+      live = false;
+    };
+  }, [platform, signedIn]);
   useEffect(() => {
     if (!menuOpen) return;
     const close = (event: KeyboardEvent) => {
@@ -125,6 +143,7 @@ export function AppShell(locale: LocaleProps) {
             approvals: createApprovalsClient(services.api.request, organizationId),
             agents: createAgentsClient(services.api.request, organizationId),
             agentTasks: createAgentTasksClient(services.api.request, organizationId),
+            executions: createExecutionsClient(services.api.request, organizationId),
             automations: createAutomationsClient(services.api.request, organizationId),
           },
     [services, organizationId],
@@ -235,7 +254,11 @@ export function AppShell(locale: LocaleProps) {
           agentId={route.agentId}
           {...(canReadAgents
             ? {
-                tasks: { client: clients.agentTasks, canAsk: canAskAgents },
+                tasks: {
+                  client: clients.agentTasks,
+                  canAsk: canAskAgents,
+                  stop: canCancelExecutions ? clients.executions.cancel : undefined,
+                },
                 agents: clients.agents,
               }
             : {})}
@@ -264,7 +287,11 @@ export function AppShell(locale: LocaleProps) {
     case 'documents':
       page = canReadDocuments ? (
         <div className="light-surface">
-          <DocumentsPage client={clients.documents} canUpload={canUploadDocuments} />
+          <DocumentsPage
+            client={clients.documents}
+            canUpload={canUploadDocuments}
+            canReadMemory={canReadBusiness || canReadKnowledge}
+          />
         </div>
       ) : (
         <NotFound />
@@ -297,6 +324,15 @@ export function AppShell(locale: LocaleProps) {
           <NotFound />
         );
       break;
+    case 'platform':
+      page = platformAdmin ? (
+        <div className="light-surface">
+          <PlatformPage client={platform} />
+        </div>
+      ) : (
+        <NotFound />
+      );
+      break;
     case 'aiUsage':
       page = canReadAIUsage ? (
         <div className="light-surface">
@@ -320,6 +356,7 @@ export function AppShell(locale: LocaleProps) {
                 manageWorkflows: canManageWorkflows,
               }}
               templates={canReadAgents ? clients.agents.templates : undefined}
+              stop={canCancelExecutions ? clients.executions.cancel : undefined}
             />
           </div>
         ) : (
@@ -390,6 +427,7 @@ export function AppShell(locale: LocaleProps) {
                 canReadReports={canReadReports}
                 canReadDocuments={canReadDocuments}
                 canReadAIUsage={canReadAIUsage}
+                platformAdmin={platformAdmin}
                 canReadApprovals={canReadApprovals}
                 canReadAgents={canReadAgents}
                 canReadAutomations={canReadWorkflows || canReadPlans}
@@ -410,6 +448,11 @@ export function AppShell(locale: LocaleProps) {
                   menuOpen={menuOpen}
                   onMenu={() => setMenuOpen((open) => !open)}
                   locale={locale}
+                  notifications={{
+                    approvals: canReadApprovals ? clients.approvals : undefined,
+                    automations: canReadPlans ? clients.automations : undefined,
+                    followUps: canReadFollowUps ? clients.followUps : undefined,
+                  }}
                 />
                 <main className="app__main" key={route.kind === 'office' ? route.slug : route.kind}>
                   {page}

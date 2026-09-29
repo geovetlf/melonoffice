@@ -195,9 +195,10 @@ describe.each(STORES)('forecasts (ADR-0059) with storage in %s', (name, createSt
       department: 'sales',
       confidence: null,
       interval: { low: 'quantile_0.1', high: 'quantile_0.9' },
-      model: { provider: 'timesfm', id: 'timesfm-2.5-200m', kind: 'model' },
+      model: 'model',
       creditsCharged: 1,
     });
+    expect(JSON.stringify(done.body)).not.toContain('timesfm');
     expect(done.body.history).toEqual([{ period: expect.any(String), value: 1500 }]);
     expect((done.body.forecast as unknown[]).length).toBe(7);
     // Asked again: the same forecast, no new run.

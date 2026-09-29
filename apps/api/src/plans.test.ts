@@ -282,11 +282,14 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
     // An estimate is only ever an estimate: unknown without a credit rate (D-12).
     expect(detail.current).toEqual(
       expect.objectContaining({
-        estimate: { status: 'unknown', costMicroUsd: null, credits: null },
+        estimate: { status: 'unknown', credits: null },
       }),
     );
     expect(Object.keys(detail)).not.toContain('revision');
     expect(Object.keys(detail)).not.toContain('organizationId');
+    // Which model wrote the plan, and its internal cost, are the platform's (ADR-0082).
+    expect(detail.current).toEqual(expect.objectContaining({ source: { kind: 'planner' } }));
+    expect(JSON.stringify(detail)).not.toMatch(/alpha|costMicroUsd|default_model/);
   });
 
   it('keeps other organizations out', async () => {

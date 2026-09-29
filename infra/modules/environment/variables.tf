@@ -85,6 +85,17 @@ variable "nvidia_api_key_secret" {
   }
 }
 
+variable "platform_admin_user_ids" {
+  description = "MelonOffice user ids (the users collection's document ids) allowed to open the platform AI view: providers, models, routing and internal cost (ADR-0082). Empty: nobody. No company role grants it."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for id in var.platform_admin_user_ids : can(regex("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", id))])
+    error_message = "platform_admin_user_ids must be MelonOffice user ids (lowercase UUIDs)."
+  }
+}
+
 variable "document_storage" {
   description = "Turn on document uploads (ADR-0078): a private Cloud Storage bucket for uploaded documents, which only the api may create and read objects in. Needs the apps and Firestore. Only dev."
   type        = bool

@@ -258,6 +258,7 @@ logger.info('channels', {
 });
 
 logger.info('web origins', { count: config.webOrigins?.length ?? 0 });
+logger.info('platform admins', { count: config.platformAdminUserIds?.length ?? 0 });
 logger.info('documents', {
   storage: projectId !== undefined && config.documentsBucket !== undefined,
 });
@@ -276,6 +277,7 @@ const app = createApp({
   logger,
   version: config.version,
   webOrigins: config.webOrigins ?? [],
+  platformAdmins: config.platformAdminUserIds ?? [],
   ai,
   ...configured,
 });
