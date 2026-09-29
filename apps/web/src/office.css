@@ -2268,3 +2268,52 @@ a.sidebar__item:hover {
     align-items: flex-start;
   }
 }
+
+/* Agent tasks (ADR-0063): what the owner asked an agent and its verified answer. */
+.agent-tasks {
+  margin-top: var(--mo-space-4);
+}
+
+.agent-tasks__form {
+  display: grid;
+  gap: var(--mo-space-2);
+  margin-bottom: var(--mo-space-3);
+}
+
+.agent-tasks__form label {
+  display: grid;
+  gap: var(--mo-space-1);
+}
+
+.agent-tasks__list {
+  display: grid;
+  gap: var(--mo-space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.agent-task {
+  padding: var(--mo-space-3);
+  border: 1px solid var(--office-line);
+  border-radius: 8px;
+}
+
+.agent-task__request {
+  margin: 0 0 var(--mo-space-1);
+  font-weight: 600;
+  white-space: pre-wrap;
+}
+
+.agent-task__status {
+  font-weight: 600;
+}
+
+.agent-task__answer {
+  margin-top: var(--mo-space-2);
+  white-space: pre-wrap;
+}
+
+.agent-task--failed .agent-task__status {
+  color: var(--office-muted);
+}

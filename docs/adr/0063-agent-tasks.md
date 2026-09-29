@@ -60,6 +60,12 @@ After AE-1 an owner can create agents from templates, but an agent can do nothin
 - The list is newest first, 20 per page by default, at most 50, with an opaque cursor bound to the organization and agent (ADR-0061's pattern). Firestore index: `agentTasks (organizationId, specialistId, createdAt desc)`; while it is missing, the list falls back to an equality read and logs `firestore.index_missing`.
 - The task view: id, agent, version, request, who, when, `status` (the execution's), `failure` code, `completedAt`, `answer`.
 
+### 6. Web (the agent's place)
+
+- The agent's place (`/office/<department>/agent/<id>`, ADR-0041) gets a Tasks section for anyone with `specialist.read`. It replaces the "Current task: none" line there.
+- With `specialist.task` and an active agent, it shows a form. Each typed request has one `idempotencyKey`, so a retry after a failure is the same task. The form says the agent answers from the company memory, takes no action, and uses at most 1 credit per task.
+- A task still open is read again every 4 seconds, at most 45 times. The screen then shows the verified answer and what the agent says is missing. A failed task says it failed and that nothing was done on the agent's behalf. No answer is shown that the API did not return.
+
 ## Consequences
 
 - An agent can do real work that a person can read, on the engines already in production in DEV, with no new runtime, gateway, memory or queue.

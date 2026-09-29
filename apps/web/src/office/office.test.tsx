@@ -689,14 +689,12 @@ describe('a department’s workstations (ADR-0041)', () => {
     expect(profile.getByText('Workstation 1')).toBeTruthy();
     expect(profile.getByText('Available')).toBeTruthy();
     const work = within(screen.getByRole('region', { name: 'Work' }));
-    for (const none of [
-      'No activity available',
-      'No task assigned',
-      'No activity recorded',
-      'No projects',
-    ]) {
+    for (const none of ['No activity available', 'No activity recorded', 'No projects']) {
       expect(work.getByText(none)).toBeTruthy();
     }
+    // Its tasks (ADR-0063) are read from the API: none yet, and none invented.
+    const tasks = within(screen.getByRole('region', { name: 'Tasks' }));
+    expect(await tasks.findByText('No tasks yet.')).toBeTruthy();
     expect(screen.queryByText('Working')).toBeNull();
     // Reading the profile only reads.
     expect(
