@@ -45,13 +45,19 @@ import {
 import { describe, expect, it } from 'vitest';
 import {
   ProviderCredential,
+  retryAfterMsOf,
   type ProviderAdapter,
   type ProviderCall,
   type ProviderOutcome,
   type ProviderStreamEvent,
 } from './adapter.js';
 import type { AICreditsPort } from './credits.js';
-import { ASSIST_MODEL_POLICIES, createAIGateway } from './gateway.js';
+import {
+  ASSIST_MODEL_POLICIES,
+  createAIGateway,
+  MAX_RETRY_WAIT_MS,
+  retryDelayMs,
+} from './gateway.js';
 import { createModelPolicyCatalogue, DEFAULT_MODEL_POLICY } from './policy.js';
 import { createProviderRegistry } from './registry.js';
 import {
@@ -316,6 +322,7 @@ async function world(options: WorldOptions = {}) {
   });
   const credits = fakeCredits(options.balance ?? 1_000);
   const logLines: string[] = [];
+  const sleeps: number[] = [];
   const gateway = createAIGateway({
     executions: executionRepository,
     organizations: tenancy,
@@ -339,7 +346,9 @@ async function world(options: WorldOptions = {}) {
     logger: createLogger({ service: 'test', sink: (line) => logLines.push(line) }),
     timeoutMs: 50,
     now,
-    sleep: async () => undefined,
+    sleep: async (ms: number) => {
+      sleeps.push(ms);
+    },
     ...(options.usage === undefined ? {} : { usage: options.usage }),
   });
   const tenantA = await resolveTenant(as(ALICE), orgA, tenancy);
@@ -415,6 +424,7 @@ async function world(options: WorldOptions = {}) {
     audit,
     events,
     logLines,
+    sleeps,
     orgA,
     orgB,
     tenantA,
@@ -1883,5 +1893,80 @@ describe('AI gateway: stored documents (ADR-0079)', () => {
     expect(
       await w.gateway.assist(w.tenantA, { ...full, requestId: 'r2', maxOutputTokens: 20_000 }),
     ).toMatchObject({ status: 'denied', code: 'cost_limit_exceeded' });
+  });
+});
+
+describe("AI gateway: a provider's Retry-After (ADR-0080)", () => {
+  const limited = (retryAfterMs?: number) => (): ProviderOutcome => ({
+    status: 'error',
+    kind: 'rate_limited',
+    httpStatus: 429,
+    ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
+  });
+
+  it('waits as long as the provider asked before trying the same model again', async () => {
+    const { w, call } = await setup({
+      defaultPolicy: { ...onlyModels('alpha/alpha-large'), maxAttempts: 2, backoffMs: 100 },
+      script: { 'alpha-large': [limited(2_000)] },
+    });
+    expect(await call()).toMatchObject({ status: 'completed', attempts: 2 });
+    expect(w.sleeps).toEqual([2_000]);
+  });
+
+  it("never waits less than the policy's backoff", async () => {
+    const { w, call } = await setup({
+      defaultPolicy: { ...onlyModels('alpha/alpha-large'), maxAttempts: 2, backoffMs: 500 },
+      script: { 'alpha-large': [limited(10)] },
+    });
+    expect(await call()).toMatchObject({ status: 'completed' });
+    expect(w.sleeps).toEqual([500]);
+  });
+
+  it('goes to the next compatible model when the wait is longer than a call may take', async () => {
+    const { w, call } = await setup({
+      defaultPolicy: {
+        ...onlyModels('alpha/alpha-large', 'beta/beta-text'),
+        maxAttempts: 3,
+        backoffMs: 0,
+      },
+      script: { 'alpha-large': [limited(MAX_RETRY_WAIT_MS + 1)] },
+    });
+    expect(await call({ quality: 'standard' })).toMatchObject({
+      status: 'completed',
+      model: 'beta-text',
+      fallbackFrom: 'alpha/alpha-large',
+      attempts: 2,
+    });
+    expect(w.sleeps).toEqual([]);
+  });
+
+  it('does not ask a provider again before its Retry-After has passed', async () => {
+    const { w, call } = await setup({
+      defaultPolicy: {
+        ...onlyModels('alpha/alpha-large', 'beta/beta-text'),
+        maxAttempts: 1,
+        backoffMs: 0,
+      },
+      script: { 'alpha-large': [limited(60_000)] },
+    });
+    expect(await call({ quality: 'standard' })).toMatchObject({ model: 'beta-text' });
+    // The next call skips alpha at once: it said when it takes calls again.
+    expect(await call({ requestId: 'req-2', quality: 'standard' })).toMatchObject({
+      model: 'beta-text',
+    });
+    expect(w.calls.map((c) => c.model.id)).toEqual(['alpha-large', 'beta-text', 'beta-text']);
+  });
+
+  it('reads Retry-After in seconds or as a date, bounded', () => {
+    const now = Date.parse('2026-09-29T12:00:00Z');
+    expect(retryAfterMsOf('3', now)).toBe(3_000);
+    expect(retryAfterMsOf('Tue, 29 Sep 2026 12:00:05 GMT', now)).toBe(5_000);
+    expect(retryAfterMsOf('Tue, 29 Sep 2026 11:59:00 GMT', now)).toBe(0);
+    expect(retryAfterMsOf('999999999', now)).toBe(86_400_000);
+    expect(retryAfterMsOf(null, now)).toBeUndefined();
+    expect(retryAfterMsOf('soon', now)).toBeUndefined();
+    expect(retryDelayMs(500, undefined)).toBe(500);
+    expect(retryDelayMs(500, 2_000)).toBe(2_000);
+    expect(retryDelayMs(500, MAX_RETRY_WAIT_MS + 1)).toBeUndefined();
   });
 });

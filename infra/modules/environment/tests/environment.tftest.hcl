@@ -974,3 +974,65 @@ run "rejects_unknown_environment" {
 
   expect_failures = [var.environment]
 }
+
+# NVIDIA's API key (ADR-0080): with the owner's secret named, the api and worker may read that one
+# secret and learn its reference; the web learns nothing. Without it, nothing changes.
+run "dev_lets_the_api_and_worker_read_the_nvidia_key" {
+  command = apply
+
+  variables {
+    environment           = "dev"
+    deploy_apps           = true
+    deletion_protection   = false
+    firestore_and_auth    = true
+    ai_assist             = true
+    conversation_agents   = true
+    nvidia_api_key_secret = "ai-nvidia-api-key"
+  }
+
+  assert {
+    condition = alltrue([for m in [google_secret_manager_secret_iam_member.api_nvidia_key[0], google_secret_manager_secret_iam_member.worker_nvidia_key[0]] :
+      m.role == "roles/secretmanager.secretAccessor" && m.secret_id == "ai-nvidia-api-key"
+    ])
+    error_message = "The api and worker may only read the NVIDIA key's secret."
+  }
+
+  assert {
+    condition     = google_secret_manager_secret_iam_member.api_nvidia_key[0].member == "serviceAccount:${module.app["api"].runtime_service_account}" && google_secret_manager_secret_iam_member.worker_nvidia_key[0].member == "serviceAccount:${module.app["worker"].runtime_service_account}"
+    error_message = "Only the api's and the worker's runtime identities get access."
+  }
+
+  assert {
+    condition     = module.app["api"].env["NVIDIA_API_KEY_SECRET"] == "projects/test-project/secrets/ai-nvidia-api-key/versions/latest" && module.app["worker"].env["NVIDIA_API_KEY_SECRET"] == module.app["api"].env["NVIDIA_API_KEY_SECRET"] && !contains(keys(module.app["web"].env), "NVIDIA_API_KEY_SECRET")
+    error_message = "The api and worker learn the key's reference; the web never does."
+  }
+}
+
+run "nvidia_is_off_without_its_secret" {
+  command = apply
+
+  variables {
+    environment         = "dev"
+    deploy_apps         = true
+    deletion_protection = false
+    firestore_and_auth  = true
+    ai_assist           = true
+    conversation_agents = true
+  }
+
+  assert {
+    condition     = length(google_secret_manager_secret_iam_member.api_nvidia_key) == 0 && length(google_secret_manager_secret_iam_member.worker_nvidia_key) == 0 && !contains(keys(module.app["api"].env), "NVIDIA_API_KEY_SECRET")
+    error_message = "Without the owner's secret, NVIDIA gets nothing."
+  }
+}
+
+run "nvidia_is_refused_outside_dev" {
+  command = plan
+
+  variables {
+    environment           = "prod"
+    nvidia_api_key_secret = "ai-nvidia-api-key"
+  }
+
+  expect_failures = [var.nvidia_api_key_secret]
+}

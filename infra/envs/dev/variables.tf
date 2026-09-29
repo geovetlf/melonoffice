@@ -30,3 +30,9 @@ variable "budget" {
   })
   default = null
 }
+
+variable "nvidia_api_key_secret" {
+  description = "Secret Manager secret id (ai-*) holding the NVIDIA API key (ADR-0080), created by the owner. Null: NVIDIA is off."
+  type        = string
+  default     = null
+}

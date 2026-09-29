@@ -41,6 +41,12 @@ export interface ServiceConfig {
    */
   readonly deepSeek?: { readonly keySecret: SecretRef };
   /**
+   * NVIDIA's official hosted API (ADR-0080): `NVIDIA_API_KEY_SECRET`, the Secret Manager
+   * reference of its key (`projects/{project}/secrets/ai-{name}/versions/latest`), never the key
+   * itself. Unset: NVIDIA is not registered.
+   */
+  readonly nvidia?: { readonly keySecret: SecretRef };
+  /**
    * The Cloud Storage bucket that holds uploaded documents (ADR-0078): `DOCUMENTS_BUCKET`, from
    * Terraform. Unset: uploads and downloads answer 503 (`storage_unavailable`).
    */
@@ -159,11 +165,16 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): S
     // The reference, not the value, is shown: a key pasted here by mistake is not echoed.
     throw new Error('Invalid DEEPSEEK_API_KEY_SECRET: expected a Secret Manager ai-* reference');
   }
+  const nvidiaKeySecret = env.NVIDIA_API_KEY_SECRET || undefined;
+  if (nvidiaKeySecret !== undefined && !isAISecretRef(nvidiaKeySecret)) {
+    throw new Error('Invalid NVIDIA_API_KEY_SECRET: expected a Secret Manager ai-* reference');
+  }
   return {
     port,
     logLevel: level,
     version: env.SERVICE_VERSION ?? 'dev',
     ...(deepSeekKeySecret === undefined ? {} : { deepSeek: { keySecret: deepSeekKeySecret } }),
+    ...(nvidiaKeySecret === undefined ? {} : { nvidia: { keySecret: nvidiaKeySecret } }),
     ...(identityProjectId === undefined ? {} : { identityProjectId }),
     ...(channelSecretsProjectId === undefined ? {} : { channelSecretsProjectId }),
     ...(whatsappGraphApiVersion === undefined ? {} : { whatsappGraphApiVersion }),

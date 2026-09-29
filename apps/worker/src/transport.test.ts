@@ -254,7 +254,8 @@ describe('worker architecture', () => {
     }
     // Only the composition builds the gate and the gateway. The server passes the real tool
     // catalogue with the conversation agent's executors only (ADR-0043), and the official model
-    // adapters, Vertex AI (D-7) and DeepSeek (ADR-0072), each only with its own settings, with
+    // adapters, Vertex AI (D-7), DeepSeek (ADR-0072) and NVIDIA (ADR-0080), each only with its own
+    // settings, with
     // credits at the approved rate (D-12); without any of them it registers no adapter and no
     // credits.
     const server = text('server.ts');
@@ -262,6 +263,7 @@ describe('worker architecture', () => {
     expect(server).toMatch(/adapters: \[\]/);
     expect([...server.matchAll(/create\w*Adapter\(/g)].map((m) => m[0]).sort()).toEqual([
       'createDeepSeekAdapter(',
+      'createNvidiaAdapter(',
       'createVertexAIAdapter(',
       'createWhatsAppAdapter(',
     ]);

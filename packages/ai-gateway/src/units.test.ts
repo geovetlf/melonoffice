@@ -368,3 +368,87 @@ describe('cost and credits', () => {
     expect(creditReferenceOf('req-1')).toBe('ai:req-1');
   });
 });
+
+describe("a model's recorded terms (ADR-0080)", () => {
+  const terms = {
+    offering: 'free_prototyping',
+    production: 'requires_license',
+    contentUse: 'may_be_used',
+    source: 'https://example.com/terms',
+    verifiedAt: '2026-09-29',
+  } as const;
+  const publicOnly = { maxSensitivity: 'public' as const, terms };
+
+  it('registers a model with terms that fit where it runs and what it receives', () => {
+    expect(registryOf([model('alpha', 'free', publicOnly)]).models()).toHaveLength(1);
+    expect(
+      registryOf([
+        model('alpha', 'paid', {
+          environments: ['dev', 'prod'],
+          terms: { ...terms, offering: 'paid', production: 'allowed', contentUse: 'not_used' },
+        }),
+      ]).models(),
+    ).toHaveLength(1);
+  });
+
+  it('refuses production for a model whose terms do not allow it', () => {
+    for (const production of ['not_allowed', 'requires_license', 'unknown'] as const) {
+      expect(() =>
+        registryOf([
+          model('alpha', 'free', {
+            ...publicOnly,
+            environments: ['dev', 'prod'],
+            terms: { ...terms, production },
+          }),
+        ]),
+      ).toThrow(AIConfigError);
+    }
+  });
+
+  it('gives a model whose provider may use or keep what it is sent public data only', () => {
+    for (const contentUse of ['may_be_used', 'unknown'] as const) {
+      expect(() =>
+        registryOf([
+          model('alpha', 'free', { maxSensitivity: 'internal', terms: { ...terms, contentUse } }),
+        ]),
+      ).toThrow(AIConfigError);
+    }
+  });
+
+  it('keeps a model the terms do not allow, or no longer offered, out of routing', () => {
+    for (const offering of ['not_allowed', 'unavailable'] as const) {
+      expect(() =>
+        registryOf([model('alpha', 'm', { ...publicOnly, terms: { ...terms, offering } })]),
+      ).toThrow(AIConfigError);
+      expect(
+        registryOf([
+          model('alpha', 'm', { ...publicOnly, status: 'retired', terms: { ...terms, offering } }),
+        ]).models(),
+      ).toHaveLength(1);
+    }
+  });
+
+  it('refuses terms without an official https source and a date, or with extra fields', () => {
+    for (const bad of [
+      { ...terms, source: 'blog post' },
+      { ...terms, verifiedAt: 'yesterday' },
+      { ...terms, offering: 'unlimited' },
+      { ...terms, rateLimit: '40 rpm' },
+    ]) {
+      expect(() =>
+        registryOf([model('alpha', 'm', { maxSensitivity: 'public', terms: bad as never })]),
+      ).toThrow(AIConfigError);
+    }
+  });
+
+  it('routes public data only to such a model', () => {
+    const registry = registryOf([model('alpha', 'free', publicOnly)]);
+    expect(routeModel(registry, DEFAULT_MODEL_POLICY, 'dev', route)).toEqual({
+      status: 'none',
+      reason: 'sensitivity_not_allowed',
+    });
+    expect(
+      routeModel(registry, DEFAULT_MODEL_POLICY, 'dev', { ...route, sensitivity: 'public' }),
+    ).toMatchObject({ status: 'selected' });
+  });
+});

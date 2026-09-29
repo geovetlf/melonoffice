@@ -13,7 +13,11 @@ export interface ProviderHealthTracker {
   /** Providers to leave out of routing right now. */
   unavailable(): ReadonlySet<string>;
   status(providerId: string): ProviderHealth;
-  record(providerId: string, outcome: 'success' | ProviderErrorKind): void;
+  /**
+   * `retryAfterMs`: on `rate_limited`, how long the provider asked to wait. It is left out of
+   * routing for that long at once (ADR-0080), whatever the failure count.
+   */
+  record(providerId: string, outcome: 'success' | ProviderErrorKind, retryAfterMs?: number): void;
 }
 
 export interface ProviderHealthOptions {
@@ -48,7 +52,7 @@ export function createProviderHealthTracker(
       if (s.openUntil > now()) return 'unavailable';
       return s.degraded ? 'degraded' : 'available';
     },
-    record(providerId: string, outcome: 'success' | ProviderErrorKind) {
+    record(providerId: string, outcome: 'success' | ProviderErrorKind, retryAfterMs?: number) {
       const s = of(providerId);
       if (outcome === 'success') {
         s.failures = [];
@@ -61,8 +65,12 @@ export function createProviderHealthTracker(
       s.degraded = true;
       s.failures = [...s.failures.filter((t) => at - t < windowMs), at];
       if (s.failures.length >= failureThreshold) {
-        s.openUntil = at + cooldownMs;
+        s.openUntil = Math.max(s.openUntil, at + cooldownMs);
         s.failures = [];
+      }
+      // The provider said when it takes calls again: it is not asked before then.
+      if (outcome === 'rate_limited' && retryAfterMs !== undefined && retryAfterMs > 0) {
+        s.openUntil = Math.max(s.openUntil, at + retryAfterMs);
       }
     },
   });

@@ -193,6 +193,37 @@ function withDeadline(work: Promise<ProviderOutcome>, ms: number): Promise<Attem
   return Promise.race([outcome, timeout]).finally(() => clearTimeout(timer));
 }
 
+/** The longest the gateway waits within a call before trying the same model again (ADR-0080). */
+export const MAX_RETRY_WAIT_MS = 10_000;
+
+/**
+ * How long to wait before trying the same model again: the policy's backoff, or longer when the
+ * provider asked (`Retry-After` on a 429). Undefined when it asked for more than a call may wait,
+ * so the call goes to the next model instead of waiting.
+ */
+export function retryDelayMs(
+  backoffMs: number,
+  retryAfterMs: number | undefined,
+): number | undefined {
+  if (retryAfterMs === undefined) return backoffMs;
+  if (retryAfterMs > MAX_RETRY_WAIT_MS) return undefined;
+  return Math.max(backoffMs, retryAfterMs);
+}
+
+const retryAfterOf = (outcome: Attempt): number | undefined =>
+  outcome.status === 'error' && outcome.kind === 'rate_limited' && 'retryAfterMs' in outcome
+    ? outcome.retryAfterMs
+    : undefined;
+
+const failureOf = (
+  outcome: Exclude<Attempt, { readonly status: 'success' }>,
+): { readonly error: ProviderErrorKind; readonly retryAfterMs?: number } => {
+  const retryAfterMs = retryAfterOf(outcome);
+  return retryAfterMs === undefined
+    ? { error: outcome.kind }
+    : { error: outcome.kind, retryAfterMs };
+};
+
 const REQUEST_ID = /^[\w-]{1,100}$/;
 
 export function createAIGateway(options: AIGatewayOptions): AIGateway {
@@ -214,6 +245,12 @@ export function createAIGateway(options: AIGatewayOptions): AIGateway {
   const health = options.health ?? createProviderHealthTracker();
   const usageSink = options.usage;
   const costEngine = createAICostEngine();
+
+  /** What the provider's answer says of its health, with how long it asked to wait on a 429. */
+  function recordHealth(providerId: string, outcome: Attempt): void {
+    if (outcome.status === 'success') health.record(providerId, 'success');
+    else health.record(providerId, outcome.kind, retryAfterOf(outcome));
+  }
 
   async function organizationOf(tenant: TenantContext): Promise<OrganizationId | undefined> {
     if (!isResolvedTenant(tenant)) return undefined;
@@ -545,7 +582,10 @@ export function createAIGateway(options: AIGatewayOptions): AIGateway {
       candidate: RouteCandidate,
       call: ProviderCall,
       callLog: Logger,
-    ) => Promise<{ readonly response: AIResponse } | { readonly error: ProviderErrorKind }>,
+    ) => Promise<
+      | { readonly response: AIResponse }
+      | { readonly error: ProviderErrorKind; readonly retryAfterMs?: number }
+    >,
     retryable: () => boolean = () => true,
   ): Promise<AIResponse> {
     const { known, record } = ctx;
@@ -576,7 +616,10 @@ export function createAIGateway(options: AIGatewayOptions): AIGateway {
         if (!retryable()) return giveUp(ctx, lastKind, progress);
         // Permanent errors are never retried on the same model.
         if (!isTransient(lastKind) || n === policy.maxAttempts) break;
-        await sleep(policy.backoffMs * n);
+        const wait = retryDelayMs(policy.backoffMs * n, result.retryAfterMs);
+        // The provider asked for a longer wait than a call may take: the next model instead.
+        if (wait === undefined) break;
+        await sleep(wait);
       }
       // A request the provider refused would be refused elsewhere too: no fallback.
       if (!allowsFallback(lastKind)) break;
@@ -626,8 +669,8 @@ export function createAIGateway(options: AIGatewayOptions): AIGateway {
       if (outcome.status === 'success' && !checkProviderSuccess(outcome, request.tools)) {
         outcome = { status: 'error', kind: 'invalid_response' };
       }
-      health.record(c.provider.id, outcome.status === 'success' ? 'success' : outcome.kind);
-      if (outcome.status !== 'success') return { error: outcome.kind };
+      recordHealth(c.provider.id, outcome);
+      if (outcome.status !== 'success') return failureOf(outcome);
       return {
         response: await settle(ctx, request, policy, prepared, c, outcome, progress, callLog),
       };
@@ -684,8 +727,8 @@ export function createAIGateway(options: AIGatewayOptions): AIGateway {
         ) {
           outcome = { status: 'error', kind: 'invalid_response' };
         }
-        health.record(c.provider.id, outcome.status === 'success' ? 'success' : outcome.kind);
-        if (outcome.status !== 'success') return { error: outcome.kind };
+        recordHealth(c.provider.id, outcome);
+        if (outcome.status !== 'success') return failureOf(outcome);
         const response = await settle(
           ctx,
           request,

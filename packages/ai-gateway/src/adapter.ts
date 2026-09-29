@@ -76,6 +76,11 @@ export type ProviderOutcome =
       readonly kind: ProviderErrorKind;
       /** The provider's HTTP status, when there is one. Never its message. */
       readonly httpStatus?: number;
+      /**
+       * On `rate_limited`: how long the provider asked to wait before the next call (its
+       * `Retry-After`), in milliseconds, when it said (ADR-0080).
+       */
+      readonly retryAfterMs?: number;
     };
 
 /**
@@ -168,3 +173,28 @@ export const allowsFallback = (kind: ProviderErrorKind): boolean =>
   kind === 'authentication' ||
   kind === 'invalid_response' ||
   kind === 'context_overflow';
+
+/** The longest a provider's `Retry-After` is honoured, in milliseconds (a day). */
+const MAX_RETRY_AFTER_MS = 86_400_000;
+
+/**
+ * A `Retry-After` header as milliseconds from now (ADR-0080): seconds, or an HTTP date. Undefined
+ * when absent or unreadable, never negative, and at most a day, so a provider cannot park a
+ * server for longer.
+ */
+export function retryAfterMsOf(
+  header: string | null | undefined,
+  nowMs: number,
+): number | undefined {
+  if (header === null || header === undefined) return undefined;
+  const value = header.trim();
+  if (value.length === 0 || value.length > 64) return undefined;
+  let ms: number;
+  if (/^\d{1,9}$/.test(value)) ms = Number(value) * 1000;
+  else {
+    const at = Date.parse(value);
+    if (Number.isNaN(at)) return undefined;
+    ms = at - nowMs;
+  }
+  return Math.min(Math.max(0, Math.ceil(ms)), MAX_RETRY_AFTER_MS);
+}

@@ -21,6 +21,7 @@ import {
   DEEPSEEK_MODELS,
   DEEPSEEK_PROVIDER,
 } from '@melonoffice/ai-deepseek';
+import { createNvidiaAdapter, NVIDIA_MODELS, NVIDIA_PROVIDER } from '@melonoffice/ai-nvidia';
 import type { DeploymentEnvironment, ModelPolicy, PolicyId, SecretRef } from '@melonoffice/domain';
 import {
   aiProviderKeysFromSecrets,
@@ -99,8 +100,8 @@ export interface AIConfiguration {
 /**
  * The AI Gateway's configuration from the service's settings (ADR-0038, ADR-0072). Each provider
  * is registered only when its own settings are set, and nothing at all without the environment
- * (fails closed): Vertex AI with its project and location; DeepSeek with the Secret Manager
- * reference of its key. Registering a provider allows nothing by itself: a call reaches it only
+ * (fails closed): Vertex AI with its project and location; DeepSeek and NVIDIA (ADR-0080) with
+ * the Secret Manager reference of their keys. Registering a provider allows nothing by itself: a call reaches it only
  * where a model policy allows it and the model's price is known. Where the provider or the policy
  * do not allow the environment (anywhere but DEV today), calls are denied too.
  */
@@ -110,11 +111,12 @@ export function aiConfigurationOf(config: {
   /** The documents bucket (ADR-0078): Vertex AI reads a scanned PDF from it (ADR-0079). */
   readonly documentsBucket?: string;
   readonly deepSeek?: { readonly keySecret: SecretRef };
+  readonly nvidia?: { readonly keySecret: SecretRef };
   readonly fetch?: typeof fetch;
   /** Where AI provider keys are read; Secret Manager unless given (tests). */
   readonly secrets?: SecretStore;
 }): AIConfiguration {
-  const { deploymentEnvironment: environment, vertexAI, deepSeek } = config;
+  const { deploymentEnvironment: environment, vertexAI, deepSeek, nvidia } = config;
   if (environment === undefined) return {};
   const fetchOption = config.fetch === undefined ? {} : { fetch: config.fetch };
   const providers = [];
@@ -142,6 +144,19 @@ export function aiConfigurationOf(config: {
         credentials: aiProviderKeysFromSecrets(
           config.secrets ?? createSecretManagerStore({ ...fetchOption, accepts: isAISecretRef }),
           { [DEEPSEEK_PROVIDER.credential.provider]: deepSeek.keySecret },
+        ),
+        ...fetchOption,
+      }),
+    );
+  }
+  if (nvidia !== undefined) {
+    providers.push(NVIDIA_PROVIDER);
+    models.push(...NVIDIA_MODELS);
+    adapters.push(
+      createNvidiaAdapter({
+        credentials: aiProviderKeysFromSecrets(
+          config.secrets ?? createSecretManagerStore({ ...fetchOption, accepts: isAISecretRef }),
+          { [NVIDIA_PROVIDER.credential.provider]: nvidia.keySecret },
         ),
         ...fetchOption,
       }),

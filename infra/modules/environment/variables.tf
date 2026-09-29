@@ -69,6 +69,22 @@ variable "forecast_credits_per_run" {
   }
 }
 
+variable "nvidia_api_key_secret" {
+  description = "Secret Manager secret id (ai-*) holding the NVIDIA API key (ADR-0080). The owner creates the secret and its value; Terraform only lets the api and worker read that one secret and tells them its name. Null leaves NVIDIA unregistered. Only dev: NVIDIA's free hosted access is for prototyping and testing, not production."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.nvidia_api_key_secret == null || can(regex("^ai-[a-z0-9][a-z0-9-]{0,62}$", coalesce(var.nvidia_api_key_secret, "x")))
+    error_message = "nvidia_api_key_secret must be a secret id starting with ai- (lowercase letters, digits and dashes), or null."
+  }
+
+  validation {
+    condition     = var.nvidia_api_key_secret == null || var.environment == "dev"
+    error_message = "NVIDIA's free hosted access is for prototyping and testing only: nvidia_api_key_secret may be set in dev only."
+  }
+}
+
 variable "document_storage" {
   description = "Turn on document uploads (ADR-0078): a private Cloud Storage bucket for uploaded documents, which only the api may create and read objects in. Needs the apps and Firestore. Only dev."
   type        = bool
