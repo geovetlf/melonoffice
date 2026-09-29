@@ -674,6 +674,31 @@ importers:
         specifier: workspace:*
         version: link:../config
 
+  packages/events:
+    dependencies:
+      '@melonoffice/audit':
+        specifier: workspace:*
+        version: link:../audit
+      '@melonoffice/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@melonoffice/observability':
+        specifier: workspace:*
+        version: link:../observability
+      '@melonoffice/tenancy':
+        specifier: workspace:*
+        version: link:../tenancy
+    devDependencies:
+      '@melonoffice/auth':
+        specifier: workspace:*
+        version: link:../auth
+      '@melonoffice/config':
+        specifier: workspace:*
+        version: link:../config
+      '@melonoffice/credits':
+        specifier: workspace:*
+        version: link:../credits
+
   packages/execution:
     dependencies:
       '@melonoffice/audit':
