@@ -3,6 +3,8 @@ import { useEffect, useRef, type CSSProperties, type ReactNode } from 'react';
 import { navigate } from '../identity/router.js';
 import { paths } from '../shell/routes.js';
 import { AgentAvatar, AgentStatus } from './agents.js';
+import { AgentTasks } from './AgentTasks.js';
+import type { AgentTasksClient } from './agentTasksClient.js';
 import { agentsOf, departmentName, findBySlug, lookOf, officeSlug } from './departments.js';
 import { Icon } from './icons.js';
 import { readyList, useOfficeData } from './OfficeData.js';
@@ -108,7 +110,16 @@ export function DepartmentOffice({
  * its workspace will fill once the runtime reports them (ADR-0041). It never shows a task or
  * activity the agent does not have: with none reported, it says so.
  */
-export function AgentPlace({ slug, agentId }: { readonly slug: string; readonly agentId: string }) {
+export function AgentPlace({
+  slug,
+  agentId,
+  tasks,
+}: {
+  readonly slug: string;
+  readonly agentId: string;
+  /** The agent's tasks (ADR-0063), for a person who may read them; absent, none are shown. */
+  readonly tasks?: { readonly client: AgentTasksClient; readonly canAsk: boolean };
+}) {
   const intl = useIntl();
   const { departments, specialists } = useOfficeData();
   const department = findBySlug(readyList(departments), slug);
@@ -146,9 +157,10 @@ export function AgentPlace({ slug, agentId }: { readonly slug: string; readonly 
     },
   ];
   // What the runtime will report; today nothing does, and each says so (never an invented one).
+  // Its tasks, when they can be read, have their own section below.
   const work = [
     ['office.profile.activity', 'office.profile.noActivity'],
-    ['office.profile.task', 'office.profile.noTask'],
+    ...(tasks === undefined ? ([['office.profile.task', 'office.profile.noTask']] as const) : []),
     ['office.profile.lastActivity', 'office.profile.noLastActivity'],
     ['office.profile.projects', 'office.profile.noProjects'],
   ] as const;
@@ -209,6 +221,16 @@ export function AgentPlace({ slug, agentId }: { readonly slug: string; readonly 
           </dl>
         </section>
       </div>
+      {tasks === undefined ? null : (
+        <AgentTasks
+          key={agent.id}
+          client={tasks.client}
+          agentId={agent.id}
+          agentName={agent.displayName}
+          canAsk={tasks.canAsk}
+          agentActive={agent.status === 'active'}
+        />
+      )}
       <ComingAreas
         titleId="office.agent.coming"
         areas={['documents', 'tools', 'results', 'actions']}

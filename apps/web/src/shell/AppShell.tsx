@@ -30,6 +30,7 @@ import { createGiaClient } from '../gia/giaClient.js';
 import { GiaWorkplace } from '../gia/GiaWorkplace.js';
 import { AgentPlace, DepartmentOffice, NotFound } from '../office/DepartmentOffice.js';
 import { createOfficeClient } from '../office/officeClient.js';
+import { createAgentTasksClient } from '../office/agentTasksClient.js';
 import { MemoryPage } from '../memory/MemoryPage.js';
 import { ReportsPage, ReportsSection } from '../reports/Reports.js';
 import { createReportsClient } from '../reports/reportsClient.js';
@@ -64,6 +65,9 @@ export function AppShell(locale: LocaleProps) {
   const canManageFollowUps = useCan('follow_up.manage');
   const canReadKnowledge = useCan('knowledge.read');
   const canReadReports = useCan('report.read');
+  // Agent tasks (ADR-0063): read with the agents, asked only with `specialist.task`.
+  const canReadAgents = useCan('specialist.read');
+  const canAskAgents = useCan('specialist.task');
   const route = parseRoute(usePath());
   const [menuOpen, setMenuOpen] = useState(false);
   useEffect(() => {
@@ -92,6 +96,7 @@ export function AppShell(locale: LocaleProps) {
             followUps: createFollowUpsClient(services.api.request, organizationId),
             memory: createMemoryClient(services.api.request, organizationId),
             reports: createReportsClient(services.api.request, organizationId),
+            agentTasks: createAgentTasksClient(services.api.request, organizationId),
           },
     [services, organizationId],
   );
@@ -189,7 +194,15 @@ export function AppShell(locale: LocaleProps) {
       );
       break;
     case 'agent':
-      page = <AgentPlace slug={route.slug} agentId={route.agentId} />;
+      page = (
+        <AgentPlace
+          slug={route.slug}
+          agentId={route.agentId}
+          {...(canReadAgents
+            ? { tasks: { client: clients.agentTasks, canAsk: canAskAgents } }
+            : {})}
+        />
+      );
       break;
     case 'gia':
       page = <GiaWorkplace />;

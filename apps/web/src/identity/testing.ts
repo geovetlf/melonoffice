@@ -70,6 +70,8 @@ export interface FakeBackend {
     knowledgeQuestions: Record<string, Record<string, unknown>[]>;
     /** Each organization's follow-ups (C5), as the API's views. */
     followUps: Record<string, Record<string, unknown>[]>;
+    /** Each agent's tasks (ADR-0063), newest first, as the API's views. */
+    agentTasks: Record<string, Record<string, unknown>[]>;
     /** Records per page of Comercial's lists (ADR-0061), unless the request asks a `limit`. */
     pageSize: number;
     /** Every page after the first fails (ADR-0061). */
@@ -147,6 +149,7 @@ export function fakeBackend(): FakeBackend {
     knowledgeConflicts: {},
     knowledgeQuestions: {},
     followUps: {},
+    agentTasks: {},
     pageSize: 50,
     metrics: {},
   };
@@ -780,6 +783,41 @@ export function fakeBackend(): FakeBackend {
       return (
         needs('department.read') ??
         json(200, { departments: DEPARTMENT_TYPES.map((type) => department(organizationId, type)) })
+      );
+    }
+    const agentTask = route?.match(/^specialists\/([^/]+)\/tasks$/);
+    if (agentTask?.[1] !== undefined) {
+      const tasks = (options.agentTasks[agentTask[1]] ??= []);
+      if (method === 'POST') {
+        const denied = needs('specialist.task');
+        if (denied !== undefined) return denied;
+        const input = JSON.parse(body ?? '{}') as { request?: string; idempotencyKey?: string };
+        const existing = tasks.find((t) => t.key === input.idempotencyKey);
+        if (existing !== undefined) return json(202, existing);
+        const task = {
+          id: `task-${tasks.length + 1}`,
+          key: input.idempotencyKey,
+          specialistId: agentTask[1],
+          request: input.request,
+          createdAt: '2026-09-29T12:00:00Z',
+          status: 'running',
+          failure: null,
+          completedAt: null,
+          answer: null,
+        };
+        tasks.unshift(task);
+        return json(202, task);
+      }
+      return needs('specialist.read') ?? json(200, { tasks, nextCursor: null });
+    }
+    const oneTask = route?.match(/^agent-tasks\/([^/]+)$/);
+    if (oneTask?.[1] !== undefined) {
+      const found = Object.values(options.agentTasks)
+        .flat()
+        .find((t) => t.id === oneTask[1]);
+      return (
+        needs('specialist.read') ??
+        (found === undefined ? json(404, { error: 'task_not_found' }) : json(200, found))
       );
     }
     if (route === 'specialists') {
