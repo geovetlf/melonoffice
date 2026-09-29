@@ -76,6 +76,24 @@ describe('Documents (DOC-3)', () => {
     expect(await screen.findByText('Carta 2026.pdf')).toBeTruthy();
   });
 
+  it('opens the company memory from a read document, to confirm what GIA learned', async () => {
+    open('/documents', (b) => {
+      b.options.permissions.push('knowledge.read');
+      b.options.documents = {
+        org_1: [
+          STORED,
+          { ...STORED, id: 'doc_read', name: 'carta.pdf', status: 'ingested', ingestion: null },
+        ],
+      };
+    });
+    await screen.findByText('carta.pdf');
+    // Only a document whose text was read offers it.
+    const links = screen.getAllByRole('button', { name: 'Review what GIA learned' });
+    expect(links).toHaveLength(1);
+    fireEvent.click(links[0] as HTMLElement);
+    expect(globalThis.location.pathname).toBe('/memory');
+  });
+
   it('refuses a file type or size the API would refuse, without sending it', async () => {
     const backend = open('/documents');
     await screen.findByText('menu.docx');

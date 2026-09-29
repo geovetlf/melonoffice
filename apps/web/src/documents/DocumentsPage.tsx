@@ -1,5 +1,7 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { navigate } from '../identity/router.js';
+import { paths } from '../shell/routes.js';
 import {
   ACCEPTED_TYPES,
   contentTypeOf,
@@ -38,9 +40,15 @@ const ACCEPT = [
 export function DocumentsPage({
   client,
   canUpload,
+  canReadMemory = false,
 }: {
   readonly client: DocumentsClient;
   readonly canUpload: boolean;
+  /**
+   * Whether the person can open the company memory, where what GIA read from a document waits
+   * as proposals to confirm (ADR-0051, ADR-0079).
+   */
+  readonly canReadMemory?: boolean;
 }) {
   const intl = useIntl();
   const [documents, setDocuments] = useState<readonly DocumentView[] | undefined>();
@@ -164,6 +172,7 @@ export function DocumentsPage({
                 values={{ name: upload.document.name }}
               />{' '}
               <Reading document={upload.document} />
+              {canReadMemory && upload.document.status === 'ingested' ? <ToMemory /> : null}
             </p>
           ) : upload.status === 'failed' ? (
             <p className="panel__empty" role="alert">
@@ -204,6 +213,7 @@ export function DocumentsPage({
                   </span>
                   <span className="documents__meta">
                     <Reading document={d} />
+                    {canReadMemory && d.status === 'ingested' ? <ToMemory /> : null}
                   </span>
                 </div>
                 <button
@@ -225,6 +235,18 @@ export function DocumentsPage({
         ) : null}
       </section>
     </article>
+  );
+}
+
+/** Where what GIA learned from a document is reviewed and confirmed: the company memory. */
+function ToMemory() {
+  return (
+    <>
+      {' '}
+      <button type="button" className="panel__link" onClick={() => navigate(paths.memory())}>
+        <FormattedMessage id="documents.review" />
+      </button>
+    </>
   );
 }
 

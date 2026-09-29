@@ -137,6 +137,8 @@ export interface FakeBackend {
   apiCalls(): Call[];
   /** Files uploaded to Documents (DOC-3), with the type and name they were sent with. */
   readonly uploads: { readonly contentType: string | null; readonly name: string | null }[];
+  /** Executions (plans, agent tasks) a person asked to stop, by id. */
+  readonly cancelled: string[];
 }
 
 const json = (status: number, body: unknown) =>
@@ -202,6 +204,7 @@ export function fakeBackend(): FakeBackend {
     metrics: {},
   };
   const uploads: FakeBackend['uploads'] = [];
+  const cancelled: string[] = [];
 
   function issue() {
     issued += 1;
@@ -919,6 +922,25 @@ export function fakeBackend(): FakeBackend {
       }
       return needs('specialist.read') ?? json(200, { tasks, nextCursor: null });
     }
+    // Stopping a plan or an agent task (ADR-0029): both are executions, by the same id.
+    const cancel = route?.match(/^executions\/([^/]+)\/cancel$/);
+    if (cancel?.[1] !== undefined && method === 'POST') {
+      const denied = needs('execution.cancel');
+      if (denied !== undefined) return denied;
+      const { reason } = JSON.parse(body ?? '{}') as { reason?: string };
+      if (reason !== 'director_request') return json(400, { error: 'invalid_request' });
+      cancelled.push(cancel[1]);
+      const target = [
+        ...(options.plans[organizationId] ?? []),
+        ...Object.values(options.agentTasks).flat(),
+      ].find((x) => x.id === cancel[1]);
+      if (target === undefined) return json(404, { error: 'execution_not_found' });
+      if (['completed', 'failed', 'cancelled', 'rejected'].includes(target.status as string)) {
+        return json(409, { error: 'execution_already_terminal' });
+      }
+      target.status = 'cancelled';
+      return json(200, { id: cancel[1], status: 'cancelled' });
+    }
     const oneTask = route?.match(/^agent-tasks\/([^/]+)$/);
     if (oneTask?.[1] !== undefined) {
       const found = Object.values(options.agentTasks)
@@ -1450,6 +1472,7 @@ export function fakeBackend(): FakeBackend {
     options,
     apiCalls: () => calls.filter((call) => call.url.startsWith(API)),
     uploads,
+    cancelled,
   };
 }
 

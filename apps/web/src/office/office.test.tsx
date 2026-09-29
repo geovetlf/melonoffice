@@ -330,7 +330,16 @@ describe('the Home (ADR-0040)', () => {
   it('searches the office and goes where the person chose', async () => {
     open('/');
     await rooms();
-    const search = screen.getByRole('searchbox', { name: 'Search for a department or agent…' });
+    const search = screen.getByRole('searchbox', {
+      name: 'Search departments, agents and screens…',
+    });
+    // The screens the person may open are found too, by name.
+    fireEvent.change(search, { target: { value: 'memory' } });
+    expect(
+      within(screen.getByRole('list', { name: 'Search results' }))
+        .getByRole('link', { name: /Company memory/ })
+        .getAttribute('href'),
+    ).toBe('/memory');
     fireEvent.change(search, { target: { value: 'fin' } });
     expect(
       within(screen.getByRole('list', { name: 'Search results' }))

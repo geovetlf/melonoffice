@@ -46,7 +46,14 @@ const STATUS_KEYS: Readonly<Record<string, string>> = {
 };
 const statusKey = (task: AgentTaskView) => STATUS_KEYS[task.status] ?? 'agentTasks.status.running';
 
-function TaskItem({ task }: { readonly task: AgentTaskView }) {
+function TaskItem({
+  task,
+  onStop,
+}: {
+  readonly task: AgentTaskView;
+  /** Stops an open task; absent, it has no stop. */
+  readonly onStop?: (() => void) | undefined;
+}) {
   const intl = useIntl();
   return (
     <li className={`agent-task agent-task--${isOpenTask(task) ? 'open' : task.status}`}>
@@ -84,6 +91,13 @@ function TaskItem({ task }: { readonly task: AgentTaskView }) {
           <FormattedMessage id="agentTasks.failed" />
         </p>
       ) : null}
+      {onStop !== undefined && isOpenTask(task) ? (
+        <div className="customers__actions">
+          <Button variant="secondary" onClick={onStop}>
+            <FormattedMessage id="agentTasks.stop" />
+          </Button>
+        </div>
+      ) : null}
     </li>
   );
 }
@@ -94,6 +108,7 @@ export function AgentTasks({
   agentName,
   canAsk,
   agentActive,
+  stop,
   refreshMs = TASK_REFRESH_MS,
 }: {
   readonly client: AgentTasksClient;
@@ -103,6 +118,8 @@ export function AgentTasks({
   readonly canAsk: boolean;
   /** Only an active agent takes new work. */
   readonly agentActive: boolean;
+  /** Stops a task that is still working (ADR-0029), with `execution.cancel`. */
+  readonly stop?: ((taskId: string) => Promise<void>) | undefined;
   readonly refreshMs?: number;
 }) {
   const intl = useIntl();
@@ -169,6 +186,21 @@ export function AgentTasks({
       () => setError('agentTasks.error.unavailable'),
     );
   }, [client, agentId, nextCursor]);
+
+  async function stopTask(task: AgentTaskView) {
+    if (stop === undefined) return;
+    if (!globalThis.confirm(intl.formatMessage({ id: 'agentTasks.stop.confirm' }))) return;
+    setError(undefined);
+    try {
+      await stop(task.id);
+    } catch {
+      // It may have ended meanwhile: reading it again says how it stands.
+      setError('agentTasks.stop.error');
+    }
+    const fresh = await client.get(task.id).catch(() => undefined);
+    if (fresh !== undefined)
+      setTasks((current) => current.map((t) => (t.id === fresh.id ? fresh : t)));
+  }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -244,7 +276,11 @@ export function AgentTasks({
       ) : (
         <ul className="agent-tasks__list">
           {tasks.map((task) => (
-            <TaskItem key={task.id} task={task} />
+            <TaskItem
+              key={task.id}
+              task={task}
+              onStop={stop === undefined ? undefined : () => void stopTask(task)}
+            />
           ))}
         </ul>
       )}

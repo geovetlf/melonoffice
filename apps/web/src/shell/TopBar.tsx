@@ -1,16 +1,18 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
 import { Button } from '@melonoffice/ui';
 import { useId, useMemo, useState } from 'react';
+import { useAuth } from '../identity/AuthProvider.js';
 import { LanguageSwitcher, type LocaleProps } from '../identity/pages.js';
 import { navigate } from '../identity/router.js';
 import { AgentAvatar } from '../office/agents.js';
 import { departmentName, officeSlug } from '../office/departments.js';
 import { Icon } from '../office/icons.js';
 import { readyList, useOfficeData } from '../office/OfficeData.js';
+import { Notifications } from './Notifications.js';
 import { paths } from './routes.js';
 
 /**
- * The top bar (ADR-0040): search, notifications, how many agents the office has, the
+ * The top bar (ADR-0040): search, what waits on the person (the bell), how many agents the office has, the
  * organization and the person. Everything shown is the API's answer; nothing is made up.
  */
 export function TopBar({
@@ -20,6 +22,7 @@ export function TopBar({
   menuOpen,
   onMenu,
   locale,
+  notifications = {},
 }: {
   readonly organizationName: string;
   readonly email: string;
@@ -27,6 +30,8 @@ export function TopBar({
   readonly menuOpen: boolean;
   readonly onMenu: () => void;
   readonly locale: LocaleProps;
+  /** What the bell may read, each with the person's own permission. */
+  readonly notifications?: Parameters<typeof Notifications>[0];
 }) {
   const intl = useIntl();
   const { specialists } = useOfficeData();
@@ -45,15 +50,7 @@ export function TopBar({
       </button>
       <GlobalSearch />
       <div className="topbar__end">
-        <button
-          type="button"
-          className="topbar__icon"
-          aria-disabled="true"
-          aria-label={intl.formatMessage({ id: 'topbar.notifications' })}
-          title={intl.formatMessage({ id: 'topbar.noNotifications' })}
-        >
-          <Icon name="bell" size={20} />
-        </button>
+        <Notifications {...notifications} />
         {specialists.status === 'ready' ? (
           <span className="topbar__agents">
             <span
@@ -92,19 +89,58 @@ interface SearchResult {
 }
 
 /**
- * Searches what the office knows: its departments and agents. Tasks and projects join the results
- * when they exist.
+ * The app's screens a person may open, by the permissions each needs (any one of them): search
+ * finds them by name, so every function is one word away from anywhere.
+ */
+const SCREENS: readonly {
+  readonly labelId: string;
+  readonly path: string;
+  readonly anyOf: readonly string[];
+}[] = [
+  { labelId: 'gia.name', path: paths.gia(), anyOf: ['gia.ask'] },
+  { labelId: 'nav.communications', path: paths.conversations(), anyOf: ['conversation.read'] },
+  { labelId: 'nav.memory', path: paths.memory(), anyOf: ['organization.read', 'knowledge.read'] },
+  { labelId: 'nav.documents', path: paths.documents(), anyOf: ['document.read'] },
+  { labelId: 'nav.reports', path: paths.reports(), anyOf: ['report.read'] },
+  { labelId: 'nav.agents', path: paths.agents(), anyOf: ['specialist.read'] },
+  { labelId: 'nav.automations', path: paths.automations(), anyOf: ['workflow.read', 'plan.read'] },
+  { labelId: 'nav.approvals', path: paths.approvals(), anyOf: ['approval.read'] },
+  { labelId: 'nav.aiUsage', path: paths.aiUsage(), anyOf: ['ai_usage.read'] },
+  {
+    labelId: 'nav.commandCenter',
+    path: paths.commandCenter(),
+    anyOf: ['ai_usage.read', 'approval.read', 'specialist.read', 'plan.read'],
+  },
+  { labelId: 'nav.connections', path: paths.connections(), anyOf: ['channel.read'] },
+];
+
+/**
+ * Searches what the office knows: its departments and agents, and the screens the person may
+ * open. Tasks and projects join the results when they exist.
  */
 export function GlobalSearch() {
   const intl = useIntl();
   const listId = useId();
   const { departments, specialists } = useOfficeData();
+  const { state } = useAuth();
+  const permissions = state.status === 'signed_in' ? state.workspace?.permissions : undefined;
   const [query, setQuery] = useState('');
   const results = useMemo<readonly SearchResult[]>(() => {
     const q = query.trim().toLocaleLowerCase();
     if (q.length < 1) return [];
     const depts = readyList(departments);
     const found: SearchResult[] = [];
+    for (const screen of SCREENS) {
+      if (!screen.anyOf.some((p) => permissions?.has(p) === true)) continue;
+      const label = intl.formatMessage({ id: screen.labelId });
+      if (!label.toLocaleLowerCase().includes(q)) continue;
+      found.push({
+        id: screen.path,
+        label,
+        detail: intl.formatMessage({ id: 'search.kind.screen' }),
+        path: screen.path,
+      });
+    }
     for (const department of depts) {
       const name = departmentName(intl, department, 'name');
       if (name.toLocaleLowerCase().includes(q)) {
@@ -129,7 +165,7 @@ export function GlobalSearch() {
       });
     }
     return found.slice(0, 8);
-  }, [query, departments, specialists, intl]);
+  }, [query, departments, specialists, intl, permissions]);
   const go = (path: string) => {
     setQuery('');
     navigate(path);

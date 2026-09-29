@@ -2,6 +2,7 @@ import { FormattedMessage, useIntl } from '@melonoffice/i18n';
 import { Button } from '@melonoffice/ui';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AgentTemplateView } from '../agents/agentsClient.js';
+import { ExecutionRequestError } from '../executions/executionsClient.js';
 import { newRequestKey } from '../office/AgentTasks.js';
 import {
   AutomationsError,
@@ -75,9 +76,15 @@ export function AutomationsPage({
   client,
   permissions,
   templates,
+  stop,
 }: {
   readonly client: AutomationsClient;
   readonly permissions: AutomationsPermissions;
+  /**
+   * Stops a running plan and everything it delegated (ADR-0029), with `execution.cancel`. Absent:
+   * the plan shows no stop.
+   */
+  readonly stop?: ((planId: string) => Promise<void>) | undefined;
   /** The agent catalogue, for who does each step; without it workflows are not written here. */
   readonly templates?: (() => Promise<readonly AgentTemplateView[]>) | undefined;
 }) {
@@ -352,6 +359,7 @@ export function AutomationsPage({
               planId={selected}
               canDecide={permissions.decidePlans}
               onDecided={loadPlans}
+              stop={stop}
             />
           )}
         </section>
@@ -491,12 +499,15 @@ function PlanCard({
   planId,
   canDecide,
   onDecided,
+  stop,
 }: {
   readonly client: AutomationsClient;
   readonly planId: string;
   readonly canDecide: boolean;
   readonly onDecided: () => void;
+  readonly stop?: ((planId: string) => Promise<void>) | undefined;
 }) {
+  const intl = useIntl();
   const [plan, setPlan] = useState<Load<PlanDetail>>({ status: 'loading' });
   const [steps, setSteps] = useState<readonly PlanStepProgress[]>([]);
   const [pending, setPending] = useState(false);
@@ -528,6 +539,28 @@ function PlanCard({
       read();
     } catch (failure) {
       setError(errorKey(failure));
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function stopPlan() {
+    if (stop === undefined) return;
+    if (!globalThis.confirm(intl.formatMessage({ id: 'automations.stop.confirm' }))) return;
+    setPending(true);
+    setError(undefined);
+    try {
+      await stop(planId);
+      onDecided();
+      read();
+    } catch (failure) {
+      setError(
+        failure instanceof ExecutionRequestError && failure.code === 'execution_already_terminal'
+          ? 'automations.error.changed'
+          : failure instanceof ExecutionRequestError && failure.status === 403
+            ? 'automations.error.permission'
+            : 'automations.error.generic',
+      );
     } finally {
       setPending(false);
     }
@@ -620,6 +653,11 @@ function PlanCard({
           <Button variant="secondary" onClick={read}>
             <FormattedMessage id="automations.refresh" />
           </Button>
+          {stop === undefined ? null : (
+            <Button variant="secondary" disabled={pending} onClick={() => void stopPlan()}>
+              <FormattedMessage id="automations.stop" />
+            </Button>
+          )}
         </div>
       ) : null}
     </article>

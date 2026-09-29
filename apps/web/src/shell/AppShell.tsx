@@ -34,6 +34,7 @@ import { GiaWorkplace } from '../gia/GiaWorkplace.js';
 import { AgentPlace, DepartmentOffice, NotFound } from '../office/DepartmentOffice.js';
 import { createOfficeClient } from '../office/officeClient.js';
 import { createAgentTasksClient } from '../office/agentTasksClient.js';
+import { createExecutionsClient } from '../executions/executionsClient.js';
 import { MemoryPage } from '../memory/MemoryPage.js';
 import { ReportsPage, ReportsSection } from '../reports/Reports.js';
 import { createReportsClient } from '../reports/reportsClient.js';
@@ -94,6 +95,8 @@ export function AppShell(locale: LocaleProps) {
   const canPlanWorkflows = useCan('plan.create');
   const canDecidePlans = useCan('approval.approve');
   const canManageWorkflows = useCan('workflow.manage');
+  // Stopping a plan or an agent task under way (ADR-0029).
+  const canCancelExecutions = useCan('execution.cancel');
   const route = parseRoute(usePath());
   const [menuOpen, setMenuOpen] = useState(false);
   // The platform AI view (ADR-0082) is the MelonOffice platform administrator's, never a
@@ -140,6 +143,7 @@ export function AppShell(locale: LocaleProps) {
             approvals: createApprovalsClient(services.api.request, organizationId),
             agents: createAgentsClient(services.api.request, organizationId),
             agentTasks: createAgentTasksClient(services.api.request, organizationId),
+            executions: createExecutionsClient(services.api.request, organizationId),
             automations: createAutomationsClient(services.api.request, organizationId),
           },
     [services, organizationId],
@@ -250,7 +254,11 @@ export function AppShell(locale: LocaleProps) {
           agentId={route.agentId}
           {...(canReadAgents
             ? {
-                tasks: { client: clients.agentTasks, canAsk: canAskAgents },
+                tasks: {
+                  client: clients.agentTasks,
+                  canAsk: canAskAgents,
+                  stop: canCancelExecutions ? clients.executions.cancel : undefined,
+                },
                 agents: clients.agents,
               }
             : {})}
@@ -279,7 +287,11 @@ export function AppShell(locale: LocaleProps) {
     case 'documents':
       page = canReadDocuments ? (
         <div className="light-surface">
-          <DocumentsPage client={clients.documents} canUpload={canUploadDocuments} />
+          <DocumentsPage
+            client={clients.documents}
+            canUpload={canUploadDocuments}
+            canReadMemory={canReadBusiness || canReadKnowledge}
+          />
         </div>
       ) : (
         <NotFound />
@@ -344,6 +356,7 @@ export function AppShell(locale: LocaleProps) {
                 manageWorkflows: canManageWorkflows,
               }}
               templates={canReadAgents ? clients.agents.templates : undefined}
+              stop={canCancelExecutions ? clients.executions.cancel : undefined}
             />
           </div>
         ) : (
@@ -435,6 +448,11 @@ export function AppShell(locale: LocaleProps) {
                   menuOpen={menuOpen}
                   onMenu={() => setMenuOpen((open) => !open)}
                   locale={locale}
+                  notifications={{
+                    approvals: canReadApprovals ? clients.approvals : undefined,
+                    automations: canReadPlans ? clients.automations : undefined,
+                    followUps: canReadFollowUps ? clients.followUps : undefined,
+                  }}
                 />
                 <main className="app__main" key={route.kind === 'office' ? route.slug : route.kind}>
                   {page}

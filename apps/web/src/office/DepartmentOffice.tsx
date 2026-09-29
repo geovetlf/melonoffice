@@ -121,7 +121,12 @@ export function AgentPlace({
   readonly slug: string;
   readonly agentId: string;
   /** The agent's tasks (ADR-0063), for a person who may read them; absent, none are shown. */
-  readonly tasks?: { readonly client: AgentTasksClient; readonly canAsk: boolean };
+  readonly tasks?: {
+    readonly client: AgentTasksClient;
+    readonly canAsk: boolean;
+    /** With `execution.cancel`: stops a task still working. */
+    readonly stop?: ((taskId: string) => Promise<void>) | undefined;
+  };
   /** What the agent can do now (ADR-0062), for a person who may read agents. */
   readonly agents?: AgentsClient;
 }) {
@@ -235,6 +240,7 @@ export function AgentPlace({
           agentName={agent.displayName}
           canAsk={tasks.canAsk}
           agentActive={agent.status === 'active'}
+          stop={tasks.stop}
         />
       )}
       <ComingAreas

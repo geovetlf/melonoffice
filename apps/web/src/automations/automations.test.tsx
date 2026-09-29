@@ -150,6 +150,54 @@ describe('Automations (WF-3)', () => {
     expect(posts(backend, '/approve')).toHaveLength(0);
   });
 
+  it('stops a running plan after the person confirms, and not without execution.cancel', async () => {
+    const running = () => [
+      {
+        id: 'plan-7',
+        status: 'executing',
+        version: 1,
+        createdAt: '2026-09-29T09:00:00Z',
+        current: {
+          version: 1,
+          digest: 'c'.repeat(64),
+          request: { summary: 'Campaña', objective: 'Lanzar la campaña' },
+          steps: [{ id: 'research', kind: 'specialist', label: 'Research', dependsOn: [] }],
+          riskLevel: 'low',
+          source: { kind: 'planner' },
+        },
+      },
+    ];
+    const confirm = vi.spyOn(globalThis, 'confirm').mockReturnValue(false);
+    const backend = open(
+      (b) => {
+        b.options.plans.org_1 = running();
+      },
+      [...OWNER, 'execution.cancel'],
+    );
+    const plans = within(await screen.findByRole('region', { name: 'Plans' }));
+    fireEvent.click(await plans.findByRole('button', { name: /Running/ }));
+    const plan = await screen.findByRole('article', { name: 'Campaña' });
+    // Declining the confirmation stops nothing.
+    fireEvent.click(await within(plan).findByRole('button', { name: 'Stop this plan' }));
+    expect(backend.cancelled).toEqual([]);
+    confirm.mockReturnValue(true);
+    fireEvent.click(within(plan).getByRole('button', { name: 'Stop this plan' }));
+    expect(await within(plan).findByText(/Cancelled/)).toBeTruthy();
+    expect(backend.cancelled).toEqual(['plan-7']);
+    expect(within(plan).queryByRole('button', { name: 'Stop this plan' })).toBeNull();
+    confirm.mockRestore();
+
+    cleanup();
+    open((b) => {
+      b.options.plans.org_1 = running();
+    });
+    const again = within(await screen.findByRole('region', { name: 'Plans' }));
+    fireEvent.click(await again.findByRole('button', { name: /Running/ }));
+    const readOnly = await screen.findByRole('article', { name: 'Campaña' });
+    expect(within(readOnly).getByRole('button', { name: 'Refresh' })).toBeTruthy();
+    expect(within(readOnly).queryByRole('button', { name: 'Stop this plan' })).toBeNull();
+  });
+
   it('without workflow.read or plan.read, Automations stays a coming tool and nothing is read', async () => {
     const backend = open(undefined, []);
     await screen.findByRole('heading', { level: 1 });
