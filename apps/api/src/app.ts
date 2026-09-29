@@ -26,9 +26,8 @@ import { createBillingService, type BillingStore } from '@melonoffice/billing';
 import { createDepartmentService, type DepartmentRepository } from '@melonoffice/departments';
 import {
   createConversationAssistant,
-  contactStageCounts,
   createOpportunityService,
-  pipelineSummary,
+  readPipelineSummary,
   createConversationService,
   createCustomerService,
   createCommercialInsights,
@@ -454,14 +453,16 @@ export function createApp({
             ? {}
             : {
                 connections: conversations.connections,
+                // Counted and summed where the records are stored (ADR-0061), never all read.
                 contacts: {
-                  counts: async (organizationId) =>
-                    contactStageCounts(await conversations.repository.listContacts(organizationId)),
+                  counts: (organizationId) =>
+                    conversations.repository.countContactStages(organizationId),
                 },
                 opportunities: {
                   summary: async (organizationId) =>
-                    pipelineSummary(
-                      await conversations.repository.listOpportunities(organizationId),
+                    readPipelineSummary(
+                      conversations.repository,
+                      organizationId,
                       await companyFact(organizationId, 'finance', 'currency'),
                     ),
                 },

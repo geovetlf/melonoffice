@@ -576,7 +576,6 @@
   "customers.empty.lead": "No hay leads por ahora.",
   "customers.empty.customer": "No hay clientes por ahora.",
   "customers.empty.inactive": "No hay contactos inactivos.",
-  "customers.more": "Se muestran los 200 más recientes.",
   "customers.stage.lead": "Lead",
   "customers.stage.customer": "Cliente",
   "customers.stage.inactive": "Inactivo",
@@ -950,5 +949,8 @@
   "activity.action.follow_up.completed": "Se hizo un seguimiento",
   "activity.action.follow_up.rescheduled": "Se reprogramó un seguimiento",
   "activity.action.follow_up.cancelled": "Se canceló un seguimiento",
-  "activity.action.follow_up.failed": "No se pudo programar un seguimiento"
+  "activity.action.follow_up.failed": "No se pudo programar un seguimiento",
+  "lists.more": "Cargar más",
+  "lists.loadingMore": "Cargando más…",
+  "lists.moreFailed": "No se pudo cargar la página siguiente. Inténtalo de nuevo."
 }

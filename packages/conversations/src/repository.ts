@@ -5,6 +5,7 @@ import type {
   Contact,
   ContactId,
   ContactNote,
+  ContactStage,
   Conversation,
   ConversationId,
   ConversationSettings,
@@ -40,6 +41,25 @@ import {
   type InboundRecords,
   type OutboundSettlement,
 } from './model.js';
+import {
+  contactPosition,
+  followUpPosition,
+  matchesContactPage,
+  matchesFollowUpPage,
+  matchesOpportunityPage,
+  opportunityPosition,
+  pageOf,
+  type ContactPageFilter,
+  type FollowUpPageFilter,
+  type OpportunityPageFilter,
+  type Page,
+  type PageRequest,
+} from './pages.js';
+
+/** Per pipeline stage: how many opportunities, and their amounts in one currency added up. */
+export type OpportunityStageTotals = Readonly<
+  Record<string, { readonly count: number; readonly valueMinor: number }>
+>;
 
 /** What storing one inbound message did. A repeat of an already stored message changes nothing. */
 export interface ReceiveResult {
@@ -169,6 +189,21 @@ export interface ConversationRepository {
   ): Promise<Conversation>;
   findContact(organizationId: OrganizationId, id: ContactId): Promise<Contact | undefined>;
   listContacts(organizationId: OrganizationId): Promise<readonly Contact[]>;
+  /** These contacts of the organization, in no order; absent and other organizations' are left out. */
+  findContacts(
+    organizationId: OrganizationId,
+    ids: readonly ContactId[],
+  ): Promise<readonly Contact[]>;
+  /**
+   * One page of the organization's marked, active contacts, newest change first (ADR-0061). Only
+   * the page is read.
+   */
+  pageContacts(
+    organizationId: OrganizationId,
+    request: PageRequest<ContactPageFilter>,
+  ): Promise<Page<Contact>>;
+  /** How many marked, active contacts are at each stage: counted, not read (ADR-0061). */
+  countContactStages(organizationId: OrganizationId): Promise<Record<ContactStage, number>>;
   /**
    * Stores a contact a person entered (C1), with its audit events, in one transaction. Refused
    * with `duplicate_contact` (its detail: the other contact's id) when another active contact of
@@ -210,6 +245,20 @@ export interface ConversationRepository {
   ): Promise<Opportunity | undefined>;
   /** The organization's opportunities, newest change first. */
   listOpportunities(organizationId: OrganizationId): Promise<readonly Opportunity[]>;
+  /** One page of the organization's opportunities, newest change first (ADR-0061). */
+  pageOpportunities(
+    organizationId: OrganizationId,
+    request: PageRequest<OpportunityPageFilter>,
+  ): Promise<Page<Opportunity>>;
+  /**
+   * For each of `stageIds`, how many opportunities are at it and their amounts in `currency`
+   * added up (none without a currency): counted and summed, not read (ADR-0061).
+   */
+  opportunityStageTotals(
+    organizationId: OrganizationId,
+    stageIds: readonly string[],
+    currency: string | undefined,
+  ): Promise<OpportunityStageTotals>;
   /**
    * Creates (`{ contactId }`) or changes (`{ opportunityId }`) an opportunity (C2): reads it, its
    * contact and the pipeline, and writes what `change` returns in one transaction. An absent or
@@ -223,8 +272,16 @@ export interface ConversationRepository {
   ): Promise<Opportunity>;
   /** One follow-up (C5), or undefined when it is absent or another organization's. */
   findFollowUp(organizationId: OrganizationId, id: FollowUpId): Promise<FollowUp | undefined>;
-  /** The organization's follow-ups. Order and filters are the caller's. */
-  listFollowUps(organizationId: OrganizationId): Promise<readonly FollowUp[]>;
+  /** The organization's follow-ups, only those `filter` keeps when given. Order is the caller's. */
+  listFollowUps(
+    organizationId: OrganizationId,
+    filter?: FollowUpPageFilter,
+  ): Promise<readonly FollowUp[]>;
+  /** One page of the organization's follow-ups, soonest first (ADR-0061). */
+  pageFollowUps(
+    organizationId: OrganizationId,
+    request: PageRequest<FollowUpPageFilter>,
+  ): Promise<Page<FollowUp>>;
   /**
    * Creates (`contactId` given) or changes a follow-up (C5): reads it, its contact, its
    * opportunity and the other follow-ups of the same record, and writes what `change` returns in
@@ -434,6 +491,25 @@ export function removedStages(current: Pipeline | undefined, next: Pipeline): re
 }
 
 /** For tests and local runs only. */
+/** Per-stage totals of opportunities already in memory: the same figures Firestore counts and sums. */
+export function opportunityTotalsOf(
+  opportunities: readonly Opportunity[],
+  stageIds: readonly string[],
+  currency: string | undefined,
+): OpportunityStageTotals {
+  const totals: Record<string, { count: number; valueMinor: number }> = {};
+  for (const id of stageIds) totals[id] = { count: 0, valueMinor: 0 };
+  for (const o of opportunities) {
+    const stage = totals[o.stageId];
+    if (stage === undefined) continue;
+    stage.count += 1;
+    if (currency !== undefined && o.value?.currency === currency) {
+      stage.valueMinor += o.value.amountMinor;
+    }
+  }
+  return totals;
+}
+
 export class InMemoryConversationRepository implements ConversationRepository {
   readonly #contacts = new Map<string, Contact>();
   readonly #identities = new Map<string, ChannelIdentity>();
@@ -564,6 +640,35 @@ export class InMemoryConversationRepository implements ConversationRepository {
       .sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0));
   }
 
+  async findContacts(
+    organizationId: OrganizationId,
+    ids: readonly ContactId[],
+  ): Promise<readonly Contact[]> {
+    const wanted = new Set<string>(ids);
+    return (await this.listContacts(organizationId)).filter((c) => wanted.has(c.id));
+  }
+
+  async pageContacts(
+    organizationId: OrganizationId,
+    request: PageRequest<ContactPageFilter>,
+  ): Promise<Page<Contact>> {
+    return pageOf(await this.listContacts(organizationId), {
+      matches: (c) => matchesContactPage(c, request.filter),
+      position: contactPosition,
+      order: 'newest_first',
+      limit: request.limit,
+      ...(request.after === undefined ? {} : { after: request.after }),
+    });
+  }
+
+  async countContactStages(organizationId: OrganizationId): Promise<Record<ContactStage, number>> {
+    const counts: Record<ContactStage, number> = { lead: 0, customer: 0, inactive: 0 };
+    for (const c of await this.listContacts(organizationId)) {
+      if (matchesContactPage(c, {}) && c.commercial !== undefined) counts[c.commercial.stage] += 1;
+    }
+    return counts;
+  }
+
   async createContact(contact: Contact, events: readonly AuditEvent[]): Promise<Contact> {
     const others = await this.listContacts(contact.organizationId);
     const duplicate = duplicateOf(contact, others);
@@ -647,6 +752,27 @@ export class InMemoryConversationRepository implements ConversationRepository {
       .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0));
   }
 
+  async pageOpportunities(
+    organizationId: OrganizationId,
+    request: PageRequest<OpportunityPageFilter>,
+  ): Promise<Page<Opportunity>> {
+    return pageOf(await this.listOpportunities(organizationId), {
+      matches: (o) => matchesOpportunityPage(o, request.filter),
+      position: opportunityPosition,
+      order: 'newest_first',
+      limit: request.limit,
+      ...(request.after === undefined ? {} : { after: request.after }),
+    });
+  }
+
+  async opportunityStageTotals(
+    organizationId: OrganizationId,
+    stageIds: readonly string[],
+    currency: string | undefined,
+  ): Promise<OpportunityStageTotals> {
+    return opportunityTotalsOf(await this.listOpportunities(organizationId), stageIds, currency);
+  }
+
   async writeOpportunity(
     organizationId: OrganizationId,
     target: { readonly contactId: ContactId } | { readonly opportunityId: OpportunityId },
@@ -689,8 +815,28 @@ export class InMemoryConversationRepository implements ConversationRepository {
     return f?.organizationId === organizationId ? f : undefined;
   }
 
-  async listFollowUps(organizationId: OrganizationId): Promise<readonly FollowUp[]> {
-    return [...this.#followUps.values()].filter((f) => f.organizationId === organizationId);
+  async listFollowUps(
+    organizationId: OrganizationId,
+    filter?: FollowUpPageFilter,
+  ): Promise<readonly FollowUp[]> {
+    return [...this.#followUps.values()].filter(
+      (f) =>
+        f.organizationId === organizationId &&
+        (filter === undefined || matchesFollowUpPage(f, filter)),
+    );
+  }
+
+  async pageFollowUps(
+    organizationId: OrganizationId,
+    request: PageRequest<FollowUpPageFilter>,
+  ): Promise<Page<FollowUp>> {
+    return pageOf(await this.listFollowUps(organizationId), {
+      matches: (f) => matchesFollowUpPage(f, request.filter),
+      position: followUpPosition,
+      order: 'soonest_first',
+      limit: request.limit,
+      ...(request.after === undefined ? {} : { after: request.after }),
+    });
   }
 
   async writeFollowUp(

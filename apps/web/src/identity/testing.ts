@@ -70,6 +70,10 @@ export interface FakeBackend {
     knowledgeQuestions: Record<string, Record<string, unknown>[]>;
     /** Each organization's follow-ups (C5), as the API's views. */
     followUps: Record<string, Record<string, unknown>[]>;
+    /** Records per page of Comercial's lists (ADR-0061), unless the request asks a `limit`. */
+    pageSize: number;
+    /** Every page after the first fails (ADR-0061). */
+    nextPagesFail?: boolean;
     /** Scheduling a follow-up fails with this code and status (C5). */
     followUpFails?: { readonly error: string; readonly status: number };
     /**
@@ -143,6 +147,7 @@ export function fakeBackend(): FakeBackend {
     knowledgeConflicts: {},
     knowledgeQuestions: {},
     followUps: {},
+    pageSize: 50,
     metrics: {},
   };
 
@@ -259,6 +264,22 @@ export function fakeBackend(): FakeBackend {
     description: null,
   });
 
+  /**
+   * One page of a list as the API cuts it (ADR-0061): `?cursor=` is where the previous page
+   * stopped (here, a plain offset), `?limit=` its size.
+   */
+  function pageOf<T>(items: readonly T[], query: string) {
+    const q = new URLSearchParams(query);
+    const start = Number(q.get('cursor')?.replace('page:', '') ?? 0);
+    const size = Number(q.get('limit') ?? options.pageSize);
+    const hasMore = items.length > start + size;
+    return {
+      items: items.slice(start, start + size),
+      hasMore,
+      nextCursor: hasMore ? `page:${start + size}` : null,
+    };
+  }
+
   /** The customers routes (C1), as the API answers them: duplicates, revisions and notes. */
   function customersAnswer(
     organizationId: string,
@@ -313,9 +334,11 @@ export function fakeBackend(): FakeBackend {
       return (
         needs('contact.read') ??
         json(200, {
-          items: all.filter((c) => stage === null || stageOf(c) === stage),
+          ...pageOf(
+            all.filter((c) => stage === null || stageOf(c) === stage),
+            query,
+          ),
           counts,
-          hasMore: false,
         })
       );
     }
@@ -586,9 +609,11 @@ export function fakeBackend(): FakeBackend {
       return (
         needs('opportunity.read') ??
         json(200, {
-          items: all.filter((o) => status === null || o.status === status),
+          ...pageOf(
+            all.filter((o) => status === null || o.status === status),
+            query,
+          ),
           summary: summary(),
-          hasMore: false,
         })
       );
     }
@@ -675,8 +700,7 @@ export function fakeBackend(): FakeBackend {
             upcoming: count('upcoming'),
             open: items.length,
           },
-          items,
-          hasMore: false,
+          ...pageOf(items, query),
         })
       );
     }
@@ -749,6 +773,9 @@ export function fakeBackend(): FakeBackend {
       contact: { id: `contact-${c.id}`, displayName: c.name, phone: null },
     });
     const [route, query = ''] = rest.split('?');
+    if (options.nextPagesFail === true && new URLSearchParams(query).has('cursor')) {
+      return json(500, { error: 'internal' });
+    }
     if (route === 'departments') {
       return (
         needs('department.read') ??

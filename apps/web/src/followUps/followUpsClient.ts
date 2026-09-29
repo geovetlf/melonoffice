@@ -1,4 +1,5 @@
 import type { ReplyRequest } from '../conversations/sendReply.js';
+import { pageQuery, type PageRequest } from '../lists/pages.js';
 
 /**
  * Follow-ups (C5, ADR-0058), as the API serves them: something a member must do about a contact
@@ -44,6 +45,7 @@ export interface FollowUpList {
   };
   readonly items: readonly FollowUpView[];
   readonly hasMore: boolean;
+  readonly nextCursor: string | null;
 }
 
 export interface FollowUpFilter {
@@ -65,7 +67,8 @@ export interface NewFollowUp {
 }
 
 export interface FollowUpsClient {
-  list(filter?: FollowUpFilter): Promise<FollowUpList>;
+  /** One page of the follow-ups the filter keeps, soonest first. */
+  list(filter?: FollowUpFilter, page?: PageRequest): Promise<FollowUpList>;
   create(input: NewFollowUp): Promise<FollowUpView & { readonly created: boolean }>;
   reschedule(
     id: string,
@@ -107,8 +110,8 @@ export function createFollowUpsClient(
   });
   const one = (id: string, action: string) => `${base}/${encodeURIComponent(id)}/${action}`;
   return {
-    async list(filter = {}) {
-      const query = new URLSearchParams();
+    async list(filter = {}, page) {
+      const query = pageQuery(new URLSearchParams(), page);
       if (filter.contactId !== undefined) query.set('contact', filter.contactId);
       if (filter.opportunityId !== undefined) query.set('opportunity', filter.opportunityId);
       if (filter.mine === true) query.set('assignee', 'me');

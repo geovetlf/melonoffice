@@ -29,6 +29,7 @@ import {
 import { ConversationError } from './errors.js';
 import type { OpportunityService } from './opportunities.js';
 import type { ConversationRepository } from './repository.js';
+import { PAGE_SIZES } from './pages.js';
 
 /**
  * Commercial insights (C4): what GIA reads to answer how sales are going and what to attend to.
@@ -806,14 +807,19 @@ export function createCommercialInsights(
         authorization.authorize(tenant, permission).allowed;
       const [contactList, opportunityList, pipeline, threads, zone, currency, followUpList] =
         await Promise.all([
-          may('contact.read') ? customers.list(tenant) : undefined,
-          may('opportunity.read') ? opportunities.list(tenant) : undefined,
+          // One page as large as a list ever was: C4 reads what it read before, and no more.
+          may('contact.read')
+            ? customers.list(tenant, {}, { limit: PAGE_SIZES.contacts.max })
+            : undefined,
+          may('opportunity.read')
+            ? opportunities.list(tenant, {}, { limit: PAGE_SIZES.opportunities.max })
+            : undefined,
           may('opportunity.read') ? opportunities.pipeline(tenant) : undefined,
           may('conversation.read') ? conversations.listConversations(organizationId) : undefined,
           options.timeZone(organizationId),
           options.currency(organizationId),
           options.followUps !== undefined && may('follow_up.read')
-            ? options.followUps.list(tenant, { open: 'true' })
+            ? options.followUps.list(tenant, { open: 'true' }, { limit: PAGE_SIZES.follow_ups.max })
             : undefined,
         ]);
       const own = <T extends { readonly organizationId: OrganizationId }>(list: readonly T[]) =>

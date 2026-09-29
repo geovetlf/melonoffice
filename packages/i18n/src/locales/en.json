@@ -576,7 +576,6 @@
   "customers.empty.lead": "No leads right now.",
   "customers.empty.customer": "No customers right now.",
   "customers.empty.inactive": "No inactive contacts.",
-  "customers.more": "Showing the most recent 200.",
   "customers.stage.lead": "Lead",
   "customers.stage.customer": "Customer",
   "customers.stage.inactive": "Inactive",
@@ -950,5 +949,8 @@
   "activity.action.follow_up.completed": "A follow-up was done",
   "activity.action.follow_up.rescheduled": "A follow-up was rescheduled",
   "activity.action.follow_up.cancelled": "A follow-up was cancelled",
-  "activity.action.follow_up.failed": "A follow-up could not be scheduled"
+  "activity.action.follow_up.failed": "A follow-up could not be scheduled",
+  "lists.more": "Load more",
+  "lists.loadingMore": "Loading more…",
+  "lists.moreFailed": "The next page could not be loaded. Try again."
 }

@@ -1,9 +1,10 @@
 import type {
   Firestore,
   Timestamp as FirestoreTimestamp,
+  Query,
   Transaction,
 } from '@google-cloud/firestore';
-import { Timestamp } from '@google-cloud/firestore';
+import { AggregateField, FieldPath, Timestamp } from '@google-cloud/firestore';
 import type { AuditEvent } from '@melonoffice/audit';
 import {
   applyInbound,
@@ -51,6 +52,21 @@ import {
   type SettleResult,
   checkMediaRef,
   checkTemplateRef,
+  contactPosition,
+  followUpPosition,
+  matchesContactPage,
+  matchesFollowUpPage,
+  matchesOpportunityPage,
+  opportunityPosition,
+  opportunityTotalsOf,
+  pageOf,
+  type ContactPageFilter,
+  type FollowUpPageFilter,
+  type OpportunityPageFilter,
+  type OpportunityStageTotals,
+  type Page,
+  type PagePosition,
+  type PageRequest,
 } from '@melonoffice/conversations';
 import type {
   ChannelIdentity,
@@ -58,6 +74,7 @@ import type {
   Contact,
   ContactCommercial,
   ContactId,
+  ContactStage,
   ContactNote,
   Conversation,
   ConversationId,
@@ -635,8 +652,66 @@ function toMessage(id: string, d: Doc): Message {
 }
 
 /** Conversations in Firestore. Each write is one transaction with its audit events. */
+/** A query Firestore refuses until its composite index exists (gRPC FAILED_PRECONDITION). */
+const isMissingIndex = (error: unknown): boolean =>
+  typeof error === 'object' &&
+  error !== null &&
+  (error as { code?: unknown }).code === 9 &&
+  /index/i.test(String((error as { message?: unknown }).message));
+
+const CONTACT_STAGES = ['lead', 'customer', 'inactive'] as const;
+
+export interface FirestoreConversationRepositoryOptions {
+  /**
+   * Told when a page had to be read the old way, the whole collection, because Firestore does not
+   * have its composite index yet (ADR-0061): the list still works, only slower, until the index
+   * is applied. Only the name of the query, never data.
+   */
+  readonly onIndexMissing?: (query: string) => void;
+}
+
 export class FirestoreConversationRepository implements ConversationRepository {
-  constructor(private readonly db: Firestore) {}
+  constructor(
+    private readonly db: Firestore,
+    private readonly options: FirestoreConversationRepositoryOptions = {},
+  ) {}
+
+  /**
+   * One page read in Firestore (ADR-0061): the query in the list's order, then the document id,
+   * started after the previous page's last record, one more than the page to know if more follow.
+   * While the composite index is missing, the same page is cut from the whole collection.
+   */
+  async #page<T>(
+    name: string,
+    query: Query,
+    options: {
+      readonly field: string;
+      readonly direction: 'asc' | 'desc';
+      readonly limit: number;
+      readonly after: PagePosition | undefined;
+      readonly read: (id: string, data: Doc) => T;
+      readonly fallback: () => Promise<Page<T>>;
+    },
+  ): Promise<Page<T>> {
+    let ordered = query
+      .orderBy(options.field, options.direction)
+      .orderBy(FieldPath.documentId(), options.direction);
+    if (options.after !== undefined) {
+      ordered = ordered.startAfter(ts(options.after.at as IsoTimestamp), options.after.id);
+    }
+    try {
+      const snapshot = await ordered.limit(options.limit + 1).get();
+      const items = snapshot.docs.map((doc) => options.read(doc.id, doc.data()));
+      return Object.freeze({
+        items: Object.freeze(items.slice(0, options.limit)),
+        hasMore: items.length > options.limit,
+      });
+    } catch (error) {
+      if (!isMissingIndex(error)) throw error;
+      this.options.onIndexMissing?.(name);
+      return options.fallback();
+    }
+  }
 
   async receive(
     inbound: InboundMessage,
@@ -826,6 +901,77 @@ export class FirestoreConversationRepository implements ConversationRepository {
       .sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0));
   }
 
+  async findContacts(
+    organizationId: OrganizationId,
+    ids: readonly ContactId[],
+  ): Promise<readonly Contact[]> {
+    const valid = [...new Set(ids)].filter((id) => isContactId(id));
+    if (!isOrganizationId(organizationId) || valid.length === 0) return [];
+    const snapshots = await this.db.getAll(
+      ...valid.map((id) => this.db.collection(CONTACTS).doc(id)),
+    );
+    return snapshots
+      .filter((snapshot) => snapshot.data()?.organizationId === organizationId)
+      .map((snapshot) => toContact(snapshot.id, snapshot.data() as Doc));
+  }
+
+  /**
+   * Served by the composite indexes `contacts_page` and `contacts_owner_page` (Terraform): the
+   * organization, active, one stage or any stage, newest change first.
+   */
+  async pageContacts(
+    organizationId: OrganizationId,
+    request: PageRequest<ContactPageFilter>,
+  ): Promise<Page<Contact>> {
+    if (!isOrganizationId(organizationId)) return { items: [], hasMore: false };
+    const { filter } = request;
+    let query = this.db
+      .collection(CONTACTS)
+      .where('organizationId', '==', organizationId)
+      .where('status', '==', 'active');
+    if (filter.ownerId !== undefined)
+      query = query.where('commercial.ownerId', '==', filter.ownerId);
+    query =
+      filter.stage === undefined
+        ? query.where('commercial.stage', 'in', [...CONTACT_STAGES])
+        : query.where('commercial.stage', '==', filter.stage);
+    return this.#page('contacts', query, {
+      field: 'updatedAt',
+      direction: 'desc',
+      limit: request.limit,
+      after: request.after,
+      read: toContact,
+      fallback: async () =>
+        pageOf(await this.listContacts(organizationId), {
+          matches: (c) => matchesContactPage(c, filter),
+          position: contactPosition,
+          order: 'newest_first',
+          limit: request.limit,
+          ...(request.after === undefined ? {} : { after: request.after }),
+        }),
+    });
+  }
+
+  /** Three counts, equality filters only: nothing is read but the numbers. */
+  async countContactStages(organizationId: OrganizationId): Promise<Record<ContactStage, number>> {
+    const counts: Record<ContactStage, number> = { lead: 0, customer: 0, inactive: 0 };
+    if (!isOrganizationId(organizationId)) return counts;
+    const found = await Promise.all(
+      CONTACT_STAGES.map(async (stage) => {
+        const snapshot = await this.db
+          .collection(CONTACTS)
+          .where('organizationId', '==', organizationId)
+          .where('status', '==', 'active')
+          .where('commercial.stage', '==', stage)
+          .count()
+          .get();
+        return [stage, snapshot.data().count] as const;
+      }),
+    );
+    for (const [stage, count] of found) counts[stage] = count;
+    return counts;
+  }
+
   /** The organization's other contacts with this phone or email: equality filters only. */
   async #sameAddress(
     t: Transaction,
@@ -1006,6 +1152,85 @@ export class FirestoreConversationRepository implements ConversationRepository {
       .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0));
   }
 
+  /**
+   * Served by the composite indexes `opportunities_page*` (Terraform): the organization and at
+   * most one of status, stage, responsible or contact, newest change first. Other combinations
+   * are read the old way until an index serves them.
+   */
+  async pageOpportunities(
+    organizationId: OrganizationId,
+    request: PageRequest<OpportunityPageFilter>,
+  ): Promise<Page<Opportunity>> {
+    if (!isOrganizationId(organizationId)) return { items: [], hasMore: false };
+    const { filter } = request;
+    let query: Query = this.db
+      .collection(OPPORTUNITIES)
+      .where('organizationId', '==', organizationId);
+    if (filter.status !== undefined) query = query.where('status', '==', filter.status);
+    if (filter.stageId !== undefined) query = query.where('stageId', '==', filter.stageId);
+    if (filter.ownerId !== undefined) query = query.where('ownerId', '==', filter.ownerId);
+    if (filter.contactId !== undefined) query = query.where('contactId', '==', filter.contactId);
+    return this.#page('opportunities', query, {
+      field: 'updatedAt',
+      direction: 'desc',
+      limit: request.limit,
+      after: request.after,
+      read: toOpportunity,
+      fallback: async () =>
+        pageOf(await this.listOpportunities(organizationId), {
+          matches: (o) => matchesOpportunityPage(o, filter),
+          position: opportunityPosition,
+          order: 'newest_first',
+          limit: request.limit,
+          ...(request.after === undefined ? {} : { after: request.after }),
+        }),
+    });
+  }
+
+  /**
+   * Per stage, a count and, in the business's currency, a sum of `value.amountMinor` (the sum
+   * served by the composite index `opportunities_stage_value`). Nothing is read but the numbers.
+   */
+  async opportunityStageTotals(
+    organizationId: OrganizationId,
+    stageIds: readonly string[],
+    currency: string | undefined,
+  ): Promise<OpportunityStageTotals> {
+    if (!isOrganizationId(organizationId)) return {};
+    const atStage = (stageId: string) =>
+      this.db
+        .collection(OPPORTUNITIES)
+        .where('organizationId', '==', organizationId)
+        .where('stageId', '==', stageId);
+    try {
+      const totals = await Promise.all(
+        stageIds.map(async (stageId) => {
+          const [counted, summed] = await Promise.all([
+            atStage(stageId).count().get(),
+            currency === undefined
+              ? undefined
+              : atStage(stageId)
+                  .where('value.currency', '==', currency)
+                  .aggregate({ valueMinor: AggregateField.sum('value.amountMinor') })
+                  .get(),
+          ]);
+          return [
+            stageId,
+            {
+              count: counted.data().count,
+              valueMinor: summed === undefined ? 0 : Number(summed.data().valueMinor ?? 0),
+            },
+          ] as const;
+        }),
+      );
+      return Object.fromEntries(totals);
+    } catch (error) {
+      if (!isMissingIndex(error)) throw error;
+      this.options.onIndexMissing?.('opportunity_totals');
+      return opportunityTotalsOf(await this.listOpportunities(organizationId), stageIds, currency);
+    }
+  }
+
   async writeOpportunity(
     organizationId: OrganizationId,
     target: { readonly contactId: ContactId } | { readonly opportunityId: OpportunityId },
@@ -1077,13 +1302,60 @@ export class FirestoreConversationRepository implements ConversationRepository {
     return data?.organizationId === organizationId ? toFollowUp(snapshot.id, data) : undefined;
   }
 
-  async listFollowUps(organizationId: OrganizationId): Promise<readonly FollowUp[]> {
+  /** Equality and `in` filters only: served by single-field indexes, no composite one. */
+  async listFollowUps(
+    organizationId: OrganizationId,
+    filter?: FollowUpPageFilter,
+  ): Promise<readonly FollowUp[]> {
     if (!isOrganizationId(organizationId)) return [];
-    const snapshot = await this.db
-      .collection(FOLLOW_UPS)
-      .where('organizationId', '==', organizationId)
-      .get();
+    if (filter?.statuses?.length === 0) return [];
+    const snapshot = await this.#followUpQuery(organizationId, filter ?? {}).get();
     return snapshot.docs.map((doc) => toFollowUp(doc.id, doc.data()));
+  }
+
+  #followUpQuery(organizationId: OrganizationId, filter: FollowUpPageFilter): Query {
+    let query: Query = this.db.collection(FOLLOW_UPS).where('organizationId', '==', organizationId);
+    if (filter.statuses !== undefined) {
+      query =
+        filter.statuses.length === 1
+          ? query.where('status', '==', filter.statuses[0])
+          : query.where('status', 'in', [...filter.statuses]);
+    }
+    if (filter.contactId !== undefined) query = query.where('contactId', '==', filter.contactId);
+    if (filter.opportunityId !== undefined) {
+      query = query.where('opportunityId', '==', filter.opportunityId);
+    }
+    if (filter.assignedTo !== undefined) query = query.where('assignedTo', '==', filter.assignedTo);
+    return query;
+  }
+
+  /**
+   * Served by the composite indexes `follow_ups_page*` (Terraform): the organization, its
+   * statuses, and at most one of contact, opportunity or assignee, soonest first.
+   */
+  async pageFollowUps(
+    organizationId: OrganizationId,
+    request: PageRequest<FollowUpPageFilter>,
+  ): Promise<Page<FollowUp>> {
+    const { filter } = request;
+    if (!isOrganizationId(organizationId) || filter.statuses?.length === 0) {
+      return { items: [], hasMore: false };
+    }
+    return this.#page('follow_ups', this.#followUpQuery(organizationId, filter), {
+      field: 'scheduledAt',
+      direction: 'asc',
+      limit: request.limit,
+      after: request.after,
+      read: toFollowUp,
+      fallback: async () =>
+        pageOf(await this.listFollowUps(organizationId), {
+          matches: (f) => matchesFollowUpPage(f, filter),
+          position: followUpPosition,
+          order: 'soonest_first',
+          limit: request.limit,
+          ...(request.after === undefined ? {} : { after: request.after }),
+        }),
+    });
   }
 
   async writeFollowUp(

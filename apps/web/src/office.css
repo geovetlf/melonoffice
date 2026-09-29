@@ -2252,3 +2252,19 @@ a.sidebar__item:hover {
 .reports__go {
   color: var(--office-focus);
 }
+
+/* "Load more" under a Comercial list (ADR-0061): full width on a phone, beside the list's end
+   on a wide screen. */
+.list-more {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+@media (min-width: 640px) {
+  .list-more {
+    align-items: flex-start;
+  }
+}
