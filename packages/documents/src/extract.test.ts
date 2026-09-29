@@ -134,9 +134,7 @@ describe('DOCX text (ADR-0079)', () => {
   });
 });
 
-// Each PDF starts its own worker thread, which takes about 2 s on a busy CI runner: reading three
-// in turn takes longer than the default 5 s, so these tests get a budget that fits the work.
-describe('PDF text (ADR-0079), in a worker thread', { timeout: 30_000 }, () => {
+describe('PDF text (ADR-0079), in a worker thread', () => {
   it('reads the text of every page', async () => {
     const result = await pdfText(buildPdf([textPage('Hola mundo'), textPage('Segunda pagina')]));
     expect(result.status).toBe('text');
