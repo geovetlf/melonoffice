@@ -7,6 +7,7 @@ import { RecordFollowUps } from '../followUps/FollowUps.js';
 import type { FollowUpsClient } from '../followUps/followUpsClient.js';
 import { openedWith, paths } from '../shell/routes.js';
 import { useRead } from '../shell/useRead.js';
+import { LoadMore, usePagedRead } from '../lists/usePagedRead.js';
 import {
   LOST_REASONS,
   OpportunityRequestError,
@@ -24,6 +25,8 @@ import {
 
 type IntlShape = ReturnType<typeof useIntl>;
 
+/** The contacts the new opportunity form offers, per stage. */
+const CONTACT_PICKER_LIMIT = 200;
 /** How many minor units a currency's major unit has (2 for soles, 0 for yen). */
 export function minorDigits(currency: string): number {
   try {
@@ -98,7 +101,11 @@ export function OpportunitiesSection({
   const [mode, setMode] = useState<'none' | 'create' | 'stages'>('none');
   const reload = () => setVersion((v) => v + 1);
   const pipeline = useRead(`pipeline:${version}`, () => client.pipeline());
-  const list = useRead(`list:${status}:${version}`, () => client.list(status));
+  // The pages of this tab and version (ADR-0061): a new tab or a change starts from the first.
+  const pages = usePagedRead(`list:${status}:${version}`, (cursor?: string) =>
+    client.list(status, cursor === undefined ? {} : { cursor }),
+  );
+  const list = pages.list;
 
   const ready = pipeline.status === 'ready' ? pipeline.value : undefined;
   const summary = list.status === 'ready' ? list.value.summary : undefined;
@@ -216,7 +223,9 @@ export function OpportunitiesSection({
                 aria-label={stageName(intl, stage)}
               >
                 <h3 className="pipeline-board__title">
-                  {stageName(intl, stage)} <span className="customers__count">{here.length}</span>
+                  {stageName(intl, stage)}{' '}
+                  {/* How many are at the stage in all, not only on the pages loaded. */}
+                  <span className="customers__count">{total?.count ?? 0}</span>
                 </h3>
                 {summary?.currency != null && total !== undefined ? (
                   <p className="customers__meta">
@@ -246,6 +255,7 @@ export function OpportunitiesSection({
           today={today}
         />
       )}
+      {pipeline.status === 'error' ? null : <LoadMore read={pages} />}
       {selected === undefined || ready === undefined ? null : (
         <OpportunityCard
           key={`${selected}:${version}`}
@@ -327,8 +337,9 @@ function CreateOpportunity({
   const intl = useIntl();
   const contacts = useRead('contacts', async () => {
     const [leads, clients] = await Promise.all([
-      customers.list('lead'),
-      customers.list('customer'),
+      // As many as a list ever showed; a search replaces this picker when lists grow.
+      customers.list('lead', { limit: CONTACT_PICKER_LIMIT }),
+      customers.list('customer', { limit: CONTACT_PICKER_LIMIT }),
     ]);
     return [...leads.items, ...clients.items];
   });

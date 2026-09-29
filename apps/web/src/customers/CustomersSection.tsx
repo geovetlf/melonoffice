@@ -2,6 +2,7 @@ import { FormattedMessage, useIntl } from '@melonoffice/i18n';
 import { Button } from '@melonoffice/ui';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { RecordFollowUps } from '../followUps/FollowUps.js';
+import { LoadMore, usePagedRead } from '../lists/usePagedRead.js';
 import type { FollowUpsClient } from '../followUps/followUpsClient.js';
 import { openedWith } from '../shell/routes.js';
 import { ContactConversations, ContactHistory, ContactOpportunities } from './ContactContext.js';
@@ -12,7 +13,6 @@ import {
   type Consent,
   type CustomerChange,
   type CustomerDetail,
-  type CustomerList,
   type CustomerStage,
   type CustomersClient,
 } from './customersClient.js';
@@ -61,26 +61,17 @@ export function CustomersSection({
     const opened = openedWith('stage');
     return STAGES.find((s) => s === opened) ?? 'lead';
   });
-  const [read, setRead] = useState<{ key: string; load: Load<CustomerList> } | undefined>();
   // A card opened from elsewhere (the Conversations Center, C3) starts open.
   const [selected, setSelected] = useState<string | undefined>(() => openedWith('contact'));
   const [creating, setCreating] = useState(false);
   const [version, setVersion] = useState(0);
   const reload = useCallback(() => setVersion((v) => v + 1), []);
 
-  // The read of this tab and version; an older one shows as loading until the new one answers.
-  const key = `${stage}:${version}`;
-  useEffect(() => {
-    let live = true;
-    client.list(stage).then(
-      (value) => live && setRead({ key, load: { status: 'ready', value } }),
-      () => live && setRead({ key, load: { status: 'error' } }),
-    );
-    return () => {
-      live = false;
-    };
-  }, [client, stage, key]);
-  const list: Load<CustomerList> = read?.key === key ? read.load : { status: 'loading' };
+  // The pages of this tab and version (ADR-0061): a new tab or a change starts from the first.
+  const pages = usePagedRead(`${stage}:${version}`, (cursor?: string) =>
+    client.list(stage, cursor === undefined ? {} : { cursor }),
+  );
+  const list = pages.list;
 
   const today = todayIn(timeZone);
   const counts = list.status === 'ready' ? list.value.counts : undefined;
@@ -169,11 +160,7 @@ export function CustomersSection({
           })}
         </ul>
       )}
-      {list.status === 'ready' && list.value.hasMore ? (
-        <p className="panel__empty">
-          <FormattedMessage id="customers.more" />
-        </p>
-      ) : null}
+      <LoadMore read={pages} />
       {selected === undefined ? null : (
         <CustomerCard
           key={selected}

@@ -20,6 +20,7 @@ import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import type { AuthEnv } from './auth.js';
 import { withPermission, type AuthorizationDependencies } from './authorization.js';
 import { toConversationView, toHistoryView, toOpportunityView } from './opportunities.js';
+import { pageOf } from './pages.js';
 
 const STATUS: Partial<Record<ConversationErrorCode, ContentfulStatusCode>> = {
   invalid_request: 400,
@@ -222,14 +223,19 @@ export function registerCustomerRoutes(
       answer(c, async () => {
         const stage = c.req.query('stage');
         const owner = c.req.query('owner');
-        const list = await customers.list(tenant, {
-          ...(stage === undefined ? {} : { stage }),
-          ...(owner === undefined ? {} : { ownerId: owner === 'me' ? tenant.userId : owner }),
-        });
+        const list = await customers.list(
+          tenant,
+          {
+            ...(stage === undefined ? {} : { stage }),
+            ...(owner === undefined ? {} : { ownerId: owner === 'me' ? tenant.userId : owner }),
+          },
+          pageOf(c),
+        );
         return {
           items: list.items.map((contact) => toCustomerView(contact, tenant.userId)),
           counts: list.counts,
           hasMore: list.hasMore,
+          nextCursor: list.nextCursor,
         };
       }),
     ),

@@ -6,7 +6,6 @@ import {
   type OpportunityService,
 } from '@melonoffice/conversations';
 import type {
-  Contact,
   Conversation,
   Opportunity,
   OrganizationId,
@@ -19,6 +18,7 @@ import type { Context, Hono } from 'hono';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import type { AuthEnv } from './auth.js';
 import { withPermission, type AuthorizationDependencies } from './authorization.js';
+import { contactNames, pageOf, type ContactsById } from './pages.js';
 
 const STATUS: Partial<Record<ConversationErrorCode, ContentfulStatusCode>> = {
   invalid_request: 400,
@@ -115,8 +115,7 @@ export function registerOpportunityRoutes(
     readonly history?: AuditHistoryReader;
     readonly conversations?: {
       listConversations(organizationId: OrganizationId): Promise<readonly Conversation[]>;
-      listContacts(organizationId: OrganizationId): Promise<readonly Contact[]>;
-    };
+    } & ContactsById;
     readonly brain?: Pick<CompanyBrainService, 'ingest'>;
   },
 ): void {
@@ -183,20 +182,24 @@ export function registerOpportunityRoutes(
       answer(c, async () => {
         const q = (name: string) => c.req.query(name);
         const owner = q('owner');
-        const list = await opportunities.list(tenant, {
-          ...(q('status') === undefined ? {} : { status: q('status') }),
-          ...(q('stage') === undefined ? {} : { stageId: q('stage') }),
-          ...(q('contact') === undefined ? {} : { contactId: q('contact') }),
-          ...(owner === undefined ? {} : { ownerId: owner === 'me' ? tenant.userId : owner }),
-        });
-        // The contact's name, only to someone who may read contacts.
+        const list = await opportunities.list(
+          tenant,
+          {
+            ...(q('status') === undefined ? {} : { status: q('status') }),
+            ...(q('stage') === undefined ? {} : { stageId: q('stage') }),
+            ...(q('contact') === undefined ? {} : { contactId: q('contact') }),
+            ...(owner === undefined ? {} : { ownerId: owner === 'me' ? tenant.userId : owner }),
+          },
+          pageOf(c),
+        );
+        // The contacts' names, only to someone who may read contacts: this page's, no more.
         const names =
           conversations !== undefined && authorization.authorize(tenant, 'contact.read').allowed
-            ? new Map(
-                (await conversations.listContacts(tenant.organizationId)).map((contact) => [
-                  contact.id as string,
-                  contact.displayName ?? contact.phone ?? contact.email ?? null,
-                ]),
+            ? contactNames(
+                await conversations.findContacts(
+                  tenant.organizationId,
+                  list.items.map((o) => o.contactId),
+                ),
               )
             : undefined;
         return {
@@ -206,6 +209,7 @@ export function registerOpportunityRoutes(
           })),
           summary: list.summary,
           hasMore: list.hasMore,
+          nextCursor: list.nextCursor,
         };
       }),
     ),

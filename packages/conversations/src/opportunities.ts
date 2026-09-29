@@ -33,7 +33,21 @@ import {
   proposedPipeline,
   stageOf,
 } from './pipeline.js';
-import type { ConversationRepository, OpportunityRead, OpportunityWrite } from './repository.js';
+import {
+  decodeCursor,
+  nextCursorOf,
+  opportunityPosition,
+  PAGE_SIZES,
+  pageLimit,
+  type OpportunityPageFilter,
+  type PageInput,
+} from './pages.js';
+import type {
+  ConversationRepository,
+  OpportunityRead,
+  OpportunityStageTotals,
+  OpportunityWrite,
+} from './repository.js';
 
 /**
  * Opportunities (C2, ADR-0054): possible sales to the C1 contacts, moving through the
@@ -53,8 +67,8 @@ export const LOST_REASONS: readonly LostReason[] = [
 ];
 
 export const OPPORTUNITY_LIMITS = Object.freeze({
-  /** Opportunities one list returns. */
-  list: 500,
+  /** The most opportunities one page returns (ADR-0061: `PAGE_SIZES.opportunities`). */
+  list: PAGE_SIZES.opportunities.max,
   titleLength: 120,
   nextActionLength: 200,
   /** The largest amount, in minor units (a trillion céntimos). */
@@ -105,10 +119,55 @@ export function pipelineSummary(
   return { currency: currency ?? null, stages, open, won, lost };
 }
 
+/**
+ * The same totals as `pipelineSummary`, from per-stage counts and sums (ADR-0061) instead of every
+ * opportunity: a stage's opportunities all have its kind as their status, and a stage in use is
+ * never removed from the pipeline. Stages with none are left out, as there.
+ */
+export function summaryFromTotals(
+  pipeline: Pick<Pipeline, 'stages'> | undefined,
+  totals: OpportunityStageTotals,
+  currency: string | undefined,
+): PipelineSummary {
+  const stages: Record<string, { count: number; valueMinor: number }> = {};
+  const open = { count: 0, valueMinor: 0 };
+  let won = 0;
+  let lost = 0;
+  for (const stage of pipeline?.stages ?? []) {
+    const total = totals[stage.id];
+    if (total === undefined || total.count === 0) continue;
+    stages[stage.id] = { count: total.count, valueMinor: total.valueMinor };
+    if (stage.kind === 'open') {
+      open.count += total.count;
+      open.valueMinor += total.valueMinor;
+    } else if (stage.kind === 'won') won += total.count;
+    else lost += total.count;
+  }
+  return { currency: currency ?? null, stages, open, won, lost };
+}
+
+/** The organization's pipeline totals, counted and summed where the opportunities are stored. */
+export async function readPipelineSummary(
+  repository: Pick<ConversationRepository, 'findPipeline' | 'opportunityStageTotals'>,
+  organizationId: OrganizationId,
+  currency: string | undefined,
+): Promise<PipelineSummary> {
+  const pipeline = await repository.findPipeline(organizationId);
+  if (pipeline === undefined) return summaryFromTotals(undefined, {}, currency);
+  const totals = await repository.opportunityStageTotals(
+    organizationId,
+    pipeline.stages.map((s) => s.id),
+    currency,
+  );
+  return summaryFromTotals(pipeline, totals, currency);
+}
+
 export interface OpportunityList {
   readonly items: readonly Opportunity[];
   readonly summary: PipelineSummary;
   readonly hasMore: boolean;
+  /** The cursor of the next page under the same filter, or null on the last page (ADR-0061). */
+  readonly nextCursor: string | null;
 }
 
 export interface PipelineView {
@@ -122,7 +181,10 @@ export interface OpportunityService {
   pipeline(tenant: TenantContext): Promise<PipelineView>;
   /** `pipeline.manage`, a person directly: stores the stages, against the current revision. */
   savePipeline(tenant: TenantContext, input: Record<string, unknown>): Promise<Pipeline>;
-  /** `opportunity.read`: the organization's opportunities, newest change first, with totals. */
+  /**
+   * `opportunity.read`: one page of the organization's opportunities, newest change first, with
+   * the totals of all of them (counted and summed, not read).
+   */
   list(
     tenant: TenantContext,
     filter?: {
@@ -131,6 +193,7 @@ export interface OpportunityService {
       readonly ownerId?: unknown;
       readonly contactId?: unknown;
     },
+    page?: PageInput,
   ): Promise<OpportunityList>;
   /** `opportunity.read`: one opportunity with its contact and pipeline. */
   get(
@@ -159,6 +222,8 @@ export interface OpportunityServiceOptions {
     | 'savePipeline'
     | 'findOpportunity'
     | 'listOpportunities'
+    | 'pageOpportunities'
+    | 'opportunityStageTotals'
     | 'writeOpportunity'
     | 'findContact'
   >;
@@ -428,7 +493,7 @@ export function createOpportunityService(options: OpportunityServiceOptions): Op
       });
     },
 
-    async list(tenant, filter = {}) {
+    async list(tenant, filter = {}, page = {}) {
       const organizationId = await organizationOf(tenant, 'opportunity.read');
       const { status, stageId, ownerId, contactId } = filter;
       if (status !== undefined && !['open', 'won', 'lost'].includes(status as string))
@@ -436,20 +501,34 @@ export function createOpportunityService(options: OpportunityServiceOptions): Op
       if (stageId !== undefined && !isStageId(stageId)) bad('stageId');
       if (ownerId !== undefined && !isUuid(ownerId)) bad('ownerId');
       if (contactId !== undefined && !isContactId(contactId)) bad('contactId');
-      const all = (await repository.listOpportunities(organizationId)).filter(
-        (o) => o.organizationId === organizationId,
-      );
-      const matching = all.filter(
-        (o) =>
-          (status === undefined || o.status === status) &&
-          (stageId === undefined || o.stageId === stageId) &&
-          (ownerId === undefined || o.ownerId === ownerId) &&
-          (contactId === undefined || o.contactId === contactId),
-      );
+      const limit = pageLimit('opportunities', page.limit);
+      const wanted: OpportunityPageFilter = {
+        ...(status === undefined ? {} : { status: status as OpportunityStatus }),
+        ...(stageId === undefined ? {} : { stageId: stageId as string }),
+        ...(ownerId === undefined ? {} : { ownerId: ownerId as UserId }),
+        ...(contactId === undefined ? {} : { contactId: contactId as ContactId }),
+      };
+      const after = decodeCursor(page.cursor, organizationId, 'opportunities', wanted);
+      const [found, summary] = await Promise.all([
+        repository.pageOpportunities(organizationId, {
+          filter: wanted,
+          limit,
+          ...(after === undefined ? {} : { after }),
+        }),
+        currency(organizationId).then((c) => readPipelineSummary(repository, organizationId, c)),
+      ]);
+      const items = found.items.filter((o) => o.organizationId === organizationId);
       return Object.freeze({
-        items: Object.freeze(matching.slice(0, OPPORTUNITY_LIMITS.list)),
-        summary: pipelineSummary(all, await currency(organizationId)),
-        hasMore: matching.length > OPPORTUNITY_LIMITS.list,
+        items: Object.freeze(items),
+        summary,
+        hasMore: found.hasMore,
+        nextCursor: nextCursorOf(
+          found,
+          opportunityPosition,
+          organizationId,
+          'opportunities',
+          wanted,
+        ),
       });
     },
 
@@ -725,10 +804,7 @@ export function createOpportunityService(options: OpportunityServiceOptions): Op
 
     async summary(tenant) {
       const organizationId = await organizationOf(tenant, 'opportunity.read');
-      return pipelineSummary(
-        await repository.listOpportunities(organizationId),
-        await currency(organizationId),
-      );
+      return readPipelineSummary(repository, organizationId, await currency(organizationId));
     },
   } satisfies OpportunityService);
 }

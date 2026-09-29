@@ -1,4 +1,5 @@
 import type { ReplyRequest } from '../conversations/sendReply.js';
+import { pageQuery, type PageRequest } from '../lists/pages.js';
 
 /**
  * Customers and leads (C1, ADR-0053), as the API serves them: the organization's contacts with a
@@ -104,6 +105,7 @@ export interface CustomerList {
   readonly items: readonly CustomerView[];
   readonly counts: StageCounts;
   readonly hasMore: boolean;
+  readonly nextCursor: string | null;
 }
 
 export interface NewCustomer {
@@ -122,7 +124,8 @@ export interface CustomerChange {
 }
 
 export interface CustomersClient {
-  list(stage: CustomerStage): Promise<CustomerList>;
+  /** One page of the contacts at a stage, newest change first. */
+  list(stage: CustomerStage, page?: PageRequest): Promise<CustomerList>;
   get(id: string): Promise<CustomerDetail>;
   create(input: NewCustomer): Promise<CustomerView>;
   update(id: string, change: CustomerChange): Promise<CustomerView>;
@@ -167,7 +170,10 @@ export function createCustomersClient(
     body: JSON.stringify(body),
   });
   return {
-    list: async (stage) => read(await request(`${base}?stage=${stage}`, {})),
+    list: async (stage, page) =>
+      read(
+        await request(`${base}?${pageQuery(new URLSearchParams({ stage }), page).toString()}`, {}),
+      ),
     get: async (id) => read(await request(one(id), {})),
     create: async (input) => read(await request(base, send('POST', input))),
     update: async (id, change) => read(await request(one(id), send('PATCH', change))),

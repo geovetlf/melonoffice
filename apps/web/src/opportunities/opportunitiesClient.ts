@@ -1,4 +1,5 @@
 import type { ReplyRequest } from '../conversations/sendReply.js';
+import { pageQuery, type PageRequest } from '../lists/pages.js';
 
 /**
  * Opportunities and the pipeline (C2, ADR-0054), as the API serves them. The stages are the
@@ -102,6 +103,7 @@ export interface OpportunityList {
   readonly items: readonly OpportunityView[];
   readonly summary: PipelineSummary;
   readonly hasMore: boolean;
+  readonly nextCursor: string | null;
 }
 
 export interface NewOpportunity {
@@ -133,7 +135,8 @@ export interface StageInput {
 export interface OpportunitiesClient {
   pipeline(): Promise<PipelineView>;
   savePipeline(revision: number, stages: readonly StageInput[]): Promise<PipelineView>;
-  list(status: OpportunityStatus): Promise<OpportunityList>;
+  /** One page of the opportunities with a status, newest change first. */
+  list(status: OpportunityStatus, page?: PageRequest): Promise<OpportunityList>;
   get(id: string): Promise<OpportunityDetail>;
   create(input: NewOpportunity): Promise<OpportunityView>;
   update(id: string, change: OpportunityChange): Promise<OpportunityView>;
@@ -174,7 +177,13 @@ export function createOpportunitiesClient(
     pipeline: async () => read(await request(`${base}/pipeline`, {})),
     savePipeline: async (revision, stages) =>
       read(await request(`${base}/pipeline`, send('PUT', { revision, stages }))),
-    list: async (status) => read(await request(`${base}/opportunities?status=${status}`, {})),
+    list: async (status, page) =>
+      read(
+        await request(
+          `${base}/opportunities?${pageQuery(new URLSearchParams({ status }), page).toString()}`,
+          {},
+        ),
+      ),
     get: async (id) => read(await request(one(id), {})),
     create: async (input) => read(await request(`${base}/opportunities`, send('POST', input))),
     update: async (id, change) => read(await request(one(id), send('PATCH', change))),

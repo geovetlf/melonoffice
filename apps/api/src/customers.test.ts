@@ -56,7 +56,12 @@ describe.each(STORES)('customers and leads with storage in %s', (_name, createSt
     const empty = await t.call('token-alice', t.base(t.orgA));
     expect(empty).toEqual({
       status: 200,
-      body: { items: [], counts: { lead: 0, customer: 0, inactive: 0 }, hasMore: false },
+      body: {
+        items: [],
+        counts: { lead: 0, customer: 0, inactive: 0 },
+        hasMore: false,
+        nextCursor: null,
+      },
     });
     const created = await t.send('token-alice', 'POST', t.base(t.orgA), {
       displayName: 'Carmen',

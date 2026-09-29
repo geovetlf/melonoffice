@@ -2,6 +2,7 @@ import { FormattedMessage, useIntl } from '@melonoffice/i18n';
 import { Button } from '@melonoffice/ui';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { navigate } from '../identity/router.js';
+import { LoadMore, usePagedRead, type PagedRead } from '../lists/usePagedRead.js';
 import { openedWith, paths } from '../shell/routes.js';
 import {
   FOLLOW_UP_TYPES,
@@ -19,11 +20,6 @@ import {
  * change; when a follow-up's time comes the scheduler marks it due and the office's activity
  * shows it. Nothing is sent to the contact.
  */
-
-type Load<T> =
-  | { readonly status: 'loading' }
-  | { readonly status: 'ready'; readonly value: T }
-  | { readonly status: 'error' };
 
 /** Refusals with their own words; any other is the generic one. */
 const KNOWN_ERRORS = new Set([
@@ -55,27 +51,17 @@ export const followUpErrorKey = (error: unknown): string => {
   return KNOWN_ERRORS.has(error.code) ? `followUps.error.${error.code}` : 'followUps.error.generic';
 };
 
+/** The pages of a filter's follow-ups (ADR-0061); `reload` starts again from the first page. */
 function useList(
   client: FollowUpsClient,
   filter: Parameters<FollowUpsClient['list']>[0],
-): { list: Load<FollowUpList>; reload: () => void } {
-  const [read, setRead] = useState<{ key: string; load: Load<FollowUpList> } | undefined>();
+): PagedRead<FollowUpList> & { reload: () => void } {
   const [version, setVersion] = useState(0);
   const reload = useCallback(() => setVersion((v) => v + 1), []);
-  const key = `${JSON.stringify(filter)}:${version}`;
-  useEffect(() => {
-    let live = true;
-    client.list(filter).then(
-      (value) => live && setRead({ key, load: { status: 'ready', value } }),
-      () => live && setRead({ key, load: { status: 'error' } }),
-    );
-    return () => {
-      live = false;
-    };
-    // The filter is part of the key.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [client, key]);
-  return { list: read?.key === key ? read.load : { status: 'loading' }, reload };
+  const pages = usePagedRead(`${JSON.stringify(filter)}:${version}`, (cursor?: string) =>
+    client.list(filter, cursor === undefined ? {} : { cursor }),
+  );
+  return { ...pages, reload };
 }
 
 /** One follow-up: when, what, for whom, and what a person may do with it. */
@@ -377,7 +363,8 @@ export function RecordFollowUps({
 }) {
   const filter =
     opportunityId === undefined ? { contactId, open: true } : { opportunityId, open: true };
-  const { list, reload } = useList(client, filter);
+  const pages = useList(client, filter);
+  const { list, reload } = pages;
   const [adding, setAdding] = useState(false);
   const changed = () => {
     reload();
@@ -416,6 +403,7 @@ export function RecordFollowUps({
           )}
         </ul>
       )}
+      {opportunityId === undefined ? <LoadMore read={pages} /> : null}
       {canManage ? (
         adding ? (
           <FollowUpForm
@@ -449,7 +437,8 @@ export function FollowUpsSection({
   readonly canManage: boolean;
 }) {
   const [mine, setMine] = useState(false);
-  const { list, reload } = useList(client, { open: true, ...(mine ? { mine: true } : {}) });
+  const pages = useList(client, { open: true, ...(mine ? { mine: true } : {}) });
+  const { list, reload } = pages;
   const [opened] = useState(() => openedWith('followUp'));
   useEffect(() => {
     if (openedWith('view') !== 'follow-ups') return;
@@ -498,11 +487,17 @@ export function FollowUpsSection({
         groups.map((when) => {
           const items = list.value.items.filter((i) => i.when === when);
           if (items.length === 0) return null;
+          const { counts } = list.value;
+          // How many are in the group in all, not only on the pages loaded.
+          const all =
+            when === 'later'
+              ? Math.max(0, counts.open - counts.overdue - counts.today - counts.upcoming)
+              : counts[when];
           return (
             <div key={when}>
               <h3>
                 <FormattedMessage id={`followUps.group.${when}`} />{' '}
-                <span className="customers__count">{items.length}</span>
+                <span className="customers__count">{all}</span>
               </h3>
               <ul className="customers__notes follow-ups">
                 {items.map((item) => (
@@ -520,6 +515,7 @@ export function FollowUpsSection({
           );
         })
       )}
+      <LoadMore read={pages} />
     </section>
   );
 }

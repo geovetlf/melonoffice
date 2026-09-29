@@ -59,7 +59,10 @@ const logger = createLogger({ service: SERVICE_NAME, level: config.logLevel });
 const projectId = config.identityProjectId;
 function services(projectId: string) {
   const firestore = new Firestore({ projectId });
-  const conversations = new FirestoreConversationRepository(firestore);
+  // A Comercial page read the old way while its Firestore index is missing is logged (ADR-0061).
+  const conversations = new FirestoreConversationRepository(firestore, {
+    onIndexMissing: (query) => logger.warn('firestore.index_missing', { query }),
+  });
   const connections = new FirestoreChannelConnectionRepository(firestore);
   const templates = new FirestoreChannelTemplateRepository(firestore);
   const secretProjectId = config.channelSecretsProjectId;

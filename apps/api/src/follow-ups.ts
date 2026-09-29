@@ -6,13 +6,14 @@ import {
   type ConversationErrorCode,
   type FollowUpService,
 } from '@melonoffice/conversations';
-import type { Contact, FollowUp, OrganizationId, UserId } from '@melonoffice/domain';
+import type { FollowUp, UserId } from '@melonoffice/domain';
 import type { AuthorizationService } from '@melonoffice/rbac';
 import type { TenantContext } from '@melonoffice/tenancy';
 import type { Context, Hono } from 'hono';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import type { AuthEnv } from './auth.js';
 import { withPermission, type AuthorizationDependencies } from './authorization.js';
+import { contactNames, pageOf, type ContactsById } from './pages.js';
 
 const STATUS: Partial<Record<ConversationErrorCode, ContentfulStatusCode>> = {
   invalid_request: 400,
@@ -90,9 +91,7 @@ export function registerFollowUpRoutes(
   dependencies: AuthorizationDependencies & {
     readonly followUps: FollowUpService;
     readonly authorization: Pick<AuthorizationService, 'authorize'>;
-    readonly contacts?: {
-      listContacts(organizationId: OrganizationId): Promise<readonly Contact[]>;
-    };
+    readonly contacts?: ContactsById;
     readonly brain?: Pick<CompanyBrainService, 'ingest'>;
   },
 ): void {
@@ -146,21 +145,25 @@ export function registerFollowUpRoutes(
     withPermission('follow_up.read', dependencies, (c, tenant) =>
       answer(c, async () => {
         const q = (name: string) => c.req.query(name);
-        const list = await followUps.list(tenant, {
-          ...(q('status') === undefined ? {} : { status: q('status') }),
-          ...(q('contact') === undefined ? {} : { contactId: q('contact') }),
-          ...(q('opportunity') === undefined ? {} : { opportunityId: q('opportunity') }),
-          ...(q('assignee') === undefined ? {} : { assignee: q('assignee') }),
-          ...(q('open') === undefined ? {} : { open: q('open') }),
-        });
-        // The contact's name, only to someone who may read contacts.
+        const list = await followUps.list(
+          tenant,
+          {
+            ...(q('status') === undefined ? {} : { status: q('status') }),
+            ...(q('contact') === undefined ? {} : { contactId: q('contact') }),
+            ...(q('opportunity') === undefined ? {} : { opportunityId: q('opportunity') }),
+            ...(q('assignee') === undefined ? {} : { assignee: q('assignee') }),
+            ...(q('open') === undefined ? {} : { open: q('open') }),
+          },
+          pageOf(c),
+        );
+        // The contacts' names, only to someone who may read contacts: this page's, no more.
         const names =
           contacts !== undefined && authorization.authorize(tenant, 'contact.read').allowed
-            ? new Map(
-                (await contacts.listContacts(tenant.organizationId)).map((contact) => [
-                  contact.id as string,
-                  contact.displayName ?? contact.phone ?? contact.email ?? null,
-                ]),
+            ? contactNames(
+                await contacts.findContacts(
+                  tenant.organizationId,
+                  list.items.map((f) => f.contactId),
+                ),
               )
             : undefined;
         return {
@@ -173,6 +176,7 @@ export function registerFollowUpRoutes(
               contactName: names?.get(f.contactId) ?? null,
             })),
             hasMore: list.hasMore,
+            nextCursor: list.nextCursor,
           },
         };
       }),

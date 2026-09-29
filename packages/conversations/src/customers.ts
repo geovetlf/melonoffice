@@ -22,6 +22,15 @@ import { isResolvedTenant, type TenancyStore, type TenantContext } from '@melono
 import { randomUUID } from 'node:crypto';
 import { ConversationError } from './errors.js';
 import { isContactId, isE164, isUuid, MAX_DISPLAY_NAME_LENGTH } from './model.js';
+import {
+  contactPosition,
+  decodeCursor,
+  nextCursorOf,
+  PAGE_SIZES,
+  pageLimit,
+  type ContactPageFilter,
+  type PageInput,
+} from './pages.js';
 import type { ConversationRepository } from './repository.js';
 
 /**
@@ -43,8 +52,8 @@ export const CONTACT_SOURCE_KINDS: readonly ContactSourceKind[] = [
 export const MESSAGING_CONSENTS: readonly MessagingConsent[] = ['granted', 'denied', 'unknown'];
 
 export const CUSTOMER_LIMITS = Object.freeze({
-  /** Contacts one list returns. */
-  list: 200,
+  /** The most contacts one page returns (ADR-0061: `PAGE_SIZES.contacts`). */
+  list: PAGE_SIZES.contacts.max,
   nextActionLength: 200,
   noteLength: 2_000,
   notesShown: 20,
@@ -107,6 +116,8 @@ export interface CustomerList {
   /** How many contacts are at each stage, of all the organization's contacts. */
   readonly counts: Readonly<Record<ContactStage, number>>;
   readonly hasMore: boolean;
+  /** The cursor of the next page under the same filter, or null on the last page (ADR-0061). */
+  readonly nextCursor: string | null;
 }
 
 export interface CustomerDetail {
@@ -115,10 +126,14 @@ export interface CustomerDetail {
 }
 
 export interface CustomerService {
-  /** `contact.read`: contacts at one stage, or every marked one; the newest change first. */
+  /**
+   * `contact.read`: one page of the contacts at one stage, or of every marked one; the newest
+   * change first. The counts are of all the organization's contacts, counted, not read.
+   */
   list(
     tenant: TenantContext,
     filter?: { readonly stage?: unknown; readonly ownerId?: unknown },
+    page?: PageInput,
   ): Promise<CustomerList>;
   /** `contact.read`: one contact with its latest notes. */
   get(tenant: TenantContext, id: string): Promise<CustomerDetail>;
@@ -140,6 +155,8 @@ export interface CustomerServiceOptions {
     ConversationRepository,
     | 'findContact'
     | 'listContacts'
+    | 'pageContacts'
+    | 'countContactStages'
     | 'createContact'
     | 'updateContact'
     | 'addContactNote'
@@ -308,7 +325,11 @@ export function createCustomerService(options: CustomerServiceOptions): Customer
   }
 
   return Object.freeze({
-    async list(tenant: TenantContext, filter: { stage?: unknown; ownerId?: unknown } = {}) {
+    async list(
+      tenant: TenantContext,
+      filter: { stage?: unknown; ownerId?: unknown } = {},
+      page: PageInput = {},
+    ) {
       const organizationId = await organizationOf(tenant, 'contact.read');
       if (
         filter.stage !== undefined &&
@@ -317,22 +338,27 @@ export function createCustomerService(options: CustomerServiceOptions): Customer
         bad('stage');
       }
       if (filter.ownerId !== undefined && !isUuid(filter.ownerId)) bad('ownerId');
-      const all = (await repository.listContacts(organizationId)).filter(
-        (c) => c.organizationId === organizationId,
-      );
-      const matching = all
-        .filter(
-          (c) =>
-            c.status !== 'archived' &&
-            c.commercial !== undefined &&
-            (filter.stage === undefined || c.commercial.stage === filter.stage) &&
-            (filter.ownerId === undefined || c.commercial.ownerId === filter.ownerId),
-        )
-        .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0));
+      const limit = pageLimit('contacts', page.limit);
+      const wanted: ContactPageFilter = {
+        ...(filter.stage === undefined ? {} : { stage: filter.stage as ContactStage }),
+        ...(filter.ownerId === undefined ? {} : { ownerId: filter.ownerId as UserId }),
+      };
+      const after = decodeCursor(page.cursor, organizationId, 'contacts', wanted);
+      const [found, counts] = await Promise.all([
+        repository.pageContacts(organizationId, {
+          filter: wanted,
+          limit,
+          ...(after === undefined ? {} : { after }),
+        }),
+        repository.countContactStages(organizationId),
+      ]);
+      // Belt and braces: a record of another organization is never handed out.
+      const items = found.items.filter((c) => c.organizationId === organizationId);
       return Object.freeze({
-        items: Object.freeze(matching.slice(0, CUSTOMER_LIMITS.list)),
-        counts: Object.freeze(contactStageCounts(all)),
-        hasMore: matching.length > CUSTOMER_LIMITS.list,
+        items: Object.freeze(items),
+        counts: Object.freeze({ ...counts }),
+        hasMore: found.hasMore,
+        nextCursor: nextCursorOf(found, contactPosition, organizationId, 'contacts', wanted),
       });
     },
 
@@ -574,7 +600,7 @@ export function createCustomerService(options: CustomerServiceOptions): Customer
 
     async counts(tenant: TenantContext) {
       const organizationId = await organizationOf(tenant, 'contact.read');
-      return Object.freeze(contactStageCounts(await repository.listContacts(organizationId)));
+      return Object.freeze({ ...(await repository.countContactStages(organizationId)) });
     },
   });
 }

@@ -439,6 +439,85 @@ resource "google_firestore_index" "audit_activity" {
   }
 }
 
+# Comercial's lists are read one page at a time (ADR-0061): the organization, the list's filters,
+# then its order (newest change first, or soonest first for follow-ups). Firestore needs one
+# composite index per combination; the document id that breaks ties is implicit. Until an index
+# exists, the API reads that list the old way (the whole collection) and logs it, so applying
+# these never has to come before the code. The last one serves the pipeline totals' sums.
+locals {
+  commercial_indexes = {
+    contacts_page = {
+      collection = "contacts"
+      fields     = [["organizationId", "ASCENDING"], ["status", "ASCENDING"], ["commercial.stage", "ASCENDING"], ["updatedAt", "DESCENDING"]]
+    }
+    contacts_owner_page = {
+      collection = "contacts"
+      fields     = [["organizationId", "ASCENDING"], ["status", "ASCENDING"], ["commercial.ownerId", "ASCENDING"], ["commercial.stage", "ASCENDING"], ["updatedAt", "DESCENDING"]]
+    }
+    opportunities_page = {
+      collection = "opportunities"
+      fields     = [["organizationId", "ASCENDING"], ["updatedAt", "DESCENDING"]]
+    }
+    opportunities_status_page = {
+      collection = "opportunities"
+      fields     = [["organizationId", "ASCENDING"], ["status", "ASCENDING"], ["updatedAt", "DESCENDING"]]
+    }
+    opportunities_stage_page = {
+      collection = "opportunities"
+      fields     = [["organizationId", "ASCENDING"], ["stageId", "ASCENDING"], ["updatedAt", "DESCENDING"]]
+    }
+    opportunities_owner_page = {
+      collection = "opportunities"
+      fields     = [["organizationId", "ASCENDING"], ["ownerId", "ASCENDING"], ["updatedAt", "DESCENDING"]]
+    }
+    opportunities_contact_page = {
+      collection = "opportunities"
+      fields     = [["organizationId", "ASCENDING"], ["contactId", "ASCENDING"], ["updatedAt", "DESCENDING"]]
+    }
+    opportunities_stage_value = {
+      collection = "opportunities"
+      fields     = [["organizationId", "ASCENDING"], ["stageId", "ASCENDING"], ["value.currency", "ASCENDING"], ["value.amountMinor", "ASCENDING"]]
+    }
+    follow_ups_page = {
+      collection = "followUps"
+      fields     = [["organizationId", "ASCENDING"], ["scheduledAt", "ASCENDING"]]
+    }
+    follow_ups_status_page = {
+      collection = "followUps"
+      fields     = [["organizationId", "ASCENDING"], ["status", "ASCENDING"], ["scheduledAt", "ASCENDING"]]
+    }
+    follow_ups_contact_page = {
+      collection = "followUps"
+      fields     = [["organizationId", "ASCENDING"], ["status", "ASCENDING"], ["contactId", "ASCENDING"], ["scheduledAt", "ASCENDING"]]
+    }
+    follow_ups_opportunity_page = {
+      collection = "followUps"
+      fields     = [["organizationId", "ASCENDING"], ["status", "ASCENDING"], ["opportunityId", "ASCENDING"], ["scheduledAt", "ASCENDING"]]
+    }
+    follow_ups_assignee_page = {
+      collection = "followUps"
+      fields     = [["organizationId", "ASCENDING"], ["status", "ASCENDING"], ["assignedTo", "ASCENDING"], ["scheduledAt", "ASCENDING"]]
+    }
+  }
+}
+
+resource "google_firestore_index" "commercial" {
+  for_each = var.firestore_and_auth ? local.commercial_indexes : {}
+
+  project     = var.project_id
+  database    = google_firestore_database.default[0].name
+  collection  = each.value.collection
+  query_scope = "COLLECTION"
+
+  dynamic "fields" {
+    for_each = each.value.fields
+    content {
+      field_path = fields.value[0]
+      order      = fields.value[1]
+    }
+  }
+}
+
 # Enables Identity Platform with email and password sign-in only. Other providers and MFA are
 # added when the auth work needs them. Identity Platform cannot be disabled once enabled; a
 # destroy only removes it from state.

@@ -36,6 +36,15 @@ import {
 } from './follow-up-time.js';
 import { isTimeZone } from './insights.js';
 import { isContactId, isUuid } from './model.js';
+import {
+  decodeCursor,
+  followUpPosition,
+  nextCursorOf,
+  PAGE_SIZES,
+  pageLimit,
+  type FollowUpPageFilter,
+  type PageInput,
+} from './pages.js';
 import type { ConversationRepository, FollowUpRead, FollowUpWrite } from './repository.js';
 
 /**
@@ -72,8 +81,8 @@ export const isOpenFollowUp = (f: Pick<FollowUp, 'status'>) => OPEN_FOLLOW_UP.ha
 export const FOLLOW_UP_LIMITS = Object.freeze({
   titleLength: 120,
   descriptionLength: 1000,
-  /** Follow-ups one list returns. */
-  list: 500,
+  /** The most follow-ups one page returns (ADR-0061: `PAGE_SIZES.follow_ups`). */
+  list: PAGE_SIZES.follow_ups.max,
   /** Open follow-ups one contact or opportunity may have at once (a technical limit). */
   openPerRecord: 20,
   /** Earlier times kept per follow-up. */
@@ -174,6 +183,8 @@ export interface FollowUpList {
     readonly open: number;
   };
   readonly hasMore: boolean;
+  /** The cursor of the next page under the same filter, or null on the last page (ADR-0061). */
+  readonly nextCursor: string | null;
 }
 
 export interface FollowUpFilter {
@@ -195,8 +206,11 @@ export type DueResult =
   | { readonly kind: 'not_found' };
 
 export interface FollowUpService {
-  /** `follow_up.read`: the organization's follow-ups, soonest first, with their counts. */
-  list(tenant: TenantContext, filter?: FollowUpFilter): Promise<FollowUpList>;
+  /**
+   * `follow_up.read`: one page of the organization's follow-ups, soonest first, with the counts
+   * of all the open ones the filter keeps.
+   */
+  list(tenant: TenantContext, filter?: FollowUpFilter, page?: PageInput): Promise<FollowUpList>;
   /** `follow_up.read`. */
   get(tenant: TenantContext, id: string): Promise<FollowUp>;
   /**
@@ -232,7 +246,7 @@ export interface FollowUpService {
 export interface FollowUpServiceOptions {
   readonly repository: Pick<
     ConversationRepository,
-    'findFollowUp' | 'listFollowUps' | 'writeFollowUp'
+    'findFollowUp' | 'listFollowUps' | 'pageFollowUps' | 'writeFollowUp'
   >;
   readonly organizations: Pick<TenancyStore, 'findOrganization' | 'findMembership'>;
   readonly authorization: Pick<AuthorizationService, 'authorize'>;
@@ -554,7 +568,7 @@ export function createFollowUpService(options: FollowUpServiceOptions): FollowUp
   }
 
   return Object.freeze({
-    async list(tenant, filter = {}) {
+    async list(tenant, filter = {}, page = {}) {
       const organizationId = await organizationOf(tenant, 'follow_up.read');
       const { status, contactId, opportunityId, assignee, open } = filter;
       if (status !== undefined && !(FOLLOW_UP_STATUSES as readonly unknown[]).includes(status)) {
@@ -564,34 +578,54 @@ export function createFollowUpService(options: FollowUpServiceOptions): FollowUp
       if (opportunityId !== undefined && !isUuid(opportunityId)) bad('opportunityId');
       if (assignee !== undefined && assignee !== 'me') bad('assignee');
       if (open !== undefined && open !== 'true' && open !== true) bad('open');
+      const limit = pageLimit('follow_ups', page.limit);
+      const records: FollowUpPageFilter = {
+        ...(contactId === undefined ? {} : { contactId: contactId as ContactId }),
+        ...(opportunityId === undefined ? {} : { opportunityId: opportunityId as OpportunityId }),
+        ...(assignee === undefined ? {} : { assignedTo: tenant.userId }),
+      };
+      const statuses = FOLLOW_UP_STATUSES.filter(
+        (s) =>
+          (status === undefined || s === status) && (open === undefined || OPEN_FOLLOW_UP.has(s)),
+      );
+      const wanted: FollowUpPageFilter = {
+        ...records,
+        ...(statuses.length === FOLLOW_UP_STATUSES.length ? {} : { statuses }),
+      };
+      const after = decodeCursor(page.cursor, organizationId, 'follow_ups', wanted);
+      const openStatuses = statuses.filter((s) => OPEN_FOLLOW_UP.has(s));
       const timeZone = await zoneOf(organizationId);
       const today = localDateTime(now(), timeZone).date;
-      const all = (await repository.listFollowUps(organizationId))
-        .filter((f) => f.organizationId === organizationId)
-        .toSorted(byTime);
-      const matching = all.filter(
-        (f) =>
-          (status === undefined || f.status === status) &&
-          (open === undefined || isOpenFollowUp(f)) &&
-          (contactId === undefined || f.contactId === contactId) &&
-          (opportunityId === undefined || f.opportunityId === opportunityId) &&
-          (assignee === undefined || f.assignedTo === tenant.userId),
-      );
+      const [found, openOnes] = await Promise.all([
+        statuses.length === 0
+          ? { items: [], hasMore: false }
+          : repository.pageFollowUps(organizationId, {
+              filter: wanted,
+              limit,
+              ...(after === undefined ? {} : { after }),
+            }),
+        // The counts: only the open follow-ups the filter keeps, never the closed history.
+        openStatuses.length === 0
+          ? []
+          : repository.listFollowUps(organizationId, { ...records, statuses: openStatuses }),
+      ]);
       const counts = { overdue: 0, today: 0, upcoming: 0, open: 0 };
-      for (const f of matching) {
-        if (!isOpenFollowUp(f)) continue;
+      for (const f of openOnes) {
+        if (f.organizationId !== organizationId || !isOpenFollowUp(f)) continue;
         counts.open += 1;
         const { when } = timingOf(f, today);
         if (when === 'overdue') counts.overdue += 1;
         else if (when === 'today') counts.today += 1;
         else if (when === 'upcoming') counts.upcoming += 1;
       }
+      const items = found.items.filter((f) => f.organizationId === organizationId);
       return Object.freeze({
-        items: Object.freeze(matching.slice(0, FOLLOW_UP_LIMITS.list)),
+        items: Object.freeze(items),
         timeZone,
         today,
         counts: Object.freeze(counts),
-        hasMore: matching.length > FOLLOW_UP_LIMITS.list,
+        hasMore: found.hasMore,
+        nextCursor: nextCursorOf(found, followUpPosition, organizationId, 'follow_ups', wanted),
       });
     },
 
