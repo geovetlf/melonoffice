@@ -36,6 +36,7 @@
     "@melonoffice/conversations": "workspace:*",
     "@melonoffice/credits": "workspace:*",
     "@melonoffice/departments": "workspace:*",
+    "@melonoffice/documents": "workspace:*",
     "@melonoffice/domain": "workspace:*",
     "@melonoffice/entitlements": "workspace:*",
     "@melonoffice/events": "workspace:*",

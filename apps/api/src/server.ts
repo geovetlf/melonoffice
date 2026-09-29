@@ -3,6 +3,7 @@ import { serve } from '@hono/node-server';
 import { createAuditService } from '@melonoffice/audit';
 import { createIdentityPlatformVerifier } from '@melonoffice/auth';
 import { createConversationIngress } from '@melonoffice/conversations';
+import { createGcsFileStore } from '@melonoffice/documents';
 import {
   createIntegrationEngine,
   createIntegrationRegistry,
@@ -37,6 +38,7 @@ import {
   FirestoreBusinessProfileRepository,
   FirestoreKnowledgeRepository,
   FirestoreDepartmentRepository,
+  FirestoreDocumentRepository,
   FirestoreEntitlementOverrideStore,
   FirestoreExecutionRepository,
   FirestoreForecastRepository,
@@ -151,6 +153,16 @@ function services(projectId: string) {
     structure,
     businessProfiles: new FirestoreBusinessProfileRepository(firestore),
     knowledge: new FirestoreKnowledgeRepository(firestore),
+    // Uploaded documents (ADR-0078): records in Firestore, bytes in the documents bucket, reached
+    // with the service's own identity. Without the bucket, uploads and downloads are refused.
+    documents: {
+      repository: new FirestoreDocumentRepository(firestore, {
+        onIndexMissing: (query) => logger.warn('firestore.index_missing', { query }),
+      }),
+      ...(config.documentsBucket === undefined
+        ? {}
+        : { files: createGcsFileStore({ bucket: config.documentsBucket }) }),
+    },
     activity: new FirestoreAuditStore(firestore),
     credits: new FirestoreCreditStore(firestore),
     // Every AI call's usage and cost (ADR-0074). Until its index exists, the event list is read
@@ -244,6 +256,9 @@ logger.info('channels', {
 });
 
 logger.info('web origins', { count: config.webOrigins?.length ?? 0 });
+logger.info('documents', {
+  storage: projectId !== undefined && config.documentsBucket !== undefined,
+});
 logger.info('forecasting', {
   model: forecastingConfig.forecasterUrl !== undefined,
   priced: forecastingConfig.creditsPerRun !== undefined,

@@ -30,6 +30,12 @@ import {
 } from '@melonoffice/business';
 import { InMemoryDepartmentRepository, type DepartmentRepository } from '@melonoffice/departments';
 import {
+  InMemoryDocumentRepository,
+  InMemoryFileStore,
+  type DocumentRepository,
+  type FileStore,
+} from '@melonoffice/documents';
+import {
   InMemoryAgentOutputRepository,
   InMemoryExecutionRepository,
   type ExecutionRepository,
@@ -86,6 +92,7 @@ import {
   toSubscriptionDocument,
   DEPARTMENTS,
   FirestoreDepartmentRepository,
+  FirestoreDocumentRepository,
   toDepartmentDocument,
   FirestoreExecutionRepository,
   FirestoreApprovalRepository,
@@ -158,6 +165,8 @@ export interface Stores {
   readonly knowledge: KnowledgeRepository;
   /** What people asked agents (ADR-0063). */
   readonly agentTasks: AgentTaskRepository;
+  /** Uploaded documents' records (ADR-0078); their bytes are in `setupApp`'s file store. */
+  readonly documents: DocumentRepository;
   /** The department catalogue migration's storage (ADR-0047). */
   readonly departmentMigration: DepartmentMigrationStore;
   readonly credits: CreditStore;
@@ -234,6 +243,7 @@ function memoryStores(): Stores {
     auditReader: events,
     knowledge: new InMemoryKnowledgeRepository(breakable),
     agentTasks: new InMemoryAgentTaskRepository(),
+    documents: new InMemoryDocumentRepository(breakable),
     departmentMigration: new InMemoryDepartmentMigrationStore(
       departments,
       specialists,
@@ -296,6 +306,7 @@ function firestoreStores(): Stores {
     auditReader: new FirestoreAuditStore(db),
     knowledge: new FirestoreKnowledgeRepository(db),
     agentTasks: new FirestoreAgentTaskRepository(db),
+    documents: new FirestoreDocumentRepository(db),
     departmentMigration: new FirestoreDepartmentMigrationStore(db),
     async putStructure(record) {
       if ('origin' in record) {
@@ -390,6 +401,7 @@ export function setupApp(
     forecasting,
     toolEnvironment = 'dev',
     runPlans = false,
+    files = new InMemoryFileStore(),
   }: {
     readonly sending?: boolean;
     readonly webOrigins?: readonly string[];
@@ -402,6 +414,8 @@ export function setupApp(
     readonly toolEnvironment?: 'dev' | 'staging' | 'prod' | null;
     /** Approving a plan starts it (WF-1): its steps are queued with the recording kickoff. */
     readonly runPlans?: boolean;
+    /** Where documents' bytes live (ADR-0078): memory unless a test passes its own, or `null`. */
+    readonly files?: FileStore | null;
   } = {},
 ) {
   const lines: string[] = [];
@@ -471,6 +485,7 @@ export function setupApp(
     },
     webhooks: engine,
     agentTasks: { repository: stores.agentTasks, outputs: agentOutputs, runtime: kickoff },
+    documents: { repository: stores.documents, ...(files === null ? {} : { files }) },
     ...(forecasting ? { forecasting } : {}),
     ...(tools ? { tools } : {}),
     ...(webOrigins ? { webOrigins } : {}),
@@ -488,5 +503,5 @@ export function setupApp(
         userId: string;
       }
     ).userId;
-  return { app, lines, as, register, meta, agentOutputs, scheduled, kicked, ...stores };
+  return { app, lines, as, register, meta, agentOutputs, scheduled, kicked, files, ...stores };
 }

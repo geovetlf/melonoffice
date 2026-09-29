@@ -113,6 +113,8 @@ describe('catalogue', () => {
       'knowledge.propose',
       'knowledge.manage',
       'knowledge.capture',
+      'document.read',
+      'document.upload',
       'entitlement.read',
       'billing.read',
       'execution.read',

@@ -31,6 +31,11 @@ import {
 import { createBillingService, type BillingStore } from '@melonoffice/billing';
 import { createDepartmentService, type DepartmentRepository } from '@melonoffice/departments';
 import {
+  createDocumentService,
+  type DocumentRepository,
+  type FileStore,
+} from '@melonoffice/documents';
+import {
   createConversationAssistant,
   createOpportunityService,
   readPipelineSummary,
@@ -119,6 +124,7 @@ import { registerMetricRoutes } from './metrics.js';
 import { registerOpportunityRoutes } from './opportunities.js';
 import { registerGiaRoutes } from './gia.js';
 import { registerDepartmentRoutes } from './departments.js';
+import { registerDocumentRoutes } from './documents.js';
 import { registerConnectionRoutes } from './connections.js';
 import { registerConversationRoutes } from './conversations.js';
 import { registerCreditRoutes } from './credits.js';
@@ -179,6 +185,15 @@ export interface AppOptions {
   readonly businessProfiles?: BusinessProfileRepository;
   /** Company Brain (ADR-0051). Absent: the brain routes answer 503 (fails closed). */
   readonly knowledge?: KnowledgeRepository;
+  /**
+   * Uploaded documents (ADR-0078). Absent: the document routes answer 503 (fails closed). A text
+   * file's text also goes to Company Brain when it is configured (`knowledge`).
+   */
+  readonly documents?: {
+    readonly repository: DocumentRepository;
+    /** Where their bytes live (Cloud Storage). Absent: uploads and downloads answer 503. */
+    readonly files?: FileStore;
+  };
   /** The tool catalogue (ADR-0026). Defaults to the one in code, which is empty until tools exist. */
   readonly tools?: ToolRegistry;
   /** Tool approvals (ADR-0026). Absent: the approval routes answer 503 (fails closed). */
@@ -322,6 +337,7 @@ export function createApp({
   structure,
   businessProfiles,
   knowledge,
+  documents,
   activity,
   tools = defaultToolRegistry(),
   approvals,
@@ -532,6 +548,27 @@ export function createApp({
       app.all('/v1/organizations/:organizationId/brain/*', (c) =>
         c.json({ error: 'brain_not_configured' }, 503),
       );
+    }
+    // Uploaded documents (ADR-0078): their text files' text goes to Company Brain, as the person.
+    if (tenancy !== undefined && documents !== undefined) {
+      registerDocumentRoutes(app, {
+        store: tenancy,
+        authorization,
+        audit,
+        documentsFor: (requestId) =>
+          createDocumentService({
+            repository: documents.repository,
+            ...(documents.files === undefined ? {} : { files: documents.files }),
+            authorization,
+            ...(brain === undefined ? {} : { knowledge: brain }),
+            logger: logger.child({ component: 'documents' }),
+            ...(requestId === undefined ? {} : { requestId }),
+          }),
+      });
+    } else if (tenancy !== undefined) {
+      const unavailable = (c: Context<Env>) => c.json({ error: 'documents_not_configured' }, 503);
+      app.all('/v1/organizations/:organizationId/documents', unavailable);
+      app.all('/v1/organizations/:organizationId/documents/*', unavailable);
     }
     // The commercial services, built once: Comercial's routes use them, and GIA reads through
     // them (C4) as the person asking. Opportunities and pipeline (C2, ADR-0054) have stages

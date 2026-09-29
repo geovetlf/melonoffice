@@ -4,6 +4,7 @@
 # CV-6C lets conversation agents run in dev (ADR-0043) and turns on the WhatsApp channel's secrets.
 # The Forecasting Engine (ADR-0059) adds the private forecaster (TimesFM 2.5). One model run costs
 # 1 credit (Geovet, 2026-09-28); cache hits, refusals and the fallback cost nothing.
+# DOC-1 adds a private bucket for uploaded documents, which only the api reads and writes (ADR-0078).
 module "environment" {
   source = "../../modules/environment"
 
@@ -18,6 +19,7 @@ module "environment" {
   conversation_agents = true
   whatsapp_channel    = true
   forecasting         = true
+  document_storage    = true
   # Whole credits per forecast run (ADR-0059), set by Geovet on 2026-09-28.
   forecast_credits_per_run = 1
   # Meta Graph API version for sending, as Meta shows it for the DEV app (App settings → Advanced).

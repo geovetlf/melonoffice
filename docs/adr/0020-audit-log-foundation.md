@@ -83,6 +83,7 @@ Only actions the code performs today:
 | `workflow.created`             | workflow      | success                  | A workflow was created in draft, with version 1 (added by ADR-0028)          |
 | `workflow.version_created`     | workflow      | success                  | A new write-once workflow version was stored (added by ADR-0028)             |
 | `workflow.state_changed`       | workflow      | success                  | A workflow was activated, paused or archived, with from and to (ADR-0028)    |
+| `document.uploaded`            | document      | success                  | A person uploaded a new document; its id only (added by ADR-0078)            |
 | `tenancy.resolve`              | tenancy       | denied                   | A request inside an organization is refused by tenancy                       |
 | `authorization.check`          | authorization | denied                   | RBAC refuses a permission                                                    |
 

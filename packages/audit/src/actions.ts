@@ -18,6 +18,7 @@ export interface AuditActionDefinition {
     | 'department'
     | 'specialist'
     | 'knowledge'
+    | 'document'
     | 'gia'
     | 'contact'
     | 'opportunity'
@@ -101,6 +102,12 @@ export const AUDIT_ACTIONS = {
     category: 'knowledge',
     description:
       'A document was given to Company Brain (ADR-0051); its facts are extracted as unverified. Never its text.',
+    results: ['success'],
+  },
+  'document.uploaded': {
+    category: 'document',
+    description:
+      'A person uploaded a document to the organization (ADR-0078); `target` is the document. Never its name or content: those stay with the document.',
     results: ['success'],
   },
   'gia.message_answered': {
