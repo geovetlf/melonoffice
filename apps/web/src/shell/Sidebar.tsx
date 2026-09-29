@@ -28,6 +28,7 @@ export function Sidebar({
   canReadConversations,
   canReadConnections = false,
   canReadMemory = false,
+  canReadReports = false,
   open,
   onNavigate,
 }: {
@@ -37,6 +38,8 @@ export function Sidebar({
   readonly canReadConnections?: boolean;
   /** The company's memory (ADR-0056), for a member who may read the business or its knowledge. */
   readonly canReadMemory?: boolean;
+  /** Reports (ADR-0060), for a person with `report.read`. */
+  readonly canReadReports?: boolean;
   readonly open: boolean;
   readonly onNavigate: () => void;
 }) {
@@ -106,6 +109,16 @@ export function Sidebar({
                 icon={tool.icon}
                 path={paths.conversations()}
                 current={route.kind === 'conversations'}
+                go={go}
+              >
+                <FormattedMessage id={`nav.${tool.id}`} />
+              </NavLink>
+            ) : tool.id === 'reports' && canReadReports ? (
+              <NavLink
+                key={tool.id}
+                icon={tool.icon}
+                path={paths.reports()}
+                current={route.kind === 'reports'}
                 go={go}
               >
                 <FormattedMessage id={`nav.${tool.id}`} />

@@ -50,7 +50,9 @@ import {
 } from '@melonoffice/execution';
 import {
   createForecastEngine,
+  createMetricHistory,
   createRecordSources,
+  type ForecastContextPort,
   type ForecastLimits,
   type ForecastModelProvider,
   type ForecastRepository,
@@ -96,6 +98,7 @@ import { registerBusinessRoutes } from './business.js';
 import { registerCustomerRoutes } from './customers.js';
 import { registerFollowUpRoutes } from './follow-ups.js';
 import { registerForecastRoutes } from './forecasts.js';
+import { registerMetricRoutes } from './metrics.js';
 import { registerOpportunityRoutes } from './opportunities.js';
 import { registerGiaRoutes } from './gia.js';
 import { registerDepartmentRoutes } from './departments.js';
@@ -521,6 +524,19 @@ export function createApp({
     // Its series are the organization's own records, read through the existing repositories;
     // Company Brain gives only context (the currency, with the profile's time zone). A run goes
     // to the worker on the existing job queue and is charged by the existing credits engine.
+    const businessContext: ForecastContextPort = {
+      async of(organizationId) {
+        const profile = await businessProfiles?.find(organizationId);
+        if (profile === undefined) return undefined;
+        const currency = await companyFact(organizationId, 'finance', 'currency');
+        return {
+          timeZone: profile.timeZone,
+          ...(currency === undefined ? {} : { currency }),
+        };
+      },
+    };
+    const recordSources =
+      conversations === undefined ? undefined : createRecordSources(conversations.repository);
     const forecastEngine =
       tenancy !== undefined &&
       conversations !== undefined &&
@@ -528,7 +544,7 @@ export function createApp({
       forecasting !== undefined
         ? createForecastEngine({
             repository: forecasting.repository,
-            sources: createRecordSources(conversations.repository),
+            sources: recordSources ?? createRecordSources(conversations.repository),
             ...(forecasting.provider === undefined ? {} : { provider: forecasting.provider }),
             ...(forecasting.scheduler === undefined ? {} : { scheduler: forecasting.scheduler }),
             ...(forecasting.creditsPerRun === undefined
@@ -537,17 +553,7 @@ export function createApp({
             ...(forecasting.limits === undefined ? {} : { limits: forecasting.limits }),
             ...(forecasting.now === undefined ? {} : { now: forecasting.now }),
             credits: createCreditService({ store: credits, organizations: tenancy }),
-            context: {
-              async of(organizationId) {
-                const profile = await businessProfiles?.find(organizationId);
-                if (profile === undefined) return undefined;
-                const currency = await companyFact(organizationId, 'finance', 'currency');
-                return {
-                  timeZone: profile.timeZone,
-                  ...(currency === undefined ? {} : { currency }),
-                };
-              },
-            },
+            context: businessContext,
             tenancy,
             authorization,
             audit,
@@ -560,6 +566,27 @@ export function createApp({
         authorization,
         audit,
         ...(forecastEngine === undefined ? {} : { engine: forecastEngine }),
+      });
+    }
+    // Reports (ADR-0060): the same metrics, sources and business context as the engine, read
+    // without the model. They need no forecasting configuration: nothing is run or charged.
+    if (tenancy !== undefined) {
+      registerMetricRoutes(app, {
+        store: tenancy,
+        authorization,
+        audit,
+        ...(recordSources === undefined
+          ? {}
+          : {
+              metrics: createMetricHistory({
+                sources: recordSources,
+                context: businessContext,
+                tenancy,
+                authorization,
+                ...(forecasting?.limits === undefined ? {} : { limits: forecasting.limits }),
+                ...(forecasting?.now === undefined ? {} : { now: forecasting.now }),
+              }),
+            }),
       });
     }
     // GIA's chat (ADR-0052): the same gateway, Company Brain and activity, read as the person;

@@ -21,8 +21,11 @@ export function DepartmentOffice({
   customers,
   opportunities,
   followUps,
+  reports,
 }: {
   readonly slug: string;
+  /** The reports of the metrics this department is served by (ADR-0060), for `report.read`. */
+  readonly reports?: (typeId: string) => ReactNode;
   /** The Comercial office's pending follow-ups (C5, ADR-0058), for a role that may read them. */
   readonly followUps?: ReactNode;
   /** The Comercial office's customers and leads (C1, ADR-0053), for a role that may read them. */
@@ -70,6 +73,7 @@ export function DepartmentOffice({
       {department.typeId === 'sales' ? followUps : null}
       {department.typeId === 'sales' ? opportunities : null}
       {department.typeId === 'sales' ? customers : null}
+      {department.typeId === null ? null : reports?.(department.typeId)}
       <div className="dept-office__grid">
         <section className="dept-office__section" aria-labelledby="dept-agents">
           <h2 id="dept-agents">

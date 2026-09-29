@@ -72,6 +72,21 @@ export interface FakeBackend {
     followUps: Record<string, Record<string, unknown>[]>;
     /** Scheduling a follow-up fails with this code and status (C5). */
     followUpFails?: { readonly error: string; readonly status: number };
+    /**
+     * Reports (ADR-0060): each organization's metrics as the API lists them, and each read by
+     * `metric:frequency`, as the API's body or an error with its status.
+     */
+    metrics: Record<
+      string,
+      {
+        list: Record<string, unknown>[];
+        histories: Record<
+          string,
+          | Record<string, unknown>
+          | { readonly error: string; readonly field?: string; readonly status: number }
+        >;
+      }
+    >;
   };
   apiCalls(): Call[];
 }
@@ -128,6 +143,7 @@ export function fakeBackend(): FakeBackend {
     knowledgeConflicts: {},
     knowledgeQuestions: {},
     followUps: {},
+    metrics: {},
   };
 
   function issue() {
@@ -780,6 +796,21 @@ export function fakeBackend(): FakeBackend {
         items: options.activity[organizationId] ?? [],
         hasMore: false,
       });
+    }
+    if (route === 'metrics' || route?.startsWith('metrics/') === true) {
+      const denied = needs('report.read');
+      if (denied !== undefined) return denied;
+      const reports = options.metrics[organizationId] ?? { list: [], histories: {} };
+      if (route === 'metrics') return json(200, { metrics: reports.list });
+      const frequency = new URLSearchParams(query).get('frequency') ?? 'day';
+      const read = reports.histories[`${route.slice('metrics/'.length)}:${frequency}`];
+      if (read === undefined) return json(404, { error: 'metric_not_found' });
+      return 'error' in read && typeof read.status === 'number'
+        ? json(read.status, {
+            error: read.error,
+            ...(read.field === undefined ? {} : { field: read.field }),
+          })
+        : json(200, read);
     }
     if (route === 'gia/messages' && method === 'POST') {
       const denied = needs('gia.ask');

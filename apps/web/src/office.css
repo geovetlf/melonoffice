@@ -2171,3 +2171,84 @@ a.sidebar__item:hover {
   color: var(--office-muted);
   font-size: var(--mo-font-size-xs);
 }
+
+/* Reports (ADR-0060): what was recorded per metric; never a projection. */
+.reports__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--mo-space-2);
+}
+
+.reports__header .period-picker {
+  align-items: center;
+  margin-bottom: 0;
+}
+
+.reports__per {
+  color: var(--office-muted);
+  font-size: var(--mo-font-size-xs);
+}
+
+.reports__list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 16rem), 1fr));
+  gap: var(--mo-space-3);
+  margin: var(--mo-space-3) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.report-card {
+  display: grid;
+  gap: var(--mo-space-1);
+  height: 100%;
+  padding: var(--mo-space-4);
+  border: 1px solid var(--office-line);
+  border-radius: 16px;
+}
+
+.report-card__title {
+  margin: 0;
+  color: var(--office-muted);
+  font-size: var(--mo-font-size-sm);
+  font-weight: 600;
+}
+
+.report-card__total {
+  margin: 0;
+  font-size: var(--mo-font-size-xl);
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.report-card__meta,
+.report-card__readiness {
+  margin: 0;
+  color: var(--office-muted);
+  font-size: var(--mo-font-size-xs);
+}
+
+.report-card__readiness {
+  padding-top: var(--mo-space-2);
+  border-top: 1px solid var(--office-line);
+}
+
+.report-card__bars {
+  width: 100%;
+  height: 3.5rem;
+  margin: var(--mo-space-2) 0;
+}
+
+.report-card__bar {
+  fill: var(--office-accent);
+}
+
+.report-card__bar--zero {
+  fill: var(--office-line);
+}
+
+.reports__go {
+  color: var(--office-focus);
+}

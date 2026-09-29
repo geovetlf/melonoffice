@@ -14,6 +14,7 @@ export type Route =
   | { readonly kind: 'connections' }
   | { readonly kind: 'memory' }
   | { readonly kind: 'gia' }
+  | { readonly kind: 'reports' }
   | { readonly kind: 'office'; readonly slug: string }
   | { readonly kind: 'agent'; readonly slug: string; readonly agentId: string }
   | { readonly kind: 'not_found' };
@@ -31,6 +32,8 @@ export function parseRoute(path: string): Route {
   // Settings → Business (ADR-0048): that address still opens it.
   if (trimmed === '/memory' || trimmed === '/settings/business') return { kind: 'memory' };
   if (trimmed === '/gia') return { kind: 'gia' };
+  // Reports (ADR-0060): what was recorded for each metric.
+  if (trimmed === '/reports') return { kind: 'reports' };
   const parts = trimmed.split('/').slice(1);
   const [first, slug, third, agentId] = parts;
   if (first !== 'office' || slug === undefined || !SEGMENT.test(slug)) return { kind: 'not_found' };
@@ -61,6 +64,7 @@ export const paths = {
   connections: () => '/settings/connections',
   memory: () => '/memory',
   gia: () => '/gia',
+  reports: () => '/reports',
   office: (slug: string) => `/office/${encodeURIComponent(slug)}`,
   agent: (slug: string, agentId: string) =>
     `/office/${encodeURIComponent(slug)}/agent/${encodeURIComponent(agentId)}`,
