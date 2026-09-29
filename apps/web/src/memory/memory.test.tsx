@@ -295,3 +295,70 @@ describe('the company memory (ADR-0056)', () => {
     expect(keyFor('¿?')).toBeUndefined();
   });
 });
+
+describe('teaching the company memory (block 7)', () => {
+  const teacher = [...OWNER, 'knowledge.capture'];
+
+  it('sends what a person wrote to GIA and shows what she proposes, to confirm', async () => {
+    const backend = open('/memory', undefined, teacher);
+    const tell = within(
+      await screen.findByRole('region', { name: 'Teach GIA about your company' }),
+    );
+    const send = tell.getByRole('button', { name: 'Send to GIA' });
+    expect((send as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(tell.getByLabelText('Tell GIA something about your business'), {
+      target: { value: 'Abrimos de lunes a sábado.' },
+    });
+    fireEvent.click(send);
+    expect(
+      await tell.findByText('GIA found 1 fact. It waits under “To review” for your confirmation.'),
+    ).toBeTruthy();
+    expect((await screen.findAllByText('Abrimos de lunes a sábado.')).length).toBeGreaterThan(0);
+    const [sent] = backend
+      .apiCalls()
+      .filter((c) => c.method === 'POST' && c.url.endsWith('/brain/capture'));
+    expect(JSON.parse(sent?.body ?? '{}')).toEqual({ text: 'Abrimos de lunes a sábado.' });
+  });
+
+  it('says plainly when GIA cannot read it, and saves nothing', async () => {
+    open(
+      '/memory',
+      (b) => {
+        b.options.captureExtraction = 'unavailable';
+      },
+      teacher,
+    );
+    const tell = within(
+      await screen.findByRole('region', { name: 'Teach GIA about your company' }),
+    );
+    fireEvent.change(tell.getByLabelText('Tell GIA something about your business'), {
+      target: { value: 'Vendemos melones.' },
+    });
+    fireEvent.click(tell.getByRole('button', { name: 'Send to GIA' }));
+    expect(await tell.findByRole('alert')).toBeTruthy();
+    expect(tell.getByText(/GIA cannot read this right now/)).toBeTruthy();
+  });
+
+  it('updates from MelonOffice records and says how many facts changed', async () => {
+    open(
+      '/memory',
+      (b) => {
+        b.options.syncChanged = 3;
+      },
+      OWNER,
+    );
+    const tell = within(
+      await screen.findByRole('region', { name: 'Teach GIA about your company' }),
+    );
+    // Without knowledge.capture, only the update from records is offered.
+    expect(tell.queryByRole('button', { name: 'Send to GIA' })).toBeNull();
+    fireEvent.click(tell.getByRole('button', { name: 'Update from MelonOffice' }));
+    expect(await tell.findByText('3 facts were updated.')).toBeTruthy();
+  });
+
+  it('offers no teaching to a member who may only read', async () => {
+    open('/memory', undefined, ['knowledge.read']);
+    await knowledge();
+    expect(screen.queryByRole('region', { name: 'Teach GIA about your company' })).toBeNull();
+  });
+});

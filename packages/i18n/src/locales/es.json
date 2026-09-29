@@ -1358,5 +1358,17 @@
   "capabilities.reads.opportunity": "oportunidades",
   "capabilities.reads.follow_up": "seguimientos",
   "capabilities.reads.report": "reportes",
-  "capabilities.reads.credits": "créditos"
+  "capabilities.reads.credits": "créditos",
+  "memory.tell.title": "Enséñale a GIA sobre tu empresa",
+  "memory.tell.label": "Cuéntale a GIA algo de tu negocio",
+  "memory.tell.hint": "GIA lo lee y propone qué recordar. Nada se guarda como cierto hasta que lo confirmes en “Por revisar”. Leerlo usa créditos.",
+  "memory.tell.submit": "Enviar a GIA",
+  "memory.tell.reading": "GIA está leyendo…",
+  "memory.tell.found": "{count, plural, =0 {GIA no encontró nada nuevo que recordar en lo que escribiste.} one {GIA encontró # dato. Espera en “Por revisar” tu confirmación.} other {GIA encontró # datos. Esperan en “Por revisar” tu confirmación.}}",
+  "memory.tell.unavailable": "GIA no puede leer esto ahora: puede que no queden créditos o que la IA no esté disponible. No se guardó nada.",
+  "memory.tell.failed": "GIA no lo pudo entender. Prueba con otras palabras. No se guardó nada.",
+  "memory.sync.submit": "Actualizar desde MelonOffice",
+  "memory.sync.running": "Actualizando…",
+  "memory.sync.hint": "Vuelve a traer tu perfil de negocio y tus registros. No usa créditos y se puede repetir.",
+  "memory.sync.done": "{count, plural, =0 {Todo ya estaba al día.} one {Se actualizó # dato.} other {Se actualizaron # datos.}}"
 }

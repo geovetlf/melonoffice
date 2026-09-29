@@ -64,6 +64,10 @@ export interface FakeBackend {
     contactContext: Record<string, Record<string, unknown>>;
     /** Each organization's Company Brain items (ADR-0051), as the API's views. */
     knowledge: Record<string, Record<string, unknown>[]>;
+    /** What `POST brain/capture` answers: GIA's extraction status (default `extracted`). */
+    captureExtraction?: 'extracted' | 'unavailable' | 'failed';
+    /** How many facts `POST brain/sync` changed. */
+    syncChanged?: number;
     /** Each organization's open Company Brain conflicts. */
     knowledgeConflicts: Record<string, Record<string, unknown>[]>;
     /** Company Brain's onboarding questions still unanswered. */
@@ -457,6 +461,46 @@ export function fakeBackend(): FakeBackend {
       if (denied !== undefined) return denied;
       options.knowledgeConflicts[organizationId] = conflicts.filter((c) => c.id !== resolve[1]);
       return json(200, { outcome: 'conflict_resolved', itemId: 'x' });
+    }
+    if (route === 'brain/capture' && method === 'POST') {
+      const denied = needs('knowledge.capture') ?? needs('knowledge.propose');
+      if (denied !== undefined) return denied;
+      const extraction = options.captureExtraction ?? 'extracted';
+      if (extraction !== 'extracted') return json(200, { outcomes: [], rejected: 0, extraction });
+      const id = `${organizationId}_operations_opening_hours`;
+      all.push({
+        id,
+        domain: 'operations',
+        key: 'opening_hours',
+        subject: null,
+        label: null,
+        value: { type: 'text', text: String(input.text) },
+        verification: 'proposed',
+        status: 'active',
+        sensitivity: 'internal',
+        critical: false,
+        needsConfirmation: true,
+        source: {
+          type: 'gia',
+          id: 'capture',
+          reference: null,
+          recordedBy: 'gia',
+          confidence: null,
+        },
+        effectiveFrom: '2026-09-28T12:00:00Z',
+        effectiveUntil: null,
+        revision: 1,
+        updatedAt: '2026-09-28T12:00:00Z',
+        openConflictId: null,
+      });
+      return json(200, {
+        outcomes: [{ outcome: 'created', itemId: id, revision: 1 }],
+        rejected: 0,
+        extraction,
+      });
+    }
+    if (route === 'brain/sync' && method === 'POST') {
+      return needs('knowledge.propose') ?? json(200, { changed: options.syncChanged ?? 0 });
     }
     if (route === 'brain/documents') {
       return (

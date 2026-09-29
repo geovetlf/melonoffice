@@ -1358,5 +1358,17 @@
   "capabilities.reads.opportunity": "opportunities",
   "capabilities.reads.follow_up": "follow-ups",
   "capabilities.reads.report": "reports",
-  "capabilities.reads.credits": "credits"
+  "capabilities.reads.credits": "credits",
+  "memory.tell.title": "Teach GIA about your company",
+  "memory.tell.label": "Tell GIA something about your business",
+  "memory.tell.hint": "GIA reads it and proposes what to remember. Nothing is saved as true until you confirm it under “To review”. Reading it uses credits.",
+  "memory.tell.submit": "Send to GIA",
+  "memory.tell.reading": "GIA is reading…",
+  "memory.tell.found": "{count, plural, =0 {GIA found nothing new to remember in what you wrote.} one {GIA found # fact. It waits under “To review” for your confirmation.} other {GIA found # facts. They wait under “To review” for your confirmation.}}",
+  "memory.tell.unavailable": "GIA cannot read this right now: there may be no credits left or the AI is unavailable. Nothing was saved.",
+  "memory.tell.failed": "GIA could not understand it. Try other words. Nothing was saved.",
+  "memory.sync.submit": "Update from MelonOffice",
+  "memory.sync.running": "Updating…",
+  "memory.sync.hint": "Brings in your business profile and records again. It uses no credits and can be repeated.",
+  "memory.sync.done": "{count, plural, =0 {Everything was already up to date.} one {# fact was updated.} other {# facts were updated.}}"
 }
