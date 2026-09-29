@@ -139,22 +139,45 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
         }),
     logger: logger.child({ component: 'conversation-agents' }),
   });
-  // Agent tasks (ADR-0063): the same runtime runs them, with Company Brain as their context.
-  const plans = new FirestorePlanRepository(firestore);
-  const routed = routeAgentWork(
-    agents,
-    createAgentTaskParts({
-      stores: {
-        tenancy,
-        specialists: stores.specialists,
-        tasks: new FirestoreAgentTaskRepository(firestore),
-        knowledge: new FirestoreKnowledgeRepository(firestore),
-        outputs: agentOutputs,
-        plans,
-      },
-      logger: logger.child({ component: 'agent-tasks' }),
+  // Follow-ups (C5, ADR-0058): their tasks come through the same queue and invoker. The hop to
+  // a time beyond the queue's horizon is queued the same way.
+  const businessProfiles = new FirestoreBusinessProfileRepository(firestore);
+  const followUps = createFollowUpService({
+    repository: new FirestoreConversationRepository(firestore),
+    organizations: tenancy,
+    authorization: createAuthorizationService(),
+    timeZone: async (organizationId) =>
+      (await businessProfiles.find(organizationId))?.timeZone ?? 'America/Lima',
+    scheduler: createCloudTasksScheduler({
+      queue: runtime.queue,
+      targetUrl: `${runtime.workerUrl}${RUN_FOLLOW_UP_PATH}`,
+      audience: runtime.workerUrl,
+      invokerEmail: runtime.invokerEmail,
+      dispatchDeadlineSeconds: Math.ceil(runtime.leaseMs / 1000),
     }),
-  );
+  });
+  // Agent tasks (ADR-0063): the same runtime runs them, with Company Brain as their context. What
+  // an agent proposes from a task (ADR-0084): a follow-up, scheduled with the same follow-up
+  // service once a person approves it, and facts for Company Brain.
+  const plans = new FirestorePlanRepository(firestore);
+  const taskParts = createAgentTaskParts({
+    stores: {
+      tenancy,
+      specialists: stores.specialists,
+      tasks: new FirestoreAgentTaskRepository(firestore),
+      knowledge: new FirestoreKnowledgeRepository(firestore),
+      outputs: agentOutputs,
+      plans,
+    },
+    proposals: {
+      conversations: new FirestoreConversationRepository(firestore),
+      followUps,
+      timeZone: async (organizationId) =>
+        (await businessProfiles.find(organizationId))?.timeZone ?? 'America/Lima',
+    },
+    logger: logger.child({ component: 'agent-tasks' }),
+  });
+  const routed = routeAgentWork(agents, taskParts);
   // The model providers (ADR-0038, ADR-0072), each only where its own settings are set: Vertex AI
   // with its project and location, DeepSeek and NVIDIA with the Secret Manager reference of their
   // keys. A
@@ -209,7 +232,10 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
     // Vertex AI's Gemini 2.5 Flash-Lite (D-7) with the credit rate (D-12), only where Terraform
     // sets the Vertex AI project; anywhere else no provider is registered and every model call
     // is denied before reaching one.
-    tools: { registry: createToolRegistry(TOOL_CATALOGUE), executors: agents.executors },
+    tools: {
+      registry: createToolRegistry(TOOL_CATALOGUE),
+      executors: { ...agents.executors, ...taskParts.executors },
+    },
     ai: aiRegistry,
     ...(aiRegistered
       ? {
@@ -229,6 +255,7 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
     verifier: routed.verifier,
     outputs: agents.outputs,
     onStopped: routed.onStopped,
+    ...(taskParts.onEnded === undefined ? {} : { onEnded: taskParts.onEnded }),
     plans,
     // Plans' condition steps (WF-4, ADR-0075): decided by the Decision Engine, rules only.
     conditions: createPlanConditions({
@@ -247,23 +274,6 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
       dispatchDeadlineSeconds: Math.ceil(runtime.leaseMs / 1000),
     }),
     logger,
-  });
-  // Follow-ups (C5, ADR-0058): their tasks come through the same queue and invoker. The hop to
-  // a time beyond the queue's horizon is queued the same way.
-  const businessProfiles = new FirestoreBusinessProfileRepository(firestore);
-  const followUps = createFollowUpService({
-    repository: new FirestoreConversationRepository(firestore),
-    organizations: tenancy,
-    authorization: createAuthorizationService(),
-    timeZone: async (organizationId) =>
-      (await businessProfiles.find(organizationId))?.timeZone ?? 'America/Lima',
-    scheduler: createCloudTasksScheduler({
-      queue: runtime.queue,
-      targetUrl: `${runtime.workerUrl}${RUN_FOLLOW_UP_PATH}`,
-      audience: runtime.workerUrl,
-      invokerEmail: runtime.invokerEmail,
-      dispatchDeadlineSeconds: Math.ceil(runtime.leaseMs / 1000),
-    }),
   });
   // Domain events (EV-2, ADR-0067): stored in the outbox, queued on the same queue, delivered by
   // this worker behind the same invoker. No subscriber reacts yet: an event is stored, delivered

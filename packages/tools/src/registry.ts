@@ -296,6 +296,51 @@ export const FOLLOW_UP_SCHEDULE_TOOL: ToolDefinition = {
       environments: ['dev'],
       invocationModes: ['human'],
     },
+    // Version 2 is an agent's (ADR-0084): the commercial agent schedules a follow-up it proposed
+    // in a task, and a person approves the exact follow-up (contact, date, time, title) first,
+    // every time. It never assigns anyone or links an opportunity: the follow-up goes to the
+    // contact's responsible person, as the service decides.
+    {
+      toolId: 'follow_up_schedule' as ToolVersion['toolId'],
+      version: 2,
+      nameKey: 'tools.follow_up_schedule.name' as ToolVersion['nameKey'],
+      descriptionKey: 'tools.follow_up_schedule.description' as ToolVersion['descriptionKey'],
+      category: 'crm',
+      action: 'schedule',
+      mutating: true,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          requestKey: { type: 'string', minLength: 8, maxLength: 128 },
+          contactId: { type: 'string', minLength: 36, maxLength: 36 },
+          type: { type: 'string', maxLength: 16, enum: [...FOLLOW_UP_TYPE_CODES] },
+          title: { type: 'string', maxLength: 1_000 },
+          date: { type: 'string', maxLength: 10 },
+          time: { type: 'string', maxLength: 5 },
+          source: { type: 'string', maxLength: 8, enum: ['agent'] },
+        },
+        required: ['requestKey', 'contactId', 'title', 'date', 'time', 'source'],
+      },
+      outputSchema: {
+        type: 'object',
+        properties: {
+          followUpId: { type: 'string', minLength: 36, maxLength: 36 },
+          created: { type: 'boolean' },
+        },
+        required: ['followUpId', 'created'],
+      },
+      permissions: ['follow_up.manage'],
+      credentials: [],
+      riskLevel: 'low',
+      approvalPolicy: 'approval_required',
+      // Two days to decide: a proposal older than that is asked again in a new task.
+      approvalTtlSeconds: 2 * 24 * 3600,
+      timeoutMs: 15_000,
+      retryPolicy: { maxAttempts: 1, backoffMs: 0 },
+      provider: { kind: 'internal', id: 'follow_up' },
+      environments: ['dev'],
+      invocationModes: ['runtime'],
+    },
   ],
 };
 

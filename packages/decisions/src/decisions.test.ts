@@ -137,12 +137,15 @@ describe('Decision Engine (DE-1)', () => {
       maxCredits: null,
       reasons: ['unknown_action'],
     });
-    // Agents prepare only what the catalogue lets them (a discount, not a follow-up), and only
-    // what a skill grants them (SK-2, ADR-0083): no skill grants a follow-up.
-    expect(engine.evaluateAction(alice, 'follow_up.schedule', 'agent').reasons).toEqual([
+    // Agents prepare only what the catalogue lets them (not a task for another agent), and only
+    // what a skill grants them (SK-2, ADR-0083): customer_follow_up@2 grants a follow-up
+    // (ADR-0084), no skill grants assigning a task.
+    expect(engine.evaluateAction(alice, 'agent_task.assign', 'agent').reasons).toEqual([
       'proposer_not_allowed',
       'not_granted_by_skill',
+      'not_configured',
     ]);
+    expect(engine.evaluateAction(alice, 'follow_up.schedule', 'agent').outcome).toBe('available');
   });
 
   it('an action that needs approval is offered as such; a bad catalogue is refused', async () => {

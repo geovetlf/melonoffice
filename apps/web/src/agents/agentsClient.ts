@@ -42,6 +42,12 @@ export interface AgentCapabilitiesView {
     readonly approval: string | null;
   }[];
   readonly problems: readonly { readonly kind: string }[];
+  /** A newer version of one of its skills, which a person may move it to (ADR-0084). */
+  readonly upgrades?: readonly {
+    readonly skillId: string;
+    readonly from: number;
+    readonly to: number;
+  }[];
 }
 
 /** Where each status may go (ADR-0025): archived is final. */
@@ -103,6 +109,11 @@ export interface AgentsClient {
   }): Promise<AgentView>;
   setStatus(id: string, from: SpecialistStatus, to: SpecialistStatus): Promise<AgentView>;
   capabilities(id: string): Promise<AgentCapabilitiesView>;
+  /** Needs `specialist.manage`: one skill to a newer version, as a new version of the agent. */
+  upgradeSkill(
+    id: string,
+    input: { readonly fromVersion: number; readonly skillId: string; readonly version: number },
+  ): Promise<AgentView>;
 }
 
 export function createAgentsClient(request: ReplyRequest, organizationId: string): AgentsClient {
@@ -139,5 +150,7 @@ export function createAgentsClient(request: ReplyRequest, organizationId: string
       post<AgentView>(`/specialists/${encodeURIComponent(id)}/status`, { from, to }),
     capabilities: (id) =>
       call<AgentCapabilitiesView>(`/specialists/${encodeURIComponent(id)}/capabilities`),
+    upgradeSkill: (id, input) =>
+      post<AgentView>(`/specialists/${encodeURIComponent(id)}/skills/upgrade`, input),
   };
 }

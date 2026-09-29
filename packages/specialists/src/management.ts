@@ -42,6 +42,18 @@ export interface SpecialistManagement {
   create(tenant: TenantContext, input: Record<string, unknown>): Promise<Specialist>;
   revise(tenant: TenantContext, id: string, input: Record<string, unknown>): Promise<Specialist>;
   setStatus(tenant: TenantContext, id: string, input: Record<string, unknown>): Promise<Specialist>;
+  /**
+   * Moves one of the agent's skills to a newer version of the catalogue, as a new version of the
+   * agent: `{ fromVersion, skillId, version }` (ADR-0084). The tools the new version grants at one
+   * exact version are assigned, the tools no skill grants any more are removed, and the
+   * permissions they need are listed. It is the only way an agent gains what a newer skill
+   * version grants: nothing is upgraded by itself.
+   */
+  upgradeSkill(
+    tenant: TenantContext,
+    id: string,
+    input: Record<string, unknown>,
+  ): Promise<Specialist>;
 }
 
 export interface SpecialistManagementOptions {
@@ -138,6 +150,30 @@ export function createSpecialistManagement(
     }
   }
 
+  /**
+   * What skills give an agent without a person choosing: each tool a skill grants at one exact
+   * version (a grant at several versions, like the reply's supervised or autonomous one, is a
+   * person's choice and is never made here), and the permissions the skills read and those tools
+   * need.
+   */
+  function derivedFrom(refs: SpecialistConfiguration['skills']) {
+    const assigned: { id: string; version: number }[] = [];
+    const permissions = new Set<string>();
+    for (const ref of refs) {
+      const found = skills.resolve(ref.id, ref.version);
+      for (const permission of found?.reads ?? []) permissions.add(permission);
+      for (const grant of found?.tools ?? []) {
+        const [version] = grant.versions;
+        if (grant.versions.length !== 1 || version === undefined) continue;
+        assigned.push({ id: grant.id, version });
+        for (const permission of tools(grant.id, version)?.permissions ?? []) {
+          permissions.add(permission);
+        }
+      }
+    }
+    return { tools: assigned, permissions };
+  }
+
   async function departmentOf(
     organizationId: OrganizationId,
     configuration: SpecialistConfiguration,
@@ -174,12 +210,7 @@ export function createSpecialistManagement(
       if (template === undefined) return bad('templateId');
       const locale = (input.locale ?? 'es') as AgentLocale;
       if (!(AGENT_LOCALES as readonly unknown[]).includes(locale)) bad('locale');
-      const reads = new Set<string>();
-      for (const ref of template.skills) {
-        for (const permission of skills.resolve(ref.id, ref.version)?.reads ?? []) {
-          reads.add(permission);
-        }
-      }
+      const derived = derivedFrom(template.skills);
       const configuration = checkConfiguration(
         {
           departmentId: departmentIdOf(organizationId, template.departmentTypeId),
@@ -188,8 +219,8 @@ export function createSpecialistManagement(
           purpose: template.purpose[locale],
           capabilities: [],
           skills: template.skills,
-          tools: [],
-          permissions: [...reads].sort(),
+          tools: derived.tools,
+          permissions: [...derived.permissions].sort(),
           policies: template.policies,
         },
         organizationId,
@@ -238,6 +269,62 @@ export function createSpecialistManagement(
             configuration,
             department,
           },
+          person.userId,
+          at.toISOString() as IsoTimestamp,
+        );
+        return {
+          ...write,
+          events: [event(person, write.specialist, 'specialist.version_created', at)],
+        };
+      });
+    },
+
+    async upgradeSkill(tenant, id, input) {
+      const organizationId = await managerOf(tenant);
+      const person = userOf(tenant);
+      if (!isRecord(input)) bad('body');
+      for (const key of Object.keys(input)) {
+        if (!['fromVersion', 'skillId', 'version'].includes(key)) bad(key);
+      }
+      if (!isVersionNumber(input.fromVersion)) bad('fromVersion');
+      if (typeof input.skillId !== 'string') bad('skillId');
+      if (!isVersionNumber(input.version)) bad('version');
+      const target = skills.resolve(input.skillId as string, input.version as number);
+      if (target === undefined) return bad('version');
+      if (!isSpecialistId(id)) throw new SpecialistError('specialist_not_found');
+      const read = await repository.find(organizationId, id);
+      if (read === undefined) throw new SpecialistError('specialist_not_found');
+      const department = await departmentOf(organizationId, read.configuration);
+      return update(organizationId, id, (current, at) => {
+        const { configuration } = current;
+        const held = configuration.skills.find((s) => s.id === target.id);
+        // Only forward, and only a skill the agent already has: a new skill is a revision.
+        if (held === undefined) bad('skillId');
+        if ((held?.version ?? 0) >= target.version) bad('version');
+        if (configuration.departmentId !== read.configuration.departmentId) bad('departmentId');
+        const nextSkills = configuration.skills.map((s) =>
+          s.id === target.id ? { id: target.id, version: target.version } : s,
+        );
+        const granted = grantsOf(nextSkills, skills).tools;
+        const derived = derivedFrom(nextSkills);
+        const kept = configuration.tools.filter((t) => granted.has(toolKey(t.id, t.version)));
+        const keptKeys = new Set(kept.map((t) => toolKey(t.id, t.version)));
+        const added = derived.tools.filter((t) => !keptKeys.has(toolKey(t.id, t.version)));
+        const next = checkConfiguration(
+          {
+            ...configuration,
+            skills: nextSkills,
+            tools: [...kept, ...added],
+            permissions: [
+              ...new Set([...configuration.permissions, ...derived.permissions]),
+            ].sort(),
+          },
+          organizationId,
+        );
+        checkAgainstCatalogues(next);
+        const write = reviseSpecialist(
+          current,
+          { fromVersion: input.fromVersion as number, configuration: next, department },
           person.userId,
           at.toISOString() as IsoTimestamp,
         );

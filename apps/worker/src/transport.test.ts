@@ -259,7 +259,9 @@ describe('worker architecture', () => {
     // credits at the approved rate (D-12); without any of them it registers no adapter and no
     // credits.
     const server = text('server.ts');
-    expect(server).toMatch(/createToolRegistry\(TOOL_CATALOGUE\), executors: agents\.executors/);
+    expect(server).toMatch(
+      /registry: createToolRegistry\(TOOL_CATALOGUE\),\s+executors: \{ \.\.\.agents\.executors, \.\.\.taskParts\.executors \}/,
+    );
     expect(server).toMatch(/adapters: \[\]/);
     expect([...server.matchAll(/create\w*Adapter\(/g)].map((m) => m[0]).sort()).toEqual([
       'createDeepSeekAdapter(',
@@ -277,6 +279,6 @@ describe('worker architecture', () => {
       [...agents.matchAll(/executors\.(\w+) =|^\s+(\w+): create\w+Executor\(/gm)]
         .map((m) => m[1] ?? m[2])
         .sort(),
-    ).toEqual(['channel', 'conversation']);
+    ).toEqual(['channel', 'conversation', 'follow_up']);
   });
 });

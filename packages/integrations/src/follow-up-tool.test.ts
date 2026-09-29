@@ -8,6 +8,8 @@ import {
 } from '@melonoffice/tools';
 import { describe, expect, it } from 'vitest';
 import {
+  AGENT_FOLLOW_UP_SCHEDULE,
+  createAgentFollowUpScheduleExecutor,
   createFollowUpScheduleExecutor,
   createGatedFollowUpCreate,
   FOLLOW_UP_SCHEDULE,
@@ -95,6 +97,69 @@ describe('follow_up_schedule executor (TL-1)', () => {
       followUps: { create },
     });
     expect(await gone.execute(context(), {})).toEqual({
+      status: 'failure',
+      code: 'permission_denied',
+    });
+  });
+});
+
+describe("follow_up_schedule version 2: an agent's, approved by a person (ADR-0084)", () => {
+  const agentContext = (over: Partial<ToolExecutionContext> = {}) =>
+    context({
+      toolVersion: AGENT_FOLLOW_UP_SCHEDULE.version,
+      actor: { userId: ALICE, via: 'runtime' },
+      specialistId: 'agent-1' as never,
+      specialistVersion: 2,
+      approvalId: 'approval-1' as never,
+      ...over,
+    });
+
+  it('runs as the runtime for the person the task is for, through the service', async () => {
+    const seen: { tenant: TenantContext; input: unknown }[] = [];
+    const executor = createAgentFollowUpScheduleExecutor({
+      organizations: organizations(true) as never,
+      followUps: {
+        create: async (tenant, input) => {
+          seen.push({ tenant, input });
+          return { followUp: { id: FU } as never, created: true };
+        },
+      },
+    });
+    const input = { requestKey: 'agent-task-1', source: 'agent' };
+    expect(await executor.execute(agentContext(), input)).toEqual({
+      status: 'success',
+      output: { followUpId: FU, created: true },
+    });
+    expect(seen[0]?.tenant).toMatchObject({ actor: 'runtime', userId: ALICE, organizationId: ORG });
+    expect(seen[0]?.input).toEqual(input);
+  });
+
+  it("refuses a person's call, GIA's, version 1, a call without an agent or an approval, and a person no longer a member", async () => {
+    const create = async () => {
+      throw new Error('must not run');
+    };
+    const executor = createAgentFollowUpScheduleExecutor({
+      organizations: organizations(true) as never,
+      followUps: { create },
+    });
+    const refused: Partial<ToolExecutionContext>[] = [
+      { actor: { userId: ALICE, via: 'direct' as const } },
+      { actor: { userId: ALICE, via: 'gia' as const } },
+      { toolVersion: 1 },
+      { specialistId: undefined },
+      { approvalId: undefined },
+    ] as Partial<ToolExecutionContext>[];
+    for (const over of refused) {
+      expect(await executor.execute(agentContext(over), {})).toEqual({
+        status: 'failure',
+        code: 'tool_not_runtime_invokable',
+      });
+    }
+    const gone = createAgentFollowUpScheduleExecutor({
+      organizations: organizations(false) as never,
+      followUps: { create },
+    });
+    expect(await gone.execute(agentContext(), {})).toEqual({
       status: 'failure',
       code: 'permission_denied',
     });

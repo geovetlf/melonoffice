@@ -41,7 +41,11 @@ import {
 } from '@melonoffice/tenancy';
 import { describe, expect, it } from 'vitest';
 import {
+  AGENT_ANSWER_SCHEMA,
   AGENT_TASK_NODE,
+  AGENT_TASK_SCHEDULE_NODE,
+  contactRef,
+  createAgentTaskFactProposer,
   createAgentTaskService,
   createAgentTaskVerifier,
   createAgentTaskWork,
@@ -55,6 +59,7 @@ import {
   parseAgentAnswer,
   taskOf,
   type AgentContextSource,
+  type AgentTaskProposalPorts,
 } from './index.js';
 
 const T0 = new Date('2026-09-29T12:00:00Z');
@@ -121,7 +126,11 @@ async function world(options: { readonly without?: readonly Permission[] } = {})
     organizations: tenancy,
     authorization: full,
     skills: createSkillCatalogue(),
-    tools: () => undefined,
+    // The one tool a template's skill grants: the commercial agent's follow-up (ADR-0084).
+    tools: (id, version) =>
+      id === 'follow_up_schedule' && version === 2
+        ? { riskLevel: 'low', approval: 'approval_required', permissions: ['follow_up.manage'] }
+        : undefined,
     now,
   });
   const specialists = createSpecialistService({
@@ -212,13 +221,21 @@ describe('Agent tasks: asking an agent (ADR-0063)', () => {
       specialistId: lucia.identity.id,
       departmentId: lucia.configuration.departmentId,
     });
+    // The commercial agent's version has follow_up_schedule@2: a second node, after the work,
+    // for a follow-up it may propose (ADR-0084).
     expect(execution?.nodes.map((n) => [n.id, n.type, n.status])).toEqual([
       ['work', 'agent', 'pending'],
+      ['schedule', 'tool', 'pending'],
     ]);
-    // The snapshot names the agent's version and each of its skills' versions.
+    expect(execution?.nodes[1]).toMatchObject({
+      dependsOn: ['work'],
+      tool: { id: 'follow_up_schedule', version: 2 },
+    });
+    // The snapshot names the agent's version, each of its skills' versions and the tool version.
     expect(execution?.versionSnapshot.components.map((c) => c.kind)).toEqual([
       'specialist',
       ...lucia.configuration.skills.map(() => 'skill'),
+      'tool',
     ]);
     expect(w.kicked).toEqual([task.id]);
     expect(taskOf(execution as Execution)).toEqual({
@@ -532,10 +549,14 @@ describe('Agent tasks: the answer and its verification (ADR-0063)', () => {
     expect(parseAgentAnswer({ structured: { answer: ' Hola ', missing: ['x'] } })).toEqual({
       answer: 'Hola',
       missing: ['x'],
+      followUp: null,
+      facts: [],
     });
     expect(parseAgentAnswer({ text: '```json\n{"answer":"Hola","missing":[]}\n```' })).toEqual({
       answer: 'Hola',
       missing: [],
+      followUp: null,
+      facts: [],
     });
     expect(parseAgentAnswer({ structured: { answer: '' } })).toBeUndefined();
     expect(parseAgentAnswer({ structured: { answer: 'x'.repeat(4001) } })).toBeUndefined();
@@ -752,5 +773,262 @@ describe('plan steps after a condition (WF-4)', () => {
     } as unknown as PlanVersion;
     expect(answeringSteps(version, version.steps[4] as PlanStep)).toEqual(['a', 'b']);
     expect(answeringSteps(version, step('d', 'specialist', ['missing']))).toBeUndefined();
+  });
+});
+
+describe('What an agent proposes from a task (ADR-0084)', () => {
+  const JUAN = '6f1c2d3e-4b5a-4c6d-8e7f-001122334455';
+  const context: AgentContextSource = { read: async () => [] };
+
+  async function setup(
+    options: {
+      readonly templateId?: string;
+      readonly offers?: AgentTaskProposalPorts['offers'];
+      readonly refuse?: boolean;
+    } = {},
+  ) {
+    const w = await world();
+    const agent = await w.agent(w.alice, options.templateId ?? 'commercial');
+    const { execution } = await w.service().assign(w.alice, agent.identity.id, {
+      request: 'Llama a Juan mañana a las 10 y recuerda que abrimos los domingos',
+    });
+    const outputs = createAgentOutputStore(new InMemoryAgentOutputRepository());
+    const checked: Record<string, unknown>[] = [];
+    const proposals: AgentTaskProposalPorts = {
+      // The Decision Engine's answer, from the actions the agent's skills grant.
+      offers: options.offers ?? ((_tenant, action, actions) => actions.has(action)),
+      outputs,
+      contacts: { list: async () => [{ id: JUAN, name: 'Juan Pérez' }] },
+      clock: { today: async () => ({ date: '2026-09-29', timeZone: 'America/Lima' }) },
+      followUps: {
+        checkCreate: async (_tenant, input) => {
+          checked.push(input);
+          if (options.refuse === true) throw new Error('date_in_past');
+        },
+      },
+    };
+    const work = createAgentTaskWork({
+      tasks: w.tasks,
+      specialists: w.repository,
+      skills: createSkillCatalogue(),
+      context,
+      proposals,
+    });
+    const running = execution as Execution;
+    const answered = async (output: Record<string, unknown>): Promise<Execution> => {
+      await outputs.record(w.runtime, {
+        executionId: running.id,
+        nodeId: AGENT_TASK_NODE as ExecutionNodeId,
+        requestId: 'req-1',
+        output: { structured: { answer: 'Listo', missing: [], ...output } },
+      });
+      return {
+        ...running,
+        nodes: running.nodes.map((n) =>
+          n.id === AGENT_TASK_NODE ? { ...n, status: 'completed' as const } : n,
+        ),
+      };
+    };
+    return { w, agent, running, work, outputs, checked, answered };
+  }
+
+  const nodeOf = (execution: Execution, id: string) =>
+    execution.nodes.find((n) => n.id === id) as Execution['nodes'][number];
+
+  it('offers the commercial agent a follow-up with the contacts by reference, and facts', async () => {
+    const { w, running, work } = await setup();
+    const asked = await work.agentWork(w.runtime, running, nodeOf(running, AGENT_TASK_NODE));
+    const ref = contactRef(JUAN);
+    expect(ref).toMatch(/^c_[a-p]{10}$/);
+    const schema = asked?.outputSchema as { properties: Record<string, { enum?: unknown }> };
+    expect(Object.keys(schema.properties)).toEqual(['answer', 'missing', 'followUp', 'facts']);
+    expect(
+      (schema.properties.followUp as { properties: { contact: { enum: unknown } } }).properties
+        .contact.enum,
+    ).toEqual([ref]);
+    const text = JSON.stringify(asked?.messages);
+    expect(text).toContain(ref);
+    expect(text).toContain('Juan Pérez');
+    expect(text).toContain('2026-09-29');
+    expect(text).toContain('A person approves it before it is scheduled');
+    // Never the contact's id: only its reference.
+    expect(text).not.toContain(JUAN);
+  });
+
+  it('offers nothing the Decision Engine does not, and nothing to an agent without the skill', async () => {
+    const none = await setup({ offers: () => false });
+    const asked = await none.work.agentWork(
+      none.w.runtime,
+      none.running,
+      nodeOf(none.running, AGENT_TASK_NODE),
+    );
+    expect(asked?.outputSchema).toEqual(AGENT_ANSWER_SCHEMA);
+    // The finance agent's skills grant facts only: no follow-up node, no follow-up offered.
+    const finance = await setup({ templateId: 'finance' });
+    expect(finance.running.nodes.map((n) => n.id)).toEqual([AGENT_TASK_NODE]);
+    const offered = await finance.work.agentWork(
+      finance.w.runtime,
+      finance.running,
+      nodeOf(finance.running, AGENT_TASK_NODE),
+    );
+    expect(Object.keys((offered?.outputSchema as { properties: object }).properties)).toEqual([
+      'answer',
+      'missing',
+      'facts',
+    ]);
+  });
+
+  it('puts a proposed follow-up to a person only once it resolves and the service would take it', async () => {
+    const { w, running, work, checked, answered } = await setup();
+    const schedule = nodeOf(running, AGENT_TASK_SCHEDULE_NODE);
+    // Before the agent answered: nothing to schedule.
+    expect(await work.needed(w.runtime, running, schedule)).toBe(false);
+    const proposal = {
+      contact: contactRef(JUAN),
+      type: 'call',
+      title: 'Llamar a Juan',
+      date: '2026-09-30',
+      time: '10:00',
+    };
+    const done = await answered({ followUp: proposal });
+    expect(await work.needed(w.runtime, done, schedule)).toBe(true);
+    const input = {
+      requestKey: `agent-task-${running.id}`,
+      contactId: JUAN,
+      type: 'call',
+      title: 'Llamar a Juan',
+      date: '2026-09-30',
+      time: '10:00',
+      source: 'agent',
+    };
+    expect(checked).toEqual([input]);
+    // The same input every time: the approval is bound to it.
+    expect(await work.toolInput(w.runtime, done, schedule)).toEqual(input);
+    expect(await work.toolInput(w.runtime, done, schedule)).toEqual(input);
+    // A reference to no contact, or no proposal at all: skipped.
+    expect(
+      await work.needed(
+        w.runtime,
+        await answered({ followUp: { ...proposal, contact: 'c_aaaaaaaaaa' } }),
+        schedule,
+      ),
+    ).toBe(false);
+    expect(await work.needed(w.runtime, await answered({ followUp: null }), schedule)).toBe(false);
+  });
+
+  it('skips a follow-up the follow-up service would refuse', async () => {
+    const { w, running, work, answered } = await setup({ refuse: true });
+    const done = await answered({
+      followUp: {
+        contact: contactRef(JUAN),
+        type: 'call',
+        title: 'Llamar',
+        date: '2026-09-30',
+        time: '10:00',
+      },
+    });
+    expect(await work.needed(w.runtime, done, nodeOf(running, AGENT_TASK_SCHEDULE_NODE))).toBe(
+      false,
+    );
+  });
+
+  it('reads only a well-formed follow-up and confident facts from the answer', () => {
+    const parsed = parseAgentAnswer({
+      structured: {
+        answer: 'Ok',
+        missing: [],
+        followUp: {
+          contact: 'c_abcdefghij',
+          type: 'call',
+          title: 'x',
+          date: '2026-13-45',
+          time: '25:00',
+        },
+        facts: [
+          {
+            domain: 'operations',
+            key: 'opening_days',
+            valueType: 'text',
+            text: 'Domingos',
+            confidence: 0.9,
+          },
+          { domain: 'operations', key: 'maybe', valueType: 'text', text: 'Quizá', confidence: 0.2 },
+        ],
+      },
+    });
+    expect(parsed?.followUp).toBeNull();
+    expect(parsed?.facts).toHaveLength(1);
+  });
+
+  it('verifies a scheduled follow-up exists', async () => {
+    const { w, running, outputs, answered } = await setup();
+    const done = await answered({ followUp: null });
+    const both: Execution = {
+      ...done,
+      nodes: done.nodes.map((n) => ({ ...n, status: 'completed' as const })),
+    };
+    let exists = false;
+    const verifier = createAgentTaskVerifier({ outputs, scheduled: async () => exists });
+    const failed = await verifier.verify(w.runtime, both);
+    expect(failed?.verification.nodes.map((n) => [n.nodeId, n.checks[0]?.result])).toEqual([
+      [AGENT_TASK_NODE, 'passed'],
+      [AGENT_TASK_SCHEDULE_NODE, 'failed'],
+    ]);
+    exists = true;
+    const passed = await verifier.verify(w.runtime, both);
+    expect(passed?.verification.nodes[1]?.checks[0]).toMatchObject({
+      code: 'follow_up_scheduled',
+      result: 'passed',
+    });
+    // A skipped schedule node is not checked.
+    expect((await verifier.verify(w.runtime, done))?.verification.nodes).toHaveLength(1);
+    expect(running.id).toBe(done.id);
+  });
+
+  it('proposes the facts to Company Brain as the agent, only when its skills grant it', async () => {
+    const { w, running, outputs, answered } = await setup();
+    const done = await answered({
+      facts: [
+        {
+          domain: 'operations',
+          key: 'opening_days',
+          valueType: 'text',
+          text: 'Domingos',
+          confidence: 0.9,
+        },
+      ],
+    });
+    const ingested: { source: unknown; inputs: unknown }[] = [];
+    const brain: Pick<CompanyBrainService, 'ingest'> = {
+      ingest: async (_tenant, source, inputs) => {
+        ingested.push({ source, inputs });
+        return { outcomes: [{ outcome: 'created' } as never], rejected: 0 };
+      },
+    };
+    const proposer = (offers: AgentTaskProposalPorts['offers']) =>
+      createAgentTaskFactProposer({
+        outputs,
+        specialists: w.repository,
+        skills: createSkillCatalogue(),
+        offers,
+        brain,
+      });
+    expect(await proposer((_t, a, actions) => actions.has(a)).ended(w.runtime, done)).toBe(1);
+    expect(ingested[0]?.source).toEqual({ type: 'agent', id: running.id });
+    expect(ingested[0]?.inputs).toEqual([
+      {
+        domain: 'operations',
+        key: 'opening_days',
+        value: { type: 'text', text: 'Domingos' },
+        confidence: 0.9,
+      },
+    ]);
+    // The Decision Engine says no, the work never finished, or it is not a task: nothing.
+    expect(await proposer(() => false).ended(w.runtime, done)).toBe(0);
+    expect(await proposer(() => true).ended(w.runtime, running)).toBe(0);
+    expect(
+      await proposer(() => true).ended(w.runtime, { ...done, input: { type: 'message', id: 'm' } }),
+    ).toBe(0);
+    expect(ingested).toHaveLength(1);
   });
 });

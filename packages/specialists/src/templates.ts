@@ -39,9 +39,13 @@ export const AGENT_TASK_POLICY_REF = Object.freeze({ id: 'agent_task' as PolicyI
 export const AGENT_LOCALES = ['es', 'en'] as const;
 export type AgentLocale = (typeof AGENT_LOCALES)[number];
 
-const skillRef = (id: string) => {
-  const found = SKILL_CATALOGUE.find((s: AgentSkill) => s.id === id);
-  if (found === undefined) throw new Error(`unknown skill ${id}`);
+/** A skill as `id` (version 1) or `id@version`: always one exact version of the catalogue. */
+const skillRef = (ref: string) => {
+  const [id, version = '1'] = ref.split('@');
+  const found = SKILL_CATALOGUE.find(
+    (s: AgentSkill) => s.id === id && s.version === Number(version),
+  );
+  if (found === undefined) throw new Error(`unknown skill ${ref}`);
   return Object.freeze({ id: found.id, version: found.version });
 };
 
@@ -58,13 +62,14 @@ const template = (
     mainRoleId: `${id}_agent`,
     roleVersion: 1,
     purpose: Object.freeze(purpose),
-    // Every agent can read what the company knows for its department (ADR-0063).
-    skills: Object.freeze(['company_knowledge', ...skills].map(skillRef)),
+    // Every agent can read what the company knows for its department (ADR-0063), and propose
+    // facts to it for the owner to confirm (ADR-0084).
+    skills: Object.freeze(['company_knowledge@2', ...skills].map(skillRef)),
     policies: Object.freeze({ model: AGENT_TASK_POLICY_REF }),
   });
 
 export const AGENT_TEMPLATES: readonly AgentTemplate[] = Object.freeze([
-  template('commercial', 'sales', ['customer_follow_up', 'pipeline_analysis'], {
+  template('commercial', 'sales', ['customer_follow_up@2', 'pipeline_analysis'], {
     es: 'Da seguimiento a clientes y oportunidades, y ayuda a cerrar ventas.',
     en: 'Follows up on customers and opportunities, and helps close sales.',
   }),

@@ -1,10 +1,12 @@
-import { I18nProvider } from '@melonoffice/i18n';
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { catalogs, I18nProvider } from '@melonoffice/i18n';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../App.js';
 import { createServices } from '../identity/services.js';
 import { REFRESH_KEY } from '../identity/session.js';
 import { API, KEY, fakeBackend, memoryStore } from '../identity/testing.js';
+import { AgentCapabilities } from './AgentCapabilities.js';
+import type { AgentCapabilitiesView, AgentsClient } from './agentsClient.js';
 
 afterEach(() => {
   cleanup();
@@ -143,5 +145,83 @@ describe('Agents (ADR-0025, ADR-0062)', () => {
     expect(await within(catalogue).findByText('Reply to conversations')).toBeTruthy();
     expect(within(catalogue).queryByRole('heading', { name: 'Tools' })).toBeNull();
     expect(backend.apiCalls().some((c) => c.url.endsWith('/tools'))).toBe(false);
+  });
+});
+
+describe('moving a skill to its newer version (ADR-0084)', () => {
+  const view = (
+    version: number,
+    upgrades: NonNullable<AgentCapabilitiesView['upgrades']>,
+  ): AgentCapabilitiesView => ({
+    version,
+    ready: true,
+    skills: [
+      {
+        id: 'customer_follow_up',
+        version: upgrades.length > 0 ? 1 : 2,
+        known: true,
+        tools: [],
+        actions: [],
+        reads: ['contact.read'],
+      },
+    ],
+    tools: [],
+    problems: [],
+    upgrades,
+  });
+  function client(): AgentsClient {
+    let current = view(1, [{ skillId: 'customer_follow_up', from: 1, to: 2 }]);
+    return {
+      templates: vi.fn(),
+      skills: vi.fn(),
+      tools: vi.fn(),
+      create: vi.fn(),
+      setStatus: vi.fn(),
+      capabilities: vi.fn(async () => current),
+      upgradeSkill: vi.fn(async () => {
+        current = view(2, []);
+        return {} as never;
+      }),
+    } as unknown as AgentsClient;
+  }
+  const show = (agents: AgentsClient, canManage: boolean) =>
+    render(
+      <I18nProvider locale="en" messages={catalogs.en}>
+        <AgentCapabilities client={agents} agentId="spec_lucia" canManage={canManage} />
+      </I18nProvider>,
+    );
+
+  it('says what the newer version allows, and moves the agent only after confirming', async () => {
+    const agents = client();
+    const confirm = vi.spyOn(globalThis, 'confirm').mockReturnValueOnce(false);
+    show(agents, true);
+    expect(
+      await screen.findByText(
+        'Version 2 lets it propose follow-ups and schedule them, always with your approval.',
+      ),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Update to version 2' }));
+    expect(agents.upgradeSkill).not.toHaveBeenCalled();
+    confirm.mockReturnValueOnce(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Update to version 2' }));
+    await waitFor(() =>
+      expect(agents.upgradeSkill).toHaveBeenCalledWith('spec_lucia', {
+        fromVersion: 1,
+        skillId: 'customer_follow_up',
+        version: 2,
+      }),
+    );
+    expect(await screen.findByText('Skill updated. The agent has a new version.')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Update to version 2' })).toBeNull();
+  });
+
+  it('without specialist.manage, only says a newer version exists', async () => {
+    show(client(), false);
+    expect(
+      await screen.findByText(
+        'Version 2 lets it propose follow-ups and schedule them, always with your approval.',
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Update to version 2' })).toBeNull();
   });
 });

@@ -16,10 +16,11 @@ export type FollowUpStatus = 'scheduled' | 'due' | 'completed' | 'cancelled' | '
 export type FollowUpType = 'follow_up' | 'call' | 'message' | 'review' | 'check_in';
 
 /**
- * Who proposed it: a person (`manual`, level A) or GIA with the person's confirmation (`gia`,
- * level B). `rule` is reserved for automatic rules (level C), which are not enabled.
+ * Who proposed it: a person (`manual`, level A), GIA with the person's confirmation (`gia`,
+ * level B) or an agent with the person's approval of that exact follow-up (`agent`, ADR-0084).
+ * `rule` is reserved for automatic rules (level C), which are not enabled.
  */
-export type FollowUpSource = 'manual' | 'gia' | 'rule';
+export type FollowUpSource = 'manual' | 'gia' | 'agent' | 'rule';
 
 /** Why a follow-up was cancelled: a person, or its record had ended when its time came. */
 export type FollowUpCancelReason = 'person' | 'opportunity_closed' | 'contact_archived';

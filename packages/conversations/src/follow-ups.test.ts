@@ -417,12 +417,55 @@ describe('follow-ups (C5, ADR-0058)', () => {
     expect(await codeOf(w.followUps.create(w.aliceAsGia, tomorrowAt10(w.juan.id)))).toBe(
       'requires_user',
     );
+    // The runtime creates only an agent's follow-up (ADR-0084), which a person may not claim.
     expect(await codeOf(w.followUps.create(w.runtime, tomorrowAt10(w.juan.id)))).toBe(
-      'requires_user',
+      'invalid_request:source',
     );
+    expect(
+      await codeOf(w.followUps.create(w.runtime, tomorrowAt10(w.juan.id, { source: 'gia' }))),
+    ).toBe('invalid_request:source');
+    expect(
+      await codeOf(w.followUps.create(w.alice, tomorrowAt10(w.juan.id, { source: 'agent' }))),
+    ).toBe('invalid_request:source');
+    expect(
+      await codeOf(w.followUps.create(w.aliceAsGia, tomorrowAt10(w.juan.id, { source: 'agent' }))),
+    ).toBe('requires_user');
     expect(
       reader.recorder.tasks.length + none.recorder.tasks.length + w.recorder.tasks.length,
     ).toBe(0);
+  });
+
+  it("an agent's follow-up (ADR-0084): the runtime, for the person, with every rule of a create", async () => {
+    const w = await world();
+    const { followUp, created } = await w.followUps.create(
+      w.runtime,
+      tomorrowAt10(w.juan.id, { source: 'agent' }),
+    );
+    expect(created).toBe(true);
+    expect(followUp).toMatchObject({
+      source: 'agent',
+      status: 'scheduled',
+      metadata: { automation: 'suggested' },
+      createdBy: ALICE,
+    });
+    expect(w.recorder.tasks).toHaveLength(1);
+    expect(actions(w.audit)).toContain('follow_up.created');
+    // The same checks as a person's: a date in the past is refused.
+    expect(
+      await codeOf(
+        w.followUps.create(
+          w.runtime,
+          tomorrowAt10(w.juan.id, { source: 'agent', date: '2020-01-01' }),
+        ),
+      ),
+    ).toBe('invalid_request:date_in_past');
+    // Without follow_up.manage for that person, the runtime may not either.
+    const reader = await world({ roles: { ...ROLES, owner: ['follow_up.read', 'contact.read'] } });
+    expect(
+      await codeOf(
+        reader.followUps.create(reader.runtime, tomorrowAt10(reader.juan.id, { source: 'agent' })),
+      ),
+    ).toBe('permission_denied');
   });
 
   it('11. is assigned to the record’s responsible member, or to one chosen', async () => {

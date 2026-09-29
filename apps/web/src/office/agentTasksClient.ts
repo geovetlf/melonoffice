@@ -27,7 +27,29 @@ export interface AgentTaskView {
   readonly status: AgentTaskStatus;
   readonly failure: string | null;
   readonly completedAt: string | null;
-  readonly answer: { readonly answer: string; readonly missing: readonly string[] } | null;
+  readonly answer: {
+    readonly answer: string;
+    readonly missing: readonly string[];
+    /** How many facts it proposed for the company memory, for the owner to confirm (ADR-0084). */
+    readonly facts?: number;
+    /** The follow-up it proposed, and where it stands (ADR-0084). */
+    readonly followUp?: TaskFollowUpView | null;
+  } | null;
+}
+
+export type TaskFollowUpState =
+  'preparing' | 'waiting_approval' | 'scheduled' | 'rejected' | 'expired' | 'not_scheduled';
+
+export interface TaskFollowUpView {
+  readonly contactId: string | null;
+  readonly contactName: string | null;
+  readonly type: string;
+  readonly title: string;
+  readonly date: string;
+  readonly time: string;
+  readonly state: TaskFollowUpState;
+  /** Only while it waits for a person's approval. */
+  readonly approvalId: string | null;
 }
 
 export interface AgentTaskPage {

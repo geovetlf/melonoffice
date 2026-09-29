@@ -85,6 +85,16 @@ export function registerSpecialistRoutes(
     ),
   );
 
+  // A newer version of one of the agent's skills, only when a person asks (ADR-0084).
+  app.post(
+    '/v1/organizations/:organizationId/specialists/:specialistId/skills/upgrade',
+    withPermission('specialist.manage', dependencies, async (c, tenant) =>
+      answer(c, 200, async () =>
+        management.upgradeSkill(tenant, c.req.param('specialistId') ?? '', await bodyOf(c)),
+      ),
+    ),
+  );
+
   app.get(
     '/v1/organizations/:organizationId/specialists/:specialistId/capabilities',
     withPermission('specialist.read', dependencies, async (c, tenant) => {
@@ -97,7 +107,22 @@ export function registerSpecialistRoutes(
           ),
         );
         const found = agentCapabilities(specialist, { skills, tools, held });
-        return c.json({ id: specialist.identity.id, version: specialist.version, ...found });
+        // A newer version of a skill the agent has: only a person moves it there (ADR-0084).
+        const upgrades = specialist.configuration.skills.flatMap(({ id, version }) => {
+          const latest = Math.max(
+            ...skills
+              .list()
+              .filter((s) => s.id === id)
+              .map((s) => s.version),
+          );
+          return latest > version ? [{ skillId: id, from: version, to: latest }] : [];
+        });
+        return c.json({
+          id: specialist.identity.id,
+          version: specialist.version,
+          ...found,
+          upgrades,
+        });
       } catch (error) {
         if (isSpecialistError(error) && error.code === 'specialist_not_found') {
           return c.json({ error: 'specialist_not_found' }, 404);

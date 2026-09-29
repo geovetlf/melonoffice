@@ -374,7 +374,13 @@ export function createFollowUpService(options: FollowUpServiceOptions): FollowUp
 
   /** A create's input, checked as `create` checks it, before anything is written. */
   async function parseCreate(tenant: TenantContext, input: Record<string, unknown>) {
-    const organizationId = await managerOf(tenant);
+    // A person's, directly; or an agent's (ADR-0084): the runtime, for the person the agent's task
+    // is for, after that person approved this exact follow-up at the tool gate. Only as `agent`.
+    const byAgent = tenant.actor === 'runtime';
+    const organizationId = byAgent
+      ? await organizationOf(tenant, 'follow_up.manage')
+      : await managerOf(tenant);
+    if (byAgent !== (input.source === 'agent')) bad('source');
     checkKeys(input, CREATE_KEYS);
     if (typeof input.requestKey !== 'string' || !REQUEST_KEY.test(input.requestKey)) {
       bad('requestKey');
@@ -395,7 +401,9 @@ export function createFollowUpService(options: FollowUpServiceOptions): FollowUp
         ? 'manual'
         : input.source === 'gia'
           ? 'gia'
-          : bad('source');
+          : input.source === 'agent'
+            ? 'agent'
+            : bad('source');
     const chosen =
       input.assignedTo === undefined || input.assignedTo === null
         ? undefined
@@ -764,7 +772,7 @@ export function createFollowUpService(options: FollowUpServiceOptions): FollowUp
             source,
             schedule: 1,
             history: Object.freeze([]),
-            metadata: Object.freeze({ automation: source === 'gia' ? 'suggested' : 'manual' }),
+            metadata: Object.freeze({ automation: source === 'manual' ? 'manual' : 'suggested' }),
             revision: 1,
             createdBy: tenant.userId,
             createdAt: iso,

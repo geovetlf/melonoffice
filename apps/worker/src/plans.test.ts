@@ -227,7 +227,11 @@ describe.each(STORES)(
         organizations: stores.tenancy,
         authorization,
         skills: createSkillCatalogue(),
-        tools: () => undefined,
+        // The commercial agent's follow-up (ADR-0084), granted by its skill.
+        tools: (id, version) =>
+          id === 'follow_up_schedule' && version === 2
+            ? { riskLevel: 'low', approval: 'approval_required', permissions: ['follow_up.manage'] }
+            : undefined,
         now,
       });
 
