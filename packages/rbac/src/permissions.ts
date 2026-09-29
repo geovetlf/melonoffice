@@ -279,6 +279,12 @@ export const PERMISSIONS = {
     action: 'read',
     description: "See the organization's credit balance (ADR-0023).",
   },
+  'ai_usage.read': {
+    resource: 'ai_usage',
+    action: 'read',
+    description:
+      "See what the organization's AI use cost, in total and by agent, department, workflow, task, capability, provider and model, and each operation's usage (ADR-0074). Codes and amounts only, never content.",
+  },
 } as const satisfies Record<string, PermissionDefinition>;
 
 export interface PermissionDefinition {

@@ -71,6 +71,9 @@ importers:
       '@melonoffice/ai-gateway':
         specifier: workspace:*
         version: link:../../packages/ai-gateway
+      '@melonoffice/ai-usage':
+        specifier: workspace:*
+        version: link:../../packages/ai-usage
       '@melonoffice/ai-vertex':
         specifier: workspace:*
         version: link:../../packages/ai-vertex
@@ -214,6 +217,9 @@ importers:
       '@melonoffice/ai-gateway':
         specifier: workspace:*
         version: link:../../packages/ai-gateway
+      '@melonoffice/ai-usage':
+        specifier: workspace:*
+        version: link:../../packages/ai-usage
       '@melonoffice/ai-vertex':
         specifier: workspace:*
         version: link:../../packages/ai-vertex
@@ -773,6 +779,9 @@ importers:
       '@melonoffice/agents':
         specifier: workspace:*
         version: link:../agents
+      '@melonoffice/ai-usage':
+        specifier: workspace:*
+        version: link:../ai-usage
       '@melonoffice/approvals':
         specifier: workspace:*
         version: link:../approvals

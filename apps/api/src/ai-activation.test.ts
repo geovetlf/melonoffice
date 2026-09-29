@@ -171,6 +171,57 @@ describe.each(STORES)('assisted AI on Vertex AI with storage in %s (ADR-0038)', 
     };
   }
 
+  it('records each call in the AI usage ledger and shows it only to its organization (ADR-0074)', async () => {
+    const t = await setup();
+    await t.grant('dev');
+    const id = await t.receive(t.test, 'Hola, ¿cuánto cuestan los melones?');
+    await t.assist('token-alice', t.test, id, { operation: 'summary', requestKey: 'click-0001' });
+    const today = new Date().toISOString().slice(0, 10);
+    const read = async (token: string, org: string, query = '') => {
+      const response = await t.app.request(
+        `/v1/organizations/${org}/ai-usage${query}`,
+        t.as(token),
+      );
+      return { status: response.status, body: (await response.json()) as Json };
+    };
+    const summary = await read('token-alice', t.test, `?from=${today}&to=${today}`);
+    expect(summary.status).toBe(200);
+    expect(summary.body).toMatchObject({
+      scope: t.test,
+      currency: 'USD',
+      totals: { operations: 1, costMicroUsd: 830, unpricedOperations: 0, credits: 1 },
+      by: {
+        capability: { llm: { operations: 1 } },
+        provider: { 'google-vertex-ai': { costMicroUsd: 830 } },
+        model: { 'google-vertex-ai/gemini-2.5-flash-lite': { operations: 1 } },
+        actor: { user: { operations: 1 } },
+      },
+      quantities: { llm: { input_tokens: 3_500, output_tokens: 1_200 } },
+    });
+    const events = await read('token-alice', t.test, '/events?limit=10');
+    expect(events.status).toBe(200);
+    expect(events.body).toMatchObject({
+      events: [
+        {
+          capability: 'llm',
+          source: 'llm_router',
+          attribution: { subject: { type: 'conversation', id } },
+          cost: { actualMicroUsd: 830, costBasis: 'provider_price_list' },
+        },
+      ],
+      nextCursor: null,
+    });
+    expect(JSON.stringify(events.body)).not.toContain('melones');
+    // Another organization's owner sees nothing of it, and their own is empty.
+    expect((await read('token-bob', t.test)).status).toBe(403);
+    expect((await read('token-bob', t.other)).body).toMatchObject({ totals: { operations: 0 } });
+    // A bad range or page is refused.
+    expect((await read('token-alice', t.test, '?from=2026-09-30&to=2026-09-01')).status).toBe(400);
+    expect((await read('token-alice', t.test, '?from=yesterday')).status).toBe(400);
+    expect((await read('token-alice', t.test, '/events?limit=1000')).status).toBe(400);
+    expect((await read('token-alice', t.test, '/events?cursor=x')).status).toBe(400);
+  });
+
   it('grants MOpruebas 500 DEV credits once, audited, and no other organization anything', async () => {
     const t = await setup();
     const first = await t.grant('dev');

@@ -144,7 +144,7 @@ run "staging_is_isolated_and_minimal" {
   }
 
   assert {
-    condition     = length(google_firestore_database.default) == 0 && length(google_firestore_index.audit_activity) == 0 && length(google_firestore_index.commercial) == 0 && length(google_firestore_index.agent_tasks) == 0 && length(google_identity_platform_config.default) == 0 && length(google_project_iam_member.api_firestore) == 0
+    condition     = length(google_firestore_database.default) == 0 && length(google_firestore_index.audit_activity) == 0 && length(google_firestore_index.commercial) == 0 && length(google_firestore_index.agent_tasks) == 0 && length(google_firestore_index.ai_usage_events) == 0 && length(google_identity_platform_config.default) == 0 && length(google_project_iam_member.api_firestore) == 0
     error_message = "Firestore and Identity Platform are dev only."
   }
 
@@ -189,7 +189,7 @@ run "prod_is_isolated_and_minimal" {
   }
 
   assert {
-    condition     = length(google_firestore_database.default) == 0 && length(google_firestore_index.audit_activity) == 0 && length(google_firestore_index.commercial) == 0 && length(google_firestore_index.agent_tasks) == 0 && length(google_identity_platform_config.default) == 0 && length(google_project_iam_member.api_firestore) == 0
+    condition     = length(google_firestore_database.default) == 0 && length(google_firestore_index.audit_activity) == 0 && length(google_firestore_index.commercial) == 0 && length(google_firestore_index.agent_tasks) == 0 && length(google_firestore_index.ai_usage_events) == 0 && length(google_identity_platform_config.default) == 0 && length(google_project_iam_member.api_firestore) == 0
     error_message = "Firestore and Identity Platform are dev only."
   }
 
@@ -265,6 +265,11 @@ run "dev_gets_firestore_and_auth" {
   assert {
     condition     = google_firestore_index.agent_tasks[0].collection == "agentTasks" && [for f in google_firestore_index.agent_tasks[0].fields : "${f.field_path}:${f.order}"] == ["organizationId:ASCENDING", "specialistId:ASCENDING", "createdAt:DESCENDING"]
     error_message = "Dev must have the agent tasks index (ADR-0063): per organization and agent, newest first."
+  }
+
+  assert {
+    condition     = google_firestore_index.ai_usage_events[0].collection == "aiUsageEvents" && [for f in google_firestore_index.ai_usage_events[0].fields : "${f.field_path}:${f.order}"] == ["organizationId:ASCENDING", "occurredAt:DESCENDING"]
+    error_message = "Dev must have the AI usage events index (ADR-0074): per organization, newest first."
   }
 
   assert {

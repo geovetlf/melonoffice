@@ -1,3 +1,4 @@
+import type { AIUsageSink } from '@melonoffice/ai-usage';
 import {
   createAIGateway,
   createModelPolicyCatalogue,
@@ -62,6 +63,11 @@ export interface WorkerRuntimeOptions {
    * which stops at `internal` data.
    */
   readonly policies?: ModelPolicyCatalogue;
+  /**
+   * Where every model call's usage and cost is recorded (the AI Usage Ledger, ADR-0074). Absent:
+   * nothing is recorded; the calls and their credits are unchanged.
+   */
+  readonly usage?: AIUsageSink;
   readonly work?: NodeWorkSource;
   readonly verifier?: VerificationSource;
   readonly dispatcher?: JobDispatcher;
@@ -158,6 +164,7 @@ export function createWorkerRuntime(options: WorkerRuntimeOptions): {
         policies: options.policies ?? createModelPolicyCatalogue([], DEFAULT_MODEL_POLICY),
         environment,
         ...(credits === undefined ? {} : { credits }),
+        ...(options.usage === undefined ? {} : { usage: options.usage }),
         audit,
         ...clock,
         ...log,

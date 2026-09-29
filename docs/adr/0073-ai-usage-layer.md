@@ -51,7 +51,7 @@ The existing credits ledger stays the only charge. The event records the credits
 - Any new AI engine (image, video, voice and so on) reports usage and cost in the same shape as language models, with no financial code of its own.
 - Until U1, the gateway takes a sink but none is wired in the API or worker, so events go nowhere yet. Logs and audit keep recording each call as before.
 
-## Next (U1)
+## Next (U1, [ADR-0074](0074-ai-usage-ledger.md))
 
 - A persistent, append-only AI usage ledger per organization that the sink writes to, idempotent by event id.
 - Queries by every attribution dimension, capability, provider and model.
