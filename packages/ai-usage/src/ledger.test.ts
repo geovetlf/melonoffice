@@ -194,6 +194,20 @@ describe('AI usage ledger', () => {
     await expect(ledger.record({ ...event('e1'), id: 'bad id!' })).rejects.toThrow(AIUsageError);
     await expect(ledger.record({ ...event('e1'), credits: -1 })).rejects.toThrow(AIUsageError);
     await expect(
+      ledger.record({ ...event('e1'), creditPolicy: { id: 'free text', version: 'v1' } }),
+    ).rejects.toThrow(AIUsageError);
+    await expect(ledger.record({ ...event('e1'), fallbackFrom: 'a b' })).rejects.toThrow(
+      AIUsageError,
+    );
+    expect(
+      await ledger.record({
+        ...event('e2'),
+        credits: 0,
+        creditPolicy: { id: 'provider_cost_at_rate', version: '10000' },
+        fallbackFrom: 'alpha/alpha-small',
+      }),
+    ).toBeUndefined();
+    await expect(
       ledger.record({
         ...event('e1'),
         attribution: { ...event('e1').attribution, taskType: 'free text' },

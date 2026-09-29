@@ -123,8 +123,15 @@ export interface AIUsageEvent {
   readonly operation: string;
   readonly outcome: 'completed' | 'failed';
   readonly cost: CostResult;
-  /** Credits charged for it, when any (the existing credits ledger stays the only charge). */
+  /**
+   * The customer's credit cost: credits charged for it, when any (the existing credits ledger
+   * stays the only charge). Kept apart from `cost`, the provider's cost to MelonOffice.
+   */
   readonly credits: number;
+  /** The customer credit policy that priced `credits` (ADR-0081), when one did. */
+  readonly creditPolicy?: { readonly id: string; readonly version: string };
+  /** The model first tried when this one answered as a fallback (`provider:model`). */
+  readonly fallbackFrom?: string;
   /** The engine that served it, e.g. `llm_router`. */
   readonly source: string;
   readonly requestId: string;
