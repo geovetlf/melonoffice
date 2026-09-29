@@ -137,9 +137,11 @@ describe('Decision Engine (DE-1)', () => {
       maxCredits: null,
       reasons: ['unknown_action'],
     });
-    // Agents prepare only what the catalogue lets them (a discount, not a follow-up).
+    // Agents prepare only what the catalogue lets them (a discount, not a follow-up), and only
+    // what a skill grants them (SK-2, ADR-0083): no skill grants a follow-up.
     expect(engine.evaluateAction(alice, 'follow_up.schedule', 'agent').reasons).toEqual([
       'proposer_not_allowed',
+      'not_granted_by_skill',
     ]);
   });
 
@@ -157,9 +159,15 @@ describe('Decision Engine (DE-1)', () => {
       authorization: createAuthorizationService(),
       catalogue: [...ACTION_CATALOGUE, approval],
     });
-    expect(engine.evaluateAction(alice, 'tool.message_send', 'agent').outcome).toBe(
+    const granted = { actions: new Set(['tool.message_send']) };
+    expect(engine.evaluateAction(alice, 'tool.message_send', 'agent', granted).outcome).toBe(
       'needs_approval',
     );
+    // No skill of the catalogue grants it, so no agent may propose it (SK-2, ADR-0083).
+    expect(engine.evaluateAction(alice, 'tool.message_send', 'agent')).toMatchObject({
+      outcome: 'unavailable',
+      reasons: ['not_granted_by_skill'],
+    });
     expect(() => checkCatalogue([approval, approval])).toThrow('duplicate action');
     expect(() => checkCatalogue([{ ...approval, id: 'Bad' }])).toThrow('invalid action id');
     expect(() => checkCatalogue([{ ...approval, maxCredits: -1 }])).toThrow('invalid credits');

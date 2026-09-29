@@ -3,9 +3,11 @@ import { useEffect, useState } from 'react';
 import type { AgentCapabilitiesView, AgentsClient } from './agentsClient.js';
 
 /**
- * What an agent can do now (ADR-0062, ADR-0069), on its page: its version, its skills, the tools
- * those skills use with their risk and whether they need approval, and whether it is ready to
- * take work, with what stops it when it is not. Read from the API; nothing is inferred.
+ * What an agent can do now (ADR-0062, ADR-0069, ADR-0083), on its page: its version, then each
+ * skill at the version it has, and under it what that skill lets it do: the tools it uses, with
+ * their risk and whether each use waits for approval, the actions it may propose and the records
+ * it reads. A tool reaches an agent only through a skill, so there is no separate tool list; one
+ * no skill grants shows as a problem. Read from the API; nothing is inferred.
  */
 export function AgentCapabilities({
   client,
@@ -28,6 +30,24 @@ export function AgentCapabilities({
   }, [client, agentId]);
   const message = (id: string, fallback: string) =>
     intl.messages[id] === undefined ? fallback : intl.formatMessage({ id });
+  const readName = (permission: string) => {
+    const resource = permission.split('.')[0] ?? permission;
+    return message(`capabilities.reads.${resource}`, resource);
+  };
+  // What a tool is, how risky it is and whether each use waits for a person's approval.
+  const toolLine = (t: AgentCapabilitiesView['tools'][number]) =>
+    [
+      message(`approvals.tool.${t.id}`, t.id),
+      t.riskLevel === null
+        ? null
+        : intl.formatMessage(
+            { id: 'approvals.risk' },
+            { level: message(`approvals.riskLevel.${t.riskLevel}`, t.riskLevel) },
+          ),
+      t.approval === null ? null : message(`agents.approval.${t.approval}`, t.approval),
+    ]
+      .filter((part) => part !== null)
+      .join(' · ');
   return (
     <section className="dept-office__section" aria-labelledby="agent-capabilities">
       <h2 id="agent-capabilities">
@@ -62,7 +82,7 @@ export function AgentCapabilities({
               ))}
             </ul>
           )}
-          <h3>
+          <h3 id="agent-capabilities-skills">
             <FormattedMessage id="agents.capabilities.skills" />
           </h3>
           {found.skills.length === 0 ? (
@@ -70,42 +90,63 @@ export function AgentCapabilities({
               <FormattedMessage id="agents.capabilities.noSkills" />
             </p>
           ) : (
-            <ul className="coming">
-              {found.skills.map((s) => (
-                <li key={s.id} className="coming__item">
-                  <strong>{message(`agents.skill.${s.id}.name`, s.id)}</strong>
-                  {intl.messages[`agents.skill.${s.id}.description`] === undefined
-                    ? null
-                    : ` · ${intl.formatMessage({ id: `agents.skill.${s.id}.description` })}`}
-                </li>
-              ))}
+            <ul className="agent-skills" aria-labelledby="agent-capabilities-skills">
+              {found.skills.map((s) => {
+                // The agent's own tools that this skill grants, at the versions it was given.
+                const tools = found.tools.filter((t) => s.tools.includes(t.id));
+                return (
+                  <li key={`${s.id}@${s.version}`} className="agent-skills__item">
+                    <strong>{message(`agents.skill.${s.id}.name`, s.id)}</strong>{' '}
+                    <span className="documents__meta">
+                      <FormattedMessage
+                        id="agents.capabilities.skillVersion"
+                        values={{ version: s.version }}
+                      />
+                    </span>
+                    {intl.messages[`agents.skill.${s.id}.description`] === undefined ? null : (
+                      <span className="agent-skills__line">
+                        {intl.formatMessage({ id: `agents.skill.${s.id}.description` })}
+                      </span>
+                    )}
+                    <ul className="agent-skills__grants">
+                      {tools.length === 0 ? (
+                        <li>
+                          <FormattedMessage id="agents.capabilities.skillNoTools" />
+                        </li>
+                      ) : (
+                        tools.map((t) => <li key={`${t.id}@${t.version}`}>{toolLine(t)}</li>)
+                      )}
+                      {s.actions.length === 0 ? null : (
+                        <li>
+                          <FormattedMessage
+                            id="agents.capabilities.proposes"
+                            values={{
+                              actions: s.actions
+                                .map((a) => message(`agents.action.${a}`, a))
+                                .join(', '),
+                            }}
+                          />
+                        </li>
+                      )}
+                      {s.reads.length === 0 ? null : (
+                        <li>
+                          <FormattedMessage
+                            id="capabilities.reads"
+                            values={{ records: [...new Set(s.reads.map(readName))].join(', ') }}
+                          />
+                        </li>
+                      )}
+                    </ul>
+                  </li>
+                );
+              })}
             </ul>
           )}
-          <h3>
-            <FormattedMessage id="agents.capabilities.tools" />
-          </h3>
           {found.tools.length === 0 ? (
             <p className="panel__empty">
               <FormattedMessage id="agents.capabilities.noTools" />
             </p>
-          ) : (
-            <ul className="coming">
-              {found.tools.map((t) => (
-                <li key={t.id} className="coming__item">
-                  {message(`approvals.tool.${t.id}`, t.id)}
-                  {t.riskLevel === null
-                    ? ''
-                    : ` · ${intl.formatMessage(
-                        { id: 'approvals.risk' },
-                        { level: message(`approvals.riskLevel.${t.riskLevel}`, t.riskLevel) },
-                      )}`}
-                  {t.approval === null
-                    ? ''
-                    : ` · ${message(`agents.approval.${t.approval}`, t.approval)}`}
-                </li>
-              ))}
-            </ul>
-          )}
+          ) : null}
         </>
       )}
     </section>

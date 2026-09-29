@@ -105,7 +105,18 @@ describe('Agents (ADR-0025, ADR-0062)', () => {
     const section = await screen.findByRole('region', { name: 'What this agent can do' });
     expect(await within(section).findByText(/Version 2/)).toBeTruthy();
     expect(within(section).getByText(/Ready to take work/)).toBeTruthy();
-    expect(within(section).getByText('Reply to conversations')).toBeTruthy();
+    // Each skill at its version, and under it what that version lets the agent do (ADR-0083).
+    const skills = within(within(section).getByRole('list', { name: 'Skills' }));
+    const reply = within(skills.getByText('Reply to conversations').closest('li') as HTMLElement);
+    expect(reply.getByText('v1')).toBeTruthy();
+    expect(reply.getByText('Send a message · Risk: medium · needs approval')).toBeTruthy();
+    expect(reply.getByText(/Hand a conversation to a person · Risk: low/)).toBeTruthy();
+    expect(reply.getByText('Reads: conversations')).toBeTruthy();
+    const knowledge = within(skills.getByText('Company knowledge').closest('li') as HTMLElement);
+    expect(
+      knowledge.getByText('Uses no tools: it works from what the company has recorded.'),
+    ).toBeTruthy();
+    expect(knowledge.queryByText(/Send a message/)).toBeNull();
   });
 
   it('shows the skills catalogue, and the tools with their approval policy to tool.read', async () => {

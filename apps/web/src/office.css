@@ -2844,3 +2844,32 @@ a.sidebar__item:hover {
   min-width: 0;
   max-width: 100%;
 }
+
+/* An agent's skills, each with what it lets the agent do (ADR-0083). */
+.agent-skills {
+  display: grid;
+  gap: var(--mo-space-2);
+  margin: var(--mo-space-3) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.agent-skills__item {
+  min-width: 0;
+  padding: var(--mo-space-3) var(--mo-space-4);
+  border: 1px solid var(--office-line);
+  border-radius: var(--mo-radius-md);
+  overflow-wrap: anywhere;
+}
+
+.agent-skills__line {
+  display: block;
+  margin-top: var(--mo-space-1);
+}
+
+.agent-skills__grants {
+  margin: var(--mo-space-2) 0 0;
+  padding-left: var(--mo-space-6);
+  color: var(--office-muted);
+  font-size: 0.875rem;
+}

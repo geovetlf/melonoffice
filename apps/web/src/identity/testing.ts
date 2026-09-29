@@ -1212,14 +1212,39 @@ export function fakeBackend(): FakeBackend {
         id: found.id,
         version: 2,
         ready: found.status === 'active',
-        skills: [{ id: 'conversation_reply', version: 1, known: true }],
+        // As the API gives it for the supervised conversation agent (ADR-0043, ADR-0069).
+        skills: [
+          {
+            id: 'company_knowledge',
+            version: 1,
+            known: true,
+            tools: [],
+            actions: [],
+            reads: ['knowledge.read'],
+          },
+          {
+            id: 'conversation_reply',
+            version: 1,
+            known: true,
+            tools: ['message_send', 'conversation_handoff'],
+            actions: [],
+            reads: ['conversation.read'],
+          },
+        ],
         tools: [
           {
             id: 'message_send',
+            version: 2,
+            known: true,
+            riskLevel: 'medium',
+            approval: 'approval_required',
+          },
+          {
+            id: 'conversation_handoff',
             version: 1,
             known: true,
-            riskLevel: 'high',
-            approval: 'approval_required',
+            riskLevel: 'low',
+            approval: 'auto',
           },
         ],
         permissions: { required: [], missing: [] },

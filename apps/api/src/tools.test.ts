@@ -15,6 +15,7 @@ import { createToolGate } from '@melonoffice/guardrails';
 import { createAuthorizationService, ROLES } from '@melonoffice/rbac';
 import {
   applySpecialistStatus,
+  createSkillCatalogue,
   createSpecialistService,
   newSpecialist,
 } from '@melonoffice/specialists';
@@ -145,6 +146,21 @@ describe.each(STORES)('tools and approvals with storage in %s', (_name, createSt
       authorization,
       audit: stores.audit,
       environment: 'dev',
+      // The fixture skill that grants the fixture tools (SK-2, ADR-0083).
+      skills: createSkillCatalogue([
+        {
+          id: 'fixture_work',
+          version: 1,
+          nameKey: 'fixture',
+          descriptionKey: 'fixture',
+          tools: [
+            { id: 'send_email', versions: [1] },
+            { id: 'lookup', versions: [1] },
+          ],
+          actions: [],
+          reads: [],
+        } as never,
+      ]),
       now,
     });
 
@@ -161,7 +177,7 @@ describe.each(STORES)('tools and approvals with storage in %s', (_name, createSt
             mainRoleId: 'operations_assistant',
             roleVersion: 1,
             capabilities: [],
-            skills: [],
+            skills: [{ id: 'fixture_work', version: 1 }],
             tools: [
               { id: 'send_email', version: 1 },
               { id: 'lookup', version: 1 },
