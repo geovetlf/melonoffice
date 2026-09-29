@@ -15,10 +15,12 @@ import { createExecutionService, type ExecutionRepository } from '@melonoffice/e
 import { createToolGate } from '@melonoffice/guardrails';
 import { createJobService, type JobRepository, type JobService } from '@melonoffice/jobs';
 import type { Logger } from '@melonoffice/observability';
+import { createPlanConductor, planStepOf, type PlanRepository } from '@melonoffice/planning';
 import { createAuthorizationService } from '@melonoffice/rbac';
 import {
   createRuntime,
   type AgentOutputSink,
+  type ExecutionEndHook,
   type ExecutionStopHook,
   type JobDispatcher,
   type NodeWorkSource,
@@ -67,6 +69,11 @@ export interface WorkerRuntimeOptions {
   readonly outputs?: AgentOutputSink;
   /** Told when an execution stops without completing (ADR-0043). */
   readonly onStopped?: ExecutionStopHook;
+  /**
+   * The plans, for the plan conductor (WF-1, ADR-0070): when one of a plan's steps ends, its next
+   * steps start, or the plan closes. Absent: a plan step ends and nothing follows.
+   */
+  readonly plans?: PlanRepository;
   readonly logger?: Logger;
   readonly now?: () => Date;
 }
@@ -105,6 +112,17 @@ export function createWorkerRuntime(options: WorkerRuntimeOptions): {
       ...(requestId === undefined ? {} : { requestId }),
     });
 
+  const executionsFor = (correlationId: string) =>
+    createExecutionService({
+      repository: stores.executions,
+      organizations: stores.tenancy,
+      assignments: specialists.assignments,
+      authorization,
+      audit,
+      requestId: correlationId,
+      ...clock,
+    });
+
   const services = (correlationId: string): RuntimeServices => {
     const approvals = createApprovalService({
       repository: stores.approvals,
@@ -115,15 +133,7 @@ export function createWorkerRuntime(options: WorkerRuntimeOptions): {
       ...clock,
     });
     return {
-      executions: createExecutionService({
-        repository: stores.executions,
-        organizations: stores.tenancy,
-        assignments: specialists.assignments,
-        authorization,
-        audit,
-        requestId: correlationId,
-        ...clock,
-      }),
+      executions: executionsFor(correlationId),
       gate: createToolGate({
         executions: stores.executions,
         organizations: stores.tenancy,
@@ -158,7 +168,33 @@ export function createWorkerRuntime(options: WorkerRuntimeOptions): {
   };
 
   const jobs = jobsFor();
-  const runtime = createRuntime({
+  // The plan conductor (ADR-0070) starts a plan's next steps through this same runtime, as the
+  // runtime of the person the plan runs for: their delegated start, then the step's first node.
+  const plans = options.plans;
+  const onEnded: ExecutionEndHook | undefined =
+    plans === undefined
+      ? undefined
+      : {
+          async ended(tenant, execution) {
+            const step = planStepOf(execution);
+            if (step === undefined) return;
+            const executions = executionsFor(execution.id);
+            await createPlanConductor({
+              plans,
+              executions,
+              starter: {
+                async start(runtimeTenant, executionId) {
+                  await executions.runtimeStart(runtimeTenant, executionId);
+                  await runtime.kickoff(runtimeTenant, executionId);
+                },
+              },
+              requestId: execution.id,
+              ...clock,
+              ...(logger === undefined ? {} : { logger: logger.child({ component: 'plans' }) }),
+            }).advance(tenant, step.planId);
+          },
+        };
+  const runtime: Runtime = createRuntime({
     jobs,
     services,
     ...(options.work === undefined ? {} : { work: options.work }),
@@ -166,6 +202,7 @@ export function createWorkerRuntime(options: WorkerRuntimeOptions): {
     ...(options.dispatcher === undefined ? {} : { dispatcher: options.dispatcher }),
     ...(options.outputs === undefined ? {} : { outputs: options.outputs }),
     ...(options.onStopped === undefined ? {} : { onStopped: options.onStopped }),
+    ...(onEnded === undefined ? {} : { onEnded }),
     ...log,
   });
   return Object.freeze({ jobs, runtime });

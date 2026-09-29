@@ -153,6 +153,8 @@ function services(projectId: string) {
     activity: new FirestoreAuditStore(firestore),
     credits: new FirestoreCreditStore(firestore),
     plans: new FirestorePlanRepository(firestore),
+    // Approving a plan starts it (ADR-0070): its steps are queued through the same runtime.
+    planRuntime: agentTurns,
     workflows: new FirestoreWorkflowRepository(firestore),
     audit,
     agentTurns,

@@ -17,7 +17,8 @@ export type PlanningErrorCode =
   | 'specialist_not_eligible'
   | 'delegation_conflict'
   | 'delegation_in_progress'
-  | 'delegation_failed';
+  | 'delegation_failed'
+  | 'plan_not_runnable';
 
 export class PlanningError extends Error {
   override readonly name = 'PlanningError';

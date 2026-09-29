@@ -109,6 +109,7 @@ import { isRuntimeError } from './errors.js';
 import type {
   AgentOutputSink,
   AgentWork,
+  ExecutionEndHook,
   ExecutionStopHook,
   NodeWorkSource,
   VerificationSource,
@@ -360,6 +361,7 @@ interface WorldOptions {
   readonly verifier?: VerificationSource | 'none';
   readonly outputs?: AgentOutputSink;
   readonly onStopped?: ExecutionStopHook;
+  readonly onEnded?: ExecutionEndHook;
 }
 
 describe.each(STORES)('runtime advance() with storage in %s', (storage, createStores) => {
@@ -530,6 +532,7 @@ describe.each(STORES)('runtime advance() with storage in %s', (storage, createSt
       dispatcher: { dispatch: async (id) => void dispatched.push(id) },
       ...(options.outputs === undefined ? {} : { outputs: options.outputs }),
       ...(options.onStopped === undefined ? {} : { onStopped: options.onStopped }),
+      ...(options.onEnded === undefined ? {} : { onEnded: options.onEnded }),
     });
 
     const tenantA = await resolveTenant(as(ALICE), orgA, stores.tenancy);
@@ -1419,6 +1422,29 @@ describe.each(STORES)('runtime advance() with storage in %s', (storage, createSt
     expect(result).toEqual({ outcome: 'failed', code: 'credits_not_configured' });
     expect(stops).toEqual([`${execution.id}:credits_not_configured`]);
     expect((await w.get(execution.id)).status).toBe('failed');
+  });
+
+  it('39. tells the end hook once an execution completed or failed, stored first (WF-1)', async () => {
+    const ends: string[] = [];
+    const onEnded: ExecutionEndHook = {
+      ended: async (_tenant, execution, status) => {
+        ends.push(`${execution.id}:${status}:${execution.status}`);
+        throw new Error('hook down');
+      },
+    };
+    const w = await world({ onEnded });
+    const done = await w.started([{ id: 'n0', tool: 'lookup' }]);
+    const result = await w.runtime.advance((await firstClaim(w, done)).lease);
+    expect(result).toMatchObject({ outcome: 'completed' });
+    // The hook sees the stored end, and its failure changes nothing.
+    expect(ends).toEqual([`${done.id}:completed:completed`]);
+    expect((await w.get(done.id)).status).toBe('completed');
+
+    const broke = await world({ credits: 'none', onEnded });
+    const failed = await broke.started([{ id: 'n0' }]);
+    await broke.runtime.advance((await firstClaim(broke, failed)).lease);
+    expect(ends.at(-1)).toBe(`${failed.id}:failed:failed`);
+    expect((await broke.get(failed.id)).status).toBe('failed');
   });
 
   it('refuses a job error that is not a known refusal, and keeps runtime errors typed', async () => {

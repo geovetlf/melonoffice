@@ -383,6 +383,7 @@ export function setupApp(
     followUpScheduler,
     forecasting,
     toolEnvironment = 'dev',
+    runPlans = false,
   }: {
     readonly sending?: boolean;
     readonly webOrigins?: readonly string[];
@@ -393,6 +394,8 @@ export function setupApp(
     readonly forecasting?: AppOptions['forecasting'];
     /** Where a person's business tools run (TL-1); `null` leaves it unset (fails closed). */
     readonly toolEnvironment?: 'dev' | 'staging' | 'prod' | null;
+    /** Approving a plan starts it (WF-1): its steps are queued with the recording kickoff. */
+    readonly runPlans?: boolean;
   } = {},
 ) {
   const lines: string[] = [];
@@ -445,6 +448,7 @@ export function setupApp(
     approvals: stores.approvals,
     credits,
     plans: stores.plans,
+    ...(runPlans ? { planRuntime: kickoff } : {}),
     workflows: stores.workflows,
     audit: stores.audit,
     conversations: {

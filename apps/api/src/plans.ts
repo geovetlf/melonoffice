@@ -1,22 +1,43 @@
+import { parseAgentAnswer } from '@melonoffice/agents';
 import type { Plan, PlanStep, PlanVersion } from '@melonoffice/domain';
-import { isPlanningError, type PlanService } from '@melonoffice/planning';
+import type { AgentOutputStore, ExecutionService } from '@melonoffice/execution';
+import {
+  isPlanningError,
+  PlanningError,
+  unrunnableStepOf,
+  type PlanConductor,
+  type PlanService,
+} from '@melonoffice/planning';
 import { withCorrelation } from '@melonoffice/observability';
 import type { Context, Hono } from 'hono';
 import type { AuthEnv } from './auth.js';
 import { withPermission, type AuthorizationDependencies } from './authorization.js';
 
 /**
- * Plan routes (ADR-0028). Plans are made by the planner or a workflow on the server, never by a
- * client: there is no route that creates, runs or delegates a plan. A user may read plans
+ * Plan routes (ADR-0028, ADR-0070). Plans are made by the planner or a workflow on the server,
+ * never by a client: there is no route that creates or delegates a plan by itself. Approving one
+ * is what starts it, when the plan conductor is configured. A user may read plans
  * (`plan.read`) and approve or reject one exact version (`approval.approve`, acting directly,
  * never through GIA). The decision body carries only the version and digest the user saw; any
  * other field is refused. Another organization's plan answers exactly like a missing one.
  */
 export function registerPlanRoutes(
   app: Hono<AuthEnv>,
-  dependencies: AuthorizationDependencies & { readonly plans: PlanService },
+  dependencies: AuthorizationDependencies & {
+    readonly plans: PlanService;
+    /**
+     * Runs an approved plan (WF-1, ADR-0070): approving starts it. Absent: an approval is
+     * recorded and nothing runs, exactly as before.
+     */
+    readonly conductor?: Pick<PlanConductor, 'run'>;
+    /** Reads each step's execution and answer, for `GET plans/:id/steps`. */
+    readonly steps?: {
+      readonly executions: Pick<ExecutionService, 'get'>;
+      readonly outputs?: Pick<AgentOutputStore, 'find'>;
+    };
+  },
 ): void {
-  const { plans } = dependencies;
+  const { plans, conductor, steps } = dependencies;
   const base = '/v1/organizations/:organizationId/plans';
 
   app.get(
@@ -37,6 +58,43 @@ export function registerPlanRoutes(
     ),
   );
 
+  // Each specialist step, its execution's state and, once it completed, its agent's answer.
+  if (steps !== undefined) {
+    app.get(
+      `${base}/:planId/steps`,
+      withPermission('plan.read', dependencies, async (c, tenant) =>
+        answer(c, async () => {
+          const plan = await plans.get(tenant, c.req.param('planId') ?? '');
+          const version = await plans.getVersion(tenant, plan.id, plan.version);
+          const out = [];
+          for (const step of version.steps) {
+            if (step.kind !== 'specialist') continue;
+            const executionId = plan.delegations.find((d) => d.stepId === step.id)?.executionId;
+            const execution =
+              executionId === undefined
+                ? undefined
+                : await steps.executions.get(tenant, executionId);
+            const record =
+              execution?.status === 'completed' && steps.outputs !== undefined
+                ? await steps.outputs.find(tenant, execution.id, step.id)
+                : undefined;
+            const answered = record === undefined ? undefined : parseAgentAnswer(record.output);
+            out.push({
+              stepId: step.id,
+              label: step.label,
+              executionId: execution?.id ?? null,
+              status: execution?.status ?? null,
+              failure: execution?.failure?.code ?? null,
+              answer: answered?.answer ?? null,
+              missing: answered === undefined ? [] : [...answered.missing],
+            });
+          }
+          return { planId: plan.id, status: plan.status, steps: out };
+        }),
+      ),
+    );
+  }
+
   for (const [action, decide] of [
     ['approve', plans.approve],
     ['reject', plans.reject],
@@ -47,9 +105,22 @@ export function registerPlanRoutes(
         const seen = await decisionOf(c);
         if (seen === undefined) return c.json({ error: 'invalid_request' }, 400);
         return answer(c, async () => {
-          const plan = await decide(tenant, c.req.param('planId') ?? '', seen);
-          withCorrelation(c.get('logger'), { planId: plan.id }).info(`plan ${action}`);
-          return toPlanView(plan);
+          const planId = c.req.param('planId') ?? '';
+          // Approving starts the plan: one that cannot run whole is refused before the decision,
+          // so an approval never covers a plan that would stop halfway (ADR-0070).
+          if (action === 'approve' && conductor !== undefined) {
+            const current = await plans.get(tenant, planId);
+            const version = await plans.getVersion(tenant, current.id, current.version);
+            const unrunnable = unrunnableStepOf(version);
+            if (unrunnable !== undefined) throw new PlanningError('plan_not_runnable', unrunnable);
+          }
+          const decided = await decide(tenant, planId, seen);
+          const log = withCorrelation(c.get('logger'), { planId: decided.id });
+          log.info(`plan ${action}`);
+          if (decided.status !== 'approved' || conductor === undefined) return toPlanView(decided);
+          const running = await conductor.run(tenant, decided.id);
+          log.info('plan running');
+          return toPlanView(running);
         });
       }),
     );
@@ -81,6 +152,11 @@ const STATUS = {
   plan_version_mismatch: 409,
   plan_concurrency_conflict: 409,
   invalid_plan_transition: 409,
+  plan_not_runnable: 409,
+  specialist_not_eligible: 409,
+  delegation_failed: 409,
+  delegation_conflict: 409,
+  execution_not_plannable: 409,
 } as const;
 
 async function answer(c: Context<AuthEnv>, work: () => Promise<unknown>): Promise<Response> {

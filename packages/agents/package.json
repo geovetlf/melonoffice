@@ -23,6 +23,7 @@
     "@melonoffice/brain": "workspace:*",
     "@melonoffice/domain": "workspace:*",
     "@melonoffice/execution": "workspace:*",
+    "@melonoffice/planning": "workspace:*",
     "@melonoffice/rbac": "workspace:*",
     "@melonoffice/specialists": "workspace:*",
     "@melonoffice/tenancy": "workspace:*"

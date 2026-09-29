@@ -205,19 +205,29 @@ describe('worker architecture', () => {
       expect(dependency.startsWith('@melonoffice/') || allowed.includes(dependency)).toBe(true);
     }
     // Credits are here only for the AI Gateway's charge per model call (CV-6B, ADR-0043).
-    for (const forbidden of [
-      '@melonoffice/planning',
-      '@melonoffice/workflows',
-      '@melonoffice/billing',
-    ]) {
+    for (const forbidden of ['@melonoffice/workflows', '@melonoffice/billing']) {
       expect(Object.keys(manifest.dependencies)).not.toContain(forbidden);
     }
+    // The worker never plans: from planning it takes only the plan conductor, which starts the
+    // steps of a plan a person approved and closes it (ADR-0070). No planner, validator,
+    // delegation or plan decision is reachable from its code.
+    const PLAN_RUNS = ['PlanRepository', 'createPlanConductor', 'planStepOf'];
     for (const file of sources) {
       // Providers are reached only through their @melonoffice adapter packages, never an SDK.
       expect(text(file)).not.toMatch(
         /from '[^']*(openai|anthropic|@google\/genai|generative-ai|vertexai|elevenlabs|@google-cloud\/tasks)[^']*'/i,
       );
-      expect(text(file)).not.toMatch(/from '@melonoffice\/(planning|workflows)'/);
+      expect(text(file)).not.toMatch(/from '@melonoffice\/workflows'/);
+      for (const [, names] of text(file).matchAll(
+        /import\s*(?:type\s*)?\{([^}]*)\}\s*from '@melonoffice\/planning'/g,
+      )) {
+        const imported = (names ?? '')
+          .split(',')
+          .map((n) => n.replace(/^\s*type\s+/, '').trim())
+          .filter((n) => n.length > 0);
+        for (const name of imported) expect(PLAN_RUNS).toContain(name);
+      }
+      expect(text(file)).not.toMatch(/import \* as \w+ from '@melonoffice\/planning'/);
     }
   });
 

@@ -34,6 +34,7 @@ import {
   FirestoreForecastRepository,
   FirestoreJobRepository,
   FirestoreKnowledgeRepository,
+  FirestorePlanRepository,
   FirestoreSpecialistRepository,
   FirestoreTenancyStore,
 } from '@melonoffice/firestore';
@@ -127,6 +128,7 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
     logger: logger.child({ component: 'conversation-agents' }),
   });
   // Agent tasks (ADR-0063): the same runtime runs them, with Company Brain as their context.
+  const plans = new FirestorePlanRepository(firestore);
   const routed = routeAgentWork(
     agents,
     createAgentTaskParts({
@@ -136,6 +138,7 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
         tasks: new FirestoreAgentTaskRepository(firestore),
         knowledge: new FirestoreKnowledgeRepository(firestore),
         outputs: agentOutputs,
+        plans,
       },
       logger: logger.child({ component: 'agent-tasks' }),
     }),
@@ -182,6 +185,7 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
     verifier: routed.verifier,
     outputs: agents.outputs,
     onStopped: routed.onStopped,
+    plans,
     dispatcher: createCloudTasksDispatcher({
       queue: runtime.queue,
       targetUrl: `${runtime.workerUrl}${RUN_JOB_PATH}`,

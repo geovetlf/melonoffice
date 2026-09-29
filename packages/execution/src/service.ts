@@ -67,6 +67,19 @@ export interface ExecutionService {
    */
   runtimeChangeNode(tenant: TenantContext, id: string, change: NodeChange): Promise<Execution>;
   /**
+   * The plan conductor moves a planning execution (WF-1, ADR-0070): only a `runtime` context,
+   * only a `mode: plan` execution, whose graph mirrors the child executions its plan delegated.
+   * The model rules are the same as for any execution (no `verifying` with unfinished nodes, no
+   * `completed` without passing evidence), and it never cancels.
+   */
+  runtimePlanChangeStatus(
+    tenant: TenantContext,
+    id: string,
+    change: StatusChange,
+  ): Promise<Execution>;
+  /** One node of a planning execution, by the plan conductor, audited as any node change. */
+  runtimePlanChangeNode(tenant: TenantContext, id: string, change: NodeChange): Promise<Execution>;
+  /**
    * A user's start (ADR-0029): `pending → running`. Only a user acting directly, with
    * `execution.start`; GIA, the planner, delegation and the runtime never start anything. A
    * second start, or a concurrent one, returns the execution already started and changes nothing.
@@ -351,6 +364,71 @@ export function createExecutionService({
     });
   }
 
+  /**
+   * A runtime status change: of work (`plan: false`) or of a planning execution by the plan
+   * conductor (`plan: true`), never the other. The runtime never cancels.
+   */
+  async function runtimeStatus(
+    tenant: TenantContext,
+    id: string,
+    change: StatusChange,
+    plan: boolean,
+  ): Promise<Execution> {
+    requireRuntime(tenant);
+    if (change.to === 'cancelled') {
+      throw new ExecutionError('actor_not_allowed', 'runtime_cannot_cancel');
+    }
+    const organizationId = await organizationOf(tenant);
+    const at = now();
+    return repository.update(organizationId, idOf(id), (current) => {
+      if ((current.mode === 'plan') !== plan) {
+        throw new ExecutionError(
+          'actor_not_allowed',
+          plan ? 'not_plan_execution' : 'plan_execution',
+        );
+      }
+      return statusWrite(tenant, change, at)(current);
+    });
+  }
+
+  /** A runtime node change, audited in the same write, with the same split as `runtimeStatus`. */
+  async function runtimeNode(
+    tenant: TenantContext,
+    id: string,
+    change: NodeChange,
+    plan: boolean,
+  ): Promise<Execution> {
+    requireRuntime(tenant);
+    const organizationId = await organizationOf(tenant);
+    const at = now();
+    return repository.update(organizationId, idOf(id), (current) => {
+      if ((current.mode === 'plan') !== plan) {
+        throw new ExecutionError(
+          'actor_not_allowed',
+          plan ? 'not_plan_execution' : 'plan_execution',
+        );
+      }
+      const next = applyNodeChange(current, change, at.toISOString() as IsoTimestamp);
+      const reason = change.to === 'failed' ? change.error?.code : undefined;
+      return {
+        execution: next,
+        events: [
+          event(
+            tenant,
+            next,
+            {
+              action: 'execution.node_changed',
+              nodeId: change.nodeId,
+              transition: { from: change.from, to: change.to },
+              ...(reason === undefined ? {} : { reason }),
+            },
+            at,
+          ),
+        ],
+      };
+    });
+  }
+
   /** A status change and its event, in one write. The model decides whether it is allowed. */
   function statusWrite(tenant: TenantContext, change: StatusChange, at: Date) {
     return (current: Execution) => {
@@ -491,20 +569,11 @@ export function createExecutionService({
       });
     },
 
-    async runtimeChangeStatus(tenant, id, change) {
-      requireRuntime(tenant);
-      if (change.to === 'cancelled') {
-        throw new ExecutionError('actor_not_allowed', 'runtime_cannot_cancel');
-      }
-      const organizationId = await organizationOf(tenant);
-      const at = now();
-      return repository.update(organizationId, idOf(id), (current) => {
-        // The runtime drives work, not plans: a planning execution runs nothing itself.
-        if (current.mode === 'plan')
-          throw new ExecutionError('actor_not_allowed', 'plan_execution');
-        return statusWrite(tenant, change, at)(current);
-      });
-    },
+    // The runtime drives work, not plans: a planning execution runs nothing itself. Its graph is
+    // moved only by the plan conductor, through the two plan methods below.
+    runtimeChangeStatus: (tenant, id, change) => runtimeStatus(tenant, id, change, false),
+
+    runtimePlanChangeStatus: (tenant, id, change) => runtimeStatus(tenant, id, change, true),
 
     // Graph changes are operational detail: they live in the execution itself, not the audit log.
     async addNodes(tenant, id, nodes) {
@@ -516,33 +585,9 @@ export function createExecutionService({
       }));
     },
 
-    async runtimeChangeNode(tenant, id, change) {
-      requireRuntime(tenant);
-      const organizationId = await organizationOf(tenant);
-      const at = now();
-      return repository.update(organizationId, idOf(id), (current) => {
-        if (current.mode === 'plan')
-          throw new ExecutionError('actor_not_allowed', 'plan_execution');
-        const next = applyNodeChange(current, change, at.toISOString() as IsoTimestamp);
-        const reason = change.to === 'failed' ? change.error?.code : undefined;
-        return {
-          execution: next,
-          events: [
-            event(
-              tenant,
-              next,
-              {
-                action: 'execution.node_changed',
-                nodeId: change.nodeId,
-                transition: { from: change.from, to: change.to },
-                ...(reason === undefined ? {} : { reason }),
-              },
-              at,
-            ),
-          ],
-        };
-      });
-    },
+    runtimeChangeNode: (tenant, id, change) => runtimeNode(tenant, id, change, false),
+
+    runtimePlanChangeNode: (tenant, id, change) => runtimeNode(tenant, id, change, true),
 
     start: (tenant, id) => startOne(tenant, id, false),
 

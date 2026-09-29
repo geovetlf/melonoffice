@@ -2,6 +2,8 @@ import {
   createAgentTaskVerifier,
   createAgentTaskWork,
   createBrainContextSource,
+  createPlanStepVerifier,
+  createPlanStepWork,
   taskOf,
   type AgentTaskRepository,
 } from '@melonoffice/agents';
@@ -24,6 +26,7 @@ import {
   type IntegrationEngine,
 } from '@melonoffice/integrations';
 import type { Logger } from '@melonoffice/observability';
+import { planStepOf, type PlanRepository } from '@melonoffice/planning';
 import { createAuthorizationService } from '@melonoffice/rbac';
 import type {
   AgentOutputSink,
@@ -130,12 +133,16 @@ export interface AgentTaskStores {
   readonly tasks: AgentTaskRepository;
   readonly knowledge: KnowledgeRepository;
   readonly outputs: AgentOutputRepository;
+  /** The plans, for the steps of approved plans (WF-1, ADR-0070). */
+  readonly plans?: PlanRepository;
 }
 
 /** What the runtime needs to run agent tasks (ADR-0063): no tool, no stop hook. */
 export interface AgentTaskParts {
   readonly work: NodeWorkSource;
   readonly verifier: VerificationSource;
+  /** The steps of approved plans (ADR-0070): the same prompt and answer as a task. */
+  readonly steps?: { readonly work: NodeWorkSource; readonly verifier: VerificationSource };
 }
 
 /**
@@ -157,45 +164,77 @@ export function createAgentTaskParts(options: {
     ...(logger === undefined ? {} : { logger }),
   });
   const outputs = createAgentOutputStore(stores.outputs, now);
+  const skills = createSkillCatalogue();
+  const context = createBrainContextSource({ brain });
   return Object.freeze({
     work: createAgentTaskWork({
       tasks: stores.tasks,
       specialists: stores.specialists,
-      skills: createSkillCatalogue(),
-      context: createBrainContextSource({ brain }),
+      skills,
+      context,
     }),
     verifier: createAgentTaskVerifier({ outputs }),
+    ...(stores.plans === undefined
+      ? {}
+      : {
+          steps: Object.freeze({
+            work: createPlanStepWork({
+              plans: stores.plans,
+              specialists: stores.specialists,
+              skills,
+              context,
+              outputs,
+            }),
+            verifier: createPlanStepVerifier({ outputs }),
+          }),
+        }),
   });
 }
 
+/** Work nobody configured: nothing is asked of a model, nothing is verified. */
+const NO_WORK: { readonly work: NodeWorkSource; readonly verifier: VerificationSource } =
+  Object.freeze({
+    work: Object.freeze({
+      toolInput: async () => undefined,
+      agentWork: async () => undefined,
+    }),
+    verifier: Object.freeze({ verify: async () => undefined }),
+  });
+
 /**
- * One runtime, two kinds of agent work: an agent task's execution (`taskOf`) goes to the task's
- * pieces, everything else to the conversation agent's, exactly as before (ADR-0063).
+ * One runtime, three kinds of agent work: an agent task's execution (`taskOf`) goes to the task's
+ * pieces (ADR-0063), a step of an approved plan (`planStepOf`) to the plan steps' (ADR-0070), and
+ * everything else to the conversation agent's, exactly as before.
  */
 export function routeAgentWork(
   conversation: ConversationAgentParts,
   tasks: AgentTaskParts,
 ): Pick<ConversationAgentParts, 'work' | 'verifier' | 'onStopped'> {
   const isTask = (execution: Execution) => taskOf(execution) !== undefined;
+  const isStep = (execution: Execution) => planStepOf(execution) !== undefined;
+  const partsOf = (execution: Execution) =>
+    isTask(execution) ? tasks : isStep(execution) ? (tasks.steps ?? NO_WORK) : conversation;
   return Object.freeze({
     work: Object.freeze({
       toolInput: (tenant, execution, node) =>
-        (isTask(execution) ? tasks.work : conversation.work).toolInput(tenant, execution, node),
+        partsOf(execution).work.toolInput(tenant, execution, node),
       agentWork: (tenant, execution, node) =>
-        (isTask(execution) ? tasks.work : conversation.work).agentWork(tenant, execution, node),
+        partsOf(execution).work.agentWork(tenant, execution, node),
       needed: async (tenant, execution, node) => {
-        const source = isTask(execution) ? tasks.work : conversation.work;
+        const source = partsOf(execution).work;
         return source.needed === undefined ? true : source.needed(tenant, execution, node);
       },
     } satisfies NodeWorkSource),
     verifier: Object.freeze({
-      verify: (tenant, execution) =>
-        (isTask(execution) ? tasks.verifier : conversation.verifier).verify(tenant, execution),
+      verify: (tenant, execution) => partsOf(execution).verifier.verify(tenant, execution),
     } satisfies VerificationSource),
     onStopped: Object.freeze({
-      // A task that stops has nobody to hand over to: its failure is on the execution.
+      // A task or a plan step that stops has nobody to hand over to: its failure is on the
+      // execution, and a plan step's reaches its plan through the end hook (ADR-0070).
       stopped: async (tenant, execution, code) => {
-        if (!isTask(execution)) await conversation.onStopped.stopped(tenant, execution, code);
+        if (!isTask(execution) && !isStep(execution)) {
+          await conversation.onStopped.stopped(tenant, execution, code);
+        }
       },
     } satisfies ExecutionStopHook),
   });
