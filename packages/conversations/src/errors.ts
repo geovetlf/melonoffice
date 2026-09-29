@@ -61,6 +61,8 @@ export type ConversationErrorCode =
   | 'follow_up_limit_reached'
   | 'follow_up_not_scheduled'
   | 'follow_up_scheduler_unavailable'
+  /** The tool gate or its follow-up tool is not set up here, or it did not answer (TL-1). */
+  | 'follow_up_tool_unavailable'
   | 'next_action_from_follow_up';
 
 export class ConversationError extends Error {

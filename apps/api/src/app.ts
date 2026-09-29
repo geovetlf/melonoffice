@@ -37,7 +37,9 @@ import {
   createCustomerService,
   createCommercialInsights,
   createFollowUpService,
+  ConversationError,
   type FollowUpScheduler,
+  type FollowUpService,
   type ConversationRepository,
 } from '@melonoffice/conversations';
 import { createCreditService, type CreditStore } from '@melonoffice/credits';
@@ -73,6 +75,8 @@ import {
   createHandoffSummaries,
   createIntegrationRegistry,
   createChannelTemplateService,
+  createFollowUpScheduleExecutor,
+  createGatedFollowUpCreate,
   createMessageSendService,
   type ChannelConnectionRepository,
   type ChannelTemplateRepository,
@@ -220,6 +224,12 @@ export interface AppOptions {
       /** Where this server runs, set explicitly: the tool runs only where its version allows. */
       readonly environment: DeploymentEnvironment;
     };
+    /**
+     * Where this server runs, for a person's business tools (TL-1, ADR-0068): a new follow-up
+     * goes through the tool gate's `follow_up_schedule`. Absent: creating a follow-up answers 503
+     * (`follow_up_tool_unavailable`); there is no path around the gate.
+     */
+    readonly toolEnvironment?: DeploymentEnvironment;
   };
   /**
    * The AI Gateway's configuration (ADR-0027), used today by assisted AI on conversations
@@ -963,11 +973,54 @@ export function createApp({
       // opportunities and history (C3, ADR-0055).
       const { opportunities, customers, followUps } =
         commercial ?? commercialOf(tenancy, conversations.repository);
+      // A new follow-up is a tool call (TL-1, ADR-0068): the same gate as a person's send, with
+      // the follow-up executor. Without the gate's parts or an environment, it fails closed.
+      const toolEnvironment = conversations.toolEnvironment;
+      const scheduleFollowUp: Pick<FollowUpService, 'create'> =
+        toolEnvironment !== undefined &&
+        executions !== undefined &&
+        executionService !== undefined &&
+        specialists !== undefined &&
+        approvals !== undefined
+          ? createGatedFollowUpCreate({
+              followUps,
+              authorization,
+              executions: executionService,
+              gate: createToolGate({
+                executions,
+                organizations: tenancy,
+                specialists,
+                departments: structure.departments,
+                registry: tools,
+                approvals: createApprovalService({
+                  repository: approvals,
+                  organizations: tenancy,
+                  authorization,
+                  audit,
+                }),
+                executors: {
+                  follow_up: createFollowUpScheduleExecutor({
+                    followUps,
+                    organizations: tenancy,
+                  }),
+                },
+                authorization,
+                audit,
+                environment: toolEnvironment,
+                logger: logger.child({ component: 'tool-gate' }),
+              }),
+              logger: logger.child({ component: 'follow-up-tool' }),
+            })
+          : {
+              create: async () => {
+                throw new ConversationError('follow_up_tool_unavailable');
+              },
+            };
       registerFollowUpRoutes(app, {
         store: tenancy,
         authorization,
         audit,
-        followUps,
+        followUps: { ...followUps, create: scheduleFollowUp.create },
         contacts: conversations.repository,
         ...(brain === undefined ? {} : { brain }),
       });

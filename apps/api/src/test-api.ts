@@ -382,6 +382,7 @@ export function setupApp(
     ai,
     followUpScheduler,
     forecasting,
+    toolEnvironment = 'dev',
   }: {
     readonly sending?: boolean;
     readonly webOrigins?: readonly string[];
@@ -390,6 +391,8 @@ export function setupApp(
     readonly followUpScheduler?: FollowUpScheduler | null;
     /** The Forecasting Engine's parts (ADR-0059). Absent: its routes answer 503. */
     readonly forecasting?: AppOptions['forecasting'];
+    /** Where a person's business tools run (TL-1); `null` leaves it unset (fails closed). */
+    readonly toolEnvironment?: 'dev' | 'staging' | 'prod' | null;
   } = {},
 ) {
   const lines: string[] = [];
@@ -452,6 +455,7 @@ export function setupApp(
       agentOutputs,
       engine,
       ...(sending ? { outbound: { environment: 'dev' as const } } : {}),
+      ...(toolEnvironment === null ? {} : { toolEnvironment }),
       ...(scheduler === null ? {} : { followUpScheduler: scheduler }),
     },
     webhooks: engine,

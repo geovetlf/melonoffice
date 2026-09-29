@@ -1,0 +1,213 @@
+import {
+  ConversationError,
+  isConversationError,
+  isFollowUpId,
+  type ConversationErrorCode,
+  type FollowUpService,
+} from '@melonoffice/conversations';
+import type { FollowUp, FollowUpId } from '@melonoffice/domain';
+import { isExecutionError, type ExecutionService } from '@melonoffice/execution';
+import type { Logger } from '@melonoffice/observability';
+import type { AuthorizationService } from '@melonoffice/rbac';
+import {
+  isResolvedTenant,
+  resolveTenant,
+  type TenancyStore,
+  type TenantContext,
+} from '@melonoffice/tenancy';
+import {
+  FOLLOW_UP_SCHEDULE_TOOL,
+  type ToolExecutionContext,
+  type ToolExecutor,
+  type ToolExecutorOutcome,
+} from '@melonoffice/tools';
+import { randomUUID } from 'node:crypto';
+import type { ToolInvoker } from './outbound.js';
+
+/** `follow_up_schedule` version 1: the one a person invokes (TL-1, ADR-0068). */
+export const FOLLOW_UP_SCHEDULE = FOLLOW_UP_SCHEDULE_TOOL.versions[0] as NonNullable<
+  (typeof FOLLOW_UP_SCHEDULE_TOOL.versions)[0]
+>;
+export const SCHEDULE_NODE = 'schedule';
+
+/** The executor's `ConversationError` codes, passed back as the tool's failure code. */
+const CODE = /^[a-z][a-z0-9_]{0,63}$/;
+
+/**
+ * The executor of `follow_up_schedule` (provider `follow_up`). The gate calls it only after its
+ * checks passed. It runs the person's own call only: it resolves their membership again, in the
+ * execution's organization, and calls the follow-up service's `create` as them, so every rule of
+ * the service (contact, opportunity, assignee, time, limits, audit) applies unchanged. The
+ * service is idempotent by `requestKey`: a repeat returns the follow-up it made.
+ */
+export function createFollowUpScheduleExecutor(options: {
+  readonly followUps: Pick<FollowUpService, 'create'>;
+  readonly organizations: Pick<TenancyStore, 'findMembership' | 'findOrganization'>;
+}): ToolExecutor {
+  const { followUps, organizations } = options;
+  return {
+    async execute(context: ToolExecutionContext, input: unknown): Promise<ToolExecutorOutcome> {
+      if (
+        context.toolId !== FOLLOW_UP_SCHEDULE.toolId ||
+        context.toolVersion !== FOLLOW_UP_SCHEDULE.version ||
+        context.actor.via !== 'direct'
+      ) {
+        return { status: 'failure', code: 'tool_not_human_invokable' };
+      }
+      let tenant: TenantContext;
+      try {
+        tenant = await resolveTenant(
+          { actor: 'user', userId: context.actor.userId, emailVerified: true },
+          context.organizationId,
+          organizations as TenancyStore,
+        );
+      } catch {
+        return { status: 'failure', code: 'permission_denied' };
+      }
+      try {
+        const { followUp, created } = await followUps.create(
+          tenant,
+          input as Record<string, unknown>,
+        );
+        return { status: 'success', output: { followUpId: followUp.id, created } };
+      } catch (error) {
+        if (isConversationError(error) && CODE.test(error.code)) {
+          return { status: 'failure', code: error.code };
+        }
+        throw error;
+      }
+    },
+  };
+}
+
+/** Gate refusals that mean the person may not do this at all. */
+const NOT_ALLOWED = new Set([
+  'permission_not_held',
+  'runtime_only',
+  'tool_not_human_invokable',
+  'execution_not_owned',
+]);
+
+export interface GatedFollowUpCreateOptions {
+  readonly followUps: Pick<FollowUpService, 'checkCreate' | 'get'>;
+  readonly authorization: Pick<AuthorizationService, 'authorize'>;
+  readonly executions: Pick<ExecutionService, 'create' | 'start'>;
+  readonly gate: ToolInvoker;
+  readonly logger?: Logger;
+}
+
+/**
+ * A person's new follow-up, through the tool gate (TL-1, ADR-0068). Same input and answer as the
+ * follow-up service's `create`, which the gate's executor runs: the route's contract is unchanged.
+ *
+ * 1. The service checks the request first (`checkCreate`), so a refusal names its field exactly as
+ *    before, and nothing is recorded for a request that cannot run.
+ * 2. One execution per attempt records the call: the gate checks the tool, the person's
+ *    permissions and the environment, runs it and audits `tool.*` and `execution.*`.
+ * 3. The follow-up comes back from the service. Two attempts with the same `requestKey` make one
+ *    follow-up: the service's own idempotency decides, not the execution.
+ */
+export function createGatedFollowUpCreate(
+  options: GatedFollowUpCreateOptions,
+): Pick<FollowUpService, 'create'> {
+  const { followUps, authorization, executions, gate, logger } = options;
+
+  return Object.freeze({
+    async create(tenant: TenantContext, input: Record<string, unknown>) {
+      if (!isResolvedTenant(tenant)) throw new ConversationError('unresolved_tenant');
+      // Everything the call will be checked for, up front: nothing is recorded for a call that
+      // cannot happen. The gate and the execution service check again.
+      for (const permission of ['follow_up.manage', 'tool.execute', 'execution.start']) {
+        if (!authorization.authorize(tenant, permission).allowed) {
+          throw new ConversationError('permission_denied');
+        }
+      }
+      await followUps.checkCreate(tenant, input);
+      // The tool's closed input: an absent value is left out, never sent as null.
+      const toolInput = Object.fromEntries(
+        Object.entries(input).filter(([, value]) => value !== undefined && value !== null),
+      );
+      const requestKey = input.requestKey as string;
+      const execution = await executions.create(tenant, {
+        mode: 'execute',
+        input: { type: 'follow_up_request', id: requestKey },
+        versionSnapshot: {
+          schemaVersion: 1,
+          components: [
+            {
+              kind: 'tool',
+              id: FOLLOW_UP_SCHEDULE.toolId,
+              version: String(FOLLOW_UP_SCHEDULE.version),
+            },
+          ],
+        },
+        nodes: [
+          {
+            id: SCHEDULE_NODE,
+            type: 'tool',
+            label: FOLLOW_UP_SCHEDULE.toolId,
+            input: { type: 'follow_up_request', id: requestKey },
+            tool: { id: FOLLOW_UP_SCHEDULE.toolId, version: FOLLOW_UP_SCHEDULE.version },
+          },
+        ],
+        // One execution per attempt: the follow-up's own key keeps the result one.
+        idempotencyKey: `follow_up:${requestKey}:${randomUUID()}`,
+      });
+      if (execution.status === 'pending') {
+        try {
+          await executions.start(tenant, execution.id);
+        } catch (error) {
+          if (!isExecutionError(error)) throw error;
+          throw new ConversationError('follow_up_tool_unavailable');
+        }
+      }
+      const result = await gate.invoke(tenant, {
+        executionId: execution.id,
+        nodeId: SCHEDULE_NODE,
+        input: toolInput,
+      });
+      if (result.status === 'success') {
+        const { followUpId, created } = result.output as {
+          readonly followUpId: FollowUpId;
+          readonly created: boolean;
+        };
+        if (!isFollowUpId(followUpId)) throw new ConversationError('follow_up_tool_unavailable');
+        const followUp: FollowUp = await followUps.get(tenant, followUpId);
+        return { followUp, created };
+      }
+      const code = result.status === 'failure' || result.status === 'denied' ? result.code : null;
+      logger?.warn('follow_up_tool_refused', {
+        status: result.status,
+        ...(code === null ? {} : { code }),
+        executionId: execution.id,
+      });
+      if (result.status === 'denied' && code !== null && NOT_ALLOWED.has(code)) {
+        throw new ConversationError('permission_denied');
+      }
+      if (result.status === 'denied' && code === 'invalid_input') {
+        throw new ConversationError('invalid_request');
+      }
+      // The service's own refusal, found while it ran (e.g. the contact was archived meanwhile).
+      if (result.status === 'failure' && code !== null && SERVICE_CODES.has(code)) {
+        throw new ConversationError(code as ConversationErrorCode);
+      }
+      throw new ConversationError('follow_up_tool_unavailable');
+    },
+  });
+}
+
+/** The follow-up service's refusals a create can end with, passed through as they are. */
+const SERVICE_CODES = new Set<string>([
+  'permission_denied',
+  'requires_user',
+  'organization_inactive',
+  'invalid_request',
+  'contact_not_found',
+  'opportunity_not_found',
+  'opportunity_closed',
+  'owner_not_member',
+  'duplicate_request',
+  'follow_up_limit_reached',
+  'follow_up_not_scheduled',
+  'follow_up_scheduler_unavailable',
+] satisfies readonly ConversationErrorCode[]);

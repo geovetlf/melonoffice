@@ -1364,13 +1364,17 @@ describe('the only send path is the tool gate (CV-2)', () => {
     expect(source).toContain('sender.send(');
     expect(source).toContain('createToolGate(');
     expect(source).not.toContain('graph.facebook.com');
-    // The agent's handoff (CV-6B, ADR-0043) is internal: it moves the conversation to a person
-    // and never reaches a channel.
+    // The agent's handoff (CV-6B, ADR-0043) and a person's follow-up (TL-1, ADR-0068) are
+    // internal: neither reaches a channel. Only `message_send` has an external provider.
+    const tools = defaultToolRegistry().list();
+    expect(tools.map((t) => t.id)).toEqual([
+      'message_send',
+      'conversation_handoff',
+      'follow_up_schedule',
+    ]);
     expect(
-      defaultToolRegistry()
-        .list()
-        .map((t) => t.id),
-    ).toEqual(['message_send', 'conversation_handoff']);
+      tools.filter((t) => t.versions.some((v) => v.provider.kind === 'external')).map((t) => t.id),
+    ).toEqual(['message_send']);
     // The API's own runtime (kickoff and resume only) has no executor at all.
     expect(source).toContain('executors: {},');
   });
