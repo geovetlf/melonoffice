@@ -17,6 +17,7 @@ import {
   defaultToolRegistry,
   CONVERSATION_HANDOFF_TOOL,
   HANDOFF_REASON_CODES,
+  FOLLOW_UP_SCHEDULE_TOOL,
   MESSAGE_SEND_TOOL,
   TOOL_CATALOGUE,
 } from './registry.js';
@@ -183,9 +184,17 @@ describe('tool registry', () => {
     expect(codeOf(() => createToolRegistry([definition()], [version()]))).toBe('accepted');
   });
 
-  it('ships message_send and conversation_handoff: real tools with executors, none invented', () => {
-    expect(TOOL_CATALOGUE.map((t) => t.id)).toEqual(['message_send', 'conversation_handoff']);
-    expect(defaultToolRegistry().list()).toEqual([MESSAGE_SEND_TOOL, CONVERSATION_HANDOFF_TOOL]);
+  it('ships message_send, conversation_handoff and follow_up_schedule: real tools with executors, none invented', () => {
+    expect(TOOL_CATALOGUE.map((t) => t.id)).toEqual([
+      'message_send',
+      'conversation_handoff',
+      'follow_up_schedule',
+    ]);
+    expect(defaultToolRegistry().list()).toEqual([
+      MESSAGE_SEND_TOOL,
+      CONVERSATION_HANDOFF_TOOL,
+      FOLLOW_UP_SCHEDULE_TOOL,
+    ]);
     const v = defaultToolRegistry().resolve('message_send', 1)?.version;
     expect(v).toMatchObject({
       action: 'send',
@@ -368,5 +377,38 @@ describe('digests and idempotency', () => {
     expect(key).not.toBe(idempotencyKeyOf(e, 'send', 'web_search', 2));
     expect(key).not.toBe(idempotencyKeyOf(e, 'other', 'web_search', 1));
     expect(key).toMatch(/^[0-9a-f]{64}$/);
+  });
+});
+
+describe('follow_up_schedule (TL-1, ADR-0068)', () => {
+  it("is a person's own internal tool: low risk, no credential, never the runtime's", () => {
+    const v = defaultToolRegistry().resolve('follow_up_schedule', 1)?.version;
+    expect(v).toMatchObject({
+      category: 'crm',
+      action: 'schedule',
+      mutating: true,
+      permissions: ['follow_up.manage'],
+      credentials: [],
+      riskLevel: 'low',
+      approvalPolicy: 'auto',
+      retryPolicy: { maxAttempts: 1, backoffMs: 0 },
+      provider: { kind: 'internal', id: 'follow_up' },
+      environments: ['dev'],
+      invocationModes: ['human'],
+    });
+    // Its input is the follow-up's own fields: no organization, person or credential in it.
+    expect(Object.keys((v?.inputSchema as { properties: object }).properties)).toEqual([
+      'requestKey',
+      'contactId',
+      'opportunityId',
+      'type',
+      'title',
+      'description',
+      'date',
+      'time',
+      'assignedTo',
+      'source',
+    ]);
+    expect(defaultToolRegistry().resolve('follow_up_schedule', 2)).toBeUndefined();
   });
 });

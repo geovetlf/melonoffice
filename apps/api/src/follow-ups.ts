@@ -32,6 +32,7 @@ const STATUS: Partial<Record<ConversationErrorCode, ContentfulStatusCode>> = {
   follow_up_limit_reached: 409,
   follow_up_not_scheduled: 503,
   follow_up_scheduler_unavailable: 503,
+  follow_up_tool_unavailable: 503,
 };
 
 const who = (id: UserId | undefined, viewer: UserId) =>

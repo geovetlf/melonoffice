@@ -227,6 +227,12 @@ export interface FollowUpService {
     tenant: TenantContext,
     input: Record<string, unknown>,
   ): Promise<{ readonly followUp: FollowUp; readonly created: boolean }>;
+  /**
+   * Checks a create as `create` would (permission, fields, assignee, time, scheduler), writing
+   * nothing: a caller that must run `create` elsewhere (the tool gate, TL-1) refuses early with
+   * the same code and field.
+   */
+  checkCreate(tenant: TenantContext, input: Record<string, unknown>): Promise<void>;
   /** `follow_up.manage`: title, description, type or assignee, against its `revision`. */
   update(tenant: TenantContext, id: string, input: Record<string, unknown>): Promise<FollowUp>;
   /**
@@ -364,6 +370,55 @@ export function createFollowUpService(options: FollowUpServiceOptions): FollowUp
     const organizationId = await organizationOf(tenant, 'follow_up.manage');
     if (tenant.actor !== 'user') throw new ConversationError('requires_user');
     return organizationId;
+  }
+
+  /** A create's input, checked as `create` checks it, before anything is written. */
+  async function parseCreate(tenant: TenantContext, input: Record<string, unknown>) {
+    const organizationId = await managerOf(tenant);
+    checkKeys(input, CREATE_KEYS);
+    if (typeof input.requestKey !== 'string' || !REQUEST_KEY.test(input.requestKey)) {
+      bad('requestKey');
+    }
+    if (!isContactId(input.contactId)) bad('contactId');
+    if (
+      input.opportunityId !== undefined &&
+      input.opportunityId !== null &&
+      !isUuid(input.opportunityId)
+    ) {
+      bad('opportunityId');
+    }
+    const type = input.type === undefined ? 'follow_up' : typeOf(input.type);
+    const title = titleOf(input.title);
+    const description = input.description === undefined ? null : descriptionOf(input.description);
+    const source: FollowUpSource =
+      input.source === undefined || input.source === 'manual'
+        ? 'manual'
+        : input.source === 'gia'
+          ? 'gia'
+          : bad('source');
+    const chosen =
+      input.assignedTo === undefined || input.assignedTo === null
+        ? undefined
+        : await memberOf(organizationId, input.assignedTo);
+    const { at: scheduled, timeZone } = await instantOf(organizationId, input);
+    if (scheduler === undefined) throw new ConversationError('follow_up_scheduler_unavailable');
+    const id = followUpIdFor(organizationId, input.requestKey as string);
+    const opportunityId =
+      input.opportunityId === undefined || input.opportunityId === null
+        ? undefined
+        : (input.opportunityId as OpportunityId);
+    return {
+      organizationId,
+      type,
+      title,
+      description,
+      source,
+      chosen,
+      scheduled,
+      timeZone,
+      id,
+      opportunityId,
+    };
   }
 
   async function memberOf(organizationId: OrganizationId, value: unknown): Promise<UserId> {
@@ -642,42 +697,25 @@ export function createFollowUpService(options: FollowUpServiceOptions): FollowUp
       return found;
     },
 
+    async checkCreate(tenant, input) {
+      await parseCreate(tenant, input);
+    },
+
     async create(tenant, input) {
-      const organizationId = await managerOf(tenant);
-      checkKeys(input, CREATE_KEYS);
-      if (typeof input.requestKey !== 'string' || !REQUEST_KEY.test(input.requestKey)) {
-        bad('requestKey');
-      }
-      if (!isContactId(input.contactId)) bad('contactId');
-      if (
-        input.opportunityId !== undefined &&
-        input.opportunityId !== null &&
-        !isUuid(input.opportunityId)
-      ) {
-        bad('opportunityId');
-      }
-      const type = input.type === undefined ? 'follow_up' : typeOf(input.type);
-      const title = titleOf(input.title);
-      const description = input.description === undefined ? null : descriptionOf(input.description);
-      const source: FollowUpSource =
-        input.source === undefined || input.source === 'manual'
-          ? 'manual'
-          : input.source === 'gia'
-            ? 'gia'
-            : bad('source');
-      const chosen =
-        input.assignedTo === undefined || input.assignedTo === null
-          ? undefined
-          : await memberOf(organizationId, input.assignedTo);
-      const { at: scheduled, timeZone } = await instantOf(organizationId, input);
-      if (scheduler === undefined) throw new ConversationError('follow_up_scheduler_unavailable');
-      const id = followUpIdFor(organizationId, input.requestKey as string);
+      const {
+        organizationId,
+        type,
+        title,
+        description,
+        source,
+        chosen,
+        scheduled,
+        timeZone,
+        id,
+        opportunityId,
+      } = await parseCreate(tenant, input);
       const at = now();
       const iso = at.toISOString() as IsoTimestamp;
-      const opportunityId =
-        input.opportunityId === undefined || input.opportunityId === null
-          ? undefined
-          : (input.opportunityId as OpportunityId);
       let created = false;
 
       const followUp = await repository.writeFollowUp(

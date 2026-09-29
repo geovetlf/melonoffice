@@ -187,6 +187,8 @@ function services(projectId: string) {
       // A person's replies (ADR-0034) only where the engine and the environment are both
       // configured (DEV, from Terraform); anywhere else sending stays off (fails closed).
       ...(engine === undefined || environment === undefined ? {} : { outbound: { environment } }),
+      // A person's business tools (TL-1, ADR-0068) run where this server's environment is set.
+      ...(environment === undefined ? {} : { toolEnvironment: environment }),
     },
     // Forecasts (ADR-0059): stored in Firestore; a run goes to the worker on the same queue and
     // invoker as jobs. The API never calls the model: it only needs to know it is deployed.

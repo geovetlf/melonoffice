@@ -18,6 +18,7 @@ describe.each(STORES)('follow-ups (C5) with storage in %s', (_name, createStores
     options: {
       readOnly?: boolean;
       scheduler?: FollowUpScheduler | null;
+      toolEnvironment?: 'prod' | null;
     } = {},
   ) {
     const stores: Stores = createStores();
@@ -31,7 +32,12 @@ describe.each(STORES)('follow-ups (C5) with storage in %s', (_name, createStores
       undefined,
       undefined,
       undefined,
-      options.scheduler === undefined ? {} : { followUpScheduler: options.scheduler },
+      {
+        ...(options.scheduler === undefined ? {} : { followUpScheduler: options.scheduler }),
+        ...(options.toolEnvironment === undefined
+          ? {}
+          : { toolEnvironment: options.toolEnvironment }),
+      },
     );
     const alice = (await ctx.register('token-alice')) as UserId;
     await ctx.register('token-bob');
@@ -201,6 +207,57 @@ describe.each(STORES)('follow-ups (C5) with storage in %s', (_name, createStores
     expect((await t.call('token-bob', `${t.base(t.orgB)}/follow-ups`)).body.items).toEqual([]);
   });
 
+  it('schedules through the tool gate: each attempt is one audited tool call, one follow-up (TL-1)', async () => {
+    const t = await setup();
+    const contactId = await t.contact(t.orgA, '+51912121212');
+    const request = t.followUp(contactId, { opportunityId: null, assignedTo: null });
+    const first = await t.send('token-alice', 'POST', `${t.base(t.orgA)}/follow-ups`, request);
+    expect(first).toMatchObject({ status: 201, body: { created: true } });
+    const again = await t.send('token-alice', 'POST', `${t.base(t.orgA)}/follow-ups`, request);
+    expect(again).toMatchObject({ status: 200, body: { id: first.body.id, created: false } });
+    const events = await t.stores.auditReader.query({
+      organizationId: t.orgA,
+      actions: ['tool.execution_requested', 'tool.execution_completed', 'follow_up.created'],
+      from: new Date(Date.now() - 60_000),
+      to: new Date(Date.now() + 60_000),
+      limit: 50,
+    });
+    const completed = events.filter((e) => e.action === 'tool.execution_completed');
+    expect(completed).toHaveLength(2);
+    for (const e of completed) {
+      expect(e).toMatchObject({
+        result: 'success',
+        actor: { type: 'user', userId: t.alice, via: 'direct' },
+        tool: { id: 'follow_up_schedule', version: 1 },
+      });
+    }
+    expect(events.filter((e) => e.action === 'follow_up.created')).toHaveLength(1);
+    // A refusal found before the gate keeps its field, and records no tool call.
+    expect(
+      await t.send('token-alice', 'POST', `${t.base(t.orgA)}/follow-ups`, {
+        ...t.followUp(contactId),
+        date: '2020-01-01',
+      }),
+    ).toMatchObject({ status: 400, body: { error: 'invalid_request', field: 'date_in_past' } });
+    // Another organization's contact is not found, through the same path.
+    const other = await t.contact(t.orgB, '+51913131313', 'token-bob');
+    expect(
+      await t.send('token-alice', 'POST', `${t.base(t.orgA)}/follow-ups`, t.followUp(other)),
+    ).toMatchObject({ status: 404, body: { error: 'contact_not_found' } });
+  });
+
+  it('fails closed where the tool cannot run: no environment, or one its version does not allow', async () => {
+    for (const toolEnvironment of [null, 'prod'] as const) {
+      const t = await setup({ toolEnvironment });
+      const contactId = await t.contact(t.orgA, '+51914141414');
+      expect(
+        await t.send('token-alice', 'POST', `${t.base(t.orgA)}/follow-ups`, t.followUp(contactId)),
+      ).toEqual({ status: 503, body: { error: 'follow_up_tool_unavailable' } });
+      expect((await t.call('token-alice', `${t.base(t.orgA)}/follow-ups`)).body.items).toEqual([]);
+      expect(t.scheduled).toEqual([]);
+    }
+  });
+
   it('refuses changes to a role that may only read them', async () => {
     const t = await setup({ readOnly: true });
     const contactId = await t.contact(t.orgA, '+51933333333');
@@ -282,7 +339,12 @@ describe.each(STORES)('follow-ups (C5) with storage in %s', (_name, createStores
     expect(await service(real).runDue(task)).toMatchObject({ kind: 'already_due' });
 
     const one = await t.call('token-alice', `${t.base(t.orgA)}/follow-ups/${followUp.id}`);
-    expect(one.body).toMatchObject({ status: 'due', when: 'today' });
+    // Half an hour ago may still be yesterday in Lima, just after its midnight.
+    const today = localDateTime(new Date(real), LIMA).date;
+    expect(one.body).toMatchObject({
+      status: 'due',
+      when: at.date === today ? 'today' : 'overdue',
+    });
     const activity = await t.call('token-alice', `${t.base(t.orgA)}/activity?period=today`);
     const items = activity.body.items as { action: string; actor: string; link?: unknown }[];
     expect(items).toContainEqual(

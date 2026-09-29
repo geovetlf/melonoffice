@@ -238,14 +238,76 @@ export const CONVERSATION_HANDOFF_TOOL: ToolDefinition = {
   ],
 };
 
+/** The follow-up types, as the conversations domain lists them (a test keeps the two equal). */
+export const FOLLOW_UP_TYPE_CODES = ['follow_up', 'call', 'message', 'review', 'check_in'] as const;
+
+/**
+ * `follow_up_schedule` (TL-1, ADR-0068): a person schedules a follow-up in their organization,
+ * directly or by confirming what GIA proposed. It wraps the follow-up service's own `create`,
+ * which checks the contact, the opportunity, the assignee and the time, and is idempotent by
+ * `requestKey`: a repeat returns the follow-up it made. It sends nothing outside MelonOffice.
+ * Version 1 is a person's only; the runtime cannot invoke it.
+ */
+export const FOLLOW_UP_SCHEDULE_TOOL: ToolDefinition = {
+  id: 'follow_up_schedule' as ToolDefinition['id'],
+  status: 'active',
+  versions: [
+    {
+      toolId: 'follow_up_schedule' as ToolVersion['toolId'],
+      version: 1,
+      nameKey: 'tools.follow_up_schedule.name' as ToolVersion['nameKey'],
+      descriptionKey: 'tools.follow_up_schedule.description' as ToolVersion['descriptionKey'],
+      category: 'crm',
+      action: 'schedule',
+      mutating: true,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          requestKey: { type: 'string', minLength: 8, maxLength: 128 },
+          contactId: { type: 'string', minLength: 36, maxLength: 36 },
+          opportunityId: { type: 'string', minLength: 36, maxLength: 36 },
+          type: { type: 'string', maxLength: 16, enum: [...FOLLOW_UP_TYPE_CODES] },
+          title: { type: 'string', maxLength: 1_000 },
+          description: { type: 'string', maxLength: 5_000 },
+          date: { type: 'string', maxLength: 10 },
+          time: { type: 'string', maxLength: 5 },
+          assignedTo: { type: 'string', minLength: 36, maxLength: 36 },
+          source: { type: 'string', maxLength: 8, enum: ['manual', 'gia'] },
+        },
+        required: ['requestKey', 'contactId', 'title', 'date', 'time'],
+      },
+      outputSchema: {
+        type: 'object',
+        properties: {
+          followUpId: { type: 'string', minLength: 36, maxLength: 36 },
+          created: { type: 'boolean' },
+        },
+        required: ['followUpId', 'created'],
+      },
+      permissions: ['follow_up.manage'],
+      credentials: [],
+      riskLevel: 'low',
+      approvalPolicy: 'auto',
+      approvalTtlSeconds: 600,
+      timeoutMs: 15_000,
+      // Never retried here: the person's own retry repeats it, and `requestKey` keeps it one.
+      retryPolicy: { maxAttempts: 1, backoffMs: 0 },
+      provider: { kind: 'internal', id: 'follow_up' },
+      environments: ['dev'],
+      invocationModes: ['human'],
+    },
+  ],
+};
+
 /**
  * MelonOffice's tool catalogue. Only what exists, with its executor: tools are never invented.
- * Today, `message_send` (CV-2: a person's send; CV-6B: an agent's reply) and
- * `conversation_handoff` (CV-6B).
+ * Today, `message_send` (CV-2: a person's send; CV-6B: an agent's reply),
+ * `conversation_handoff` (CV-6B) and `follow_up_schedule` (TL-1).
  */
 export const TOOL_CATALOGUE: readonly ToolDefinition[] = Object.freeze([
   MESSAGE_SEND_TOOL,
   CONVERSATION_HANDOFF_TOOL,
+  FOLLOW_UP_SCHEDULE_TOOL,
 ]);
 
 export const defaultToolRegistry = (): ToolRegistry => createToolRegistry(TOOL_CATALOGUE);
