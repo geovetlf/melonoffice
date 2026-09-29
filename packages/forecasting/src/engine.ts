@@ -297,7 +297,7 @@ export function createForecastEngine(options: ForecastEngineOptions): ForecastEn
       throw new ForecastError('invalid_request', 'horizon');
     }
     if (horizon < 1 || horizon > limits.maxHorizon[frequency]) {
-      throw new ForecastError('horizon_out_of_range');
+      throw new ForecastError('horizon_out_of_range', undefined, limits.maxHorizon[frequency]);
     }
     const covariates = checkCovariates(input.covariates, limits);
     if (input.entity !== undefined && typeof input.entity !== 'string') {

@@ -133,6 +133,8 @@ async function world(
       readonly activeDays?: number;
       /** The company context the engine reads: absent profile, or no currency. */
       readonly business?: 'none' | 'no_currency';
+      /** The recorded history has the same day twice: it exists but cannot be read as a series. */
+      readonly duplicated?: boolean;
     };
   } = {},
 ) {
@@ -187,10 +189,14 @@ async function world(
               read: async (request) => {
                 const days = options.forecast?.days ?? 0;
                 const active = options.forecast?.activeDays ?? days;
-                return Array.from({ length: days }, (_, i) => ({
+                const points = Array.from({ length: days }, (_, i) => ({
                   timestamp: addPeriods(request.end, i - days + 1, 'day'),
                   value: i >= days - active ? 100 : 0,
                 }));
+                const first = points[0];
+                return options.forecast?.duplicated === true && first !== undefined
+                  ? [first, ...points]
+                  : points;
               },
             },
           },
@@ -1005,6 +1011,7 @@ describe('GIA and the Forecasting Engine (ADR-0059)', () => {
       need: null,
       shortOf: null,
       reason: null,
+      maxHorizon: null,
     });
     const block = forecastOf(textOf(w.ai.calls[0])) as string;
     expect(block).toContain('no records of orders');
@@ -1079,6 +1086,51 @@ describe('GIA and the Forecasting Engine (ADR-0059)', () => {
       expect(block).toContain(words);
       expect(block).toContain('Company memory, Company information');
     }
+  });
+
+  it('beyond the longest horizon, says how far was asked and the longest allowed, and charges nothing', async () => {
+    for (const [message, frequency, horizon, max] of [
+      ['Proyecta las ventas de los próximos 2 años', 'month', 24, 12],
+      ['Proyecta nuestras ventas de los próximos 120 días', 'day', 120, 90],
+    ] as const) {
+      const w = await world({ forecast: { days: 90 } });
+      const answer = await w.gia.ask(w.alice, ask(message));
+      expect(answer.forecast).toMatchObject({
+        status: 'unavailable',
+        reason: 'horizon_out_of_range',
+        frequency,
+        horizon,
+        maxHorizon: max,
+      });
+      expect(w.forecastRuns).toHaveLength(0);
+      expect(w.charges).toHaveLength(0);
+      const block = forecastOf(textOf(w.ai.calls[0])) as string;
+      expect(block).toContain(`The person asked for ${horizon} ${frequency}s ahead.`);
+      expect(block).toContain(
+        `The longest projection allowed per ${frequency} is ${max} ${frequency}s.`,
+      );
+      expect(block).not.toContain('PROJECTION');
+    }
+  });
+
+  it('with history recorded but unreadable, names the problem and never says history is missing', async () => {
+    const w = await world({ forecast: { days: 90, duplicated: true } });
+    const answer = await w.gia.ask(w.alice, ask('¿Cuánto venderemos el próximo mes?'));
+    expect(answer.forecast).toMatchObject({
+      status: 'invalid_data',
+      metric: 'sales.won_value',
+      frequency: 'day',
+      have: null,
+      need: null,
+    });
+    expect(w.forecastRuns).toHaveLength(0);
+    expect(w.charges).toHaveLength(0);
+    const block = forecastOf(textOf(w.ai.calls[0])) as string;
+    expect(block).toContain('status: invalid_data');
+    expect(block).toContain('History is NOT missing.');
+    expect(block).toContain('problem: the same period was recorded twice');
+    expect(block).not.toMatch(/insufficient_data|history needed|history recorded/);
+    expect(textOf(w.ai.calls[0])).toContain('never say history is missing');
   });
 
   it('respects permissions: without forecast.run or opportunity.read the engine is not asked', async () => {

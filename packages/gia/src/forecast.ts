@@ -38,9 +38,26 @@ export type GiaForecastContext =
       readonly shortOf: InsufficientCount | null;
       readonly problem: string;
     }
+  | {
+      /**
+       * The history exists but cannot be read as a series (a gap, a duplicate, a value that is
+       * not a number): nothing is missing, so it is never worded as too little history.
+       */
+      readonly kind: 'invalid_data';
+      readonly metric: string;
+      readonly frequency: ForecastFrequency;
+      readonly problem: string;
+    }
   | { readonly kind: 'unsupported'; readonly subject: string }
   | { readonly kind: 'not_allowed' }
-  | { readonly kind: 'unavailable'; readonly reason: string };
+  | {
+      readonly kind: 'unavailable';
+      readonly reason: string;
+      /** For `horizon_out_of_range`: what was asked and the longest the engine allows. */
+      readonly frequency?: ForecastFrequency;
+      readonly horizon?: number;
+      readonly maxHorizon?: number;
+    };
 
 /**
  * What the answer carries about the forecast, for the app to show beside it: never the history
@@ -49,7 +66,12 @@ export type GiaForecastContext =
 export interface GiaForecastSummary {
   readonly id: string | null;
   readonly status:
-    Forecast['status'] | 'insufficient_data' | 'unsupported' | 'not_allowed' | 'unavailable';
+    | Forecast['status']
+    | 'insufficient_data'
+    | 'invalid_data'
+    | 'unsupported'
+    | 'not_allowed'
+    | 'unavailable';
   readonly metric: string | null;
   readonly frequency: ForecastFrequency | null;
   readonly horizon: number | null;
@@ -63,6 +85,8 @@ export interface GiaForecastSummary {
   readonly shortOf: InsufficientCount | null;
   /** For `unavailable`, why, as a code (`business_profile_missing`, `currency_missing`, …). */
   readonly reason: string | null;
+  /** For `horizon_out_of_range`, the longest horizon the engine allows for `frequency`. */
+  readonly maxHorizon: number | null;
 }
 
 /** Engine refusals the person sees as their own reason; any other is "not available now". */
@@ -70,6 +94,7 @@ const UNAVAILABLE: Readonly<Record<string, string>> = {
   forecast_credits_insufficient: 'credits_insufficient',
   forecast_limit_reached: 'busy',
   horizon_out_of_range: 'horizon_out_of_range',
+  frequency_not_supported: 'frequency_not_supported',
 };
 
 /**
@@ -112,6 +137,17 @@ export async function readForecast(
       wait: true,
     });
     if (!('forecast' in outcome)) {
+      if (outcome.status === 'invalid_data') {
+        return {
+          intent,
+          context: {
+            kind: 'invalid_data',
+            metric: outcome.metric,
+            frequency: outcome.frequency,
+            problem: outcome.problem,
+          },
+        };
+      }
       return {
         intent,
         context: {
@@ -133,13 +169,20 @@ export async function readForecast(
       error.code === 'invalid_request' && error.detail !== undefined
         ? MISSING_CONTEXT[error.detail]
         : undefined;
-    return {
-      intent,
-      context: {
-        kind: 'unavailable',
-        reason: missing ?? UNAVAILABLE[error.code] ?? 'not_available',
-      },
-    };
+    const reason = missing ?? UNAVAILABLE[error.code] ?? 'not_available';
+    if (reason === 'horizon_out_of_range') {
+      return {
+        intent,
+        context: {
+          kind: 'unavailable',
+          reason,
+          frequency: intent.frequency,
+          horizon: intent.horizon,
+          ...(error.limit === undefined ? {} : { maxHorizon: error.limit }),
+        },
+      };
+    }
+    return { intent, context: { kind: 'unavailable', reason } };
   }
 }
 
@@ -157,20 +200,25 @@ export function forecastSummaryOf(context: GiaForecastContext): GiaForecastSumma
       need: null,
       shortOf: null,
       reason: null,
+      maxHorizon: null,
     });
   }
   const short = context.kind === 'insufficient_data' ? context : undefined;
+  const series =
+    context.kind === 'insufficient_data' || context.kind === 'invalid_data' ? context : undefined;
+  const unavailable = context.kind === 'unavailable' ? context : undefined;
   return Object.freeze({
     id: null,
     status: context.kind,
-    metric: context.kind === 'insufficient_data' ? context.metric : null,
-    frequency: context.kind === 'insufficient_data' ? context.frequency : null,
-    horizon: null,
+    metric: series?.metric ?? null,
+    frequency: series?.frequency ?? unavailable?.frequency ?? null,
+    horizon: unavailable?.horizon ?? null,
     model: null,
     have: short?.have ?? null,
     need: short?.need ?? null,
     shortOf: short?.shortOf ?? null,
-    reason: context.kind === 'unavailable' ? context.reason : null,
+    reason: unavailable?.reason ?? null,
+    maxHorizon: unavailable?.maxHorizon ?? null,
   });
 }
 
@@ -199,6 +247,16 @@ const UNAVAILABLE_WORDS: Readonly<Record<string, string>> = {
     "The company's currency is not recorded, and projecting money needs it. It is set in Company memory, Company information.",
 };
 
+/** What is wrong with a recorded history that exists but cannot be projected (`invalid_data`). */
+const PROBLEM_WORDS: Readonly<Record<string, string>> = {
+  invalid_series: 'the recorded history could not be read as a series',
+  invalid_timestamp: 'a recorded date could not be read',
+  duplicate_timestamp: 'the same period was recorded twice',
+  irregular_frequency: 'the recorded periods are not evenly spaced',
+  invalid_value: 'a recorded value is not a valid number',
+  missing_values: 'some periods have no value',
+};
+
 const SUBJECT_WORDS: Readonly<Record<string, string>> = {
   orders: 'orders',
   products: 'products',
@@ -217,6 +275,22 @@ function number(value: number, locale: GiaLocale, currency: string | null): stri
   }
 }
 
+/** How far the person asked and the longest projection allowed, as the engine counted them. */
+function horizonWords(context: {
+  readonly frequency?: ForecastFrequency;
+  readonly horizon?: number;
+  readonly maxHorizon?: number;
+}): string | undefined {
+  const { frequency, horizon, maxHorizon } = context;
+  if (frequency === undefined || horizon === undefined) return undefined;
+  return [
+    `The person asked for ${horizon} ${frequency}s ahead.`,
+    maxHorizon === undefined
+      ? 'That is beyond the longest projection allowed.'
+      : `The longest projection allowed per ${frequency} is ${maxHorizon} ${frequency}s.`,
+  ].join(' ');
+}
+
 const sum = (values: readonly number[]) => values.reduce((a, b) => a + b, 0);
 
 /**
@@ -231,9 +305,18 @@ export function forecastBlock(context: GiaForecastContext, locale: GiaLocale): s
     case 'unsupported':
       return `status: unsupported. MelonOffice has no records of ${SUBJECT_WORDS[context.subject] ?? context.subject} yet, so nothing about them can be projected. No other metric stands in for them.`;
     case 'unavailable': {
-      const words = UNAVAILABLE_WORDS[context.reason];
+      const words =
+        context.reason === 'horizon_out_of_range'
+          ? horizonWords(context)
+          : UNAVAILABLE_WORDS[context.reason];
       return `status: unavailable (${context.reason}). No projection now.${words === undefined ? '' : ` ${words}`}`;
     }
+    case 'invalid_data':
+      return [
+        'status: invalid_data. The history of this metric is recorded, but it cannot be projected as it is; no projection was made and the forecasting model was not run. History is NOT missing.',
+        `metric: ${METRIC_WORDS[context.metric] ?? context.metric}, per ${context.frequency}`,
+        `problem: ${PROBLEM_WORDS[context.problem] ?? context.problem}`,
+      ].join('\n');
     case 'insufficient_data': {
       const unit = context.frequency;
       const counts =
@@ -320,6 +403,7 @@ export function forecastRules(locale: GiaLocale): readonly string[] {
     `If <forecast> says not_allowed, answer exactly "${NO_PERMISSION[locale]}" and nothing about it.`,
     'If <forecast> says unsupported, say MelonOffice has no records of that yet, so it cannot be projected, and what they could register instead. Never answer with another metric.',
     'If <forecast> says insufficient_data, say which history is missing: name the metric and its unit (days, weeks or months), give the recorded and the needed amounts exactly as <forecast> states them, and say where that history comes from. Give no figure, and never say more is missing than <forecast> says.',
-    'If <forecast> says the projection is still being calculated, say so and that they can ask again in a moment. If it says unavailable, say projections are not available right now (credits_insufficient: not enough credits; busy: other projections are running; business_profile_missing or currency_missing: say exactly what <forecast> says is missing and where it is filled in).',
+    'If <forecast> says invalid_data, say the history is recorded but has a problem that stops the projection, name the problem as <forecast> states it, and never say history is missing.',
+    'If <forecast> says the projection is still being calculated, say so and that they can ask again in a moment. If it says unavailable, say projections are not available right now (credits_insufficient: not enough credits; busy: other projections are running; business_profile_missing or currency_missing: say exactly what <forecast> says is missing and where it is filled in; horizon_out_of_range: say how far they asked and the longest projection allowed, exactly as <forecast> states them, and that they can ask for that instead; frequency_not_supported: say this metric cannot be projected per that period).',
   ];
 }

@@ -423,7 +423,13 @@ function GiaReply({ answer }: { readonly answer: GiaAnswerView }) {
                     need: answer.forecastGap.need,
                     unit: answer.forecastGap.unit,
                   }
-                : {}
+                : 'max' in answer.forecastGap
+                  ? {
+                      asked: answer.forecastGap.asked,
+                      max: answer.forecastGap.max,
+                      unit: answer.forecastGap.unit,
+                    }
+                  : {}
             }
           />
         </p>

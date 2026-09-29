@@ -233,6 +233,21 @@ describe("GIA's Workplace (ADR-0050)", () => {
         },
         "Projecting money needs the company's currency. Record it under Company memory.",
       ],
+      [
+        {
+          ...summary,
+          status: 'unavailable',
+          metric: null,
+          frequency: 'month',
+          horizon: 24,
+          maxHorizon: 12,
+          have: null,
+          need: null,
+          shortOf: null,
+          reason: 'horizon_out_of_range',
+        },
+        'You asked for 24 months; the longest projection is 12 months. No projection was made.',
+      ],
     ] as const) {
       open('/gia', (b) => {
         b.options.gia = { ...base, forecast };
@@ -250,6 +265,8 @@ describe("GIA's Workplace (ADR-0050)", () => {
     for (const forecast of [
       { ...summary, have: null, need: null, shortOf: null },
       { ...summary, status: 'unavailable', reason: 'busy' },
+      // A horizon refusal without the engine's longest horizon: no numbers are made up.
+      { ...summary, status: 'unavailable', reason: 'horizon_out_of_range', horizon: 24 },
     ]) {
       open('/gia', (b) => {
         b.options.gia = { ...base, forecast };
@@ -261,7 +278,9 @@ describe("GIA's Workplace (ADR-0050)", () => {
       fireEvent.click(within(chat).getByRole('button', { name: 'Send' }));
       await within(chat).findByText(base.answer);
       expect(
-        within(chat).queryByText(/Recorded history|with activity|Company memory\./),
+        within(chat).queryByText(
+          /Recorded history|with activity|Company memory\.|longest projection/,
+        ),
       ).toBeNull();
       cleanup();
     }
