@@ -92,6 +92,10 @@ export interface FakeBackend {
      * Reports (ADR-0060): each organization's metrics as the API lists them, and each read by
      * `metric:frequency`, as the API's body or an error with its status.
      */
+    /** Approvals (ADR-0026): each organization's, as the API lists them. */
+    approvals: Record<string, Record<string, unknown>[]>;
+    /** Deciding an approval fails with this code and status. */
+    approvalDecisionFails?: { readonly error: string; readonly status: number };
     /** AI usage (ADR-0074): each organization's summary and events, as the API gives them. */
     aiUsage: Record<
       string,
@@ -175,6 +179,7 @@ export function fakeBackend(): FakeBackend {
     plans: {},
     planSteps: {},
     pageSize: 50,
+    approvals: {},
     aiUsage: {},
     documents: {},
     metrics: {},
@@ -958,6 +963,32 @@ export function fakeBackend(): FakeBackend {
         items: options.activity[organizationId] ?? [],
         hasMore: false,
       });
+    }
+    if (route === 'approvals' || route?.startsWith('approvals/') === true) {
+      const list = (options.approvals[organizationId] ??= []);
+      if (route === 'approvals') {
+        const denied = needs('approval.read');
+        return denied ?? json(200, { approvals: list });
+      }
+      const denied = needs('approval.approve');
+      if (denied !== undefined) return denied;
+      const [, id, decision] = route.split('/');
+      if (options.approvalDecisionFails !== undefined) {
+        return json(options.approvalDecisionFails.status, {
+          error: options.approvalDecisionFails.error,
+        });
+      }
+      const index = list.findIndex((a) => a.id === id);
+      const found = list[index];
+      if (found === undefined) return json(404, { error: 'approval_not_found' });
+      if (found.status !== 'pending') return json(409, { error: 'approval_not_pending' });
+      const decided = {
+        ...found,
+        status: decision === 'approve' ? 'approved' : 'rejected',
+        decidedAt: '2026-09-29T12:05:00.000Z',
+      };
+      list[index] = decided;
+      return json(200, decided);
     }
     if (route === 'ai-usage' || route === 'ai-usage/events') {
       const denied = needs('ai_usage.read');

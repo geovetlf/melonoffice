@@ -37,6 +37,8 @@ import { MemoryPage } from '../memory/MemoryPage.js';
 import { ReportsPage, ReportsSection } from '../reports/Reports.js';
 import { createReportsClient } from '../reports/reportsClient.js';
 import { AIUsagePage } from '../aiUsage/AIUsagePage.js';
+import { ApprovalsPage } from '../approvals/ApprovalsPage.js';
+import { createApprovalsClient } from '../approvals/approvalsClient.js';
 import { createAIUsageClient } from '../aiUsage/aiUsageClient.js';
 import { DocumentsPage } from '../documents/DocumentsPage.js';
 import { createDocumentsClient } from '../documents/documentsClient.js';
@@ -74,6 +76,7 @@ export function AppShell(locale: LocaleProps) {
   const canReadDocuments = useCan('document.read');
   const canUploadDocuments = useCan('document.upload');
   const canReadAIUsage = useCan('ai_usage.read');
+  const canReadApprovals = useCan('approval.read');
   // Agent tasks (ADR-0063): read with the agents, asked only with `specialist.task`.
   const canReadAgents = useCan('specialist.read');
   const canAskAgents = useCan('specialist.task');
@@ -112,6 +115,7 @@ export function AppShell(locale: LocaleProps) {
             reports: createReportsClient(services.api.request, organizationId),
             documents: createDocumentsClient(services.api.request, organizationId),
             aiUsage: createAIUsageClient(services.api.request, organizationId),
+            approvals: createApprovalsClient(services.api.request, organizationId),
             agentTasks: createAgentTasksClient(services.api.request, organizationId),
             automations: createAutomationsClient(services.api.request, organizationId),
           },
@@ -236,6 +240,19 @@ export function AppShell(locale: LocaleProps) {
         <NotFound />
       );
       break;
+    case 'approvals':
+      page = canReadApprovals ? (
+        <div className="light-surface">
+          <ApprovalsPage
+            client={clients.approvals}
+            canDecide={canDecidePlans}
+            canReadPlans={canReadPlans}
+          />
+        </div>
+      ) : (
+        <NotFound />
+      );
+      break;
     case 'aiUsage':
       page = canReadAIUsage ? (
         <div className="light-surface">
@@ -327,6 +344,7 @@ export function AppShell(locale: LocaleProps) {
                 canReadReports={canReadReports}
                 canReadDocuments={canReadDocuments}
                 canReadAIUsage={canReadAIUsage}
+                canReadApprovals={canReadApprovals}
                 canReadAutomations={canReadWorkflows || canReadPlans}
                 open={menuOpen}
                 onNavigate={() => setMenuOpen(false)}

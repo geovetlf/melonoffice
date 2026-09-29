@@ -2577,3 +2577,15 @@ a.sidebar__item:hover {
   font-weight: 600;
   overflow-wrap: anywhere;
 }
+
+/* The approval center (ADR-0026). */
+.approval-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--mo-space-2);
+  padding: var(--mo-space-3);
+  border: 1px solid var(--office-line);
+  border-radius: 12px;
+}
