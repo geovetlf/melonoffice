@@ -26,6 +26,8 @@ export interface ProviderCall {
 export interface ProviderUsage {
   readonly inputTokens: number;
   readonly outputTokens: number;
+  /** Of `inputTokens`, how many the provider served from its cache, when it says. */
+  readonly cachedInputTokens?: number;
 }
 
 export type FinishReason = 'stop' | 'length' | 'content_filter' | 'tool_use';
@@ -45,7 +47,9 @@ export type ProviderErrorKind =
   | 'authentication'
   | 'invalid_request'
   | 'content_policy'
-  | 'invalid_response';
+  | 'invalid_response'
+  /** The input did not fit this model's context: not retried; a larger model may take it. */
+  | 'context_overflow';
 
 export type ProviderOutcome =
   | {
@@ -136,4 +140,7 @@ export const isTransient = (kind: ProviderErrorKind): boolean => TRANSIENT_ERROR
  * back.
  */
 export const allowsFallback = (kind: ProviderErrorKind): boolean =>
-  isTransient(kind) || kind === 'authentication' || kind === 'invalid_response';
+  isTransient(kind) ||
+  kind === 'authentication' ||
+  kind === 'invalid_response' ||
+  kind === 'context_overflow';

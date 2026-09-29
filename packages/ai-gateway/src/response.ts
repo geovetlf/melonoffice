@@ -1,3 +1,4 @@
+import type { AIRoutingStrategy } from '@melonoffice/domain';
 import type { FinishReason, ProviderOutcome, ProviderUsage } from './adapter.js';
 import type { AICreditState } from './credits.js';
 import { looksLikeSecretText } from './secrets.js';
@@ -37,6 +38,11 @@ export type AIResponse =
       readonly attempts: number;
       /** Set when another model answered than the one first chosen. */
       readonly fallbackFrom: string | null;
+      /**
+       * How the router ordered the models (ADR-0072). The gateway always sets it; optional so
+       * answers built before it existed stay valid.
+       */
+      readonly strategy?: AIRoutingStrategy;
     }
   | {
       readonly status: 'failed';
@@ -80,6 +86,12 @@ export function checkProviderSuccess(
   }
   if (typeof usage !== 'object' || usage === null) return false;
   if (!count(usage.inputTokens) || !count(usage.outputTokens)) return false;
+  if (
+    usage.cachedInputTokens !== undefined &&
+    (!count(usage.cachedInputTokens) || usage.cachedInputTokens > usage.inputTokens)
+  ) {
+    return false;
+  }
   if (!FINISH.includes(finishReason)) return false;
   if (providerRequestId !== undefined && !PROVIDER_REQUEST_ID.test(providerRequestId)) return false;
   return true;

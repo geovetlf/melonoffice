@@ -22,6 +22,17 @@ const REF =
 export const isSecretRef = (value: unknown): value is SecretRef =>
   typeof value === 'string' && REF.test(value);
 
+const AI_REF =
+  /^projects\/[a-z][a-z0-9-]{4,28}[a-z0-9]\/secrets\/ai-[a-z0-9][a-z0-9-]{0,62}\/versions\/latest$/;
+
+/**
+ * An AI provider's key (LLM Router, ADR-0072): `projects/{project}/secrets/ai-{name}/versions/latest`.
+ * Set by the operator in the service's configuration, never by a client; the `ai-` prefix keeps it
+ * apart from channel secrets, so neither reader can be pointed at the other's secrets.
+ */
+export const isAISecretRef = (value: unknown): value is SecretRef =>
+  typeof value === 'string' && AI_REF.test(value);
+
 /** `projects/{project}/secrets/channel-{connectionId}-{kind}/versions/latest`. */
 export function secretRefFor(
   projectId: string,
@@ -83,16 +94,23 @@ const MAX_SECRET_BYTES = 8192;
  * Secret Manager over its REST API, authenticated with the service's own identity through the
  * metadata server: no key, no SDK. Only `secretVersions.access` is used; the service account
  * needs `roles/secretmanager.secretAccessor` on the channel secrets (INFRASTRUCTURE REQUIRED,
- * not applied in CV-1).
+ * not applied in CV-1), or, for a store that reads AI provider keys (`accepts: isAISecretRef`),
+ * on those `ai-*` secrets.
  */
 export function createSecretManagerStore(
-  options: { readonly fetch?: typeof fetch; readonly timeoutMs?: number } = {},
+  options: {
+    readonly fetch?: typeof fetch;
+    readonly timeoutMs?: number;
+    /** Which references this store reads; channel secrets unless told otherwise. */
+    readonly accepts?: (ref: unknown) => ref is SecretRef;
+  } = {},
 ): SecretStore {
   const call = options.fetch ?? fetch;
   const timeoutMs = options.timeoutMs ?? 5000;
+  const accepts = options.accepts ?? isSecretRef;
   return {
     async read(ref) {
-      if (!isSecretRef(ref)) throw new IntegrationError('secret_not_found');
+      if (!accepts(ref)) throw new IntegrationError('secret_not_found');
       let token: string;
       try {
         const answer = await call(METADATA_TOKEN_URL, {

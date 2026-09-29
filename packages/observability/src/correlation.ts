@@ -28,6 +28,13 @@ export interface Correlation {
   readonly correlationId?: string;
   /** The conversation an assisted AI call is about (ADR-0037). */
   readonly conversationId?: string;
+  /**
+   * An AI call's task type, the department whose agent made it and how the router ordered the
+   * models (ADR-0072), so its cost can be traced to company, department, agent and task.
+   */
+  readonly taskType?: string;
+  readonly departmentId?: string;
+  readonly routingStrategy?: string;
 }
 
 const KEYS = [
@@ -45,6 +52,9 @@ const KEYS = [
   'workerId',
   'correlationId',
   'conversationId',
+  'taskType',
+  'departmentId',
+  'routingStrategy',
 ] as const;
 
 const ID = /^[\w-]{1,128}$/;

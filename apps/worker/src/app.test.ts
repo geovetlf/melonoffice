@@ -75,6 +75,18 @@ describe('loadConfig', () => {
       channelSecretsProjectId: 'melonoffice',
       whatsappGraphApiVersion: 'v21.0',
     });
+    expect(
+      loadConfig({
+        DEEPSEEK_API_KEY_SECRET: 'projects/melonoffice/secrets/ai-deepseek-api-key/versions/latest',
+      }).agents,
+    ).toEqual({
+      deepSeek: {
+        keySecret: 'projects/melonoffice/secrets/ai-deepseek-api-key/versions/latest',
+      },
+    });
+    expect(() => loadConfig({ DEEPSEEK_API_KEY_SECRET: 'plain-key-value' })).toThrow(
+      'Invalid DEEPSEEK_API_KEY_SECRET',
+    );
     expect(() => loadConfig({ VERTEX_AI_PROJECT_ID: 'melonoffice' })).toThrow('set together');
     expect(() =>
       loadConfig({ VERTEX_AI_PROJECT_ID: 'Bad_Id', VERTEX_AI_LOCATION: 'us-central1' }),

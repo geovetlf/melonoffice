@@ -1,7 +1,13 @@
 import type { ModelPolicy, PolicyId } from '@melonoffice/domain';
 import { isDeploymentEnvironment } from '@melonoffice/tools';
 import { AIConfigError } from './errors.js';
-import { AI_CAPABILITIES, AI_MODALITIES, LATENCY_TIERS, SENSITIVITIES } from './request.js';
+import {
+  AI_CAPABILITIES,
+  AI_MODALITIES,
+  AI_ROUTING_STRATEGIES,
+  LATENCY_TIERS,
+  SENSITIVITIES,
+} from './request.js';
 
 const ID = /^[a-z][a-z0-9_]{0,63}$/;
 const PROVIDER = /^[a-z][a-z0-9_-]{0,63}$/;
@@ -49,6 +55,12 @@ export function checkModelPolicy(p: ModelPolicy): ModelPolicy {
     invalid('maxLatency');
   }
   if (p.fallback !== 'none' && p.fallback !== 'compatible') invalid('fallback');
+  if (
+    p.strategy !== undefined &&
+    !(AI_ROUTING_STRATEGIES as readonly string[]).includes(p.strategy)
+  ) {
+    invalid('strategy');
+  }
   if (!int(p.maxAttempts, 1, 5)) invalid('maxAttempts');
   if (!int(p.backoffMs, 0, 30_000)) invalid('backoffMs');
   return p;

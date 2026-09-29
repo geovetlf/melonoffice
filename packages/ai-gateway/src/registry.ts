@@ -105,6 +105,15 @@ export function checkModel(
   for (const flag of ['structuredOutput', 'toolUse', 'streaming'] as const) {
     if (typeof m[flag] !== 'boolean') invalid(`${at}.${flag}`);
   }
+  if (
+    m.displayName !== undefined &&
+    (typeof m.displayName !== 'string' || m.displayName.length === 0 || m.displayName.length > 100)
+  ) {
+    invalid(`${at}.displayName`);
+  }
+  if (m.priority !== undefined && !(count(m.priority, 0) && m.priority <= 1000)) {
+    invalid(`${at}.priority`);
+  }
   if (!(QUALITY_TIERS as readonly string[]).includes(m.quality)) invalid(`${at}.quality`);
   if (!(LATENCY_TIERS as readonly string[]).includes(m.latency)) invalid(`${at}.latency`);
   const { pricing } = m;
@@ -113,6 +122,8 @@ export function checkModel(
       pricing.currency !== 'USD' ||
       !count(pricing.inputMicroUsdPerMillionTokens, 0) ||
       !count(pricing.outputMicroUsdPerMillionTokens, 0) ||
+      (pricing.cachedInputMicroUsdPerMillionTokens !== undefined &&
+        !count(pricing.cachedInputMicroUsdPerMillionTokens, 0)) ||
       typeof pricing.source !== 'string' ||
       pricing.source.length === 0 ||
       Number.isNaN(Date.parse(pricing.asOf))

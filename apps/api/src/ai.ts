@@ -15,7 +15,18 @@ import {
   VERTEX_AI_PROVIDER,
   VERTEX_AI_PROVIDER_ID,
 } from '@melonoffice/ai-vertex';
-import type { DeploymentEnvironment, ModelPolicy, PolicyId } from '@melonoffice/domain';
+import {
+  createDeepSeekAdapter,
+  DEEPSEEK_MODELS,
+  DEEPSEEK_PROVIDER,
+} from '@melonoffice/ai-deepseek';
+import type { DeploymentEnvironment, ModelPolicy, PolicyId, SecretRef } from '@melonoffice/domain';
+import {
+  aiProviderKeysFromSecrets,
+  createSecretManagerStore,
+  isAISecretRef,
+  type SecretStore,
+} from '@melonoffice/integrations';
 
 /**
  * The model policy of assisted AI on conversations (CV-5, ADR-0038). A conversation is the
@@ -85,32 +96,55 @@ export interface AIConfiguration {
 }
 
 /**
- * The AI Gateway's configuration from the service's settings (ADR-0038). Vertex AI is registered
- * only when its project and location and the environment are all set; otherwise nothing is, and
- * every AI call is denied (fails closed). Where the provider or the policy do not allow the
- * environment (anywhere but DEV today), calls are denied too.
+ * The AI Gateway's configuration from the service's settings (ADR-0038, ADR-0072). Each provider
+ * is registered only when its own settings are set, and nothing at all without the environment
+ * (fails closed): Vertex AI with its project and location; DeepSeek with the Secret Manager
+ * reference of its key. Registering a provider allows nothing by itself: a call reaches it only
+ * where a model policy allows it and the model's price is known. Where the provider or the policy
+ * do not allow the environment (anywhere but DEV today), calls are denied too.
  */
 export function aiConfigurationOf(config: {
   readonly deploymentEnvironment?: DeploymentEnvironment;
   readonly vertexAI?: { readonly projectId: string; readonly location: string };
+  readonly deepSeek?: { readonly keySecret: SecretRef };
   readonly fetch?: typeof fetch;
+  /** Where AI provider keys are read; Secret Manager unless given (tests). */
+  readonly secrets?: SecretStore;
 }): AIConfiguration {
-  const { deploymentEnvironment: environment, vertexAI } = config;
+  const { deploymentEnvironment: environment, vertexAI, deepSeek } = config;
   if (environment === undefined) return {};
-  if (vertexAI === undefined) return { environment };
+  const fetchOption = config.fetch === undefined ? {} : { fetch: config.fetch };
+  const providers = [];
+  const models = [];
+  const adapters = [];
+  if (vertexAI !== undefined) {
+    providers.push(VERTEX_AI_PROVIDER);
+    models.push(...VERTEX_AI_MODELS);
+    adapters.push(
+      createVertexAIAdapter({
+        projectId: vertexAI.projectId,
+        location: vertexAI.location,
+        ...fetchOption,
+      }),
+    );
+  }
+  if (deepSeek !== undefined) {
+    providers.push(DEEPSEEK_PROVIDER);
+    models.push(...DEEPSEEK_MODELS);
+    adapters.push(
+      createDeepSeekAdapter({
+        credentials: aiProviderKeysFromSecrets(
+          config.secrets ?? createSecretManagerStore({ ...fetchOption, accepts: isAISecretRef }),
+          { [DEEPSEEK_PROVIDER.credential.provider]: deepSeek.keySecret },
+        ),
+        ...fetchOption,
+      }),
+    );
+  }
+  if (providers.length === 0) return { environment };
   return {
     environment,
-    registry: createProviderRegistry({
-      providers: [VERTEX_AI_PROVIDER],
-      models: VERTEX_AI_MODELS,
-      adapters: [
-        createVertexAIAdapter({
-          projectId: vertexAI.projectId,
-          location: vertexAI.location,
-          ...(config.fetch === undefined ? {} : { fetch: config.fetch }),
-        }),
-      ],
-    }),
+    registry: createProviderRegistry({ providers, models, adapters }),
     policies: createModelPolicyCatalogue([
       CONVERSATION_ASSIST_POLICY,
       COMPANY_KNOWLEDGE_ASSIST_POLICY,

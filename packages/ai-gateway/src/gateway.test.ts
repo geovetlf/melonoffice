@@ -1,3 +1,4 @@
+import { InMemoryUsageSink, type AIUsageSink } from '@melonoffice/ai-usage';
 import { createCreditService, InMemoryCreditStore, openWallet } from '@melonoffice/credits';
 import { createAuditService, InMemoryAuditStore } from '@melonoffice/audit';
 import type { AuthenticatedContext } from '@melonoffice/auth';
@@ -230,6 +231,7 @@ interface WorldOptions {
   readonly models?: AIModelDefinition[];
   /** Use the real Credits engine (PR #20) instead of the test double. */
   readonly realCredits?: boolean;
+  readonly usage?: AIUsageSink;
 }
 
 async function world(options: WorldOptions = {}) {
@@ -310,6 +312,7 @@ async function world(options: WorldOptions = {}) {
     timeoutMs: 50,
     now,
     sleep: async () => undefined,
+    ...(options.usage === undefined ? {} : { usage: options.usage }),
   });
   const tenantA = await resolveTenant(as(ALICE), orgA, tenancy);
   const tenantB = await resolveTenant(as(BOB), orgB, tenancy);
@@ -1112,5 +1115,171 @@ describe('AI gateway: assisted calls (ADR-0037)', () => {
       ).toMatchObject({ status: 'denied', code });
     }
     expect(w.calls).toHaveLength(1);
+  });
+});
+
+describe('AI gateway: the LLM Router (ADR-0072)', () => {
+  const RATE_LIMITED = (): ProviderOutcome => ({ status: 'error', kind: 'rate_limited' });
+
+  it('routes balanced by default, and in the order a request asks for', async () => {
+    const { call } = await setup();
+    // Balanced: the cheapest model of at least standard quality.
+    expect(await call()).toMatchObject({
+      status: 'completed',
+      model: 'alpha-small',
+      strategy: 'balanced',
+    });
+    expect(await call({ requestId: 'req-2', strategy: 'quality_first' })).toMatchObject({
+      status: 'completed',
+      model: 'alpha-large',
+      strategy: 'quality_first',
+    });
+  });
+
+  it('skips a provider that keeps failing, in the same request and in the next', async () => {
+    const { w, call } = await setup({
+      script: { 'alpha-small': [RATE_LIMITED, RATE_LIMITED, RATE_LIMITED] },
+    });
+    const first = await call();
+    // Three rate limits on alpha: alpha-large is not tried; beta answers.
+    expect(first).toMatchObject({
+      status: 'completed',
+      provider: 'beta',
+      model: 'beta-text',
+      attempts: 4,
+      fallbackFrom: 'alpha/alpha-small',
+    });
+    expect(w.calls.map((c) => c.model.id)).toEqual([
+      'alpha-small',
+      'alpha-small',
+      'alpha-small',
+      'beta-text',
+    ]);
+    // The next request goes straight to beta: alpha is resting.
+    expect(await call({ requestId: 'req-2' })).toMatchObject({
+      status: 'completed',
+      provider: 'beta',
+      attempts: 1,
+      fallbackFrom: null,
+    });
+    const line = w.logLines.find((l) => l.includes('ai request completed')) ?? '';
+    expect(JSON.parse(line)).toMatchObject({
+      retries: 2,
+      fallbacks: 1,
+      taskType: 'summarise_document',
+      routingStrategy: 'balanced',
+    });
+    expect(line).toMatch(/"departmentId":"[^"]+_research"/);
+  });
+
+  it('falls back to a larger model on a context overflow, without retrying the same one', async () => {
+    const { w, call } = await setup({
+      script: { 'alpha-small': [() => ({ status: 'error', kind: 'context_overflow' })] },
+    });
+    expect(await call()).toMatchObject({
+      status: 'completed',
+      model: 'alpha-large',
+      attempts: 2,
+      fallbackFrom: 'alpha/alpha-small',
+    });
+    expect(w.calls.map((c) => c.model.id)).toEqual(['alpha-small', 'alpha-large']);
+    expect(w.events('ai.provider_fallback')).toMatchObject([{ reason: 'context_overflow' }]);
+  });
+
+  it('never falls back when the policy says none, whatever the strategy', async () => {
+    const { w, call } = await setup({
+      defaultPolicy: { ...onlyModels('alpha/alpha-small', 'beta/beta-text'), fallback: 'none' },
+      script: { 'alpha-small': [RATE_LIMITED, RATE_LIMITED, RATE_LIMITED] },
+    });
+    expect(await call({ strategy: 'reliability_first' })).toMatchObject({
+      status: 'failed',
+      code: 'rate_limited',
+      attempts: 3,
+    });
+    expect(w.calls.every((c) => c.model.id === 'alpha-small')).toBe(true);
+  });
+
+  it('charges cached input at its own price', async () => {
+    const cheapCache = MODELS.map((m) =>
+      m.modelId === 'alpha-small' && m.pricing.status === 'known'
+        ? { ...m, pricing: { ...m.pricing, cachedInputMicroUsdPerMillionTokens: 0 } }
+        : m,
+    );
+    const { call } = await setup({
+      models: cheapCache,
+      defaultPolicy: onlyModels('alpha/alpha-small'),
+      script: {
+        'alpha-small': [
+          () => ({
+            status: 'success',
+            output: { text: 'Cached.' },
+            usage: { inputTokens: 1_000, outputTokens: 500, cachedInputTokens: 1_000 },
+            finishReason: 'stop',
+          }),
+        ],
+      },
+    });
+    // 1000 cached × 0 + 500 × 0.4 = 200 micro-USD.
+    expect(await call()).toMatchObject({
+      status: 'completed',
+      cost: { actualMicroUsd: 200 },
+      usage: { cachedInputTokens: 1_000 },
+    });
+  });
+});
+
+describe('AI gateway: the AI Usage Layer (ADR-0073)', () => {
+  it('emits one usage event per completed call, attributed and priced, without content', async () => {
+    const usage = new InMemoryUsageSink();
+    const { w, call, specialist, execution } = await setup({ usage });
+    const answer = await call();
+    expect(answer).toMatchObject({ status: 'completed' });
+    await call();
+    // The same request again is the same event.
+    expect(usage.events).toHaveLength(1);
+    const [event] = usage.events;
+    expect(event).toMatchObject({
+      capability: 'llm',
+      source: 'llm_router',
+      outcome: 'completed',
+      provider: 'alpha',
+      model: 'alpha-small',
+      operation: 'text_generation',
+      requestId: 'req-1',
+      attribution: {
+        organizationId: w.orgA,
+        actor: 'user',
+        userId: ALICE,
+        specialistId: specialist.identity.id,
+        departmentId: execution.departmentId,
+        executionId: execution.id,
+        taskType: 'summarise_document',
+      },
+      cost: {
+        capability: 'llm',
+        units: ['input_tokens', 'output_tokens'],
+        costBasis: 'provider_price_list',
+        currency: 'USD',
+      },
+    });
+    if (answer.status !== 'completed') throw new Error('not completed');
+    expect(event?.cost.actualMicroUsd).toBe(answer.cost.actualMicroUsd);
+    expect(event?.credits).toBe(answer.credits.consumed);
+    expect(JSON.stringify(event)).not.toContain('melon market');
+  });
+
+  it('never fails a call because its usage could not be recorded, and emits nothing when denied', async () => {
+    const failing: AIUsageSink = {
+      record: async () => {
+        throw new Error('ledger down');
+      },
+    };
+    const { w, call } = await setup({ usage: failing });
+    expect(await call()).toMatchObject({ status: 'completed' });
+    expect(w.logLines.some((l) => l.includes('ai usage not recorded'))).toBe(true);
+    const usage = new InMemoryUsageSink();
+    const denied = await setup({ usage, credits: 'none' });
+    expect(await denied.call()).toMatchObject({ status: 'denied' });
+    expect(usage.events).toHaveLength(0);
   });
 });

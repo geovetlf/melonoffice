@@ -3,10 +3,12 @@ import type {
   AILatencyTier,
   AIModality,
   AIQualityTier,
+  AIRoutingStrategy,
   DataSensitivity,
   DeploymentEnvironment,
   ModelPolicy,
 } from '@melonoffice/domain';
+import type { ProviderHealth } from './adapter.js';
 import { costMicroUsd } from './cost.js';
 import {
   modelKey,
@@ -31,7 +33,11 @@ export interface RouteRequest {
   readonly structuredOutput?: boolean;
   readonly toolUse?: boolean;
   readonly streaming?: boolean;
+  /** The caller's order, when it has one; otherwise the policy's, otherwise `balanced`. */
+  readonly strategy?: AIRoutingStrategy;
 }
+
+export const DEFAULT_ROUTING_STRATEGY: AIRoutingStrategy = 'balanced';
 
 /**
  * Why no model fits. Each is the step at which the last candidate was ruled out, in the router's
@@ -63,17 +69,22 @@ export type RouteDecision =
       /** The chosen model first, then the compatible fallbacks, in order. */
       readonly candidates: readonly RouteCandidate[];
       readonly reason: 'preferred' | 'best_match';
+      readonly strategy: AIRoutingStrategy;
     }
   | { readonly status: 'none'; readonly reason: RouteRefusal };
 
 const rank = <T extends string>(list: readonly T[], value: T): number => list.indexOf(value);
 
 /**
- * Chooses a model (ADR-0027). Deterministic: equal inputs give the same answer, in the same
- * order. No AI: the candidates are filtered by fixed rules, then sorted by the policy's preferred
- * list, higher quality, lower known cost, faster latency, then provider and model id.
+ * Chooses a model (ADR-0027, ADR-0072). Deterministic: equal inputs give the same answer, in the
+ * same order. No AI: the candidates are filtered by fixed rules (capability, modality, context
+ * and output size, structured output, tools, streaming, policy, status, environment, sensitivity,
+ * quality, latency, cost limit, provider health), and only then ordered: the policy's preferred
+ * list first, then the routing strategy, then the model's priority and its id. A strategy only
+ * orders; it can never bring back a model a filter left out.
  *
- * `unavailable` holds the providers known to be down; they are left out.
+ * `unavailable` holds the providers known to be down; they are left out. `health` says how the
+ * rest are doing, for `reliability_first`.
  */
 export function routeModel(
   registry: ProviderRegistry,
@@ -81,7 +92,9 @@ export function routeModel(
   environment: DeploymentEnvironment,
   request: RouteRequest,
   unavailable: ReadonlySet<string> = new Set(),
+  health: (providerId: string) => ProviderHealth = () => 'available',
 ): RouteDecision {
+  const strategy = request.strategy ?? policy.strategy ?? DEFAULT_ROUTING_STRATEGY;
   const limit = [request.maxCostMicroUsd, policy.maxCostMicroUsd].filter(
     (v): v is number => v !== undefined,
   );
@@ -185,21 +198,41 @@ export function routeModel(
     const i = preferred.indexOf(modelKey(r.provider.id, r.model.modelId));
     return i === -1 ? preferred.length : i;
   };
+  type Scored = RouteCandidate;
+  const cost = (r: Scored) => r.estimatedCostMicroUsd ?? Infinity;
+  const quality = (r: Scored) => -rank(QUALITY_TIERS, r.model.quality);
+  const latency = (r: Scored) => rank(LATENCY_TIERS, r.model.latency);
+  const priority = (r: Scored) => r.model.priority ?? 1000;
+  const healthy = (r: Scored) => (health(r.provider.id) === 'available' ? 0 : 1);
+  // `balanced`: at least the quality asked for, or `standard` when nothing was asked, if any fits.
+  const floor = rank(QUALITY_TIERS, request.quality ?? 'standard');
+  const meetsFloor = (r: Scored) => (rank(QUALITY_TIERS, r.model.quality) >= floor ? 0 : 1);
+  const keys: Record<AIRoutingStrategy, readonly ((r: Scored) => number)[]> = {
+    cost_optimized: [cost, quality, latency],
+    balanced: [meetsFloor, cost, quality, latency],
+    quality_first: [quality, cost, latency],
+    latency_first: [latency, cost, quality],
+    reliability_first: [healthy, priority, cost, quality],
+  };
+  const byStrategy = [order, ...keys[strategy], priority];
   const sorted = candidates
     .map((r) => Object.freeze({ ...r, estimatedCostMicroUsd: estimate(r) }))
-    .sort(
-      (a, b) =>
-        order(a) - order(b) ||
-        rank(QUALITY_TIERS, b.model.quality) - rank(QUALITY_TIERS, a.model.quality) ||
-        (a.estimatedCostMicroUsd ?? Infinity) - (b.estimatedCostMicroUsd ?? Infinity) ||
-        rank(LATENCY_TIERS, a.model.latency) - rank(LATENCY_TIERS, b.model.latency) ||
-        compare(modelKey(a.provider.id, a.model.modelId), modelKey(b.provider.id, b.model.modelId)),
-    );
+    .sort((a, b) => {
+      for (const key of byStrategy) {
+        const diff = key(a) - key(b);
+        if (diff !== 0 && !Number.isNaN(diff)) return diff;
+      }
+      return compare(
+        modelKey(a.provider.id, a.model.modelId),
+        modelKey(b.provider.id, b.model.modelId),
+      );
+    });
   const first = sorted[0];
   return Object.freeze({
     status: 'selected',
     candidates: Object.freeze(sorted),
     reason: first !== undefined && order(first) < preferred.length ? 'preferred' : 'best_match',
+    strategy,
   });
 }
 

@@ -252,13 +252,15 @@ describe('worker architecture', () => {
       expect(text(file)).not.toMatch(/\.execute\(/);
     }
     // Only the composition builds the gate and the gateway. The server passes the real tool
-    // catalogue with the conversation agent's executors only (ADR-0043), and one provider
-    // adapter, Vertex AI (D-7), with credits at the approved rate (D-12); without the Vertex AI
-    // settings it registers no adapter and no credits.
+    // catalogue with the conversation agent's executors only (ADR-0043), and the official model
+    // adapters, Vertex AI (D-7) and DeepSeek (ADR-0072), each only with its own settings, with
+    // credits at the approved rate (D-12); without any of them it registers no adapter and no
+    // credits.
     const server = text('server.ts');
     expect(server).toMatch(/createToolRegistry\(TOOL_CATALOGUE\), executors: agents\.executors/);
     expect(server).toMatch(/adapters: \[\]/);
     expect([...server.matchAll(/create\w*Adapter\(/g)].map((m) => m[0]).sort()).toEqual([
+      'createDeepSeekAdapter(',
       'createVertexAIAdapter(',
       'createWhatsAppAdapter(',
     ]);
