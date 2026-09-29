@@ -28,6 +28,7 @@ import {
   resolveTenant,
   type TenantContext,
 } from '@melonoffice/tenancy';
+import { createSkillCatalogue, type AgentSkill } from '@melonoffice/specialists';
 import { describe, expect, it } from 'vitest';
 import { ACTION_CATALOGUE, type ActionDefinition } from './catalogue.js';
 import { COMMERCIAL_RULES, commercialPriorities } from './deciders/commercial.js';
@@ -96,9 +97,27 @@ async function world() {
 
 type World = Awaited<ReturnType<typeof world>>;
 
+/**
+ * A skill that lets agents propose a discount and a campaign (SK-2, ADR-0083). The catalogue in
+ * code grants neither, so these tests give the engine this one; the real catalogue's answer is
+ * checked in "7. agents".
+ */
+const AGENT_SKILLS = createSkillCatalogue([
+  {
+    id: 'offers',
+    version: 1,
+    nameKey: 'fixture',
+    descriptionKey: 'fixture',
+    tools: [],
+    actions: ['opportunity.offer_discount', 'marketing.propose_campaign'],
+    reads: [],
+  } as unknown as AgentSkill,
+]);
+
 function engineOf(w: World, options: Partial<DecisionEngineOptions> = {}) {
   return createDecisionEngine({
     authorization: createAuthorizationService(),
+    skills: AGENT_SKILLS,
     deciders: DECIDERS,
     audit: w.audit,
     now: () => NOW,
@@ -618,6 +637,28 @@ describe('7. agents', () => {
     const engine = engineOf(w);
     expect(engine.evaluateAction(w.runtime, 'opportunity.offer_discount', 'agent').outcome).toBe(
       'available',
+    );
+    // SK-2 (ADR-0083): an agent proposes only what its own skills grant, at their versions.
+    const named = (actions: readonly string[]) => ({ actions: new Set(actions) });
+    expect(
+      engine.evaluateAction(w.runtime, 'opportunity.offer_discount', 'agent', named([])),
+    ).toMatchObject({ outcome: 'unavailable', reasons: ['not_granted_by_skill'] });
+    expect(
+      engine.evaluateAction(
+        w.runtime,
+        'opportunity.offer_discount',
+        'agent',
+        named(['opportunity.offer_discount']),
+      ).outcome,
+    ).toBe('available');
+    // With the skills in code, no skill grants a discount, so no agent may propose one.
+    const real = engineOf(w, { skills: createSkillCatalogue() });
+    expect(real.evaluateAction(w.runtime, 'opportunity.offer_discount', 'agent')).toMatchObject({
+      outcome: 'unavailable',
+      reasons: ['not_granted_by_skill'],
+    });
+    expect(real.listActions(w.runtime, 'agent').every((a) => a.outcome === 'unavailable')).toBe(
+      true,
     );
     // The runtime never prepares for GIA, and GIA's own actor prepares nothing.
     expect(engine.evaluateAction(w.runtime, 'follow_up.schedule').reasons).toEqual([

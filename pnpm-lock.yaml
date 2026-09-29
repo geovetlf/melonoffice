@@ -691,6 +691,9 @@ importers:
       '@melonoffice/rbac':
         specifier: workspace:*
         version: link:../rbac
+      '@melonoffice/specialists':
+        specifier: workspace:*
+        version: link:../specialists
       '@melonoffice/tenancy':
         specifier: workspace:*
         version: link:../tenancy

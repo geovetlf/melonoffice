@@ -8,6 +8,7 @@ import type {
   IsoTimestamp,
   Organization,
   OrganizationId,
+  SkillId,
   Specialist,
   UserId,
 } from '@melonoffice/domain';
@@ -20,6 +21,7 @@ import {
 import {
   applySpecialistStatus,
   newSpecialist,
+  reviseSpecialist,
   type SpecialistRepository,
 } from '@melonoffice/specialists';
 import {
@@ -151,6 +153,9 @@ export async function setEntitlementOverride(input: {
  * `specialist.manage` (deferred) uses to try agents. Generic: nothing in it names an
  * organization.
  */
+/** The skill that grants the conversation agent its reply and hand-off (SK-1, ADR-0069). */
+const REPLY_SKILL = Object.freeze({ id: 'conversation_reply' as SkillId, version: 1 });
+
 export const TEST_AGENT = Object.freeze({
   displayName: 'Agente de prueba',
   departmentType: 'sales' as DepartmentTypeId,
@@ -214,6 +219,23 @@ export async function seedTestAgent(input: {
   let specialist: Specialist;
   if (existing !== undefined) {
     specialist = existing;
+    // Seeded before SK-1 (ADR-0069): its tools came from no skill, and the tool gate now refuses
+    // them (ADR-0083). Its next version carries the skill that grants them; nothing else changes.
+    const skills = existing.configuration.skills;
+    if (!skills.some((s) => s.id === REPLY_SKILL.id && s.version === REPLY_SKILL.version)) {
+      const at = now().toISOString() as IsoTimestamp;
+      specialist = await input.specialists.update(organization.id, existing.identity.id, (s) =>
+        reviseSpecialist(
+          s,
+          {
+            fromVersion: s.version,
+            configuration: { ...s.configuration, skills: [...skills, REPLY_SKILL] },
+          },
+          organization.createdBy,
+          at,
+        ),
+      );
+    }
   } else {
     const departmentId = departmentIdOf(organization.id, TEST_AGENT.departmentType);
     const department = await input.departments.find(organization.id, departmentId);
@@ -230,7 +252,7 @@ export async function seedTestAgent(input: {
           capabilities: ['answer_customers'],
           // Its tools come from its skill (SK-1, ADR-0069): the reply at its level, and the
           // hand-off (ADR-0043).
-          skills: [{ id: 'conversation_reply', version: 1 }],
+          skills: [REPLY_SKILL],
           tools: [
             { id: 'message_send', version: autonomy === 'supervised' ? 2 : 3 },
             { id: 'conversation_handoff', version: 1 },

@@ -82,6 +82,7 @@ import {
 import { createAuthorizationService } from '@melonoffice/rbac';
 import {
   applySpecialistStatus,
+  createSkillCatalogue,
   createSpecialistService,
   InMemorySpecialistRepository,
   newSpecialist,
@@ -466,6 +467,18 @@ describe.each(STORES)('runtime advance() with storage in %s', (storage, createSt
         specialists,
         departments: stores.departments,
         registry,
+        // The fixture skill that grants every fixture tool (SK-2, ADR-0083).
+        skills: createSkillCatalogue([
+          {
+            id: 'fixture_work',
+            version: 1,
+            nameKey: 'fixture',
+            descriptionKey: 'fixture',
+            tools: TOOLS.map((t) => ({ id: t.id, versions: [1] })),
+            actions: [],
+            reads: [],
+          } as never,
+        ]),
         approvals,
         executors: { fixture: executor },
         authorization,
@@ -552,7 +565,7 @@ describe.each(STORES)('runtime advance() with storage in %s', (storage, createSt
             mainRoleId: 'operations_assistant',
             roleVersion: 1,
             capabilities: [],
-            skills: [],
+            skills: [{ id: 'fixture_work', version: 1 }],
             tools: TOOLS.map((t) => ({ id: t.id, version: 1 })),
             permissions: ['organization.read'],
             policies: {},

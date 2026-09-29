@@ -38,9 +38,11 @@ import { createLogger } from '@melonoffice/observability';
 import { createAuthorizationService } from '@melonoffice/rbac';
 import {
   applySpecialistStatus,
+  createSkillCatalogue,
   createSpecialistService,
   InMemorySpecialistRepository,
   newSpecialist,
+  type AgentSkill,
 } from '@melonoffice/specialists';
 import {
   createOrganization,
@@ -174,6 +176,30 @@ const TOOLS: readonly ToolDefinition[] = [
 
 const ASSIGNED = TOOLS.map((t) => ({ id: t.id, version: 1 }));
 
+/**
+ * The fixture skills (ADR-0069/0083): a tool reaches a specialist only through one of its skills.
+ * `fixture_work@1` grants every fixture tool at version 1; its version 2 grants only `lookup`, so
+ * a specialist still on version 1 keeps what version 1 grants.
+ */
+const fixtureSkill = (version: number, tools: readonly string[]): AgentSkill =>
+  ({
+    id: 'fixture_work',
+    version,
+    nameKey: 'fixture',
+    descriptionKey: 'fixture',
+    tools: tools.map((id) => ({ id, versions: [1] })),
+    actions: [],
+    reads: [],
+  }) as never;
+const SKILLS = createSkillCatalogue([
+  fixtureSkill(
+    1,
+    TOOLS.map((t) => t.id),
+  ),
+  fixtureSkill(2, ['lookup']),
+]);
+const FIXTURE_SKILL = [{ id: 'fixture_work', version: 1 }];
+
 /** A fixture executor: answers per tool, and records every call it gets. */
 function fixtureExecutor(answers: Record<string, () => Promise<ToolExecutorOutcome>> = {}) {
   const calls: { context: ToolExecutionContext; input: unknown }[] = [];
@@ -265,6 +291,7 @@ async function world(options: WorldOptions = {}) {
     specialists: specialistsAtRun,
     departments,
     registry: createToolRegistry(TOOLS),
+    skills: SKILLS,
     approvals,
     executors: { fixture: executor },
     authorization: authorizationAtRun,
@@ -289,7 +316,13 @@ async function world(options: WorldOptions = {}) {
       status = 'active',
       permissions = ['organization.read'],
       department = 'research',
-    }: { status?: SpecialistStatus; permissions?: string[]; department?: string } = {},
+      skills = FIXTURE_SKILL,
+    }: {
+      status?: SpecialistStatus;
+      permissions?: string[];
+      department?: string;
+      skills?: readonly { id: string; version: number }[];
+    } = {},
   ): Promise<Specialist> {
     const departmentId = departmentIdOf(org, department as DepartmentTypeId);
     const write = newSpecialist(
@@ -301,7 +334,7 @@ async function world(options: WorldOptions = {}) {
           mainRoleId: 'operations_assistant',
           roleVersion: 1,
           capabilities: [],
-          skills: [],
+          skills,
           tools: ASSIGNED,
           permissions,
           policies: {},
@@ -1245,6 +1278,71 @@ describe('ADR-0034 non-regression: the runtime path is unchanged', () => {
     const { w, invoke } = await setup(['send_email']);
     expect(await invoke(w.runtimeB)).toEqual({ status: 'denied', code: 'execution_not_found' });
     expect((await invoke(w.runtimeA)).status).toBe('requires_approval');
+    expect(w.calls).toHaveLength(0);
+  });
+});
+
+describe('SK-2: a tool reaches an agent only through one of its skills (ADR-0083)', () => {
+  async function agentWith(skills: readonly { id: string; version: number }[], tool: string) {
+    const w = await world();
+    const specialist = await w.seed(w.orgA, { skills });
+    const execution = await w.running(w.tenantA, specialist, [tool]);
+    const invoke = (tenant: TenantContext = w.runtimeA) =>
+      w.gate.invoke(tenant, { executionId: execution.id, nodeId: 'n0', input: INPUT });
+    return { w, invoke };
+  }
+
+  it('1. an agent with no skill cannot use a tool its version lists', async () => {
+    const { w, invoke } = await agentWith([], 'lookup');
+    expect(await invoke()).toEqual({ status: 'denied', code: 'tool_not_granted_by_skill' });
+    expect(w.calls).toHaveLength(0);
+    expect(w.events('tool.authorization_checked').at(-1)).toMatchObject({
+      result: 'denied',
+      reason: 'tool_not_granted_by_skill',
+    });
+  });
+
+  it('2. an agent whose skill grants the tool uses it', async () => {
+    const { w, invoke } = await agentWith(FIXTURE_SKILL, 'lookup');
+    expect((await invoke()).status).toBe('success');
+    expect(w.calls).toHaveLength(1);
+  });
+
+  it('3. a skill that does not grant the tool blocks it', async () => {
+    const { w, invoke } = await agentWith([{ id: 'company_knowledge', version: 1 }], 'lookup');
+    expect(await invoke()).toEqual({ status: 'denied', code: 'tool_not_granted_by_skill' });
+    expect(w.calls).toHaveLength(0);
+  });
+
+  it('4. the wrong skill version blocks the tool: version 2 does not grant what version 1 did', async () => {
+    const v2 = await agentWith([{ id: 'fixture_work', version: 2 }], 'update_record');
+    expect(await v2.invoke()).toEqual({ status: 'denied', code: 'tool_not_granted_by_skill' });
+    const unknown = await agentWith([{ id: 'fixture_work', version: 9 }], 'lookup');
+    expect(await unknown.invoke()).toEqual({ status: 'denied', code: 'tool_not_granted_by_skill' });
+  });
+
+  it('10. an agent still on version 1 of a skill keeps what version 1 grants', async () => {
+    // Version 2 of the skill exists and grants less; the agent pinned to version 1 is unchanged.
+    const { invoke } = await agentWith(FIXTURE_SKILL, 'update_record');
+    expect((await invoke()).status).toBe('success');
+  });
+
+  it('5. a tool only a person may invoke never runs for an agent, even when a skill lists it', async () => {
+    const { w, invoke } = await agentWith(FIXTURE_SKILL, 'human_note');
+    expect(await invoke()).toEqual({ status: 'denied', code: 'tool_not_runtime_invocable' });
+    expect(w.calls).toHaveLength(0);
+  });
+
+  it('6. a granted tool that needs approval asks for one, and runs nothing until it is approved', async () => {
+    const { w, invoke } = await agentWith(FIXTURE_SKILL, 'send_email');
+    expect((await invoke()).status).toBe('requires_approval');
+    expect(w.events('tool.approval_requested')).toHaveLength(1);
+    expect(w.calls).toHaveLength(0);
+  });
+
+  it('9. a skill never opens another organization: cross-tenant stays denied', async () => {
+    const { w, invoke } = await agentWith(FIXTURE_SKILL, 'lookup');
+    expect(await invoke(w.runtimeB)).toEqual({ status: 'denied', code: 'execution_not_found' });
     expect(w.calls).toHaveLength(0);
   });
 });

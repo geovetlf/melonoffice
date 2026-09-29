@@ -25,9 +25,18 @@ export interface AgentView extends SpecialistView {
 export interface AgentCapabilitiesView {
   readonly version: number;
   readonly ready: boolean;
-  readonly skills: readonly { readonly id: string; readonly known: boolean }[];
+  /** Each skill at the exact version the agent has, and what that version grants (ADR-0069). */
+  readonly skills: readonly {
+    readonly id: string;
+    readonly version: number;
+    readonly known: boolean;
+    readonly tools: readonly string[];
+    readonly actions: readonly string[];
+    readonly reads: readonly string[];
+  }[];
   readonly tools: readonly {
     readonly id: string;
+    readonly version: number;
     readonly known: boolean;
     readonly riskLevel: string | null;
     readonly approval: string | null;

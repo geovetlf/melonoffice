@@ -44,6 +44,8 @@ export type GuardrailDenyReason =
   | 'specialist_execution'
   | 'approval_unavailable'
   | 'tool_not_assigned'
+  /** The agent's version lists the tool, but none of its skills grants it (SK-2, ADR-0083). */
+  | 'tool_not_granted_by_skill'
   | 'department_not_allowed'
   | 'permission_not_held'
   | 'environment_not_allowed'
@@ -100,6 +102,11 @@ export interface PreExecutionFacts {
   readonly executors: ToolExecutors;
   readonly riskPolicy: RiskPolicy;
   readonly input: unknown;
+  /**
+   * The tool versions (`id@version`) the specialist version's own skills grant, at their exact
+   * versions (SK-1/SK-2, ADR-0069/0083). Absent: nothing is granted.
+   */
+  readonly granted?: ReadonlySet<string>;
 }
 
 const deny = (reason: GuardrailDenyReason): GuardrailDecision =>
@@ -127,7 +134,9 @@ export const nodeOf = (
  *    active department, at its current version, and the user holds its permissions);
  * 8. the node's exact tool version exists and 9. the tool is `active`, and the runtime may
  *    invoke it (every tool, unless it names its invocation modes without `runtime`: ADR-0034);
- * 10. the specialist's version lists exactly that tool version;
+ * 10. the specialist's version lists exactly that tool version, and one of that version's own
+ *     skills grants it at that version (ADR-0069/0083): a tool reaches an agent only through a
+ *     skill, never directly;
  * 11. the tool allows the specialist's department type, when it restricts them;
  * 12. the user holds `tool.execute` and every permission the tool needs (GIA gets no more);
  * 13. the tool version allows this environment (an unknown one allows nothing);
@@ -174,6 +183,9 @@ export function evaluatePreExecution(facts: PreExecutionFacts): GuardrailDecisio
     (t) => t.id === node.tool?.id && t.version === node.tool.version,
   );
   if (!assigned) return deny('tool_not_assigned');
+  if (facts.granted?.has(`${node.tool.id}@${node.tool.version}`) !== true) {
+    return deny('tool_not_granted_by_skill');
+  }
   const { departmentTypes } = tool.version;
   if (departmentTypes !== undefined) {
     const department = facts.department;

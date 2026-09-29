@@ -36,6 +36,7 @@ import {
 } from '@melonoffice/runtime';
 import { createSpecialistService, type SpecialistRepository } from '@melonoffice/specialists';
 import type { TenancyStore } from '@melonoffice/tenancy';
+import type { SkillCatalogue } from '@melonoffice/specialists';
 import type { ToolExecutors, ToolRegistry } from '@melonoffice/tools';
 
 /** The stores the worker reads and writes: the same repositories the API uses, nothing new. */
@@ -55,7 +56,12 @@ export interface WorkerRuntimeOptions {
   readonly environment: DeploymentEnvironment | undefined;
   readonly leaseMs: number;
   /** The tool catalogue and executors. In production: the real catalogue, empty today (ADR-0026). */
-  readonly tools: { readonly registry: ToolRegistry; readonly executors: ToolExecutors };
+  readonly tools: {
+    readonly registry: ToolRegistry;
+    readonly executors: ToolExecutors;
+    /** The skills that grant tools to agents (ADR-0083). Absent: the catalogue in code. */
+    readonly skills?: SkillCatalogue;
+  };
   /** The model catalogue. In production: the official providers, none until D-7 (ADR-0027). */
   readonly ai: ProviderRegistry;
   /**
@@ -156,6 +162,7 @@ export function createWorkerRuntime(options: WorkerRuntimeOptions): {
         specialists,
         departments: stores.departments,
         registry: tools.registry,
+        ...(tools.skills === undefined ? {} : { skills: tools.skills }),
         approvals,
         executors: tools.executors,
         authorization,

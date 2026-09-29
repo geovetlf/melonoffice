@@ -1,5 +1,6 @@
 import { actorOf, type AuditService } from '@melonoffice/audit';
 import type { AuthorizationService, Permission } from '@melonoffice/rbac';
+import { createSkillCatalogue, type SkillCatalogue } from '@melonoffice/specialists';
 import { isResolvedTenant, type TenantContext } from '@melonoffice/tenancy';
 import { randomUUID } from 'node:crypto';
 import {
@@ -53,7 +54,22 @@ export type ActionReason =
   | 'permission_denied'
   /** The engine that carries it out is not set up in this environment. */
   | 'not_configured'
-  | 'proposer_not_allowed';
+  | 'proposer_not_allowed'
+  /**
+   * An agent proposes only what one of its skills grants (SK-2, ADR-0083). Asked for a named
+   * agent: none of its skills, at their exact versions, grants the action. Asked for agents in
+   * general: no skill of the catalogue grants it, so no agent can propose it.
+   */
+  | 'not_granted_by_skill';
+
+/**
+ * The agent an action is evaluated for (SK-2, ADR-0083): the actions its skills grant, worked
+ * out by the caller from the agent's current version (`grantsOf`). Never taken from a request
+ * or a model.
+ */
+export interface AgentActionGrants {
+  readonly actions: ReadonlySet<string>;
+}
 
 export interface ActionDecision {
   readonly action: string;
@@ -112,12 +128,29 @@ export interface DecisionTypeView {
 }
 
 export interface DecisionEngine {
-  /** One action, for this person, as `proposer` would prepare it (GIA by default). */
-  evaluateAction(tenant: TenantContext, action: string, proposer?: ActionProposer): ActionDecision;
+  /**
+   * One action, for this person, as `proposer` would prepare it (GIA by default). For an agent,
+   * `agent` names the one proposing; without it the answer is for agents in general.
+   */
+  evaluateAction(
+    tenant: TenantContext,
+    action: string,
+    proposer?: ActionProposer,
+    agent?: AgentActionGrants,
+  ): ActionDecision;
   /** Every action of the catalogue, in its order, for this person. */
-  listActions(tenant: TenantContext, proposer?: ActionProposer): readonly ActionDecision[];
+  listActions(
+    tenant: TenantContext,
+    proposer?: ActionProposer,
+    agent?: AgentActionGrants,
+  ): readonly ActionDecision[];
   /** Whether it may be prepared at all: `available` or `needs_approval`. */
-  offers(tenant: TenantContext, action: string, proposer?: ActionProposer): boolean;
+  offers(
+    tenant: TenantContext,
+    action: string,
+    proposer?: ActionProposer,
+    agent?: AgentActionGrants,
+  ): boolean;
   /** Decides, explains and audits. Never runs anything. */
   evaluateDecision(tenant: TenantContext, request: DecisionRequest): Promise<DecisionResult>;
   /** The decision types, and whether this person may ask each one here. */
@@ -132,6 +165,11 @@ export interface DecisionEngineOptions {
    */
   readonly configured?: (action: string) => boolean;
   readonly catalogue?: readonly ActionDefinition[];
+  /**
+   * The skills that grant actions to agents (SK-1/SK-2, ADR-0069/0083). Absent: the catalogue in
+   * code.
+   */
+  readonly skills?: SkillCatalogue;
   readonly deciders?: readonly Decider<unknown>[];
   readonly ports?: DecisionPorts;
   /** The existing audit trail. Absent (tests of the actions only): decisions are not recorded. */
@@ -149,6 +187,10 @@ export function createDecisionEngine(options: DecisionEngineOptions): DecisionEn
   const ports = options.ports ?? {};
   const catalogue = checkCatalogue(options.catalogue ?? ACTION_CATALOGUE);
   const byId = new Map(catalogue.map((a) => [a.id, a]));
+  // Every action some skill of the catalogue grants: what agents in general may propose.
+  const grantedToAgents = new Set(
+    (options.skills ?? createSkillCatalogue()).list().flatMap((skill) => skill.actions),
+  );
   const deciders = new Map<string, Decider<unknown>>();
   for (const decider of options.deciders ?? []) {
     if (deciders.has(decider.type)) throw new Error(`duplicate decider ${decider.type}`);
@@ -161,6 +203,7 @@ export function createDecisionEngine(options: DecisionEngineOptions): DecisionEn
     tenant: TenantContext,
     id: string,
     proposer: ActionProposer = 'gia',
+    agent?: AgentActionGrants,
   ): ActionDecision {
     const definition = byId.get(id);
     if (definition === undefined) {
@@ -180,6 +223,9 @@ export function createDecisionEngine(options: DecisionEngineOptions): DecisionEn
       if (!can(tenant, definition.permission)) reasons.push('permission_denied');
     }
     if (!definition.proposers.includes(proposer)) reasons.push('proposer_not_allowed');
+    if (proposer === 'agent' && !(agent?.actions ?? grantedToAgents).has(id)) {
+      reasons.push('not_granted_by_skill');
+    }
     if (!configured(id)) reasons.push('not_configured');
     return Object.freeze({
       action: id,
@@ -202,10 +248,14 @@ export function createDecisionEngine(options: DecisionEngineOptions): DecisionEn
 
   const engine: DecisionEngine = Object.freeze({
     evaluateAction,
-    listActions: (tenant: TenantContext, proposer?: ActionProposer) =>
-      Object.freeze(catalogue.map((a) => evaluateAction(tenant, a.id, proposer))),
-    offers: (tenant: TenantContext, id: string, proposer?: ActionProposer) =>
-      evaluateAction(tenant, id, proposer).outcome !== 'unavailable',
+    listActions: (tenant: TenantContext, proposer?: ActionProposer, agent?: AgentActionGrants) =>
+      Object.freeze(catalogue.map((a) => evaluateAction(tenant, a.id, proposer, agent))),
+    offers: (
+      tenant: TenantContext,
+      id: string,
+      proposer?: ActionProposer,
+      agent?: AgentActionGrants,
+    ) => evaluateAction(tenant, id, proposer, agent).outcome !== 'unavailable',
 
     listDecisionTypes(tenant: TenantContext) {
       return Object.freeze(

@@ -36,7 +36,13 @@ import {
 } from '@melonoffice/execution';
 import { withCorrelation, type Logger } from '@melonoffice/observability';
 import type { AuthorizationService } from '@melonoffice/rbac';
-import type { EligibilityDecision, SpecialistService } from '@melonoffice/specialists';
+import {
+  createSkillCatalogue,
+  grantsOf,
+  type EligibilityDecision,
+  type SkillCatalogue,
+  type SpecialistService,
+} from '@melonoffice/specialists';
 import { isResolvedTenant, type TenancyStore, type TenantContext } from '@melonoffice/tenancy';
 import {
   digestOf,
@@ -101,6 +107,11 @@ export interface ToolGateOptions {
   /** Where this server runs, set explicitly. Undefined: no tool runs anywhere (fail closed). */
   readonly environment: DeploymentEnvironment | undefined;
   readonly riskPolicy?: RiskPolicy;
+  /**
+   * The skill catalogue a specialist version's skills are read from (ADR-0069/0083). Absent: the
+   * catalogue in code. Tests give their own.
+   */
+  readonly skills?: SkillCatalogue;
   readonly logger?: Logger;
   readonly now?: () => Date;
   readonly requestId?: string;
@@ -147,6 +158,7 @@ export function createToolGate(options: ToolGateOptions): ToolGate {
     audit,
     environment,
     riskPolicy = DEFAULT_RISK_POLICY,
+    skills = createSkillCatalogue(),
     now = () => new Date(),
     requestId,
     sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
@@ -310,6 +322,10 @@ export function createToolGate(options: ToolGateOptions): ToolGate {
             executors,
             riskPolicy,
             input,
+            granted:
+              facts.version === undefined
+                ? new Set<string>()
+                : grantsOf(facts.version.configuration.skills, skills).tools,
           });
 
       const deny = async (reason: string): Promise<ToolResult> => {

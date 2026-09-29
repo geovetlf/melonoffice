@@ -5,6 +5,7 @@ import type { EntitlementOverride } from '@melonoffice/entitlements';
 import { createConversationAgentCheck } from '@melonoffice/integrations';
 import { createAuthorizationService } from '@melonoffice/rbac';
 import { describe, expect, it } from 'vitest';
+import { reviseSpecialist } from '@melonoffice/specialists';
 import { OperatorError, seedTestAgent, setEntitlementOverride, TEST_AGENT } from './operator.js';
 import { setupApp, STORES } from './test-api.js';
 
@@ -173,6 +174,32 @@ describe.each(STORES)('operator tools with storage in %s', (_name, createStores)
       // Nothing happened to another organization.
       expect(await t.stores.specialists.list(t.orgB)).toEqual([]);
       expect(await t.stores.conversations.findSettings(t.orgB)).toBeUndefined();
+    });
+
+    it('gives an agent seeded before SK-1 the skill that grants its tools, as a new version (ADR-0083)', async () => {
+      const t = await setup();
+      const first = await seed(t);
+      // As it was stored before skills granted tools: the same tools, no skill.
+      await t.stores.specialists.update(t.orgA, first.specialistId as never, (s) =>
+        reviseSpecialist(
+          s,
+          { fromVersion: s.version, configuration: { ...s.configuration, skills: [] } },
+          t.aliceId,
+          '2026-09-29T12:00:00.000Z' as never,
+        ),
+      );
+      const again = await seed(t);
+      expect(again).toMatchObject({ specialistId: first.specialistId, created: false });
+      const [agent] = await t.stores.specialists.list(t.orgA);
+      expect(agent?.configuration.skills).toEqual([{ id: 'conversation_reply', version: 1 }]);
+      expect(agent?.configuration.tools).toEqual([
+        { id: 'message_send', version: 2 },
+        { id: 'conversation_handoff', version: 1 },
+      ]);
+      const version = agent?.version ?? 0;
+      // Running it again changes nothing more.
+      await seed(t);
+      expect((await t.stores.specialists.list(t.orgA))[0]?.version).toBe(version);
     });
 
     it('refuses an unknown organization or level', async () => {

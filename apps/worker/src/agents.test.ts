@@ -474,7 +474,8 @@ describe.each(STORES)('CV-6B conversation agent with storage in %s', (_storage, 
             mainRoleId: 'sales_assistant',
             roleVersion: 1,
             capabilities: ['answer_customers'],
-            skills: [],
+            // Its reply and hand-off come from this skill (SK-1/SK-2, ADR-0069/0083).
+            skills: [{ id: 'conversation_reply', version: 1 }],
             // One reply version per agent: its own level's (a specialist lists a tool once).
             tools: setup.tools ?? [
               { id: 'message_send', version: setup.autonomy === 'supervised' ? 2 : 3 },

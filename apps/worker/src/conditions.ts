@@ -5,6 +5,7 @@ import { createDecisionEngine, DECIDERS, planConditionEvaluator } from '@melonof
 import type { Logger } from '@melonoffice/observability';
 import type { ConditionEvaluator } from '@melonoffice/planning';
 import { createAuthorizationService } from '@melonoffice/rbac';
+import type { SkillCatalogue } from '@melonoffice/specialists';
 import type { TenancyStore } from '@melonoffice/tenancy';
 
 /**
@@ -31,8 +32,10 @@ export function createPlanConditions(options: {
   readonly stores: PlanConditionStores;
   readonly logger?: Logger;
   readonly now?: () => Date;
+  /** The skills that grant actions to agents (ADR-0083). Absent: the catalogue in code. */
+  readonly skills?: SkillCatalogue;
 }): ConditionEvaluator {
-  const { stores, logger, now } = options;
+  const { stores, logger, now, skills } = options;
   const authorization = createAuthorizationService();
   const brain = createCompanyBrain({
     repository: stores.knowledge,
@@ -47,6 +50,7 @@ export function createPlanConditions(options: {
     deciders: DECIDERS.filter((d) => CONDITION_DECISION_TYPES.includes(d.type) && !d.usesAI),
     ports: { brain },
     audit: createAuditService(stores.audit, now),
+    ...(skills === undefined ? {} : { skills }),
     ...(now === undefined ? {} : { now }),
   });
   return planConditionEvaluator(engine);
