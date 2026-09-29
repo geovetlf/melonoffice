@@ -15,6 +15,7 @@ import {
   RUNTIME_AI_FIELDS,
   type AgentOutputSink,
   type AgentWork,
+  type ExecutionEndHook,
   type ExecutionStopHook,
   type JobDispatcher,
   type NodeWorkSource,
@@ -95,6 +96,8 @@ export interface RuntimeOptions {
   readonly outputs?: AgentOutputSink;
   /** Told when an execution stops without completing (ADR-0043). */
   readonly onStopped?: ExecutionStopHook;
+  /** Told when an execution ended, completed or failed (ADR-0070). */
+  readonly onEnded?: ExecutionEndHook;
   readonly logger?: Logger;
 }
 
@@ -137,7 +140,8 @@ function readyNode(execution: Execution): ExecutionNode | undefined {
 }
 
 export function createRuntime(options: RuntimeOptions): Runtime {
-  const { jobs, services, work, verifier, dispatcher, outputs, onStopped, logger } = options;
+  const { jobs, services, work, verifier, dispatcher, outputs, onStopped, onEnded, logger } =
+    options;
 
   const logOf = (job: ExecutionJob, leaseId?: string) =>
     logger === undefined
@@ -203,6 +207,16 @@ export function createRuntime(options: RuntimeOptions): Runtime {
       }
     }
 
+    /** Tells the end hook, once the end is stored. Its failure changes nothing here. */
+    async function endedHook(execution: Execution, status: 'completed' | 'failed'): Promise<void> {
+      if (onEnded === undefined) return;
+      try {
+        await onEnded.ended(tenant, execution, status);
+      } catch {
+        log?.warn('end hook failed', { status });
+      }
+    }
+
     /** The execution ended: cancel its jobs, this one included. */
     async function ended(execution: Execution): Promise<AdvanceResult> {
       await s.jobs.cancelForExecution(tenant, execution.id);
@@ -212,8 +226,9 @@ export function createRuntime(options: RuntimeOptions): Runtime {
 
     /** Fails the execution with a stable code. Unfinished nodes are cancelled with it. */
     async function fail(execution: Execution, code: string): Promise<AdvanceResult> {
+      let failed: Execution;
       try {
-        await s.executions.runtimeChangeStatus(tenant, execution.id, {
+        failed = await s.executions.runtimeChangeStatus(tenant, execution.id, {
           from: execution.status,
           to: 'failed',
           failure: { code },
@@ -227,6 +242,7 @@ export function createRuntime(options: RuntimeOptions): Runtime {
       const result = await finish('failed', code, 'failed');
       await s.jobs.cancelForExecution(tenant, execution.id);
       await stopped(execution, code);
+      await endedHook(failed, 'failed');
       return result;
     }
 
@@ -285,12 +301,14 @@ export function createRuntime(options: RuntimeOptions): Runtime {
       if (current.verification?.result !== 'passed') {
         return fail(current, 'verification_failed');
       }
-      await s.executions.runtimeChangeStatus(tenant, current.id, {
+      const completed = await s.executions.runtimeChangeStatus(tenant, current.id, {
         from: 'verifying',
         to: 'completed',
         ...(result === undefined ? {} : { result }),
       });
-      return finish('succeeded', 'execution_completed', 'completed');
+      const done = await finish('succeeded', 'execution_completed', 'completed');
+      await endedHook(completed, 'completed');
+      return done;
     }
 
     /** After a node: queue the next ready one, or verify once every node is done. */

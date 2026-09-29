@@ -43,10 +43,13 @@ interface PlanDetail {
 }
 
 describe.each(STORES)('plans and workflows API with storage in %s', (_name, createStores) => {
-  async function setup(roles: Record<string, readonly string[]> = ROLES) {
+  async function setup(
+    roles: Record<string, readonly string[]> = ROLES,
+    options: { readonly runPlans?: boolean } = {},
+  ) {
     const stores: Stores = createStores();
     const authorization = createAuthorizationService(roles as never);
-    const ctx = setupApp(stores, authorization);
+    const ctx = setupApp(stores, authorization, undefined, undefined, undefined, options);
     const aliceId = (await ctx.register('token-alice')) as UserId;
     await ctx.register('token-bob');
     const createOrg = async (token: string, name: string) => {
@@ -199,8 +202,13 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
           ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         }),
       );
-    /** A ready plan with two specialist steps, for delegation. */
-    async function proposeWork() {
+    /**
+     * A plan with two specialist steps, for delegation: ready, or waiting on a person's approval,
+     * and with an approval step when asked.
+     */
+    async function proposeWork(
+      options: { readonly approvalRequired?: boolean; readonly gate?: boolean } = {},
+    ) {
       const execution = await planning(tenant);
       const step = (id: string, s: Specialist, dependsOn: string[] = []) => ({
         id,
@@ -209,13 +217,22 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
         dependsOn,
         specialistId: s.identity.id,
         verification: { policy: 'checks', expectedOutput: 'report', requiredChecks: [] },
+        ...(options.approvalRequired === true && id === 'research'
+          ? { approvalRequired: true }
+          : {}),
       });
       const outcome = await plans.propose(tenant, {
         executionId: execution.id,
         proposal: {
           summary: 'Market study',
           objective: 'Study the melon market.',
-          steps: [step('research', researcher), step('campaign', marketer, ['research'])],
+          steps: [
+            step('research', researcher),
+            step('campaign', marketer, ['research']),
+            ...(options.gate === true
+              ? [{ id: 'sign_off', kind: 'approval', label: 'Sign off', dependsOn: ['campaign'] }]
+              : []),
+          ],
         },
         source: {
           kind: 'planner',
@@ -335,6 +352,89 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
     };
     expect(view.status).toBe('cancelled');
     expect(view.cancellation.reason).toBe('plan_rejected');
+  });
+
+  it('WF-1: approving starts the plan: its first step is started and queued, the rest wait', async () => {
+    const t = await setup(ROLES, { runPlans: true });
+    const { plan } = await t.proposeWork({ approvalRequired: true });
+    const version = must(await t.stores.plans.findVersion(t.orgA, plan.id, plan.version));
+    const approved = await t.post('token-alice', `/plans/${plan.id}/approve`, {
+      version: 1,
+      digest: version.digest,
+    });
+    expect(approved.status).toBe(200);
+    const view = (await approved.json()) as {
+      status: string;
+      delegations: { stepId: string; executionId: string }[];
+    };
+    expect(view.status).toBe('executing');
+    const [research, campaign] = view.delegations.map((d) => d.executionId);
+    expect(t.kicked).toEqual([research]);
+
+    const steps = await t.get('token-alice', `/plans/${plan.id}/steps`);
+    expect(steps.status).toBe(200);
+    expect(await steps.json()).toEqual({
+      planId: plan.id,
+      status: 'executing',
+      steps: [
+        {
+          stepId: 'research',
+          label: 'Work research',
+          executionId: research,
+          status: 'running',
+          failure: null,
+          answer: null,
+          missing: [],
+        },
+        {
+          stepId: 'campaign',
+          label: 'Work campaign',
+          executionId: campaign,
+          status: 'pending',
+          failure: null,
+          answer: null,
+          missing: [],
+        },
+      ],
+    });
+    // Approving again changes nothing and starts nothing.
+    expect(
+      (
+        await t.post('token-alice', `/plans/${plan.id}/approve`, {
+          version: 1,
+          digest: version.digest,
+        })
+      ).status,
+    ).toBe(409);
+    expect(t.kicked).toEqual([research]);
+  });
+
+  it('WF-1: a plan with a step it cannot run is not approved at all', async () => {
+    const t = await setup(ROLES, { runPlans: true });
+    // An approval step has no defined behaviour in a plan yet: the plan is refused before the
+    // decision, so an approval never covers a plan that would stop halfway.
+    const { plan } = await t.proposeWork({ approvalRequired: true, gate: true });
+    const version = must(await t.stores.plans.findVersion(t.orgA, plan.id, plan.version));
+    const refused = await t.post('token-alice', `/plans/${plan.id}/approve`, {
+      version: 1,
+      digest: version.digest,
+    });
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toEqual({ error: 'plan_not_runnable' });
+    expect((await t.stores.plans.find(t.orgA, plan.id))?.status).toBe('approval_required');
+    expect(t.kicked).toEqual([]);
+  });
+
+  it('WF-1: without the plan runtime, approving records the decision and runs nothing', async () => {
+    const t = await setup();
+    const { plan } = await t.proposeWork({ approvalRequired: true });
+    const version = must(await t.stores.plans.findVersion(t.orgA, plan.id, plan.version));
+    const approved = await t.post('token-alice', `/plans/${plan.id}/approve`, {
+      version: 1,
+      digest: version.digest,
+    });
+    expect(((await approved.json()) as { status: string }).status).toBe('approved');
+    expect(t.kicked).toEqual([]);
   });
 
   it('has no approval path for a plan that needs none', async () => {

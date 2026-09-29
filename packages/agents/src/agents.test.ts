@@ -9,9 +9,12 @@ import {
 } from '@melonoffice/departments';
 import type {
   Execution,
+  ExecutionId,
   ExecutionNodeId,
   InitialBilling,
   Organization,
+  Plan,
+  PlanVersion,
   Specialist,
   SubscriptionId,
   UserId,
@@ -42,6 +45,8 @@ import {
   createAgentTaskVerifier,
   createAgentTaskWork,
   createBrainContextSource,
+  createPlanStepVerifier,
+  createPlanStepWork,
   InMemoryAgentTaskRepository,
   isAgentTaskError,
   MAX_TASK_REQUEST_LENGTH,
@@ -563,6 +568,169 @@ describe('Agent tasks: the answer and its verification (ADR-0063)', () => {
     // Anything that is not an agent task is not this verifier's.
     expect(
       await verifier.verify(w.runtime, { ...done, input: { type: 'message', id: 'm' } }),
+    ).toBeUndefined();
+  });
+});
+
+describe('Plan steps: what a step’s agent is given (WF-1, ADR-0070)', () => {
+  const PLAN = '5a1b7c9e-1111-4111-8111-000000000001';
+  const PARENT = '5a1b7c9e-2222-4222-8222-000000000001';
+  const RESEARCH = '5a1b7c9e-3333-4333-8333-000000000001';
+  const REPORT = '5a1b7c9e-3333-4333-8333-000000000002';
+
+  async function setup() {
+    const w = await world();
+    const lucia = await w.agent();
+    const specialist = {
+      id: lucia.identity.id,
+      version: lucia.version,
+      departmentId: lucia.configuration.departmentId,
+    };
+    const step = (id: string, label: string, dependsOn: string[] = []) => ({
+      id,
+      kind: 'specialist',
+      label,
+      dependsOn,
+      specialist,
+      approvalRequired: false,
+    });
+    const version = {
+      planId: PLAN,
+      organizationId: w.orgA,
+      version: 1,
+      request: { summary: 'Estudio', objective: 'Estudiar el mercado de melones' },
+      steps: [
+        step('research', 'Investigar precios'),
+        step('report', 'Escribir el informe', ['research']),
+      ],
+    } as unknown as PlanVersion;
+    let plan = {
+      id: PLAN,
+      organizationId: w.orgA,
+      executionId: PARENT,
+      status: 'executing',
+      version: 1,
+      delegations: [
+        { stepId: 'research', executionId: RESEARCH },
+        { stepId: 'report', executionId: REPORT },
+      ],
+    } as unknown as Plan;
+    const plans = {
+      find: async (org: string, id: string) => (org === w.orgA && id === PLAN ? plan : undefined),
+      findVersion: async (org: string, id: string, v: number) =>
+        org === w.orgA && id === PLAN && v === 1 ? version : undefined,
+    };
+    const child = {
+      id: REPORT,
+      organizationId: w.orgA,
+      mode: 'execute',
+      status: 'running',
+      input: { type: 'plan_step', id: `${PLAN}:report` },
+      parentExecutionId: PARENT,
+      specialistId: lucia.identity.id,
+      specialistVersion: lucia.version,
+      versionSnapshot: {
+        schemaVersion: 1,
+        components: [{ kind: 'plan', id: PLAN, version: '1' }],
+      },
+      nodes: [{ id: 'report', type: 'agent', label: 'Escribir', status: 'running', dependsOn: [] }],
+    } as unknown as Execution;
+    const node = child.nodes[0] as Execution['nodes'][number];
+    const repository = new InMemoryAgentOutputRepository();
+    const outputs = createAgentOutputStore(repository);
+    const context: AgentContextSource = {
+      read: async () => [{ name: 'company_context', text: '- Tienda: Lima' }],
+    };
+    const work = createPlanStepWork({
+      plans,
+      specialists: w.repository,
+      skills: createSkillCatalogue(),
+      context,
+      outputs,
+    });
+    const answer = (text: string) =>
+      outputs.record(w.runtime, {
+        executionId: RESEARCH as ExecutionId,
+        nodeId: 'research' as ExecutionNodeId,
+        requestId: 'req-1',
+        output: { structured: { answer: text, missing: [] } },
+      });
+    return {
+      w,
+      child,
+      node,
+      work,
+      outputs,
+      answer,
+      setPlan: (p: Partial<Plan>) => {
+        plan = { ...plan, ...p };
+      },
+    };
+  }
+
+  it('asks the step with the plan’s objective and the answers of the steps before it, as data', async () => {
+    const t = await setup();
+    // The step before it has no answer yet: nothing is asked, nothing is invented.
+    expect(await t.work.agentWork(t.w.runtime, t.child, t.node)).toBeUndefined();
+    await t.answer('El kilo cuesta S/ 4 en mayo');
+    const asked = await t.work.agentWork(t.w.runtime, t.child, t.node);
+    expect(asked).toMatchObject({
+      taskType: 'agent_task',
+      sensitivity: 'confidential',
+      metadata: { previousSteps: 1 },
+    });
+    const text = JSON.stringify(asked?.messages);
+    expect(text).toContain('Estudiar el mercado de melones');
+    expect(text).toContain('Escribir el informe');
+    expect(text).toContain('Investigar precios: El kilo cuesta S/ 4 en mayo');
+    expect(text).toContain('Tienda: Lima');
+    expect(await t.work.toolInput(t.w.runtime, t.child, t.node)).toBeUndefined();
+  });
+
+  it('asks nothing for anything that is not exactly this plan’s step for this agent', async () => {
+    const t = await setup();
+    await t.answer('Listo');
+    const none = (execution: Execution, node = t.node, tenant = t.w.runtime) =>
+      t.work.agentWork(tenant, execution, node);
+    expect(await none({ ...t.child, specialistVersion: 99 })).toBeUndefined();
+    expect(await none({ ...t.child, parentExecutionId: RESEARCH as ExecutionId })).toBeUndefined();
+    expect(
+      await none({ ...t.child, versionSnapshot: { schemaVersion: 1, components: [] } }),
+    ).toBeUndefined();
+    expect(await none(t.child, { ...t.node, id: 'research' as ExecutionNodeId })).toBeUndefined();
+    const bobRuntime = await resolveRuntimeTenant(BOB, t.w.orgB, t.w.tenancy);
+    expect(await none(t.child, t.node, bobRuntime)).toBeUndefined();
+    // The plan no longer names this execution for the step.
+    t.setPlan({ delegations: [{ stepId: 'research', executionId: RESEARCH as ExecutionId }] });
+    expect(await none(t.child)).toBeUndefined();
+  });
+
+  it('verifies a finished step by its answer’s shape, with the answer as the result', async () => {
+    const t = await setup();
+    const verifier = createPlanStepVerifier({ outputs: t.outputs });
+    expect(await verifier.verify(t.w.runtime, t.child)).toBeUndefined();
+    const done: Execution = {
+      ...t.child,
+      nodes: t.child.nodes.map((n) => ({ ...n, status: 'completed' as const })),
+    };
+    expect(
+      (await verifier.verify(t.w.runtime, done))?.verification.nodes[0]?.checks[0]?.result,
+    ).toBe('failed');
+    await t.outputs.record(t.w.runtime, {
+      executionId: REPORT as ExecutionId,
+      nodeId: 'report' as ExecutionNodeId,
+      requestId: 'req-1',
+      output: { structured: { answer: 'Informe', missing: [] } },
+    });
+    const passed = await verifier.verify(t.w.runtime, done);
+    expect(passed?.verification.nodes[0]).toMatchObject({
+      nodeId: 'report',
+      policy: 'output_schema',
+      checks: [{ code: 'agent_answer_valid', result: 'passed' }],
+    });
+    expect(passed?.result).toEqual({ type: 'agent_output', id: `${REPORT}:report` });
+    expect(
+      await verifier.verify(t.w.runtime, { ...done, input: { type: 'agent_task', id: REPORT } }),
     ).toBeUndefined();
   });
 });

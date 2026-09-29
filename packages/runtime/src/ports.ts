@@ -72,6 +72,15 @@ export interface ExecutionStopHook {
   stopped(tenant: TenantContext, execution: Execution, code: string): Promise<void>;
 }
 
+/**
+ * Told once an execution ended, completed or failed (WF-1, ADR-0070), after the end is stored:
+ * the plan conductor starts the plan's next steps from here. Its failure changes nothing about
+ * the execution that ended.
+ */
+export interface ExecutionEndHook {
+  ended(tenant: TenantContext, execution: Execution, status: 'completed' | 'failed'): Promise<void>;
+}
+
 /** What the runtime sets on every AI call, never a work source. */
 export const RUNTIME_AI_FIELDS = ['requestId', 'executionId', 'nodeId', 'specialistId'] as const;
 

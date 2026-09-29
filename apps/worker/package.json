@@ -34,6 +34,7 @@
     "@melonoffice/integrations": "workspace:*",
     "@melonoffice/jobs": "workspace:*",
     "@melonoffice/observability": "workspace:*",
+    "@melonoffice/planning": "workspace:*",
     "@melonoffice/rbac": "workspace:*",
     "@melonoffice/runtime": "workspace:*",
     "@melonoffice/specialists": "workspace:*",

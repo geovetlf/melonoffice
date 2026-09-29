@@ -1,6 +1,7 @@
 # ADR-0031: Runtime advance(): one node at a time, and runtime authority
 
 - Status: Proposed (Phase X6c, pending Geovet's review)
+- Amended by: [ADR-0070](0070-approved-plans-run.md): the plan conductor moves a planning execution through two runtime-only plan methods; the runtime tells an end hook when an execution ends.
 - Date: 2026-09-27
 - Builds on: [ADR-0020](0020-audit-log-foundation.md), [ADR-0024](0024-execution-foundation.md), [ADR-0026](0026-tools-approvals-and-guardrails.md), [ADR-0027](0027-ai-gateway-and-provider-registry.md), [ADR-0029](0029-runtime-guards.md) and [ADR-0030](0030-execution-jobs-and-lease.md)
 - Decisions it applies: D-X6-ACTOR, D-X6-START, D-X6-CANCEL, D-X6-VERIFY, D-X6-ATTEMPT, D-X6-JOB (Geovet, 2026-09-27) and the X6c authorization

@@ -92,7 +92,9 @@ import {
   type SpecialistRepository,
 } from '@melonoffice/specialists';
 import {
+  createDelegation,
   createPlanCancellationCascade,
+  createPlanConductor,
   createPlanService,
   createPlanValidator,
   type PlanRepository,
@@ -183,6 +185,11 @@ export interface AppOptions {
   readonly credits?: CreditStore;
   /** Plans (ADR-0028). Absent: the plan routes answer 503 (fails closed). */
   readonly plans?: PlanRepository;
+  /**
+   * Queues a plan step's first node for the worker (WF-1, ADR-0070): with it, approving a plan
+   * starts it. Absent: an approval is recorded and nothing runs.
+   */
+  readonly planRuntime?: TaskKickoff;
   /** Workflows (ADR-0028). Absent: the workflow routes answer 503 (fails closed). */
   readonly workflows?: WorkflowRepository;
   /**
@@ -313,6 +320,7 @@ export function createApp({
   approvals,
   credits,
   plans,
+  planRuntime,
   workflows,
   conversations,
   ai = {},
@@ -818,9 +826,9 @@ export function createApp({
       app.all('/v1/organizations/:organizationId/approvals', unavailable);
       app.all('/v1/organizations/:organizationId/approvals/*', unavailable);
     }
-    // Plans are read and decided over HTTP, never made, run or delegated: only the server-side
-    // planner and workflows propose them, so this validator is never reached from a route and
-    // fails closed on every tool (no environment).
+    // Plans are read and decided over HTTP, never made there: only the server-side planner and
+    // workflows propose them, so this validator is never reached from a route and fails closed
+    // on every tool (no environment). Approving one runs it (ADR-0070).
     if (
       tenancy !== undefined &&
       executionService !== undefined &&
@@ -843,7 +851,39 @@ export function createApp({
         authorization,
         audit,
       });
-      registerPlanRoutes(app, { ...dependencies, plans: planService });
+      // An approved plan runs (ADR-0070): the person who approved delegates it and starts its
+      // first steps, each queued for the worker; the worker's conductor starts the rest.
+      const conductor =
+        planRuntime === undefined
+          ? undefined
+          : createPlanConductor({
+              plans,
+              delegation: createDelegation({
+                plans,
+                executions: executionService,
+                specialists,
+                organizations: tenancy,
+                authorization,
+              }),
+              executions: executionService,
+              starter: {
+                async start(tenant, executionId) {
+                  await executionService.start(tenant, executionId);
+                  await planRuntime.kickoff(tenant, executionId);
+                },
+              },
+            });
+      registerPlanRoutes(app, {
+        ...dependencies,
+        plans: planService,
+        ...(conductor === undefined ? {} : { conductor }),
+        steps: {
+          executions: executionService,
+          ...(agentTasks?.outputs === undefined
+            ? {}
+            : { outputs: createAgentOutputStore(agentTasks.outputs) }),
+        },
+      });
       if (workflows !== undefined) {
         registerWorkflowRoutes(app, {
           ...dependencies,

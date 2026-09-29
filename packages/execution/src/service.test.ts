@@ -966,6 +966,59 @@ describe('X6c N1: only the runtime drives running work (ADR-0031)', () => {
     ).toBe('actor_not_allowed');
   });
 
+  it('lets only the runtime move a planning execution, through the plan methods only (WF-1)', async () => {
+    const w = await world();
+    const plan = await w.service.create(w.tenantA, { ...REQUEST, mode: 'plan' });
+    await w.service.changeStatus(w.tenantA, plan.id, { from: 'pending', to: 'planning' });
+    await w.service.changeStatus(w.tenantA, plan.id, { from: 'planning', to: 'running' });
+    const node = { nodeId: 'work', from: 'pending', to: 'running' } as const;
+    // The work methods never touch a plan, the plan methods never touch work.
+    expect(await codeOf(w.service.runtimeChangeNode(w.runtimeA, plan.id, node))).toBe(
+      'actor_not_allowed',
+    );
+    const { id } = await w.service.create(w.tenantA, REQUEST);
+    await w.service.start(w.tenantA, id);
+    expect(await codeOf(w.service.runtimePlanChangeNode(w.runtimeA, id, node))).toBe(
+      'actor_not_allowed',
+    );
+    expect(
+      await codeOf(
+        w.service.runtimePlanChangeStatus(w.runtimeA, id, { from: 'running', to: 'verifying' }),
+      ),
+    ).toBe('actor_not_allowed');
+    // Only the runtime: never a person or GIA, and never to cancel.
+    for (const tenant of [w.tenantA, w.giaA]) {
+      expect(await codeOf(w.service.runtimePlanChangeNode(tenant, plan.id, node))).toBe(
+        'actor_not_allowed',
+      );
+    }
+    expect(
+      await codeOf(
+        w.service.runtimePlanChangeStatus(w.runtimeA, plan.id, {
+          from: 'running',
+          to: 'cancelled',
+          reason: 'director_request',
+        }),
+      ),
+    ).toBe('actor_not_allowed');
+    // The same model rules as any execution: no verifying with a node unfinished.
+    expect(
+      await codeOf(
+        w.service.runtimePlanChangeStatus(w.runtimeA, plan.id, {
+          from: 'running',
+          to: 'verifying',
+        }),
+      ),
+    ).toBe('invalid_execution_transition');
+    const moved = await w.service.runtimePlanChangeNode(w.runtimeA, plan.id, node);
+    expect(moved.nodes[0]?.status).toBe('running');
+    expect(w.events().at(-1)).toMatchObject({
+      action: 'execution.node_changed',
+      nodeId: 'work',
+      transition: { from: 'pending', to: 'running' },
+    });
+  });
+
   it('lets a person withdraw work that never started, and nothing else', async () => {
     const w = await world();
     const { id } = await w.service.create(w.tenantA, REQUEST);

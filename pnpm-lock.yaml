@@ -259,6 +259,9 @@ importers:
       '@melonoffice/observability':
         specifier: workspace:*
         version: link:../../packages/observability
+      '@melonoffice/planning':
+        specifier: workspace:*
+        version: link:../../packages/planning
       '@melonoffice/rbac':
         specifier: workspace:*
         version: link:../../packages/rbac
@@ -327,6 +330,9 @@ importers:
       '@melonoffice/execution':
         specifier: workspace:*
         version: link:../execution
+      '@melonoffice/planning':
+        specifier: workspace:*
+        version: link:../planning
       '@melonoffice/rbac':
         specifier: workspace:*
         version: link:../rbac
