@@ -43,6 +43,7 @@ import { createLogger } from '@melonoffice/observability';
 import { createAuthorizationService } from '@melonoffice/rbac';
 import {
   applySpecialistStatus,
+  createSkillCatalogue,
   createSpecialistService,
   InMemorySpecialistRepository,
   newSpecialist,
@@ -250,7 +251,22 @@ describe.each(STORES)('worker job delivery with storage in %s', (_storage, creat
       leaseMs: LEASE_MS,
       tools: production
         ? { registry: createToolRegistry(TOOL_CATALOGUE), executors: {} }
-        : { registry: createToolRegistry(TOOLS), executors: { fixture: executor } },
+        : {
+            registry: createToolRegistry(TOOLS),
+            executors: { fixture: executor },
+            // The fixture skill that grants every fixture tool (SK-2, ADR-0083).
+            skills: createSkillCatalogue([
+              {
+                id: 'fixture_work',
+                version: 1,
+                nameKey: 'fixture',
+                descriptionKey: 'fixture',
+                tools: TOOLS.map((t) => ({ id: t.id, versions: [1] })),
+                actions: [],
+                reads: [],
+              } as never,
+            ]),
+          },
       ai: createProviderRegistry({ providers: [], models: [], adapters: [] }),
       work: {
         toolInput: async () => ({ subject: 'Weekly summary' }),
@@ -300,7 +316,7 @@ describe.each(STORES)('worker job delivery with storage in %s', (_storage, creat
             mainRoleId: 'operations_assistant',
             roleVersion: 1,
             capabilities: [],
-            skills: [],
+            skills: [{ id: 'fixture_work', version: 1 }],
             tools: TOOLS.map((t) => ({ id: t.id, version: 1 })),
             permissions: ['organization.read'],
             policies: {},

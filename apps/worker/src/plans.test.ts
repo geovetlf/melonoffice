@@ -296,6 +296,18 @@ describe.each(STORES)(
         plans: stores.plans,
         conditions: createPlanConditions({
           stores: { tenancy: stores.tenancy, knowledge: stores.knowledge, audit: stores.audit },
+          // A skill that lets agents propose a discount (ADR-0083): none in code grants it yet.
+          skills: createSkillCatalogue([
+            {
+              id: 'offers',
+              version: 1,
+              nameKey: 'fixture',
+              descriptionKey: 'fixture',
+              tools: [],
+              actions: ['opportunity.offer_discount'],
+              reads: [],
+            } as never,
+          ]),
           now,
         }),
         dispatcher: { dispatch: async (id) => void dispatched.push(id) },
