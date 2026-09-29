@@ -169,6 +169,9 @@ describe.each(STORES)('agent tasks with storage in %s', (_name, createStores) =>
     const id = await agent();
     for (const request of ['uno', 'dos', 'tres']) {
       await call('token-alice', 'POST', `${base(orgA)}/specialists/${id}/tasks`, { request });
+      // Newest first is by creation time: two tasks created in the same millisecond tie, and
+      // their order is then the ids', not the order they were asked in.
+      await new Promise((resolve) => setTimeout(resolve, 5));
     }
     const first = await call('token-alice', 'GET', `${base(orgA)}/specialists/${id}/tasks?limit=2`);
     expect(first.status).toBe(200);

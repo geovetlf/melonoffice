@@ -1,0 +1,32 @@
+{
+  "name": "@melonoffice/events",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "@melonoffice/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@melonoffice/audit": "workspace:*",
+    "@melonoffice/domain": "workspace:*",
+    "@melonoffice/observability": "workspace:*",
+    "@melonoffice/tenancy": "workspace:*"
+  },
+  "devDependencies": {
+    "@melonoffice/auth": "workspace:*",
+    "@melonoffice/config": "workspace:*",
+    "@melonoffice/credits": "workspace:*"
+  }
+}
