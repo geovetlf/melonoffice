@@ -1,5 +1,5 @@
 import { I18nProvider } from '@melonoffice/i18n';
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../App.js';
 import { createServices } from '../identity/services.js';
@@ -103,12 +103,20 @@ describe("the Home's work for today (block 8)", () => {
   });
 });
 
+/** The shortcut listens once GIA's chat is available, which may come after the Home renders. */
+const pressUntilOpen = (key: { key: string; ctrlKey?: boolean; metaKey?: boolean }) =>
+  waitFor(() => {
+    if (screen.queryByRole('dialog', { name: 'Ask GIA' }) === null) {
+      fireEvent.keyDown(globalThis.window, key);
+    }
+    return screen.getByRole('dialog', { name: 'Ask GIA' });
+  });
+
 describe('Ctrl+K asks GIA from anywhere (block 8)', () => {
   it('opens a box, sends only on Enter, and opens the GIA workplace', async () => {
     const backend = open([]);
     await today();
-    fireEvent.keyDown(globalThis.window, { key: 'k', ctrlKey: true });
-    const dialog = within(await screen.findByRole('dialog', { name: 'Ask GIA' }));
+    const dialog = within(await pressUntilOpen({ key: 'k', ctrlKey: true }));
     const input = dialog.getByRole('textbox');
     fireEvent.change(input, { target: { value: '¿Cómo van las ventas?' } });
     expect(backend.apiCalls().some((c) => c.url.includes('/gia'))).toBe(false);
@@ -121,8 +129,7 @@ describe('Ctrl+K asks GIA from anywhere (block 8)', () => {
   it('closes with Escape without sending', async () => {
     const backend = open([]);
     await today();
-    fireEvent.keyDown(globalThis.window, { key: 'k', metaKey: true });
-    await screen.findByRole('dialog', { name: 'Ask GIA' });
+    await pressUntilOpen({ key: 'k', metaKey: true });
     fireEvent.keyDown(globalThis.window, { key: 'Escape' });
     expect(screen.queryByRole('dialog', { name: 'Ask GIA' })).toBeNull();
     expect(backend.apiCalls().some((c) => c.method === 'POST' && c.url.includes('/gia'))).toBe(

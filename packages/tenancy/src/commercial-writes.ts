@@ -1,0 +1,52 @@
+import type { AuditEvent } from '@melonoffice/audit';
+import type {
+  CommercialAccount,
+  CommercialAccountId,
+  CommercialMembership,
+  CustomerRelationship,
+  OrganizationId,
+} from '@melonoffice/domain';
+import type { CommercialStore } from './commercial.js';
+
+/**
+ * Writes of the commercial layer (ADR-0086). Every write stores its audit events in the same step,
+ * so a change never exists without its record. A write that changes an existing record names the
+ * version it read (`expected`, by `updatedAt`), so two people changing the same record cannot
+ * overwrite each other: the second one gets `commercial_conflict`.
+ */
+export interface CommercialRepository extends CommercialStore {
+  /** Every account, for the platform administrator. */
+  listAccounts(): Promise<readonly CommercialAccount[]>;
+  /** The members of one account, in any status. */
+  membersOfAccount(accountId: CommercialAccountId): Promise<readonly CommercialMembership[]>;
+  /** The relationships of one organization, in any status, for its owner. */
+  relationshipsOfOrganization(
+    organizationId: OrganizationId,
+  ): Promise<readonly CustomerRelationship[]>;
+  /** A new account with its first admin. Fails if the id exists. */
+  createAccount(
+    account: CommercialAccount,
+    firstAdmin: CommercialMembership,
+    events: readonly AuditEvent[],
+  ): Promise<void>;
+  /**
+   * Creates or changes a membership. `limit`, when given, is the most active members the account
+   * may have, counted in the same step so concurrent additions cannot pass it.
+   */
+  saveMembership(
+    membership: CommercialMembership,
+    expected: CommercialMembership | undefined,
+    events: readonly AuditEvent[],
+    limit?: number,
+  ): Promise<void>;
+  /**
+   * Creates or changes a relationship. `limit`, when given, is the most relationships not ended
+   * the account may have, counted in the same step.
+   */
+  saveRelationship(
+    relationship: CustomerRelationship,
+    expected: CustomerRelationship | undefined,
+    events: readonly AuditEvent[],
+    limit?: number,
+  ): Promise<void>;
+}

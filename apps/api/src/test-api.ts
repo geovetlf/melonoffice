@@ -79,7 +79,12 @@ import { createLogger } from '@melonoffice/observability';
 import type { EntitlementService } from '@melonoffice/entitlements';
 import type { AuthorizationService } from '@melonoffice/rbac';
 import { InMemorySpecialistRepository, type SpecialistRepository } from '@melonoffice/specialists';
-import { InMemoryTenancyStore, type TenancyStore } from '@melonoffice/tenancy';
+import {
+  InMemoryCommercialStore,
+  InMemoryTenancyStore,
+  type CommercialRepository,
+  type TenancyStore,
+} from '@melonoffice/tenancy';
 import { createApp, type AppOptions } from './app.js';
 import {
   AUDIT_LOGS,
@@ -113,6 +118,7 @@ import {
   PLAN_VERSIONS,
   FirestoreWorkflowRepository,
   FirestoreTenancyStore,
+  FirestoreCommercialStore,
   MEMBERSHIPS,
   ORGANIZATIONS,
   FirestoreUserDirectory,
@@ -132,6 +138,11 @@ import { emulatorFirestore, emulatorHost } from '@melonoffice/firestore/testing'
 const IDENTITIES: Record<string, VerifiedIdentity> = {
   'token-alice': { subject: 'uid-alice', email: 'alice@example.com', emailVerified: true },
   'token-bob': { subject: 'uid-bob', email: 'bob@example.com', emailVerified: false },
+  // More people, for the commercial layer's tests (ADR-0086).
+  'token-carol': { subject: 'uid-carol', email: 'carol@example.com', emailVerified: true },
+  'token-dave': { subject: 'uid-dave', email: 'dave@example.com', emailVerified: true },
+  'token-erin': { subject: 'uid-erin', email: 'erin@example.com', emailVerified: true },
+  'token-frank': { subject: 'uid-frank', email: 'frank@example.com', emailVerified: true },
 };
 export const verifier: IdTokenVerifier = {
   async verify(token) {
@@ -146,6 +157,8 @@ export const verifier: IdTokenVerifier = {
 export interface Stores {
   readonly users: UserDirectory;
   readonly tenancy: TenancyStore;
+  /** Partner and agency accounts (ADR-0086). */
+  readonly commercial: CommercialRepository;
   /** Stores a record as given, e.g. a suspended membership, the way an operator change would. */
   readonly put: (record: Organization | Membership) => Promise<void>;
   readonly billing: BillingStore;
@@ -232,6 +245,7 @@ function memoryStores(): Stores {
     secrets: new InMemorySecretStore(),
     users: new InMemoryUserDirectory(),
     tenancy,
+    commercial: new InMemoryCommercialStore(events),
     put: async (r) => tenancy.put(r),
     billing,
     putBilling: async (r) => billing.put(r),
@@ -288,6 +302,7 @@ function firestoreStores(): Stores {
     secrets: new InMemorySecretStore(),
     users: new FirestoreUserDirectory(db),
     tenancy: new FirestoreTenancyStore(db),
+    commercial: new FirestoreCommercialStore(db),
     billing: new FirestoreBillingStore(db),
     async putBilling(record) {
       if ('status' in record) {
@@ -466,6 +481,7 @@ export function setupApp(
     version: 'test',
     auth: { verifier, users: stores.users },
     tenancy: stores.tenancy,
+    commercialAccounts: stores.commercial,
     billing: stores.billing,
     executions: stores.executions,
     structure: { departments: stores.departments, specialists: stores.specialists },

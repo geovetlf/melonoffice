@@ -16,7 +16,10 @@ export type TenancyErrorCode =
   | 'customer_forbidden'
   | 'invalid_commercial_account_name'
   | 'invalid_customer_scopes'
-  | 'invalid_commission';
+  | 'invalid_commission'
+  // Writes of the commercial layer (ADR-0086).
+  | 'commercial_conflict'
+  | 'commercial_limit_reached';
 
 export class TenancyError extends Error {
   override readonly name = 'TenancyError';

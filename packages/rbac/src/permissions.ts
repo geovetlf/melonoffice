@@ -297,6 +297,46 @@ export const PERMISSIONS = {
     description:
       "See what the organization's AI use cost, in total and by agent, department, workflow, task, capability, provider and model, and each operation's usage (ADR-0074). Codes and amounts only, never content.",
   },
+  // An organization's side of the commercial layer (ADR-0086): its owner decides which partner or
+  // agency may reach it, and for what.
+  'relationship.read': {
+    resource: 'relationship',
+    action: 'read',
+    description:
+      'See which partners and agencies are related to the organization, or ask to be, and what each may see (ADR-0086).',
+  },
+  'relationship.manage': {
+    resource: 'relationship',
+    action: 'manage',
+    description:
+      "Accept a partner's or agency's request, choose which scopes it gets, change them, or end the relationship (ADR-0086).",
+  },
+  // Commercial permissions (ADR-0086): held through a commercial membership (COMMERCIAL_ROLES),
+  // never through an organization role, and checked by `authorizeCommercial` only.
+  'commercial.read': {
+    resource: 'commercial',
+    action: 'read',
+    description:
+      'See your partner or agency account, its members and its active customers (ADR-0086).',
+  },
+  'commercial.manage_members': {
+    resource: 'commercial',
+    action: 'manage_members',
+    description:
+      'Add people to your partner or agency account, change their role or remove them (ADR-0086).',
+  },
+  'commercial.invite_customer': {
+    resource: 'commercial',
+    action: 'invite_customer',
+    description:
+      'Ask an organization to become a customer of your account, within its limit; nothing is reachable until its owner accepts (ADR-0086).',
+  },
+  'customer.read_summary': {
+    resource: 'customer',
+    action: 'read_summary',
+    description:
+      "See a customer's name, status, plan and subscription status, only when the customer granted the `summary` scope (ADR-0086).",
+  },
 } as const satisfies Record<string, PermissionDefinition>;
 
 export interface PermissionDefinition {

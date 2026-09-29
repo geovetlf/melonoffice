@@ -1,7 +1,13 @@
-import type { OrganizationId } from '@melonoffice/domain';
-import { isResolvedTenant, type TenantContext } from '@melonoffice/tenancy';
+import type { CustomerAccessScope, OrganizationId } from '@melonoffice/domain';
+import {
+  isResolvedCommercialContext,
+  isResolvedTenant,
+  type CommercialContext,
+  type CustomerAccess,
+  type TenantContext,
+} from '@melonoffice/tenancy';
 import { isPermission, PERMISSIONS, type Permission } from './permissions.js';
-import { ROLES, type RoleCatalogue } from './roles.js';
+import { COMMERCIAL_ROLES, ROLES, type RoleCatalogue } from './roles.js';
 
 export type RbacDenyReason =
   | 'unknown_permission'
@@ -78,3 +84,72 @@ export function createAuthorizationService(roles: RoleCatalogue = ROLES): Author
     },
   });
 }
+
+export type CommercialDenyReason =
+  | 'unknown_permission'
+  | 'unresolved_commercial_context'
+  | 'unknown_role'
+  | 'role_not_for_account_type'
+  | 'permission_denied'
+  | 'cross_account'
+  | 'scope_not_granted';
+
+export type CommercialDecision =
+  { readonly allowed: true } | { readonly allowed: false; readonly reason: CommercialDenyReason };
+
+/**
+ * The customer scope a commercial permission needs, when it reads inside a customer. The
+ * customer's owner grants scopes (ADR-0085); a role never reaches past them.
+ */
+const SCOPE_OF: Readonly<Partial<Record<Permission, CustomerAccessScope>>> = {
+  'customer.read_summary': 'summary',
+};
+
+/**
+ * The same question as `authorize`, asked for a partner or agency (ADR-0086): may this commercial
+ * context do this, and, inside a customer, does that customer's relationship grant the scope it
+ * needs? It is part of the one RBAC: the permissions come from the same catalogue and the roles
+ * are data (`COMMERCIAL_ROLES`). It denies by default: a context not issued by
+ * `resolveCommercialContext()`, a role of another account type, a customer access of another
+ * account or a scope the customer did not grant.
+ */
+export function createCommercialAuthorization(roles: RoleCatalogue = COMMERCIAL_ROLES) {
+  const byRole = new Map<string, ReadonlySet<Permission>>();
+  for (const [role, permissions] of Object.entries(roles)) {
+    for (const permission of permissions) {
+      if (!Object.hasOwn(PERMISSIONS, permission)) {
+        throw new Error(`role ${role} grants unknown permission ${permission}`);
+      }
+    }
+    byRole.set(role, new Set(permissions));
+  }
+  const refuse = (reason: CommercialDenyReason): CommercialDecision =>
+    Object.freeze({ allowed: false, reason });
+  const ALLOWED: CommercialDecision = Object.freeze({ allowed: true });
+  return Object.freeze({
+    authorize(
+      context: CommercialContext,
+      permission: string,
+      access?: CustomerAccess,
+    ): CommercialDecision {
+      if (!isPermission(permission)) return refuse('unknown_permission');
+      if (!isResolvedCommercialContext(context)) return refuse('unresolved_commercial_context');
+      const permissions = byRole.get(context.role);
+      if (permissions === undefined) return refuse('unknown_role');
+      if (!context.role.startsWith(`${context.accountType}.`)) {
+        return refuse('role_not_for_account_type');
+      }
+      if (!permissions.has(permission)) return refuse('permission_denied');
+      const scope = SCOPE_OF[permission];
+      if (scope !== undefined) {
+        if (access === undefined || access.commercialAccountId !== context.commercialAccountId) {
+          return refuse('cross_account');
+        }
+        if (!access.scopes.has(scope)) return refuse('scope_not_granted');
+      }
+      return ALLOWED;
+    },
+  });
+}
+
+export type CommercialAuthorization = ReturnType<typeof createCommercialAuthorization>;

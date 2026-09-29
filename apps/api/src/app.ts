@@ -93,7 +93,11 @@ import {
   type WebhookIngress,
 } from '@melonoffice/integrations';
 import type { Logger } from '@melonoffice/observability';
-import { createAuthorizationService, type AuthorizationService } from '@melonoffice/rbac';
+import {
+  createAuthorizationService,
+  createCommercialAuthorization,
+  type AuthorizationService,
+} from '@melonoffice/rbac';
 import {
   createSkillCatalogue,
   createSpecialistManagement,
@@ -108,7 +112,7 @@ import {
   createPlanValidator,
   type PlanRepository,
 } from '@melonoffice/planning';
-import { resolveTenant, type TenancyStore } from '@melonoffice/tenancy';
+import { resolveTenant, type CommercialRepository, type TenancyStore } from '@melonoffice/tenancy';
 import { defaultToolRegistry, type ToolRegistry } from '@melonoffice/tools';
 import { createWorkflowService, type WorkflowRepository } from '@melonoffice/workflows';
 import { Hono, type Context } from 'hono';
@@ -117,6 +121,7 @@ import { registerApprovalRoutes } from './approvals.js';
 import { registerAuthRoutes, type AuthEnv } from './auth.js';
 import { registerCors } from './cors.js';
 import { registerBillingRoutes } from './billing.js';
+import { registerCommercialRoutes } from './commercial.js';
 import { DEFAULT_ACTIVITY_TIME_ZONE, registerActivityRoutes } from './activity.js';
 import { registerBrainRoutes } from './brain.js';
 import { registerBusinessRoutes } from './business.js';
@@ -330,6 +335,11 @@ export interface AppOptions {
    * view (`/v1/platform/*`). Empty or absent: nobody.
    */
   readonly platformAdmins?: readonly string[];
+  /**
+   * The commercial layer's storage (ADR-0086): partner and agency accounts, their people and their
+   * customers. Absent: its routes answer 503.
+   */
+  readonly commercialAccounts?: CommercialRepository;
 }
 
 type Env = AuthEnv;
@@ -368,6 +378,7 @@ export function createApp({
   agentTasks,
   webOrigins = [],
   platformAdmins = [],
+  commercialAccounts,
 }: AppOptions): Hono<Env> {
   const app = new Hono<Env>();
 
@@ -1232,6 +1243,27 @@ export function createApp({
       app.all('/v1/organizations/:organizationId/credits', (c) =>
         c.json({ error: 'credits_not_configured' }, 503),
       );
+    }
+    if (tenancy !== undefined && commercialAccounts !== undefined) {
+      const plans =
+        billing === undefined
+          ? undefined
+          : createBillingService({ billing, organizations: tenancy });
+      registerCommercialRoutes(app, {
+        commercial: commercialAccounts,
+        organizations: tenancy,
+        admins: new Set(platformAdmins),
+        authorization,
+        commercialAuthorization: createCommercialAuthorization(),
+        audit,
+        ...(plans === undefined ? {} : { currentPlan: (id) => plans.currentPlan(id) }),
+      });
+    } else {
+      const unavailable = (c: Context<Env>) => c.json({ error: 'commercial_not_configured' }, 503);
+      app.all('/v1/platform/commercial-accounts', unavailable);
+      app.all('/v1/commercial/*', unavailable);
+      app.all('/v1/organizations/:organizationId/commercial-relationships', unavailable);
+      app.all('/v1/organizations/:organizationId/commercial-relationships/*', unavailable);
     }
     registerPlatformRoutes(app, {
       admins: new Set(platformAdmins),

@@ -5,3 +5,4 @@ export * from './memory.js';
 export * from './tenant.js';
 export * from './commercial.js';
 export * from './commercial-memory.js';
+export * from './commercial-writes.js';

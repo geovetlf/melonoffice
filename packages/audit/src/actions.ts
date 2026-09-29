@@ -27,7 +27,8 @@ export interface AuditActionDefinition {
     | 'forecast'
     | 'decision'
     | 'event'
-    | 'platform';
+    | 'platform'
+    | 'commercial';
   readonly description: string;
   /** The results this action is recorded with. Anything else is a programming error. */
   readonly results: readonly AuditResult[];
@@ -742,6 +743,41 @@ export const AUDIT_ACTIONS = {
     description:
       "Someone read the platform AI view (ADR-0082): providers, models, routing and health, or every organization's AI usage and internal cost; `reference` names the view. Denied when they are not a platform administrator.",
     results: ['success', 'denied'],
+  },
+  'commercial_account.created': {
+    category: 'commercial',
+    description:
+      'The platform administrator created a partner or agency account and named its first admin (ADR-0086). Denied when the caller is not a platform administrator.',
+    results: ['success', 'denied'],
+  },
+  'commercial_membership.created': {
+    category: 'commercial',
+    description:
+      "A commercial account's admin added a person to it, or changed their role (ADR-0086); `reference` names the role.",
+    results: ['success'],
+  },
+  'commercial_membership.revoked': {
+    category: 'commercial',
+    description: "A commercial account's admin removed a person from it (ADR-0086).",
+    results: ['success'],
+  },
+  'customer_relationship.created': {
+    category: 'commercial',
+    description:
+      'A partner or agency asked an organization to become its customer (ADR-0086): pending until an owner of that organization accepts; `reference` names the mode.',
+    results: ['success'],
+  },
+  'customer_relationship.updated': {
+    category: 'commercial',
+    description:
+      "An organization's owner accepted or ended a relationship with a partner or agency, or changed the scopes it grants (ADR-0086); `transition` is the status change.",
+    results: ['success'],
+  },
+  'commercial.access': {
+    category: 'commercial',
+    description:
+      'A person asked to act in a commercial account, or in one of its customers, and was refused (ADR-0086); `permission` is what they asked for.',
+    results: ['denied'],
   },
   'tenancy.resolve': {
     category: 'tenancy',
