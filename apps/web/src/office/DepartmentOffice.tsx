@@ -11,6 +11,8 @@ import { readyList, useOfficeData } from './OfficeData.js';
 import { agentsSummary, seatsSummary } from './OfficeScene.js';
 import { agentRole, WorkstationMap } from './WorkstationMap.js';
 import { agentAt, presenceOf, seatAgents } from './workstations.js';
+import { AgentCapabilities } from '../agents/AgentCapabilities.js';
+import type { AgentsClient } from '../agents/agentsClient.js';
 
 /**
  * A department's office (ADR-0040, level 2): the room from the Home, entered. Its workstations
@@ -114,11 +116,14 @@ export function AgentPlace({
   slug,
   agentId,
   tasks,
+  agents,
 }: {
   readonly slug: string;
   readonly agentId: string;
   /** The agent's tasks (ADR-0063), for a person who may read them; absent, none are shown. */
   readonly tasks?: { readonly client: AgentTasksClient; readonly canAsk: boolean };
+  /** What the agent can do now (ADR-0062), for a person who may read agents. */
+  readonly agents?: AgentsClient;
 }) {
   const intl = useIntl();
   const { departments, specialists } = useOfficeData();
@@ -203,6 +208,7 @@ export function AgentPlace({
             <FormattedMessage id="office.profile.stateSource" />
           </p>
         </section>
+        {agents === undefined ? null : <AgentCapabilities client={agents} agentId={agent.id} />}
         <section className="dept-office__section" aria-labelledby="agent-work">
           <h2 id="agent-work">
             <FormattedMessage id="office.profile.work" />

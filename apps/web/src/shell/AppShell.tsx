@@ -28,6 +28,7 @@ import { useAuth, useCan } from '../identity/AuthProvider.js';
 import type { LocaleProps } from '../identity/pages.js';
 import { usePath } from '../identity/router.js';
 import { GiaChatProvider } from '../gia/GiaChat.js';
+import { GiaQuickAsk } from '../gia/GiaQuickAsk.js';
 import { createGiaClient } from '../gia/giaClient.js';
 import { GiaWorkplace } from '../gia/GiaWorkplace.js';
 import { AgentPlace, DepartmentOffice, NotFound } from '../office/DepartmentOffice.js';
@@ -36,6 +37,13 @@ import { createAgentTasksClient } from '../office/agentTasksClient.js';
 import { MemoryPage } from '../memory/MemoryPage.js';
 import { ReportsPage, ReportsSection } from '../reports/Reports.js';
 import { createReportsClient } from '../reports/reportsClient.js';
+import { AIUsagePage } from '../aiUsage/AIUsagePage.js';
+import { CommandCenterPage } from '../commandCenter/CommandCenterPage.js';
+import { AgentsPage } from '../agents/AgentsPage.js';
+import { createAgentsClient } from '../agents/agentsClient.js';
+import { ApprovalsPage } from '../approvals/ApprovalsPage.js';
+import { createApprovalsClient } from '../approvals/approvalsClient.js';
+import { createAIUsageClient } from '../aiUsage/aiUsageClient.js';
 import { DocumentsPage } from '../documents/DocumentsPage.js';
 import { createDocumentsClient } from '../documents/documentsClient.js';
 import { createMemoryClient } from '../memory/memoryClient.js';
@@ -71,6 +79,10 @@ export function AppShell(locale: LocaleProps) {
   const canReadReports = useCan('report.read');
   const canReadDocuments = useCan('document.read');
   const canUploadDocuments = useCan('document.upload');
+  const canReadAIUsage = useCan('ai_usage.read');
+  const canReadApprovals = useCan('approval.read');
+  const canManageAgents = useCan('specialist.manage');
+  const canReadTools = useCan('tool.read');
   // Agent tasks (ADR-0063): read with the agents, asked only with `specialist.task`.
   const canReadAgents = useCan('specialist.read');
   const canAskAgents = useCan('specialist.task');
@@ -79,6 +91,7 @@ export function AppShell(locale: LocaleProps) {
   const canReadPlans = useCan('plan.read');
   const canPlanWorkflows = useCan('plan.create');
   const canDecidePlans = useCan('approval.approve');
+  const canManageWorkflows = useCan('workflow.manage');
   const route = parseRoute(usePath());
   const [menuOpen, setMenuOpen] = useState(false);
   useEffect(() => {
@@ -108,6 +121,9 @@ export function AppShell(locale: LocaleProps) {
             memory: createMemoryClient(services.api.request, organizationId),
             reports: createReportsClient(services.api.request, organizationId),
             documents: createDocumentsClient(services.api.request, organizationId),
+            aiUsage: createAIUsageClient(services.api.request, organizationId),
+            approvals: createApprovalsClient(services.api.request, organizationId),
+            agents: createAgentsClient(services.api.request, organizationId),
             agentTasks: createAgentTasksClient(services.api.request, organizationId),
             automations: createAutomationsClient(services.api.request, organizationId),
           },
@@ -129,7 +145,13 @@ export function AppShell(locale: LocaleProps) {
     case 'home':
       // The Home is always the first screen: describing the business lives in the company's
       // memory (ADR-0056), never in front of the Home.
-      page = <HomePage />;
+      page = (
+        <HomePage
+          canReadAIUsage={canReadAIUsage}
+          followUps={canReadFollowUps ? clients.followUps : undefined}
+          approvals={canReadApprovals ? clients.approvals : undefined}
+        />
+      );
       break;
     case 'memory':
       page =
@@ -212,9 +234,25 @@ export function AppShell(locale: LocaleProps) {
           slug={route.slug}
           agentId={route.agentId}
           {...(canReadAgents
-            ? { tasks: { client: clients.agentTasks, canAsk: canAskAgents } }
+            ? {
+                tasks: { client: clients.agentTasks, canAsk: canAskAgents },
+                agents: clients.agents,
+              }
             : {})}
         />
+      );
+      break;
+    case 'agents':
+      page = canReadAgents ? (
+        <div className="light-surface">
+          <AgentsPage
+            client={clients.agents}
+            canManage={canManageAgents}
+            canReadTools={canReadTools}
+          />
+        </div>
+      ) : (
+        <NotFound />
       );
       break;
     case 'gia':
@@ -232,6 +270,42 @@ export function AppShell(locale: LocaleProps) {
         <NotFound />
       );
       break;
+    case 'approvals':
+      page = canReadApprovals ? (
+        <div className="light-surface">
+          <ApprovalsPage
+            client={clients.approvals}
+            canDecide={canDecidePlans}
+            canReadPlans={canReadPlans}
+          />
+        </div>
+      ) : (
+        <NotFound />
+      );
+      break;
+    case 'commandCenter':
+      page =
+        canReadAIUsage || canReadApprovals || canReadAgents || canReadPlans ? (
+          <div className="light-surface">
+            <CommandCenterPage
+              aiUsage={canReadAIUsage ? clients.aiUsage : undefined}
+              approvals={canReadApprovals ? clients.approvals : undefined}
+              automations={canReadPlans ? clients.automations : undefined}
+            />
+          </div>
+        ) : (
+          <NotFound />
+        );
+      break;
+    case 'aiUsage':
+      page = canReadAIUsage ? (
+        <div className="light-surface">
+          <AIUsagePage client={clients.aiUsage} />
+        </div>
+      ) : (
+        <NotFound />
+      );
+      break;
     case 'automations':
       page =
         canReadWorkflows || canReadPlans ? (
@@ -243,7 +317,9 @@ export function AppShell(locale: LocaleProps) {
                 readPlans: canReadPlans,
                 planWorkflows: canPlanWorkflows,
                 decidePlans: canDecidePlans,
+                manageWorkflows: canManageWorkflows,
               }}
+              templates={canReadAgents ? clients.agents.templates : undefined}
             />
           </div>
         ) : (
@@ -313,7 +389,13 @@ export function AppShell(locale: LocaleProps) {
                 canReadMemory={canReadBusiness || canReadKnowledge}
                 canReadReports={canReadReports}
                 canReadDocuments={canReadDocuments}
+                canReadAIUsage={canReadAIUsage}
+                canReadApprovals={canReadApprovals}
+                canReadAgents={canReadAgents}
                 canReadAutomations={canReadWorkflows || canReadPlans}
+                canReadCommandCenter={
+                  canReadAIUsage || canReadApprovals || canReadAgents || canReadPlans
+                }
                 open={menuOpen}
                 onNavigate={() => setMenuOpen(false)}
               />
@@ -334,6 +416,7 @@ export function AppShell(locale: LocaleProps) {
                 </main>
               </div>
             </div>
+            <GiaQuickAsk />
           </GiaChatProvider>
         </BusinessFormats>
       </ActivityProvider>

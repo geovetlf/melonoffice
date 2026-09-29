@@ -161,3 +161,128 @@ describe('Automations (WF-3)', () => {
     ).toHaveLength(0);
   });
 });
+
+const WRITER = [...OWNER, 'workflow.manage', 'specialist.read'];
+
+describe('Writing workflows (block 4)', () => {
+  it('creates a workflow as a draft: steps in order, each by a role, with an approval asked', async () => {
+    const backend = open(undefined, WRITER);
+    fireEvent.click(await screen.findByRole('button', { name: 'New workflow' }));
+    const editor = within(await screen.findByRole('form', { name: 'New workflow' }));
+    const create = await editor.findByRole('button', { name: 'Create as draft' });
+    expect((create as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(editor.getByLabelText('Name'), { target: { value: 'Seguimiento semanal' } });
+    fireEvent.change(editor.getByLabelText('Step 1: what to do'), {
+      target: { value: 'Revisar clientes' },
+    });
+    fireEvent.change(editor.getByLabelText('Who does it'), {
+      target: { value: 'sales/commercial_agent' },
+    });
+    fireEvent.click(editor.getByRole('button', { name: 'Add a step' }));
+    fireEvent.change(editor.getByLabelText('Step 2: what to do'), {
+      target: { value: 'Enviar resumen' },
+    });
+    fireEvent.change(editor.getAllByLabelText('Who does it')[1] as HTMLElement, {
+      target: { value: 'sales/commercial_agent' },
+    });
+    fireEvent.click(editor.getAllByLabelText('Ask me before this step runs')[1] as HTMLElement);
+    fireEvent.click(create);
+
+    expect(
+      await screen.findByText('The workflow was created as a draft. Activate it when it is ready.'),
+    ).toBeTruthy();
+    expect(screen.queryByRole('form', { name: 'New workflow' })).toBeNull();
+    const workflows = within(screen.getByRole('region', { name: 'Workflows' }));
+    expect(await workflows.findByText('Seguimiento semanal')).toBeTruthy();
+    const [sent] = posts(backend, '/org_1/workflows');
+    const verification = {
+      policy: 'output_schema',
+      expectedOutput: 'agent_answer',
+      requiredChecks: [],
+    };
+    expect(JSON.parse(sent?.body ?? '{}')).toEqual({
+      name: 'Seguimiento semanal',
+      steps: [
+        {
+          id: 'step_1',
+          kind: 'specialist',
+          label: 'Revisar clientes',
+          dependsOn: [],
+          assignee: { departmentTypeId: 'sales', roleId: 'commercial_agent' },
+          verification,
+        },
+        {
+          id: 'step_2',
+          kind: 'specialist',
+          label: 'Enviar resumen',
+          dependsOn: ['step_1'],
+          assignee: { departmentTypeId: 'sales', roleId: 'commercial_agent' },
+          verification,
+          approvalRequired: true,
+        },
+      ],
+    });
+  });
+
+  it('shows a workflow’s steps and saves an edit as a new version', async () => {
+    const backend = open(undefined, WRITER);
+    const workflows = within(await screen.findByRole('region', { name: 'Workflows' }));
+    fireEvent.click((await workflows.findAllByRole('button', { name: 'Steps' }))[0] as HTMLElement);
+    expect(await workflows.findByText(/done by: Research agent/)).toBeTruthy();
+    fireEvent.click(workflows.getByRole('button', { name: 'Edit (new version)' }));
+    const editor = within(await screen.findByRole('form', { name: 'New version' }));
+    expect((await editor.findByLabelText('Name')).getAttribute('value')).toBe('Lanzamiento');
+    fireEvent.change(editor.getByLabelText('Step 1: what to do'), {
+      target: { value: 'Investigar el mercado' },
+    });
+    fireEvent.click(editor.getByRole('button', { name: 'Save new version' }));
+    expect(
+      await screen.findByText('The new version was saved. Plans already made keep their version.'),
+    ).toBeTruthy();
+    expect(await workflows.findByText(/version 3/)).toBeTruthy();
+    const [sent] = posts(backend, '/workflows/wf-launch/versions');
+    const body = JSON.parse(sent?.body ?? '{}') as { steps: { label: string }[] };
+    expect(body.steps.map((s) => s.label)).toEqual(['Investigar el mercado']);
+  });
+
+  it('activates a draft and archives only after the person confirms', async () => {
+    const backend = open(undefined, WRITER);
+    const workflows = within(await screen.findByRole('region', { name: 'Workflows' }));
+    fireEvent.click(await workflows.findByRole('button', { name: 'Activate' }));
+    expect(
+      await screen.findByText('The workflow is active. You can prepare plans from it.'),
+    ).toBeTruthy();
+    const [moved] = posts(backend, '/workflows/wf-draft/status');
+    expect(JSON.parse(moved?.body ?? '{}')).toEqual({ from: 'draft', to: 'active' });
+    expect(await workflows.findAllByRole('button', { name: 'Prepare a plan' })).toHaveLength(2);
+
+    const confirm = vi.spyOn(globalThis, 'confirm').mockReturnValue(false);
+    fireEvent.click(workflows.getAllByRole('button', { name: 'Archive' })[0] as HTMLElement);
+    expect(confirm).toHaveBeenCalledOnce();
+    expect(posts(backend, '/workflows/wf-launch/status')).toHaveLength(0);
+    confirm.mockRestore();
+  });
+
+  it('says a workflow changed meanwhile and reloads it', async () => {
+    const backend = open(undefined, WRITER);
+    const workflows = within(await screen.findByRole('region', { name: 'Workflows' }));
+    const activate = await workflows.findByRole('button', { name: 'Activate' });
+    const draft = backend.options.workflows.org_1?.find((w) => w.id === 'wf-draft');
+    if (draft !== undefined) draft.status = 'archived';
+    fireEvent.click(activate);
+    expect(
+      await screen.findByText('This workflow changed meanwhile. The list was reloaded; try again.'),
+    ).toBeTruthy();
+  });
+
+  it('offers no writing to a role without workflow.manage', async () => {
+    open();
+    const workflows = within(await screen.findByRole('region', { name: 'Workflows' }));
+    expect(await workflows.findByText('Lanzamiento')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'New workflow' })).toBeNull();
+    expect(workflows.queryByRole('button', { name: 'Activate' })).toBeNull();
+    fireEvent.click(workflows.getAllByRole('button', { name: 'Steps' })[0] as HTMLElement);
+    expect(await workflows.findByText(/done by: Research agent/)).toBeTruthy();
+    expect(workflows.queryByRole('button', { name: 'Edit (new version)' })).toBeNull();
+  });
+});

@@ -3,6 +3,7 @@ import { Button } from '@melonoffice/ui';
 import { useCallback, useState, type FormEvent, type ReactNode } from 'react';
 import { formatMoney, minorDigits, toMinor } from '../opportunities/OpportunitiesSection.js';
 import { useRead } from '../shell/useRead.js';
+import { TellGia } from './TellGia.js';
 import {
   KNOWLEDGE_DOMAINS,
   MemoryRequestError,
@@ -120,6 +121,14 @@ export function MemoryPage({
           }}
         />
       )}
+      {readsKnowledge && canPropose ? (
+        <TellGia
+          client={client}
+          canCapture={can('knowledge.capture')}
+          canSync={canPropose}
+          onChanged={reload}
+        />
+      ) : null}
       {readsKnowledge ? (
         <Review
           client={client}

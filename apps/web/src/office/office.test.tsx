@@ -165,13 +165,13 @@ describe('the Home (ADR-0040)', () => {
       'Research',
       'Finance',
     ]);
-    // The tools: Communications; the rest are coming. The business lives in the company
+    // The tools: Communications, the AI Command Center and Agents; the rest are coming. The business lives in the company
     // memory, next to the rooms (ADR-0056).
     expect(
       within(screen.getByRole('navigation', { name: 'Tools' }))
         .getAllByRole('link')
         .map((link) => link.getAttribute('href')),
-    ).toEqual(['/conversations']);
+    ).toEqual(['/conversations', '/command-center', '/agents']);
   });
 
   it('enters a department’s office on click, and comes back by the breadcrumb or the browser', async () => {
@@ -265,7 +265,7 @@ describe('the Home (ADR-0040)', () => {
     expect(await screen.findByRole('heading', { name: 'This place does not exist' })).toBeTruthy();
   });
 
-  it('shows the real credit balance and plan, offers no upgrade, and marks examples as examples', async () => {
+  it('shows the real credit balance and plan, offers no upgrade, and shows no example data', async () => {
     open('/');
     const credits = await screen.findByRole('region', { name: 'Credit use' });
     expect(await within(credits).findByText('498')).toBeTruthy();
@@ -273,9 +273,13 @@ describe('the Home (ADR-0040)', () => {
     expect(await screen.findByText('Entrepreneur plan')).toBeTruthy();
     expect(screen.getByText('498 credits available')).toBeTruthy();
     expect(screen.queryByRole('button', { name: /upgrade|improve/i })).toBeNull();
-    for (const name of ["Today's tasks", 'Upcoming meetings']) {
-      expect(within(screen.getByRole('region', { name })).getByText('Example')).toBeTruthy();
-    }
+    // No panel shows example data: meetings wait for a calendar connection.
+    expect(screen.queryByText('Example')).toBeNull();
+    expect(
+      within(screen.getByRole('region', { name: 'Upcoming meetings' })).getByText(
+        /No calendar is connected yet/,
+      ),
+    ).toBeTruthy();
     // Activity is the audit trail's (ADR-0049), never an example.
     expect(
       within(screen.getByRole('region', { name: 'Recent activity' })).queryByText('Example'),

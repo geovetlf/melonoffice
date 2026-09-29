@@ -140,6 +140,16 @@ export interface MemoryClient {
   conflicts(): Promise<readonly KnowledgeConflict[]>;
   resolve(conflictId: string, choice: 'kept_current' | 'took_candidate'): Promise<KnowledgeOutcome>;
   addDocument(name: string, text: string): Promise<unknown>;
+  /** GIA reads what a person wrote; the facts she finds wait as proposals. Uses credits. */
+  capture(text: string): Promise<CaptureResult>;
+  /** Brings in what MelonOffice already holds (profile, records); safe to repeat. */
+  sync(): Promise<{ readonly changed: number }>;
+}
+
+export interface CaptureResult {
+  readonly outcomes: readonly KnowledgeOutcome[];
+  readonly rejected: number;
+  readonly extraction: string;
 }
 
 /** The API refused or failed; `field` names the refused field when it says. */
@@ -198,6 +208,8 @@ export function createMemoryClient(request: ReplyRequest, organizationId: string
       ).conflicts,
     resolve: async (id, choice) =>
       read(await request(`${base}/conflicts/${encodeURIComponent(id)}/resolve`, send({ choice }))),
+    capture: async (text) => read(await request(`${base}/capture`, send({ text }))),
+    sync: async () => read(await request(`${base}/sync`, send({}))),
     addDocument: async (name, text) =>
       read(await request(`${base}/documents`, send({ name, text }))),
   };

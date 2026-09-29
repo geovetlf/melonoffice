@@ -64,6 +64,10 @@ export interface FakeBackend {
     contactContext: Record<string, Record<string, unknown>>;
     /** Each organization's Company Brain items (ADR-0051), as the API's views. */
     knowledge: Record<string, Record<string, unknown>[]>;
+    /** What `POST brain/capture` answers: GIA's extraction status (default `extracted`). */
+    captureExtraction?: 'extracted' | 'unavailable' | 'failed';
+    /** How many facts `POST brain/sync` changed. */
+    syncChanged?: number;
     /** Each organization's open Company Brain conflicts. */
     knowledgeConflicts: Record<string, Record<string, unknown>[]>;
     /** Company Brain's onboarding questions still unanswered. */
@@ -72,7 +76,10 @@ export interface FakeBackend {
     followUps: Record<string, Record<string, unknown>[]>;
     /** Each agent's tasks (ADR-0063), newest first, as the API's views. */
     agentTasks: Record<string, Record<string, unknown>[]>;
-    /** Each organization's workflows (WF-3), as the API lists them. */
+    /**
+     * Each organization's workflows (WF-3), as the API lists them. A `steps` field is the current
+     * version's steps for `GET workflows/:id`; writes keep what was sent there.
+     */
     workflows: Record<string, Record<string, unknown>[]>;
     /**
      * Each organization's plans (WF-3), as the API shows one (with `current`), and each plan's
@@ -92,6 +99,15 @@ export interface FakeBackend {
      * Reports (ADR-0060): each organization's metrics as the API lists them, and each read by
      * `metric:frequency`, as the API's body or an error with its status.
      */
+    /** Approvals (ADR-0026): each organization's, as the API lists them. */
+    approvals: Record<string, Record<string, unknown>[]>;
+    /** Deciding an approval fails with this code and status. */
+    approvalDecisionFails?: { readonly error: string; readonly status: number };
+    /** AI usage (ADR-0074): each organization's summary and events, as the API gives them. */
+    aiUsage: Record<
+      string,
+      { summary: Record<string, unknown>; events: Record<string, unknown>[] } | { status: number }
+    >;
     /** Documents (DOC-3): each organization's files as the API lists them. */
     documents: Record<string, Record<string, unknown>[]>;
     /** Uploading a document fails with this code and status. */
@@ -170,6 +186,8 @@ export function fakeBackend(): FakeBackend {
     plans: {},
     planSteps: {},
     pageSize: 50,
+    approvals: {},
+    aiUsage: {},
     documents: {},
     metrics: {},
   };
@@ -443,6 +461,46 @@ export function fakeBackend(): FakeBackend {
       if (denied !== undefined) return denied;
       options.knowledgeConflicts[organizationId] = conflicts.filter((c) => c.id !== resolve[1]);
       return json(200, { outcome: 'conflict_resolved', itemId: 'x' });
+    }
+    if (route === 'brain/capture' && method === 'POST') {
+      const denied = needs('knowledge.capture') ?? needs('knowledge.propose');
+      if (denied !== undefined) return denied;
+      const extraction = options.captureExtraction ?? 'extracted';
+      if (extraction !== 'extracted') return json(200, { outcomes: [], rejected: 0, extraction });
+      const id = `${organizationId}_operations_opening_hours`;
+      all.push({
+        id,
+        domain: 'operations',
+        key: 'opening_hours',
+        subject: null,
+        label: null,
+        value: { type: 'text', text: String(input.text) },
+        verification: 'proposed',
+        status: 'active',
+        sensitivity: 'internal',
+        critical: false,
+        needsConfirmation: true,
+        source: {
+          type: 'gia',
+          id: 'capture',
+          reference: null,
+          recordedBy: 'gia',
+          confidence: null,
+        },
+        effectiveFrom: '2026-09-28T12:00:00Z',
+        effectiveUntil: null,
+        revision: 1,
+        updatedAt: '2026-09-28T12:00:00Z',
+        openConflictId: null,
+      });
+      return json(200, {
+        outcomes: [{ outcome: 'created', itemId: id, revision: 1 }],
+        rejected: 0,
+        extraction,
+      });
+    }
+    if (route === 'brain/sync' && method === 'POST') {
+      return needs('knowledge.propose') ?? json(200, { changed: options.syncChanged ?? 0 });
     }
     if (route === 'brain/documents') {
       return (
@@ -843,10 +901,83 @@ export function fakeBackend(): FakeBackend {
         (found === undefined ? json(404, { error: 'task_not_found' }) : json(200, found))
       );
     }
+    if (route === 'workflows' && method === 'POST') {
+      const denied = needs('workflow.manage');
+      if (denied !== undefined) return denied;
+      const input = JSON.parse(body ?? '{}') as { name?: string; steps?: unknown[] };
+      if (typeof input.name !== 'string' || input.name.trim() === '') {
+        return json(400, { error: 'invalid_workflow', detail: 'name' });
+      }
+      const list = (options.workflows[organizationId] ??= []);
+      const created = {
+        id: `wf-${list.length + 1}`,
+        name: input.name,
+        status: 'draft',
+        version: 1,
+        createdAt: '2026-09-29T12:00:00Z',
+        createdBy: 'user-1',
+        updatedAt: '2026-09-29T12:00:00Z',
+        steps: input.steps,
+      };
+      list.push(created);
+      return json(201, created);
+    }
     if (route === 'workflows') {
       return (
         needs('workflow.read') ?? json(200, { workflows: options.workflows[organizationId] ?? [] })
       );
+    }
+    const oneWorkflow = route?.match(/^workflows\/([^/]+)(?:\/(versions|status))?$/);
+    if (oneWorkflow?.[1] !== undefined) {
+      const workflow = (options.workflows[organizationId] ?? []).find(
+        (w) => w.id === oneWorkflow[1],
+      );
+      const action = oneWorkflow[2];
+      if (action === undefined && method === 'GET') {
+        const denied = needs('workflow.read');
+        if (denied !== undefined) return denied;
+        if (workflow === undefined) return json(404, { error: 'workflow_not_found' });
+        const steps = (workflow.steps as Record<string, unknown>[] | undefined) ?? [
+          {
+            id: 'research',
+            kind: 'specialist',
+            label: 'Research',
+            dependsOn: [],
+            assignee: { departmentTypeId: 'research', roleId: 'research_agent' },
+          },
+        ];
+        return json(200, {
+          ...workflow,
+          current: {
+            version: workflow.version,
+            name: workflow.name,
+            steps: steps.map((s) => ({
+              performedBy: null,
+              tool: null,
+              ...s,
+              assignee: s.assignee ?? null,
+              approvalRequired: s.approvalRequired ?? false,
+            })),
+          },
+        });
+      }
+      if (action !== undefined && method === 'POST') {
+        const denied = needs('workflow.manage');
+        if (denied !== undefined) return denied;
+        if (workflow === undefined) return json(404, { error: 'workflow_not_found' });
+        const input = JSON.parse(body ?? '{}') as Record<string, unknown>;
+        if (action === 'status') {
+          if (input.from !== workflow.status) {
+            return json(409, { error: 'workflow_concurrency_conflict' });
+          }
+          workflow.status = input.to;
+        } else {
+          workflow.version = (workflow.version as number) + 1;
+          if (typeof input.name === 'string') workflow.name = input.name;
+          workflow.steps = input.steps;
+        }
+        return json(action === 'status' ? 200 : 201, workflow);
+      }
     }
     const planWorkflow = route?.match(/^workflows\/([^/]+)\/plans$/);
     if (planWorkflow?.[1] !== undefined && method === 'POST') {
@@ -911,6 +1042,140 @@ export function fakeBackend(): FakeBackend {
       }
       return json(200, plan);
     }
+    if (route === 'agents/catalogue') {
+      return (
+        needs('specialist.read') ??
+        json(200, {
+          templates: [
+            {
+              id: 'commercial',
+              departmentTypeId: 'sales',
+              nameKey: 'agents.template.commercial.name',
+              role: { id: 'commercial_agent', version: 1 },
+              purpose: { es: 'Atiende clientes.', en: 'Serves customers.' },
+              skills: [{ id: 'conversation_reply', version: 1 }],
+            },
+          ],
+          skills: [
+            {
+              id: 'conversation_reply',
+              version: 1,
+              nameKey: 'agents.skill.conversation_reply.name',
+              descriptionKey: 'agents.skill.conversation_reply.description',
+              tools: [
+                { id: 'message_send', versions: [2, 3] },
+                { id: 'conversation_handoff', versions: [1] },
+              ],
+              actions: [],
+              reads: ['conversation.read'],
+            },
+            {
+              id: 'company_knowledge',
+              version: 1,
+              nameKey: 'agents.skill.company_knowledge.name',
+              descriptionKey: 'agents.skill.company_knowledge.description',
+              tools: [],
+              actions: [],
+              reads: ['knowledge.read'],
+            },
+          ],
+        })
+      );
+    }
+    if (route === 'tools') {
+      const version = (n: number, approvalPolicy: string) => ({
+        version: n,
+        nameKey: 'tools.message_send.name',
+        descriptionKey: 'tools.message_send.description',
+        category: 'communication',
+        action: 'send',
+        mutating: true,
+        riskLevel: 'medium',
+        approvalPolicy,
+        environments: ['dev'],
+      });
+      return (
+        needs('tool.read') ??
+        json(200, {
+          tools: [
+            {
+              id: 'message_send',
+              status: 'active',
+              versions: [version(1, 'auto'), version(2, 'approval_required')],
+            },
+          ],
+        })
+      );
+    }
+    if (route === 'specialists' && method === 'POST') {
+      const denied = needs('specialist.manage');
+      if (denied !== undefined) return denied;
+      const input = JSON.parse(body ?? '{}') as { templateId?: string; displayName?: string };
+      if (typeof input.displayName !== 'string' || input.displayName.trim() === '') {
+        return json(400, { error: 'invalid_specialist' });
+      }
+      const list = (options.specialists[organizationId] ??= []);
+      const created = {
+        id: `spec_new_${list.length + 1}`,
+        name: input.displayName,
+        type: 'sales',
+        status: 'draft',
+      };
+      list.push(created);
+      return json(201, {
+        id: created.id,
+        departmentId: `${organizationId}_sales`,
+        displayName: created.name,
+        status: 'draft',
+        purpose: 'Serves customers.',
+        version: 1,
+      });
+    }
+    const agentStatus = route?.match(/^specialists\/([^/]+)\/status$/);
+    if (agentStatus !== null && agentStatus !== undefined && method === 'POST') {
+      const denied = needs('specialist.manage');
+      if (denied !== undefined) return denied;
+      const found = (options.specialists[organizationId] ?? []).find(
+        (s) => s.id === agentStatus[1],
+      );
+      if (found === undefined) return json(404, { error: 'specialist_not_found' });
+      const { from, to } = JSON.parse(body ?? '{}') as { from?: string; to?: string };
+      if (from !== found.status) return json(409, { error: 'specialist_concurrency_conflict' });
+      found.status = to ?? found.status;
+      return json(200, {
+        id: found.id,
+        departmentId: `${organizationId}_${found.type}`,
+        displayName: found.name,
+        status: found.status,
+        purpose: found.purpose ?? null,
+      });
+    }
+    const agentCapabilities = route?.match(/^specialists\/([^/]+)\/capabilities$/);
+    if (agentCapabilities !== null && agentCapabilities !== undefined) {
+      const denied = needs('specialist.read');
+      if (denied !== undefined) return denied;
+      const found = (options.specialists[organizationId] ?? []).find(
+        (s) => s.id === agentCapabilities[1],
+      );
+      if (found === undefined) return json(404, { error: 'specialist_not_found' });
+      return json(200, {
+        id: found.id,
+        version: 2,
+        ready: found.status === 'active',
+        skills: [{ id: 'conversation_reply', version: 1, known: true }],
+        tools: [
+          {
+            id: 'message_send',
+            version: 1,
+            known: true,
+            riskLevel: 'high',
+            approval: 'approval_required',
+          },
+        ],
+        permissions: { required: [], missing: [] },
+        problems: found.status === 'active' ? [] : [{ kind: 'not_active', status: found.status }],
+      });
+    }
     if (route === 'specialists') {
       return (
         needs('specialist.read') ??
@@ -951,6 +1216,51 @@ export function fakeBackend(): FakeBackend {
         to: '2026-09-28T15:00:00.000Z',
         items: options.activity[organizationId] ?? [],
         hasMore: false,
+      });
+    }
+    if (route === 'approvals' || route?.startsWith('approvals/') === true) {
+      const list = (options.approvals[organizationId] ??= []);
+      if (route === 'approvals') {
+        const denied = needs('approval.read');
+        return denied ?? json(200, { approvals: list });
+      }
+      const denied = needs('approval.approve');
+      if (denied !== undefined) return denied;
+      const [, id, decision] = route.split('/');
+      if (options.approvalDecisionFails !== undefined) {
+        return json(options.approvalDecisionFails.status, {
+          error: options.approvalDecisionFails.error,
+        });
+      }
+      const index = list.findIndex((a) => a.id === id);
+      const found = list[index];
+      if (found === undefined) return json(404, { error: 'approval_not_found' });
+      if (found.status !== 'pending') return json(409, { error: 'approval_not_pending' });
+      const decided = {
+        ...found,
+        status: decision === 'approve' ? 'approved' : 'rejected',
+        decidedAt: '2026-09-29T12:05:00.000Z',
+      };
+      list[index] = decided;
+      return json(200, decided);
+    }
+    if (route === 'ai-usage' || route === 'ai-usage/events') {
+      const denied = needs('ai_usage.read');
+      if (denied !== undefined) return denied;
+      const usage = options.aiUsage[organizationId];
+      if (usage !== undefined && 'status' in usage)
+        return json(usage.status, { error: 'internal' });
+      if (route === 'ai-usage/events') {
+        return json(200, { events: usage?.events ?? [], nextCursor: null });
+      }
+      const params = new URLSearchParams(query);
+      return json(200, {
+        ...(usage?.summary ?? {
+          totals: { operations: 0, costMicroUsd: 0, unpricedOperations: 0, credits: 0 },
+          by: {},
+        }),
+        from: params.get('from'),
+        to: params.get('to'),
       });
     }
     if (route === 'documents') {

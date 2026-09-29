@@ -53,6 +53,7 @@ function fakeApi(granted: readonly string[] = ALL) {
     [ORG_B]: [connection('conn-b', { displayName: 'B private line' })],
   };
   const calls: { method: string; path: string; body: string | undefined }[] = [];
+  const templates: Record<string, Record<string, unknown>[]> = {};
   const answer = (status: number, body: unknown) =>
     new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
   const request = async (path: string, init: RequestInit = {}) => {
@@ -95,6 +96,38 @@ function fakeApi(granted: readonly string[] = ALL) {
       });
       store.push(created);
       return answer(201, { ...created, setup: setupOf(created.id) });
+    }
+    const template =
+      /^channel-connections\/([^/]+)\/templates(?:\/([^/]+)\/(check|disable))?$/.exec(rest);
+    if (template !== null) {
+      const [, connectionId = '', templateId, templateAction] = template;
+      const list = (templates[connectionId] ??= []);
+      if (method === 'GET') {
+        return need('channel.read')
+          ? answer(200, { templates: list })
+          : answer(403, { error: 'permission_denied' });
+      }
+      if (!need('channel.update')) return answer(403, { error: 'permission_denied' });
+      if (templateId === undefined) {
+        const input = JSON.parse(body ?? '{}') as { name: string; language: string };
+        const approved = input.name === 'order_update';
+        const created = {
+          id: `tpl-${list.length + 1}`,
+          name: input.name,
+          language: input.language,
+          status: approved ? 'active' : 'invalid',
+          statusReason: approved ? null : 'template_not_found',
+          category: approved ? 'utility' : null,
+          spec: approved ? { header: { format: 'none' }, bodyParameters: 2, urlButtons: [] } : null,
+          lastValidatedAt: approved ? '2026-09-29T12:00:00Z' : null,
+        };
+        list.push(created);
+        return answer(201, created);
+      }
+      const found = list.find((t) => t.id === templateId);
+      if (found === undefined) return answer(404, { error: 'template_not_found' });
+      if (templateAction === 'disable') found.status = 'disabled';
+      return answer(200, found);
     }
     const [, id = '', action] = /^channel-connections\/([^/]+)(?:\/(\w+))?$/.exec(rest) ?? [];
     const index = store.findIndex((c) => c.id === id);
@@ -157,7 +190,7 @@ describe('Settings → Connections', () => {
       within(ventas)
         .getAllByRole('button')
         .map((b) => b.textContent),
-    ).toEqual(['View setup']);
+    ).toEqual(['View setup', 'Templates']);
     expect(screen.queryByRole('button', { name: 'Connect a channel' })).toBeNull();
   });
 
@@ -173,7 +206,7 @@ describe('Settings → Connections', () => {
       const buttons = within(ventas)
         .getAllByRole('button')
         .map((b) => b.textContent);
-      expect(buttons).toEqual(['View setup', ...labels]);
+      expect(buttons).toEqual(['View setup', 'Templates', ...labels]);
       cleanup();
     }
   });
@@ -274,5 +307,61 @@ describe('Settings → Connections', () => {
   it('masks a phone number enough to recognise it', () => {
     expect(maskPhone('+51 987 654 321')).toBe('+51 ••••21');
     expect(maskPhone(null)).toBeNull();
+  });
+
+  it('registers a WhatsApp template, shows what it needs, and turns one off', async () => {
+    const api = show();
+    fireEvent.click(await screen.findByRole('button', { name: 'Templates' }));
+    const panel = within(await screen.findByRole('region', { name: 'Message templates' }));
+    expect(await panel.findByText('No templates registered yet.')).toBeTruthy();
+    fireEvent.change(panel.getByLabelText('Template name in WhatsApp'), {
+      target: { value: 'order_update' },
+    });
+    fireEvent.change(panel.getByLabelText(/Language code/), { target: { value: 'es_PE' } });
+    fireEvent.click(panel.getByRole('button', { name: 'Register and check' }));
+    expect(await panel.findByText('order_update · es_PE')).toBeTruthy();
+    expect(panel.getByText(/Approved, can be sent · utility/)).toBeTruthy();
+    expect(panel.getByText('Needs 2 values in the body.')).toBeTruthy();
+    const [registered] = api.calls.filter(
+      (c) => c.method === 'POST' && c.path.endsWith('/conn-a/templates'),
+    );
+    expect(JSON.parse(registered?.body ?? '{}')).toEqual({
+      name: 'order_update',
+      language: 'es_PE',
+    });
+
+    fireEvent.change(panel.getByLabelText('Template name in WhatsApp'), {
+      target: { value: 'missing_one' },
+    });
+    fireEvent.click(panel.getByRole('button', { name: 'Register and check' }));
+    expect(
+      await panel.findByText(
+        /Not confirmed, not sent · WhatsApp has no approved template with that name/,
+      ),
+    ).toBeTruthy();
+
+    fireEvent.click(panel.getAllByRole('button', { name: 'Turn off' })[0] as HTMLElement);
+    expect(await panel.findByText(/Turned off/)).toBeTruthy();
+  });
+
+  it('refuses a template name WhatsApp would not accept, without calling the API', async () => {
+    const api = show();
+    fireEvent.click(await screen.findByRole('button', { name: 'Templates' }));
+    const panel = within(await screen.findByRole('region', { name: 'Message templates' }));
+    await panel.findByText('No templates registered yet.');
+    fireEvent.change(panel.getByLabelText('Template name in WhatsApp'), {
+      target: { value: 'Order Update' },
+    });
+    fireEvent.click(panel.getByRole('button', { name: 'Register and check' }));
+    expect(await panel.findByRole('alert')).toBeTruthy();
+    expect(api.calls.some((c) => c.method === 'POST' && c.path.endsWith('/templates'))).toBe(false);
+  });
+
+  it('shows templates read-only to a member who may only read', async () => {
+    show(['channel.read']);
+    fireEvent.click(await screen.findByRole('button', { name: 'Templates' }));
+    const panel = within(await screen.findByRole('region', { name: 'Message templates' }));
+    expect(await panel.findByText('No templates registered yet.')).toBeTruthy();
+    expect(panel.queryByRole('button', { name: 'Register and check' })).toBeNull();
   });
 });
