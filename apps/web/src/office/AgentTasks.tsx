@@ -18,12 +18,12 @@ import {
 /** How often an open task is read again, and for how long at most. */
 export const TASK_REFRESH_MS = 4_000;
 export const TASK_REFRESH_LIMIT = 45;
-const MAX_REQUEST = 2_000;
+export const MAX_REQUEST = 2_000;
 
-const newRequestKey = (): string => `web-${globalThis.crypto.randomUUID()}`;
+export const newRequestKey = (): string => `web-${globalThis.crypto.randomUUID()}`;
 
 /** A refused or failed request, as one message the person can act on. */
-function errorKey(error: unknown): string {
+export function errorKey(error: unknown): string {
   if (!(error instanceof AgentTaskError)) return 'agentTasks.error.unavailable';
   switch (error.code) {
     case 'permission_denied':

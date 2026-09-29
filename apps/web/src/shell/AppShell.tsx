@@ -263,6 +263,7 @@ export function AppShell(locale: LocaleProps) {
           <GiaChatProvider
             client={canAskGia ? clients.gia : undefined}
             {...(canManageFollowUps ? { followUps: clients.followUps } : {})}
+            {...(canAskAgents ? { agentTasks: clients.agentTasks } : {})}
           >
             <div className="app">
               <Sidebar

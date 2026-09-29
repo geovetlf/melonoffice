@@ -47,6 +47,14 @@ import {
   type GiaForecastPort,
   type GiaForecastSummary,
 } from './forecast.js';
+import {
+  agentRefOf,
+  agentTaskProposalOf,
+  GIA_AGENT_LIMITS,
+  type GiaAgent,
+  type GiaAgentsPort,
+  type GiaAgentTaskProposal,
+} from './agents.js';
 import { giaMessages, giaOutputSchema, type GiaTurn } from './prompt.js';
 
 /**
@@ -91,6 +99,11 @@ export interface GiaAnswer {
    */
   readonly proposedFollowUp: GiaFollowUpProposal | null;
   /**
+   * A task she prepared for one of the organization's active agents (AE-3), for the person to
+   * confirm in the app: nothing is assigned until they do.
+   */
+  readonly proposedAgentTask: GiaAgentTaskProposal | null;
+  /**
    * The projection the person asked for (ADR-0059), made by the Forecasting Engine, never by
    * GIA: what it is and how it ended. The app reads the figures from the forecast by its id.
    */
@@ -104,6 +117,8 @@ export interface GiaAnswer {
     readonly activity: boolean;
     readonly commercial: boolean;
     readonly forecast: boolean;
+    /** Whether she was shown the organization's agents (only to someone who may give tasks). */
+    readonly agents: boolean;
     readonly missing: readonly string[];
   };
   readonly replayed: boolean;
@@ -140,6 +155,11 @@ export interface GiaOptions {
    * projection. GIA never calls a model herself.
    */
   readonly forecasting?: GiaForecastPort;
+  /**
+   * The organization's active agents (AE-3), read only for a person who may give them tasks
+   * (`specialist.task`). GIA prepares a task; the person assigns it.
+   */
+  readonly agents?: GiaAgentsPort;
   readonly departments: Pick<DepartmentRepository, 'list'>;
   readonly authorization: Pick<AuthorizationService, 'authorize'>;
   readonly audit: AuditService;
@@ -231,6 +251,7 @@ function parseAnswer(
       facts: unknown[];
       links: unknown[];
       followUp: unknown;
+      agentTask: unknown;
     }
   | undefined {
   let output: unknown = response.output.structured;
@@ -242,7 +263,7 @@ function parseAnswer(
     }
   }
   if (!isRecord(output)) return undefined;
-  const { answer, department, screen, proposedAction, facts, links, followUp } = output;
+  const { answer, department, screen, proposedAction, facts, links, followUp, agentTask } = output;
   if (typeof answer !== 'string' || answer.trim() === '') return undefined;
   if (answer.length > GIA_LIMITS.answerLength) return undefined;
   if (typeof screen !== 'string' || !(GIA_SCREENS as readonly string[]).includes(screen)) {
@@ -265,6 +286,7 @@ function parseAnswer(
     facts: Array.isArray(facts) ? facts.slice(0, GIA_LIMITS.facts) : [],
     links: Array.isArray(links) ? links : [],
     followUp,
+    agentTask,
   };
 }
 
@@ -323,6 +345,7 @@ export function createGia(options: GiaOptions): GiaService {
     activity,
     commercial,
     forecasting,
+    agents,
     departments,
     authorization,
     audit,
@@ -447,7 +470,7 @@ export function createGia(options: GiaOptions): GiaService {
 
     // What she reads, as this person: each part only with its own permission, and a part she
     // cannot read is simply left out (she says she does not know, never guesses).
-    const [facts, gaps, today, types, insights, projection] = await Promise.all([
+    const [facts, gaps, today, types, insights, projection, team] = await Promise.all([
       readFacts(tenant, message),
       readGaps(tenant),
       readActivity(tenant),
@@ -459,6 +482,8 @@ export function createGia(options: GiaOptions): GiaService {
       ),
       // Only when the person's own words ask for a projection now (ADR-0059).
       readProjection(tenant, message),
+      // The agents a task may be prepared for (AE-3): only for someone who may give them tasks.
+      readAgents(tenant),
     ]);
     const missing = gaps?.questions.map((q) => q.id) ?? [];
     // What an answer may link to: only the references she was given, never an id she wrote.
@@ -483,7 +508,12 @@ export function createGia(options: GiaOptions): GiaService {
       capability: 'text_generation',
       requirements: { structuredOutput: true },
       // The gateway takes at most 50 codes in a list: the general screens and the first records.
-      outputSchema: giaOutputSchema(types, [...linkable.keys()].slice(0, 50), followUpRecords),
+      outputSchema: giaOutputSchema(
+        types,
+        [...linkable.keys()].slice(0, 50),
+        followUpRecords,
+        (team ?? []).map((_, index) => agentRefOf(index)),
+      ),
       messages: giaMessages({
         locale,
         facts,
@@ -496,6 +526,7 @@ export function createGia(options: GiaOptions): GiaService {
           ? {}
           : { commercial: { insights, canScheduleFollowUps: followUpRecords.length > 0 } }),
         ...(projection === undefined ? {} : { forecast: projection }),
+        ...(team === undefined ? {} : { agents: team }),
       }),
       outputModality: 'text',
       maxOutputTokens: GIA_LIMITS.outputTokens,
@@ -543,6 +574,8 @@ export function createGia(options: GiaOptions): GiaService {
             message,
             earlier: history.filter((t) => t.role === 'person').map((t) => t.text),
           });
+    const proposedAgentTask =
+      team === undefined || team.length === 0 ? null : agentTaskProposalOf(parsed.agentTask, team);
     log.info('gia.message_answered', {
       latencyMs,
       facts: facts.length,
@@ -552,6 +585,7 @@ export function createGia(options: GiaOptions): GiaService {
       routed: parsed.department !== null,
       commercial: insights !== undefined,
       followUpProposed: proposedFollowUp !== null,
+      agentTaskProposed: proposedAgentTask !== null,
       forecast: projection?.kind ?? null,
     });
     const links = [...new Set(parsed.links.filter((ref): ref is string => typeof ref === 'string'))]
@@ -571,12 +605,14 @@ export function createGia(options: GiaOptions): GiaService {
       proposedFacts,
       links: Object.freeze(links),
       proposedFollowUp,
+      proposedAgentTask,
       forecast: projection === undefined ? null : forecastSummaryOf(projection),
       context: Object.freeze({
         facts: facts.length,
         activity: today !== undefined,
         commercial: insights !== undefined,
         forecast: projection !== undefined,
+        agents: team !== undefined,
         missing: Object.freeze([...missing]),
       }),
       replayed: false,
@@ -655,6 +691,17 @@ export function createGia(options: GiaOptions): GiaService {
     } catch (error) {
       logger.warn('gia.forecast_unavailable', { error: codeOf(error) });
       return { kind: 'unavailable', reason: 'not_available' };
+    }
+  }
+
+  /** The active agents, as this person may task them; a failure is only logged. */
+  async function readAgents(tenant: TenantContext): Promise<readonly GiaAgent[] | undefined> {
+    if (agents === undefined || !can(tenant, 'specialist.task')) return undefined;
+    try {
+      return (await agents.active(tenant)).slice(0, GIA_AGENT_LIMITS.agents);
+    } catch (error) {
+      logger.warn('gia.agents_unavailable', { error: codeOf(error) });
+      return undefined;
     }
   }
 
