@@ -1,5 +1,6 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
 import { useState, type FormEvent } from 'react';
+import { useAuth } from '../identity/AuthProvider.js';
 import { navigate } from '../identity/router.js';
 import { Icon, type IconName } from '../office/icons.js';
 import { paths } from '../shell/routes.js';
@@ -8,8 +9,8 @@ import { useGiaChat } from '../gia/GiaChat.js';
 
 /**
  * GIA's place on the Home (ADR-0040). The command bar talks to GIA (ADR-0052): a message goes to
- * her chat and the conversation continues in her Workplace. Attachments, voice and the quick
- * actions are laid out and say they are coming. Nothing here runs a tool.
+ * her chat and the conversation continues in her Workplace. Voice says it is coming; the quick
+ * actions open the screens where real work is done. Nothing here runs a tool.
  */
 
 export function GiaCard() {
@@ -43,6 +44,11 @@ export function GiaCommandBar() {
   const [text, setText] = useState('');
   const [notice, setNotice] = useState(false);
   const chat = useGiaChat();
+  const { state } = useAuth();
+  // A file GIA should know is uploaded in Documents: its text goes to the company memory GIA
+  // answers from (ADR-0079).
+  const canUpload =
+    state.status === 'signed_in' && state.workspace?.permissions.has('document.upload') === true;
   const submit = (event: FormEvent) => {
     event.preventDefault();
     if (!chat.available) {
@@ -72,15 +78,17 @@ export function GiaCommandBar() {
         aria-label={intl.formatMessage({ id: 'gia.bar.placeholder' })}
         maxLength={2000}
       />
-      <button
-        type="button"
-        className="gia-bar__tool"
-        aria-disabled="true"
-        title={soon}
-        aria-label={intl.formatMessage({ id: 'gia.bar.attach' })}
-      >
-        <Icon name="paperclip" size={18} />
-      </button>
+      {canUpload ? (
+        <button
+          type="button"
+          className="gia-bar__tool"
+          aria-label={intl.formatMessage({ id: 'gia.bar.attach' })}
+          title={intl.formatMessage({ id: 'gia.bar.attach' })}
+          onClick={() => navigate(paths.documents())}
+        >
+          <Icon name="paperclip" size={18} />
+        </button>
+      ) : null}
       <button
         type="button"
         className="gia-bar__tool"
@@ -106,33 +114,47 @@ export function GiaCommandBar() {
   );
 }
 
-const QUICK_ACTIONS: readonly { readonly id: string; readonly icon: IconName }[] = [
-  { id: 'document', icon: 'documents' },
-  { id: 'file', icon: 'file' },
-  { id: 'email', icon: 'mail' },
-  { id: 'meeting', icon: 'calendar' },
-  { id: 'video', icon: 'video' },
-  { id: 'more', icon: 'more' },
+/**
+ * Shortcuts from the Home to what the office can really do, each opening the screen where it is
+ * done and shown only to a person who may do it there. No shortcut to a tool that does not exist.
+ */
+const QUICK_ACTIONS: readonly {
+  readonly id: string;
+  readonly icon: IconName;
+  readonly path: string;
+  readonly anyOf: readonly string[];
+}[] = [
+  { id: 'file', icon: 'file', path: paths.documents(), anyOf: ['document.upload'] },
+  { id: 'agentTask', icon: 'user', path: paths.agents(), anyOf: ['specialist.read'] },
+  { id: 'automation', icon: 'automations', path: paths.automations(), anyOf: ['workflow.read'] },
+  { id: 'teach', icon: 'memory', path: paths.memory(), anyOf: ['knowledge.read'] },
+  { id: 'approvals', icon: 'check', path: paths.approvals(), anyOf: ['approval.read'] },
+  { id: 'usage', icon: 'coins', path: paths.aiUsage(), anyOf: ['ai_usage.read'] },
 ];
 
-/** Shortcuts to GIA's future tools. None exists yet, so each is marked as coming soon. */
 export function QuickActions() {
   const intl = useIntl();
+  const { state } = useAuth();
+  const permissions = state.status === 'signed_in' ? state.workspace?.permissions : undefined;
+  const shown = QUICK_ACTIONS.filter((a) => a.anyOf.some((p) => permissions?.has(p) === true));
+  if (shown.length === 0) return null;
   return (
     <ul className="quick-actions" aria-label={intl.formatMessage({ id: 'home.quick.label' })}>
-      {QUICK_ACTIONS.map((action) => (
+      {shown.map((action) => (
         <li key={action.id}>
-          <button
-            type="button"
+          <a
+            href={action.path}
             className="quick-action"
-            aria-disabled="true"
-            title={intl.formatMessage({ id: 'common.soon' })}
+            onClick={(event) => {
+              event.preventDefault();
+              navigate(action.path);
+            }}
           >
             <Icon name={action.icon} size={16} />
             <span>
               <FormattedMessage id={`home.quick.${action.id}`} />
             </span>
-          </button>
+          </a>
         </li>
       ))}
     </ul>

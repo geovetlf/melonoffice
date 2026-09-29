@@ -29,4 +29,7 @@ module "environment" {
   budget                     = var.budget
   # NVIDIA's API key secret (ADR-0080), once the owner has created it. Null: NVIDIA is off.
   nvidia_api_key_secret = var.nvidia_api_key_secret
+
+  # Who may open the platform AI view (ADR-0082). Empty: nobody.
+  platform_admin_user_ids = var.platform_admin_user_ids
 }

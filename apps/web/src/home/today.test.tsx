@@ -130,3 +130,29 @@ describe('Ctrl+K asks GIA from anywhere (block 8)', () => {
     );
   });
 });
+
+describe('the Home quick actions', () => {
+  it('open only real screens the person may use, and none of tools that do not exist', async () => {
+    open(['specialist.read', 'ai_usage.read', 'document.upload']);
+    const quick = within(await screen.findByRole('list', { name: 'Quick actions' }));
+    expect(quick.getAllByRole('link').map((a) => a.textContent)).toEqual([
+      'Upload a file for GIA to read',
+      'Ask an agent',
+      'See AI usage',
+    ]);
+    expect(screen.queryByText('Send an email')).toBeNull();
+    fireEvent.click(quick.getByRole('link', { name: 'Ask an agent' }));
+    expect(globalThis.location.pathname).toBe('/agents');
+  });
+
+  it('the attach button uploads in Documents, and only with document.upload', async () => {
+    open(['document.upload']);
+    fireEvent.click(await screen.findByRole('button', { name: 'Upload a file for GIA to read' }));
+    expect(globalThis.location.pathname).toBe('/documents');
+    cleanup();
+    globalThis.history.replaceState(null, '', '/');
+    open([]);
+    await today();
+    expect(screen.queryByRole('button', { name: 'Upload a file for GIA to read' })).toBeNull();
+  });
+});

@@ -341,38 +341,40 @@ function Breakdown({
       <h3 id={id}>
         <FormattedMessage id={titleId} />
       </h3>
-      <table className="ai-usage__table">
-        <thead>
-          <tr>
-            <th scope="col">
-              <FormattedMessage id={titleId} />
-            </th>
-            <th scope="col">
-              <FormattedMessage id="aiUsage.operations" />
-            </th>
-            <th scope="col">
-              <FormattedMessage id="aiUsage.internalCost" />
-            </th>
-            <th scope="col">
-              <FormattedMessage id="aiUsage.credits" />
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {sorted.map(([key, bucket], index) => (
-            // Two organizations can share a name: the row is its place, the label its name.
-            <tr key={`${index}-${key}`}>
-              <th scope="row">{key}</th>
-              <td>{intl.formatNumber(bucket.operations)}</td>
-              <td>
-                {usd(intl, bucket.costMicroUsd)}
-                {bucket.unpricedOperations > 0 ? ' *' : ''}
-              </td>
-              <td>{intl.formatNumber(bucket.credits)}</td>
+      <div className="platform__scroll">
+        <table className="ai-usage__table">
+          <thead>
+            <tr>
+              <th scope="col">
+                <FormattedMessage id={titleId} />
+              </th>
+              <th scope="col">
+                <FormattedMessage id="aiUsage.operations" />
+              </th>
+              <th scope="col">
+                <FormattedMessage id="aiUsage.internalCost" />
+              </th>
+              <th scope="col">
+                <FormattedMessage id="aiUsage.credits" />
+              </th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {sorted.map(([key, bucket], index) => (
+              // Two organizations can share a name: the row is its place, the label its name.
+              <tr key={`${index}-${key}`}>
+                <th scope="row">{key}</th>
+                <td>{intl.formatNumber(bucket.operations)}</td>
+                <td>
+                  {usd(intl, bucket.costMicroUsd)}
+                  {bucket.unpricedOperations > 0 ? ' *' : ''}
+                </td>
+                <td>{intl.formatNumber(bucket.credits)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </section>
   );
 }

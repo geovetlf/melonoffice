@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import type { ModelPolicy } from '@melonoffice/domain';
 import { createModelPolicyCatalogue, DEFAULT_MODEL_POLICY } from './policy.js';
 
 describe('the model policy catalogue', () => {
   it('lists every policy, the default first, as the platform administrator reads them', () => {
-    const gia = { ...DEFAULT_MODEL_POLICY, id: 'gia', version: 2 };
+    const gia: ModelPolicy = { ...DEFAULT_MODEL_POLICY, id: 'gia', version: 2 } as ModelPolicy;
     const catalogue = createModelPolicyCatalogue([gia]);
     expect(catalogue.list().map((p) => `${p.id}@${p.version}`)).toEqual([
       `${DEFAULT_MODEL_POLICY.id}@${DEFAULT_MODEL_POLICY.version}`,

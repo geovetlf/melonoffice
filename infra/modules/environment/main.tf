@@ -207,6 +207,8 @@ locals {
         local.document_storage_enabled ? { DOCUMENTS_BUCKET = local.documents_bucket_name } : {},
         # Where NVIDIA's key is kept (ADR-0080): a reference, never the key.
         local.nvidia_api_enabled ? local.nvidia_env : {},
+        # Who may open the platform AI view (ADR-0082): MelonOffice user ids, not secrets.
+        length(var.platform_admin_user_ids) > 0 ? { PLATFORM_ADMIN_USER_IDS = join(",", var.platform_admin_user_ids) } : {},
       )
       timeout = null
     }

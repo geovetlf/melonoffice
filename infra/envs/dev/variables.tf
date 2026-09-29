@@ -36,3 +36,9 @@ variable "nvidia_api_key_secret" {
   type        = string
   default     = null
 }
+
+variable "platform_admin_user_ids" {
+  description = "MelonOffice user ids allowed to open the platform AI view (ADR-0082). Empty: nobody."
+  type        = list(string)
+  default     = []
+}

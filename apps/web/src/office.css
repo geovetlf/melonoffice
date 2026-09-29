@@ -727,6 +727,7 @@ a.sidebar__item:hover {
 
 .gia-bar__tool[aria-disabled='true'] {
   cursor: default;
+  opacity: 0.45;
 }
 
 .gia-bar__send {
@@ -767,7 +768,13 @@ a.sidebar__item:hover {
   font: inherit;
   font-size: var(--mo-font-size-sm);
   color: var(--office-text);
-  cursor: default;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.quick-action:hover,
+.quick-action:focus-visible {
+  border-color: var(--office-accent);
 }
 
 .quick-action .mo-icon {
@@ -2825,4 +2832,15 @@ a.sidebar__item:hover {
 .notifications__item:hover,
 .notifications__item:focus-visible {
   background: var(--office-accent-soft);
+}
+
+.platform .ai-usage__breakdown {
+  min-width: 0;
+}
+
+/* Its wide tables scroll inside their boxes: nothing here may widen the page on a phone. */
+.platform,
+.platform .dept-office__section {
+  min-width: 0;
+  max-width: 100%;
 }
