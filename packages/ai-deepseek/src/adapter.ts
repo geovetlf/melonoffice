@@ -1,6 +1,7 @@
 import type {
   AIMessage,
   AIOutputSchema,
+  AIToolCall,
   CredentialResolver,
   FinishReason,
   ProviderAdapter,
@@ -9,6 +10,7 @@ import type {
   ProviderErrorKind,
   ProviderOutcome,
 } from '@melonoffice/ai-gateway';
+import type { ToolSchema } from '@melonoffice/domain';
 import { DEEPSEEK_PROVIDER } from './catalogue.js';
 
 /**
@@ -21,7 +23,7 @@ import { DEEPSEEK_PROVIDER } from './catalogue.js';
  * It never throws: every failure is a classified `ProviderOutcome` error without DeepSeek's
  * message, so nothing DeepSeek says reaches a log, an audit event or a person.
  */
-export const DEEPSEEK_ADAPTER_VERSION = '1';
+export const DEEPSEEK_ADAPTER_VERSION = '2';
 export const DEEPSEEK_API_URL = 'https://api.deepseek.com/chat/completions';
 
 export interface DeepSeekAdapterOptions {
@@ -34,6 +36,7 @@ export interface DeepSeekAdapterOptions {
 
 const MODEL = /^[a-z0-9][a-z0-9.-]{0,63}$/;
 const RESPONSE_ID = /^[A-Za-z0-9._:-]{1,200}$/;
+const CALL_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const MAX_RESPONSE_BYTES = 1_000_000;
 /** Only this much of an error body is read, to tell a context overflow from other refusals. */
 const MAX_ERROR_BYTES = 4_096;
@@ -78,17 +81,73 @@ export function describeSchema(schema: AIOutputSchema): string {
   }
 }
 
+/** A tool's input schema as JSON Schema for a function's `parameters` (R3, ADR-0076). */
+export function toJsonSchema(schema: ToolSchema): Record<string, unknown> {
+  switch (schema.type) {
+    case 'string':
+      return {
+        type: 'string',
+        maxLength: schema.maxLength,
+        ...(schema.minLength === undefined ? {} : { minLength: schema.minLength }),
+        ...(schema.enum === undefined ? {} : { enum: [...schema.enum] }),
+      };
+    case 'number':
+    case 'integer':
+      return {
+        type: schema.type,
+        ...(schema.minimum === undefined ? {} : { minimum: schema.minimum }),
+        ...(schema.maximum === undefined ? {} : { maximum: schema.maximum }),
+      };
+    case 'boolean':
+      return { type: 'boolean' };
+    case 'array':
+      return { type: 'array', items: toJsonSchema(schema.items), maxItems: schema.maxItems };
+    case 'object':
+      return {
+        type: 'object',
+        properties: Object.fromEntries(
+          Object.entries(schema.properties).map(([name, s]) => [name, toJsonSchema(s)]),
+        ),
+        ...(schema.required === undefined ? {} : { required: [...schema.required] }),
+        additionalProperties: false,
+      };
+  }
+}
+
+type ChatMessage = Record<string, unknown> & { role: string };
+
 /** The request body, or undefined when the call asks for something this adapter cannot send. */
 export function deepSeekRequestOf(call: ProviderCall): Record<string, unknown> | undefined {
-  const messages: { role: 'system' | 'user' | 'assistant'; content: string }[] = [];
+  const messages: ChatMessage[] = [];
   for (const message of call.messages as readonly AIMessage[]) {
     const texts: string[] = [];
+    const calls: Record<string, unknown>[] = [];
+    const results: ChatMessage[] = [];
     for (const part of message.content) {
-      // Text only in this version.
-      if (part.type !== 'text') return undefined;
-      texts.push(part.text);
+      if (part.type === 'text') texts.push(part.text);
+      else if (part.type === 'tool_call') {
+        calls.push({
+          id: part.call.id,
+          type: 'function',
+          function: { name: part.call.name, arguments: JSON.stringify(part.call.arguments) },
+        });
+      } else if (part.type === 'tool_result') {
+        // Each result is its own `tool` message, after the call it answers.
+        results.push({
+          role: 'tool',
+          tool_call_id: part.callId,
+          content: JSON.stringify(part.result),
+        });
+      }
+      // Media is not sent in this version.
+      else return undefined;
     }
-    messages.push({ role: message.role, content: texts.join('\n') });
+    if (calls.length > 0) {
+      messages.push({ role: 'assistant', content: texts.join('\n'), tool_calls: calls });
+    } else if (texts.length > 0) {
+      messages.push({ role: message.role, content: texts.join('\n') });
+    }
+    messages.push(...results);
   }
   if (!messages.some((m) => m.role === 'user')) return undefined;
   if (call.structuredOutput) {
@@ -108,6 +167,19 @@ export function deepSeekRequestOf(call: ProviderCall): Record<string, unknown> |
     temperature: 0.2,
     stream: false,
     ...(call.structuredOutput ? { response_format: { type: 'json_object' } } : {}),
+    ...(call.tools === undefined || call.tools.length === 0
+      ? {}
+      : {
+          tools: call.tools.map((t) => ({
+            type: 'function',
+            function: {
+              name: t.name,
+              description: t.description,
+              parameters: toJsonSchema(t.parameters),
+            },
+          })),
+          tool_choice: 'auto',
+        }),
   };
 }
 
@@ -115,6 +187,7 @@ const FINISH: Readonly<Record<string, FinishReason>> = {
   stop: 'stop',
   length: 'length',
   content_filter: 'content_filter',
+  tool_calls: 'tool_use',
 };
 
 const count = (value: unknown): number | undefined =>
@@ -146,8 +219,49 @@ export function outcomeOfDeepSeekResponse(body: unknown, structured: boolean): P
   const finishReason = typeof reason === 'string' ? FINISH[reason] : undefined;
   if (finishReason === undefined) return error('invalid_response');
   const message = choice.message;
+  if (!isRecord(message)) return error('invalid_response');
+  const id = body.id;
+  const usageOf = Object.freeze({
+    inputTokens,
+    outputTokens,
+    ...(cached > 0 ? { cachedInputTokens: Math.min(cached, inputTokens) } : {}),
+  });
+  // Calls the model asked for (R3, ADR-0076). The gateway checks them against the tools offered.
+  if (finishReason === 'tool_use') {
+    const calls = message.tool_calls;
+    if (!Array.isArray(calls) || calls.length === 0) return error('invalid_response');
+    const toolCalls: AIToolCall[] = [];
+    for (const call of calls as unknown[]) {
+      if (!isRecord(call) || call.type !== 'function' || !isRecord(call.function)) {
+        return error('invalid_response');
+      }
+      const { name, arguments: raw } = call.function;
+      if (typeof call.id !== 'string' || !CALL_ID.test(call.id) || typeof name !== 'string') {
+        return error('invalid_response');
+      }
+      let args: unknown;
+      try {
+        args = typeof raw === 'string' ? (JSON.parse(raw) as unknown) : undefined;
+      } catch {
+        return error('invalid_response');
+      }
+      if (!isRecord(args)) return error('invalid_response');
+      toolCalls.push(Object.freeze({ id: call.id, name, arguments: args }));
+    }
+    const text = typeof message.content === 'string' ? message.content : '';
+    return Object.freeze({
+      status: 'success',
+      output: Object.freeze({
+        ...(text.length === 0 ? {} : { text }),
+        toolCalls: Object.freeze(toolCalls),
+      }),
+      usage: usageOf,
+      finishReason,
+      ...(typeof id === 'string' && RESPONSE_ID.test(id) ? { providerRequestId: id } : {}),
+    });
+  }
   // Only the answer: `reasoning_content` is never passed on.
-  if (!isRecord(message) || typeof message.content !== 'string') return error('invalid_response');
+  if (typeof message.content !== 'string') return error('invalid_response');
   let output: { text?: string; structured?: unknown } = { text: message.content };
   if (structured) {
     try {
@@ -156,16 +270,11 @@ export function outcomeOfDeepSeekResponse(body: unknown, structured: boolean): P
       // Left as text: the caller checks it, and refuses what it cannot read.
     }
   }
-  const id = body.id;
   return Object.freeze({
     status: 'success',
     output: Object.freeze(output),
     // Reasoning is billed within `completion_tokens`: counted, never under-charged.
-    usage: Object.freeze({
-      inputTokens,
-      outputTokens,
-      ...(cached > 0 ? { cachedInputTokens: Math.min(cached, inputTokens) } : {}),
-    }),
+    usage: usageOf,
     finishReason,
     ...(typeof id === 'string' && RESPONSE_ID.test(id) ? { providerRequestId: id } : {}),
   });

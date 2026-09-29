@@ -322,3 +322,130 @@ describe('Vertex AI catalogue (ADR-0038)', () => {
     expect(createModelPolicyCatalogue([]).resolve(undefined)?.maxSensitivity).toBe('internal');
   });
 });
+
+describe('Vertex AI function calling (R3, ADR-0076)', () => {
+  const LOOKUP = {
+    name: 'lookup_price',
+    description: 'Looks up a price.',
+    parameters: {
+      type: 'object' as const,
+      properties: {
+        product: { type: 'string' as const, maxLength: 100, enum: ['combo', 'pollo'] },
+        quantity: { type: 'integer' as const, minimum: 1, maximum: 10 },
+      },
+      required: ['product'],
+    },
+  };
+
+  it('declares the tools, and carries earlier calls and results as function parts', () => {
+    const body = vertexRequestOf(
+      call({
+        structuredOutput: false,
+        tools: [LOOKUP],
+        messages: [
+          { role: 'user', content: [{ type: 'text', text: 'Price?' }] },
+          {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool_call',
+                call: { id: 'c1', name: 'lookup_price', arguments: { product: 'combo' } },
+              },
+            ],
+          },
+          {
+            role: 'user',
+            content: [{ type: 'tool_result', callId: 'c1', name: 'lookup_price', result: 25 }],
+          },
+        ],
+      }),
+    );
+    expect(body?.tools).toEqual([
+      {
+        functionDeclarations: [
+          {
+            name: 'lookup_price',
+            description: 'Looks up a price.',
+            parameters: {
+              type: 'OBJECT',
+              properties: {
+                product: {
+                  type: 'STRING',
+                  format: 'enum',
+                  enum: ['combo', 'pollo'],
+                  maxLength: 100,
+                },
+                quantity: { type: 'INTEGER', minimum: 1, maximum: 10 },
+              },
+              required: ['product'],
+            },
+          },
+        ],
+      },
+    ]);
+    expect(body?.toolConfig).toEqual({ functionCallingConfig: { mode: 'AUTO' } });
+    expect(body?.contents).toEqual([
+      { role: 'user', parts: [{ text: 'Price?' }] },
+      {
+        role: 'model',
+        parts: [{ functionCall: { name: 'lookup_price', args: { product: 'combo' } } }],
+      },
+      {
+        role: 'user',
+        parts: [{ functionResponse: { name: 'lookup_price', response: { result: 25 } } }],
+      },
+    ]);
+    // No tools: nothing about tools is sent.
+    expect(vertexRequestOf(call())?.tools).toBeUndefined();
+  });
+
+  it('reads function calls as tool calls, with an id when Vertex gives none', () => {
+    const outcome = outcomeOfVertexResponse(
+      {
+        candidates: [
+          {
+            content: {
+              role: 'model',
+              parts: [
+                { functionCall: { name: 'lookup_price', args: { product: 'combo' } } },
+                { functionCall: { id: 'v-2', name: 'lookup_price', args: { product: 'pollo' } } },
+              ],
+            },
+            finishReason: 'STOP',
+          },
+        ],
+        usageMetadata: { promptTokenCount: 100, candidatesTokenCount: 20 },
+      },
+      false,
+    );
+    expect(outcome).toEqual({
+      status: 'success',
+      output: {
+        toolCalls: [
+          { id: 'call_1', name: 'lookup_price', arguments: { product: 'combo' } },
+          { id: 'v-2', name: 'lookup_price', arguments: { product: 'pollo' } },
+        ],
+      },
+      usage: { inputTokens: 100, outputTokens: 20 },
+      finishReason: 'tool_use',
+    });
+    expect(
+      outcomeOfVertexResponse(
+        {
+          candidates: [
+            {
+              content: { parts: [{ functionCall: { name: 'x', args: [1] } }] },
+              finishReason: 'STOP',
+            },
+          ],
+          usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1 },
+        },
+        false,
+      ),
+    ).toEqual({ status: 'error', kind: 'invalid_response' });
+  });
+
+  it('offers function calling on Gemini 2.5 Flash-Lite', () => {
+    expect(GEMINI_2_5_FLASH_LITE_MODEL.toolUse).toBe(true);
+  });
+});

@@ -54,6 +54,7 @@ import { ASSIST_MODEL_POLICIES, createAIGateway } from './gateway.js';
 import { createModelPolicyCatalogue, DEFAULT_MODEL_POLICY } from './policy.js';
 import { createProviderRegistry } from './registry.js';
 import type { AIRequest, AssistedAIRequest } from './request.js';
+import type { AIToolDefinition } from './tools.js';
 
 const T0 = new Date('2026-09-27T12:00:00Z');
 const AT = T0.toISOString() as IsoTimestamp;
@@ -1281,5 +1282,166 @@ describe('AI gateway: the AI Usage Layer (ADR-0073)', () => {
     const denied = await setup({ usage, credits: 'none' });
     expect(await denied.call()).toMatchObject({ status: 'denied' });
     expect(usage.events).toHaveLength(0);
+  });
+});
+
+describe('AI gateway: normalized tool calling (R3, ADR-0076)', () => {
+  const LOOKUP: AIToolDefinition = {
+    name: 'lookup_price',
+    description: 'Looks up the price of a product in the catalogue.',
+    parameters: {
+      type: 'object',
+      properties: { product: { type: 'string', maxLength: 100 } },
+      required: ['product'],
+    },
+  };
+  const withTools = (overrides: Partial<Record<keyof AIRequest, unknown>> = {}) => ({
+    requirements: { toolUse: true },
+    tools: [LOOKUP],
+    ...overrides,
+  });
+  const CALLED =
+    (calls: unknown): (() => ProviderOutcome) =>
+    () =>
+      ({
+        status: 'success',
+        output: { toolCalls: calls },
+        usage: { inputTokens: 1_000, outputTokens: 50 },
+        finishReason: 'tool_use',
+      }) as ProviderOutcome;
+  const tooling = (): AIModelDefinition[] => [
+    model('alpha', 'alpha-tools', { toolUse: true }),
+    model('alpha', 'alpha-small', {}),
+  ];
+
+  it('offers the tools only to a model that can call them, and passes its calls on, unrun', async () => {
+    const { w, call } = await setup({
+      models: tooling(),
+      script: {
+        'alpha-tools': [
+          CALLED([{ id: 'c1', name: 'lookup_price', arguments: { product: 'combo' } }]),
+        ],
+      },
+    });
+    const response = await call(withTools());
+    expect(response).toMatchObject({
+      status: 'completed',
+      model: 'alpha-tools',
+      finishReason: 'tool_use',
+      output: { toolCalls: [{ id: 'c1', name: 'lookup_price', arguments: { product: 'combo' } }] },
+    });
+    expect(w.calls[0]?.tools).toEqual([LOOKUP]);
+    // Without tools, the same request goes to the cheaper model and no tools are sent.
+    await call({ requestId: 'req-2' });
+    expect(w.calls[1]?.model.id).toBe('alpha-small');
+    expect(w.calls[1]?.tools).toBeUndefined();
+  });
+
+  it('refuses a call to a tool it was not offered, or with arguments its schema refuses', async () => {
+    for (const bad of [
+      [{ id: 'c1', name: 'delete_everything', arguments: {} }],
+      [{ id: 'c1', name: 'lookup_price', arguments: { product: 5 } }],
+      [{ id: 'c1', name: 'lookup_price', arguments: { product: 'x', organizationId: 'o' } }],
+      [
+        {
+          id: 'c1',
+          name: 'lookup_price',
+          arguments: { product: fake('sk', '-abcdefghijklmnopqrstuv1234') },
+        },
+      ],
+      [
+        { id: 'c1', name: 'lookup_price', arguments: { product: 'a' } },
+        { id: 'c1', name: 'lookup_price', arguments: { product: 'b' } },
+      ],
+      [],
+    ]) {
+      const { call } = await setup({
+        models: tooling(),
+        defaultPolicy: onlyModels('alpha/alpha-tools'),
+        script: { 'alpha-tools': [CALLED(bad), CALLED(bad), CALLED(bad)] },
+      });
+      expect(await call(withTools())).toMatchObject({ status: 'failed', code: 'invalid_response' });
+    }
+  });
+
+  it('refuses tools without the requirement, and tools that carry authority or secrets', async () => {
+    const { call } = await setup({ models: tooling() });
+    expect(await call({ tools: [LOOKUP] })).toMatchObject({ code: 'invalid_request' });
+    expect(await call({ requirements: { toolUse: true } })).toMatchObject({
+      code: 'invalid_request',
+    });
+    expect(
+      await call(
+        withTools({
+          tools: [
+            {
+              ...LOOKUP,
+              parameters: {
+                type: 'object',
+                properties: { userId: { type: 'string', maxLength: 10 } },
+              },
+            },
+          ],
+        }),
+      ),
+    ).toMatchObject({ code: 'authority_in_input' });
+    expect(
+      await call(
+        withTools({
+          tools: [{ ...LOOKUP, description: `Use ${fake('sk', '-abcdefghijklmnopqrstuv1234')}` }],
+        }),
+      ),
+    ).toMatchObject({ code: 'secret_in_input' });
+    expect(await call(withTools({ tools: [LOOKUP, LOOKUP] }))).toMatchObject({
+      code: 'invalid_request',
+    });
+  });
+
+  it('carries earlier calls and their results, on the right side of the conversation only', async () => {
+    const { w, call } = await setup({ models: tooling() });
+    const earlier = {
+      type: 'tool_call',
+      call: { id: 'c1', name: 'lookup_price', arguments: { product: 'combo' } },
+    };
+    const result = {
+      type: 'tool_result',
+      callId: 'c1',
+      name: 'lookup_price',
+      result: { price: 25 },
+    };
+    const conversation = [
+      { role: 'user', content: [{ type: 'text', text: 'Price of the combo?' }] },
+      { role: 'assistant', content: [earlier] },
+      { role: 'user', content: [result] },
+    ];
+    expect(await call(withTools({ messages: conversation }))).toMatchObject({
+      status: 'completed',
+    });
+    expect(w.calls[0]?.messages).toEqual(conversation);
+    // A result on the model's side, or a call on the person's side, is refused.
+    expect(
+      await call(
+        withTools({
+          requestId: 'req-2',
+          messages: [
+            { role: 'user', content: [earlier] },
+            { role: 'assistant', content: [result] },
+          ],
+        }),
+      ),
+    ).toMatchObject({ code: 'invalid_request' });
+    expect(
+      await call(
+        withTools({
+          requestId: 'req-3',
+          messages: [
+            {
+              role: 'user',
+              content: [{ ...result, result: { note: fake('sk', '-abcdefghijklmnopqrstuv1234') } }],
+            },
+          ],
+        }),
+      ),
+    ).toMatchObject({ code: 'secret_in_input' });
   });
 });

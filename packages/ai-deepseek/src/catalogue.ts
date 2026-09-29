@@ -44,7 +44,8 @@ export const DEEPSEEK_CHAT_MODEL: AIModelDefinition = Object.freeze({
   contextWindowTokens: 64_000,
   maxOutputTokens: 8_192,
   structuredOutput: true,
-  toolUse: false,
+  // Function calling (R3, ADR-0076): the model proposes calls, the Tool Gate runs them.
+  toolUse: true,
   streaming: false,
   quality: 'standard',
   latency: 'standard',

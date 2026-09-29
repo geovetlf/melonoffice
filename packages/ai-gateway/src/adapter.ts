@@ -1,5 +1,6 @@
 import type { AICapability, AIModality, CredentialReference } from '@melonoffice/domain';
 import type { AIMessage, AIOutputSchema } from './request.js';
+import type { AIToolCall, AIToolDefinition } from './tools.js';
 
 /**
  * What the gateway gives an adapter for one attempt (ADR-0027). Built only from the validated
@@ -18,6 +19,8 @@ export interface ProviderCall {
   readonly structuredOutput: boolean;
   /** The shape of a structured answer, already checked (ADR-0038). */
   readonly outputSchema?: AIOutputSchema;
+  /** The tools the model may call, already checked (R3, ADR-0076). */
+  readonly tools?: readonly AIToolDefinition[];
   readonly credential: CredentialReference;
   /** When the call must have finished. */
   readonly deadline: Date;
@@ -28,6 +31,13 @@ export interface ProviderUsage {
   readonly outputTokens: number;
   /** Of `inputTokens`, how many the provider served from its cache, when it says. */
   readonly cachedInputTokens?: number;
+}
+
+/** What a model answered: text, a structured answer, or calls to the tools it was offered. */
+export interface AIOutput {
+  readonly text?: string;
+  readonly structured?: unknown;
+  readonly toolCalls?: readonly AIToolCall[];
 }
 
 export type FinishReason = 'stop' | 'length' | 'content_filter' | 'tool_use';
@@ -54,7 +64,8 @@ export type ProviderErrorKind =
 export type ProviderOutcome =
   | {
       readonly status: 'success';
-      readonly output: { readonly text?: string; readonly structured?: unknown };
+      /** `toolCalls`: the tools the model asked to call, in its order (R3, ADR-0076). */
+      readonly output: AIOutput;
       readonly usage: ProviderUsage;
       readonly finishReason: FinishReason;
       /** The provider's own id for the call, when it gives one. */

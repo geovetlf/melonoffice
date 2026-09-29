@@ -8,6 +8,15 @@ import type {
 } from '@melonoffice/domain';
 import { isForbiddenField } from '@melonoffice/tools';
 import { looksLikeSecretText } from './secrets.js';
+import {
+  estimateToolTokens,
+  toolPartProblem,
+  toolsProblem,
+  type AIToolCallPart,
+  type AIToolDefinition,
+  type AIToolResultPart,
+  type ToolProblem,
+} from './tools.js';
 
 export const AI_CAPABILITIES = [
   'text_generation',
@@ -51,13 +60,18 @@ export const MAX_TEXT_LENGTH = 400_000;
 export const MAX_METADATA_ENTRIES = 20;
 export const MAX_OUTPUT_TOKENS = 1_000_000;
 
-/** A piece of a message. Media is passed by reference, never inline. */
+/**
+ * A piece of a message. Media is passed by reference, never inline. A tool call goes only on an
+ * `assistant` message and a tool result only on a `user` message (R3, ADR-0076).
+ */
 export type AIContentPart =
   | { readonly type: 'text'; readonly text: string }
   | {
       readonly type: 'image' | 'audio';
       readonly ref: { readonly type: string; readonly id: string };
-    };
+    }
+  | AIToolCallPart
+  | AIToolResultPart;
 
 export interface AIMessage {
   readonly role: 'system' | 'user' | 'assistant';
@@ -138,6 +152,11 @@ export interface AIRequest {
   readonly maxOutputTokens: number;
   /** With `requirements.structuredOutput`, the shape of the answer (ADR-0038). */
   readonly outputSchema?: AIOutputSchema;
+  /**
+   * With `requirements.toolUse`, the tools the model may call (R3, ADR-0076). It may answer with
+   * calls to them; the gateway checks them and never runs one.
+   */
+  readonly tools?: readonly AIToolDefinition[];
   readonly sensitivity: DataSensitivity;
   /** Safe, flat labels for tracing. Never authority, never a secret. */
   readonly metadata?: Readonly<Record<string, string | number | boolean>>;
@@ -201,6 +220,7 @@ const REQUEST_KEYS = new Set([
   'maxCredits',
   'maxOutputTokens',
   'outputSchema',
+  'tools',
   'sensitivity',
   'metadata',
 ]);
@@ -221,6 +241,12 @@ const oneOf = (list: readonly string[], value: unknown): boolean =>
 
 const count = (value: unknown, min: number, max: number): boolean =>
   typeof value === 'number' && Number.isSafeInteger(value) && value >= min && value <= max;
+
+const TOOL_REFUSAL: Readonly<Record<ToolProblem, AIRequestProblem>> = {
+  invalid: 'invalid_request',
+  authority: 'authority_in_input',
+  secret: 'secret_in_input',
+};
 
 class Refusal {
   constructor(readonly problem: AIRequestProblem) {}
@@ -263,6 +289,12 @@ function checkMessage(value: unknown): void {
       closed(ref, new Set(['type', 'id']));
       if (typeof ref.type !== 'string' || !REF_TYPE.test(ref.type)) refuse('invalid_request');
       if (typeof ref.id !== 'string' || !REF_ID.test(ref.id)) refuse('invalid_request');
+    } else if (
+      (part.type === 'tool_call' && value.role === 'assistant') ||
+      (part.type === 'tool_result' && value.role === 'user')
+    ) {
+      const problem = toolPartProblem(part);
+      if (problem !== undefined) refuse(TOOL_REFUSAL[problem]);
     } else {
       refuse('invalid_request');
     }
@@ -408,6 +440,14 @@ function checkCommon(request: Record<string, unknown>): void {
     checkOutputSchema(request.outputSchema, 1, { count: 0 });
     if ((request.outputSchema as { type?: unknown }).type !== 'object') refuse('invalid_request');
   }
+  // Tools and the tool-use requirement go together: a model is offered tools only when it must
+  // be able to call them, and asked for tool use only with something to call.
+  const toolUse = isRecord(requirements) && requirements.toolUse === true;
+  if ((request.tools !== undefined) !== toolUse) refuse('invalid_request');
+  if (request.tools !== undefined) {
+    const problem = toolsProblem(request.tools);
+    if (problem !== undefined) refuse(TOOL_REFUSAL[problem]);
+  }
 }
 
 function problemOf(check: () => void): AIRequestProblem | undefined {
@@ -462,7 +502,10 @@ export function checkAssistedAIRequest(request: unknown): AIRequestProblem | und
 export function inputModalitiesOf(request: Pick<AIRequest, 'messages'>): readonly AIModality[] {
   const found = new Set<AIModality>();
   for (const message of request.messages) {
-    for (const part of message.content) found.add(part.type);
+    for (const part of message.content) {
+      // Tool calls and results are text to the model.
+      found.add(part.type === 'image' || part.type === 'audio' ? part.type : 'text');
+    }
   }
   return AI_MODALITIES.filter((m) => found.has(m));
 }
@@ -472,11 +515,18 @@ export function inputModalitiesOf(request: Pick<AIRequest, 'messages'>): readonl
  * token, rounded up, plus a fixed allowance per media part. The provider's reported usage is
  * what is charged.
  */
-export function estimateInputTokens(request: Pick<AIRequest, 'messages'>): number {
-  let tokens = 0;
+export function estimateInputTokens(request: Pick<AIRequest, 'messages' | 'tools'>): number {
+  let tokens = request.tools === undefined ? 0 : estimateToolTokens(request.tools);
   for (const message of request.messages) {
     for (const part of message.content) {
-      tokens += part.type === 'text' ? Math.ceil([...part.text].length / 4) : 1_000;
+      tokens +=
+        part.type === 'text'
+          ? Math.ceil([...part.text].length / 4)
+          : part.type === 'tool_call'
+            ? estimateToolTokens(part.call)
+            : part.type === 'tool_result'
+              ? estimateToolTokens(part.result)
+              : 1_000;
     }
   }
   return tokens;

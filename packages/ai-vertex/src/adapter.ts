@@ -1,12 +1,14 @@
 import type {
   AIMessage,
   AIOutputSchema,
+  AIToolCall,
   FinishReason,
   ProviderAdapter,
   ProviderCall,
   ProviderErrorKind,
   ProviderOutcome,
 } from '@melonoffice/ai-gateway';
+import type { ToolSchema } from '@melonoffice/domain';
 import { VERTEX_AI_PROVIDER } from './catalogue.js';
 
 /**
@@ -20,7 +22,7 @@ import { VERTEX_AI_PROVIDER } from './catalogue.js';
  * message, so the gateway decides on retries alone and nothing the provider says reaches a log,
  * an audit event or a person.
  */
-export const VERTEX_ADAPTER_VERSION = '1';
+export const VERTEX_ADAPTER_VERSION = '2';
 
 export const METADATA_TOKEN_URL =
   'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token';
@@ -38,6 +40,7 @@ const PROJECT = /^[a-z][a-z0-9-]{4,28}[a-z0-9]$/;
 const LOCATION = /^[a-z]+-[a-z]+[0-9]{1,2}$/;
 const MODEL = /^[a-z0-9][a-z0-9.-]{0,63}$/;
 const RESPONSE_ID = /^[A-Za-z0-9._:-]{1,200}$/;
+const CALL_ID = /^[A-Za-z0-9_-]{1,64}$/;
 /** Larger answers are refused rather than read: no call here asks for anything near it. */
 const MAX_RESPONSE_BYTES = 1_000_000;
 /** A token is renewed this long before Google says it expires. */
@@ -95,24 +98,92 @@ export function toVertexSchema(schema: AIOutputSchema): VertexSchema {
   return out;
 }
 
+/** A tool's input schema as a Vertex AI function declaration's `parameters` (R3, ADR-0076). */
+export function toVertexParameters(schema: ToolSchema): VertexSchema {
+  const out: VertexSchema = { type: schema.type.toUpperCase() };
+  switch (schema.type) {
+    case 'string':
+      if (schema.enum !== undefined) {
+        out.format = 'enum';
+        out.enum = [...schema.enum];
+      }
+      out.maxLength = schema.maxLength;
+      if (schema.minLength !== undefined) out.minLength = schema.minLength;
+      break;
+    case 'number':
+    case 'integer':
+      if (schema.minimum !== undefined) out.minimum = schema.minimum;
+      if (schema.maximum !== undefined) out.maximum = schema.maximum;
+      break;
+    case 'boolean':
+      break;
+    case 'array':
+      out.items = toVertexParameters(schema.items);
+      out.maxItems = schema.maxItems;
+      break;
+    case 'object': {
+      const names = Object.keys(schema.properties);
+      out.properties = Object.fromEntries(
+        names.map((name) => [name, toVertexParameters(schema.properties[name] as ToolSchema)]),
+      );
+      if (schema.required !== undefined) out.required = [...schema.required];
+      break;
+    }
+  }
+  return out;
+}
+
+type VertexPart = Record<string, unknown>;
+
+/** A function's response must be an object: anything else is wrapped as `{ result }`. */
+const responseObject = (result: unknown): Record<string, unknown> =>
+  typeof result === 'object' && result !== null && !Array.isArray(result)
+    ? (result as Record<string, unknown>)
+    : { result };
+
 /** The request body, or undefined when the call asks for something this adapter cannot send. */
 export function vertexRequestOf(call: ProviderCall): Record<string, unknown> | undefined {
   const system: { text: string }[] = [];
-  const contents: { role: 'user' | 'model'; parts: { text: string }[] }[] = [];
+  const contents: { role: 'user' | 'model'; parts: VertexPart[] }[] = [];
   for (const message of call.messages as readonly AIMessage[]) {
-    const parts: { text: string }[] = [];
+    const parts: VertexPart[] = [];
     for (const part of message.content) {
+      if (part.type === 'text') parts.push({ text: part.text });
+      else if (part.type === 'tool_call') {
+        parts.push({ functionCall: { name: part.call.name, args: part.call.arguments } });
+      } else if (part.type === 'tool_result') {
+        parts.push({
+          functionResponse: { name: part.name, response: responseObject(part.result) },
+        });
+      }
       // Media is not sent in this version: text only (ADR-0038).
-      if (part.type !== 'text') return undefined;
-      parts.push({ text: part.text });
+      else return undefined;
     }
-    if (message.role === 'system') system.push(...parts);
-    else contents.push({ role: message.role === 'assistant' ? 'model' : 'user', parts });
+    if (message.role === 'system') {
+      if (parts.some((p) => typeof p.text !== 'string')) return undefined;
+      system.push(...(parts as { text: string }[]));
+    } else contents.push({ role: message.role === 'assistant' ? 'model' : 'user', parts });
   }
   if (contents.length === 0) return undefined;
+  const tools = call.tools ?? [];
   return {
     contents,
     ...(system.length === 0 ? {} : { systemInstruction: { parts: system } }),
+    ...(tools.length === 0
+      ? {}
+      : {
+          tools: [
+            {
+              functionDeclarations: tools.map((t) => ({
+                name: t.name,
+                description: t.description,
+                parameters: toVertexParameters(t.parameters),
+              })),
+            },
+          ],
+          // The model decides whether to call; it never answers with a function it was not given.
+          toolConfig: { functionCallingConfig: { mode: 'AUTO' } },
+        }),
     generationConfig: {
       candidateCount: 1,
       maxOutputTokens: call.maxOutputTokens,
@@ -177,10 +248,36 @@ export function outcomeOfVertexResponse(body: unknown, structured: boolean): Pro
   const parts = isRecord(content) && Array.isArray(content.parts) ? content.parts : undefined;
   if (parts === undefined) return error('invalid_response');
   // Reasoning is never part of the answer.
-  const text = parts
-    .filter((p): p is Record<string, unknown> => isRecord(p) && p.thought !== true)
-    .map((p) => (typeof p.text === 'string' ? p.text : ''))
-    .join('');
+  const answer = parts.filter(
+    (p): p is Record<string, unknown> => isRecord(p) && p.thought !== true,
+  );
+  const text = answer.map((p) => (typeof p.text === 'string' ? p.text : '')).join('');
+  // Calls the model asked for (R3, ADR-0076). The gateway checks them against the tools offered.
+  const toolCalls: AIToolCall[] = [];
+  for (const part of answer) {
+    if (part.functionCall === undefined) continue;
+    const fn = part.functionCall;
+    if (!isRecord(fn) || typeof fn.name !== 'string') return error('invalid_response');
+    const args = fn.args ?? {};
+    if (!isRecord(args)) return error('invalid_response');
+    const id =
+      typeof fn.id === 'string' && CALL_ID.test(fn.id) ? fn.id : `call_${toolCalls.length + 1}`;
+    toolCalls.push(Object.freeze({ id, name: fn.name, arguments: args }));
+  }
+  if (toolCalls.length > 0) {
+    return Object.freeze({
+      status: 'success',
+      output: Object.freeze({
+        ...(text.length === 0 ? {} : { text }),
+        toolCalls: Object.freeze(toolCalls),
+      }),
+      usage: Object.freeze({ inputTokens, outputTokens: answerTokens + thoughtTokens }),
+      finishReason: 'tool_use',
+      ...(typeof body.responseId === 'string' && RESPONSE_ID.test(body.responseId)
+        ? { providerRequestId: body.responseId }
+        : {}),
+    });
+  }
   let output: { text?: string; structured?: unknown } = { text };
   if (structured) {
     try {

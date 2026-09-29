@@ -324,3 +324,124 @@ describe('DeepSeek adapter', () => {
     });
   });
 });
+
+describe('DeepSeek function calling (R3, ADR-0076)', () => {
+  const LOOKUP = {
+    name: 'lookup_price',
+    description: 'Looks up a price.',
+    parameters: {
+      type: 'object' as const,
+      properties: { product: { type: 'string' as const, maxLength: 100 } },
+      required: ['product'],
+    },
+  };
+
+  it('sends the tools as functions, and earlier calls and results as chat messages', () => {
+    const body = deepSeekRequestOf(
+      call({
+        tools: [LOOKUP],
+        messages: [
+          { role: 'user', content: [{ type: 'text', text: 'Price?' }] },
+          {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool_call',
+                call: { id: 'c1', name: 'lookup_price', arguments: { product: 'combo' } },
+              },
+            ],
+          },
+          {
+            role: 'user',
+            content: [
+              { type: 'tool_result', callId: 'c1', name: 'lookup_price', result: { price: 25 } },
+            ],
+          },
+        ],
+      }),
+    );
+    expect(body?.tools).toEqual([
+      {
+        type: 'function',
+        function: {
+          name: 'lookup_price',
+          description: 'Looks up a price.',
+          parameters: {
+            type: 'object',
+            properties: { product: { type: 'string', maxLength: 100 } },
+            required: ['product'],
+            additionalProperties: false,
+          },
+        },
+      },
+    ]);
+    expect(body?.tool_choice).toBe('auto');
+    expect(body?.messages).toEqual([
+      { role: 'user', content: 'Price?' },
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: [
+          {
+            id: 'c1',
+            type: 'function',
+            function: { name: 'lookup_price', arguments: '{"product":"combo"}' },
+          },
+        ],
+      },
+      { role: 'tool', tool_call_id: 'c1', content: '{"price":25}' },
+    ]);
+  });
+
+  it('reads tool calls, and refuses ones it cannot read', () => {
+    const called = (calls: unknown) => ({
+      id: 'ds-2',
+      choices: [
+        {
+          index: 0,
+          message: { role: 'assistant', content: '', tool_calls: calls },
+          finish_reason: 'tool_calls',
+        },
+      ],
+      usage: { prompt_tokens: 100, completion_tokens: 20 },
+    });
+    expect(
+      outcomeOfDeepSeekResponse(
+        called([
+          {
+            id: 'call_0',
+            type: 'function',
+            function: { name: 'lookup_price', arguments: '{"product":"combo"}' },
+          },
+        ]),
+        false,
+      ),
+    ).toEqual({
+      status: 'success',
+      output: {
+        toolCalls: [{ id: 'call_0', name: 'lookup_price', arguments: { product: 'combo' } }],
+      },
+      usage: { inputTokens: 100, outputTokens: 20 },
+      finishReason: 'tool_use',
+      providerRequestId: 'ds-2',
+    });
+    for (const bad of [
+      [],
+      [{ id: 'c', type: 'function', function: { name: 'x', arguments: 'not json' } }],
+      [{ id: 'c', type: 'function', function: { name: 'x', arguments: '[1]' } }],
+      [{ id: 'bad id!', type: 'function', function: { name: 'x', arguments: '{}' } }],
+    ]) {
+      expect(outcomeOfDeepSeekResponse(called(bad), false)).toEqual({
+        status: 'error',
+        kind: 'invalid_response',
+      });
+    }
+  });
+
+  it('offers function calling on the chat model only', () => {
+    expect(DEEPSEEK_MODELS.map((m) => [m.modelId, m.toolUse])).toEqual([
+      ['deepseek-chat', true],
+      ['deepseek-reasoner', false],
+    ]);
+  });
+});
