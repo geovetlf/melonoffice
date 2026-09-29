@@ -902,6 +902,53 @@ run "dev_stores_documents" {
     condition     = contains(google_project_iam_custom_role.planner.permissions, "storage.buckets.get") && contains(google_project_iam_custom_role.planner.permissions, "storage.buckets.getIamPolicy") && length([for p in google_project_iam_custom_role.planner.permissions : p if startswith(p, "storage.objects.")]) == 0
     error_message = "The planner reads the bucket and its policy, never its objects."
   }
+
+  assert {
+    condition     = length(google_storage_bucket_iam_member.vertex_ai_documents_viewer) == 0
+    error_message = "Without assisted AI, Vertex AI's service agent gets nothing on the documents bucket."
+  }
+}
+
+# Reading scanned PDFs (ADR-0079): Vertex AI's own service agent reads the documents bucket's
+# objects for a `gs://` reference, only where documents and assisted AI are both on.
+run "dev_lets_vertex_ai_read_documents" {
+  command = apply
+
+  variables {
+    environment         = "dev"
+    deploy_apps         = true
+    deletion_protection = false
+    firestore_and_auth  = true
+    document_storage    = true
+    ai_assist           = true
+  }
+
+  assert {
+    condition     = google_storage_bucket_iam_member.vertex_ai_documents_viewer[0].role == "roles/storage.objectViewer" && google_storage_bucket_iam_member.vertex_ai_documents_viewer[0].bucket == google_storage_bucket.documents[0].name
+    error_message = "Vertex AI may only read objects of the documents bucket."
+  }
+
+  assert {
+    condition     = google_storage_bucket_iam_member.vertex_ai_documents_viewer[0].member == "serviceAccount:service-123456789012@gcp-sa-aiplatform.iam.gserviceaccount.com"
+    error_message = "The grant goes to the project's Vertex AI service agent, and no one else."
+  }
+}
+
+run "no_vertex_ai_document_access_without_documents" {
+  command = plan
+
+  variables {
+    environment         = "dev"
+    deploy_apps         = true
+    deletion_protection = false
+    firestore_and_auth  = true
+    ai_assist           = true
+  }
+
+  assert {
+    condition     = length(google_storage_bucket_iam_member.vertex_ai_documents_viewer) == 0
+    error_message = "Without document_storage, Vertex AI's service agent gets nothing."
+  }
 }
 
 run "no_document_storage_without_apps_and_firestore" {

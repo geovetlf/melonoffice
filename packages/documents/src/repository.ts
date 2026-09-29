@@ -2,6 +2,7 @@ import type { AuditEvent } from '@melonoffice/audit';
 import type {
   DocumentId,
   DocumentIngestionCode,
+  DocumentTextSource,
   IsoTimestamp,
   OrganizationId,
   StoredDocument,
@@ -16,11 +17,16 @@ export interface DocumentPosition {
   readonly id: DocumentId;
 }
 
-/** What may change on a stored document: only whether Company Brain read its text. */
+/**
+ * What may change on a stored document: whether Company Brain read its text, and how that text
+ * was read (ADR-0079).
+ */
 export interface DocumentStatusChange {
   readonly status: StoredDocumentStatus;
   readonly ingestion?: DocumentIngestionCode;
   readonly knowledgeDocumentId?: string;
+  readonly textSource?: DocumentTextSource;
+  readonly pages?: number;
   readonly updatedAt: IsoTimestamp;
 }
 
@@ -85,8 +91,13 @@ export function pageOfDocuments(
   };
 }
 
-/** The stored record with a status change applied, and only the fields that status allows. */
+/**
+ * The stored record with a status change applied, and only the fields that status allows. How
+ * the text was read and the page count are kept unless the change says them again.
+ */
 export function withStatus(document: StoredDocument, change: DocumentStatusChange): StoredDocument {
+  const textSource = change.textSource ?? document.textSource;
+  const pages = change.pages ?? document.pages;
   return Object.freeze({
     id: document.id,
     organizationId: document.organizationId,
@@ -102,6 +113,8 @@ export function withStatus(document: StoredDocument, change: DocumentStatusChang
     ...(change.status === 'ingested' && change.knowledgeDocumentId !== undefined
       ? { knowledgeDocumentId: change.knowledgeDocumentId }
       : {}),
+    ...(textSource === undefined ? {} : { textSource }),
+    ...(pages === undefined ? {} : { pages }),
     uploadedBy: document.uploadedBy,
     createdAt: document.createdAt,
     updatedAt: change.updatedAt,

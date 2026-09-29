@@ -10,6 +10,7 @@ import {
 } from '@melonoffice/ai-gateway';
 import {
   createVertexAIAdapter,
+  DOCUMENT_READ_POLICY,
   GEMINI_2_5_FLASH_LITE,
   VERTEX_AI_MODELS,
   VERTEX_AI_PROVIDER,
@@ -106,6 +107,8 @@ export interface AIConfiguration {
 export function aiConfigurationOf(config: {
   readonly deploymentEnvironment?: DeploymentEnvironment;
   readonly vertexAI?: { readonly projectId: string; readonly location: string };
+  /** The documents bucket (ADR-0078): Vertex AI reads a scanned PDF from it (ADR-0079). */
+  readonly documentsBucket?: string;
   readonly deepSeek?: { readonly keySecret: SecretRef };
   readonly fetch?: typeof fetch;
   /** Where AI provider keys are read; Secret Manager unless given (tests). */
@@ -124,6 +127,9 @@ export function aiConfigurationOf(config: {
       createVertexAIAdapter({
         projectId: vertexAI.projectId,
         location: vertexAI.location,
+        ...(config.documentsBucket === undefined
+          ? {}
+          : { documentsBucket: config.documentsBucket }),
         ...fetchOption,
       }),
     );
@@ -150,6 +156,8 @@ export function aiConfigurationOf(config: {
       COMPANY_KNOWLEDGE_ASSIST_POLICY,
       GIA_ASSIST_POLICY,
       DECISION_ASSIST_POLICY,
+      // Reading a scanned PDF a person uploads (ADR-0079).
+      DOCUMENT_READ_POLICY,
     ]),
     creditRate: CREDIT_RATE,
   };

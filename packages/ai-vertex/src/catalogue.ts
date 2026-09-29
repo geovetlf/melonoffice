@@ -18,7 +18,8 @@ export const VERTEX_AI_PROVIDER: AIProviderDefinition = Object.freeze({
   status: 'active',
   access: 'official',
   capabilities: Object.freeze(['text_generation', 'structured_output'] as const),
-  modalities: Object.freeze(['text'] as const),
+  // `document`: a stored PDF, read by Vertex AI from the documents bucket (ADR-0079).
+  modalities: Object.freeze(['text', 'document'] as const),
   environments: Object.freeze(['dev'] as const),
   credential: Object.freeze({
     provider: 'google_cloud',
@@ -30,9 +31,10 @@ export const VERTEX_AI_PROVIDER: AIProviderDefinition = Object.freeze({
 export const GEMINI_2_5_FLASH_LITE = 'gemini-2.5-flash-lite';
 
 /**
- * Gemini 2.5 Flash-Lite on Vertex AI (D-7), text in and text or JSON out. The price is Google's
- * published standard price for text: US$0.10 per million input tokens and US$0.40 per million
- * output tokens, reasoning included. A price change is a change here, with its date.
+ * Gemini 2.5 Flash-Lite on Vertex AI (D-7), text and PDF documents in (ADR-0079), text or JSON
+ * out. The price is Google's published standard price for text, images and documents alike:
+ * US$0.10 per million input tokens and US$0.40 per million output tokens, reasoning included. A
+ * price change is a change here, with its date.
  */
 export const GEMINI_2_5_FLASH_LITE_MODEL: AIModelDefinition = Object.freeze({
   providerId: VERTEX_AI_PROVIDER_ID,
@@ -41,7 +43,7 @@ export const GEMINI_2_5_FLASH_LITE_MODEL: AIModelDefinition = Object.freeze({
   version: 'stable',
   status: 'active',
   capabilities: Object.freeze(['text_generation', 'structured_output'] as const),
-  inputModalities: Object.freeze(['text'] as const),
+  inputModalities: Object.freeze(['text', 'document'] as const),
   outputModalities: Object.freeze(['text'] as const),
   contextWindowTokens: 1_048_576,
   maxOutputTokens: 65_536,

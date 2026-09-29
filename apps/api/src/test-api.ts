@@ -34,6 +34,7 @@ import {
   InMemoryFileStore,
   type DocumentRepository,
   type FileStore,
+  type TextExtractor,
 } from '@melonoffice/documents';
 import {
   InMemoryAgentOutputRepository,
@@ -402,6 +403,7 @@ export function setupApp(
     toolEnvironment = 'dev',
     runPlans = false,
     files = new InMemoryFileStore(),
+    extractor,
   }: {
     readonly sending?: boolean;
     readonly webOrigins?: readonly string[];
@@ -416,6 +418,8 @@ export function setupApp(
     readonly runPlans?: boolean;
     /** Where documents' bytes live (ADR-0078): memory unless a test passes its own, or `null`. */
     readonly files?: FileStore | null;
+    /** Reads PDF and DOCX text (ADR-0079). Absent: those files are only stored. */
+    readonly extractor?: TextExtractor;
   } = {},
 ) {
   const lines: string[] = [];
@@ -485,7 +489,11 @@ export function setupApp(
     },
     webhooks: engine,
     agentTasks: { repository: stores.agentTasks, outputs: agentOutputs, runtime: kickoff },
-    documents: { repository: stores.documents, ...(files === null ? {} : { files }) },
+    documents: {
+      repository: stores.documents,
+      ...(files === null ? {} : { files }),
+      ...(extractor === undefined ? {} : { extractor }),
+    },
     ...(forecasting ? { forecasting } : {}),
     ...(tools ? { tools } : {}),
     ...(webOrigins ? { webOrigins } : {}),

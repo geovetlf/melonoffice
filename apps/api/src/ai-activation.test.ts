@@ -8,8 +8,10 @@ import type {
   UserId,
 } from '@melonoffice/domain';
 import { createConversationIngress } from '@melonoffice/conversations';
+import type { TextExtractor } from '@melonoffice/documents';
 import { resolveTenant } from '@melonoffice/tenancy';
 import { describe, expect, it } from 'vitest';
+import { DOCUMENT_READ_POLICY } from '@melonoffice/ai-vertex';
 import { aiConfigurationOf, CONVERSATION_ASSIST_POLICY } from './ai.js';
 import { loadConfig } from './config.js';
 import { DEV_TEST_GRANT, grantDevTestCredits } from './dev-credits.js';
@@ -83,15 +85,22 @@ interface Json {
 }
 
 describe.each(STORES)('assisted AI on Vertex AI with storage in %s (ADR-0038)', (_n, create) => {
-  async function setup(environment: 'dev' | 'staging' = 'dev') {
+  async function setup(
+    environment: 'dev' | 'staging' = 'dev',
+    documents: { readonly extractor?: TextExtractor } = {},
+  ) {
     const stores: Stores = create();
     const cloud = googleCloud();
     const ai = aiConfigurationOf({
       deploymentEnvironment: environment,
       vertexAI: { projectId: 'melonoffice-dev-test', location: 'us-central1' },
+      documentsBucket: 'melonoffice-dev-test-documents',
       fetch: cloud.fetchFn,
     });
-    const ctx = setupApp(stores, undefined, undefined, undefined, undefined, { ai });
+    const ctx = setupApp(stores, undefined, undefined, undefined, undefined, {
+      ai,
+      ...(documents.extractor === undefined ? {} : { extractor: documents.extractor }),
+    });
     const aliceId = (await ctx.register('token-alice')) as UserId;
     await ctx.register('token-bob');
     const organizations: OrganizationId[] = [];
@@ -293,6 +302,72 @@ describe.each(STORES)('assisted AI on Vertex AI with storage in %s (ADR-0038)', 
     expect(JSON.stringify(await t.stores.auditEvents())).not.toContain('melones');
   });
 
+  it('reads a scanned PDF with Gemini from the documents bucket, charged 1 credit once (ADR-0079)', async () => {
+    const scan: TextExtractor = {
+      extract: async () => ({ status: 'text', text: '', pages: 2, truncated: false }),
+    };
+    const t = await setup('dev', { extractor: scan });
+    await t.grant('dev');
+    t.cloud.state.answer = () =>
+      Response.json({
+        candidates: [
+          {
+            content: { role: 'model', parts: [{ text: 'Factura 001\nTotal S/90' }] },
+            finishReason: 'STOP',
+          },
+        ],
+        usageMetadata: { promptTokenCount: 560, candidatesTokenCount: 12, totalTokenCount: 572 },
+      });
+    const upload = () =>
+      t.app.request(
+        `/v1/organizations/${t.test}/documents?name=Escaneo.pdf`,
+        t.as('token-alice', {
+          method: 'POST',
+          headers: { 'content-type': 'application/pdf' },
+          body: new TextEncoder().encode('%PDF-1.7\n1 0 obj << >> endobj\n%%EOF'),
+        }),
+      );
+    const response = await upload();
+    expect(response.status).toBe(201);
+    const { document } = (await response.json()) as { document: Json };
+    expect(document).toMatchObject({ status: 'ingested', textSource: 'model', pages: 2 });
+    // One call to Vertex: the stored PDF by its gs:// reference, never its bytes.
+    const [sent] = t.cloud.requests;
+    expect(sent?.url).toBe(VERTEX);
+    expect(JSON.stringify(sent?.body)).toContain(
+      `"fileData":{"mimeType":"application/pdf","fileUri":"gs://melonoffice-dev-test-documents/organizations/${t.test}/documents/${String(document.id)}"}`,
+    );
+    expect(await t.balanceOf(t.test, 'token-alice')).toBe(499);
+    const consumed = (await t.stores.auditEvents()).filter((e) => e.action === 'credits.consume');
+    expect(consumed).toMatchObject([
+      { reference: `ai:document-read-${String(document.id)}`, reason: 'ai_generation' },
+    ]);
+    expect(JSON.stringify([t.lines, await t.stores.auditEvents()])).not.toContain('Factura');
+  });
+
+  it('keeps a scanned PDF not ingested, with credits as the reason, when none are left', async () => {
+    const scan: TextExtractor = {
+      extract: async () => ({ status: 'text', text: '', pages: 1, truncated: false }),
+    };
+    const t = await setup('dev', { extractor: scan });
+    const response = await t.app.request(
+      `/v1/organizations/${t.test}/documents?name=Escaneo.pdf`,
+      t.as('token-alice', {
+        method: 'POST',
+        headers: { 'content-type': 'application/pdf' },
+        body: new TextEncoder().encode('%PDF-1.7\n%%EOF'),
+      }),
+    );
+    expect(response.status).toBe(201);
+    expect(((await response.json()) as { document: Json }).document).toMatchObject({
+      status: 'not_ingested',
+      ingestion: 'credits',
+      textSource: null,
+      pages: 1,
+    });
+    expect(t.cloud.requests).toEqual([]);
+  });
+
   it('sends Vertex only the policy and the data, as structured output, with no tools', async () => {
     const t = await setup();
     await t.grant('dev');
@@ -453,6 +528,10 @@ describe('AI configuration (ADR-0038)', () => {
     expect(configured.creditRate).toEqual({ microUsdPerCredit: 10_000 });
     expect(configured.policies?.resolve({ id: 'conversation_assist', version: 1 })).toEqual(
       CONVERSATION_ASSIST_POLICY,
+    );
+    // Reading scanned documents has its own policy (ADR-0079).
+    expect(configured.policies?.resolve({ id: 'document_read', version: 1 })).toEqual(
+      DOCUMENT_READ_POLICY,
     );
     // The default policy is untouched: internal data at most.
     expect(configured.policies?.resolve(undefined)?.maxSensitivity).toBe('internal');

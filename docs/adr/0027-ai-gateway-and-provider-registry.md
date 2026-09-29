@@ -61,7 +61,7 @@ Every provider is `access: 'official'`. The registry refuses aggregators and int
 
 ### Capabilities and modalities
 
-Capabilities: `text_generation`, `reasoning`, `structured_output`, `image_generation`, `image_understanding`, `audio_understanding`, `transcription`, `speech`, `embeddings`. Modalities: `text`, `image`, `audio`. Media is passed by reference (type and id), never inline.
+Capabilities: `text_generation`, `reasoning`, `structured_output`, `image_generation`, `image_understanding`, `audio_understanding`, `transcription`, `speech`, `embeddings`. Modalities: `text`, `image`, `audio`, and `document` (a stored PDF, added by [ADR-0079](0079-document-text-reading.md)). Media is passed by reference (type and id), never inline.
 
 ### Data sensitivity
 

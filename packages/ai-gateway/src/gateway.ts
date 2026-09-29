@@ -44,8 +44,10 @@ import { modelKey, type ProviderRegistry } from './registry.js';
 import {
   checkAIRequest,
   checkAssistedAIRequest,
+  documentRefsOf,
   estimateInputTokens,
   inputModalitiesOf,
+  STORED_DOCUMENT_KEY,
   type AIModelRequest,
   type AIRequest,
   type AssistedAIRequest,
@@ -102,6 +104,8 @@ export const ASSIST_PERMISSIONS: Readonly<Record<AssistSubjectType, string>> = O
   gia: 'gia.ask',
   // The Decision Engine, when a rule cannot decide alone (ADR-0065).
   decision: 'decision.evaluate',
+  // Reading a scanned document a person uploads (ADR-0079): only as part of that upload.
+  document: 'document.upload',
 });
 
 /**
@@ -117,7 +121,29 @@ export const ASSIST_MODEL_POLICIES: Readonly<
   company_knowledge: Object.freeze({ id: 'company_knowledge_assist', version: 1 }),
   gia: Object.freeze({ id: 'gia_assist', version: 1 }),
   decision: Object.freeze({ id: 'decision_assist', version: 1 }),
+  document: Object.freeze({ id: 'document_read', version: 1 }),
 });
+
+/**
+ * Why a request's stored documents are refused, or nothing (ADR-0079). A document is data of one
+ * organization: a key naming any other organization than the tenant's is authority the caller
+ * does not have, refused as `authority_in_input` like any other smuggled authority, and audited.
+ * Only an assisted call about that very document may name it (`subject: {type: 'document'}`);
+ * a specialist's call reads no stored document yet.
+ */
+export function documentRefsProblem(
+  request: Pick<AIRequest, 'messages'>,
+  organizationId: string,
+  subject: { readonly type: string; readonly id: string } | undefined,
+): 'authority_in_input' | 'invalid_request' | undefined {
+  for (const key of documentRefsOf(request)) {
+    const match = STORED_DOCUMENT_KEY.exec(key);
+    if (match === null) return 'invalid_request';
+    if (match[1] !== organizationId) return 'authority_in_input';
+    if (subject?.type !== 'document' || match[2] !== subject.id) return 'invalid_request';
+  }
+  return undefined;
+}
 
 export interface AIGatewayOptions {
   readonly executions: Pick<ExecutionRepository, 'find'>;
@@ -770,7 +796,8 @@ export function createAIGateway(options: AIGatewayOptions): AIGateway {
 
     // 1. Environment and the request itself.
     if (environment === undefined) return deny('environment_unknown');
-    const problem = checkAIRequest(request);
+    const problem =
+      checkAIRequest(request) ?? documentRefsProblem(request, organizationId, undefined);
     if (problem !== undefined) return deny(problem);
 
     // 2. Authorization: RBAC, then the execution and its specialist, read for this tenant.
@@ -843,6 +870,9 @@ export function createAIGateway(options: AIGatewayOptions): AIGateway {
     ctx.known.attribution = {
       subject: { type: request.subject.type, id: request.subject.id },
     };
+    // Another organization's document is refused here, and audited with the call's subject.
+    const documents = documentRefsProblem(request, organizationId, request.subject);
+    if (documents !== undefined) return deny(documents);
     if (request.subject.type === 'conversation') {
       ctx.correlate({ conversationId: request.subject.id });
     }

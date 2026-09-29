@@ -3,7 +3,7 @@ import { serve } from '@hono/node-server';
 import { createAuditService } from '@melonoffice/audit';
 import { createIdentityPlatformVerifier } from '@melonoffice/auth';
 import { createConversationIngress } from '@melonoffice/conversations';
-import { createGcsFileStore } from '@melonoffice/documents';
+import { createGcsFileStore, createTextExtractor } from '@melonoffice/documents';
 import {
   createIntegrationEngine,
   createIntegrationRegistry,
@@ -162,6 +162,8 @@ function services(projectId: string) {
       ...(config.documentsBucket === undefined
         ? {}
         : { files: createGcsFileStore({ bucket: config.documentsBucket }) }),
+      // PDF and DOCX text, read locally (ADR-0079); PDFs in a bounded worker thread.
+      extractor: createTextExtractor(),
     },
     activity: new FirestoreAuditStore(firestore),
     credits: new FirestoreCreditStore(firestore),

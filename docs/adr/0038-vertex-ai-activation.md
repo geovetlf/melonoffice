@@ -70,7 +70,7 @@ The adapter works as follows:
 The provider and the model each declare:
 
 - capabilities: text generation and structured output;
-- modality: text;
+- modality: text (and `document`, a stored PDF read from the documents bucket, since [ADR-0079](0079-document-text-reading.md));
 - the price, from Google's published list: US$0.10 per million input tokens and US$0.40 per million output tokens, as of 2026-09-27;
 - environments: `dev` only;
 - `maxSensitivity`: `confidential`.

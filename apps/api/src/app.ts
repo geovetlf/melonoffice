@@ -34,6 +34,7 @@ import {
   createDocumentService,
   type DocumentRepository,
   type FileStore,
+  type TextExtractor,
 } from '@melonoffice/documents';
 import {
   createConversationAssistant,
@@ -186,13 +187,18 @@ export interface AppOptions {
   /** Company Brain (ADR-0051). Absent: the brain routes answer 503 (fails closed). */
   readonly knowledge?: KnowledgeRepository;
   /**
-   * Uploaded documents (ADR-0078). Absent: the document routes answer 503 (fails closed). A text
-   * file's text also goes to Company Brain when it is configured (`knowledge`).
+   * Uploaded documents (ADR-0078). Absent: the document routes answer 503 (fails closed). Their
+   * text also goes to Company Brain when it is configured (`knowledge`).
    */
   readonly documents?: {
     readonly repository: DocumentRepository;
     /** Where their bytes live (Cloud Storage). Absent: uploads and downloads answer 503. */
     readonly files?: FileStore;
+    /**
+     * Reads PDF and DOCX text (ADR-0079); a scanned PDF is then read through the AI Gateway.
+     * Absent: those files are only stored.
+     */
+    readonly extractor?: TextExtractor;
   };
   /** The tool catalogue (ADR-0026). Defaults to the one in code, which is empty until tools exist. */
   readonly tools?: ToolRegistry;
@@ -549,7 +555,8 @@ export function createApp({
         c.json({ error: 'brain_not_configured' }, 503),
       );
     }
-    // Uploaded documents (ADR-0078): their text files' text goes to Company Brain, as the person.
+    // Uploaded documents (ADR-0078): their text goes to Company Brain, as the person; PDF and DOCX
+    // text is read by a library, or by the model for a scan (ADR-0079).
     if (tenancy !== undefined && documents !== undefined) {
       registerDocumentRoutes(app, {
         store: tenancy,
@@ -561,6 +568,9 @@ export function createApp({
             ...(documents.files === undefined ? {} : { files: documents.files }),
             authorization,
             ...(brain === undefined ? {} : { knowledge: brain }),
+            // A PDF with no text layer is read by Gemini through the one AI Gateway (ADR-0079).
+            ...(documents.extractor === undefined ? {} : { extractor: documents.extractor }),
+            ...(aiGateway === undefined ? {} : { gateway: aiGateway }),
             logger: logger.child({ component: 'documents' }),
             ...(requestId === undefined ? {} : { requestId }),
           }),

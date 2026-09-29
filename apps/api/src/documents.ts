@@ -44,6 +44,8 @@ const view = (document: StoredDocument) => ({
   status: document.status,
   ingestion: document.ingestion ?? null,
   knowledgeDocumentId: document.knowledgeDocumentId ?? null,
+  textSource: document.textSource ?? null,
+  pages: document.pages ?? null,
   uploadedBy: document.uploadedBy,
   createdAt: document.createdAt,
   updatedAt: document.updatedAt,

@@ -95,7 +95,7 @@ A record never points at bytes that were not stored. A failure between 5 and 6 c
 
 ## Open
 
-1. **Reading PDF and DOCX text.** Pending Geovet's decision: a local library, Gemini through the AI Gateway (costs credits, sends the file to a model), or both. Until then those files stay `stored`.
+1. **Reading PDF and DOCX text.** Decided ("Ambas": a local library first, Gemini through the AI Gateway for scans) and built in [ADR-0079](0079-document-text-reading.md).
 2. **Web UI** for uploading, listing and downloading documents.
 3. **Deletion and retention.** Nothing deletes a document or its object today, and the api cannot.
 4. **Virus and malware scanning** before a file is served back.
