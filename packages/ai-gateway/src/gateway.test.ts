@@ -1040,6 +1040,7 @@ describe('AI gateway: assisted calls (ADR-0037)', () => {
       conversation: { id: 'conversation_assist', version: 1 },
       company_knowledge: { id: 'company_knowledge_assist', version: 1 },
       gia: { id: 'gia_assist', version: 1 },
+      decision: { id: 'decision_assist', version: 1 },
     });
   });
 

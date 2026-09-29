@@ -62,6 +62,10 @@ export interface AuditDocument {
   readonly previousModelProvider: string | null;
   readonly previousModelId: string | null;
   readonly reason: string | null;
+  /** A `decision.evaluated` event's decision (ADR-0065); absent on every other event. */
+  readonly decisionType?: string;
+  readonly decisionVersion?: number;
+  readonly decisionRules?: readonly string[];
   readonly reference: string | null;
   readonly requestId: string | null;
   readonly source: string;
@@ -105,6 +109,13 @@ export function toAuditDocument(event: AuditEvent): AuditDocument {
     previousModelProvider: event.previousModel?.provider ?? null,
     previousModelId: event.previousModel?.id ?? null,
     reason: event.reason ?? null,
+    ...(event.decision === undefined
+      ? {}
+      : {
+          decisionType: event.decision.type,
+          decisionVersion: event.decision.version,
+          decisionRules: [...event.decision.rules],
+        }),
     reference: event.reference ?? null,
     requestId: event.requestId ?? null,
     source: event.source,
@@ -238,6 +249,15 @@ export function fromAuditDocument(id: string, d: AuditDocument): AuditEvent {
       ? {}
       : { previousModel: { provider: d.previousModelProvider, id: d.previousModelId } }),
     ...(d.reason === null ? {} : { reason: d.reason }),
+    ...(d.decisionType == null
+      ? {}
+      : {
+          decision: {
+            type: d.decisionType,
+            version: d.decisionVersion,
+            rules: d.decisionRules ?? [],
+          },
+        }),
     ...(d.reference === null ? {} : { reference: d.reference }),
     ...(d.requestId === null ? {} : { requestId: d.requestId }),
     source: d.source,

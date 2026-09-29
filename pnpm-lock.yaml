@@ -95,6 +95,9 @@ importers:
       '@melonoffice/credits':
         specifier: workspace:*
         version: link:../../packages/credits
+      '@melonoffice/decisions':
+        specifier: workspace:*
+        version: link:../../packages/decisions
       '@melonoffice/departments':
         specifier: workspace:*
         version: link:../../packages/departments
@@ -590,6 +593,46 @@ importers:
         specifier: workspace:*
         version: link:../config
 
+  packages/decisions:
+    dependencies:
+      '@melonoffice/ai-gateway':
+        specifier: workspace:*
+        version: link:../ai-gateway
+      '@melonoffice/audit':
+        specifier: workspace:*
+        version: link:../audit
+      '@melonoffice/brain':
+        specifier: workspace:*
+        version: link:../brain
+      '@melonoffice/conversations':
+        specifier: workspace:*
+        version: link:../conversations
+      '@melonoffice/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@melonoffice/forecasting':
+        specifier: workspace:*
+        version: link:../forecasting
+      '@melonoffice/rbac':
+        specifier: workspace:*
+        version: link:../rbac
+      '@melonoffice/tenancy':
+        specifier: workspace:*
+        version: link:../tenancy
+    devDependencies:
+      '@melonoffice/auth':
+        specifier: workspace:*
+        version: link:../auth
+      '@melonoffice/config':
+        specifier: workspace:*
+        version: link:../config
+      '@melonoffice/credits':
+        specifier: workspace:*
+        version: link:../credits
+      '@melonoffice/departments':
+        specifier: workspace:*
+        version: link:../departments
+
   packages/departments:
     dependencies:
       '@melonoffice/domain':
@@ -783,6 +826,9 @@ importers:
       '@melonoffice/conversations':
         specifier: workspace:*
         version: link:../conversations
+      '@melonoffice/decisions':
+        specifier: workspace:*
+        version: link:../decisions
       '@melonoffice/departments':
         specifier: workspace:*
         version: link:../departments

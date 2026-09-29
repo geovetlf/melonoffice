@@ -23,7 +23,8 @@ export interface AuditActionDefinition {
     | 'opportunity'
     | 'pipeline'
     | 'follow_up'
-    | 'forecast';
+    | 'forecast'
+    | 'decision';
   readonly description: string;
   /** The results this action is recorded with. Anything else is a programming error. */
   readonly results: readonly AuditResult[];
@@ -105,6 +106,12 @@ export const AUDIT_ACTIONS = {
     category: 'gia',
     description:
       'A person asked GIA and she answered, or was refused or failed (ADR-0052); `reference` is the credit reference of the call. Never the question or the answer.',
+    results: ['success', 'denied', 'failure'],
+  },
+  'decision.evaluated': {
+    category: 'decision',
+    description:
+      'The Decision Engine decided for a person, or refused or failed (ADR-0065); `target` is the decision, `reason` its outcome or refusal, `decision` its type, version and the rules applied. Never the records it read.',
     results: ['success', 'denied', 'failure'],
   },
   'contact.created': {

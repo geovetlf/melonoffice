@@ -140,6 +140,8 @@ async function world(
     };
     /** The organization's active agents (AE-3), or a read that fails. */
     agents?: readonly GiaAgent[] | 'fail';
+    /** The Decision Engine's answer, when a test sets it (ADR-0065). */
+    offers?: (action: string) => boolean;
   } = {},
 ) {
   const store = new InMemoryAuditStore();
@@ -264,6 +266,16 @@ async function world(
               agentReads.push(tenant.actor);
               if (options.agents === 'fail') throw new Error('down');
               return options.agents ?? [];
+            },
+          },
+        }),
+    ...(options.offers === undefined
+      ? {}
+      : {
+          decisions: {
+            offers: (_tenant: unknown, action: string) => options.offers?.(action) ?? false,
+            evaluateDecision: async () => {
+              throw new Error('no decisions in this test');
             },
           },
         }),
@@ -688,6 +700,85 @@ describe('GIA commercial intelligence (C4)', () => {
     );
   });
 
+  it('ranks what to attend to first through the Decision Engine, never by the model (ADR-0065)', async () => {
+    const w = await world({ commercial: async () => restaurantInsights() });
+    w.ai.state.answer = () =>
+      completed({
+        answer: 'Primero Catering boda: la próxima acción venció hace 3 días.',
+        department: 'sales',
+        screen: 'department',
+        proposedAction: null,
+        facts: [],
+        links: ['o_a'],
+        priorities: true,
+      });
+    const answer = await w.gia.ask(w.alice, ask('¿Qué debería atender primero hoy?'));
+    const sent = textOf(w.ai.calls[0]);
+    // The engine's order, reasons and next step, by the references she already knows.
+    expect(sent).toContain('<priorities>');
+    expect(sent).toMatch(
+      /1\. o_a \[high\] next_action_overdue: overdue_next_action \(days 3, date 2026-09-25, value S\/\s12,000\.00\); next: do_next_action/,
+    );
+    expect(sent).toMatch(/2\. o_b \[medium\] closing_soon/);
+    expect(sent).toContain('never reorder it');
+    const schema = w.ai.calls[0]?.outputSchema as unknown as {
+      properties: Record<string, unknown>;
+    };
+    expect(schema.properties.priorities).toEqual({ type: 'boolean' });
+    // The app gets the ranking itself, with links, reasons and whether it needs approval.
+    expect(answer.priorities?.decisionId).toMatch(/^dec_[0-9a-f]{32}$/);
+    expect(answer.priorities?.items[0]).toEqual({
+      priority: 'high',
+      outcome: 'next_action_overdue',
+      reasons: [
+        {
+          code: 'overdue_next_action',
+          params: { days: 3, date: '2026-09-25', amountMinor: 1_200_000, currency: 'PEN' },
+        },
+      ],
+      link: {
+        kind: 'opportunity',
+        id: '00000000-0000-4000-8000-000000000001',
+        label: 'Catering boda',
+      },
+      recommendedAction: { code: 'do_next_action', action: null },
+      requiredApproval: false,
+    });
+    // The decision is audited on the same trail, with the same request, and no content.
+    const decision = w.store.events().find((e) => e.action === 'decision.evaluated');
+    const message = w.store.events().find((e) => e.action === 'gia.message_answered');
+    expect(decision).toMatchObject({
+      result: 'success',
+      reason: 'attention_needed',
+      target: { type: 'decision', id: answer.priorities?.decisionId },
+      requestId: message?.requestId,
+      decision: { type: 'commercial.priorities', version: 1 },
+    });
+    expect(JSON.stringify(decision)).not.toMatch(/Catering|12,000|Ana/);
+  });
+
+  it('shows the ranking only when the answer is about it, and never without decision.evaluate', async () => {
+    const w = await world({ commercial: async () => restaurantInsights() });
+    const answer = await w.gia.ask(w.alice, ask('¿Cuánto vendí este mes?'));
+    expect(answer.priorities).toBeNull();
+    const denied = await world({
+      commercial: async () => restaurantInsights(),
+      roles: { ...ROLES, owner: ROLES.owner.filter((p) => p !== 'decision.evaluate') },
+    });
+    denied.ai.state.answer = () =>
+      completed({
+        answer: 'x',
+        department: 'none',
+        screen: 'none',
+        facts: [],
+        priorities: true,
+      });
+    const withheld = await denied.gia.ask(denied.alice, ask('¿Qué atiendo primero?'));
+    expect(textOf(denied.ai.calls[0])).not.toContain('<priorities>');
+    expect(withheld.priorities).toBeNull();
+    expect(denied.store.events().some((e) => e.action === 'decision.evaluated')).toBe(false);
+  });
+
   it('tells the model which parts the person may not read, and offers no links to them', async () => {
     const w = await world({
       commercial: async () => restaurantInsights({ contacts: false, opportunities: false }),
@@ -1041,6 +1132,27 @@ describe('GIA prepares agent tasks (AE-3)', () => {
     const still = await down.gia.ask(down.alice, ask('Pídele a un agente una propuesta'));
     expect(still).toMatchObject({ proposedAgentTask: null, context: { agents: false } });
     expect(textOf(down.ai.calls[0])).not.toContain('<agents>');
+  });
+
+  it('offers only what the Decision Engine offers the person (ADR-0065)', async () => {
+    const w = await world({
+      agents: AGENTS,
+      commercial: async (_org, mentions) => withFollowUps(mentions),
+      offers: (action) => action === 'knowledge.propose_fact',
+    });
+    w.ai.state.answer = () =>
+      completed({
+        ...ANSWER,
+        links: [],
+        followUp: { record: 'c_a', type: 'call', title: 'Llamar a Ana', date: null },
+        agentTask: { agent: 'a_a', request: 'Prepara algo' },
+      });
+    const answer = await w.gia.ask(w.alice, ask('Recuérdame llamar a Ana y pídele algo a Valeria'));
+    expect(answer).toMatchObject({ proposedFollowUp: null, proposedAgentTask: null });
+    expect(w.agentReads).toEqual([]);
+    const schema = schemaOf(w.ai.calls[0]);
+    expect(schema.properties.followUp).toBeUndefined();
+    expect(schema.properties.agentTask).toBeUndefined();
   });
 
   it('an agent name cannot close its block or give her instructions', async () => {

@@ -62,6 +62,7 @@ import {
   type ForecastRepository,
   type ForecastScheduler,
 } from '@melonoffice/forecasting';
+import { createDecisionEngine, DECIDERS } from '@melonoffice/decisions';
 import { createGia } from '@melonoffice/gia';
 import type { DeploymentEnvironment, OrganizationId } from '@melonoffice/domain';
 import { createToolGate } from '@melonoffice/guardrails';
@@ -120,6 +121,7 @@ import { registerHealth } from './health.js';
 import { registerPlanRoutes } from './plans.js';
 import { registerSpecialistRoutes, toolLookupOf } from './specialists.js';
 import { giaAgentsOf, registerAgentTaskRoutes } from './agent-tasks.js';
+import { registerDecisionRoutes } from './decisions.js';
 import { registerTenancyRoutes } from './tenancy.js';
 import { registerToolRoutes } from './tools.js';
 import { registerWebhookRoutes } from './webhooks.js';
@@ -616,6 +618,38 @@ export function createApp({
             }),
       });
     }
+    // The Decision Engine (DE-1, ADR-0065): what GIA may prepare for a person, one answer for the
+    // chat and the screens, and the decisions MelonMotor makes (what to attend to first, company
+    // policy, forecasts, which agent). An action is set up only where GIA and the engine that
+    // carries it out both are. It decides and explains; it runs nothing.
+    const giaConfigured = aiGateway !== undefined && structure !== undefined;
+    const agentTasksConfigured =
+      agentTasks !== undefined && executions !== undefined && specialists !== undefined;
+    const decisions = createDecisionEngine({
+      authorization,
+      configured: (action) =>
+        giaConfigured &&
+        (action === 'knowledge.propose_fact'
+          ? brain !== undefined
+          : action === 'follow_up.schedule'
+            ? commercial !== undefined
+            : action === 'agent_task.assign'
+              ? agentTasksConfigured
+              : false),
+      // Each decision type reads through the services that already exist, as the person asking.
+      deciders: DECIDERS,
+      ports: {
+        ...(commercial === undefined ? {} : { commercial: commercial.insights }),
+        ...(brain === undefined ? {} : { brain }),
+        ...(forecastEngine === undefined ? {} : { forecasts: forecastEngine }),
+        ...(structure === undefined ? {} : { agents: giaAgentsOf(structure) }),
+        ...(aiGateway === undefined ? {} : { gateway: aiGateway }),
+      },
+      audit,
+    });
+    if (tenancy !== undefined) {
+      registerDecisionRoutes(app, { store: tenancy, authorization, audit, decisions });
+    }
     // GIA's chat (ADR-0052): the same gateway, Company Brain and activity, read as the person;
     // and, with C4, the commercial insights.
     if (tenancy !== undefined) {
@@ -646,11 +680,9 @@ export function createApp({
                 ...(commercial === undefined ? {} : { commercial: commercial.insights }),
                 ...(forecastEngine === undefined ? {} : { forecasting: forecastEngine }),
                 // AE-3: GIA prepares tasks for the agents only where they can be assigned.
-                ...(agentTasks === undefined ||
-                executions === undefined ||
-                specialists === undefined
-                  ? {}
-                  : { agents: giaAgentsOf(structure) }),
+                ...(agentTasksConfigured ? { agents: giaAgentsOf(structure) } : {}),
+                // What she may prepare for the person: the same answer the screens read.
+                decisions,
                 departments: structure.departments,
                 authorization,
                 audit,

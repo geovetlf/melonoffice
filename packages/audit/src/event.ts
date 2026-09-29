@@ -64,8 +64,16 @@ export interface AuditTarget {
     | 'pipeline'
     | 'follow_up'
     | 'forecast'
-    | 'gia';
+    | 'gia'
+    | 'decision';
   readonly id: string;
+}
+
+/** A decision's type, version and the rules it applied (ADR-0065): codes only. */
+export interface AuditDecision {
+  readonly type: string;
+  readonly version: number;
+  readonly rules: readonly string[];
 }
 
 /** A plan reference as recorded: which plan and which exact version. */
@@ -155,6 +163,8 @@ export interface AuditEvent {
    * code for a credits movement. Never a message.
    */
   readonly reason?: string;
+  /** For `decision.evaluated`: which decision type and rules (ADR-0065). */
+  readonly decision?: AuditDecision;
   /**
    * The caller's idempotency key of a credits operation (ADR-0023); the amounts stay in the
    * ledger. For `conversation.message_*` events, the message's conversation (ADR-0034). For
@@ -177,6 +187,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const CODE = /^[a-z][a-z_]{0,63}$/;
 const PERMISSION = /^[a-z][a-z_]*\.[a-z][a-z_]*$/;
 const REQUEST_ID = /^[\w-]{1,128}$/;
+const DECISION_RULE = /^[a-z][a-z_]*(\.[a-z][a-z_]*)+@[1-9][0-9]{0,5}$/;
 const PLAN_ID = /^[a-z][a-z0-9_-]{0,63}$/;
 const TOOL_ID = /^[a-z][a-z0-9_]{0,63}$/;
 const PROVIDER_ID = /^[a-z][a-z0-9_-]{0,63}$/;
@@ -271,6 +282,16 @@ export function buildAuditEvent(input: AuditEventInput, at: Date): AuditEvent {
   ) {
     throw new Error('invalid audit plan');
   }
+  if (
+    input.decision !== undefined &&
+    (!PERMISSION.test(input.decision.type) ||
+      !Number.isSafeInteger(input.decision.version) ||
+      input.decision.version < 1 ||
+      input.decision.rules.length > 12 ||
+      !input.decision.rules.every((r) => DECISION_RULE.test(r)))
+  ) {
+    throw new Error('invalid audit decision');
+  }
   const actor: AuditActor = copyActor(input.actor);
   const requested = input.requestedOrganizationId;
   return Object.freeze({
@@ -330,6 +351,15 @@ export function buildAuditEvent(input: AuditEventInput, at: Date): AuditEvent {
           }),
         }),
     ...(input.reason === undefined ? {} : { reason: input.reason }),
+    ...(input.decision === undefined
+      ? {}
+      : {
+          decision: Object.freeze({
+            type: input.decision.type,
+            version: input.decision.version,
+            rules: Object.freeze([...input.decision.rules]),
+          }),
+        }),
     ...(input.reference === undefined ? {} : { reference: input.reference }),
     ...(input.requestId !== undefined && REQUEST_ID.test(input.requestId)
       ? { requestId: input.requestId }

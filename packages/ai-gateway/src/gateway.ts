@@ -72,6 +72,8 @@ export const ASSIST_PERMISSIONS: Readonly<Record<AssistSubjectType, string>> = O
   company_knowledge: 'knowledge.capture',
   // A person asking GIA, about their own organization (ADR-0052).
   gia: 'gia.ask',
+  // The Decision Engine, when a rule cannot decide alone (ADR-0065).
+  decision: 'decision.evaluate',
 });
 
 /**
@@ -86,6 +88,7 @@ export const ASSIST_MODEL_POLICIES: Readonly<
   conversation: Object.freeze({ id: 'conversation_assist', version: 1 }),
   company_knowledge: Object.freeze({ id: 'company_knowledge_assist', version: 1 }),
   gia: Object.freeze({ id: 'gia_assist', version: 1 }),
+  decision: Object.freeze({ id: 'decision_assist', version: 1 }),
 });
 
 export interface AIGatewayOptions {
