@@ -228,13 +228,14 @@ export async function seedTestAgent(input: {
           mainRoleId: TEST_AGENT.mainRoleId,
           roleVersion: 1,
           capabilities: ['answer_customers'],
-          skills: [],
-          // An agent lists the reply version of its own level, and the hand-off (ADR-0043).
+          // Its tools come from its skill (SK-1, ADR-0069): the reply at its level, and the
+          // hand-off (ADR-0043).
+          skills: [{ id: 'conversation_reply', version: 1 }],
           tools: [
             { id: 'message_send', version: autonomy === 'supervised' ? 2 : 3 },
             { id: 'conversation_handoff', version: 1 },
           ],
-          permissions: ['conversation.send', 'conversation.manage'],
+          permissions: ['conversation.manage', 'conversation.read', 'conversation.send'],
           policies: { model: CONVERSATION_AGENT_POLICY_REF },
           conversation: {
             instructions: TEST_AGENT.instructions,

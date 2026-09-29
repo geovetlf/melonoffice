@@ -1,0 +1,87 @@
+import { ACTION_CATALOGUE } from '@melonoffice/decisions';
+import {
+  AGENT_TEMPLATES,
+  createSkillCatalogue,
+  grantsOf,
+  SKILL_CATALOGUE,
+} from '@melonoffice/specialists';
+import { defaultToolRegistry, isRuntimeInvocable } from '@melonoffice/tools';
+import { createHash } from 'node:crypto';
+import { describe, expect, it } from 'vitest';
+
+/**
+ * The skill catalogue against the tool catalogue and the Decision Engine (SK-1, ADR-0069). The
+ * packages cannot import each other, so the check lives here, where all three are wired.
+ */
+describe('skills grant only what exists, and only to agents (SK-1)', () => {
+  const tools = defaultToolRegistry();
+
+  it("every tool a skill grants exists at that version and is the runtime's to call", () => {
+    for (const skill of SKILL_CATALOGUE) {
+      for (const grant of skill.tools) {
+        expect(grant.versions.length).toBeGreaterThan(0);
+        for (const version of grant.versions) {
+          const found = tools.resolve(grant.id, version);
+          expect(found, `${skill.id} grants ${grant.id}@${version}`).toBeDefined();
+          // A person's own versions (message_send@1, follow_up_schedule@1) are never an agent's.
+          expect(isRuntimeInvocable(found?.version as never), `${grant.id}@${version}`).toBe(true);
+        }
+      }
+    }
+  });
+
+  it('every action a skill grants is in the Decision Engine and allows agents', () => {
+    const actions = new Map(ACTION_CATALOGUE.map((a) => [a.id, a]));
+    for (const skill of SKILL_CATALOGUE) {
+      for (const action of skill.actions) {
+        expect(actions.get(action)?.proposers, `${skill.id} grants ${action}`).toContain('agent');
+      }
+    }
+  });
+
+  it("every template's skills resolve, and grant no tool (a new agent starts with none)", () => {
+    const catalogue = createSkillCatalogue();
+    for (const template of AGENT_TEMPLATES) {
+      for (const ref of template.skills) {
+        expect(catalogue.resolve(ref.id, ref.version), `${template.id}: ${ref.id}`).toBeDefined();
+      }
+      expect([...grantsOf(template.skills, catalogue).tools]).toEqual([]);
+    }
+  });
+
+  it('only conversation_reply grants tools today, and no skill grants an action', () => {
+    expect(
+      SKILL_CATALOGUE.filter((s) => s.tools.length > 0).map((s) => [
+        s.id,
+        s.tools.map((t) => `${t.id}@${t.versions.join('|')}`),
+      ]),
+    ).toEqual([['conversation_reply', ['message_send@2|3', 'conversation_handoff@1']]]);
+    expect(SKILL_CATALOGUE.flatMap((s) => s.actions)).toEqual([]);
+  });
+
+  it('a published skill version never changes: a change needs a new version', () => {
+    const digest = (value: unknown) =>
+      createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, 12);
+    const published = Object.fromEntries(
+      SKILL_CATALOGUE.map((s) => [
+        `${s.id}@${s.version}`,
+        digest({ tools: s.tools, actions: s.actions, reads: s.reads }),
+      ]),
+    );
+    // Pinned on purpose: when this fails, give the changed skill a new version instead.
+    expect(published).toMatchInlineSnapshot(`
+      {
+        "campaign_analysis@1": "d71dcf655bed",
+        "company_knowledge@1": "39a1e0299b99",
+        "content_drafting@1": "39a1e0299b99",
+        "conversation_reply@1": "338e7530cc39",
+        "customer_follow_up@1": "ffa7c617dfde",
+        "design_briefing@1": "39a1e0299b99",
+        "finance_review@1": "b6fdaaa61bbc",
+        "market_research@1": "973fa6cccfce",
+        "operations_tracking@1": "0ef075e7f3f2",
+        "pipeline_analysis@1": "0f3ee33c30a3",
+      }
+    `);
+  });
+});

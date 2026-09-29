@@ -26,7 +26,7 @@ import {
   type SpecialistWrite,
 } from './model.js';
 import type { SpecialistRepository } from './repository.js';
-import type { SkillCatalogue } from './skills.js';
+import { grantsOf, toolKey, type SkillCatalogue } from './skills.js';
 import { AGENT_LOCALES, findAgentTemplate, type AgentLocale } from './templates.js';
 
 /**
@@ -111,22 +111,27 @@ export function createSpecialistManagement(
     );
 
   /**
-   * The catalogues' rules on top of `checkConfiguration`: known skills and tools, every tool a
-   * skill uses assigned, and every permission its skills and tools need listed, so that
-   * eligibility (which checks the listed ones) checks them all.
+   * The catalogues' rules on top of `checkConfiguration`: known skills and tools; every tool a
+   * skill uses assigned, at one of the versions it grants; every tool assigned granted by one of
+   * the agent's skills at that exact version (SK-1, ADR-0069); and every permission its skills
+   * and tools need listed, so that eligibility (which checks the listed ones) checks them all.
    */
   function checkAgainstCatalogues(configuration: SpecialistConfiguration): void {
-    const assigned = new Set(configuration.tools.map((t) => t.id as string));
+    const assigned = new Set(configuration.tools.map((t) => toolKey(t.id, t.version)));
     const listed = new Set(configuration.permissions);
     for (const { id, version } of configuration.skills) {
       const found = skills.resolve(id, version);
       if (found === undefined) bad('skills.unknown');
-      for (const tool of found?.toolIds ?? []) if (!assigned.has(tool)) bad('skills.tools');
+      for (const grant of found?.tools ?? []) {
+        if (!grant.versions.some((v) => assigned.has(toolKey(grant.id, v)))) bad('skills.tools');
+      }
       for (const permission of found?.reads ?? []) if (!listed.has(permission)) bad('permissions');
     }
+    const granted = grantsOf(configuration.skills, skills).tools;
     for (const { id, version } of configuration.tools) {
       const found = tools(id, version);
       if (found === undefined) bad('tools.unknown');
+      if (!granted.has(toolKey(id, version))) bad('tools.not_granted');
       for (const permission of found?.permissions ?? []) {
         if (!listed.has(permission)) bad('permissions');
       }
