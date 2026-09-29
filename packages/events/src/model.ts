@@ -24,6 +24,8 @@ export interface DomainEvent {
   readonly data: Readonly<Record<string, EventValue>>;
   /** The request or execution it came from, to follow one chain across events. */
   readonly correlationId: string | null;
+  /** The part of MelonMotor that publishes this type, from the catalogue (e.g. `follow_ups`). */
+  readonly source: string;
 }
 
 export type EventValue = string | number | boolean | null;
@@ -36,10 +38,21 @@ export interface EventDraft {
   readonly correlationId?: string;
   /** When it happened, if not now (e.g. a follow-up's due time). */
   readonly occurredAt?: Date;
+  /**
+   * What makes this event the same one when its producer retries (e.g. `{followUpId}:{schedule}`).
+   * With it the id is derived from the organization, the type and the key, so a retried publish
+   * stores and delivers the event once (EV-2, ADR-0067). A producer that may retry sets it.
+   */
+  readonly idempotencyKey?: string;
 }
 
 export type EventErrorCode =
-  'unresolved_tenant' | 'event_type_unknown' | 'invalid_event' | 'subscriber_invalid';
+  | 'unresolved_tenant'
+  | 'event_type_unknown'
+  | 'invalid_event'
+  | 'subscriber_invalid'
+  /** The events were stored but could not be queued: the producer retries (same key). */
+  | 'queue_unavailable';
 
 export class EventError extends Error {
   override readonly name = 'EventError';

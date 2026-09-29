@@ -1,6 +1,6 @@
 # ADR-0066: Event System (MelonMotor EV-1)
 
-- Status: Proposed
+- Status: Proposed; section 4 (polling delivery) replaced by ADR-0067 (queued delivery)
 - Date: 2026-09-29
 - Builds on:
   - ADR-0020 (audit actors);

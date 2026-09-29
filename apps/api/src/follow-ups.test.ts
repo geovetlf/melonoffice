@@ -278,8 +278,8 @@ describe.each(STORES)('follow-ups (C5) with storage in %s', (_name, createStores
     });
     const task = scheduled[0]?.task as FollowUpTask;
     expect(await service(real).runDue(task)).toMatchObject({ kind: 'due' });
-    // The same task again changes nothing.
-    expect(await service(real).runDue(task)).toMatchObject({ kind: 'stale' });
+    // The same task again changes nothing: the follow-up is already due.
+    expect(await service(real).runDue(task)).toMatchObject({ kind: 'already_due' });
 
     const one = await t.call('token-alice', `${t.base(t.orgA)}/follow-ups/${followUp.id}`);
     expect(one.body).toMatchObject({ status: 'due', when: 'today' });

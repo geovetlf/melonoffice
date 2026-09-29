@@ -65,7 +65,8 @@ export interface AuditTarget {
     | 'follow_up'
     | 'forecast'
     | 'gia'
-    | 'decision';
+    | 'decision'
+    | 'event';
   readonly id: string;
 }
 

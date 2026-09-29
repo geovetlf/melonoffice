@@ -27,45 +27,50 @@ export interface EventDefinition {
   readonly version: number;
   /** The record type the event is about. */
   readonly subject: string;
+  /** The only part of MelonMotor that publishes it (EV-2): recorded on every event as `source`. */
+  readonly source: string;
   readonly fields: Readonly<Record<string, EventField>>;
 }
 
 const define = (
   type: string,
   subject: string,
+  source: string,
   fields: Record<string, EventField> = {},
   version = 1,
 ): EventDefinition =>
-  Object.freeze({ type, version, subject, fields: Object.freeze({ ...fields }) });
+  Object.freeze({ type, version, subject, source, fields: Object.freeze({ ...fields }) });
 
 export const EVENT_CATALOGUE: readonly EventDefinition[] = Object.freeze([
   // A customer wrote on a channel (ADR-0033/0044).
-  define('conversation.message_received', 'conversation', {
+  define('conversation.message_received', 'conversation', 'conversations', {
     channel: { kind: 'code' },
     contactId: { kind: 'id', optional: true },
   }),
   // A follow-up reached its time (ADR-0058).
-  define('follow_up.due', 'follow_up', {
+  define('follow_up.due', 'follow_up', 'follow_ups', {
+    contactId: { kind: 'id' },
     opportunityId: { kind: 'id', optional: true },
-    contactId: { kind: 'id', optional: true },
+    /** The member it is for: who a reaction (a notice, a workflow step) concerns. */
+    assignedTo: { kind: 'id' },
   }),
   // An opportunity moved in the pipeline (ADR-0054).
-  define('opportunity.stage_changed', 'opportunity', {
+  define('opportunity.stage_changed', 'opportunity', 'opportunities', {
     from: { kind: 'code' },
     to: { kind: 'code' },
     status: { kind: 'code' },
   }),
   // A document was read into Company Brain (ADR-0051).
-  define('knowledge.document_ingested', 'knowledge_document', {
+  define('knowledge.document_ingested', 'knowledge_document', 'brain', {
     facts: { kind: 'number' },
   }),
   // An agent task ended (ADR-0063).
-  define('agent_task.finished', 'execution', {
+  define('agent_task.finished', 'execution', 'agents', {
     specialistId: { kind: 'id' },
     outcome: { kind: 'code' },
   }),
   // A decision asked for approval (ADR-0065).
-  define('decision.approval_required', 'decision', {
+  define('decision.approval_required', 'decision', 'decisions', {
     decisionType: { kind: 'code' },
   }),
 ]);
@@ -88,6 +93,7 @@ export function checkEventCatalogue(
     seen.add(d.type);
     if (!Number.isInteger(d.version) || d.version < 1) throw new Error(`invalid version ${d.type}`);
     if (!CODE.test(d.subject)) throw new Error(`invalid subject ${d.type}`);
+    if (!CODE.test(d.source)) throw new Error(`invalid source ${d.type}`);
     const names = Object.keys(d.fields);
     if (names.length > MAX_FIELDS || names.some((n) => !FIELD.test(n))) {
       throw new Error(`invalid fields ${d.type}`);
