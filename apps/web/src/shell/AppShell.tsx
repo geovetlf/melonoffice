@@ -80,6 +80,7 @@ export function AppShell(locale: LocaleProps) {
   const canReadAIUsage = useCan('ai_usage.read');
   const canReadApprovals = useCan('approval.read');
   const canManageAgents = useCan('specialist.manage');
+  const canReadTools = useCan('tool.read');
   // Agent tasks (ADR-0063): read with the agents, asked only with `specialist.task`.
   const canReadAgents = useCan('specialist.read');
   const canAskAgents = useCan('specialist.task');
@@ -236,7 +237,11 @@ export function AppShell(locale: LocaleProps) {
     case 'agents':
       page = canReadAgents ? (
         <div className="light-surface">
-          <AgentsPage client={clients.agents} canManage={canManageAgents} />
+          <AgentsPage
+            client={clients.agents}
+            canManage={canManageAgents}
+            canReadTools={canReadTools}
+          />
         </div>
       ) : (
         <NotFound />

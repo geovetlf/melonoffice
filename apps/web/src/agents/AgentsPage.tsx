@@ -5,6 +5,7 @@ import { readyList, useOfficeData, useSpecialistSaved } from '../office/OfficeDa
 import { departmentName, officeSlug } from '../office/departments.js';
 import type { SpecialistStatus, SpecialistView } from '../office/officeClient.js';
 import { paths } from '../shell/routes.js';
+import { CapabilityCatalogue } from './CapabilityCatalogue.js';
 import {
   AgentRequestError,
   TRANSITIONS,
@@ -40,9 +41,12 @@ const codeOf = (error: unknown) => {
 export function AgentsPage({
   client,
   canManage,
+  canReadTools = false,
 }: {
   readonly client: AgentsClient;
   readonly canManage: boolean;
+  /** `tool.read`: the tools catalogue next to the skills. */
+  readonly canReadTools?: boolean;
 }) {
   const intl = useIntl();
   const { departments, specialists } = useOfficeData();
@@ -185,6 +189,7 @@ export function AgentsPage({
           );
         })
       )}
+      <CapabilityCatalogue client={client} canReadTools={canReadTools} />
     </article>
   );
 }

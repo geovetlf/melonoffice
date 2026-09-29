@@ -1012,7 +1012,54 @@ export function fakeBackend(): FakeBackend {
               skills: [{ id: 'conversation_reply', version: 1 }],
             },
           ],
-          skills: [],
+          skills: [
+            {
+              id: 'conversation_reply',
+              version: 1,
+              nameKey: 'agents.skill.conversation_reply.name',
+              descriptionKey: 'agents.skill.conversation_reply.description',
+              tools: [
+                { id: 'message_send', versions: [2, 3] },
+                { id: 'conversation_handoff', versions: [1] },
+              ],
+              actions: [],
+              reads: ['conversation.read'],
+            },
+            {
+              id: 'company_knowledge',
+              version: 1,
+              nameKey: 'agents.skill.company_knowledge.name',
+              descriptionKey: 'agents.skill.company_knowledge.description',
+              tools: [],
+              actions: [],
+              reads: ['knowledge.read'],
+            },
+          ],
+        })
+      );
+    }
+    if (route === 'tools') {
+      const version = (n: number, approvalPolicy: string) => ({
+        version: n,
+        nameKey: 'tools.message_send.name',
+        descriptionKey: 'tools.message_send.description',
+        category: 'communication',
+        action: 'send',
+        mutating: true,
+        riskLevel: 'medium',
+        approvalPolicy,
+        environments: ['dev'],
+      });
+      return (
+        needs('tool.read') ??
+        json(200, {
+          tools: [
+            {
+              id: 'message_send',
+              status: 'active',
+              versions: [version(1, 'auto'), version(2, 'approval_required')],
+            },
+          ],
         })
       );
     }

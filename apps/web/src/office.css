@@ -2425,6 +2425,14 @@ a.sidebar__item:hover {
   flex-basis: 100%;
 }
 
+/* Skills and tools catalogue (block 6). */
+.capabilities__versions {
+  display: grid;
+  gap: var(--mo-space-1);
+  margin: var(--mo-space-1) 0 0;
+  padding-left: var(--mo-space-4);
+}
+
 /* Writing a workflow (block 4). */
 .workflow-editor__steps {
   display: grid;

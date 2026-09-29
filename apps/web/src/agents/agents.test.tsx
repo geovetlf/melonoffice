@@ -107,4 +107,30 @@ describe('Agents (ADR-0025, ADR-0062)', () => {
     expect(within(section).getByText(/Ready to take work/)).toBeTruthy();
     expect(within(section).getByText('Reply to conversations')).toBeTruthy();
   });
+
+  it('shows the skills catalogue, and the tools with their approval policy to tool.read', async () => {
+    open('/agents', (b) => b.options.permissions.push('tool.read'));
+    const catalogue = await screen.findByRole('region', { name: 'Skills and tools' });
+    const skills = within(await within(catalogue).findByRole('list', { name: 'Skills' }));
+    expect(skills.getByText('Reply to conversations')).toBeTruthy();
+    expect(skills.getByText('Uses: Send a message, Hand a conversation to a person')).toBeTruthy();
+    expect(skills.getByText('Reads: conversations')).toBeTruthy();
+    expect(skills.getByText('Agents with it: Commercial agent')).toBeTruthy();
+    expect(
+      skills.getByText('Uses no tools: it works from what the company has recorded.'),
+    ).toBeTruthy();
+    const tools = within(await within(catalogue).findByRole('list', { name: 'Tools' }));
+    expect(tools.getByText('Send a message')).toBeTruthy();
+    expect(
+      tools.getByText(/Version 2 · changes data · Risk: medium · needs approval/),
+    ).toBeTruthy();
+  });
+
+  it('does not read the tools without tool.read', async () => {
+    const backend = open('/agents');
+    const catalogue = await screen.findByRole('region', { name: 'Skills and tools' });
+    expect(await within(catalogue).findByText('Reply to conversations')).toBeTruthy();
+    expect(within(catalogue).queryByRole('heading', { name: 'Tools' })).toBeNull();
+    expect(backend.apiCalls().some((c) => c.url.endsWith('/tools'))).toBe(false);
+  });
 });

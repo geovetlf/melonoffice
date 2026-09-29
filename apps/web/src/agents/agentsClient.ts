@@ -54,8 +54,39 @@ export class AgentRequestError extends Error {
   }
 }
 
+/** A skill in the catalogue (ADR-0069): what it lets an agent do and read. */
+export interface SkillView {
+  readonly id: string;
+  readonly version: number;
+  readonly nameKey: string;
+  readonly descriptionKey: string;
+  readonly tools: readonly { readonly id: string; readonly versions: readonly number[] }[];
+  readonly actions: readonly string[];
+  readonly reads: readonly string[];
+}
+
+/** A tool as `GET tools` shows it (ADR-0026): each version and the policy it runs under. */
+export interface ToolView {
+  readonly id: string;
+  readonly status: string;
+  readonly versions: readonly {
+    readonly version: number;
+    readonly nameKey: string;
+    readonly descriptionKey: string;
+    readonly category: string;
+    readonly action: string;
+    readonly mutating: boolean;
+    readonly riskLevel: string;
+    readonly approvalPolicy: string;
+    readonly environments: readonly string[];
+  }[];
+}
+
 export interface AgentsClient {
   templates(): Promise<readonly AgentTemplateView[]>;
+  skills(): Promise<readonly SkillView[]>;
+  /** Needs `tool.read`. */
+  tools(): Promise<readonly ToolView[]>;
   create(input: {
     readonly templateId: string;
     readonly displayName: string;
@@ -87,6 +118,12 @@ export function createAgentsClient(request: ReplyRequest, organizationId: string
   return {
     async templates() {
       return (await call<{ templates?: AgentTemplateView[] }>('/agents/catalogue')).templates ?? [];
+    },
+    async skills() {
+      return (await call<{ skills?: SkillView[] }>('/agents/catalogue')).skills ?? [];
+    },
+    async tools() {
+      return (await call<{ tools?: ToolView[] }>('/tools')).tools ?? [];
     },
     create: (input) => post<AgentView>('/specialists', input),
     setStatus: (id, from, to) =>
