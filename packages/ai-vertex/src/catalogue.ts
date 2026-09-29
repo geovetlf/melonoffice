@@ -48,7 +48,7 @@ export const GEMINI_2_5_FLASH_LITE_MODEL: AIModelDefinition = Object.freeze({
   structuredOutput: true,
   // Function calling (R3, ADR-0076): the model proposes calls, the Tool Gate runs them.
   toolUse: true,
-  streaming: false,
+  streaming: true,
   quality: 'basic',
   latency: 'fast',
   pricing: Object.freeze({

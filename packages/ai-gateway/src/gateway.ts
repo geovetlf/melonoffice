@@ -13,6 +13,7 @@ import {
   type AIUsageSink,
 } from '@melonoffice/ai-usage';
 import type {
+  AIRoutingStrategy,
   AIUsageAttribution,
   AIUsageEvent,
   DeploymentEnvironment,
@@ -29,9 +30,11 @@ import { digestOf } from '@melonoffice/tools';
 import {
   allowsFallback,
   isTransient,
+  type ProviderAdapter,
   type ProviderCall,
   type ProviderErrorKind,
   type ProviderOutcome,
+  type ProviderStreamEvent,
 } from './adapter.js';
 import { costMicroUsd, creditsFor, type CreditRate } from './cost.js';
 import { creditReferenceOf, type AICreditsPort } from './credits.js';
@@ -47,9 +50,16 @@ import {
   type AIRequest,
   type AssistedAIRequest,
   type AssistSubjectType,
+  MAX_TEXT_LENGTH,
 } from './request.js';
 import { checkProviderSuccess, type AIResponse } from './response.js';
 import { routeModel, type RouteCandidate } from './router.js';
+import {
+  createTextChannel,
+  SafeTextRelease,
+  streamRequestProblem,
+  type AIStreamEvent,
+} from './stream.js';
 
 /**
  * The only way MelonOffice calls an AI model (ADR-0027):
@@ -70,6 +80,14 @@ export interface AIGateway {
    * the subject's permission, and never reads the subject itself.
    */
   assist(tenant: TenantContext, request: AssistedAIRequest): Promise<AIResponse>;
+  /**
+   * `generate`, with the answer's text read as it comes (R4, ADR-0077): text only, never tools or
+   * a structured answer, and only on models and adapters that stream. Ends with exactly one
+   * `done` carrying the response `generate` would have given; read it with `for await`.
+   */
+  stream(tenant: TenantContext, request: AIRequest): AsyncIterable<AIStreamEvent>;
+  /** `assist`, streamed the same way. */
+  assistStream(tenant: TenantContext, request: AssistedAIRequest): AsyncIterable<AIStreamEvent>;
 }
 
 /**
@@ -240,20 +258,31 @@ export function createAIGateway(options: AIGatewayOptions): AIGateway {
       : 'invalid';
   };
 
+  /** A model the call may go to, with what credits it may cost. */
+  interface Prepared {
+    readonly candidates: readonly RouteCandidate[];
+    readonly port: AICreditsPort;
+    readonly rate: CreditRate;
+    readonly strategy: AIRoutingStrategy;
+    readonly idempotencyKey: string;
+    readonly creditsOf: (candidate: RouteCandidate) => number | undefined;
+  }
+
   /**
-   * Everything after authorization and policy, the same for every caller: credits must be able to
-   * account for the call, then route, call with retries and fallback, charge, log and answer.
+   * Everything after authorization and policy that comes before the provider, the same for every
+   * caller: credits must be able to account for the call, then route, and keep only the models
+   * whose cost the organization can cover. `streaming` routes only to models that stream.
    */
-  async function callModel(
+  async function prepare(
     ctx: CallContext,
     request: AIModelRequest,
     policy: ModelPolicy,
-  ): Promise<AIResponse> {
-    const { tenant, requestId, known, record, deny } = ctx;
+    streaming: boolean,
+  ): Promise<Prepared | AIResponse> {
+    const { tenant, deny } = ctx;
     // environment is checked by every caller before this point.
     const deployment = environment as DeploymentEnvironment;
     const organizationId = tenant.organizationId;
-    let log = ctx.log;
 
     // 4. Credits must be able to account for the call before anything is sent.
     if (credits === undefined || credits.rate === undefined) {
@@ -262,6 +291,7 @@ export function createAIGateway(options: AIGatewayOptions): AIGateway {
     const { port, rate } = credits;
     // 5. Route.
     const estimatedInputTokens = estimateInputTokens(request);
+    const streams = streaming || request.requirements?.streaming === true;
     const route = routeModel(
       registry,
       policy,
@@ -287,9 +317,7 @@ export function createAIGateway(options: AIGatewayOptions): AIGateway {
         ...(request.requirements?.toolUse === undefined
           ? {}
           : { toolUse: request.requirements.toolUse }),
-        ...(request.requirements?.streaming === undefined
-          ? {}
-          : { streaming: request.requirements.streaming }),
+        ...(streams ? { streaming: true } : {}),
         ...(request.strategy === undefined ? {} : { strategy: request.strategy }),
       },
       health.unavailable(),
@@ -298,12 +326,16 @@ export function createAIGateway(options: AIGatewayOptions): AIGateway {
     if (route.status === 'none') return deny(route.reason);
     const { strategy } = route;
     ctx.correlate({ taskType: request.taskType, routingStrategy: strategy });
-    log = ctx.log;
 
+    // A model marked as streaming is served only by an adapter that streams.
+    const routed = streaming
+      ? route.candidates.filter((c) => c.adapter.stream !== undefined)
+      : route.candidates;
+    if (routed.length === 0) return deny('no_compatible_model');
     // Only models whose cost can be accounted for, within the request's credit limit.
     const creditsOf = (c: RouteCandidate) =>
       c.estimatedCostMicroUsd === undefined ? undefined : creditsFor(c.estimatedCostMicroUsd, rate);
-    const priced = route.candidates.filter((c) => creditsOf(c) !== undefined);
+    const priced = routed.filter((c) => creditsOf(c) !== undefined);
     if (priced.length === 0) return deny('price_unknown');
     const affordable = priced.filter(
       (c) => request.maxCredits === undefined || (creditsOf(c) ?? Infinity) <= request.maxCredits,
@@ -315,19 +347,191 @@ export function createAIGateway(options: AIGatewayOptions): AIGateway {
     if (covered.length === 0) return deny('credits_insufficient');
     // The chosen model first; the others only when the policy allows a fallback.
     const candidates = policy.fallback === 'compatible' ? covered : covered.slice(0, 1);
+    return {
+      candidates,
+      port,
+      rate,
+      strategy,
+      idempotencyKey: digestOf({ organizationId, requestId: request.requestId }),
+      creditsOf,
+    };
+  }
 
-    // 6. Call, with retries on transient errors and fallback when allowed.
-    const idempotencyKey = digestOf({ organizationId, requestId: request.requestId });
-    const started = performance.now();
-    let attempts = 0;
+  const isPrepared = (value: Prepared | AIResponse): value is Prepared => 'candidates' in value;
+
+  /** How far one call got: attempts made, fallbacks taken, and when it started. */
+  interface Progress {
+    attempts: number;
+    fallbacks: number;
+    readonly started: number;
+    readonly first: RouteCandidate | undefined;
+  }
+
+  /**
+   * A checked successful answer, accounted for: charge credits, emit usage, log, and build the
+   * response. Charged before it is passed on: an answer that cannot be charged is a failure.
+   */
+  async function settle(
+    ctx: CallContext,
+    request: AIModelRequest,
+    policy: ModelPolicy,
+    prepared: Prepared,
+    candidate: RouteCandidate,
+    outcome: Extract<ProviderOutcome, { status: 'success' }>,
+    progress: Progress,
+    callLog: Logger,
+  ): Promise<AIResponse> {
+    const { tenant, requestId, known, record } = ctx;
+    const { port, rate, strategy, idempotencyKey, creditsOf } = prepared;
+    const { attempts, fallbacks, started, first } = progress;
+    const model = known.model;
+    const latencyMs = Math.round(performance.now() - started);
+    const actual = costMicroUsd(candidate.model.pricing, outcome.usage) ?? 0;
+    const charge = creditsFor(actual, rate);
+    if (charge > 0) {
+      try {
+        await port.consume(tenant, {
+          amount: charge,
+          referenceId: creditReferenceOf(request.requestId),
+          reason: 'ai_generation',
+        });
+      } catch {
+        // The answer is not passed on when it cannot be accounted for.
+        await record('ai.request_failed', 'credits_charge_failed');
+        callLog.error('ai credits charge failed', { attempts, latencyMs });
+        return failedResponse(requestId, 'credits_charge_failed', model, attempts, latencyMs);
+      }
+    }
+    if (usageSink !== undefined) {
+      try {
+        await usageSink.record(
+          usageEventOf({
+            id: idempotencyKey,
+            occurredAt: now().toISOString(),
+            attribution: {
+              organizationId: tenant.organizationId,
+              actor: USAGE_ACTORS[tenant.actor] ?? 'system',
+              userId: tenant.userId,
+              taskType: request.taskType,
+              ...known.attribution,
+            },
+            provider: candidate.provider.id,
+            model: candidate.model.modelId,
+            modelVersion: candidate.model.version,
+            operation: request.capability,
+            cost: costEngine.cost({
+              capability: LLM_CAPABILITY,
+              provider: candidate.provider.id,
+              model: candidate.model.modelId,
+              operation: request.capability,
+              pricing: llmPricing(candidate.model.pricing),
+              usage: llmUsage(candidate.model.pricing, outcome.usage),
+              estimatedMicroUsd: candidate.estimatedCostMicroUsd ?? null,
+            }),
+            credits: charge,
+            requestId: request.requestId,
+          }),
+        );
+      } catch {
+        // Already charged and audited: the usage ledger is told again by a later reconcile.
+        callLog.warn('ai usage not recorded');
+      }
+    }
+    callLog.info('ai request completed', {
+      status: 'completed',
+      attempts,
+      retries: attempts - fallbacks - 1,
+      fallbacks,
+      latencyMs,
+      // Usage is logged as units: the logger redacts any key named like a token.
+      inputUnits: outcome.usage.inputTokens,
+      outputUnits: outcome.usage.outputTokens,
+      cachedInputUnits: outcome.usage.cachedInputTokens ?? 0,
+      estimatedCostMicroUsd: candidate.estimatedCostMicroUsd ?? null,
+      costMicroUsd: actual,
+      credits: charge,
+    });
+    return Object.freeze({
+      status: 'completed',
+      requestId,
+      provider: candidate.provider.id,
+      model: candidate.model.modelId,
+      versions: Object.freeze({
+        adapter: candidate.adapter.adapterVersion,
+        model: candidate.model.version,
+        policy: Object.freeze({ id: policy.id, version: policy.version }),
+      }),
+      output: outcome.output,
+      usage: Object.freeze({ ...outcome.usage }),
+      latencyMs,
+      finishReason: outcome.finishReason,
+      cost: Object.freeze({
+        estimatedMicroUsd: candidate.estimatedCostMicroUsd ?? null,
+        actualMicroUsd: actual,
+      }),
+      credits: Object.freeze({
+        state: charge > 0 ? 'consumed' : 'free',
+        estimated: creditsOf(candidate) ?? null,
+        consumed: charge,
+      }),
+      providerRequestId: outcome.providerRequestId ?? null,
+      attempts,
+      fallbackFrom:
+        first === undefined || candidate === first
+          ? null
+          : modelKey(first.provider.id, first.model.modelId),
+      strategy,
+    });
+  }
+
+  /** The call reached a provider and did not complete. */
+  async function giveUp(
+    ctx: CallContext,
+    kind: ProviderErrorKind,
+    progress: Progress,
+  ): Promise<AIResponse> {
+    const { attempts, fallbacks, started } = progress;
+    const latencyMs = Math.round(performance.now() - started);
+    await ctx.record('ai.request_failed', kind);
+    ctx.log.error('ai request failed', {
+      kind,
+      attempts,
+      retries: attempts - fallbacks - 1,
+      fallbacks,
+      latencyMs,
+    });
+    return failedResponse(ctx.requestId, kind, ctx.known.model, attempts, latencyMs);
+  }
+
+  /**
+   * Goes through the candidates in order: each is tried up to the policy's attempts on transient
+   * errors, and the next one only when the policy allows a fallback and the error was one another
+   * model could serve. `attempt` makes one provider call and says how it went; `retryable` says
+   * whether the call can still be made again (a stream that passed text on cannot).
+   */
+  async function throughCandidates(
+    ctx: CallContext,
+    request: AIModelRequest,
+    policy: ModelPolicy,
+    prepared: Prepared,
+    progress: Progress,
+    attempt: (
+      candidate: RouteCandidate,
+      call: ProviderCall,
+      callLog: Logger,
+    ) => Promise<{ readonly response: AIResponse } | { readonly error: ProviderErrorKind }>,
+    retryable: () => boolean = () => true,
+  ): Promise<AIResponse> {
+    const { known, record } = ctx;
+    const log = ctx.log;
     let lastKind: ProviderErrorKind = 'unavailable';
     let previous: AuditModel | undefined;
-    let fallbacks = 0;
-    const [first] = candidates;
-    for (const candidate of candidates) {
+    for (const candidate of prepared.candidates) {
       // A fallback is checked again: a provider that just failed repeatedly is not tried twice.
-      if (candidate !== first && health.status(candidate.provider.id) === 'unavailable') continue;
-      if (candidate !== first) fallbacks += 1;
+      if (candidate !== progress.first && health.status(candidate.provider.id) === 'unavailable') {
+        continue;
+      }
+      if (candidate !== progress.first) progress.fallbacks += 1;
       known.model = { provider: candidate.provider.id, id: candidate.model.modelId };
       const model = known.model;
       const key = modelKey(candidate.provider.id, candidate.model.modelId);
@@ -336,251 +540,357 @@ export function createAIGateway(options: AIGatewayOptions): AIGateway {
         await record('ai.provider_fallback', lastKind, { previousModel: previous });
         callLog.warn('ai provider fallback', { from: modelKey(previous.provider, previous.id) });
       }
-      for (let attempt = 1; attempt <= policy.maxAttempts; attempt += 1) {
-        attempts += 1;
-        const call: ProviderCall = Object.freeze({
-          requestId: request.requestId,
-          idempotencyKey,
-          model: Object.freeze({ id: candidate.model.modelId, version: candidate.model.version }),
-          capability: request.capability,
-          messages: request.messages,
-          outputModality: request.outputModality,
-          maxOutputTokens: request.maxOutputTokens,
-          structuredOutput: request.requirements?.structuredOutput ?? false,
-          ...(request.outputSchema === undefined ? {} : { outputSchema: request.outputSchema }),
-          ...(request.tools === undefined ? {} : { tools: request.tools }),
-          credential: candidate.provider.credential,
-          deadline: new Date(now().getTime() + timeoutMs),
-        });
-        let outcome = await withDeadline(candidate.adapter.generate(call), timeoutMs);
-        if (outcome.status === 'success' && !checkProviderSuccess(outcome, request.tools)) {
-          outcome = { status: 'error', kind: 'invalid_response' };
-        }
-        health.record(
-          candidate.provider.id,
-          outcome.status === 'success' ? 'success' : outcome.kind,
-        );
-        if (outcome.status === 'success') {
-          const latencyMs = Math.round(performance.now() - started);
-          const actual = costMicroUsd(candidate.model.pricing, outcome.usage) ?? 0;
-          const charge = creditsFor(actual, rate);
-          if (charge > 0) {
-            try {
-              await port.consume(tenant, {
-                amount: charge,
-                referenceId: creditReferenceOf(request.requestId),
-                reason: 'ai_generation',
-              });
-            } catch {
-              // The answer is not passed on when it cannot be accounted for.
-              await record('ai.request_failed', 'credits_charge_failed');
-              callLog.error('ai credits charge failed', { attempts, latencyMs });
-              return failedResponse(requestId, 'credits_charge_failed', model, attempts, latencyMs);
-            }
-          }
-          if (usageSink !== undefined) {
-            try {
-              await usageSink.record(
-                usageEventOf({
-                  id: idempotencyKey,
-                  occurredAt: now().toISOString(),
-                  attribution: {
-                    organizationId,
-                    actor: USAGE_ACTORS[tenant.actor] ?? 'system',
-                    userId: tenant.userId,
-                    taskType: request.taskType,
-                    ...known.attribution,
-                  },
-                  provider: candidate.provider.id,
-                  model: candidate.model.modelId,
-                  modelVersion: candidate.model.version,
-                  operation: request.capability,
-                  cost: costEngine.cost({
-                    capability: LLM_CAPABILITY,
-                    provider: candidate.provider.id,
-                    model: candidate.model.modelId,
-                    operation: request.capability,
-                    pricing: llmPricing(candidate.model.pricing),
-                    usage: llmUsage(candidate.model.pricing, outcome.usage),
-                    estimatedMicroUsd: candidate.estimatedCostMicroUsd ?? null,
-                  }),
-                  credits: charge,
-                  requestId: request.requestId,
-                }),
-              );
-            } catch {
-              // Already charged and audited: the usage ledger is told again by a later reconcile.
-              callLog.warn('ai usage not recorded');
-            }
-          }
-          callLog.info('ai request completed', {
-            status: 'completed',
-            attempts,
-            retries: attempts - fallbacks - 1,
-            fallbacks,
-            latencyMs,
-            // Usage is logged as units: the logger redacts any key named like a token.
-            inputUnits: outcome.usage.inputTokens,
-            outputUnits: outcome.usage.outputTokens,
-            cachedInputUnits: outcome.usage.cachedInputTokens ?? 0,
-            estimatedCostMicroUsd: candidate.estimatedCostMicroUsd ?? null,
-            costMicroUsd: actual,
-            credits: charge,
-          });
-          return Object.freeze({
-            status: 'completed',
-            requestId,
-            provider: candidate.provider.id,
-            model: candidate.model.modelId,
-            versions: Object.freeze({
-              adapter: candidate.adapter.adapterVersion,
-              model: candidate.model.version,
-              policy: Object.freeze({ id: policy.id, version: policy.version }),
-            }),
-            output: outcome.output,
-            usage: Object.freeze({ ...outcome.usage }),
-            latencyMs,
-            finishReason: outcome.finishReason,
-            cost: Object.freeze({
-              estimatedMicroUsd: candidate.estimatedCostMicroUsd ?? null,
-              actualMicroUsd: actual,
-            }),
-            credits: Object.freeze({
-              state: charge > 0 ? 'consumed' : 'free',
-              estimated: creditsOf(candidate) ?? null,
-              consumed: charge,
-            }),
-            providerRequestId: outcome.providerRequestId ?? null,
-            attempts,
-            fallbackFrom:
-              first === undefined || candidate === first
-                ? null
-                : modelKey(first.provider.id, first.model.modelId),
-            strategy,
-          });
-        }
-        lastKind = outcome.kind;
-        callLog.warn('ai provider error', { kind: outcome.kind, attempt });
+      for (let n = 1; n <= policy.maxAttempts; n += 1) {
+        progress.attempts += 1;
+        const call = providerCall(request, prepared, candidate);
+        const result = await attempt(candidate, call, callLog);
+        if ('response' in result) return result.response;
+        lastKind = result.error;
+        callLog.warn('ai provider error', { kind: lastKind, attempt: n });
+        if (!retryable()) return giveUp(ctx, lastKind, progress);
         // Permanent errors are never retried on the same model.
-        if (!isTransient(outcome.kind) || attempt === policy.maxAttempts) break;
-        await sleep(policy.backoffMs * attempt);
+        if (!isTransient(lastKind) || n === policy.maxAttempts) break;
+        await sleep(policy.backoffMs * n);
       }
       // A request the provider refused would be refused elsewhere too: no fallback.
       if (!allowsFallback(lastKind)) break;
       previous = known.model;
     }
-    const latencyMs = Math.round(performance.now() - started);
-    await record('ai.request_failed', lastKind);
-    log.error('ai request failed', {
-      kind: lastKind,
-      attempts,
-      retries: attempts - fallbacks - 1,
-      fallbacks,
-      latencyMs,
+    return giveUp(ctx, lastKind, progress);
+  }
+
+  /** What one attempt sends the adapter: only the checked request and the registry's data. */
+  function providerCall(
+    request: AIModelRequest,
+    prepared: Prepared,
+    candidate: RouteCandidate,
+  ): ProviderCall {
+    return Object.freeze({
+      requestId: request.requestId,
+      idempotencyKey: prepared.idempotencyKey,
+      model: Object.freeze({ id: candidate.model.modelId, version: candidate.model.version }),
+      capability: request.capability,
+      messages: request.messages,
+      outputModality: request.outputModality,
+      maxOutputTokens: request.maxOutputTokens,
+      structuredOutput: request.requirements?.structuredOutput ?? false,
+      ...(request.outputSchema === undefined ? {} : { outputSchema: request.outputSchema }),
+      ...(request.tools === undefined ? {} : { tools: request.tools }),
+      credential: candidate.provider.credential,
+      deadline: new Date(now().getTime() + timeoutMs),
     });
-    return failedResponse(requestId, lastKind, known.model, attempts, latencyMs);
+  }
+
+  /** The model call of `generate` and `assist`: one answer, checked whole. */
+  async function callModel(
+    ctx: CallContext,
+    request: AIModelRequest,
+    policy: ModelPolicy,
+  ): Promise<AIResponse> {
+    const prepared = await prepare(ctx, request, policy, false);
+    if (!isPrepared(prepared)) return prepared;
+    const progress: Progress = {
+      attempts: 0,
+      fallbacks: 0,
+      started: performance.now(),
+      first: prepared.candidates[0],
+    };
+    return throughCandidates(ctx, request, policy, prepared, progress, async (c, call, callLog) => {
+      let outcome = await withDeadline(c.adapter.generate(call), timeoutMs);
+      if (outcome.status === 'success' && !checkProviderSuccess(outcome, request.tools)) {
+        outcome = { status: 'error', kind: 'invalid_response' };
+      }
+      health.record(c.provider.id, outcome.status === 'success' ? 'success' : outcome.kind);
+      if (outcome.status !== 'success') return { error: outcome.kind };
+      return {
+        response: await settle(ctx, request, policy, prepared, c, outcome, progress, callLog),
+      };
+    });
+  }
+
+  /**
+   * The model call of `stream` and `assistStream` (R4, ADR-0077): the same call, with the
+   * answer's text passed on as it comes, in whole words that passed the credential check. Retried
+   * and fallen back like any call until text has gone out; after that, a failure ends it. The
+   * rest of the text goes out only once the whole answer is checked and charged.
+   */
+  async function* streamModel(
+    ctx: CallContext,
+    request: AIModelRequest,
+    policy: ModelPolicy,
+  ): AsyncGenerator<AIStreamEvent, void, undefined> {
+    const problem = streamRequestProblem(request);
+    if (problem !== undefined) {
+      yield doneWith(await ctx.deny(problem));
+      return;
+    }
+    const prepared = await prepare(ctx, request, policy, true);
+    if (!isPrepared(prepared)) {
+      yield doneWith(prepared);
+      return;
+    }
+    const progress: Progress = {
+      attempts: 0,
+      fallbacks: 0,
+      started: performance.now(),
+      first: prepared.candidates[0],
+    };
+    const out = createTextChannel();
+    let passedOn = false;
+    const run = throughCandidates(
+      ctx,
+      request,
+      policy,
+      prepared,
+      progress,
+      async (c, call, callLog) => {
+        const text = new SafeTextRelease();
+        let outcome = await readProviderStream(c.adapter, call, text, (piece) => {
+          passedOn = true;
+          out.push(piece);
+        });
+        if (
+          outcome.status === 'success' &&
+          (!checkProviderSuccess(outcome) ||
+            outcome.output.structured !== undefined ||
+            outcome.output.toolCalls !== undefined ||
+            (outcome.output.text ?? '') !== text.text)
+        ) {
+          outcome = { status: 'error', kind: 'invalid_response' };
+        }
+        health.record(c.provider.id, outcome.status === 'success' ? 'success' : outcome.kind);
+        if (outcome.status !== 'success') return { error: outcome.kind };
+        const response = await settle(
+          ctx,
+          request,
+          policy,
+          prepared,
+          c,
+          outcome,
+          progress,
+          callLog,
+        );
+        if (response.status === 'completed') {
+          const rest = text.rest();
+          if (rest.length > 0) out.push(rest);
+        }
+        return { response };
+      },
+      () => !passedOn,
+    ).finally(() => out.close());
+    let finished = false;
+    try {
+      for await (const text of out) yield Object.freeze({ type: 'text', text });
+      const response = await run;
+      finished = true;
+      yield doneWith(response);
+    } finally {
+      // A caller that stops reading does not stop the call: it is read to its end, checked and
+      // charged by its real usage, so stopping early never makes an answer free.
+      if (!finished) await run.catch(() => undefined);
+    }
+  }
+
+  /**
+   * One streamed attempt, read to its `end` within the call's time. Text goes to `emit` only as
+   * `text` lets it out. Anything but a well-formed stream with one `end` is an invalid response.
+   */
+  async function readProviderStream(
+    adapter: ProviderAdapter,
+    call: ProviderCall,
+    text: SafeTextRelease,
+    emit: (piece: string) => void,
+  ): Promise<Attempt> {
+    const invalid: Attempt = { status: 'error', kind: 'invalid_response' };
+    let iterator: AsyncIterator<ProviderStreamEvent>;
+    try {
+      const stream = adapter.stream?.(call);
+      if (stream === undefined) return invalid;
+      iterator = stream[Symbol.asyncIterator]();
+    } catch {
+      return invalid;
+    }
+    // Stops the provider's stream without waiting on it.
+    const stop = () => {
+      void Promise.resolve()
+        .then(() => iterator.return?.())
+        .catch(() => undefined);
+    };
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const next = await nextWithin(iterator, deadline - Date.now());
+      if (next === 'timeout') {
+        stop();
+        return { status: 'error', kind: 'timeout' };
+      }
+      if (next === 'broken' || next.done === true) return invalid;
+      const event = next.value as unknown;
+      if (isEvent(event, 'text') && typeof event.text === 'string') {
+        const piece = text.add(event.text);
+        if (piece === undefined || text.text.length > MAX_TEXT_LENGTH) {
+          stop();
+          return invalid;
+        }
+        if (piece.length > 0) emit(piece);
+        continue;
+      }
+      stop();
+      if (isEvent(event, 'end') && typeof event.outcome === 'object' && event.outcome !== null) {
+        return event.outcome as ProviderOutcome;
+      }
+      return invalid;
+    }
+  }
+
+  /** A call that passed the checks, authorization and policy of its kind. */
+  interface Admitted {
+    readonly ctx: CallContext;
+    readonly policy: ModelPolicy;
+  }
+  const isAdmitted = (value: Admitted | AIResponse): value is Admitted => 'ctx' in value;
+
+  /**
+   * `generate`'s checks: the request, `ai.generate`, the execution and its specialist, read for
+   * this tenant, then the specialist's model policy.
+   */
+  async function admitGenerate(
+    tenant: TenantContext,
+    request: AIRequest,
+  ): Promise<Admitted | AIResponse> {
+    const requestId = requestIdOf(request);
+    const organizationId = await organizationOf(tenant);
+    if (organizationId === undefined) {
+      return deniedResponse(
+        requestId,
+        isResolvedTenant(tenant) ? 'organization_inactive' : 'unresolved_tenant',
+      );
+    }
+    const ctx = callContext(tenant, organizationId, requestId);
+    const { deny } = ctx;
+
+    // 1. Environment and the request itself.
+    if (environment === undefined) return deny('environment_unknown');
+    const problem = checkAIRequest(request);
+    if (problem !== undefined) return deny(problem);
+
+    // 2. Authorization: RBAC, then the execution and its specialist, read for this tenant.
+    if (!authorization.authorize(tenant, 'ai.generate').allowed) {
+      return deny('permission_denied');
+    }
+    const execution = isExecutionId(request.executionId)
+      ? await executions.find(organizationId, request.executionId)
+      : undefined;
+    if (execution === undefined) return deny('execution_not_found');
+    ctx.known.target = { type: 'execution', id: execution.id };
+    ctx.known.attribution = {
+      executionId: execution.id,
+      ...(execution.workflowId === undefined ? {} : { workflowId: execution.workflowId }),
+    };
+    ctx.correlate({
+      executionId: execution.id,
+      ...(request.nodeId === undefined ? {} : { nodeId: request.nodeId }),
+      specialistId: request.specialistId,
+    });
+    if (!WORKING.includes(execution.status)) return deny('execution_not_running');
+    const { specialistId, specialistVersion, departmentId } = execution;
+    if (
+      specialistId === undefined ||
+      specialistVersion === undefined ||
+      departmentId === undefined
+    ) {
+      return deny('no_specialist');
+    }
+    // The specialist comes from the stored execution; a request naming another one is refused.
+    if (specialistId !== request.specialistId) return deny('specialist_mismatch');
+    const eligibility = await specialists.eligibility(tenant, {
+      specialistId,
+      departmentId,
+      version: specialistVersion,
+    });
+    if (!eligibility.eligible) return deny('specialist_not_eligible');
+    ctx.correlate({ departmentId });
+    ctx.known.attribution = { ...ctx.known.attribution, specialistId, departmentId };
+    const version = await specialists.getVersion(tenant, specialistId, specialistVersion);
+
+    // 3. Policy: the specialist's model policy, or the default.
+    const policy = policies.resolve(version.configuration.policies.model);
+    if (policy === undefined) return deny('policy_not_found');
+
+    return { ctx, policy };
+  }
+
+  /** `assist`'s checks (ADR-0037): the request, a person acting directly, the subject's policy. */
+  async function admitAssist(
+    tenant: TenantContext,
+    request: AssistedAIRequest,
+  ): Promise<Admitted | AIResponse> {
+    const requestId = requestIdOf(request);
+    const organizationId = await organizationOf(tenant);
+    if (organizationId === undefined) {
+      return deniedResponse(
+        requestId,
+        isResolvedTenant(tenant) ? 'organization_inactive' : 'unresolved_tenant',
+      );
+    }
+    const ctx = callContext(tenant, organizationId, requestId);
+    const { deny } = ctx;
+
+    // 1. Environment and the request itself.
+    if (environment === undefined) return deny('environment_unknown');
+    const problem = checkAssistedAIRequest(request);
+    if (problem !== undefined) return deny(problem);
+    ctx.known.target = { type: request.subject.type, id: request.subject.id };
+    ctx.known.attribution = {
+      subject: { type: request.subject.type, id: request.subject.id },
+    };
+    if (request.subject.type === 'conversation') {
+      ctx.correlate({ conversationId: request.subject.id });
+    }
+
+    // 2. Authorization: only a person acting directly. GIA and the runtime act for a user but
+    // are not that user asking; they get no assisted path of their own here.
+    if (tenant.actor !== 'user') return deny('assist_requires_user');
+    if (!authorization.authorize(tenant, ASSIST_PERMISSIONS[request.subject.type]).allowed) {
+      return deny('permission_denied');
+    }
+
+    // 3. Policy: the subject's own named policy, never the default.
+    const policy = policies.resolve(ASSIST_MODEL_POLICIES[request.subject.type]);
+    if (policy === undefined) return deny('policy_not_found');
+
+    return { ctx, policy };
   }
 
   return Object.freeze({
     async generate(tenant: TenantContext, request: AIRequest): Promise<AIResponse> {
-      const requestId = requestIdOf(request);
-      const organizationId = await organizationOf(tenant);
-      if (organizationId === undefined) {
-        return deniedResponse(
-          requestId,
-          isResolvedTenant(tenant) ? 'organization_inactive' : 'unresolved_tenant',
-        );
-      }
-      const ctx = callContext(tenant, organizationId, requestId);
-      const { deny } = ctx;
-
-      // 1. Environment and the request itself.
-      if (environment === undefined) return deny('environment_unknown');
-      const problem = checkAIRequest(request);
-      if (problem !== undefined) return deny(problem);
-
-      // 2. Authorization: RBAC, then the execution and its specialist, read for this tenant.
-      if (!authorization.authorize(tenant, 'ai.generate').allowed) {
-        return deny('permission_denied');
-      }
-      const execution = isExecutionId(request.executionId)
-        ? await executions.find(organizationId, request.executionId)
-        : undefined;
-      if (execution === undefined) return deny('execution_not_found');
-      ctx.known.target = { type: 'execution', id: execution.id };
-      ctx.known.attribution = {
-        executionId: execution.id,
-        ...(execution.workflowId === undefined ? {} : { workflowId: execution.workflowId }),
-      };
-      ctx.correlate({
-        executionId: execution.id,
-        ...(request.nodeId === undefined ? {} : { nodeId: request.nodeId }),
-        specialistId: request.specialistId,
-      });
-      if (!WORKING.includes(execution.status)) return deny('execution_not_running');
-      const { specialistId, specialistVersion, departmentId } = execution;
-      if (
-        specialistId === undefined ||
-        specialistVersion === undefined ||
-        departmentId === undefined
-      ) {
-        return deny('no_specialist');
-      }
-      // The specialist comes from the stored execution; a request naming another one is refused.
-      if (specialistId !== request.specialistId) return deny('specialist_mismatch');
-      const eligibility = await specialists.eligibility(tenant, {
-        specialistId,
-        departmentId,
-        version: specialistVersion,
-      });
-      if (!eligibility.eligible) return deny('specialist_not_eligible');
-      ctx.correlate({ departmentId });
-      ctx.known.attribution = { ...ctx.known.attribution, specialistId, departmentId };
-      const version = await specialists.getVersion(tenant, specialistId, specialistVersion);
-
-      // 3. Policy: the specialist's model policy, or the default.
-      const policy = policies.resolve(version.configuration.policies.model);
-      if (policy === undefined) return deny('policy_not_found');
-
-      return callModel(ctx, request, policy);
+      const admitted = await admitGenerate(tenant, request);
+      return isAdmitted(admitted) ? callModel(admitted.ctx, request, admitted.policy) : admitted;
     },
 
     async assist(tenant: TenantContext, request: AssistedAIRequest): Promise<AIResponse> {
-      const requestId = requestIdOf(request);
-      const organizationId = await organizationOf(tenant);
-      if (organizationId === undefined) {
-        return deniedResponse(
-          requestId,
-          isResolvedTenant(tenant) ? 'organization_inactive' : 'unresolved_tenant',
-        );
+      const admitted = await admitAssist(tenant, request);
+      return isAdmitted(admitted) ? callModel(admitted.ctx, request, admitted.policy) : admitted;
+    },
+
+    async *stream(tenant: TenantContext, request: AIRequest): AsyncGenerator<AIStreamEvent> {
+      const admitted = await admitGenerate(tenant, request);
+      if (!isAdmitted(admitted)) {
+        yield doneWith(admitted);
+        return;
       }
-      const ctx = callContext(tenant, organizationId, requestId);
-      const { deny } = ctx;
+      yield* streamModel(admitted.ctx, request, admitted.policy);
+    },
 
-      // 1. Environment and the request itself.
-      if (environment === undefined) return deny('environment_unknown');
-      const problem = checkAssistedAIRequest(request);
-      if (problem !== undefined) return deny(problem);
-      ctx.known.target = { type: request.subject.type, id: request.subject.id };
-      ctx.known.attribution = {
-        subject: { type: request.subject.type, id: request.subject.id },
-      };
-      if (request.subject.type === 'conversation') {
-        ctx.correlate({ conversationId: request.subject.id });
+    async *assistStream(
+      tenant: TenantContext,
+      request: AssistedAIRequest,
+    ): AsyncGenerator<AIStreamEvent> {
+      const admitted = await admitAssist(tenant, request);
+      if (!isAdmitted(admitted)) {
+        yield doneWith(admitted);
+        return;
       }
-
-      // 2. Authorization: only a person acting directly. GIA and the runtime act for a user but
-      // are not that user asking; they get no assisted path of their own here.
-      if (tenant.actor !== 'user') return deny('assist_requires_user');
-      if (!authorization.authorize(tenant, ASSIST_PERMISSIONS[request.subject.type]).allowed) {
-        return deny('permission_denied');
-      }
-
-      // 3. Policy: the subject's own named policy, never the default.
-      const policy = policies.resolve(ASSIST_MODEL_POLICIES[request.subject.type]);
-      if (policy === undefined) return deny('policy_not_found');
-
-      return callModel(ctx, request, policy);
+      yield* streamModel(admitted.ctx, request, admitted.policy);
     },
   });
 }
@@ -602,6 +912,30 @@ const usageEventOf = (
     outcome: 'completed',
     source: 'llm_router',
   });
+
+const doneWith = (response: AIResponse): AIStreamEvent => Object.freeze({ type: 'done', response });
+
+const isEvent = <T extends ProviderStreamEvent['type']>(
+  value: unknown,
+  type: T,
+): value is Record<string, unknown> & { readonly type: T } =>
+  typeof value === 'object' && value !== null && (value as { type?: unknown }).type === type;
+
+/** The iterator's next result within `ms`, `timeout` after, or `broken` when it threw. */
+function nextWithin<T>(
+  iterator: AsyncIterator<T>,
+  ms: number,
+): Promise<IteratorResult<T> | 'timeout' | 'broken'> {
+  if (ms <= 0) return Promise.resolve('timeout');
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<'timeout'>((resolve) => {
+    timer = setTimeout(() => resolve('timeout'), ms);
+  });
+  const next = Promise.resolve()
+    .then(() => iterator.next())
+    .catch((): 'broken' => 'broken');
+  return Promise.race([next, timeout]).finally(() => clearTimeout(timer));
+}
 
 const deniedResponse = (requestId: string, code: string): AIResponse =>
   Object.freeze({ status: 'denied', requestId, code });

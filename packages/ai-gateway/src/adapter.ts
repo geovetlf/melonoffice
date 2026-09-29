@@ -78,6 +78,14 @@ export type ProviderOutcome =
       readonly httpStatus?: number;
     };
 
+/**
+ * One piece of a streamed answer (R4, ADR-0077). The texts, joined, must be the `end` outcome's
+ * text exactly; the gateway refuses a stream where they differ.
+ */
+export type ProviderStreamEvent =
+  | { readonly type: 'text'; readonly text: string }
+  | { readonly type: 'end'; readonly outcome: ProviderOutcome };
+
 export type ProviderHealth = 'available' | 'degraded' | 'unavailable';
 
 /**
@@ -90,8 +98,13 @@ export interface ProviderAdapter {
   /** Changes whenever the translation changes, for reproducibility. */
   readonly adapterVersion: string;
   generate(call: ProviderCall): Promise<ProviderOutcome>;
-  /** Streaming, for adapters and models that support it. Not used by the gateway yet. */
-  stream?(call: ProviderCall): AsyncIterable<{ readonly text: string }>;
+  /**
+   * Streaming (R4, ADR-0077), for adapters and models that support it: the answer's text as it
+   * comes, then exactly one `end` with the whole outcome, as `generate` would have answered. A
+   * streamed call is text only: it is never given tools or an output schema. Like `generate`, it
+   * never throws and never passes on the provider's own words about an error.
+   */
+  stream?(call: ProviderCall): AsyncIterable<ProviderStreamEvent>;
   capabilities(): readonly AICapability[];
   health(): Promise<ProviderHealth>;
 }

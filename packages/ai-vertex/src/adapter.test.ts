@@ -449,3 +449,104 @@ describe('Vertex AI function calling (R3, ADR-0076)', () => {
     expect(GEMINI_2_5_FLASH_LITE_MODEL.toolUse).toBe(true);
   });
 });
+
+describe('Vertex AI streaming (R4, ADR-0077)', () => {
+  /** A server-sent events body, cut into pieces that do not follow event boundaries. */
+  const sse = (chunks: readonly unknown[], cut = 7) => {
+    const text = chunks.map((c) => `data: ${JSON.stringify(c)}\r\n\r\n`).join('');
+    const bytes = new TextEncoder().encode(text);
+    return new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          for (let i = 0; i < bytes.length; i += cut) controller.enqueue(bytes.slice(i, i + cut));
+          controller.close();
+        },
+      }),
+      { headers: { 'content-type': 'text/event-stream' } },
+    );
+  };
+  const piece = (text: string, extra: Record<string, unknown> = {}) => ({
+    candidates: [{ content: { role: 'model', parts: [{ text }] }, ...extra }],
+  });
+  const read = async (events: AsyncIterable<unknown>) => {
+    const all: unknown[] = [];
+    for await (const e of events) all.push(e);
+    return all;
+  };
+  // A plain text call: no structured answer, no output schema.
+  const text = Object.fromEntries(
+    Object.entries(call({ structuredOutput: false })).filter(([key]) => key !== 'outputSchema'),
+  ) as unknown as ProviderCall;
+
+  it('streams the text, then one end with the usage, read like a whole answer', async () => {
+    const { sent, fetchFn } = network(() =>
+      sse([
+        piece('Hola, '),
+        piece('¿en qué '),
+        piece('ayudo?', { finishReason: 'STOP' }),
+        {
+          usageMetadata: { promptTokenCount: 1_000, candidatesTokenCount: 200 },
+          responseId: 'resp-9',
+        },
+      ]),
+    );
+    const adapter = adapterWith(fetchFn);
+    const all = await read(must(adapter.stream)(text));
+    expect(all.slice(0, 3)).toEqual([
+      { type: 'text', text: 'Hola, ' },
+      { type: 'text', text: '¿en qué ' },
+      { type: 'text', text: 'ayudo?' },
+    ]);
+    expect(all.at(-1)).toEqual({
+      type: 'end',
+      outcome: {
+        status: 'success',
+        output: { text: 'Hola, ¿en qué ayudo?' },
+        usage: { inputTokens: 1_000, outputTokens: 200 },
+        finishReason: 'stop',
+        providerRequestId: 'resp-9',
+      },
+    });
+    expect(sent[1]?.url).toBe(
+      'https://us-central1-aiplatform.googleapis.com/v1/projects/melonoffice-test/locations/us-central1/publishers/google/models/gemini-2.5-flash-lite:streamGenerateContent?alt=sse',
+    );
+  });
+
+  it('ends with a classified error, never the provider’s words', async () => {
+    const cases: [() => Response, string][] = [
+      [() => new Response('quota exceeded for project', { status: 429 }), 'rate_limited'],
+      [() => sse([{ promptFeedback: { blockReason: 'SAFETY' } }]), 'content_policy'],
+      [() => sse([piece('Bad', { finishReason: 'SAFETY' })]), 'content_policy'],
+      [() => sse([piece('No usage', { finishReason: 'STOP' })]), 'invalid_response'],
+      [
+        () =>
+          sse([
+            { candidates: [{ content: { parts: [{ functionCall: { name: 'x', args: {} } }] } }] },
+          ]),
+        'invalid_response',
+      ],
+      [() => new Response('data: {not json\n\n'), 'invalid_response'],
+    ];
+    for (const [reply, kind] of cases) {
+      const all = await read(must(adapterWith(network(reply).fetchFn).stream)(text));
+      expect(all.at(-1)).toMatchObject({ type: 'end', outcome: { status: 'error', kind } });
+      expect(JSON.stringify(all)).not.toContain('quota');
+    }
+  });
+
+  it('streams only text: never tools or a structured answer', async () => {
+    const { sent, fetchFn } = network(() => sse([]));
+    const all = await read(must(adapterWith(fetchFn).stream)(call()));
+    expect(all).toEqual([{ type: 'end', outcome: { status: 'error', kind: 'invalid_request' } }]);
+    expect(sent).toHaveLength(0);
+  });
+
+  it('is marked as streaming in the catalogue', () => {
+    expect(GEMINI_2_5_FLASH_LITE_MODEL.streaming).toBe(true);
+  });
+});
+
+function must<T>(value: T | undefined): T {
+  if (value === undefined) throw new Error('missing');
+  return value;
+}

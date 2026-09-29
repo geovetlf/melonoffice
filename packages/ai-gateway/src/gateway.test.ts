@@ -48,6 +48,7 @@ import {
   type ProviderAdapter,
   type ProviderCall,
   type ProviderOutcome,
+  type ProviderStreamEvent,
 } from './adapter.js';
 import type { AICreditsPort } from './credits.js';
 import { ASSIST_MODEL_POLICIES, createAIGateway } from './gateway.js';
@@ -163,6 +164,7 @@ const MODELS: AIModelDefinition[] = [
 ];
 
 type Script = Record<string, (() => ProviderOutcome | Promise<ProviderOutcome>)[]>;
+type StreamScript = Record<string, (() => AsyncIterable<ProviderStreamEvent>)[]>;
 
 const OK = (text = 'Summary ready.'): ProviderOutcome => ({
   status: 'success',
@@ -173,7 +175,12 @@ const OK = (text = 'Summary ready.'): ProviderOutcome => ({
 });
 
 /** A fake official adapter: answers from a script per model, and records what it was sent. */
-function fakeAdapter(providerId: string, script: Script, calls: ProviderCall[]): ProviderAdapter {
+function fakeAdapter(
+  providerId: string,
+  script: Script,
+  calls: ProviderCall[],
+  streams: StreamScript = {},
+): ProviderAdapter {
   // What a real adapter would resolve through infrastructure; it must never leave the adapter.
   const credential = new ProviderCredential(SECRET_VALUE);
   return {
@@ -192,6 +199,17 @@ function fakeAdapter(providerId: string, script: Script, calls: ProviderCall[]):
       if (credential.reveal() !== SECRET_VALUE) throw new Error('credential lost');
       const next = script[call.model.id]?.shift();
       return next === undefined ? OK() : next();
+    },
+    async *stream(call) {
+      calls.push(call);
+      const next = streams[call.model.id]?.shift();
+      if (next !== undefined) {
+        yield* next();
+        return;
+      }
+      yield { type: 'text', text: 'Summary ' };
+      yield { type: 'text', text: 'ready.' };
+      yield { type: 'end', outcome: OK() };
     },
   };
 }
@@ -233,6 +251,7 @@ interface WorldOptions {
   /** Use the real Credits engine (PR #20) instead of the test double. */
   readonly realCredits?: boolean;
   readonly usage?: AIUsageSink;
+  readonly streams?: StreamScript;
 }
 
 async function world(options: WorldOptions = {}) {
@@ -285,7 +304,10 @@ async function world(options: WorldOptions = {}) {
       }),
     ],
     models: options.models ?? MODELS,
-    adapters: [fakeAdapter('alpha', script, calls), fakeAdapter('beta', script, calls)],
+    adapters: [
+      fakeAdapter('alpha', script, calls, options.streams),
+      fakeAdapter('beta', script, calls, options.streams),
+    ],
   });
   const credits = fakeCredits(options.balance ?? 1_000);
   const logLines: string[] = [];
@@ -1443,5 +1465,229 @@ describe('AI gateway: normalized tool calling (R3, ADR-0076)', () => {
         }),
       ),
     ).toMatchObject({ code: 'secret_in_input' });
+  });
+});
+
+describe('AI gateway: streaming (R4, ADR-0077)', () => {
+  const STREAMING = MODELS.map((m) =>
+    m.modelId === 'alpha-small' || m.modelId === 'beta-text' ? { ...m, streaming: true } : m,
+  );
+  const events = (...texts: string[]) =>
+    async function* (): AsyncIterable<ProviderStreamEvent> {
+      for (const text of texts) yield { type: 'text', text };
+      yield { type: 'end', outcome: OK(texts.join('')) };
+    };
+  const failing = (kind: 'rate_limited' | 'server_error', ...texts: string[]) =>
+    async function* (): AsyncIterable<ProviderStreamEvent> {
+      for (const text of texts) yield { type: 'text', text };
+      yield { type: 'end', outcome: { status: 'error', kind } };
+    };
+  const read = async (stream: AsyncIterable<unknown>) => {
+    const all: unknown[] = [];
+    for await (const event of stream) all.push(event);
+    return all;
+  };
+  const texts = (all: unknown[]) =>
+    all
+      .filter((e): e is { type: 'text'; text: string } => (e as { type: string }).type === 'text')
+      .map((e) => e.text);
+  const done = (all: unknown[]) => {
+    const last = all.at(-1) as { type: string; response: unknown };
+    expect(last.type).toBe('done');
+    expect(all.filter((e) => (e as { type: string }).type === 'done')).toHaveLength(1);
+    return last.response;
+  };
+
+  async function streaming(options: WorldOptions = {}) {
+    const s = await setup({ models: STREAMING, ...options });
+    const stream = (overrides: Partial<Record<keyof AIRequest, unknown>> = {}) =>
+      s.w.gateway.stream(s.w.tenantA, requestFor(s.execution, overrides));
+    return { ...s, stream };
+  }
+
+  it('passes the text on in whole words, then the same response generate gives, charged once', async () => {
+    const sink = new InMemoryUsageSink();
+    const { w, stream } = await streaming({
+      usage: sink,
+      streams: { 'alpha-small': [events('The mel', 'on market ', 'is gro', 'wing.')] },
+    });
+    const all = await read(stream());
+    expect(texts(all)).toEqual(['The ', 'melon market ', 'is ', 'growing.']);
+    expect(done(all)).toMatchObject({
+      status: 'completed',
+      model: 'alpha-small',
+      output: { text: 'The melon market is growing.' },
+      credits: { state: 'consumed', consumed: 1 },
+      attempts: 1,
+    });
+    expect(w.credits.spent.get(`${w.orgA}\nai:req-1`)).toBe(1);
+    expect(sink.events).toHaveLength(1);
+    // Only models that stream are routed to.
+    expect(w.calls.map((c) => c.model.id)).toEqual(['alpha-small']);
+  });
+
+  it('is text only: tools and structured answers are refused before any provider', async () => {
+    const { w, stream } = await streaming();
+    for (const overrides of [
+      { requirements: { structuredOutput: true } },
+      { outputModality: 'image' },
+      {
+        requirements: { toolUse: true },
+        tools: [
+          {
+            name: 'lookup',
+            description: 'Looks up.',
+            parameters: { type: 'object', properties: {} },
+          },
+        ],
+      },
+    ]) {
+      expect(done(await read(stream(overrides)))).toMatchObject({
+        status: 'denied',
+        code: 'invalid_request',
+      });
+    }
+    expect(w.calls).toHaveLength(0);
+    expect(w.events('ai.request_denied')).toHaveLength(3);
+  });
+
+  it('is denied when no model or adapter streams, and follows every check of generate', async () => {
+    const none = await setup();
+    const all = await read(none.w.gateway.stream(none.w.tenantA, requestFor(none.execution)));
+    expect(all).toHaveLength(1);
+    expect(done(all)).toMatchObject({ status: 'denied', code: 'requirements_unmet' });
+
+    const { w, stream } = await streaming({ balance: 0 });
+    expect(done(await read(stream()))).toMatchObject({
+      status: 'denied',
+      code: 'credits_insufficient',
+    });
+    const other = await read(w.gateway.stream(w.tenantB, requestFor((await setup()).execution)));
+    expect(done(other)).toMatchObject({ status: 'denied', code: 'execution_not_found' });
+    expect(w.calls).toHaveLength(0);
+  });
+
+  it('never passes on a credential, even split across pieces, and charges nothing', async () => {
+    const [head, tail] = [LEAKED_KEY.slice(0, 10), LEAKED_KEY.slice(10)];
+    const { w, stream } = await streaming({
+      streams: { 'alpha-small': [events('Your key ', 'is ', head, tail, ' and more.')] },
+    });
+    const all = await read(stream());
+    expect(texts(all).join('')).toBe('Your key is ');
+    expect(JSON.stringify(all)).not.toContain(head);
+    // Text already went out, so it is not tried again.
+    expect(done(all)).toMatchObject({
+      status: 'failed',
+      code: 'invalid_response',
+      attempts: 1,
+    });
+    expect(w.credits.spent.size).toBe(0);
+    expect(w.events('ai.request_failed')[0]).toMatchObject({ reason: 'invalid_response' });
+  });
+
+  it('retries and falls back like generate while no text has gone out', async () => {
+    const { w, stream } = await streaming({
+      streams: {
+        'alpha-small': [failing('rate_limited'), failing('rate_limited'), failing('rate_limited')],
+        'beta-text': [events('From ', 'beta.')],
+      },
+    });
+    const all = await read(stream());
+    expect(texts(all).join('')).toBe('From beta.');
+    expect(done(all)).toMatchObject({
+      status: 'completed',
+      model: 'beta-text',
+      fallbackFrom: 'alpha/alpha-small',
+    });
+    expect(w.events('ai.provider_fallback')).toHaveLength(1);
+  });
+
+  it('ends without a retry once text went out, and the partial text is not an answer', async () => {
+    const { w, stream } = await streaming({
+      streams: { 'alpha-small': [failing('server_error', 'Half an ', 'answer')] },
+    });
+    const all = await read(stream());
+    expect(texts(all)).toEqual(['Half an ']);
+    expect(done(all)).toMatchObject({ status: 'failed', code: 'server_error', attempts: 1 });
+    expect(w.calls).toHaveLength(1);
+    expect(w.credits.spent.size).toBe(0);
+  });
+
+  it('refuses a stream whose pieces differ from its end, or that never ends', async () => {
+    const { stream } = await streaming({
+      streams: {
+        'alpha-small': [
+          async function* () {
+            yield { type: 'text', text: 'One thing.' };
+            yield { type: 'end', outcome: OK('Another thing.') };
+          },
+          async function* () {
+            yield { type: 'text', text: 'No end.' };
+          },
+          async function* () {
+            yield { type: 'text', text: 'Unexpected ' };
+            yield { type: 'unknown' } as unknown as ProviderStreamEvent;
+          },
+        ],
+      },
+      defaultPolicy: { ...onlyModels('alpha/alpha-small'), maxAttempts: 1 },
+    });
+    for (const id of ['req-a', 'req-b', 'req-c']) {
+      expect(done(await read(stream({ requestId: id })))).toMatchObject({
+        status: 'failed',
+        code: 'invalid_response',
+      });
+    }
+  });
+
+  it('times out a stream that stops sending', async () => {
+    const { stream } = await streaming({
+      defaultPolicy: { ...onlyModels('alpha/alpha-small'), maxAttempts: 1 },
+      streams: {
+        'alpha-small': [
+          async function* () {
+            yield { type: 'text', text: 'Slow' };
+            await new Promise((resolve) => setTimeout(resolve, 200));
+            yield { type: 'end', outcome: OK('Slow') };
+          },
+        ],
+      },
+    });
+    expect(done(await read(stream()))).toMatchObject({ status: 'failed', code: 'timeout' });
+  });
+
+  it('still reads, checks and charges the whole answer when the caller stops early', async () => {
+    const { w, stream } = await streaming({
+      streams: { 'alpha-small': [events('One ', 'two ', 'three ', 'four.')] },
+    });
+    const seen: string[] = [];
+    for await (const event of stream()) {
+      if (event.type === 'text') seen.push(event.text);
+      break;
+    }
+    expect(seen).toEqual(['One ']);
+    expect(w.credits.spent.get(`${w.orgA}\nai:req-1`)).toBe(1);
+  });
+
+  it('streams assisted calls for a person, never for GIA', async () => {
+    const policy = {
+      ...onlyModels('alpha/alpha-small'),
+      id: 'conversation_assist' as PolicyId,
+      maxSensitivity: 'confidential' as const,
+    };
+    const w = await world({
+      policies: [policy],
+      models: STREAMING.map((m) =>
+        m.modelId === 'alpha-small' ? { ...m, maxSensitivity: 'confidential' as const } : m,
+      ),
+    });
+    const request = assisted({ requirements: undefined });
+    const all = await read(w.gateway.assistStream(w.tenantA, request));
+    expect(texts(all).join('')).toBe('Summary ready.');
+    expect(done(all)).toMatchObject({ status: 'completed', requestId: 'assist-1' });
+    expect(done(await read(w.gateway.assistStream(w.giaA, request)))).toMatchObject({
+      status: 'denied',
+      code: 'assist_requires_user',
+    });
   });
 });

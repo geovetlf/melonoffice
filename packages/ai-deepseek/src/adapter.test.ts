@@ -445,3 +445,110 @@ describe('DeepSeek function calling (R3, ADR-0076)', () => {
     ]);
   });
 });
+
+describe('DeepSeek streaming (R4, ADR-0077)', () => {
+  const sse = (lines: readonly string[]) =>
+    new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          for (const line of lines) controller.enqueue(new TextEncoder().encode(line));
+          controller.close();
+        },
+      }),
+    );
+  const data = (value: unknown) => `data: ${JSON.stringify(value)}\n\n`;
+  const delta = (content: string, extra: Record<string, unknown> = {}) =>
+    data({
+      id: 'ds-9',
+      choices: [{ index: 0, delta: { content, ...extra }, finish_reason: null }],
+    });
+  const read = async (events: AsyncIterable<unknown>) => {
+    const all: unknown[] = [];
+    for await (const e of events) all.push(e);
+    return all;
+  };
+  const streamOf = (reply: () => Response) => {
+    const net = network(reply);
+    const adapter = createDeepSeekAdapter({
+      credentials: resolver().credentials,
+      fetch: net.fetchFn,
+      now: () => T0,
+    });
+    if (adapter.stream === undefined) throw new Error('no stream');
+    return { net, stream: adapter.stream.bind(adapter) };
+  };
+
+  it('streams the answer, never the reasoning, and reads the usage at the end', async () => {
+    const { net, stream } = streamOf(() =>
+      sse([
+        ': keep-alive\n\n',
+        delta('', { reasoning_content: 'hidden thoughts' }),
+        delta('Hello '),
+        delta('there.'),
+        data({ id: 'ds-9', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] }),
+        data({
+          id: 'ds-9',
+          choices: [],
+          usage: { prompt_tokens: 1_000, completion_tokens: 200, prompt_cache_hit_tokens: 600 },
+        }),
+        'data: [DONE]\n\n',
+      ]),
+    );
+    const all = await read(stream(call()));
+    expect(all).toEqual([
+      { type: 'text', text: 'Hello ' },
+      { type: 'text', text: 'there.' },
+      {
+        type: 'end',
+        outcome: {
+          status: 'success',
+          output: { text: 'Hello there.' },
+          usage: { inputTokens: 1_000, outputTokens: 200, cachedInputTokens: 600 },
+          finishReason: 'stop',
+          providerRequestId: 'ds-9',
+        },
+      },
+    ]);
+    expect(JSON.stringify(all)).not.toContain('hidden');
+    expect(JSON.parse(String(net.sent[0]?.init?.body))).toMatchObject({
+      stream: true,
+      stream_options: { include_usage: true },
+    });
+  });
+
+  it('ends with a classified error, and streams only text', async () => {
+    const cases: [() => Response, string][] = [
+      [() => new Response('{"error":{"message":"busy"}}', { status: 503 }), 'unavailable'],
+      [() => sse([delta('No usage '), 'data: [DONE]\n\n']), 'invalid_response'],
+      [
+        () => sse([delta('', { tool_calls: [{ index: 0, id: 'c1' }] }), 'data: [DONE]\n\n']),
+        'invalid_response',
+      ],
+      [
+        () =>
+          sse([
+            data({ id: 'x', choices: [{ index: 0, delta: {}, finish_reason: 'content_filter' }] }),
+            data({ id: 'x', choices: [], usage: { prompt_tokens: 1, completion_tokens: 1 } }),
+          ]),
+        'content_policy',
+      ],
+    ];
+    for (const [reply, kind] of cases) {
+      const all = await read(streamOf(reply).stream(call()));
+      expect(all.at(-1)).toMatchObject({ type: 'end', outcome: { status: 'error', kind } });
+      expect(JSON.stringify(all)).not.toContain('busy');
+    }
+    const { net, stream } = streamOf(() => sse([]));
+    expect(await read(stream(call({ structuredOutput: true })))).toEqual([
+      { type: 'end', outcome: { status: 'error', kind: 'invalid_request' } },
+    ]);
+    expect(net.sent).toHaveLength(0);
+  });
+
+  it('streams on the chat model only', () => {
+    expect(DEEPSEEK_MODELS.map((m) => [m.modelId, m.streaming])).toEqual([
+      ['deepseek-chat', true],
+      ['deepseek-reasoner', false],
+    ]);
+  });
+});
