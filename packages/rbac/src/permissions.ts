@@ -150,7 +150,7 @@ export const PERMISSIONS = {
     resource: 'plan',
     action: 'create',
     description:
-      'Let the planner make a plan for you. Checked by the planner on the server, never by a client route (ADR-0028).',
+      'Make a plan: the planner on the server, or a workflow you plan (ADR-0028, ADR-0071). A plan always waits for your approval.',
   },
   'workflow.read': {
     resource: 'workflow',
@@ -160,8 +160,7 @@ export const PERMISSIONS = {
   'workflow.manage': {
     resource: 'workflow',
     action: 'manage',
-    description:
-      "Create, version and activate the organization's workflows. Server side only: no client route yet (ADR-0028).",
+    description: "Create, version and activate the organization's workflows (ADR-0028, ADR-0071).",
   },
   'conversation.read': {
     resource: 'conversation',

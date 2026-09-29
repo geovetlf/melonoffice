@@ -9,7 +9,7 @@ import { isWorkflowError } from './errors.js';
 import { canChangeWorkflowStatus, WORKFLOW_STATUSES } from './lifecycle.js';
 import { checkWorkflowSteps } from './model.js';
 import { InMemoryWorkflowRepository } from './repository.js';
-import { createWorkflowService } from './service.js';
+import { createWorkflowService, WORKFLOW_PLAN_INPUT, WORKFLOW_PLAN_REFUSED } from './service.js';
 
 const codeOf = async (work: Promise<unknown>): Promise<string> => {
   try {
@@ -72,6 +72,7 @@ async function setup(options: WorldOptions = {}) {
   const workflows = createWorkflowService({
     repository,
     plans: w.plans,
+    executions: w.executions,
     specialists: w.specialists,
     departments: w.departments,
     organizations: w.tenancy,
@@ -331,6 +332,13 @@ describe('workflow instantiation', () => {
       executionId: execution.id,
     });
     if (outcome.status !== 'planned') throw new Error(outcome.reason);
+    // A workflow's plan always waits for a person, even with no approval step (ADR-0071).
+    expect(outcome.plan.status).toBe('approval_required');
+    expect(outcome.version.approvalRequired).toBe(true);
+    await w.plans.approve(w.tenantA, outcome.plan.id, {
+      version: outcome.version.version,
+      digest: outcome.version.digest,
+    });
     const { children } = await w.delegation.delegate(w.tenantA, outcome.plan.id);
     const [child] = children;
     expect(child?.workflowId).toBe(active.id);
@@ -385,5 +393,107 @@ describe('workflow instantiation', () => {
     expect(
       await codeOf(w.workflows.instantiate(w.tenantA, active.id, { executionId: execution.id })),
     ).toBe('assignee_unavailable');
+  });
+});
+
+describe('a person plans a workflow (WF-2)', () => {
+  async function active(w: Awaited<ReturnType<typeof setup>>, steps: unknown = STEPS) {
+    const created = await w.workflows.create(w.tenantA, { name: 'Launch', steps });
+    return w.workflows.changeStatus(w.tenantA, created.id, { from: 'draft', to: 'active' });
+  }
+
+  it('creates the planning execution and a plan that waits for approval, once per key', async () => {
+    const w = await setup();
+    const workflow = await active(w, STEPS.slice(0, 2));
+    const outcome = await w.workflows.plan(w.tenantA, workflow.id, { requestKey: 'k-1' });
+    if (outcome.status !== 'planned') throw new Error(outcome.reason);
+    expect(outcome.plan.status).toBe('approval_required');
+    expect(outcome.plan.executionId).toBe(outcome.executionId);
+    const execution = await w.executions.get(w.tenantA, outcome.executionId);
+    expect(execution).toMatchObject({
+      mode: 'plan',
+      status: 'waiting_approval',
+      workflowId: workflow.id,
+      // The agent of the first assigned step owns the planning execution.
+      specialistId: w.researcher.identity.id,
+      input: { type: WORKFLOW_PLAN_INPUT, id: workflow.id },
+    });
+    expect(execution.versionSnapshot.components).toContainEqual({
+      kind: 'workflow',
+      id: workflow.id,
+      version: '1',
+    });
+
+    // The same key: the same plan, nothing new.
+    const again = await w.workflows.plan(w.tenantA, workflow.id, { requestKey: 'k-1' });
+    expect(again).toMatchObject({ status: 'planned', executionId: outcome.executionId });
+    expect(w.events('plan.created')).toHaveLength(1);
+    expect(w.events('execution.created')).toHaveLength(1);
+    // Another key: another plan.
+    const other = await w.workflows.plan(w.tenantA, workflow.id, { requestKey: 'k-2' });
+    expect(other.executionId).not.toBe(outcome.executionId);
+    expect(w.events('plan.created')).toHaveLength(2);
+    // Nothing ran.
+    expect(w.calls).toHaveLength(0);
+  });
+
+  it('ends the planning execution of a refused plan, and a repeat gets the same refusal', async () => {
+    // Only the tool step's performer may call its tool: without the tool, the plan is refused.
+    const w = await setup();
+    const workflow = await active(w, [
+      STEPS[0],
+      { ...STEPS[1], tool: { id: 'unknown_tool', version: 1 } },
+    ]);
+    const outcome = await w.workflows.plan(w.tenantA, workflow.id, { requestKey: 'k-1' });
+    expect(outcome.status).toBe('refused');
+    if (outcome.status !== 'refused') return;
+    const execution = await w.executions.get(w.tenantA, outcome.executionId);
+    expect(execution.status).toBe('failed');
+    expect(execution.failure?.code).toBe(WORKFLOW_PLAN_REFUSED);
+    const again = await w.workflows.plan(w.tenantA, workflow.id, { requestKey: 'k-1' });
+    expect(again).toEqual(outcome);
+    expect(w.events('plan.proposal_refused')).toHaveLength(1);
+  });
+
+  it('refuses GIA, the runtime, bad keys, inactive workflows and other organizations', async () => {
+    const w = await setup();
+    const workflow = await active(w);
+    expect(await codeOf(w.workflows.plan(w.giaA, workflow.id, { requestKey: 'k' }))).toBe(
+      'permission_denied',
+    );
+    expect(await codeOf(w.workflows.plan(w.runtimeA, workflow.id, { requestKey: 'k' }))).toBe(
+      'permission_denied',
+    );
+    expect(await codeOf(w.workflows.plan(w.tenantA, workflow.id, { requestKey: 'a b' }))).toBe(
+      'invalid_workflow',
+    );
+    expect(await codeOf(w.workflows.plan(w.tenantB, workflow.id, { requestKey: 'k' }))).toBe(
+      'workflow_not_found',
+    );
+    const paused = await w.workflows.changeStatus(w.tenantA, workflow.id, {
+      from: 'active',
+      to: 'paused',
+    });
+    expect(await codeOf(w.workflows.plan(w.tenantA, paused.id, { requestKey: 'k' }))).toBe(
+      'workflow_not_active',
+    );
+    await w.workflows.changeStatus(w.tenantA, workflow.id, { from: 'paused', to: 'active' });
+    await w.pause(w.orgA, w.marketer);
+    expect(await codeOf(w.workflows.plan(w.tenantA, workflow.id, { requestKey: 'k' }))).toBe(
+      'assignee_unavailable',
+    );
+    // Nothing was created by any refusal.
+    expect(w.events('execution.created')).toHaveLength(0);
+  });
+
+  it('reads back the plan of a request a person cancelled', async () => {
+    const w = await setup();
+    const workflow = await active(w, STEPS.slice(0, 2));
+    const outcome = await w.workflows.plan(w.tenantA, workflow.id, { requestKey: 'k' });
+    if (outcome.status !== 'planned') throw new Error(outcome.reason);
+    await w.executions.cancel(w.tenantA, outcome.executionId, 'director_request');
+    // The plan is still there (cancelled by the cascade): a repeat reads it back.
+    const again = await w.workflows.plan(w.tenantA, workflow.id, { requestKey: 'k' });
+    expect(again.status).toBe('planned');
   });
 });

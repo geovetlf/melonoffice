@@ -65,8 +65,8 @@ export interface NewPlan {
 
 /**
  * Builds a plan at version 1 from a validated plan (ADR-0028). It starts `approval_required`
- * when any step or its risk needs a human, and `ready` otherwise: only validated plans are ever
- * stored, so none is kept in `draft`.
+ * when any step or its risk needs a human, or when a workflow made it (ADR-0071), and `ready`
+ * otherwise: only validated plans are ever stored, so none is kept in `draft`.
  *
  * A plan's id is its planning execution's id: one execution has at most one plan, and storing a
  * second one for it is refused as a conflict. A changed plan is a new version of the same plan.
@@ -74,6 +74,8 @@ export interface NewPlan {
 export function newPlan(request: NewPlan, by: UserId, at: IsoTimestamp): PlanWrite {
   const id = request.executionId as string as PlanId;
   const { validated } = request;
+  // A workflow's plan always waits for a person (ADR-0071): a template never runs by itself.
+  const approvalRequired = validated.approvalRequired || request.source.kind === 'workflow';
   const content = {
     planId: id,
     organizationId: request.organizationId,
@@ -81,7 +83,7 @@ export function newPlan(request: NewPlan, by: UserId, at: IsoTimestamp): PlanWri
     request: validated.request,
     steps: validated.steps,
     riskLevel: validated.riskLevel,
-    approvalRequired: validated.approvalRequired,
+    approvalRequired,
     estimate: validated.estimate,
     source: request.source,
   };
@@ -97,7 +99,7 @@ export function newPlan(request: NewPlan, by: UserId, at: IsoTimestamp): PlanWri
     id,
     organizationId: request.organizationId,
     executionId: request.executionId,
-    status: validated.approvalRequired ? 'approval_required' : 'ready',
+    status: approvalRequired ? 'approval_required' : 'ready',
     version: 1,
     delegations: Object.freeze([]),
     revision: 1,

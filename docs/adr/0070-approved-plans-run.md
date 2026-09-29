@@ -88,8 +88,8 @@ The worker's architecture test used to forbid `@melonoffice/planning`. It now al
 
 ## Open
 
-- A plan that is `ready` (no step asks for approval) cannot be approved, so it does not run. Should every plan need a person's approval? That is a product decision (WF-2).
+- A plan that is `ready` (no step asks for approval) cannot be approved, so it does not run. A workflow's plan is always `approval_required` since [ADR-0071](0071-workflows-over-http.md); a planner's plan still can be `ready`.
 - Tool, approval, condition, verification and parallel steps (WF-4 for `condition`, through the Decision Engine).
 - There is no sweeper. If the end hook fails, the plan waits until another step ends. This is the same known limit as ADR-0031 and ADR-0067.
 - There is no UI yet (WF-3). The API offers `GET /plans/:id/steps`: each step's state and, once it completed, its answer (`plan.read`).
-- Workflows are not reachable over HTTP yet (WF-2).
+- Workflows are reachable over HTTP since [ADR-0071](0071-workflows-over-http.md) (WF-2).

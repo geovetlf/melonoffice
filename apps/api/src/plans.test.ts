@@ -100,6 +100,7 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
     const workflows = createWorkflowService({
       repository: stores.workflows,
       plans,
+      executions,
       specialists,
       departments: stores.departments,
       organizations: stores.tenancy,
@@ -453,7 +454,8 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
     for (const path of ['/plans', `/plans/${plan.id}/delegate`, `/plans/${plan.id}/execute`]) {
       expect((await t.post('token-alice', path, {})).status).toBe(404);
     }
-    expect((await t.post('token-alice', '/workflows', {})).status).toBe(404);
+    // Workflows are created by the owner (ADR-0071), but never from an empty body.
+    expect((await t.post('token-alice', '/workflows', {})).status).toBe(400);
   });
 
   it('needs plan.read and approval.approve', async () => {
@@ -510,6 +512,161 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
       t.as('token-bob'),
     );
     expect(fromB.status).toBe(404);
+  });
+
+  describe('WF-2: the owner builds and plans a workflow', () => {
+    const researchStep = {
+      id: 'research',
+      kind: 'specialist',
+      label: 'Research',
+      dependsOn: [],
+      assignee: { departmentTypeId: 'research', roleId: 'market_researcher' },
+      verification: { policy: 'checks', expectedOutput: 'report', requiredChecks: [] },
+    };
+    const campaignStep = {
+      ...researchStep,
+      id: 'campaign',
+      label: 'Campaign',
+      dependsOn: ['research'],
+      assignee: { departmentTypeId: 'marketing', roleId: 'campaign_manager' },
+    };
+
+    async function activeWorkflow(t: Awaited<ReturnType<typeof setup>>, steps: unknown[]) {
+      const created = await t.post('token-alice', '/workflows', { name: 'Market study', steps });
+      expect(created.status).toBe(201);
+      const { id } = (await created.json()) as { id: string };
+      const active = await t.post('token-alice', `/workflows/${id}/status`, {
+        from: 'draft',
+        to: 'active',
+      });
+      expect(active.status).toBe(200);
+      return id;
+    }
+
+    it('creates, versions and activates a workflow, then plans it and the approved plan runs', async () => {
+      const t = await setup(ROLES, { runPlans: true });
+      const id = await activeWorkflow(t, [researchStep]);
+      const versioned = await t.post('token-alice', `/workflows/${id}/versions`, {
+        steps: [researchStep, campaignStep],
+      });
+      expect(versioned.status).toBe(201);
+      expect(await versioned.json()).toMatchObject({ id, version: 2, status: 'active' });
+
+      const planned = await t.post('token-alice', `/workflows/${id}/plans`, { requestKey: 'r-1' });
+      expect(planned.status).toBe(201);
+      const plan = (await planned.json()) as PlanDetail & {
+        current: { source: unknown; approvalRequired: boolean };
+      };
+      // Always waits for the person, even with no approval step.
+      expect(plan.status).toBe('approval_required');
+      expect(plan.current.approvalRequired).toBe(true);
+      expect(plan.current.source).toEqual({ kind: 'workflow', workflowId: id, workflowVersion: 2 });
+      expect(plan.current.steps.map((s) => s.id)).toEqual(['research', 'campaign']);
+      // The same request again is the same plan.
+      const again = await t.post('token-alice', `/workflows/${id}/plans`, { requestKey: 'r-1' });
+      expect(((await again.json()) as PlanDetail).id).toBe(plan.id);
+      expect(t.kicked).toEqual([]);
+
+      const approved = await t.post('token-alice', `/plans/${plan.id}/approve`, {
+        version: plan.current.version,
+        digest: plan.current.digest,
+      });
+      expect(approved.status).toBe(200);
+      const view = (await approved.json()) as {
+        status: string;
+        delegations: { stepId: string; executionId: string }[];
+      };
+      expect(view.status).toBe('executing');
+      // The first step is started and queued for the worker; the second waits on it.
+      const research = view.delegations.find((d) => d.stepId === 'research')?.executionId;
+      expect(t.kicked).toEqual([research]);
+    });
+
+    it('answers a refused plan with 422 and why, and keeps the answer for a repeat', async () => {
+      const t = await setup();
+      const id = await activeWorkflow(t, [
+        researchStep,
+        {
+          id: 'search',
+          kind: 'tool',
+          label: 'Search',
+          dependsOn: ['research'],
+          performedBy: 'research',
+          tool: { id: 'unknown_tool', version: 1 },
+        },
+      ]);
+      const refused = await t.post('token-alice', `/workflows/${id}/plans`, { requestKey: 'r' });
+      expect(refused.status).toBe(422);
+      const body = (await refused.json()) as { error: string; reason: string };
+      expect(body.error).toBe('plan_refused');
+      const again = await t.post('token-alice', `/workflows/${id}/plans`, { requestKey: 'r' });
+      expect(again.status).toBe(422);
+      expect(await again.json()).toEqual(body);
+    });
+
+    it('refuses bad bodies, wrong moves, inactive workflows and other organizations', async () => {
+      const t = await setup();
+      const bad = await t.post('token-alice', '/workflows', { name: 'X', steps: [], extra: 1 });
+      expect(bad.status).toBe(400);
+      const invalid = await t.post('token-alice', '/workflows', { name: 'X', steps: 'none' });
+      expect(invalid.status).toBe(400);
+      expect(await invalid.json()).toEqual({ error: 'invalid_workflow', detail: 'steps' });
+      const created = await t.post('token-alice', '/workflows', {
+        name: 'Market study',
+        steps: [researchStep],
+      });
+      const { id } = (await created.json()) as { id: string };
+      // Not active yet: nothing to plan.
+      const draft = await t.post('token-alice', `/workflows/${id}/plans`, { requestKey: 'r' });
+      expect(draft.status).toBe(409);
+      expect(await draft.json()).toEqual({ error: 'workflow_not_active' });
+      const wrong = await t.post('token-alice', `/workflows/${id}/status`, {
+        from: 'active',
+        to: 'paused',
+      });
+      expect(wrong.status).toBe(409);
+      const unknown = await t.post('token-alice', `/workflows/${id}/status`, {
+        from: 'draft',
+        to: 'running',
+      });
+      expect(unknown.status).toBe(400);
+      expect(
+        (await t.post('token-alice', `/workflows/${id}/plans`, { requestKey: 'bad key' })).status,
+      ).toBe(400);
+      // Another organization's workflow answers like a missing one.
+      for (const path of ['plans', 'versions', 'status']) {
+        const fromB = await t.app.request(
+          `/v1/organizations/${t.orgB}/workflows/${id}/${path}`,
+          t.as('token-bob', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(
+              path === 'plans'
+                ? { requestKey: 'r' }
+                : path === 'status'
+                  ? { from: 'draft', to: 'active' }
+                  : { steps: [researchStep] },
+            ),
+          }),
+        );
+        expect(fromB.status).toBe(404);
+      }
+    });
+
+    it('needs workflow.manage to change a workflow and plan.create to plan one', async () => {
+      const t = await setup({
+        owner: ROLES.owner.filter((p) => p !== 'workflow.manage' && p !== 'plan.create'),
+      });
+      const created = await t.post('token-alice', '/workflows', {
+        name: 'Market study',
+        steps: [researchStep],
+      });
+      expect(created.status).toBe(403);
+      // The permission is checked before the workflow is looked up.
+      const id = '00000000-0000-4000-8000-000000000000';
+      const planned = await t.post('token-alice', `/workflows/${id}/plans`, { requestKey: 'r' });
+      expect(planned.status).toBe(403);
+    });
   });
 
   describe('delegation', () => {
