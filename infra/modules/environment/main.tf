@@ -897,3 +897,17 @@ resource "google_storage_bucket_iam_member" "api_documents_viewer" {
   role   = "roles/storage.objectViewer"
   member = "serviceAccount:${module.app["api"].runtime_service_account}"
 }
+
+# Reading a scanned PDF (ADR-0079): the api gives Gemini a `gs://` reference into this bucket,
+# and Vertex AI reads the object with its own service agent, not the api's identity. It may read
+# objects of this bucket only, and only where both documents and assisted AI are on. Which
+# object a call names is decided in code: only the calling organization's own document.
+resource "google_storage_bucket_iam_member" "vertex_ai_documents_viewer" {
+  count = local.document_storage_enabled && local.ai_assist_enabled ? 1 : 0
+
+  bucket = google_storage_bucket.documents[0].name
+  role   = "roles/storage.objectViewer"
+  member = "serviceAccount:service-${data.google_project.this[0].number}@gcp-sa-aiplatform.iam.gserviceaccount.com"
+
+  depends_on = [module.services]
+}

@@ -242,7 +242,12 @@ describe.each(STORES)('documents with storage in %s', (_name, createStores) => {
 
   it('lists newest first, one page at a time', async () => {
     const { upload, json, base, orgA } = await setup();
-    for (const n of [1, 2, 3]) await upload(utf8(`Documento ${n}`), { name: `d${n}.txt` });
+    for (const n of [1, 2, 3]) {
+      // Uploads in the same millisecond would share a time and fall back to id order.
+      const at = Date.now();
+      while (Date.now() === at) await new Promise((resolve) => setTimeout(resolve, 1));
+      await upload(utf8(`Documento ${n}`), { name: `d${n}.txt` });
+    }
     const first = await json('token-alice', 'GET', `${base(orgA)}?limit=2`);
     expect(first.body.documents?.map((d) => d.name)).toEqual(['d3.txt', 'd2.txt']);
     const second = await json(

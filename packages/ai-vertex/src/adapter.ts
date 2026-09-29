@@ -9,7 +9,11 @@ import type {
   ProviderOutcome,
   ProviderStreamEvent,
 } from '@melonoffice/ai-gateway';
-import { readServerSentEvents, ServerSentEventsTooLarge } from '@melonoffice/ai-gateway';
+import {
+  readServerSentEvents,
+  ServerSentEventsTooLarge,
+  STORED_DOCUMENT_KEY,
+} from '@melonoffice/ai-gateway';
 import type { ToolSchema } from '@melonoffice/domain';
 import { VERTEX_AI_PROVIDER } from './catalogue.js';
 
@@ -24,7 +28,7 @@ import { VERTEX_AI_PROVIDER } from './catalogue.js';
  * message, so the gateway decides on retries alone and nothing the provider says reaches a log,
  * an audit event or a person.
  */
-export const VERTEX_ADAPTER_VERSION = '3';
+export const VERTEX_ADAPTER_VERSION = '4';
 
 export const METADATA_TOKEN_URL =
   'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token';
@@ -34,6 +38,12 @@ export interface VertexAIAdapterOptions {
   readonly projectId: string;
   /** Its Vertex AI location, e.g. `us-central1`. */
   readonly location: string;
+  /**
+   * The documents bucket (ADR-0078), from configuration: a stored PDF is given to the model as a
+   * `gs://` reference into it, which Vertex AI reads with its own service agent (ADR-0079).
+   * Absent: a call with a document is refused as `invalid_request`.
+   */
+  readonly documentsBucket?: string;
   readonly fetch?: typeof fetch;
   readonly now?: () => Date;
 }
@@ -42,6 +52,8 @@ const PROJECT = /^[a-z][a-z0-9-]{4,28}[a-z0-9]$/;
 const LOCATION = /^[a-z]+-[a-z]+[0-9]{1,2}$/;
 const MODEL = /^[a-z0-9][a-z0-9.-]{0,63}$/;
 const RESPONSE_ID = /^[A-Za-z0-9._:-]{1,200}$/;
+// Bucket names without dots, as the documents bucket is named (ADR-0078).
+const BUCKET = /^[a-z0-9][a-z0-9_-]{1,61}[a-z0-9]$/;
 const CALL_ID = /^[A-Za-z0-9_-]{1,64}$/;
 /** Larger answers are refused rather than read: no call here asks for anything near it. */
 const MAX_RESPONSE_BYTES = 1_000_000;
@@ -143,8 +155,17 @@ const responseObject = (result: unknown): Record<string, unknown> =>
     ? (result as Record<string, unknown>)
     : { result };
 
-/** The request body, or undefined when the call asks for something this adapter cannot send. */
-export function vertexRequestOf(call: ProviderCall): Record<string, unknown> | undefined {
+/**
+ * The request body, or undefined when the call asks for something this adapter cannot send. A
+ * stored document is sent only with the documents bucket, only from a `user` message, and only
+ * under a key of the documents' own shape (ADR-0079); the gateway has already checked that it is
+ * the tenant's. Other media is never sent.
+ */
+export function vertexRequestOf(
+  call: ProviderCall,
+  options: { readonly documentsBucket?: string } = {},
+): Record<string, unknown> | undefined {
+  const { documentsBucket } = options;
   const system: { text: string }[] = [];
   const contents: { role: 'user' | 'model'; parts: VertexPart[] }[] = [];
   for (const message of call.messages as readonly AIMessage[]) {
@@ -157,8 +178,24 @@ export function vertexRequestOf(call: ProviderCall): Record<string, unknown> | u
         parts.push({
           functionResponse: { name: part.name, response: responseObject(part.result) },
         });
+      } else if (part.type === 'document') {
+        if (
+          documentsBucket === undefined ||
+          message.role !== 'user' ||
+          part.mimeType !== 'application/pdf' ||
+          part.ref.type !== 'stored_document' ||
+          !STORED_DOCUMENT_KEY.test(part.ref.id)
+        ) {
+          return undefined;
+        }
+        parts.push({
+          fileData: {
+            mimeType: 'application/pdf',
+            fileUri: `gs://${documentsBucket}/${part.ref.id}`,
+          },
+        });
       }
-      // Media is not sent in this version: text only (ADR-0038).
+      // Other media is not sent in this version (ADR-0038).
       else return undefined;
     }
     if (message.role === 'system') {
@@ -382,9 +419,16 @@ export class VertexStreamChunks {
  * a request; the model id comes from the registry.
  */
 export function createVertexAIAdapter(options: VertexAIAdapterOptions): ProviderAdapter {
-  const { projectId, location } = options;
+  const { projectId, location, documentsBucket } = options;
   if (!PROJECT.test(projectId)) throw new Error('vertex_ai.projectId');
   if (!LOCATION.test(location)) throw new Error('vertex_ai.location');
+  if (
+    documentsBucket !== undefined &&
+    (!BUCKET.test(documentsBucket) || documentsBucket.startsWith('goog'))
+  ) {
+    throw new Error('vertex_ai.documentsBucket');
+  }
+  const requestOptions = documentsBucket === undefined ? {} : { documentsBucket };
   const call = options.fetch ?? fetch;
   const now = options.now ?? (() => new Date());
   const endpoint = `https://${location}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/publishers/google/models`;
@@ -429,7 +473,7 @@ export function createVertexAIAdapter(options: VertexAIAdapterOptions): Provider
       return error('invalid_request');
     }
     if (!MODEL.test(request.model.id)) return error('invalid_request');
-    const body = vertexRequestOf(request);
+    const body = vertexRequestOf(request, requestOptions);
     if (body === undefined) return error('invalid_request');
     const remaining = request.deadline.getTime() - now().getTime();
     if (remaining <= 0) return error('timeout');

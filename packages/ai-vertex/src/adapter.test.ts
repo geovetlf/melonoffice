@@ -16,6 +16,7 @@ import {
   vertexRequestOf,
 } from './adapter.js';
 import { GEMINI_2_5_FLASH_LITE_MODEL, VERTEX_AI_MODELS, VERTEX_AI_PROVIDER } from './catalogue.js';
+import { AGENT_TASK_POLICY, CONVERSATION_AGENT_POLICY, DOCUMENT_READ_POLICY } from './policies.js';
 
 const T0 = new Date('2026-09-27T12:00:00.000Z');
 /** Credential-shaped test values, built at run time so secret scanners do not flag the source. */
@@ -550,3 +551,121 @@ function must<T>(value: T | undefined): T {
   if (value === undefined) throw new Error('missing');
   return value;
 }
+
+describe('Vertex AI stored documents (ADR-0079)', () => {
+  const ORG = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const DOC = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+  const KEY = `organizations/${ORG}/documents/${DOC}`;
+  const documentCall = (id = KEY, role: 'user' | 'system' = 'user') =>
+    call({
+      structuredOutput: false,
+      messages: [
+        { role: 'system', content: [{ type: 'text', text: 'Transcribe.' }] },
+        {
+          role,
+          content: [
+            {
+              type: 'document',
+              mimeType: 'application/pdf',
+              ref: { type: 'stored_document', id },
+              pages: 2,
+            },
+            { type: 'text', text: 'Transcribe the attached document.' },
+          ],
+        },
+      ],
+    });
+
+  it('sends a stored PDF as a gs:// reference into the documents bucket, never its bytes', async () => {
+    const net = network(() => Response.json(answer('Factura 001')));
+    const adapter = createVertexAIAdapter({
+      projectId: 'melonoffice-test',
+      location: 'us-central1',
+      documentsBucket: 'melonoffice-test-documents',
+      fetch: net.fetchFn,
+      now: () => T0,
+    });
+    expect(await adapter.generate(documentCall())).toMatchObject({
+      status: 'success',
+      output: { text: 'Factura 001' },
+    });
+    const body = JSON.parse(String(net.sent[1]?.init?.body)) as {
+      contents: { role: string; parts: unknown[] }[];
+    };
+    expect(body.contents).toEqual([
+      {
+        role: 'user',
+        parts: [
+          {
+            fileData: {
+              mimeType: 'application/pdf',
+              fileUri: `gs://melonoffice-test-documents/${KEY}`,
+            },
+          },
+          { text: 'Transcribe the attached document.' },
+        ],
+      },
+    ]);
+    expect(adapter.adapterVersion).toBe('4');
+  });
+
+  it('refuses a document without the bucket, outside a person message, or under another key', async () => {
+    const bucket = { documentsBucket: 'melonoffice-test-documents' };
+    expect(vertexRequestOf(documentCall())).toBeUndefined();
+    expect(vertexRequestOf(documentCall(KEY, 'system'), bucket)).toBeUndefined();
+    for (const id of [
+      `organizations/${ORG}/documents/${DOC}/../x`,
+      `organizations/${ORG}/other/${DOC}`,
+      `gs://elsewhere/${KEY}`,
+      `../${KEY}`,
+      'organizations/x/documents/y',
+    ]) {
+      expect(vertexRequestOf(documentCall(id), bucket)).toBeUndefined();
+    }
+    expect(vertexRequestOf(documentCall(), bucket)).toBeDefined();
+    // Without the bucket, the adapter answers invalid_request and calls nothing.
+    const net = network(() => Response.json(answer('x')));
+    expect(await adapterWith(net.fetchFn).generate(documentCall())).toEqual({
+      status: 'error',
+      kind: 'invalid_request',
+    });
+    expect(net.sent).toEqual([]);
+  });
+
+  it('refuses a documents bucket that is not a plain bucket name', () => {
+    for (const documentsBucket of ['', 'a', 'gs://x', 'Bucket', 'a/b', 'goog-docs', 'x.y.z']) {
+      expect(() =>
+        createVertexAIAdapter({
+          projectId: 'melonoffice',
+          location: 'us-central1',
+          documentsBucket,
+        }),
+      ).toThrow('vertex_ai.documentsBucket');
+    }
+  });
+
+  it('takes documents on Gemini 2.5 Flash-Lite, and only the document policy allows them', () => {
+    expect(GEMINI_2_5_FLASH_LITE_MODEL.inputModalities).toEqual(['text', 'document']);
+    expect(VERTEX_AI_PROVIDER.modalities).toEqual(['text', 'document']);
+    expect(DOCUMENT_READ_POLICY).toMatchObject({
+      id: 'document_read',
+      version: 1,
+      allowedModels: ['google-vertex-ai/gemini-2.5-flash-lite'],
+      allowedModalities: ['text', 'document'],
+      environments: ['dev'],
+      maxSensitivity: 'confidential',
+      maxCostMicroUsd: 10_000,
+      fallback: 'none',
+      maxAttempts: 2,
+    });
+    for (const policy of [CONVERSATION_AGENT_POLICY, AGENT_TASK_POLICY]) {
+      expect(policy.allowedModalities).toEqual(['text']);
+    }
+    // The worst case one call may take: 100 pages and 16,000 output tokens, within 1 credit.
+    const worst = costMicroUsd(GEMINI_2_5_FLASH_LITE_MODEL.pricing, {
+      inputTokens: 100 + 100 * 258 + 200,
+      outputTokens: 16_000,
+    });
+    expect(worst).toBeLessThanOrEqual(CREDIT_RATE.microUsdPerCredit);
+  });
+});

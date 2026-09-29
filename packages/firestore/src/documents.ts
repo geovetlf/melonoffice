@@ -16,6 +16,7 @@ import type {
   DocumentContentType,
   DocumentId,
   DocumentIngestionCode,
+  DocumentTextSource,
   IsoTimestamp,
   OrganizationId,
   StoredDocument,
@@ -45,6 +46,9 @@ interface DocumentDocument {
   readonly status: string;
   readonly ingestion: string | null;
   readonly knowledgeDocumentId: string | null;
+  /** How its text was read (ADR-0079). Absent on records written before DOC-2. */
+  readonly textSource?: string | null;
+  readonly pages?: number | null;
   readonly uploadedBy: string;
   readonly createdAt: FirestoreTimestamp;
   readonly updatedAt: FirestoreTimestamp;
@@ -60,6 +64,8 @@ const toDocument = (document: StoredDocument): DocumentDocument => ({
   status: document.status,
   ingestion: document.ingestion ?? null,
   knowledgeDocumentId: document.knowledgeDocumentId ?? null,
+  textSource: document.textSource ?? null,
+  pages: document.pages ?? null,
   uploadedBy: document.uploadedBy,
   createdAt: Timestamp.fromDate(new Date(document.createdAt)),
   updatedAt: Timestamp.fromDate(new Date(document.updatedAt)),
@@ -78,6 +84,10 @@ const toStored = (id: string, data: DocumentData): StoredDocument => {
     status: d.status as StoredDocumentStatus,
     ...(d.ingestion === null ? {} : { ingestion: d.ingestion as DocumentIngestionCode }),
     ...(d.knowledgeDocumentId === null ? {} : { knowledgeDocumentId: d.knowledgeDocumentId }),
+    ...(d.textSource === undefined || d.textSource === null
+      ? {}
+      : { textSource: d.textSource as DocumentTextSource }),
+    ...(d.pages === undefined || d.pages === null ? {} : { pages: d.pages }),
     uploadedBy: d.uploadedBy as UserId,
     createdAt: d.createdAt.toDate().toISOString() as IsoTimestamp,
     updatedAt: d.updatedAt.toDate().toISOString() as IsoTimestamp,
@@ -135,6 +145,8 @@ export class FirestoreDocumentRepository implements DocumentRepository {
         status: changed.status,
         ingestion: changed.ingestion ?? null,
         knowledgeDocumentId: changed.knowledgeDocumentId ?? null,
+        textSource: changed.textSource ?? null,
+        pages: changed.pages ?? null,
         updatedAt: Timestamp.fromDate(new Date(changed.updatedAt)),
       });
       return changed;

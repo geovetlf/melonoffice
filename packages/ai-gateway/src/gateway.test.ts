@@ -54,7 +54,12 @@ import type { AICreditsPort } from './credits.js';
 import { ASSIST_MODEL_POLICIES, createAIGateway } from './gateway.js';
 import { createModelPolicyCatalogue, DEFAULT_MODEL_POLICY } from './policy.js';
 import { createProviderRegistry } from './registry.js';
-import type { AIRequest, AssistedAIRequest } from './request.js';
+import {
+  estimateInputTokens,
+  inputModalitiesOf,
+  type AIRequest,
+  type AssistedAIRequest,
+} from './request.js';
 import type { AIToolDefinition } from './tools.js';
 
 const T0 = new Date('2026-09-27T12:00:00Z');
@@ -1067,6 +1072,7 @@ describe('AI gateway: assisted calls (ADR-0037)', () => {
       company_knowledge: { id: 'company_knowledge_assist', version: 1 },
       gia: { id: 'gia_assist', version: 1 },
       decision: { id: 'decision_assist', version: 1 },
+      document: { id: 'document_read', version: 1 },
     });
   });
 
@@ -1689,5 +1695,193 @@ describe('AI gateway: streaming (R4, ADR-0077)', () => {
       status: 'denied',
       code: 'assist_requires_user',
     });
+  });
+});
+
+describe('AI gateway: stored documents (ADR-0079)', () => {
+  const DOCUMENT = '44444444-4444-4444-8444-444444444444';
+  const OTHER_DOCUMENT = '55555555-5555-4555-8555-555555555555';
+  const readPolicy: ModelPolicy = {
+    ...onlyModels('alpha/alpha-doc'),
+    id: ASSIST_MODEL_POLICIES.document.id as PolicyId,
+    allowedModalities: ['text', 'document'],
+    maxSensitivity: 'confidential',
+    // 1 credit at the test rate of 1,000 millionths of a dollar.
+    maxCostMicroUsd: 1_000,
+    fallback: 'none',
+  };
+  const docModel = model('alpha', 'alpha-doc', {
+    inputModalities: ['text', 'document'],
+    maxSensitivity: 'confidential',
+    contextWindowTokens: 1_000_000,
+    maxOutputTokens: 65_000,
+    pricing: {
+      status: 'known',
+      currency: 'USD',
+      inputMicroUsdPerMillionTokens: 10_000,
+      outputMicroUsdPerMillionTokens: 40_000,
+      source: 'test fixture',
+      asOf: '2026-09-01',
+    },
+  });
+  const part = (organizationId: string, documentId = DOCUMENT, pages = 3) => ({
+    type: 'document',
+    mimeType: 'application/pdf',
+    ref: { type: 'stored_document', id: `organizations/${organizationId}/documents/${documentId}` },
+    pages,
+  });
+  const reading = (organizationId: string, overrides: Partial<Record<string, unknown>> = {}) =>
+    assisted({
+      requestId: `document-read-${DOCUMENT}`,
+      subject: { type: 'document', id: DOCUMENT },
+      taskType: 'document_transcription',
+      requirements: undefined,
+      messages: [
+        { role: 'system', content: [{ type: 'text', text: 'Transcribe.' }] },
+        {
+          role: 'user',
+          content: [part(organizationId), { type: 'text', text: 'Transcribe the document.' }],
+        },
+      ],
+      maxOutputTokens: 16_000,
+      ...overrides,
+    });
+
+  it("reads the tenant's own document, needing document.upload and its own policy", async () => {
+    const w = await world({ policies: [readPolicy], models: [...MODELS, docModel] });
+    const response = await w.gateway.assist(w.tenantA, reading(w.orgA));
+    expect(response).toMatchObject({
+      status: 'completed',
+      model: 'alpha-doc',
+      versions: { policy: { id: 'document_read', version: 1 } },
+    });
+    expect(w.calls[0]?.messages[1]?.content[0]).toEqual(part(w.orgA));
+    expect(w.events('ai.request_denied')).toEqual([]);
+    expect(w.credits.spent.get(`${w.orgA}\nai:document-read-${DOCUMENT}`)).toBeGreaterThan(0);
+
+    const withoutUpload = ROLES.owner.filter((p) => p !== 'document.upload');
+    const narrowed = await world({
+      policies: [readPolicy],
+      models: [...MODELS, docModel],
+      roles: { owner: withoutUpload },
+    });
+    expect(await narrowed.gateway.assist(narrowed.tenantA, reading(narrowed.orgA))).toMatchObject({
+      status: 'denied',
+      code: 'permission_denied',
+    });
+    expect(narrowed.calls).toEqual([]);
+  });
+
+  it("refuses another organization's document as smuggled authority, and audits it", async () => {
+    const w = await world({ policies: [readPolicy], models: [...MODELS, docModel] });
+    const response = await w.gateway.assist(w.tenantA, reading(w.orgB));
+    expect(response).toMatchObject({ status: 'denied', code: 'authority_in_input' });
+    expect(w.calls).toEqual([]);
+    expect(w.events('ai.request_denied')).toHaveLength(1);
+    expect(w.events('ai.request_denied')[0]).toMatchObject({
+      result: 'denied',
+      organizationId: w.orgA,
+      target: { type: 'document', id: DOCUMENT },
+      reason: 'authority_in_input',
+    });
+    // Neither the key nor the other organization reaches the audit trail.
+    expect(JSON.stringify(w.events())).not.toContain(`organizations/${w.orgB}`);
+    expect([...w.credits.spent.values()]).toEqual([]);
+  });
+
+  it('refuses a document that is not the subject, a malformed part, and documents in a specialist call', async () => {
+    const w = await world({ policies: [readPolicy], models: [...MODELS, docModel] });
+    const withContent = (content: unknown[]) =>
+      reading(w.orgA, { messages: [{ role: 'user', content }] });
+    const cases: [AssistedAIRequest, string][] = [
+      // Another document of the same organization than the one the call is about.
+      [withContent([part(w.orgA, OTHER_DOCUMENT)]), 'invalid_request'],
+      // A document in a call about something else.
+      [reading(w.orgA, { subject: { type: 'conversation', id: CONVERSATION } }), 'invalid_request'],
+      [withContent([part(w.orgA, DOCUMENT, 0)]), 'invalid_request'],
+      [withContent([part(w.orgA, DOCUMENT, 101)]), 'invalid_request'],
+      [withContent([{ ...part(w.orgA), mimeType: 'image/png' }]), 'invalid_request'],
+      [withContent([{ ...part(w.orgA), ref: { type: 'url', id: 'x' } }]), 'invalid_request'],
+      [
+        withContent([
+          { ...part(w.orgA), ref: { type: 'stored_document', id: `gs://bucket/${DOCUMENT}` } },
+        ]),
+        'invalid_request',
+      ],
+      [
+        withContent([
+          {
+            ...part(w.orgA),
+            ref: {
+              type: 'stored_document',
+              id: `organizations/${w.orgA}/documents/../${OTHER_DOCUMENT}`,
+            },
+          },
+        ]),
+        'invalid_request',
+      ],
+      [withContent([{ ...part(w.orgA), organizationId: w.orgA }]), 'authority_in_input'],
+      [withContent([part(w.orgA), part(w.orgA)]), 'invalid_request'],
+    ];
+    for (const [request, code] of cases) {
+      expect(await w.gateway.assist(w.tenantA, request)).toMatchObject({ status: 'denied', code });
+    }
+    // Only a person's message carries a document.
+    expect(
+      await w.gateway.assist(
+        w.tenantA,
+        reading(w.orgA, { messages: [{ role: 'system', content: [part(w.orgA)] }] }),
+      ),
+    ).toMatchObject({ status: 'denied', code: 'invalid_request' });
+    expect(w.calls).toEqual([]);
+
+    const s = await setup({ policies: [readPolicy], models: [...MODELS, docModel] });
+    const inGenerate = (organizationId: string) =>
+      s.call({ messages: [{ role: 'user', content: [part(organizationId)] }] });
+    expect(await inGenerate(s.w.orgA)).toMatchObject({ status: 'denied', code: 'invalid_request' });
+    expect(await inGenerate(s.w.orgB)).toMatchObject({
+      status: 'denied',
+      code: 'authority_in_input',
+    });
+    expect(s.w.calls).toEqual([]);
+  });
+
+  it('never routes a document to a model or policy without the document modality', async () => {
+    const w = await world({
+      policies: [{ ...readPolicy, allowedModalities: ['text'] }],
+      models: [...MODELS, docModel],
+    });
+    expect(await w.gateway.assist(w.tenantA, reading(w.orgA))).toMatchObject({
+      status: 'denied',
+      code: 'modality_unsupported',
+    });
+    const textOnly = await world({
+      policies: [readPolicy],
+      models: [...MODELS, { ...docModel, inputModalities: ['text'] }],
+    });
+    expect(await textOnly.gateway.assist(textOnly.tenantA, reading(textOnly.orgA))).toMatchObject({
+      status: 'denied',
+      code: 'modality_unsupported',
+    });
+  });
+
+  it('estimates 258 tokens a page, and a 100-page read fits the 1-credit cap', async () => {
+    expect(inputModalitiesOf(reading('x'))).toEqual(['text', 'document']);
+    const hundred = reading('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', {
+      messages: [
+        { role: 'user', content: [part('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', DOCUMENT, 100)] },
+      ],
+    });
+    expect(estimateInputTokens(hundred)).toBe(100 + 100 * 258);
+    const w = await world({ policies: [readPolicy], models: [...MODELS, docModel] });
+    const full = reading(w.orgA, {
+      messages: [{ role: 'user', content: [part(w.orgA, DOCUMENT, 100)] }],
+    });
+    // 25,900 × 0.01 + 16,000 × 0.04 = 899 millionths: within the 1,000 cap.
+    expect(await w.gateway.assist(w.tenantA, full)).toMatchObject({ status: 'completed' });
+    // Asking for more output than the cap covers is refused before any call.
+    expect(
+      await w.gateway.assist(w.tenantA, { ...full, requestId: 'r2', maxOutputTokens: 20_000 }),
+    ).toMatchObject({ status: 'denied', code: 'cost_limit_exceeded' });
   });
 });

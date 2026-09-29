@@ -1,15 +1,27 @@
+import {
+  checkAssistedAIRequest,
+  type AIGateway,
+  type AIResponse,
+  type AssistedAIRequest,
+} from '@melonoffice/ai-gateway';
 import { InMemoryAuditStore } from '@melonoffice/audit';
 import type { AuthenticatedContext } from '@melonoffice/auth';
-import { createCompanyBrain, InMemoryKnowledgeRepository } from '@melonoffice/brain';
+import {
+  createCompanyBrain,
+  InMemoryKnowledgeRepository,
+  type CompanyBrainService,
+} from '@melonoffice/brain';
 import { openWallet } from '@melonoffice/credits';
 import { DEFAULT_DEPARTMENT_CATALOGUE, provisionDepartments } from '@melonoffice/departments';
 import type { InitialBilling, Organization, SubscriptionId, UserId } from '@melonoffice/domain';
+import { createLogger } from '@melonoffice/observability';
 import { createAuthorizationService, ROLES, type Permission } from '@melonoffice/rbac';
 import {
   createOrganization,
   InMemoryTenancyStore,
   resolveRuntimeTenant,
   resolveTenant,
+  type TenantContext,
 } from '@melonoffice/tenancy';
 import { describe, expect, it } from 'vitest';
 import {
@@ -18,6 +30,9 @@ import {
   checkDocumentName,
   createDocumentService,
   createGcsFileStore,
+  createTextExtractor,
+  DOCUMENT_TRANSCRIPTION_MAX_OUTPUT_TOKENS,
+  DOCUMENT_TRANSCRIPTION_PROMPT,
   DocumentError,
   DOCX_CONTENT_TYPE,
   InMemoryDocumentRepository,
@@ -27,7 +42,10 @@ import {
   METADATA_TOKEN_URL,
   type DocumentServiceOptions,
   type FileStore,
+  type TextExtraction,
+  type TextExtractor,
 } from './index.js';
+import { blankPage, buildDocx, buildPdf, textPage } from './test-fixtures.js';
 
 const ALICE = '11111111-1111-4111-8111-111111111111' as UserId;
 const BOB = '22222222-2222-4222-8222-222222222222' as UserId;
@@ -71,6 +89,8 @@ async function world(
     readonly without?: readonly Permission[];
     readonly files?: FileStore | null;
     readonly knowledge?: DocumentServiceOptions['knowledge'] | null;
+    readonly extractor?: DocumentServiceOptions['extractor'];
+    readonly gateway?: DocumentServiceOptions['gateway'];
   } = {},
 ) {
   let tick = 0;
@@ -98,16 +118,22 @@ async function world(
   });
   const files = new InMemoryFileStore();
   const repository = new InMemoryDocumentRepository(audit);
+  const logs: string[] = [];
+  const logger = createLogger({ service: 'documents-test', sink: (line) => logs.push(line) });
   const service = createDocumentService({
     repository,
     ...(options.files === null ? {} : { files: options.files ?? files }),
     authorization,
     ...(options.knowledge === null ? {} : { knowledge: options.knowledge ?? brain }),
+    ...(options.extractor === undefined ? {} : { extractor: options.extractor }),
+    ...(options.gateway === undefined ? {} : { gateway: options.gateway }),
     now,
     requestId: 'req-1',
+    logger,
   });
   return {
     service,
+    logs,
     files,
     repository,
     audit,
@@ -139,6 +165,7 @@ describe('Documents: uploading (ADR-0078)', () => {
       sizeBytes: 19,
       storageKey: `organizations/${w.orgA}/documents/${document.id}`,
       status: 'ingested',
+      textSource: 'file',
       uploadedBy: ALICE,
     });
     expect(document.id).toMatch(
@@ -167,7 +194,7 @@ describe('Documents: uploading (ADR-0078)', () => {
     expect(new TextDecoder().decode(content.bytes)).toBe('Combo Familiar S/45');
   });
 
-  it('keeps a PDF and a DOCX without reading them', async () => {
+  it('keeps a PDF and a DOCX without reading them when no reader is configured', async () => {
     const w = await world();
     const pdf = await w.service.upload(w.alice, {
       name: 'Contrato.pdf',
@@ -498,5 +525,367 @@ describe('Cloud Storage file store', () => {
     await expect(noToken.put(KEY, utf8('x'), 'text/plain')).rejects.toThrow(
       'storage_unavailable: token',
     );
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// DOC-2 (ADR-0079): reading PDF and DOCX text.
+
+/** A reader that answers what the test says, and remembers what it was given. */
+function fakeExtractor(result: TextExtraction) {
+  const calls: { contentType: string; size: number }[] = [];
+  const extractor: TextExtractor = {
+    extract: async (contentType, bytes) => {
+      calls.push({ contentType, size: bytes.length });
+      return result;
+    },
+  };
+  return { extractor, calls };
+}
+
+/** An AI Gateway that answers what the test says, and remembers every assisted call. */
+function fakeGateway(answer: (request: AssistedAIRequest) => AIResponse) {
+  const calls: { tenant: TenantContext; request: AssistedAIRequest }[] = [];
+  const gateway: Pick<AIGateway, 'assist'> = {
+    assist: async (tenant, request) => {
+      calls.push({ tenant, request });
+      return answer(request);
+    },
+  };
+  return { gateway, calls };
+}
+
+const completed = (
+  text: string,
+  finishReason: 'stop' | 'length' = 'stop',
+): ((request: AssistedAIRequest) => AIResponse) => {
+  return (request) => ({
+    status: 'completed',
+    requestId: request.requestId,
+    provider: 'google-vertex-ai',
+    model: 'gemini-2.5-flash-lite',
+    versions: { adapter: '4', model: 'stable', policy: { id: 'document_read', version: 1 } },
+    output: { text },
+    usage: { inputTokens: 600, outputTokens: 40 },
+    latencyMs: 5,
+    finishReason,
+    cost: { estimatedMicroUsd: 7_000, actualMicroUsd: 76 },
+    credits: { state: 'consumed', estimated: 1, consumed: 1 },
+    providerRequestId: null,
+    attempts: 1,
+    fallbackFrom: null,
+    strategy: 'balanced',
+  });
+};
+
+const denied =
+  (code: string) =>
+  (request: AssistedAIRequest): AIResponse => ({
+    status: 'denied',
+    requestId: request.requestId,
+    code,
+  });
+
+const pdf = (bytes: Uint8Array = PDF) => ({
+  name: 'Escaneo.pdf',
+  contentType: 'application/pdf',
+  bytes,
+});
+const docx = (bytes: Uint8Array = DOCX) => ({
+  name: 'Propuesta.docx',
+  contentType: DOCX_CONTENT_TYPE,
+  bytes,
+});
+
+describe('Documents: reading PDF and DOCX text (ADR-0079)', () => {
+  it('gives text a library read to Company Brain, and says it was read by a library', async () => {
+    const reader = fakeExtractor({
+      status: 'text',
+      text: 'Precio mayorista S/12',
+      pages: 2,
+      truncated: false,
+    });
+    const ai = fakeGateway(completed('never used'));
+    const w = await world({ extractor: reader.extractor, gateway: ai.gateway });
+    const { document } = await w.service.upload(w.alice, pdf());
+    expect(document).toMatchObject({ status: 'ingested', textSource: 'library', pages: 2 });
+    expect(reader.calls).toEqual([{ contentType: 'application/pdf', size: PDF.length }]);
+    expect(ai.calls).toEqual([]);
+    const knowledge = await w.knowledgeRepository.findDocument(
+      w.orgA,
+      document.knowledgeDocumentId ?? '',
+    );
+    expect(knowledge?.text).toBe('Precio mayorista S/12');
+    expect(await w.service.get(w.alice, document.id)).toEqual(document);
+
+    const docxRead = await w.service.upload(w.alice, docx());
+    expect(docxRead.document).toMatchObject({ status: 'ingested', textSource: 'library' });
+  });
+
+  it('reads a PDF with no text layer with the model, through an assisted call about it', async () => {
+    const reader = fakeExtractor({ status: 'text', text: ' \n ', pages: 3, truncated: false });
+    const ai = fakeGateway(completed('Factura 001\nTotal S/90'));
+    const w = await world({ extractor: reader.extractor, gateway: ai.gateway });
+    const { document } = await w.service.upload(w.alice, pdf());
+    expect(document).toMatchObject({ status: 'ingested', textSource: 'model', pages: 3 });
+    expect(ai.calls).toHaveLength(1);
+    const [call] = ai.calls;
+    expect(call?.tenant).toBe(w.alice);
+    expect(call?.request).toEqual({
+      requestId: `document-read-${document.id}`,
+      subject: { type: 'document', id: document.id },
+      taskType: 'document_transcription',
+      capability: 'text_generation',
+      messages: [
+        { role: 'system', content: [{ type: 'text', text: DOCUMENT_TRANSCRIPTION_PROMPT }] },
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'document',
+              mimeType: 'application/pdf',
+              ref: {
+                type: 'stored_document',
+                id: `organizations/${w.orgA}/documents/${document.id}`,
+              },
+              pages: 3,
+            },
+            { type: 'text', text: 'Transcribe the attached document.' },
+          ],
+        },
+      ],
+      outputModality: 'text',
+      maxOutputTokens: DOCUMENT_TRANSCRIPTION_MAX_OUTPUT_TOKENS,
+      sensitivity: 'confidential',
+    });
+    // The request passes the gateway's own checks.
+    expect(checkAssistedAIRequest(call?.request)).toBeUndefined();
+    // Nothing from the document or its name reaches the prompt.
+    expect(JSON.stringify(call?.request)).not.toContain('Escaneo');
+    const knowledge = await w.knowledgeRepository.findDocument(
+      w.orgA,
+      document.knowledgeDocumentId ?? '',
+    );
+    expect(knowledge?.text).toBe('Factura 001\nTotal S/90');
+  });
+
+  it('never asks the model about a DOCX, a long PDF, or text Company Brain could not take', async () => {
+    const blank = { status: 'text', text: '', truncated: false } as const;
+    const ai = fakeGateway(completed('x'));
+    const emptyDocx = await world({
+      extractor: fakeExtractor(blank).extractor,
+      gateway: ai.gateway,
+    });
+    expect((await emptyDocx.service.upload(emptyDocx.alice, docx())).document).toMatchObject({
+      status: 'not_ingested',
+      ingestion: 'no_text',
+      textSource: 'library',
+    });
+    const long = await world({
+      extractor: fakeExtractor({ ...blank, pages: 101 }).extractor,
+      gateway: ai.gateway,
+    });
+    expect((await long.service.upload(long.alice, pdf())).document).toMatchObject({
+      status: 'not_ingested',
+      ingestion: 'too_many_pages',
+      pages: 101,
+    });
+    const reader = fakeExtractor({ ...blank, pages: 1 });
+    const noPropose = await world({
+      extractor: reader.extractor,
+      gateway: ai.gateway,
+      without: ['knowledge.propose'],
+    });
+    expect((await noPropose.service.upload(noPropose.alice, pdf())).document).toMatchObject({
+      status: 'not_ingested',
+      ingestion: 'not_permitted',
+    });
+    const noBrain = await world({
+      extractor: reader.extractor,
+      gateway: ai.gateway,
+      knowledge: null,
+    });
+    expect((await noBrain.service.upload(noBrain.alice, pdf())).document).toMatchObject({
+      status: 'not_ingested',
+      ingestion: 'unavailable',
+    });
+    // Company Brain could not take it: not even read.
+    expect(reader.calls).toEqual([]);
+    const noGateway = await world({ extractor: reader.extractor });
+    expect((await noGateway.service.upload(noGateway.alice, pdf())).document).toMatchObject({
+      status: 'not_ingested',
+      ingestion: 'unavailable',
+      pages: 1,
+    });
+    expect(ai.calls).toEqual([]);
+  });
+
+  it('records why a file could not be read, with closed codes, and never fails the upload', async () => {
+    const cases: [TextExtraction, string][] = [
+      [{ status: 'failed', code: 'unreadable' }, 'unreadable'],
+      [{ status: 'failed', code: 'timeout' }, 'timeout'],
+      [{ status: 'failed', code: 'encrypted' }, 'encrypted'],
+      [{ status: 'failed', code: 'too_large' }, 'too_long'],
+      [{ status: 'failed', code: 'too_many_pages', pages: 900 }, 'too_many_pages'],
+      [{ status: 'text', text: 'x'.repeat(200_000), pages: 9, truncated: true }, 'too_long'],
+      [{ status: 'text', text: 'x'.repeat(60_001), pages: 9, truncated: false }, 'too_long'],
+    ];
+    for (const [result, ingestion] of cases) {
+      const w = await world({ extractor: fakeExtractor(result).extractor });
+      const { document } = await w.service.upload(w.alice, pdf());
+      expect(document).toMatchObject({ status: 'not_ingested', ingestion });
+      expect(await w.service.get(w.alice, document.id)).toEqual(document);
+    }
+    const throwing = await world({
+      extractor: { extract: () => Promise.reject(new Error('boom: secret detail')) },
+    });
+    const kept = await throwing.service.upload(throwing.alice, pdf());
+    expect(kept.document).toMatchObject({ status: 'not_ingested', ingestion: 'unreadable' });
+    expect(throwing.logs.join('\n')).not.toContain('secret detail');
+  });
+
+  it("maps the gateway's answers to closed codes: credits, unavailable, too_long, no_text", async () => {
+    const reader = fakeExtractor({ status: 'text', text: '', pages: 2, truncated: false });
+    const cases: [(request: AssistedAIRequest) => AIResponse, string][] = [
+      [denied('credits_insufficient'), 'credits'],
+      [denied('credit_limit_exceeded'), 'credits'],
+      [denied('credits_unavailable'), 'credits'],
+      [denied('policy_not_found'), 'unavailable'],
+      [denied('credits_not_configured'), 'unavailable'],
+      [denied('authority_in_input'), 'unavailable'],
+      [
+        (request) => ({
+          status: 'failed',
+          requestId: request.requestId,
+          code: 'timeout',
+          provider: 'google-vertex-ai',
+          model: 'gemini-2.5-flash-lite',
+          attempts: 2,
+          latencyMs: 9,
+        }),
+        'unavailable',
+      ],
+      [completed('Cortado a la mitad', 'length'), 'too_long'],
+      [completed('   '), 'no_text'],
+      [completed('y'.repeat(60_001)), 'too_long'],
+    ];
+    for (const [answer, ingestion] of cases) {
+      const ai = fakeGateway(answer);
+      const w = await world({ extractor: reader.extractor, gateway: ai.gateway });
+      const { document } = await w.service.upload(w.alice, pdf());
+      expect(document).toMatchObject({ status: 'not_ingested', ingestion, pages: 2 });
+      expect(ai.calls).toHaveLength(1);
+    }
+    const throwing = await world({
+      extractor: reader.extractor,
+      gateway: { assist: () => Promise.reject(new Error('down')) },
+    });
+    expect((await throwing.service.upload(throwing.alice, pdf())).document).toMatchObject({
+      status: 'not_ingested',
+      ingestion: 'unavailable',
+    });
+    expect(throwing.logs.join('\n')).toContain('documents.transcription_failed');
+  });
+
+  it('reads a document stored before it could be read when it is uploaded again, and only then', async () => {
+    const stored = await world();
+    const first = await stored.service.upload(stored.alice, pdf());
+    expect(first.document.status).toBe('stored');
+    // The same repository, now with a reader: the same bytes read the stored document.
+    const reader = fakeExtractor({ status: 'text', text: 'Contrato', pages: 1, truncated: false });
+    const service = createDocumentService({
+      repository: stored.repository,
+      files: stored.files,
+      authorization: createAuthorizationService(ROLES),
+      knowledge: {
+        ingestDocument: async () =>
+          ({ document: { id: 'kd-1' } }) as Awaited<
+            ReturnType<CompanyBrainService['ingestDocument']>
+          >,
+      },
+      extractor: reader.extractor,
+    });
+    const again = await service.upload(stored.alice, pdf());
+    expect(again).toMatchObject({
+      duplicate: true,
+      document: {
+        id: first.document.id,
+        status: 'ingested',
+        knowledgeDocumentId: 'kd-1',
+        textSource: 'library',
+      },
+    });
+    // Once read, a further upload reads nothing.
+    const third = await service.upload(stored.alice, pdf());
+    expect(third).toEqual({ document: again.document, duplicate: true });
+    expect(reader.calls).toHaveLength(1);
+    expect(stored.audit.events().filter((e) => e.action === 'document.uploaded')).toHaveLength(1);
+  });
+
+  it('reads a scan again when uploaded again after a passing failure, with the same request id', async () => {
+    const reader = fakeExtractor({ status: 'text', text: '', pages: 1, truncated: false });
+    let answer = denied('credits_insufficient');
+    const ai = fakeGateway((request) => answer(request));
+    const w = await world({ extractor: reader.extractor, gateway: ai.gateway });
+    const first = await w.service.upload(w.alice, pdf());
+    expect(first.document).toMatchObject({ status: 'not_ingested', ingestion: 'credits' });
+    answer = completed('Recibo 7');
+    const again = await w.service.upload(w.alice, pdf());
+    expect(again).toMatchObject({
+      duplicate: true,
+      document: { status: 'ingested', textSource: 'model' },
+    });
+    expect(ai.calls.map((c) => c.request.requestId)).toEqual([
+      `document-read-${first.document.id}`,
+      `document-read-${first.document.id}`,
+    ]);
+    // What cannot change by trying again is not read again.
+    const unreadable = await world({
+      extractor: fakeExtractor({ status: 'failed', code: 'unreadable' }).extractor,
+    });
+    await unreadable.service.upload(unreadable.alice, pdf());
+    const reread = fakeExtractor({ status: 'text', text: 'x', truncated: false });
+    const later = createDocumentService({
+      repository: unreadable.repository,
+      files: unreadable.files,
+      authorization: createAuthorizationService(ROLES),
+      extractor: reread.extractor,
+    });
+    expect((await later.upload(unreadable.alice, pdf())).document).toMatchObject({
+      status: 'not_ingested',
+      ingestion: 'unreadable',
+    });
+    expect(reread.calls).toEqual([]);
+  });
+
+  it('reads a real PDF and a real DOCX end to end with the local extractor', async () => {
+    const ai = fakeGateway(completed('Texto del escaneo'));
+    const w = await world({ extractor: createTextExtractor(), gateway: ai.gateway });
+    const withText = await w.service.upload(
+      w.alice,
+      pdf(buildPdf([textPage('Lista de precios 2026')])),
+    );
+    expect(withText.document).toMatchObject({
+      status: 'ingested',
+      textSource: 'library',
+      pages: 1,
+    });
+    const scan = await w.service.upload(w.alice, pdf(buildPdf([blankPage, blankPage])));
+    expect(scan.document).toMatchObject({ status: 'ingested', textSource: 'model', pages: 2 });
+    expect(ai.calls).toHaveLength(1);
+    const word = await w.service.upload(
+      w.alice,
+      docx(buildDocx('<w:p><w:r><w:t>Propuesta comercial</w:t></w:r></w:p>')),
+    );
+    expect(word.document).toMatchObject({ status: 'ingested', textSource: 'library' });
+    const texts = await Promise.all(
+      [withText, word].map(
+        async ({ document }) =>
+          (await w.knowledgeRepository.findDocument(w.orgA, document.knowledgeDocumentId ?? ''))
+            ?.text,
+      ),
+    );
+    expect(texts[0]).toContain('Lista de precios 2026');
+    expect(texts[1]).toBe('Propuesta comercial\n');
   });
 });

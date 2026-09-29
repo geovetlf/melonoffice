@@ -16,8 +16,11 @@ export type AICapability =
   | 'speech'
   | 'embeddings';
 
-/** The kind of content a model takes or produces. */
-export type AIModality = 'text' | 'image' | 'audio';
+/**
+ * The kind of content a model takes or produces. `document`: a stored PDF, passed by reference
+ * (ADR-0079).
+ */
+export type AIModality = 'text' | 'image' | 'audio' | 'document';
 
 /**
  * How sensitive the data in a request is. Policies restrict which providers and models may see

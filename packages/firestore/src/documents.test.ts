@@ -1,4 +1,4 @@
-import { Query } from '@google-cloud/firestore';
+import { FieldValue, Query } from '@google-cloud/firestore';
 import { buildAuditEvent } from '@melonoffice/audit';
 import type {
   DocumentId,
@@ -125,6 +125,26 @@ describe.runIf(emulatorHost)('FirestoreDocumentRepository (ADR-0078, emulator)',
     expect(await repository.find(ORG_A, idOf(2))).toEqual(refused);
     expect(refused).toMatchObject({ status: 'not_ingested', ingestion: 'too_long' });
     expect(refused).not.toHaveProperty('knowledgeDocumentId');
+  });
+
+  it('keeps how the text was read and the page count, and reads records written before them', async () => {
+    const { db, repository } = await seed();
+    const at = '2026-09-29T13:00:00.000Z' as IsoTimestamp;
+    const scanned = await repository.setStatus(ORG_A, idOf(3), {
+      status: 'ingested',
+      knowledgeDocumentId: `${ORG_A}_d_scan`,
+      textSource: 'model',
+      pages: 4,
+      updatedAt: at,
+    });
+    expect(scanned).toMatchObject({ textSource: 'model', pages: 4 });
+    expect(await repository.find(ORG_A, idOf(3))).toEqual(scanned);
+    // A record from DOC-1 has neither field.
+    await db.collection(DOCUMENTS).doc(idOf(4)).update({ textSource: FieldValue.delete() });
+    await db.collection(DOCUMENTS).doc(idOf(4)).update({ pages: FieldValue.delete() });
+    const old = await repository.find(ORG_A, idOf(4));
+    expect(old).toEqual(document(4, ORG_A));
+    expect(old).not.toHaveProperty('textSource');
   });
 
   it('reads one page at a time, newest first, only the organization', async () => {

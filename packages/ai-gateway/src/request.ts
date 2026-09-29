@@ -29,7 +29,12 @@ export const AI_CAPABILITIES = [
   'speech',
   'embeddings',
 ] as const satisfies readonly AICapability[];
-export const AI_MODALITIES = ['text', 'image', 'audio'] as const satisfies readonly AIModality[];
+export const AI_MODALITIES = [
+  'text',
+  'image',
+  'audio',
+  'document',
+] as const satisfies readonly AIModality[];
 export const SENSITIVITIES = [
   'public',
   'internal',
@@ -61,8 +66,37 @@ export const MAX_METADATA_ENTRIES = 20;
 export const MAX_OUTPUT_TOKENS = 1_000_000;
 
 /**
+ * A stored PDF an assisted call about a document gives the model (ADR-0079): only a reference to
+ * its bytes in the organization's documents bucket, never the bytes. `id` is the storage key,
+ * `organizations/{organizationId}/documents/{documentId}`; the gateway accepts only the calling
+ * tenant's organization, and only the document the call is about. `pages` (1 to 100) sizes the
+ * cost estimate.
+ */
+export interface AIDocumentPart {
+  readonly type: 'document';
+  readonly mimeType: 'application/pdf';
+  readonly ref: { readonly type: 'stored_document'; readonly id: string };
+  readonly pages: number;
+}
+
+/** The most pages of a document one call may give a model (ADR-0079). */
+export const MAX_DOCUMENT_PAGES = 100;
+/**
+ * Tokens per page of a document, as Gemini counts a PDF page: 258 (Google's documentation,
+ * "Document understanding": each page is equivalent to 258 tokens). With a fixed allowance for
+ * the part itself.
+ */
+export const DOCUMENT_TOKENS_PER_PAGE = 258;
+export const DOCUMENT_PART_TOKENS = 100;
+
+/** A stored document's key: `organizations/{uuid}/documents/{uuid}` (ADR-0078). */
+export const STORED_DOCUMENT_KEY =
+  /^organizations\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/documents\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/;
+
+/**
  * A piece of a message. Media is passed by reference, never inline. A tool call goes only on an
- * `assistant` message and a tool result only on a `user` message (R3, ADR-0076).
+ * `assistant` message and a tool result only on a `user` message (R3, ADR-0076); a document only
+ * on a `user` message (ADR-0079).
  */
 export type AIContentPart =
   | { readonly type: 'text'; readonly text: string }
@@ -70,6 +104,7 @@ export type AIContentPart =
       readonly type: 'image' | 'audio';
       readonly ref: { readonly type: string; readonly id: string };
     }
+  | AIDocumentPart
   | AIToolCallPart
   | AIToolResultPart;
 
@@ -177,6 +212,8 @@ export const ASSIST_SUBJECT_TYPES = [
   'company_knowledge',
   'gia',
   'decision',
+  // Reading an uploaded document's text when it has no text layer (ADR-0079).
+  'document',
 ] as const;
 export type AssistSubjectType = (typeof ASSIST_SUBJECT_TYPES)[number];
 
@@ -289,6 +326,8 @@ function checkMessage(value: unknown): void {
       closed(ref, new Set(['type', 'id']));
       if (typeof ref.type !== 'string' || !REF_TYPE.test(ref.type)) refuse('invalid_request');
       if (typeof ref.id !== 'string' || !REF_ID.test(ref.id)) refuse('invalid_request');
+    } else if (part.type === 'document' && value.role === 'user') {
+      checkDocumentPart(part);
     } else if (
       (part.type === 'tool_call' && value.role === 'assistant') ||
       (part.type === 'tool_result' && value.role === 'user')
@@ -299,6 +338,29 @@ function checkMessage(value: unknown): void {
       refuse('invalid_request');
     }
   }
+}
+
+/** A document part's shape. Whose document it is, the gateway checks against the tenant. */
+function checkDocumentPart(part: Record<string, unknown>): void {
+  closed(part, new Set(['type', 'mimeType', 'ref', 'pages']));
+  if (part.mimeType !== 'application/pdf') refuse('invalid_request');
+  const { ref } = part;
+  if (!isRecord(ref)) return refuse('invalid_request');
+  closed(ref, new Set(['type', 'id']));
+  if (ref.type !== 'stored_document') refuse('invalid_request');
+  if (typeof ref.id !== 'string' || !STORED_DOCUMENT_KEY.test(ref.id)) refuse('invalid_request');
+  if (!count(part.pages, 1, MAX_DOCUMENT_PAGES)) refuse('invalid_request');
+}
+
+/** The stored documents a request's messages name, as their storage keys. */
+export function documentRefsOf(request: Pick<AIRequest, 'messages'>): readonly string[] {
+  const keys: string[] = [];
+  for (const message of request.messages) {
+    for (const part of message.content) {
+      if (part.type === 'document') keys.push(part.ref.id);
+    }
+  }
+  return keys;
 }
 
 function checkMetadata(value: unknown): void {
@@ -393,6 +455,8 @@ function checkCommon(request: Record<string, unknown>): void {
     return refuse('invalid_request');
   }
   for (const message of messages) checkMessage(message);
+  // One document per call: its cost is estimated, and it is checked against the call's subject.
+  if (documentRefsOf({ messages: messages as AIMessage[] }).length > 1) refuse('invalid_request');
   if (typeof request.requestId !== 'string' || !REQUEST_ID.test(request.requestId)) {
     refuse('invalid_request');
   }
@@ -504,7 +568,11 @@ export function inputModalitiesOf(request: Pick<AIRequest, 'messages'>): readonl
   for (const message of request.messages) {
     for (const part of message.content) {
       // Tool calls and results are text to the model.
-      found.add(part.type === 'image' || part.type === 'audio' ? part.type : 'text');
+      found.add(
+        part.type === 'image' || part.type === 'audio' || part.type === 'document'
+          ? part.type
+          : 'text',
+      );
     }
   }
   return AI_MODALITIES.filter((m) => found.has(m));
@@ -512,8 +580,8 @@ export function inputModalitiesOf(request: Pick<AIRequest, 'messages'>): readonl
 
 /**
  * A rough, deterministic token estimate for cost limits before a call: four characters per
- * token, rounded up, plus a fixed allowance per media part. The provider's reported usage is
- * what is charged.
+ * token, rounded up, plus a fixed allowance per media part, and per page of a document
+ * (`DOCUMENT_TOKENS_PER_PAGE`). The provider's reported usage is what is charged.
  */
 export function estimateInputTokens(request: Pick<AIRequest, 'messages' | 'tools'>): number {
   let tokens = request.tools === undefined ? 0 : estimateToolTokens(request.tools);
@@ -526,7 +594,9 @@ export function estimateInputTokens(request: Pick<AIRequest, 'messages' | 'tools
             ? estimateToolTokens(part.call)
             : part.type === 'tool_result'
               ? estimateToolTokens(part.result)
-              : 1_000;
+              : part.type === 'document'
+                ? DOCUMENT_PART_TOKENS + part.pages * DOCUMENT_TOKENS_PER_PAGE
+                : 1_000;
     }
   }
   return tokens;

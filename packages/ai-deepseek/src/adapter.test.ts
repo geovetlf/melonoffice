@@ -146,6 +146,29 @@ describe('DeepSeek request and response', () => {
         }),
       ),
     ).toBeUndefined();
+    // A stored document (ADR-0079): DeepSeek has no such modality, so nothing is sent.
+    expect(
+      deepSeekRequestOf(
+        call({
+          messages: [
+            {
+              role: 'user',
+              content: [
+                {
+                  type: 'document',
+                  mimeType: 'application/pdf',
+                  ref: {
+                    type: 'stored_document',
+                    id: 'organizations/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/documents/dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+                  },
+                  pages: 1,
+                },
+              ],
+            },
+          ],
+        }),
+      ),
+    ).toBeUndefined();
   });
 
   it('asks for JSON with the expected shape when the answer is structured', () => {
