@@ -196,7 +196,9 @@ describe.each(STORES)('agent tasks with storage in %s', (_name, createStores) =>
     const read = async () =>
       (await call('token-alice', 'GET', `${base(orgA)}/agent-tasks/${taskId}`)).body;
 
-    await set('waiting_approval', { approvalId: 'approval-1' });
+    // A real approval id: the Firestore store checks it is a UUID before trusting the record.
+    const approvalId = '0a0a0a0a-0000-4000-8000-00000000000a';
+    await set('waiting_approval', { approvalId });
     const waiting = await read();
     expect(waiting.answer).toEqual({
       answer: 'Te propongo llamar a Juan.',
@@ -210,7 +212,7 @@ describe.each(STORES)('agent tasks with storage in %s', (_name, createStores) =>
         date: '2026-09-30',
         time: '10:00',
         state: 'waiting_approval',
-        approvalId: 'approval-1',
+        approvalId,
       },
     });
     await set('failed', { status: 'pending' }, 'approval_rejected');
