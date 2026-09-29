@@ -79,5 +79,5 @@ The gateway logs carry task type, department, routing strategy, retries, fallbac
 
 - Which data may reach DeepSeek, its confirmed prices, and its secret and IAM binding in DEV (owner decision).
 - Company, plan, department and user policy layers need storage; today policies are per agent and per kind of assisted call.
-- Normalized tool calling: done in [ADR-0076](0076-normalized-tool-calling.md) (the Tool Gate stays the only executor). `AIGateway.stream`: next phase.
+- Normalized tool calling: done in [ADR-0076](0076-normalized-tool-calling.md) (the Tool Gate stays the only executor). `AIGateway.stream`: done in [ADR-0077](0077-streaming.md).
 - A credit hold before a call: the credits engine has none (ADR-0027).

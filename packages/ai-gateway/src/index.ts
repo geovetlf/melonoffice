@@ -11,3 +11,5 @@ export * from './router.js';
 export * from './gateway.js';
 export * from './health.js';
 export * from './tools.js';
+export * from './stream.js';
+export * from './sse.js';

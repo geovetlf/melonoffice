@@ -9,7 +9,9 @@ import type {
   ProviderCredential,
   ProviderErrorKind,
   ProviderOutcome,
+  ProviderStreamEvent,
 } from '@melonoffice/ai-gateway';
+import { readServerSentEvents, ServerSentEventsTooLarge } from '@melonoffice/ai-gateway';
 import type { ToolSchema } from '@melonoffice/domain';
 import { DEEPSEEK_PROVIDER } from './catalogue.js';
 
@@ -23,7 +25,7 @@ import { DEEPSEEK_PROVIDER } from './catalogue.js';
  * It never throws: every failure is a classified `ProviderOutcome` error without DeepSeek's
  * message, so nothing DeepSeek says reaches a log, an audit event or a person.
  */
-export const DEEPSEEK_ADAPTER_VERSION = '2';
+export const DEEPSEEK_ADAPTER_VERSION = '3';
 export const DEEPSEEK_API_URL = 'https://api.deepseek.com/chat/completions';
 
 export interface DeepSeekAdapterOptions {
@@ -280,6 +282,81 @@ export function outcomeOfDeepSeekResponse(body: unknown, structured: boolean): P
   });
 }
 
+/**
+ * A streamed answer, chunk by chunk (R4, ADR-0077). Each chunk holds the next piece of the
+ * answer in `delta.content`; the finish reason comes on the last one with choices, and the usage
+ * on a chunk of its own after it. At the end they read as one answer, checked by
+ * `outcomeOfDeepSeekResponse` like any other. Reasoning (`reasoning_content`) is never passed on.
+ */
+export class DeepSeekStreamChunks {
+  #text = '';
+  #finishReason: unknown;
+  #usage: unknown;
+  #id: unknown;
+  #ended = false;
+  #failed: ProviderOutcome | undefined;
+
+  /** Reads one event's data: the text it adds, or `undefined` when the stream cannot go on. */
+  add(data: string): string | undefined {
+    if (this.#failed !== undefined || this.#ended) return undefined;
+    if (data === '[DONE]') {
+      this.#ended = true;
+      return undefined;
+    }
+    let chunk: unknown;
+    try {
+      chunk = JSON.parse(data) as unknown;
+    } catch {
+      chunk = undefined;
+    }
+    if (!isRecord(chunk)) return this.#fail(error('invalid_response'));
+    if (chunk.id !== undefined) this.#id = chunk.id;
+    if (chunk.usage !== undefined && chunk.usage !== null) this.#usage = chunk.usage;
+    const choices = chunk.choices;
+    if (choices === undefined) return '';
+    if (!Array.isArray(choices)) return this.#fail(error('invalid_response'));
+    const [choice] = choices as unknown[];
+    if (choice === undefined) return '';
+    if (!isRecord(choice)) return this.#fail(error('invalid_response'));
+    if (choice.finish_reason !== undefined && choice.finish_reason !== null) {
+      this.#finishReason = choice.finish_reason;
+    }
+    const delta = choice.delta;
+    if (delta === undefined || delta === null) return '';
+    if (!isRecord(delta)) return this.#fail(error('invalid_response'));
+    // A call was never offered in a stream.
+    if (delta.tool_calls !== undefined && delta.tool_calls !== null) {
+      return this.#fail(error('invalid_response'));
+    }
+    const piece = typeof delta.content === 'string' ? delta.content : '';
+    this.#text += piece;
+    return piece;
+  }
+
+  /** The whole answer, as `generate` would have read it. */
+  outcome(): ProviderOutcome {
+    if (this.#failed !== undefined) return this.#failed;
+    return outcomeOfDeepSeekResponse(
+      {
+        ...(this.#id === undefined ? {} : { id: this.#id }),
+        choices: [
+          {
+            finish_reason: this.#finishReason,
+            message: { role: 'assistant', content: this.#text },
+          },
+        ],
+        usage: this.#usage,
+      },
+      false,
+    );
+  }
+
+  #fail(outcome: ProviderOutcome): undefined {
+    this.#failed = outcome;
+    return undefined;
+  }
+}
+
 /** Whether a refused request's body says the input did not fit the model's context. */
 const saysContextOverflow = (text: string): boolean =>
   /context[ _-]?length|maximum context|too many tokens/i.test(text);
@@ -301,6 +378,57 @@ export function createDeepSeekAdapter(options: DeepSeekAdapterOptions): Provider
     }
   }
 
+  /**
+   * Checks a call, reads the key and sends `body`: DeepSeek's answer when it accepted the call,
+   * or the classified error.
+   */
+  async function open(
+    request: ProviderCall,
+    body: Record<string, unknown> | undefined,
+  ): Promise<{ readonly answer: Response; readonly signal: AbortSignal } | ProviderOutcome> {
+    if (request.credential.provider !== DEEPSEEK_PROVIDER.credential.provider) {
+      return error('authentication');
+    }
+    if (request.capability !== 'text_generation' || request.outputModality !== 'text') {
+      return error('invalid_request');
+    }
+    if (!MODEL.test(request.model.id)) return error('invalid_request');
+    if (body === undefined) return error('invalid_request');
+    const remaining = request.deadline.getTime() - now().getTime();
+    if (remaining <= 0) return error('timeout');
+    const signal = AbortSignal.timeout(remaining);
+
+    const credential = await credentialFor(request);
+    if (credential === undefined) return error('authentication');
+    let answer: Response;
+    try {
+      answer = await call(DEEPSEEK_API_URL, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${credential.reveal()}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify(body),
+        signal,
+      });
+    } catch {
+      return signal.aborted ? error('timeout') : error('network');
+    }
+    if (!answer.ok) {
+      // A refused key is dropped, so the next call reads it again.
+      if (answer.status === 401) held = undefined;
+      const kind = errorKindOfStatus(answer.status);
+      if (kind === 'invalid_request') {
+        const text = await answer.text().catch(() => '');
+        if (saysContextOverflow(text.slice(0, MAX_ERROR_BYTES))) {
+          return error('context_overflow', answer.status);
+        }
+      }
+      return error(kind, answer.status);
+    }
+    return { answer, signal };
+  }
+
   return Object.freeze({
     providerId: DEEPSEEK_PROVIDER.id,
     adapterVersion: DEEPSEEK_ADAPTER_VERSION,
@@ -310,47 +438,9 @@ export function createDeepSeekAdapter(options: DeepSeekAdapterOptions): Provider
 
     async generate(request: ProviderCall): Promise<ProviderOutcome> {
       try {
-        if (request.credential.provider !== DEEPSEEK_PROVIDER.credential.provider) {
-          return error('authentication');
-        }
-        if (request.capability !== 'text_generation' || request.outputModality !== 'text') {
-          return error('invalid_request');
-        }
-        if (!MODEL.test(request.model.id)) return error('invalid_request');
-        const body = deepSeekRequestOf(request);
-        if (body === undefined) return error('invalid_request');
-        const remaining = request.deadline.getTime() - now().getTime();
-        if (remaining <= 0) return error('timeout');
-        const signal = AbortSignal.timeout(remaining);
-
-        const credential = await credentialFor(request);
-        if (credential === undefined) return error('authentication');
-        let answer: Response;
-        try {
-          answer = await call(DEEPSEEK_API_URL, {
-            method: 'POST',
-            headers: {
-              authorization: `Bearer ${credential.reveal()}`,
-              'content-type': 'application/json',
-            },
-            body: JSON.stringify(body),
-            signal,
-          });
-        } catch {
-          return signal.aborted ? error('timeout') : error('network');
-        }
-        if (!answer.ok) {
-          // A refused key is dropped, so the next call reads it again.
-          if (answer.status === 401) held = undefined;
-          const kind = errorKindOfStatus(answer.status);
-          if (kind === 'invalid_request') {
-            const text = await answer.text().catch(() => '');
-            if (saysContextOverflow(text.slice(0, MAX_ERROR_BYTES))) {
-              return error('context_overflow', answer.status);
-            }
-          }
-          return error(kind, answer.status);
-        }
+        const opened = await open(request, deepSeekRequestOf(request));
+        if (!('answer' in opened)) return opened;
+        const { answer, signal } = opened;
         let raw: string;
         try {
           raw = await answer.text();
@@ -368,6 +458,55 @@ export function createDeepSeekAdapter(options: DeepSeekAdapterOptions): Provider
       } catch {
         return error('invalid_response');
       }
+    },
+
+    // Streaming (R4, ADR-0077): server-sent chunks with the usage at the end, text only.
+    async *stream(request: ProviderCall): AsyncGenerator<ProviderStreamEvent> {
+      const end = (outcome: ProviderOutcome): ProviderStreamEvent =>
+        Object.freeze({ type: 'end', outcome });
+      if (request.structuredOutput || (request.tools?.length ?? 0) > 0) {
+        yield end(error('invalid_request'));
+        return;
+      }
+      let opened: Awaited<ReturnType<typeof open>>;
+      try {
+        const body = deepSeekRequestOf(request);
+        opened = await open(
+          request,
+          body === undefined
+            ? undefined
+            : { ...body, stream: true, stream_options: { include_usage: true } },
+        );
+      } catch {
+        opened = error('invalid_response');
+      }
+      if (!('answer' in opened)) {
+        yield end(opened);
+        return;
+      }
+      const { answer, signal } = opened;
+      if (answer.body === null) {
+        yield end(error('invalid_response'));
+        return;
+      }
+      const chunks = new DeepSeekStreamChunks();
+      try {
+        for await (const data of readServerSentEvents(answer.body, MAX_RESPONSE_BYTES)) {
+          const piece = chunks.add(data);
+          if (piece === undefined) break;
+          if (piece.length > 0) yield Object.freeze({ type: 'text', text: piece });
+        }
+      } catch (thrown) {
+        yield end(
+          thrown instanceof ServerSentEventsTooLarge
+            ? error('invalid_response')
+            : signal.aborted
+              ? error('timeout')
+              : error('network'),
+        );
+        return;
+      }
+      yield end(chunks.outcome());
     },
   });
 }

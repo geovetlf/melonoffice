@@ -7,7 +7,9 @@ import type {
   ProviderCall,
   ProviderErrorKind,
   ProviderOutcome,
+  ProviderStreamEvent,
 } from '@melonoffice/ai-gateway';
+import { readServerSentEvents, ServerSentEventsTooLarge } from '@melonoffice/ai-gateway';
 import type { ToolSchema } from '@melonoffice/domain';
 import { VERTEX_AI_PROVIDER } from './catalogue.js';
 
@@ -22,7 +24,7 @@ import { VERTEX_AI_PROVIDER } from './catalogue.js';
  * message, so the gateway decides on retries alone and nothing the provider says reaches a log,
  * an audit event or a person.
  */
-export const VERTEX_ADAPTER_VERSION = '2';
+export const VERTEX_ADAPTER_VERSION = '3';
 
 export const METADATA_TOKEN_URL =
   'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token';
@@ -300,6 +302,82 @@ export function outcomeOfVertexResponse(body: unknown, structured: boolean): Pro
 }
 
 /**
+ * A streamed answer, chunk by chunk (R4, ADR-0077). Each chunk is a `generateContent` answer
+ * holding the next piece of text; the last carries the finish reason and the usage. At the end
+ * they read as one answer, checked by `outcomeOfVertexResponse` like any other.
+ */
+export class VertexStreamChunks {
+  #text = '';
+  #finishReason: unknown;
+  #usage: unknown;
+  #responseId: unknown;
+  #failed: ProviderOutcome | undefined;
+
+  /** Reads one event's data: the text it adds, or `undefined` when the stream cannot go on. */
+  add(data: string): string | undefined {
+    if (this.#failed !== undefined) return undefined;
+    let chunk: unknown;
+    try {
+      chunk = JSON.parse(data) as unknown;
+    } catch {
+      chunk = undefined;
+    }
+    if (!isRecord(chunk)) return this.#fail(error('invalid_response'));
+    const feedback = chunk.promptFeedback;
+    if (isRecord(feedback) && typeof feedback.blockReason === 'string') {
+      return this.#fail(error('content_policy'));
+    }
+    if (chunk.usageMetadata !== undefined) this.#usage = chunk.usageMetadata;
+    if (chunk.responseId !== undefined) this.#responseId = chunk.responseId;
+    const candidates = chunk.candidates;
+    if (candidates === undefined) return '';
+    if (!Array.isArray(candidates)) return this.#fail(error('invalid_response'));
+    const [candidate] = candidates as unknown[];
+    if (candidate === undefined) return '';
+    if (!isRecord(candidate)) return this.#fail(error('invalid_response'));
+    if (candidate.finishReason !== undefined) this.#finishReason = candidate.finishReason;
+    const content = candidate.content;
+    if (content === undefined) return '';
+    const parts = isRecord(content) && Array.isArray(content.parts) ? content.parts : undefined;
+    if (parts === undefined) return this.#fail(error('invalid_response'));
+    let piece = '';
+    for (const part of parts as unknown[]) {
+      if (!isRecord(part)) return this.#fail(error('invalid_response'));
+      // Reasoning is never part of the answer; a call was never offered in a stream.
+      if (part.thought === true) continue;
+      if (part.functionCall !== undefined) return this.#fail(error('invalid_response'));
+      if (typeof part.text === 'string') piece += part.text;
+    }
+    this.#text += piece;
+    return piece;
+  }
+
+  /** The whole answer, as `generate` would have read it. */
+  outcome(): ProviderOutcome {
+    if (this.#failed !== undefined) return this.#failed;
+    // A stream cut for its content may end without usage: it is still a content refusal.
+    if (typeof this.#finishReason === 'string' && BLOCKED.has(this.#finishReason)) {
+      return error('content_policy');
+    }
+    return outcomeOfVertexResponse(
+      {
+        candidates: [
+          { content: { parts: [{ text: this.#text }] }, finishReason: this.#finishReason },
+        ],
+        usageMetadata: this.#usage,
+        ...(this.#responseId === undefined ? {} : { responseId: this.#responseId }),
+      },
+      false,
+    );
+  }
+
+  #fail(outcome: ProviderOutcome): undefined {
+    this.#failed = outcome;
+    return undefined;
+  }
+}
+
+/**
  * Creates the adapter. The project and location come from configuration (Terraform), never from
  * a request; the model id comes from the registry.
  */
@@ -335,6 +413,54 @@ export function createVertexAIAdapter(options: VertexAIAdapterOptions): Provider
     }
   }
 
+  /**
+   * Checks a call, gets a token and sends it to `method`: the provider's answer when it accepted
+   * the call, or the classified error.
+   */
+  async function open(
+    request: ProviderCall,
+    method: string,
+  ): Promise<{ readonly answer: Response; readonly signal: AbortSignal } | ProviderOutcome> {
+    // Only this provider's own credential reference: the service's identity.
+    if (request.credential.provider !== VERTEX_AI_PROVIDER.credential.provider) {
+      return error('authentication');
+    }
+    if (request.capability !== 'text_generation' || request.outputModality !== 'text') {
+      return error('invalid_request');
+    }
+    if (!MODEL.test(request.model.id)) return error('invalid_request');
+    const body = vertexRequestOf(request);
+    if (body === undefined) return error('invalid_request');
+    const remaining = request.deadline.getTime() - now().getTime();
+    if (remaining <= 0) return error('timeout');
+    const signal = AbortSignal.timeout(remaining);
+
+    const bearer = await accessToken(signal);
+    if (bearer === undefined) {
+      return signal.aborted ? error('timeout') : error('authentication');
+    }
+    let answer: Response;
+    try {
+      answer = await call(`${endpoint}/${request.model.id}:${method}`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${bearer}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify(body),
+        signal,
+      });
+    } catch {
+      return signal.aborted ? error('timeout') : error('network');
+    }
+    if (!answer.ok) {
+      // A refused token is dropped, so the next call asks for a new one.
+      if (answer.status === 401) token = undefined;
+      return error(errorKindOfStatus(answer.status), answer.status);
+    }
+    return { answer, signal };
+  }
+
   return Object.freeze({
     providerId: VERTEX_AI_PROVIDER.id,
     adapterVersion: VERTEX_ADAPTER_VERSION,
@@ -344,43 +470,9 @@ export function createVertexAIAdapter(options: VertexAIAdapterOptions): Provider
 
     async generate(request: ProviderCall): Promise<ProviderOutcome> {
       try {
-        // Only this provider's own credential reference: the service's identity.
-        if (request.credential.provider !== VERTEX_AI_PROVIDER.credential.provider) {
-          return error('authentication');
-        }
-        if (request.capability !== 'text_generation' || request.outputModality !== 'text') {
-          return error('invalid_request');
-        }
-        if (!MODEL.test(request.model.id)) return error('invalid_request');
-        const body = vertexRequestOf(request);
-        if (body === undefined) return error('invalid_request');
-        const remaining = request.deadline.getTime() - now().getTime();
-        if (remaining <= 0) return error('timeout');
-        const signal = AbortSignal.timeout(remaining);
-
-        const bearer = await accessToken(signal);
-        if (bearer === undefined) {
-          return signal.aborted ? error('timeout') : error('authentication');
-        }
-        let answer: Response;
-        try {
-          answer = await call(`${endpoint}/${request.model.id}:generateContent`, {
-            method: 'POST',
-            headers: {
-              authorization: `Bearer ${bearer}`,
-              'content-type': 'application/json',
-            },
-            body: JSON.stringify(body),
-            signal,
-          });
-        } catch {
-          return signal.aborted ? error('timeout') : error('network');
-        }
-        if (!answer.ok) {
-          // A refused token is dropped, so the next call asks for a new one.
-          if (answer.status === 401) token = undefined;
-          return error(errorKindOfStatus(answer.status), answer.status);
-        }
+        const opened = await open(request, 'generateContent');
+        if (!('answer' in opened)) return opened;
+        const { answer, signal } = opened;
         let raw: string;
         try {
           raw = await answer.text();
@@ -398,6 +490,49 @@ export function createVertexAIAdapter(options: VertexAIAdapterOptions): Provider
       } catch {
         return error('invalid_response');
       }
+    },
+
+    // Streaming (R4, ADR-0077): `streamGenerateContent` as server-sent events, text only.
+    async *stream(request: ProviderCall): AsyncGenerator<ProviderStreamEvent> {
+      const end = (outcome: ProviderOutcome): ProviderStreamEvent =>
+        Object.freeze({ type: 'end', outcome });
+      if (request.structuredOutput || (request.tools?.length ?? 0) > 0) {
+        yield end(error('invalid_request'));
+        return;
+      }
+      let opened: Awaited<ReturnType<typeof open>>;
+      try {
+        opened = await open(request, 'streamGenerateContent?alt=sse');
+      } catch {
+        opened = error('invalid_response');
+      }
+      if (!('answer' in opened)) {
+        yield end(opened);
+        return;
+      }
+      const { answer, signal } = opened;
+      if (answer.body === null) {
+        yield end(error('invalid_response'));
+        return;
+      }
+      const chunks = new VertexStreamChunks();
+      try {
+        for await (const data of readServerSentEvents(answer.body, MAX_RESPONSE_BYTES)) {
+          const piece = chunks.add(data);
+          if (piece === undefined) break;
+          if (piece.length > 0) yield Object.freeze({ type: 'text', text: piece });
+        }
+      } catch (thrown) {
+        yield end(
+          thrown instanceof ServerSentEventsTooLarge
+            ? error('invalid_response')
+            : signal.aborted
+              ? error('timeout')
+              : error('network'),
+        );
+        return;
+      }
+      yield end(chunks.outcome());
     },
   });
 }
