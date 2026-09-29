@@ -29,6 +29,7 @@ import {
   FirestoreConversationRepository,
   FirestoreCreditStore,
   FirestoreDepartmentRepository,
+  FirestoreEventOutbox,
   FirestoreExecutionRepository,
   FirestoreForecastRepository,
   FirestoreJobRepository,
@@ -44,6 +45,7 @@ import {
   deliveryPolicyFromEnv,
 } from '@melonoffice/integrations';
 import { createFollowUpService } from '@melonoffice/conversations';
+import { createEventBus } from '@melonoffice/events';
 import {
   createForecastEngine,
   createRecordSources,
@@ -59,6 +61,7 @@ import { randomUUID } from 'node:crypto';
 import { createApp, RUN_JOB_PATH, SERVICE_NAME, type AppOptions } from './app.js';
 import { loadConfig, type RuntimeConfig } from './config.js';
 import { createCloudTasksDispatcher, createCloudTasksScheduler } from './dispatcher.js';
+import { createEventHandler, RUN_EVENT_PATH } from './events.js';
 import { createFollowUpHandler, RUN_FOLLOW_UP_PATH } from './follow-ups.js';
 import { createForecastHandler } from './forecasts.js';
 import { createJobHandler } from './handler.js';
@@ -205,6 +208,28 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
       dispatchDeadlineSeconds: Math.ceil(runtime.leaseMs / 1000),
     }),
   });
+  // Domain events (EV-2, ADR-0067): stored in the outbox, queued on the same queue, delivered by
+  // this worker behind the same invoker. No subscriber reacts yet: an event is stored, delivered
+  // and recorded, and starts nothing until a reaction is approved and registered here.
+  const events = createEventBus({
+    outbox: new FirestoreEventOutbox(firestore),
+    queue: {
+      enqueue: (() => {
+        const scheduler = createCloudTasksScheduler({
+          queue: runtime.queue,
+          targetUrl: `${runtime.workerUrl}${RUN_EVENT_PATH}`,
+          audience: runtime.workerUrl,
+          invokerEmail: runtime.invokerEmail,
+          dispatchDeadlineSeconds: Math.ceil(runtime.leaseMs / 1000),
+        });
+        return (ref) => scheduler.schedule(ref, new Date());
+      })(),
+    },
+    subscribers: [],
+    leaseMs: runtime.leaseMs,
+    audit: createAuditService(stores.audit),
+    logger: logger.child({ component: 'events' }),
+  });
   // Forecasts (ADR-0059): the worker is the only place the model is called, with its own identity
   // on the private forecaster service. The engine re-reads each forecast and charges it once.
   const forecastEngine = createForecastEngine({
@@ -248,8 +273,10 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
     }),
     followUps: createFollowUpHandler({
       followUps,
+      events,
       logger: logger.child({ component: 'follow-ups' }),
     }),
+    events: createEventHandler({ events, logger: logger.child({ component: 'events' }) }),
     invoker: createServiceIdentityVerifier({
       audience: runtime.workerUrl,
       allowedEmails: [runtime.invokerEmail],

@@ -26,6 +26,7 @@
     "@melonoffice/credits": "workspace:*",
     "@melonoffice/departments": "workspace:*",
     "@melonoffice/domain": "workspace:*",
+    "@melonoffice/events": "workspace:*",
     "@melonoffice/execution": "workspace:*",
     "@melonoffice/firestore": "workspace:*",
     "@melonoffice/forecasting": "workspace:*",

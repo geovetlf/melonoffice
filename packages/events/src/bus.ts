@@ -1,8 +1,8 @@
-import { actorOf, type AuditActor } from '@melonoffice/audit';
-import type { OrganizationId } from '@melonoffice/domain';
+import { actorOf, type AuditActor, type AuditService } from '@melonoffice/audit';
+import type { OrganizationId, UserId } from '@melonoffice/domain';
 import type { Logger } from '@melonoffice/observability';
 import { isResolvedTenant, type TenantContext } from '@melonoffice/tenancy';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   checkEventCatalogue,
   checkEventData,
@@ -13,19 +13,23 @@ import { EventError, type DomainEvent, type EventDraft } from './model.js';
 import type { EventOutbox, OutboxRecord } from './outbox.js';
 
 /**
- * The event bus (ADR-0066): producers publish domain events to the outbox; the dispatcher
- * delivers each one to the subscribers of its type. Subscribers are code, registered when the
- * bus is built, never at runtime or from data. Delivery is at least once and each subscriber
- * handles an event at most once per success: a failure retries only the subscribers that
- * failed, with a bounded back-off, and an event that keeps failing is set aside as dead, never
- * dropped silently.
+ * The event bus (ADR-0066, EV-2 ADR-0067):
+ *
+ *   producer → publish → outbox (stored) → queue (the runtime's Cloud Tasks queue)
+ *            → worker `deliver` → subscribers → outbox (settled) → logs / audit
+ *
+ * Subscribers are code, registered when the bus is built, never at runtime or from data.
+ * Delivery is at least once, and each subscriber handles an event at most once per success: a
+ * delivery takes a lease on the event, runs only the subscribers that have not handled it yet and
+ * records who did. A failed delivery is answered so the queue retries it; on the queue's last
+ * attempt the event is set aside as dead, audited, and never dropped silently.
  *
  * An event is a fact. Reacting to it is each subscriber's own work, through its own service and
  * permissions; nothing here runs an action, calls a model or sends anything.
  */
 
 export interface EventContext {
-  /** Delivery round of this event, from 1. */
+  /** Delivery of this event, from 1. */
   readonly attempt: number;
 }
 
@@ -34,58 +38,95 @@ export interface EventSubscriber {
   readonly id: string;
   /** The catalogue types it reacts to. */
   readonly types: readonly string[];
+  /**
+   * Handles one event of one organization. It may run again for the same event if a delivery
+   * ends between its work and the record of it, so it dedupes on `event.id`.
+   */
   handle(event: DomainEvent, context: EventContext): Promise<void>;
 }
 
-export interface DispatchSummary {
-  readonly claimed: number;
-  readonly delivered: number;
-  readonly retried: number;
-  readonly dead: number;
+/** What the queue carries: which event of which organization, nothing else. */
+export interface EventDeliveryRef {
+  readonly organizationId: OrganizationId;
+  readonly eventId: string;
 }
 
+/** Hands a stored event to the queue that calls the worker's delivery route. */
+export interface EventQueue {
+  enqueue(ref: EventDeliveryRef): Promise<void>;
+}
+
+export type DeliveryResult =
+  | { readonly kind: 'delivered'; readonly subscribers: number }
+  | { readonly kind: 'already_delivered' }
+  /** Dead before: the queue must not retry it. */
+  | { readonly kind: 'already_dead' }
+  | { readonly kind: 'not_found' }
+  /** Another delivery holds it: retry later. */
+  | { readonly kind: 'busy' }
+  /** A subscriber failed: retry later. */
+  | { readonly kind: 'retry'; readonly subscriber: string; readonly code: string }
+  /** A subscriber failed on the last attempt: set aside. */
+  | { readonly kind: 'dead'; readonly subscriber: string; readonly code: string };
+
 export interface EventBus {
-  /** Publishes what a person, GIA or the runtime caused, in their organization. */
+  /** Publishes what a person or GIA caused, in their organization. */
   publish(tenant: TenantContext, drafts: readonly EventDraft[]): Promise<readonly DomainEvent[]>;
   /**
-   * Publishes what a verified system source caused (a signed webhook, a due timer), for the
-   * organization it was verified to belong to. Server code only.
+   * Publishes what the runtime did for a member (a follow-up's time came, an agent task ended),
+   * recorded as the runtime for that member. Server code only: the caller has verified that the
+   * organization and the member are the record's own.
+   */
+  publishRuntime(
+    organizationId: OrganizationId,
+    initiatedBy: UserId,
+    drafts: readonly EventDraft[],
+  ): Promise<readonly DomainEvent[]>;
+  /**
+   * Publishes what a verified system source caused (a signed webhook), for the organization it
+   * was verified to belong to, as no person. Server code only.
    */
   publishSystem(
     organizationId: OrganizationId,
     drafts: readonly EventDraft[],
   ): Promise<readonly DomainEvent[]>;
-  /** Delivers due events once; the worker calls it on a schedule or after a publish. */
-  dispatch(options?: { readonly limit?: number }): Promise<DispatchSummary>;
+  /**
+   * Delivers one queued event (the worker's route). `retryCount` is the queue's count of earlier
+   * deliveries of this task.
+   */
+  deliver(ref: EventDeliveryRef, options: { readonly retryCount: number }): Promise<DeliveryResult>;
   /** The subscribers of a type, in registration order. */
   subscribersOf(type: string): readonly string[];
 }
 
 export interface EventBusOptions {
   readonly outbox: EventOutbox;
+  /** Absent: events are stored as `pending` and not delivered (logged). */
+  readonly queue?: EventQueue;
   readonly subscribers?: readonly EventSubscriber[];
   readonly catalogue?: readonly EventDefinition[];
-  /** Delivery rounds before an event is set aside as dead. */
+  /** The queue's deliveries of one task; the last failed one sets the event aside. */
   readonly maxAttempts?: number;
-  /** Wait before the next round after `attempts` rounds, in ms. */
-  readonly backoffMs?: (attempts: number) => number;
+  /** How long one delivery holds the event: at least the queue's dispatch deadline. */
   readonly leaseMs?: number;
+  /** Records dead events (`event.dead_lettered`) in the audit trail. */
+  readonly audit?: Pick<AuditService, 'record'>;
   readonly now?: () => Date;
   readonly logger?: Logger;
 }
 
 export const EVENT_LIMITS = Object.freeze({
   draftsPerPublish: 50,
-  dispatchBatch: 100,
-  maxAttempts: 5,
+  /** The runtime queue's `max_attempts` in Terraform (ADR-0032). */
+  maxAttempts: 10,
   leaseMs: 60_000,
 });
 
 const SUBSCRIBER = /^[a-z][a-z_.]{0,63}$/;
 const CORRELATION = /^[A-Za-z0-9_-]{1,100}$/;
+const IDEMPOTENCY = /^[A-Za-z0-9_:.-]{1,200}$/;
 const ERROR_CODE = /^[a-z][a-z_]{0,63}$/;
-
-const defaultBackoff = (attempts: number) => Math.min(30_000 * 2 ** (attempts - 1), 3_600_000);
+const EVENT_ID = /^evt_[0-9a-f]{32}$/;
 
 /** The failure as a code, never its message (which may hold content). */
 const codeOf = (error: unknown): string => {
@@ -93,11 +134,17 @@ const codeOf = (error: unknown): string => {
   return typeof code === 'string' && ERROR_CODE.test(code) ? code : 'subscriber_failed';
 };
 
+/** The same organization, type and key always give the same id. */
+export const eventIdFor = (organizationId: OrganizationId, type: string, key: string): string =>
+  `evt_${createHash('sha256').update(`${organizationId}\n${type}\n${key}`).digest('hex').slice(0, 32)}`;
+
+export const isEventId = (value: unknown): value is string =>
+  typeof value === 'string' && EVENT_ID.test(value);
+
 export function createEventBus(options: EventBusOptions): EventBus {
-  const { outbox, logger } = options;
+  const { outbox, queue, logger, audit } = options;
   const now = options.now ?? (() => new Date());
   const maxAttempts = options.maxAttempts ?? EVENT_LIMITS.maxAttempts;
-  const backoffMs = options.backoffMs ?? defaultBackoff;
   const leaseMs = options.leaseMs ?? EVENT_LIMITS.leaseMs;
   const catalogue = new Map(
     checkEventCatalogue(options.catalogue ?? EVENT_CATALOGUE).map((d) => [d.type, d]),
@@ -128,12 +175,18 @@ export function createEventBus(options: EventBusOptions): EventBus {
     if (draft.correlationId !== undefined && !CORRELATION.test(draft.correlationId)) {
       throw new EventError('invalid_event', 'correlationId');
     }
+    if (draft.idempotencyKey !== undefined && !IDEMPOTENCY.test(draft.idempotencyKey)) {
+      throw new EventError('invalid_event', 'idempotencyKey');
+    }
     const at = draft.occurredAt ?? now();
     if (!(at instanceof Date) || Number.isNaN(at.getTime())) {
       throw new EventError('invalid_event', 'occurredAt');
     }
     return Object.freeze({
-      id: `evt_${randomUUID().replace(/-/g, '')}`,
+      id:
+        draft.idempotencyKey === undefined
+          ? `evt_${randomUUID().replace(/-/g, '')}`
+          : eventIdFor(organizationId, definition.type, draft.idempotencyKey),
       type: definition.type,
       version: definition.version,
       organizationId,
@@ -142,7 +195,37 @@ export function createEventBus(options: EventBusOptions): EventBus {
       subject: Object.freeze({ type: draft.subject.type, id: draft.subject.id }),
       data,
       correlationId: draft.correlationId ?? null,
+      source: definition.source,
     });
+  }
+
+  const logged = (event: DomainEvent) => ({
+    eventId: event.id,
+    type: event.type,
+    organizationId: event.organizationId,
+    source: event.source,
+    ...(event.correlationId === null ? {} : { correlationId: event.correlationId }),
+  });
+
+  /** Hands the stored events to the queue; those already queued are left alone. */
+  async function enqueue(records: readonly OutboxRecord[]): Promise<void> {
+    for (const record of records) {
+      if (record.status !== 'pending') continue;
+      if (queue === undefined) {
+        logger?.warn('events.not_queued', { ...logged(record.event), reason: 'no_queue' });
+        continue;
+      }
+      const { organizationId, id } = record.event;
+      try {
+        await queue.enqueue({ organizationId, eventId: id });
+      } catch {
+        logger?.error('events.queue_failed', logged(record.event));
+        // Stored, not queued: the producer retries with the same key and it is queued then.
+        throw new EventError('queue_unavailable');
+      }
+      await outbox.markQueued(organizationId, id, now().toISOString());
+      logger?.info('events.queued', logged(record.event));
+    }
   }
 
   async function append(
@@ -155,49 +238,121 @@ export function createEventBus(options: EventBusOptions): EventBus {
     }
     // All or nothing: one bad draft publishes none of them.
     const events = drafts.map((d) => build(organizationId, actor, d));
-    await outbox.append(events);
-    return Object.freeze(events);
+    const records = await outbox.append(events, now().toISOString());
+    for (const record of records) {
+      logger?.info('events.published', { ...logged(record.event), status: record.status });
+    }
+    await enqueue(records);
+    return Object.freeze(records.map((r) => r.event));
   }
 
-  async function deliver(record: OutboxRecord): Promise<'delivered' | 'retried' | 'dead'> {
+  async function deadLetter(event: DomainEvent, code: string): Promise<void> {
+    logger?.error('events.dead', { ...logged(event), error: code });
+    if (audit === undefined) return;
+    try {
+      await audit.record({
+        action: 'event.dead_lettered',
+        result: 'failure',
+        actor: event.actor,
+        organizationId: event.organizationId,
+        target: { type: 'event', id: event.id },
+        reason: code,
+        source: 'api',
+      });
+    } catch {
+      // The outbox keeps it as dead either way; the log says the audit could not.
+      logger?.error('events.dead_audit_failed', logged(event));
+    }
+  }
+
+  async function deliver(
+    ref: EventDeliveryRef,
+    deliveryOptions: { readonly retryCount: number },
+  ): Promise<DeliveryResult> {
+    if (!isEventId(ref.eventId)) return { kind: 'not_found' };
+    const leaseId = randomUUID();
+    const begun = await outbox.begin(ref.organizationId, ref.eventId, {
+      leaseId,
+      now: now().getTime(),
+      leaseMs,
+    });
+    if (begun.kind === 'not_found') {
+      logger?.warn('events.delivery_not_found', { eventId: ref.eventId });
+      return begun;
+    }
+    if (begun.kind === 'busy') return begun;
+    if (begun.kind === 'settled') {
+      return begun.record.status === 'dead'
+        ? { kind: 'already_dead' }
+        : { kind: 'already_delivered' };
+    }
+    const { record } = begun;
     const { event } = record;
-    const attempt = record.attempts + 1;
+    // The store checked it; a subscriber still never sees another organization's event.
+    if (event.organizationId !== ref.organizationId) return { kind: 'not_found' };
+    const attempt = Math.max(record.attempts, deliveryOptions.retryCount + 1);
+    logger?.info('events.delivery_started', { ...logged(event), attempt });
     const done = new Set(record.deliveredTo);
-    let lastError: OutboxRecord['lastError'] = null;
-    for (const subscriber of byType.get(event.type) ?? []) {
+    let failure: { subscriber: string; code: string } | null = null;
+    const subscribers = byType.get(event.type) ?? [];
+    for (const subscriber of subscribers) {
       if (done.has(subscriber.id)) continue;
       try {
         await subscriber.handle(event, { attempt });
         done.add(subscriber.id);
       } catch (error) {
-        lastError = { subscriber: subscriber.id, code: codeOf(error) };
-        logger?.warn('events.subscriber_failed', {
-          eventId: event.id,
-          type: event.type,
-          subscriber: subscriber.id,
-          attempt,
-          error: lastError.code,
-        });
+        failure = { subscriber: subscriber.id, code: codeOf(error) };
+        // One subscriber's failure never holds back the others; only it is retried.
+        logger?.warn('events.delivery_failed', { ...logged(event), attempt, ...failure });
       }
     }
-    const status = lastError === null ? 'delivered' : attempt >= maxAttempts ? 'dead' : 'pending';
-    await outbox.settle(event.id, {
+    const status =
+      failure === null ? 'delivered' : attempt >= maxAttempts ? 'dead' : ('queued' as const);
+    const settled = await outbox.settle(event.organizationId, event.id, leaseId, {
       deliveredTo: [...done],
       status,
-      attempts: attempt,
-      nextAttemptAt: status === 'pending' ? now().getTime() + backoffMs(attempt) : 0,
-      lastError,
+      lastError: failure ?? record.lastError,
+      at: now().toISOString(),
     });
-    if (status === 'dead') {
-      logger?.error('events.event_dead', { eventId: event.id, type: event.type, attempt });
+    // The lease ran out and another delivery took it: that one records the result.
+    if (!settled) {
+      logger?.warn('events.lease_lost', { ...logged(event), attempt });
+      return { kind: 'busy' };
     }
-    return status === 'pending' ? 'retried' : status;
+    if (failure === null) {
+      logger?.info('events.delivery_completed', {
+        ...logged(event),
+        attempt,
+        subscribers: subscribers.length,
+      });
+      return { kind: 'delivered', subscribers: subscribers.length };
+    }
+    if (status === 'dead') {
+      await deadLetter(event, failure.code);
+      return { kind: 'dead', ...failure };
+    }
+    logger?.info('events.retry', { ...logged(event), attempt, ...failure });
+    return { kind: 'retry', ...failure };
   }
 
   return Object.freeze({
     async publish(tenant: TenantContext, drafts: readonly EventDraft[]) {
       if (!isResolvedTenant(tenant)) throw new EventError('unresolved_tenant');
       return append(tenant.organizationId, actorOf(tenant), drafts);
+    },
+
+    async publishRuntime(
+      organizationId: OrganizationId,
+      initiatedBy: UserId,
+      drafts: readonly EventDraft[],
+    ) {
+      if (typeof organizationId !== 'string' || organizationId === '') {
+        throw new EventError('invalid_event', 'organizationId');
+      }
+      if (typeof initiatedBy !== 'string' || initiatedBy === '') {
+        throw new EventError('invalid_event', 'initiatedBy');
+      }
+      return append(organizationId, actorOf({ actor: 'runtime', userId: initiatedBy }), drafts);
     },
 
     async publishSystem(organizationId: OrganizationId, drafts: readonly EventDraft[]) {
@@ -207,17 +362,7 @@ export function createEventBus(options: EventBusOptions): EventBus {
       return append(organizationId, { type: 'anonymous' }, drafts);
     },
 
-    async dispatch(dispatchOptions: { readonly limit?: number } = {}) {
-      const limit = Math.min(
-        Math.max(1, dispatchOptions.limit ?? EVENT_LIMITS.dispatchBatch),
-        EVENT_LIMITS.dispatchBatch,
-      );
-      const claimed = await outbox.claim({ now: now().getTime(), limit, leaseMs });
-      const counts = { delivered: 0, retried: 0, dead: 0 };
-      // One event at a time, in order: a subscriber sees an organization's events as they came.
-      for (const record of claimed) counts[await deliver(record)] += 1;
-      return Object.freeze({ claimed: claimed.length, ...counts });
-    },
+    deliver,
 
     subscribersOf: (type: string) => Object.freeze((byType.get(type) ?? []).map((s) => s.id)),
   });

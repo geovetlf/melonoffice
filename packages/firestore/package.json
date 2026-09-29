@@ -37,6 +37,7 @@
     "@melonoffice/departments": "workspace:*",
     "@melonoffice/domain": "workspace:*",
     "@melonoffice/entitlements": "workspace:*",
+    "@melonoffice/events": "workspace:*",
     "@melonoffice/execution": "workspace:*",
     "@melonoffice/forecasting": "workspace:*",
     "@melonoffice/integrations": "workspace:*",

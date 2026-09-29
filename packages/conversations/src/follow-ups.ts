@@ -200,6 +200,11 @@ export interface FollowUpFilter {
 /** What the worker's task did. */
 export type DueResult =
   | { readonly kind: 'due'; readonly followUp: FollowUp }
+  /**
+   * A repeated task for a follow-up this same scheduling already made due: nothing changes; the
+   * worker may still say so (its event is idempotent, ADR-0067).
+   */
+  | { readonly kind: 'already_due'; readonly followUp: FollowUp }
   | { readonly kind: 'cancelled'; readonly reason: FollowUpCancelReason }
   | { readonly kind: 'early'; readonly next: Date }
   | { readonly kind: 'stale' }
@@ -914,6 +919,9 @@ export function createFollowUpService(options: FollowUpServiceOptions): FollowUp
       if (organization?.id !== task.organizationId) return { kind: 'not_found' };
       const found = await repository.findFollowUp(task.organizationId, task.followUpId);
       if (found === undefined) return { kind: 'not_found' };
+      if (found.schedule === task.schedule && found.status === 'due') {
+        return { kind: 'already_due', followUp: found };
+      }
       if (found.schedule !== task.schedule || found.status !== 'scheduled')
         return { kind: 'stale' };
       // Beyond the queue's horizon the task comes early: queue the next hop, change nothing.

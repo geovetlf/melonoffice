@@ -2,6 +2,7 @@ import { isAuthError, readBearerToken, type ServiceIdentityVerifier } from '@mel
 import type { Logger } from '@melonoffice/observability';
 import { Hono, type Context } from 'hono';
 import { RETRY_COUNT_HEADER, RUN_FOLLOW_UP_PATH, type FollowUpHandler } from './follow-ups.js';
+import { RUN_EVENT_PATH, type EventHandler } from './events.js';
 import { RUN_FORECAST_PATH, type ForecastHandler } from './forecasts.js';
 import type { JobHandler } from './handler.js';
 import { registerHealth } from './health.js';
@@ -35,6 +36,11 @@ export interface AppOptions {
      * deliveries are refused with 503.
      */
     readonly forecasts?: ForecastHandler;
+    /**
+     * Delivers queued domain events (EV-2, ADR-0067), behind the same invoker check. Absent:
+     * event deliveries are refused with 503.
+     */
+    readonly events?: EventHandler;
   };
 }
 
@@ -135,6 +141,19 @@ export function createApp({ logger, version, jobs }: AppOptions): Hono<Env> {
     if ('refused' in read) return read.refused;
     const retries = Number(c.req.header(RETRY_COUNT_HEADER) ?? '0');
     const result = await jobs.forecasts.run(
+      read.body,
+      Number.isSafeInteger(retries) && retries >= 0 ? retries : 0,
+    );
+    return c.json(result.body, result.status);
+  });
+
+  // A queued domain event (EV-2): same invoker, same checks, its own small body.
+  app.post(RUN_EVENT_PATH, async (c) => {
+    if (jobs?.events === undefined) return c.json({ error: 'events_not_configured' }, 503);
+    const read = await delivery(c);
+    if ('refused' in read) return read.refused;
+    const retries = Number(c.req.header(RETRY_COUNT_HEADER) ?? '0');
+    const result = await jobs.events.run(
       read.body,
       Number.isSafeInteger(retries) && retries >= 0 ? retries : 0,
     );

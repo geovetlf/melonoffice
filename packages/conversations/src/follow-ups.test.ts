@@ -564,7 +564,8 @@ describe('follow-ups (C5, ADR-0058)', () => {
     w.advance(22 * 3_600_000);
     const task = { organizationId: w.orgA, followUpId: first.followUp.id, schedule: 1 };
     expect((await w.followUps.runDue(task)).kind).toBe('due');
-    expect(await w.followUps.runDue(task)).toEqual({ kind: 'stale' });
+    // The same task again changes nothing; it says the follow-up is already due (ADR-0067).
+    expect(await w.followUps.runDue(task)).toMatchObject({ kind: 'already_due' });
     expect(actions(w.audit, 'follow_up.due')).toHaveLength(1);
 
     // Rescheduled: the old task's scheduling is no longer current.

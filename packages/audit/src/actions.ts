@@ -24,7 +24,8 @@ export interface AuditActionDefinition {
     | 'pipeline'
     | 'follow_up'
     | 'forecast'
-    | 'decision';
+    | 'decision'
+    | 'event';
   readonly description: string;
   /** The results this action is recorded with. Anything else is a programming error. */
   readonly results: readonly AuditResult[];
@@ -113,6 +114,12 @@ export const AUDIT_ACTIONS = {
     description:
       'The Decision Engine decided for a person, or refused or failed (ADR-0065); `target` is the decision, `reason` its outcome or refusal, `decision` its type, version and the rules applied. Never the records it read.',
     results: ['success', 'denied', 'failure'],
+  },
+  'event.dead_lettered': {
+    category: 'event',
+    description:
+      "A domain event could not be delivered on its last attempt and was set aside (EV-2, ADR-0067); `target` is the event, `reason` the failing subscriber's error code. Never its data.",
+    results: ['failure'],
   },
   'contact.created': {
     category: 'contact',

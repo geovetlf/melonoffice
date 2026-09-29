@@ -235,6 +235,9 @@ importers:
       '@melonoffice/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      '@melonoffice/events':
+        specifier: workspace:*
+        version: link:../../packages/events
       '@melonoffice/execution':
         specifier: workspace:*
         version: link:../../packages/execution
@@ -765,6 +768,9 @@ importers:
       '@melonoffice/entitlements':
         specifier: workspace:*
         version: link:../entitlements
+      '@melonoffice/events':
+        specifier: workspace:*
+        version: link:../events
       '@melonoffice/execution':
         specifier: workspace:*
         version: link:../execution

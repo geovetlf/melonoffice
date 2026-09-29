@@ -4,7 +4,8 @@ import {
   type FollowUpService,
   type FollowUpTask,
 } from '@melonoffice/conversations';
-import type { FollowUpId, OrganizationId } from '@melonoffice/domain';
+import type { FollowUp, FollowUpId, OrganizationId } from '@melonoffice/domain';
+import type { EventBus, EventDraft } from '@melonoffice/events';
 import type { Logger } from '@melonoffice/observability';
 
 /** The only route that marks follow-ups due (C5, ADR-0058). It means "this one's time came". */
@@ -53,16 +54,36 @@ const answer = (status: FollowUpRunResult['status'], body: FollowUpRunResult['bo
   Object.freeze({ status, body: Object.freeze(body) });
 
 /**
+ * `follow_up.due` (EV-2, ADR-0067): one per scheduling of a follow-up. Its key is the follow-up
+ * and its schedule, so a repeated task publishes the same event, stored and delivered once.
+ */
+export const followUpDueEvent = (followUp: FollowUp): EventDraft => ({
+  type: 'follow_up.due',
+  subject: { type: 'follow_up', id: followUp.id },
+  data: {
+    contactId: followUp.contactId,
+    opportunityId: followUp.opportunityId ?? null,
+    assignedTo: followUp.assignedTo,
+  },
+  ...(followUp.dueAt === undefined ? {} : { occurredAt: new Date(followUp.dueAt) }),
+  idempotencyKey: `${followUp.id}:${followUp.schedule}`,
+});
+
+/**
  * The worker's follow-up handler: thin, like the job handler. It checks the request and hands it
  * to the follow-up service, which re-reads everything from Firestore. `200` is done (due, already
  * done, stale or ended); `503` asks the queue to deliver again, which is safe.
  */
 export function createFollowUpHandler(options: {
   readonly followUps: Pick<FollowUpService, 'runDue' | 'failDue'>;
+  /**
+   * Publishes `follow_up.due` when a follow-up's time came (EV-2). Absent: nothing is published.
+   */
+  readonly events?: Pick<EventBus, 'publishRuntime'>;
   readonly logger?: Logger;
   readonly maxAttempts?: number;
 }): FollowUpHandler {
-  const { followUps, logger, maxAttempts = FOLLOW_UP_MAX_ATTEMPTS } = options;
+  const { followUps, events, logger, maxAttempts = FOLLOW_UP_MAX_ATTEMPTS } = options;
   return Object.freeze({
     async run(request: unknown, retryCount: number) {
       const task = taskOf(request);
@@ -70,6 +91,24 @@ export function createFollowUpHandler(options: {
       try {
         const result = await followUps.runDue(task);
         logger?.info('follow-up task', { result: result.kind });
+        if (events !== undefined && (result.kind === 'due' || result.kind === 'already_due')) {
+          const { followUp } = result;
+          try {
+            // The runtime acts for the member who scheduled it, in the follow-up's organization.
+            await events.publishRuntime(followUp.organizationId, followUp.createdBy, [
+              followUpDueEvent(followUp),
+            ]);
+          } catch {
+            // The follow-up is due; only its event is missing. The queue delivers the task again,
+            // which finds it already due and publishes the same event.
+            logger?.warn('follow-up event not published', { retryCount });
+            if (retryCount >= maxAttempts - 1) {
+              logger?.error('follow-up event lost', { followUpId: followUp.id });
+              return answer(200, { result: result.kind, code: 'event_not_published' });
+            }
+            return answer(503, { result: 'unavailable', code: 'event_not_published' });
+          }
+        }
         return answer(200, { result: result.kind });
       } catch (error) {
         const code = isConversationError(error) ? error.code : 'unavailable';
