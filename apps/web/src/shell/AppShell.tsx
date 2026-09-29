@@ -8,6 +8,8 @@ import {
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { ActivityProvider } from '../activity/ActivityFeed.js';
 import { createActivityClient } from '../activity/activityClient.js';
+import { AutomationsPage } from '../automations/AutomationsPage.js';
+import { createAutomationsClient } from '../automations/automationsClient.js';
 import { BusinessPage } from '../business/BusinessPage.js';
 import { createBusinessClient } from '../business/businessClient.js';
 import { HOME_TIME_ZONE } from '../business/defaults.js';
@@ -68,6 +70,11 @@ export function AppShell(locale: LocaleProps) {
   // Agent tasks (ADR-0063): read with the agents, asked only with `specialist.task`.
   const canReadAgents = useCan('specialist.read');
   const canAskAgents = useCan('specialist.task');
+  // Automations (WF-3): workflows and their plans; approving a plan starts it (ADR-0070).
+  const canReadWorkflows = useCan('workflow.read');
+  const canReadPlans = useCan('plan.read');
+  const canPlanWorkflows = useCan('plan.create');
+  const canDecidePlans = useCan('approval.approve');
   const route = parseRoute(usePath());
   const [menuOpen, setMenuOpen] = useState(false);
   useEffect(() => {
@@ -97,6 +104,7 @@ export function AppShell(locale: LocaleProps) {
             memory: createMemoryClient(services.api.request, organizationId),
             reports: createReportsClient(services.api.request, organizationId),
             agentTasks: createAgentTasksClient(services.api.request, organizationId),
+            automations: createAutomationsClient(services.api.request, organizationId),
           },
     [services, organizationId],
   );
@@ -210,6 +218,24 @@ export function AppShell(locale: LocaleProps) {
     case 'reports':
       page = canReadReports ? <ReportsPage client={clients.reports} /> : <NotFound />;
       break;
+    case 'automations':
+      page =
+        canReadWorkflows || canReadPlans ? (
+          <div className="light-surface">
+            <AutomationsPage
+              client={clients.automations}
+              permissions={{
+                readWorkflows: canReadWorkflows,
+                readPlans: canReadPlans,
+                planWorkflows: canPlanWorkflows,
+                decidePlans: canDecidePlans,
+              }}
+            />
+          </div>
+        ) : (
+          <NotFound />
+        );
+      break;
     case 'conversations':
       page = canReadConversations ? (
         <div className="light-surface">
@@ -272,6 +298,7 @@ export function AppShell(locale: LocaleProps) {
                 canReadConnections={canReadConnections}
                 canReadMemory={canReadBusiness || canReadKnowledge}
                 canReadReports={canReadReports}
+                canReadAutomations={canReadWorkflows || canReadPlans}
                 open={menuOpen}
                 onNavigate={() => setMenuOpen(false)}
               />
