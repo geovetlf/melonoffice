@@ -67,7 +67,10 @@ export interface AuditTarget {
     | 'forecast'
     | 'gia'
     | 'decision'
-    | 'event';
+    | 'event'
+    | 'commercial_account'
+    | 'commercial_membership'
+    | 'customer_relationship';
   readonly id: string;
 }
 
@@ -128,6 +131,11 @@ export interface AuditEvent {
   readonly actor: AuditActor;
   /** The organization the actor was authorized to act in, from a resolved tenant. Never client input. */
   readonly organizationId?: OrganizationId;
+  /**
+   * The partner or agency account the actor acted in or for (ADR-0086), from a resolved commercial
+   * context or the platform administrator's own write. Never client input.
+   */
+  readonly commercialAccountId?: string;
   readonly target?: AuditTarget;
   /** The target's version the event is about, for `workflow.*` events (ADR-0028). */
   readonly targetVersion?: number;
@@ -212,6 +220,9 @@ export function buildAuditEvent(input: AuditEventInput, at: Date): AuditEvent {
   const allowed: readonly AuditResult[] = AUDIT_ACTIONS[input.action].results;
   if (!allowed.includes(input.result)) {
     throw new Error(`audit action ${input.action} cannot be ${input.result}`);
+  }
+  if (input.commercialAccountId !== undefined && !UUID.test(input.commercialAccountId)) {
+    throw new Error('invalid audit commercial account');
   }
   if (input.reason !== undefined && !CODE.test(input.reason))
     throw new Error('invalid audit reason');
@@ -303,6 +314,9 @@ export function buildAuditEvent(input: AuditEventInput, at: Date): AuditEvent {
     result: input.result,
     actor,
     ...(input.organizationId === undefined ? {} : { organizationId: input.organizationId }),
+    ...(input.commercialAccountId === undefined
+      ? {}
+      : { commercialAccountId: input.commercialAccountId }),
     ...(input.target === undefined
       ? {}
       : { target: Object.freeze({ type: input.target.type, id: input.target.id }) }),

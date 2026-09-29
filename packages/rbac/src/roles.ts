@@ -61,7 +61,37 @@ export const ROLES = {
     'channel.update',
     'channel.disconnect',
     'channel.delete',
+    'relationship.read',
+    'relationship.manage',
   ],
 } as const satisfies RoleCatalogue;
 
 export type Role = keyof typeof ROLES;
+
+/**
+ * Roles in a partner or agency account (ADR-0086, Geovet's decision "Admin y soporte"). An admin
+ * runs the account; support and managers only read. A role only works in an account of its own
+ * type (`partner.*` in a partner, `agency.*` in an agency). What a role may see inside a customer
+ * is further limited to the scopes that customer granted.
+ */
+export const COMMERCIAL_ROLES = {
+  'partner.admin': [
+    'commercial.read',
+    'commercial.manage_members',
+    'commercial.invite_customer',
+    'customer.read_summary',
+  ],
+  'partner.support': ['commercial.read', 'customer.read_summary'],
+  'agency.admin': [
+    'commercial.read',
+    'commercial.manage_members',
+    'commercial.invite_customer',
+    'customer.read_summary',
+  ],
+  'agency.manager': ['commercial.read', 'customer.read_summary'],
+} as const satisfies RoleCatalogue;
+
+export type CommercialRoleName = keyof typeof COMMERCIAL_ROLES;
+
+export const isCommercialRoleName = (value: unknown): value is CommercialRoleName =>
+  typeof value === 'string' && Object.hasOwn(COMMERCIAL_ROLES, value);

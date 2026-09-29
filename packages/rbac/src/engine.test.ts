@@ -21,9 +21,13 @@ import {
   type TenantContext,
 } from '@melonoffice/tenancy';
 import { describe, expect, it } from 'vitest';
-import { createAuthorizationService, type RbacDecision } from './engine.js';
+import {
+  createAuthorizationService,
+  createCommercialAuthorization,
+  type RbacDecision,
+} from './engine.js';
 import { isPermission, PERMISSIONS } from './permissions.js';
-import { ROLES } from './roles.js';
+import { COMMERCIAL_ROLES, ROLES } from './roles.js';
 
 const ALICE = '11111111-1111-4111-8111-111111111111' as UserId;
 const BOB = '22222222-2222-4222-8222-222222222222' as UserId;
@@ -156,7 +160,13 @@ describe('catalogue', () => {
       'channel.update',
       'channel.disconnect',
       'channel.delete',
+      'relationship.read',
+      'relationship.manage',
     ]);
+    // An organization role never holds a commercial permission (ADR-0086).
+    expect(ROLES.owner.some((p) => p.startsWith('commercial.') || p.startsWith('customer.'))).toBe(
+      false,
+    );
     for (const permissions of Object.values(ROLES)) {
       for (const permission of permissions) expect(isPermission(permission)).toBe(true);
     }
@@ -413,5 +423,102 @@ describe('the commercial layer (ADR-0085)', () => {
       reason: 'unresolved_tenant',
     });
     expect(rbac.permissionsOf(asTenant).size).toBe(0);
+  });
+});
+
+describe('commercial authorization (ADR-0086)', () => {
+  const at = '2026-09-29T12:00:00Z' as Organization['createdAt'];
+  const PARTNER = 'aaaaaaaa-0000-4000-8000-00000000000a' as never;
+  const ORG = 'eeeeeeee-0000-4000-8000-00000000000e' as OrganizationId;
+  async function contextAs(role: string, type: 'partner' | 'agency' = 'partner') {
+    const store = new InMemoryCommercialStore();
+    store.putAccount({
+      id: PARTNER,
+      type,
+      name: 'P',
+      status: 'active',
+      createdAt: at,
+      updatedAt: at,
+    });
+    store.putMembership({
+      id: 'm' as never,
+      commercialAccountId: PARTNER,
+      userId: ALICE,
+      role,
+      status: 'active',
+      createdAt: at,
+      updatedAt: at,
+    });
+    return resolveCommercialContext(
+      { actor: 'user', userId: ALICE, emailVerified: true },
+      PARTNER,
+      store,
+    );
+  }
+  const access = (scopes: string[], account = PARTNER) =>
+    ({
+      commercialAccountId: account,
+      organizationId: ORG,
+      relationshipId: 'r',
+      mode: 'reseller',
+      scopes: new Set(scopes),
+    }) as never;
+  const commercial = createCommercialAuthorization();
+
+  it('gives admins management and support only reads, as Geovet decided', async () => {
+    const admin = await contextAs('partner.admin');
+    const support = await contextAs('partner.support');
+    for (const permission of COMMERCIAL_ROLES['partner.admin']) {
+      expect(commercial.authorize(admin, permission, access(['summary'])).allowed).toBe(true);
+    }
+    expect(commercial.authorize(support, 'commercial.read').allowed).toBe(true);
+    expect(commercial.authorize(support, 'commercial.manage_members')).toEqual({
+      allowed: false,
+      reason: 'permission_denied',
+    });
+    expect(commercial.authorize(support, 'commercial.invite_customer').allowed).toBe(false);
+  });
+
+  it('reads inside a customer only within the scopes that customer granted, for its own account', async () => {
+    const admin = await contextAs('partner.admin');
+    expect(commercial.authorize(admin, 'customer.read_summary')).toEqual({
+      allowed: false,
+      reason: 'cross_account',
+    });
+    expect(commercial.authorize(admin, 'customer.read_summary', access([]))).toEqual({
+      allowed: false,
+      reason: 'scope_not_granted',
+    });
+    expect(
+      commercial.authorize(
+        admin,
+        'customer.read_summary',
+        access(['summary'], 'bbbbbbbb-0000-4000-8000-00000000000b' as never),
+      ),
+    ).toEqual({ allowed: false, reason: 'cross_account' });
+  });
+
+  it('refuses a role of another account type, an unknown role, a forged context and organization permissions', async () => {
+    expect(commercial.authorize(await contextAs('agency.admin'), 'commercial.read')).toEqual({
+      allowed: false,
+      reason: 'role_not_for_account_type',
+    });
+    expect(commercial.authorize(await contextAs('owner'), 'commercial.read')).toEqual({
+      allowed: false,
+      reason: 'unknown_role',
+    });
+    const admin = await contextAs('partner.admin');
+    expect(commercial.authorize({ ...admin }, 'commercial.read')).toEqual({
+      allowed: false,
+      reason: 'unresolved_commercial_context',
+    });
+    expect(commercial.authorize(admin, 'knowledge.read')).toEqual({
+      allowed: false,
+      reason: 'permission_denied',
+    });
+    expect(commercial.authorize(admin, 'credits.grant')).toEqual({
+      allowed: false,
+      reason: 'unknown_permission',
+    });
   });
 });

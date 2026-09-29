@@ -48,6 +48,7 @@ import {
   FirestoreCreditStore,
   FirestorePlanRepository,
   FirestoreTenancyStore,
+  FirestoreCommercialStore,
   FirestoreUserDirectory,
   FirestoreWorkflowRepository,
 } from '@melonoffice/firestore';
@@ -147,6 +148,8 @@ function services(projectId: string) {
       users: new FirestoreUserDirectory(firestore),
     },
     tenancy,
+    // Partner and agency accounts (ADR-0086): three collections, equality queries only.
+    commercialAccounts: new FirestoreCommercialStore(firestore),
     billing: new FirestoreBillingStore(firestore),
     executions,
     approvals,

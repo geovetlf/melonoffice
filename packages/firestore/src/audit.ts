@@ -33,6 +33,8 @@ export interface AuditDocument {
   /** For the system actor: the user who started the work it did. */
   readonly actorInitiatedBy: string | null;
   readonly organizationId: string | null;
+  /** The partner or agency account (ADR-0086); absent on events before it existed. */
+  readonly commercialAccountId?: string | null;
   readonly targetType: string | null;
   readonly targetId: string | null;
   readonly targetVersion: number | null;
@@ -84,6 +86,9 @@ export function toAuditDocument(event: AuditEvent): AuditDocument {
     actorId: system?.id ?? null,
     actorInitiatedBy: system?.initiatedBy ?? null,
     organizationId: event.organizationId ?? null,
+    ...(event.commercialAccountId === undefined
+      ? {}
+      : { commercialAccountId: event.commercialAccountId }),
     targetType: event.target?.type ?? null,
     targetId: event.target?.id ?? null,
     targetVersion: event.targetVersion ?? null,
@@ -212,6 +217,7 @@ export function fromAuditDocument(id: string, d: AuditDocument): AuditEvent {
           ? { type: 'system', id: d.actorId, initiatedBy: d.actorInitiatedBy, via: d.actorVia }
           : { type: d.actorType },
     ...(d.organizationId === null ? {} : { organizationId: d.organizationId }),
+    ...(d.commercialAccountId == null ? {} : { commercialAccountId: d.commercialAccountId }),
     ...(d.targetType === null ? {} : { target: { type: d.targetType, id: d.targetId } }),
     ...(d.targetVersion == null ? {} : { targetVersion: d.targetVersion }),
     ...(d.requestedOrganizationId === null

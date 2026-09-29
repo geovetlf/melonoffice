@@ -1,3 +1,4 @@
+import type { AuditEvent, InMemoryAuditStore } from '@melonoffice/audit';
 import type {
   CommercialAccount,
   CommercialAccountId,
@@ -6,17 +7,19 @@ import type {
   OrganizationId,
   UserId,
 } from '@melonoffice/domain';
-import type { CommercialStore } from './commercial.js';
+import type { CommercialRepository } from './commercial-writes.js';
+import { TenancyError } from './errors.js';
 
-/**
- * For tests and local runs only (ADR-0085, phase 1): the commercial layer has no writes yet, so
- * records are put here directly. Phase 2 adds the Firestore store and the audited writes.
- */
-export class InMemoryCommercialStore implements CommercialStore {
+/** For tests and local runs only: everything is lost on restart and not shared between instances. */
+export class InMemoryCommercialStore implements CommercialRepository {
   readonly #accounts = new Map<string, CommercialAccount>();
   readonly #memberships = new Map<string, CommercialMembership>();
   readonly #relationships = new Map<string, CustomerRelationship>();
 
+  /** Receives the writes' audit events in the same step as the data. */
+  constructor(private readonly audit?: InMemoryAuditStore) {}
+
+  // Direct puts, for tests that set up records without going through a write.
   putAccount(account: CommercialAccount): void {
     this.#accounts.set(account.id, Object.freeze({ ...account }));
   }
@@ -39,8 +42,16 @@ export class InMemoryCommercialStore implements CommercialStore {
     return this.#accounts.get(id);
   }
 
+  async listAccounts() {
+    return [...this.#accounts.values()];
+  }
+
   async findMembership(accountId: CommercialAccountId, userId: UserId) {
     return this.#memberships.get(`${accountId}_${userId}`);
+  }
+
+  async membersOfAccount(accountId: CommercialAccountId) {
+    return [...this.#memberships.values()].filter((m) => m.commercialAccountId === accountId);
   }
 
   async membershipsOfUser(userId: UserId) {
@@ -53,5 +64,65 @@ export class InMemoryCommercialStore implements CommercialStore {
 
   async relationshipsOfAccount(accountId: CommercialAccountId) {
     return [...this.#relationships.values()].filter((r) => r.commercialAccountId === accountId);
+  }
+
+  async relationshipsOfOrganization(organizationId: OrganizationId) {
+    return [...this.#relationships.values()].filter((r) => r.organizationId === organizationId);
+  }
+
+  async createAccount(
+    account: CommercialAccount,
+    firstAdmin: CommercialMembership,
+    events: readonly AuditEvent[],
+  ) {
+    if (this.#accounts.has(account.id)) throw new TenancyError('commercial_conflict');
+    this.#record(events);
+    this.putAccount(account);
+    this.putMembership(firstAdmin);
+  }
+
+  async saveMembership(
+    membership: CommercialMembership,
+    expected: CommercialMembership | undefined,
+    events: readonly AuditEvent[],
+    limit?: number,
+  ) {
+    const current = await this.findMembership(membership.commercialAccountId, membership.userId);
+    if (current?.updatedAt !== expected?.updatedAt) throw new TenancyError('commercial_conflict');
+    if (limit !== undefined && membership.status === 'active' && current?.status !== 'active') {
+      const active = [...this.#memberships.values()].filter(
+        (m) => m.commercialAccountId === membership.commercialAccountId && m.status === 'active',
+      ).length;
+      if (active >= limit) throw new TenancyError('commercial_limit_reached');
+    }
+    this.#record(events);
+    this.putMembership(membership);
+  }
+
+  async saveRelationship(
+    relationship: CustomerRelationship,
+    expected: CustomerRelationship | undefined,
+    events: readonly AuditEvent[],
+    limit?: number,
+  ) {
+    const current = await this.findRelationship(
+      relationship.commercialAccountId,
+      relationship.organizationId,
+    );
+    if (current?.updatedAt !== expected?.updatedAt) throw new TenancyError('commercial_conflict');
+    if (limit !== undefined && relationship.status !== 'ended' && current?.status !== 'pending') {
+      const open = (await this.relationshipsOfAccount(relationship.commercialAccountId)).filter(
+        (r) => r.status !== 'ended',
+      ).length;
+      if (open >= limit) throw new TenancyError('commercial_limit_reached');
+    }
+    this.#record(events);
+    this.putRelationship(relationship);
+  }
+
+  #record(events: readonly AuditEvent[]) {
+    if (events.length === 0) return;
+    if (this.audit === undefined) throw new Error('no audit store for commercial events');
+    this.audit.appendNow(events);
   }
 }
