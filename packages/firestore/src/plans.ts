@@ -9,6 +9,7 @@ import type {
   IsoTimestamp,
   OrganizationId,
   Plan,
+  PlanConditionResult,
   PlanDecision,
   PlanId,
   PlanVersion,
@@ -54,10 +55,20 @@ interface PlanDocument {
     decidedBy: string;
     decidedAt: FirestoreTimestamp;
   } | null;
+  /** What each condition step did (WF-4). Absent in plans written before conditions ran. */
+  readonly conditions?: readonly ConditionDocument[];
   readonly revision: number;
   readonly createdAt: FirestoreTimestamp;
   readonly createdBy: string;
   readonly updatedAt: FirestoreTimestamp;
+}
+
+interface ConditionDocument {
+  readonly stepId: string;
+  readonly result: string;
+  readonly decision: { id: string; type: string; version: number; outcome: string } | null;
+  readonly failure: string | null;
+  readonly evaluatedAt: FirestoreTimestamp;
 }
 
 interface PlanVersionDocument {
@@ -94,6 +105,17 @@ export function toPlanDocument(plan: Plan): PlanDocument {
             decidedBy: plan.decision.decidedBy,
             decidedAt: ts(plan.decision.decidedAt),
           },
+    ...(plan.conditions === undefined
+      ? {}
+      : {
+          conditions: plan.conditions.map((c) => ({
+            stepId: c.stepId,
+            result: c.result,
+            decision: c.decision === undefined ? null : { ...c.decision },
+            failure: c.failure ?? null,
+            evaluatedAt: ts(c.evaluatedAt),
+          })),
+        }),
     revision: plan.revision,
     createdAt: ts(plan.createdAt),
     createdBy: plan.createdBy,
@@ -125,6 +147,17 @@ function toPlan(id: string, d: PlanDocument): Plan {
             decidedBy: d.decision.decidedBy,
             decidedAt: iso(d.decision.decidedAt),
           },
+        }),
+    ...(d.conditions === undefined
+      ? {}
+      : {
+          conditions: d.conditions.map((c) => ({
+            stepId: c.stepId,
+            result: c.result as PlanConditionResult['result'],
+            ...(c.decision === null ? {} : { decision: { ...c.decision } }),
+            ...(c.failure === null ? {} : { failure: c.failure }),
+            evaluatedAt: iso(c.evaluatedAt),
+          })),
         }),
     revision: d.revision,
     createdAt: iso(d.createdAt),

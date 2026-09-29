@@ -78,6 +78,7 @@ Only actions the code performs today:
 | `plan.approved`                | planning      | success, denied          | A user approved a plan version, or was refused (added by ADR-0028)           |
 | `plan.rejected`                | planning      | success, denied          | A user rejected a plan version, or was refused (added by ADR-0028)           |
 | `plan.state_changed`           | planning      | success                  | A plan's status changed, with from and to (added by ADR-0028)                |
+| `plan.condition_evaluated`     | planning      | success                  | A plan's condition step was decided, with its result (added by ADR-0075)     |
 | `delegation.created`           | planning      | success                  | A plan step was handed to a child execution (added by ADR-0028)              |
 | `workflow.created`             | workflow      | success                  | A workflow was created in draft, with version 1 (added by ADR-0028)          |
 | `workflow.version_created`     | workflow      | success                  | A new write-once workflow version was stored (added by ADR-0028)             |

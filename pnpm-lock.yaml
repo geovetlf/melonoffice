@@ -241,6 +241,9 @@ importers:
       '@melonoffice/credits':
         specifier: workspace:*
         version: link:../../packages/credits
+      '@melonoffice/decisions':
+        specifier: workspace:*
+        version: link:../../packages/decisions
       '@melonoffice/departments':
         specifier: workspace:*
         version: link:../../packages/departments

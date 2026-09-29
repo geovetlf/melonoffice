@@ -67,6 +67,7 @@ import { createLogger } from '@melonoffice/observability';
 import { createAuthorizationService } from '@melonoffice/rbac';
 import { createToolRegistry, TOOL_CATALOGUE } from '@melonoffice/tools';
 import { createAgentTaskParts, createConversationAgentParts, routeAgentWork } from './agents.js';
+import { createPlanConditions } from './conditions.js';
 import { randomUUID } from 'node:crypto';
 import { createApp, RUN_JOB_PATH, SERVICE_NAME, type AppOptions } from './app.js';
 import { loadConfig, type RuntimeConfig } from './config.js';
@@ -214,6 +215,15 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
     outputs: agents.outputs,
     onStopped: routed.onStopped,
     plans,
+    // Plans' condition steps (WF-4, ADR-0075): decided by the Decision Engine, rules only.
+    conditions: createPlanConditions({
+      stores: {
+        tenancy,
+        knowledge: new FirestoreKnowledgeRepository(firestore),
+        audit: stores.audit,
+      },
+      logger: logger.child({ component: 'plan-conditions' }),
+    }),
     dispatcher: createCloudTasksDispatcher({
       queue: runtime.queue,
       targetUrl: `${runtime.workerUrl}${RUN_JOB_PATH}`,

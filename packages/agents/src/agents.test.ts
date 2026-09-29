@@ -14,6 +14,7 @@ import type {
   InitialBilling,
   Organization,
   Plan,
+  PlanStep,
   PlanVersion,
   Specialist,
   SubscriptionId,
@@ -46,6 +47,7 @@ import {
   createAgentTaskWork,
   createBrainContextSource,
   createPlanStepVerifier,
+  answeringSteps,
   createPlanStepWork,
   InMemoryAgentTaskRepository,
   isAgentTaskError,
@@ -732,5 +734,23 @@ describe('Plan steps: what a step’s agent is given (WF-1, ADR-0070)', () => {
     expect(
       await verifier.verify(t.w.runtime, { ...done, input: { type: 'agent_task', id: REPORT } }),
     ).toBeUndefined();
+  });
+});
+
+describe('plan steps after a condition (WF-4)', () => {
+  it('read the answers of the steps before the condition, each once, never the condition', () => {
+    const step = (id: string, kind: PlanStep['kind'], dependsOn: string[]) =>
+      ({ id, kind, label: id, dependsOn, approvalRequired: false }) as PlanStep;
+    const version = {
+      steps: [
+        step('a', 'specialist', []),
+        step('b', 'specialist', []),
+        step('gate', 'condition', ['a', 'b']),
+        step('again', 'condition', ['gate', 'a']),
+        step('c', 'specialist', ['again', 'b']),
+      ],
+    } as unknown as PlanVersion;
+    expect(answeringSteps(version, version.steps[4] as PlanStep)).toEqual(['a', 'b']);
+    expect(answeringSteps(version, step('d', 'specialist', ['missing']))).toBeUndefined();
   });
 });

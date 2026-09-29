@@ -5,6 +5,8 @@ import type {
   IsoTimestamp,
   OrganizationId,
   Plan,
+  PlanConditionResult,
+  PlanDecisionCondition,
   PlanId,
   PlanStep,
   PlanVersion,
@@ -14,7 +16,7 @@ import type { Logger } from '@melonoffice/observability';
 import { isResolvedTenant, type TenantContext } from '@melonoffice/tenancy';
 import type { Delegation } from './delegation.js';
 import { isPlanningError, PlanningError } from './errors.js';
-import { applyPlanStatus, isPlanId } from './model.js';
+import { applyPlanStatus, isPlanId, recordCondition } from './model.js';
 import type { PlanRepository } from './repository.js';
 
 /**
@@ -25,10 +27,12 @@ import type { PlanRepository } from './repository.js';
  *
  * - `run` (the person who approved, right after approving): delegates the plan and starts the
  *   steps that depend on no other step.
- * - `advance` (the runtime, after one of the plan's steps ended): starts every step whose steps
- *   before it completed, mirrors the children on the planning execution's graph, and closes the
- *   plan: `completed` once every step completed with passing evidence, `failed` as soon as one
- *   step failed or was cancelled. A step never starts after the plan stopped.
+ * - `advance` (the runtime, after one of the plan's steps ended): decides every condition step
+ *   whose steps before it completed (WF-4, through the Decision Engine), starts every specialist
+ *   step whose steps before it completed, mirrors the children on the planning execution's
+ *   graph, and closes the plan: `completed` once every step completed with passing evidence or
+ *   was skipped by a condition, `failed` as soon as one step failed or was cancelled or a
+ *   condition could not go on. A step never starts after the plan stopped.
  *
  * Both are idempotent and safe to call again at any point: every change names the state it
  * expects, and a change another call already made is read back, never made twice.
@@ -47,17 +51,37 @@ export interface StepStarter {
   start(tenant: TenantContext, executionId: ExecutionId): Promise<void>;
 }
 
-/** The step kinds a plan may have to run in WF-1. Anything else is refused before approval. */
-export const RUNNABLE_STEP_KINDS: readonly PlanStep['kind'][] = ['specialist'];
+/** The step kinds a plan may have to run: specialist steps (WF-1) and condition steps (WF-4). */
+export const RUNNABLE_STEP_KINDS: readonly PlanStep['kind'][] = ['specialist', 'condition'];
 
 /**
- * Why a plan version cannot run yet, or `undefined` when it can. WF-1 runs specialist steps only:
- * a tool, approval, verification, condition or parallel step has no defined behaviour in a plan
- * yet (ADR-0031), so such a plan is refused whole, never run in part.
+ * Why a plan version cannot run yet, or `undefined` when it can. Specialist steps run (WF-1), and
+ * condition steps the Decision Engine decides after at least one other step (WF-4). A tool,
+ * approval, verification or parallel step, or a condition on how another step ended, has no
+ * defined behaviour in a plan yet (ADR-0031), so such a plan is refused whole, never run in part.
  */
 export function unrunnableStepOf(version: PlanVersion): string | undefined {
-  const step = version.steps.find((s) => !RUNNABLE_STEP_KINDS.includes(s.kind));
+  const step = version.steps.find(
+    (s) =>
+      !RUNNABLE_STEP_KINDS.includes(s.kind) ||
+      (s.kind === 'condition' && (s.decision === undefined || s.dependsOn.length === 0)),
+  );
   return step === undefined ? undefined : step.kind;
+}
+
+/**
+ * Decides a plan's condition steps (WF-4, ADR-0075). The app wires it to the Decision Engine
+ * (`planConditionEvaluator` in `@melonoffice/decisions`), which decides as the tenant it is given
+ * and audits the decision: there is no second decision path. It never throws for a decision
+ * that could not be made; that is a `failed` result with a stable code. Anything it throws
+ * (storage unavailable) leaves the condition undecided, to be decided on the next advance.
+ */
+export interface ConditionEvaluator {
+  evaluate(
+    tenant: TenantContext,
+    condition: PlanDecisionCondition,
+    requestId?: string,
+  ): Promise<Omit<PlanConditionResult, 'stepId' | 'evaluatedAt'>>;
 }
 
 /** The plan step a child execution is for (`plan_step` input `{planId}:{stepId}`), if it is one. */
@@ -103,6 +127,11 @@ export interface PlanConductorOptions {
     'get' | 'runtimePlanChangeStatus' | 'runtimePlanChangeNode' | 'recordVerification'
   >;
   readonly starter: StepStarter;
+  /**
+   * Decides condition steps (WF-4). Needed by `advance` only. Absent: a condition step fails with
+   * `condition_not_configured` and the plan stops, never going on undecided.
+   */
+  readonly conditions?: ConditionEvaluator;
   readonly now?: () => Date;
   readonly requestId?: string;
   readonly logger?: Logger;
@@ -110,9 +139,61 @@ export interface PlanConductorOptions {
 
 /** The planning execution's evidence that every step completed: its child execution. */
 export const STEP_CHECK = 'step_execution_completed';
+/** The evidence that a condition step was decided: its decision. */
+export const CONDITION_CHECK = 'condition_decided';
+
+/**
+ * Where one step is:
+ * - `waiting`: not started or not decided yet;
+ * - `running`: its child execution started;
+ * - `completed`: its child completed, or its condition lets the plan go on;
+ * - `stopped`: its condition was decided and the steps after it do not run;
+ * - `skipped`: a step it depends on was stopped or skipped, so it never runs;
+ * - `failed`: its child failed or was cancelled, or its condition could not go on.
+ */
+type StepState = 'waiting' | 'running' | 'completed' | 'stopped' | 'skipped' | 'failed';
+
+interface StepView {
+  readonly step: PlanStep;
+  /** On specialist steps. */
+  readonly child?: Execution;
+  /** On condition steps, once decided. */
+  readonly condition?: PlanConditionResult;
+  readonly state: StepState;
+}
+
+const specialistState = (child: Execution): StepState =>
+  child.status === 'completed'
+    ? 'completed'
+    : child.status === 'failed' || child.status === 'cancelled'
+      ? 'failed'
+      : child.startedAt !== undefined
+        ? 'running'
+        : 'waiting';
+
+const conditionState = (condition: PlanConditionResult | undefined): StepState =>
+  condition === undefined
+    ? 'waiting'
+    : condition.result === 'continue'
+      ? 'completed'
+      : condition.result === 'stop'
+        ? 'stopped'
+        : 'failed';
+
+/** Why a plan stops at a failed step, as the plan and its execution record it. */
+const failureOf = (view: StepView): string =>
+  view.step.kind === 'specialist'
+    ? 'step_failed'
+    : view.condition?.result === 'await_approval'
+      ? 'condition_needs_approval'
+      : 'condition_failed';
+
+/** A node of the planning execution that finished with work done: its evidence is checked. */
+const decided = (view: StepView): boolean => view.state === 'completed' || view.state === 'stopped';
 
 export function createPlanConductor(options: PlanConductorOptions): PlanConductor {
-  const { plans, delegation, executions, starter, now = () => new Date(), requestId } = options;
+  const { plans, delegation, executions, starter, conditions, requestId } = options;
+  const now = options.now ?? (() => new Date());
   const logger = options.logger;
 
   const iso = (at: Date): IsoTimestamp => at.toISOString() as IsoTimestamp;
@@ -134,33 +215,107 @@ export function createPlanConductor(options: PlanConductorOptions): PlanConducto
     return { plan, version };
   }
 
-  /** Each specialist step with its child execution, every step after the steps it depends on. */
+  /**
+   * Each step that runs, every step after the steps it depends on, with its child execution or
+   * its condition's result and where it is. A step after a stopped or skipped one is skipped.
+   */
   async function stepsOf(
     tenant: TenantContext,
     plan: Plan,
     version: PlanVersion,
-  ): Promise<readonly { step: PlanStep; child: Execution }[]> {
-    const out: { step: PlanStep; child: Execution }[] = [];
-    for (const step of inOrder(version.steps.filter((s) => s.kind === 'specialist'))) {
-      const d = plan.delegations.find((x) => x.stepId === step.id);
-      if (d === undefined) throw new PlanningError('delegation_conflict');
-      out.push({ step, child: await executions.get(tenant, d.executionId) });
+  ): Promise<readonly StepView[]> {
+    const out: StepView[] = [];
+    const states = new Map<string, StepState>();
+    for (const step of inOrder(version.steps.filter((s) => RUNNABLE_STEP_KINDS.includes(s.kind)))) {
+      let view: StepView;
+      if (step.kind === 'specialist') {
+        const d = plan.delegations.find((x) => x.stepId === step.id);
+        if (d === undefined) throw new PlanningError('delegation_conflict');
+        const child = await executions.get(tenant, d.executionId);
+        view = { step, child, state: specialistState(child) };
+      } else {
+        const condition = plan.conditions?.find((c) => c.stepId === step.id);
+        view = {
+          step,
+          ...(condition === undefined ? {} : { condition }),
+          state: conditionState(condition),
+        };
+      }
+      if (
+        view.state === 'waiting' &&
+        step.dependsOn.some((d) => states.get(d) === 'stopped' || states.get(d) === 'skipped')
+      ) {
+        view = { ...view, state: 'skipped' };
+      }
+      states.set(step.id, view.state);
+      out.push(view);
     }
     return out;
   }
 
-  /** Starts every child that has not started and whose steps before it all completed. */
-  async function startReady(
+  /** Whether every step a step depends on completed. */
+  function readyIn(views: readonly StepView[], view: StepView): boolean {
+    const completed = new Set(views.filter((v) => v.state === 'completed').map((v) => v.step.id));
+    return view.state === 'waiting' && view.step.dependsOn.every((d) => completed.has(d));
+  }
+
+  /** Starts every specialist step that has not started and whose steps before it all completed. */
+  async function startReady(tenant: TenantContext, views: readonly StepView[]): Promise<void> {
+    for (const view of views) {
+      if (view.child === undefined || view.child.status !== 'pending') continue;
+      if (!readyIn(views, view)) continue;
+      await starter.start(tenant, view.child.id);
+    }
+  }
+
+  /**
+   * Decides one condition step and records its result on the plan, once, with its audit event.
+   * A result another call recorded first stands: it is read back, never decided twice.
+   */
+  async function decide(
     tenant: TenantContext,
-    steps: readonly { step: PlanStep; child: Execution }[],
-  ): Promise<void> {
-    const completed = new Set(
-      steps.filter((s) => s.child.status === 'completed').map((s) => s.step.id),
-    );
-    for (const { step, child } of steps) {
-      if (child.status !== 'pending' || child.startedAt !== undefined) continue;
-      if (!step.dependsOn.every((d) => completed.has(d))) continue;
-      await starter.start(tenant, child.id);
+    organizationId: OrganizationId,
+    plan: Plan,
+    step: PlanStep,
+  ): Promise<Plan> {
+    const condition = step.decision;
+    const outcome =
+      condition === undefined
+        ? { result: 'failed' as const, failure: 'condition_invalid' }
+        : conditions === undefined
+          ? { result: 'failed' as const, failure: 'condition_not_configured' }
+          : await conditions.evaluate(tenant, condition, requestId);
+    const at = now();
+    try {
+      return await plans.update(organizationId, plan.id, (current) => {
+        const next = recordCondition(current, { stepId: step.id, ...outcome }, iso(at));
+        return {
+          plan: next,
+          events: [
+            buildAuditEvent(
+              {
+                action: 'plan.condition_evaluated',
+                result: 'success',
+                actor: actorOf(tenant),
+                organizationId,
+                target: { type: 'plan', id: next.id },
+                nodeId: step.id,
+                reason: outcome.failure ?? outcome.result,
+                ...(outcome.decision === undefined ? {} : { reference: outcome.decision.id }),
+                ...(requestId === undefined ? {} : { requestId }),
+                source: 'api',
+              },
+              at,
+            ),
+          ],
+        };
+      });
+    } catch (error) {
+      if (!isPlanningError(error)) throw error;
+      const fresh = await plans.find(organizationId, plan.id);
+      if (fresh?.conditions?.some((c) => c.stepId === step.id) === true) return fresh;
+      if (fresh !== undefined && fresh.status !== 'executing') return fresh;
+      throw error;
     }
   }
 
@@ -219,52 +374,73 @@ export function createPlanConductor(options: PlanConductorOptions): PlanConducto
     }
   }
 
-  /** The planning execution's graph follows its children: running, then completed. */
+  /**
+   * The planning execution's graph follows its steps: a started child's node runs, then
+   * completes with the child as its output; a decided condition's node completes with its
+   * decision as its output; a skipped step's node is skipped.
+   */
   async function mirror(
     tenant: TenantContext,
     parentId: ExecutionId,
-    steps: readonly { step: PlanStep; child: Execution }[],
+    views: readonly StepView[],
   ): Promise<Execution> {
     let parent = await executions.get(tenant, parentId);
-    for (const { step, child } of steps) {
+    for (const view of views) {
+      const { step } = view;
       const node = parent.nodes.find((n) => n.id === step.id);
       if (node === undefined) throw new PlanningError('delegation_conflict');
-      if (
-        child.startedAt === undefined ||
-        child.status === 'failed' ||
-        child.status === 'cancelled'
-      ) {
+      const output =
+        view.child !== undefined
+          ? { type: 'execution', id: view.child.id }
+          : view.condition?.decision === undefined
+            ? undefined
+            : { type: 'decision', id: view.condition.decision.id };
+      if (view.state === 'skipped') {
+        if (node.status === 'pending') {
+          await settle(() =>
+            executions.runtimePlanChangeNode(tenant, parentId, {
+              nodeId: step.id,
+              from: 'pending',
+              to: 'skipped',
+            }),
+          );
+        }
+      } else if (view.state === 'running' || decided(view)) {
+        if (node.status === 'pending') {
+          await settle(() =>
+            executions.runtimePlanChangeNode(tenant, parentId, {
+              nodeId: step.id,
+              from: 'pending',
+              to: 'running',
+            }),
+          );
+        }
+        if (decided(view) && node.status !== 'completed' && output !== undefined) {
+          await settle(() =>
+            executions.runtimePlanChangeNode(tenant, parentId, {
+              nodeId: step.id,
+              from: 'running',
+              to: 'completed',
+              output,
+            }),
+          );
+        }
+      } else {
         continue;
-      }
-      if (node.status === 'pending') {
-        await settle(() =>
-          executions.runtimePlanChangeNode(tenant, parentId, {
-            nodeId: step.id,
-            from: 'pending',
-            to: 'running',
-          }),
-        );
-      }
-      if (child.status === 'completed' && node.status !== 'completed') {
-        await settle(() =>
-          executions.runtimePlanChangeNode(tenant, parentId, {
-            nodeId: step.id,
-            from: 'running',
-            to: 'completed',
-            output: { type: 'execution', id: child.id },
-          }),
-        );
       }
       parent = await executions.get(tenant, parentId);
     }
     return parent;
   }
 
-  /** Every step completed: the planning execution is verified with its children and completes. */
+  /**
+   * Every step completed or was skipped: the planning execution is verified with its children
+   * and its decisions, and completes.
+   */
   async function complete(
     tenant: TenantContext,
     parent: Execution,
-    steps: readonly { step: PlanStep; child: Execution }[],
+    views: readonly StepView[],
   ): Promise<void> {
     if (parent.status === 'running') {
       await settle(() =>
@@ -276,15 +452,24 @@ export function createPlanConductor(options: PlanConductorOptions): PlanConducto
       await settle(() =>
         executions.recordVerification(tenant, parent.id, {
           correlationId: `plan-${parent.id}`,
-          nodes: steps.map(({ step, child }) => ({
-            nodeId: step.id,
+          nodes: views.filter(decided).map((view) => ({
+            nodeId: view.step.id,
             policy: 'checks',
             checks: [
-              {
-                code: STEP_CHECK,
-                result: child.status === 'completed' ? 'passed' : 'failed',
-                evidence: { type: 'execution', id: child.id },
-              },
+              view.child !== undefined
+                ? {
+                    code: STEP_CHECK,
+                    result: view.child.status === 'completed' ? 'passed' : 'failed',
+                    evidence: { type: 'execution', id: view.child.id },
+                  }
+                : {
+                    code: CONDITION_CHECK,
+                    result: view.condition?.decision === undefined ? 'failed' : 'passed',
+                    evidence: {
+                      type: 'decision',
+                      id: view.condition?.decision?.id ?? view.step.id,
+                    },
+                  },
             ],
           })),
         }),
@@ -326,6 +511,7 @@ export function createPlanConductor(options: PlanConductorOptions): PlanConducto
       if (delegation === undefined) throw new PlanningError('permission_denied', 'no_delegation');
       const { plan: delegated } = await delegation.delegate(tenant, plan.id);
       if (delegated.status !== 'executing') return delegated;
+      // Conditions wait on at least one step, so none is ready yet: the runtime decides them.
       await startReady(tenant, await stepsOf(tenant, delegated, version));
       logger?.info('plan started', { planId: delegated.id });
       return delegated;
@@ -334,30 +520,43 @@ export function createPlanConductor(options: PlanConductorOptions): PlanConducto
     async advance(tenant: TenantContext, planId: string) {
       const organizationId = organizationOf(tenant);
       if (tenant.actor !== 'runtime') throw new PlanningError('permission_denied', 'runtime_only');
-      const { plan, version } = await load(organizationId, planId);
+      const loaded = await load(organizationId, planId);
+      const { version } = loaded;
+      let plan = loaded.plan;
       if (plan.status !== 'executing' || plan.delegationState !== 'completed') return plan;
-      const steps = await stepsOf(tenant, plan, version);
       const current = await executions.get(tenant, plan.executionId);
       if (current.status === 'cancelled') {
         return (await plans.find(organizationId, plan.id)) ?? plan;
       }
+      let views = await stepsOf(tenant, plan, version);
 
-      const stopped = steps.find(
-        (s) => s.child.status === 'failed' || s.child.status === 'cancelled',
-      );
-      if (stopped !== undefined) {
-        await stop(tenant, await mirror(tenant, plan.executionId, steps), 'step_failed');
-        logger?.info('plan stopped', { planId: plan.id, stepId: stopped.step.id });
-        return finishPlan(tenant, organizationId, plan, 'failed', 'step_failed');
+      // Conditions whose steps before them completed are decided one at a time, in order, until
+      // none is ready or one stops the plan: a decision may make the next condition ready.
+      for (;;) {
+        if (views.some((v) => v.state === 'failed')) break;
+        const ready = views.find((v) => v.step.kind === 'condition' && readyIn(views, v));
+        if (ready === undefined) break;
+        plan = await decide(tenant, organizationId, plan, ready.step);
+        if (plan.status !== 'executing') return plan;
+        views = await stepsOf(tenant, plan, version);
+        logger?.info('plan condition decided', { planId: plan.id, stepId: ready.step.id });
       }
-      if (steps.every((s) => s.child.status === 'completed')) {
-        await complete(tenant, await mirror(tenant, plan.executionId, steps), steps);
+
+      const stopped = views.find((v) => v.state === 'failed');
+      if (stopped !== undefined) {
+        const code = failureOf(stopped);
+        await stop(tenant, await mirror(tenant, plan.executionId, views), code);
+        logger?.info('plan stopped', { planId: plan.id, stepId: stopped.step.id, code });
+        return finishPlan(tenant, organizationId, plan, 'failed', code);
+      }
+      if (views.every((v) => decided(v) || v.state === 'skipped')) {
+        await complete(tenant, await mirror(tenant, plan.executionId, views), views);
         const closed = await executions.get(tenant, plan.executionId);
         if (closed.status !== 'completed') return plan;
         logger?.info('plan completed', { planId: plan.id });
         return finishPlan(tenant, organizationId, plan, 'completed');
       }
-      await startReady(tenant, steps);
+      await startReady(tenant, views);
       // The graph shows what just started too.
       await mirror(tenant, plan.executionId, await stepsOf(tenant, plan, version));
       return plan;

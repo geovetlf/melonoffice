@@ -11,6 +11,7 @@
 - Amends:
   - ADR-0031 N1: a planning execution is now moved by the plan conductor, through two new runtime-only methods;
   - ADR-0028: "no route runs or delegates a plan". Approving is now what starts a plan.
+- Amended by [ADR-0075](0075-plan-conditions.md): `condition` steps with a decision run (WF-4).
 - Terraform: none. No new route that creates or delegates, no new permission, collection, queue or worker.
 - Audit: MelonOffice-Workflow-Engine-Audit.md (project files, outside the repo).
 

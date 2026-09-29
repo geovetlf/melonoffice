@@ -495,6 +495,12 @@ export const AUDIT_ACTIONS = {
     description: "A plan's status changed; the event records from and to (ADR-0028).",
     results: ['success'],
   },
+  'plan.condition_evaluated': {
+    category: 'planning',
+    description:
+      "One of a running plan's condition steps was decided by the Decision Engine (WF-4, ADR-0075); `nodeId` is the step, `reason` what it did (continue, stop, await_approval) or why it failed, `reference` the decision.",
+    results: ['success'],
+  },
   'delegation.created': {
     category: 'planning',
     description:

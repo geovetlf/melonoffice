@@ -88,6 +88,7 @@ import { createOrganization, InMemoryTenancyStore, resolveTenant } from '@melono
 import { createToolRegistry, TOOL_CATALOGUE } from '@melonoffice/tools';
 import { describe, expect, it } from 'vitest';
 import { createAgentTaskParts, createConversationAgentParts, routeAgentWork } from './agents.js';
+import { createPlanConditions } from './conditions.js';
 import { createWorkerRuntime, type WorkerStores } from './runtime.js';
 
 /**
@@ -293,6 +294,10 @@ describe.each(STORES)(
         outputs: conversation.outputs,
         onStopped: routed.onStopped,
         plans: stores.plans,
+        conditions: createPlanConditions({
+          stores: { tenancy: stores.tenancy, knowledge: stores.knowledge, audit: stores.audit },
+          now,
+        }),
         dispatcher: { dispatch: async (id) => void dispatched.push(id) },
         now,
       });
@@ -348,8 +353,12 @@ describe.each(STORES)(
         return management.setStatus(tenantA, created.identity.id, { from: 'draft', to: 'active' });
       }
 
-      /** A plan of two steps by `s`, the second after the first, proposed and approved by Alice. */
-      async function approvedPlan(s: Specialist): Promise<Plan> {
+      /**
+       * A plan of two steps by `s`, the second after the first, proposed and approved by Alice.
+       * With `continueOn`, a condition between them asks the Decision Engine whether an agent may
+       * prepare a discount (WF-4), and the second step waits on it.
+       */
+      async function approvedPlan(s: Specialist, continueOn?: string[]): Promise<Plan> {
         const planning = await executions.create(tenantA, {
           mode: 'plan',
           input: { type: 'task', id: 'market-study' },
@@ -382,11 +391,26 @@ describe.each(STORES)(
                 verification,
                 approvalRequired: true,
               },
+              ...(continueOn === undefined
+                ? []
+                : [
+                    {
+                      id: 'gate',
+                      kind: 'condition',
+                      label: '¿Puede ofrecer un descuento?',
+                      dependsOn: ['research'],
+                      decision: {
+                        decision: 'action.policy_check',
+                        continueOn,
+                        input: { action: 'opportunity.offer_discount', proposer: 'agent' },
+                      },
+                    },
+                  ]),
               {
                 id: 'pitch',
                 kind: 'specialist',
                 label: 'Escribir el mensaje de venta',
-                dependsOn: ['research'],
+                dependsOn: [continueOn === undefined ? 'research' : 'gate'],
                 specialistId: s.identity.id,
                 verification,
               },
@@ -501,6 +525,64 @@ describe.each(STORES)(
         'pending',
       );
       expect(w.providerCalls).toHaveLength(1);
+    });
+    it('3. a condition the Decision Engine allows lets the next step run (WF-4)', async () => {
+      const w = await world();
+      const lucia = await w.agent();
+      const plan = await w.approvedPlan(lucia, ['allowed']);
+      await w.conductor.run(w.tenantA, plan.id);
+      await w.drive();
+
+      const done = await w.stored(plan.id);
+      expect(done.status).toBe('completed');
+      expect(done.conditions).toEqual([
+        expect.objectContaining({
+          stepId: 'gate',
+          result: 'continue',
+          decision: expect.objectContaining({ type: 'action.policy_check', outcome: 'allowed' }),
+        }),
+      ]);
+      expect(w.providerCalls).toHaveLength(2);
+      // The step after the condition reads the answer of the step before the condition.
+      expect(w.promptOf(w.providerCalls[1])).toContain(
+        'Revisar precios del Combo Familiar: El Combo Familiar cuesta S/ 25',
+      );
+      const parent = await w.executions.get(w.tenantA, done.executionId);
+      expect(parent.nodes.map((n) => `${n.id}:${n.status}`)).toEqual([
+        'research:completed',
+        'gate:completed',
+        'pitch:completed',
+      ]);
+      const events = await w.stores.events();
+      const decision = events.find((e) => e.action === 'decision.evaluated');
+      expect(decision).toMatchObject({ result: 'success', reason: 'allowed' });
+      expect(events.find((e) => e.action === 'plan.condition_evaluated')).toMatchObject({
+        nodeId: 'gate',
+        reason: 'continue',
+        reference: decision?.target?.id,
+      });
+    });
+
+    it('4. a condition that stops skips the step after it, and the plan closes (WF-4)', async () => {
+      const w = await world();
+      const lucia = await w.agent();
+      const plan = await w.approvedPlan(lucia, ['approval_required']);
+      await w.conductor.run(w.tenantA, plan.id);
+      await w.drive();
+
+      const done = await w.stored(plan.id);
+      expect(done.status).toBe('completed');
+      expect(done.conditions?.[0]).toMatchObject({ result: 'stop' });
+      // Only the first step asked the model: the skipped one never started.
+      expect(w.providerCalls).toHaveLength(1);
+      expect((await w.executions.get(w.tenantA, w.childOf(done, 'pitch'))).status).toBe('pending');
+      const parent = await w.executions.get(w.tenantA, done.executionId);
+      expect(parent.status).toBe('completed');
+      expect(parent.nodes.map((n) => `${n.id}:${n.status}`)).toEqual([
+        'research:completed',
+        'gate:completed',
+        'pitch:skipped',
+      ]);
     });
   },
 );
