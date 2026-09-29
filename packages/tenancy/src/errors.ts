@@ -9,7 +9,14 @@ export type TenancyErrorCode =
   | 'organization_limit_reached'
   | 'organization_required'
   | 'organization_forbidden'
-  | 'requires_user';
+  | 'requires_user'
+  // The commercial layer (ADR-0085). `commercial_account_forbidden` and `customer_forbidden` are
+  // each the one answer for every refusal, as `organization_forbidden` is.
+  | 'commercial_account_forbidden'
+  | 'customer_forbidden'
+  | 'invalid_commercial_account_name'
+  | 'invalid_customer_scopes'
+  | 'invalid_commission';
 
 export class TenancyError extends Error {
   override readonly name = 'TenancyError';

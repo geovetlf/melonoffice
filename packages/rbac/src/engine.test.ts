@@ -12,7 +12,9 @@ import type {
 } from '@melonoffice/domain';
 import {
   createOrganization,
+  InMemoryCommercialStore,
   InMemoryTenancyStore,
+  resolveCommercialContext,
   membershipIdOf,
   resolveTenant,
   TenancyError,
@@ -369,5 +371,47 @@ describe('authorize', () => {
     const none = createAuthorizationService({ owner: [] });
     (none.permissionsOf(tenant) as Set<string>).add('organization.read');
     expect(none.authorize(tenant, 'organization.read').allowed).toBe(false);
+  });
+});
+
+describe('the commercial layer (ADR-0085)', () => {
+  it('15. a partner or agency context is never a tenant: RBAC grants it nothing in any organization', async () => {
+    const at = '2026-09-29T12:00:00Z' as Organization['createdAt'];
+    const accountId = 'aaaaaaaa-0000-4000-8000-00000000000a' as never;
+    const store = new InMemoryCommercialStore();
+    store.putAccount({
+      id: accountId,
+      type: 'partner',
+      name: 'Partner',
+      status: 'active',
+      createdAt: at,
+      updatedAt: at,
+    });
+    store.putMembership({
+      id: 'm' as never,
+      commercialAccountId: accountId,
+      userId: ALICE,
+      role: 'owner',
+      status: 'active',
+      createdAt: at,
+      updatedAt: at,
+    });
+    const commercial = await resolveCommercialContext(
+      { actor: 'user', userId: ALICE, emailVerified: true },
+      accountId,
+      store,
+    );
+    // Even with a role named like an organization role, and shaped like a tenant.
+    const asTenant = {
+      ...commercial,
+      actor: 'user',
+      organizationId: '99999999-9999-4999-8999-999999999999',
+    } as unknown as TenantContext;
+    const rbac = createAuthorizationService();
+    expect(rbac.authorize(asTenant, 'organization.read')).toEqual<RbacDecision>({
+      allowed: false,
+      reason: 'unresolved_tenant',
+    });
+    expect(rbac.permissionsOf(asTenant).size).toBe(0);
   });
 });

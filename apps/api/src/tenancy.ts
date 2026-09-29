@@ -25,6 +25,11 @@ const STATUS: Record<TenancyErrorCode, ContentfulStatusCode> = {
   organization_required: 403,
   organization_forbidden: 403,
   requires_user: 403,
+  commercial_account_forbidden: 403,
+  customer_forbidden: 403,
+  invalid_commercial_account_name: 400,
+  invalid_customer_scopes: 400,
+  invalid_commission: 400,
 };
 
 /**

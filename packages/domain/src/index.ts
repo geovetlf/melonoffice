@@ -22,3 +22,4 @@ export type * from './follow-up.js';
 export type * from './agent-task.js';
 export type * from './ai-usage.js';
 export type * from './document.js';
+export type * from './commercial.js';
