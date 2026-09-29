@@ -657,9 +657,17 @@ describe('7. agents', () => {
       outcome: 'unavailable',
       reasons: ['not_granted_by_skill'],
     });
-    expect(real.listActions(w.runtime, 'agent').every((a) => a.outcome === 'unavailable')).toBe(
-      true,
-    );
+    // What the skills in code grant agents (ADR-0084): facts for the memory and a follow-up.
+    expect(
+      real
+        .listActions(w.runtime, 'agent')
+        .filter((a) => a.outcome !== 'unavailable')
+        .map((a) => a.action),
+    ).toEqual(['knowledge.propose_fact', 'follow_up.schedule']);
+    // A named agent without those skills (a version before them) proposes none of them.
+    expect(
+      real.listActions(w.runtime, 'agent', named([])).every((a) => a.outcome === 'unavailable'),
+    ).toBe(true);
     // The runtime never prepares for GIA, and GIA's own actor prepares nothing.
     expect(engine.evaluateAction(w.runtime, 'follow_up.schedule').reasons).toEqual([
       'requires_user',

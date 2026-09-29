@@ -1,11 +1,14 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
 import { Button } from '@melonoffice/ui';
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { navigate } from '../identity/router.js';
+import { paths } from '../shell/routes.js';
 import {
   AgentTaskError,
   isOpenTask,
   type AgentTaskView,
   type AgentTasksClient,
+  type TaskFollowUpView,
 } from './agentTasksClient.js';
 
 /**
@@ -13,6 +16,10 @@ import {
  * what it answered. The answer is the agent's, shown only once the task completed and passed its
  * verification; while it runs the screen says so and reads it again, and a task that failed says
  * it failed. Nothing here claims the agent did anything beyond answering.
+ *
+ * What the agent proposed (ADR-0084) is shown with it: a follow-up, with where it stands and, while
+ * it waits, Approve and Reject for a person with `approval.approve`; and how many facts it proposed
+ * for the company memory, where the owner confirms them.
  */
 
 /** How often an open task is read again, and for how long at most. */
@@ -44,17 +51,115 @@ const STATUS_KEYS: Readonly<Record<string, string>> = {
   cancelled: 'agentTasks.status.cancelled',
   unknown: 'agentTasks.status.unknown',
 };
-const statusKey = (task: AgentTaskView) => STATUS_KEYS[task.status] ?? 'agentTasks.status.running';
+const statusKey = (task: AgentTaskView) => {
+  const state = task.answer?.followUp?.state;
+  // It answered; only the follow-up it proposed waits, or was turned down.
+  if (state === 'waiting_approval') return 'agentTasks.status.waitingApproval';
+  if (task.status === 'failed' && (state === 'rejected' || state === 'expired')) {
+    return 'agentTasks.status.completed';
+  }
+  return STATUS_KEYS[task.status] ?? 'agentTasks.status.running';
+};
+
+/** An internal link that stays in the app. */
+function Link({ to, children }: { readonly to: string; readonly children: ReactNode }) {
+  return (
+    <a
+      className="panel__link"
+      href={to}
+      onClick={(event) => {
+        event.preventDefault();
+        navigate(to);
+      }}
+    >
+      {children}
+    </a>
+  );
+}
+
+function ProposedFollowUp({
+  followUp,
+  onDecide,
+  busy,
+}: {
+  readonly followUp: TaskFollowUpView;
+  readonly onDecide?: ((decision: 'approve' | 'reject') => void) | undefined;
+  readonly busy: boolean;
+}) {
+  const intl = useIntl();
+  const type =
+    intl.messages[`followUps.type.${followUp.type}`] === undefined
+      ? followUp.type
+      : intl.formatMessage({ id: `followUps.type.${followUp.type}` });
+  const when = intl.formatDate(new Date(`${followUp.date}T${followUp.time}:00`), {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  });
+  return (
+    <div
+      className="agent-task__proposal"
+      role="group"
+      aria-label={intl.formatMessage({ id: 'agentTasks.followUp.title' })}
+    >
+      <p className="customers__meta">
+        <FormattedMessage id="agentTasks.followUp.title" />
+      </p>
+      <p>
+        <strong>{followUp.title}</strong>
+      </p>
+      <p className="customers__meta">
+        {type} ·{' '}
+        {followUp.contactId === null ? (
+          <FormattedMessage id="agentTasks.followUp.contactGone" />
+        ) : (
+          <Link to={paths.customer(followUp.contactId)}>{followUp.contactName}</Link>
+        )}{' '}
+        · {when}
+      </p>
+      <p className="customers__meta agent-task__state">
+        <FormattedMessage id={`agentTasks.followUp.state.${followUp.state}`} />
+      </p>
+      {followUp.state === 'waiting_approval' && followUp.approvalId !== null ? (
+        onDecide === undefined ? (
+          <p className="customers__meta">
+            <Link to={paths.approvals()}>
+              <FormattedMessage id="agentTasks.followUp.review" />
+            </Link>
+          </p>
+        ) : (
+          <div className="customers__actions">
+            <Button disabled={busy} onClick={() => onDecide('approve')}>
+              <FormattedMessage id="agentTasks.followUp.approve" />
+            </Button>
+            <Button variant="secondary" disabled={busy} onClick={() => onDecide('reject')}>
+              <FormattedMessage id="agentTasks.followUp.reject" />
+            </Button>
+          </div>
+        )
+      ) : null}
+    </div>
+  );
+}
 
 function TaskItem({
   task,
   onStop,
+  onDecide,
+  busy = false,
 }: {
   readonly task: AgentTaskView;
   /** Stops an open task; absent, it has no stop. */
   readonly onStop?: (() => void) | undefined;
+  /** Decides the follow-up it proposed; absent, the person is sent to the approvals. */
+  readonly onDecide?: ((decision: 'approve' | 'reject') => void) | undefined;
+  readonly busy?: boolean;
 }) {
   const intl = useIntl();
+  const followUp = task.answer?.followUp ?? null;
+  const facts = task.answer?.facts ?? 0;
+  // Turned down by a person: the task stopped there, and its answer stands.
+  const declined =
+    followUp !== null && (followUp.state === 'rejected' || followUp.state === 'expired');
   return (
     <li className={`agent-task agent-task--${isOpenTask(task) ? 'open' : task.status}`}>
       <p className="agent-task__request">{task.request}</p>
@@ -79,6 +184,17 @@ function TaskItem({
               </ul>
             </>
           )}
+          {followUp === null ? null : (
+            <ProposedFollowUp followUp={followUp} onDecide={onDecide} busy={busy} />
+          )}
+          {facts === 0 ? null : (
+            <p className="customers__meta">
+              <FormattedMessage id="agentTasks.facts" values={{ count: facts }} />{' '}
+              <Link to={paths.memory()}>
+                <FormattedMessage id="agentTasks.facts.review" />
+              </Link>
+            </p>
+          )}
         </div>
       )}
       {task.status === 'completed' && task.answer === null ? (
@@ -86,7 +202,7 @@ function TaskItem({
           <FormattedMessage id="agentTasks.noAnswer" />
         </p>
       ) : null}
-      {task.status === 'failed' ? (
+      {task.status === 'failed' && !declined ? (
         <p className="panel__empty">
           <FormattedMessage id="agentTasks.failed" />
         </p>
@@ -109,6 +225,7 @@ export function AgentTasks({
   canAsk,
   agentActive,
   stop,
+  decide,
   refreshMs = TASK_REFRESH_MS,
 }: {
   readonly client: AgentTasksClient;
@@ -120,6 +237,9 @@ export function AgentTasks({
   readonly agentActive: boolean;
   /** Stops a task that is still working (ADR-0029), with `execution.cancel`. */
   readonly stop?: ((taskId: string) => Promise<void>) | undefined;
+  /** Decides the follow-up an agent proposed (ADR-0084), with `approval.approve`. */
+  readonly decide?:
+    ((approvalId: string, decision: 'approve' | 'reject') => Promise<void>) | undefined;
   readonly refreshMs?: number;
 }) {
   const intl = useIntl();
@@ -197,6 +317,32 @@ export function AgentTasks({
       // It may have ended meanwhile: reading it again says how it stands.
       setError('agentTasks.stop.error');
     }
+    const fresh = await client.get(task.id).catch(() => undefined);
+    if (fresh !== undefined)
+      setTasks((current) => current.map((t) => (t.id === fresh.id ? fresh : t)));
+  }
+
+  const [deciding, setDeciding] = useState<string>();
+
+  async function decideFollowUp(task: AgentTaskView, decision: 'approve' | 'reject') {
+    const approvalId = task.answer?.followUp?.approvalId;
+    if (decide === undefined || approvalId === null || approvalId === undefined) return;
+    if (decision === 'reject') {
+      if (!globalThis.confirm(intl.formatMessage({ id: 'agentTasks.followUp.rejectConfirm' }))) {
+        return;
+      }
+    }
+    setDeciding(task.id);
+    setError(undefined);
+    try {
+      await decide(approvalId, decision);
+    } catch {
+      // Decided elsewhere or expired meanwhile: reading it again says how it stands.
+      setError('agentTasks.followUp.error');
+    } finally {
+      setDeciding(undefined);
+    }
+    refreshes.current = 0;
     const fresh = await client.get(task.id).catch(() => undefined);
     if (fresh !== undefined)
       setTasks((current) => current.map((t) => (t.id === fresh.id ? fresh : t)));
@@ -280,6 +426,10 @@ export function AgentTasks({
               key={task.id}
               task={task}
               onStop={stop === undefined ? undefined : () => void stopTask(task)}
+              onDecide={
+                decide === undefined ? undefined : (decision) => void decideFollowUp(task, decision)
+              }
+              busy={deciding === task.id}
             />
           ))}
         </ul>

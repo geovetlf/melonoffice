@@ -117,6 +117,7 @@ export function AgentPlace({
   agentId,
   tasks,
   agents,
+  canManageAgents = false,
 }: {
   readonly slug: string;
   readonly agentId: string;
@@ -126,9 +127,14 @@ export function AgentPlace({
     readonly canAsk: boolean;
     /** With `execution.cancel`: stops a task still working. */
     readonly stop?: ((taskId: string) => Promise<void>) | undefined;
+    /** With `approval.approve`: decides the follow-up an agent proposed (ADR-0084). */
+    readonly decide?:
+      ((approvalId: string, decision: 'approve' | 'reject') => Promise<void>) | undefined;
   };
   /** What the agent can do now (ADR-0062), for a person who may read agents. */
   readonly agents?: AgentsClient;
+  /** `specialist.manage`: may move a skill of the agent to its newer version (ADR-0084). */
+  readonly canManageAgents?: boolean;
 }) {
   const intl = useIntl();
   const { departments, specialists } = useOfficeData();
@@ -213,7 +219,9 @@ export function AgentPlace({
             <FormattedMessage id="office.profile.stateSource" />
           </p>
         </section>
-        {agents === undefined ? null : <AgentCapabilities client={agents} agentId={agent.id} />}
+        {agents === undefined ? null : (
+          <AgentCapabilities client={agents} agentId={agent.id} canManage={canManageAgents} />
+        )}
         <section className="dept-office__section" aria-labelledby="agent-work">
           <h2 id="agent-work">
             <FormattedMessage id="office.profile.work" />
@@ -241,6 +249,7 @@ export function AgentPlace({
           canAsk={tasks.canAsk}
           agentActive={agent.status === 'active'}
           stop={tasks.stop}
+          decide={tasks.decide}
         />
       )}
       <ComingAreas

@@ -27,11 +27,12 @@ const skill = (
     readonly tools?: Readonly<Record<string, readonly number[]>>;
     readonly actions?: readonly string[];
     readonly reads: readonly Permission[];
+    readonly version?: number;
   },
 ): AgentSkill =>
   Object.freeze({
     id: id as SkillId,
-    version: 1,
+    version: options.version ?? 1,
     nameKey: `agents.skill.${id}.name` as MessageKey,
     descriptionKey: `agents.skill.${id}.description` as MessageKey,
     tools: Object.freeze(
@@ -44,10 +45,16 @@ const skill = (
   });
 
 /**
- * The initial skills. Only `conversation_reply` grants tools today (the conversation agent's,
- * ADR-0043): the reply at its supervised (2) or autonomous (3) version, and the hand-off. The
- * others work from what the organization has recorded and grant nothing to act with: which
- * skill may grant a new tool or action is the owner's decision, never assumed here.
+ * The skills. `conversation_reply` grants the conversation agent's tools (ADR-0043): the reply at
+ * its supervised (2) or autonomous (3) version, and the hand-off. Version 2 of two skills adds
+ * what Geovet decided agents may propose (ADR-0084), always for a person to confirm:
+ * - `customer_follow_up@2`: the follow-up proposal (`follow_up.schedule`) and scheduling it with
+ *   `follow_up_schedule@2`, which needs a person's approval every time;
+ * - `company_knowledge@2`: facts for the company memory (`knowledge.propose_fact`), stored as
+ *   proposed until the owner confirms them.
+ * The others work from what the organization has recorded and grant nothing to act with: which
+ * skill may grant a new tool or action is the owner's decision, never assumed here. Version 1 of
+ * every skill stays as it was: an agent keeps the version it has until someone upgrades it.
  */
 export const SKILL_CATALOGUE: readonly AgentSkill[] = Object.freeze([
   skill('conversation_reply', {
@@ -56,7 +63,18 @@ export const SKILL_CATALOGUE: readonly AgentSkill[] = Object.freeze([
   }),
   // What the company knows (Company Brain, ADR-0051), for the agent's department only (ADR-0063).
   skill('company_knowledge', { reads: ['knowledge.read'] }),
+  skill('company_knowledge', {
+    version: 2,
+    actions: ['knowledge.propose_fact'],
+    reads: ['knowledge.read'],
+  }),
   skill('customer_follow_up', { reads: ['contact.read', 'opportunity.read', 'follow_up.read'] }),
+  skill('customer_follow_up', {
+    version: 2,
+    tools: { follow_up_schedule: [2] },
+    actions: ['follow_up.schedule'],
+    reads: ['contact.read', 'opportunity.read', 'follow_up.read'],
+  }),
   skill('pipeline_analysis', { reads: ['opportunity.read', 'report.read'] }),
   skill('campaign_analysis', { reads: ['contact.read', 'report.read'] }),
   skill('content_drafting', { reads: ['knowledge.read'] }),

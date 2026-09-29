@@ -135,10 +135,10 @@ function FollowUpItem({
             <FormattedMessage id={`followUps.assignee.${item.assignee}`} />
           </>
         )}
-        {item.source === 'gia' ? (
+        {item.source === 'gia' || item.source === 'agent' ? (
           <>
             {' · '}
-            <FormattedMessage id="followUps.source.gia" />
+            <FormattedMessage id={`followUps.source.${item.source}`} />
           </>
         ) : null}
       </span>

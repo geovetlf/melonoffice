@@ -1,5 +1,6 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
-import { useEffect, useState } from 'react';
+import { Button } from '@melonoffice/ui';
+import { useCallback, useEffect, useState } from 'react';
 import type { AgentCapabilitiesView, AgentsClient } from './agentsClient.js';
 
 /**
@@ -8,26 +9,59 @@ import type { AgentCapabilitiesView, AgentsClient } from './agentsClient.js';
  * their risk and whether each use waits for approval, the actions it may propose and the records
  * it reads. A tool reaches an agent only through a skill, so there is no separate tool list; one
  * no skill grants shows as a problem. Read from the API; nothing is inferred.
+ *
+ * A skill with a newer version (ADR-0084) says what the newer one adds, and a person with
+ * `specialist.manage` may move the agent to it, after confirming; nothing moves by itself.
  */
 export function AgentCapabilities({
   client,
   agentId,
+  canManage = false,
 }: {
   readonly client: AgentsClient;
   readonly agentId: string;
+  /** `specialist.manage`: only then can a skill be moved to its newer version. */
+  readonly canManage?: boolean;
 }) {
   const intl = useIntl();
   const [found, setFound] = useState<AgentCapabilitiesView | 'error' | undefined>();
+  const [upgrading, setUpgrading] = useState<string | undefined>();
+  const [notice, setNotice] = useState<'upgraded' | 'error' | undefined>();
+  const load = useCallback(
+    (live: () => boolean) =>
+      client.capabilities(agentId).then(
+        (value) => live() && setFound(value),
+        () => live() && setFound('error'),
+      ),
+    [client, agentId],
+  );
   useEffect(() => {
     let live = true;
-    client.capabilities(agentId).then(
-      (value) => live && setFound(value),
-      () => live && setFound('error'),
-    );
+    void load(() => live);
     return () => {
       live = false;
     };
-  }, [client, agentId]);
+  }, [load]);
+
+  async function upgrade(view: AgentCapabilitiesView, skillId: string, to: number) {
+    const name =
+      intl.messages[`agents.skill.${skillId}.name`] === undefined
+        ? skillId
+        : intl.formatMessage({ id: `agents.skill.${skillId}.name` });
+    const ask = intl.formatMessage({ id: 'agents.upgrade.confirm' }, { skill: name, version: to });
+    if (!globalThis.confirm(ask)) return;
+    setUpgrading(skillId);
+    setNotice(undefined);
+    try {
+      await client.upgradeSkill(agentId, { fromVersion: view.version, skillId, version: to });
+      setNotice('upgraded');
+    } catch {
+      setNotice('error');
+    } finally {
+      setUpgrading(undefined);
+      await load(() => true);
+    }
+  }
   const message = (id: string, fallback: string) =>
     intl.messages[id] === undefined ? fallback : intl.formatMessage({ id });
   const readName = (permission: string) => {
@@ -82,6 +116,11 @@ export function AgentCapabilities({
               ))}
             </ul>
           )}
+          {notice === undefined ? null : (
+            <p className="panel__empty" role={notice === 'error' ? 'alert' : 'status'}>
+              <FormattedMessage id={`agents.upgrade.${notice}`} />
+            </p>
+          )}
           <h3 id="agent-capabilities-skills">
             <FormattedMessage id="agents.capabilities.skills" />
           </h3>
@@ -94,6 +133,7 @@ export function AgentCapabilities({
               {found.skills.map((s) => {
                 // The agent's own tools that this skill grants, at the versions it was given.
                 const tools = found.tools.filter((t) => s.tools.includes(t.id));
+                const newer = found.upgrades?.find((u) => u.skillId === s.id);
                 return (
                   <li key={`${s.id}@${s.version}`} className="agent-skills__item">
                     <strong>{message(`agents.skill.${s.id}.name`, s.id)}</strong>{' '}
@@ -103,6 +143,35 @@ export function AgentCapabilities({
                         values={{ version: s.version }}
                       />
                     </span>
+                    {newer === undefined ? null : (
+                      <span className="agent-skills__upgrade">
+                        <span className="agent-skills__line">
+                          {message(
+                            `agents.upgrade.${s.id}.${newer.to}`,
+                            intl.formatMessage(
+                              { id: 'agents.upgrade.available' },
+                              { version: newer.to },
+                            ),
+                          )}
+                        </span>
+                        {canManage ? (
+                          <Button
+                            variant="secondary"
+                            disabled={upgrading !== undefined}
+                            onClick={() => void upgrade(found, s.id, newer.to)}
+                          >
+                            <FormattedMessage
+                              id={
+                                upgrading === s.id
+                                  ? 'agents.upgrade.working'
+                                  : 'agents.upgrade.action'
+                              }
+                              values={{ version: newer.to }}
+                            />
+                          </Button>
+                        ) : null}
+                      </span>
+                    )}
                     {intl.messages[`agents.skill.${s.id}.description`] === undefined ? null : (
                       <span className="agent-skills__line">
                         {intl.formatMessage({ id: `agents.skill.${s.id}.description` })}

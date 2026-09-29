@@ -11,6 +11,7 @@ import type { Logger } from '@melonoffice/observability';
 import type { AuthorizationService } from '@melonoffice/rbac';
 import {
   isResolvedTenant,
+  resolveRuntimeTenant,
   resolveTenant,
   type TenancyStore,
   type TenantContext,
@@ -60,6 +61,60 @@ export function createFollowUpScheduleExecutor(options: {
           { actor: 'user', userId: context.actor.userId, emailVerified: true },
           context.organizationId,
           organizations as TenancyStore,
+        );
+      } catch {
+        return { status: 'failure', code: 'permission_denied' };
+      }
+      try {
+        const { followUp, created } = await followUps.create(
+          tenant,
+          input as Record<string, unknown>,
+        );
+        return { status: 'success', output: { followUpId: followUp.id, created } };
+      } catch (error) {
+        if (isConversationError(error) && CODE.test(error.code)) {
+          return { status: 'failure', code: error.code };
+        }
+        throw error;
+      }
+    },
+  };
+}
+
+/** `follow_up_schedule` version 2: an agent's, approved by a person each time (ADR-0084). */
+export const AGENT_FOLLOW_UP_SCHEDULE = FOLLOW_UP_SCHEDULE_TOOL.versions[1] as NonNullable<
+  (typeof FOLLOW_UP_SCHEDULE_TOOL.versions)[1]
+>;
+
+/**
+ * The executor of `follow_up_schedule` version 2 (ADR-0084), in the worker. The gate calls it only
+ * after its checks passed: the agent's skill grants this version, the person the task is for holds
+ * `follow_up.manage`, and a person approved this exact input. It runs as the runtime for that
+ * person, in the execution's organization, through the follow-up service's `create` with source
+ * `agent`, so every rule of the service applies unchanged. Idempotent by `requestKey`.
+ */
+export function createAgentFollowUpScheduleExecutor(options: {
+  readonly followUps: Pick<FollowUpService, 'create'>;
+  readonly organizations: TenancyStore;
+}): ToolExecutor {
+  const { followUps, organizations } = options;
+  return {
+    async execute(context: ToolExecutionContext, input: unknown): Promise<ToolExecutorOutcome> {
+      if (
+        context.toolId !== AGENT_FOLLOW_UP_SCHEDULE.toolId ||
+        context.toolVersion !== AGENT_FOLLOW_UP_SCHEDULE.version ||
+        context.actor.via !== 'runtime' ||
+        context.specialistId === undefined ||
+        context.approvalId === undefined
+      ) {
+        return { status: 'failure', code: 'tool_not_runtime_invokable' };
+      }
+      let tenant: TenantContext;
+      try {
+        tenant = await resolveRuntimeTenant(
+          context.actor.userId,
+          context.organizationId,
+          organizations,
         );
       } catch {
         return { status: 'failure', code: 'permission_denied' };

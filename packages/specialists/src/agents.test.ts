@@ -75,7 +75,9 @@ const TOOLS: ToolLookup = (id, version) =>
     ? { riskLevel: 'medium', approval: 'auto', permissions: ['conversation.send'] }
     : id === 'conversation_handoff' && version === 1
       ? { riskLevel: 'low', approval: 'auto', permissions: ['conversation.read'] }
-      : undefined;
+      : id === 'follow_up_schedule' && version === 2
+        ? { riskLevel: 'low', approval: 'approval_required', permissions: ['follow_up.manage'] }
+        : undefined;
 
 async function world(roles: Record<string, readonly string[]> = ROLES) {
   const audit = new InMemoryAuditStore();
@@ -158,7 +160,8 @@ describe('catalogues', () => {
   it('resolves only exact skill versions and refuses a duplicate', () => {
     const skills = createSkillCatalogue();
     expect(skills.resolve('customer_follow_up', 1)?.reads).toContain('follow_up.read');
-    expect(skills.resolve('customer_follow_up', 2)).toBeUndefined();
+    expect(skills.resolve('customer_follow_up', 2)?.actions).toEqual(['follow_up.schedule']);
+    expect(skills.resolve('customer_follow_up', 3)).toBeUndefined();
     expect(skills.resolve('nope', 1)).toBeUndefined();
     expect(() =>
       createSkillCatalogue([...SKILL_CATALOGUE, ...SKILL_CATALOGUE.slice(0, 1)]),
@@ -167,7 +170,7 @@ describe('catalogues', () => {
 });
 
 describe('agent management', () => {
-  it('creates an agent from a template, in draft, with no tools, audited with the write', async () => {
+  it('creates an agent from a template, in draft, with the tools its skills grant, audited with the write', async () => {
     const w = await world();
     const agent = await w.management.create(w.tenantA, {
       templateId: 'commercial',
@@ -181,9 +184,16 @@ describe('agent management', () => {
       departmentIdOf(w.orgA, 'sales' as DepartmentTypeId),
     );
     expect(agent.configuration.mainRoleId).toBe('commercial_agent');
-    expect(agent.configuration.tools).toEqual([]);
+    // customer_follow_up@2 grants the agent's follow-up at one version (ADR-0084): assigned.
+    expect(agent.configuration.skills).toEqual([
+      { id: 'company_knowledge', version: 2 },
+      { id: 'customer_follow_up', version: 2 },
+      { id: 'pipeline_analysis', version: 1 },
+    ]);
+    expect(agent.configuration.tools).toEqual([{ id: 'follow_up_schedule', version: 2 }]);
     expect(agent.configuration.permissions).toEqual([
       'contact.read',
+      'follow_up.manage',
       'follow_up.read',
       'knowledge.read',
       'opportunity.read',
@@ -361,6 +371,99 @@ describe('agent management', () => {
     ).toMatch(/^invalid_specialist/);
     const event = w.audit.events().find((e) => e.action === 'specialist.status_changed');
     expect(event?.transition).toEqual({ from: 'draft', to: 'active' });
+  });
+});
+
+describe('upgrading a skill (ADR-0084)', () => {
+  /** An agent as it was before version 2: company_knowledge@1 and customer_follow_up@1. */
+  async function legacy(w: Awaited<ReturnType<typeof world>>) {
+    const agent = await w.management.create(w.tenantA, {
+      templateId: 'finance',
+      displayName: 'Fina',
+    });
+    return w.management.revise(w.tenantA, agent.identity.id, {
+      fromVersion: 1,
+      configuration: {
+        ...agent.configuration,
+        skills: [
+          { id: 'company_knowledge', version: 1 },
+          { id: 'finance_review', version: 1 },
+          { id: 'customer_follow_up', version: 1 },
+        ],
+        permissions: [
+          ...new Set([
+            ...agent.configuration.permissions,
+            'contact.read',
+            'opportunity.read',
+            'follow_up.read',
+          ]),
+        ].sort(),
+      },
+    });
+  }
+
+  it('moves one skill forward as a new version, assigning what it grants at one version', async () => {
+    const w = await world();
+    const agent = await legacy(w);
+    const id = agent.identity.id;
+    const next = await w.management.upgradeSkill(w.tenantA, id, {
+      fromVersion: agent.version,
+      skillId: 'customer_follow_up',
+      version: 2,
+    });
+    expect(next.version).toBe(agent.version + 1);
+    expect(next.configuration.skills).toContainEqual({ id: 'customer_follow_up', version: 2 });
+    expect(next.configuration.skills).toContainEqual({ id: 'company_knowledge', version: 1 });
+    expect(next.configuration.tools).toEqual([{ id: 'follow_up_schedule', version: 2 }]);
+    expect(next.configuration.permissions).toContain('follow_up.manage');
+    // The earlier version is kept as it was: the agent's past tasks read it.
+    expect(
+      (await w.repository.findVersion(w.orgA, id, agent.version))?.configuration.tools,
+    ).toEqual([]);
+    const events = w.audit.events().filter((e) => e.action === 'specialist.version_created');
+    expect(events.at(-1)).toMatchObject({ targetVersion: next.version });
+    // An action-only skill: nothing assigned, only the grant.
+    const facts = await w.management.upgradeSkill(w.tenantA, id, {
+      fromVersion: next.version,
+      skillId: 'company_knowledge',
+      version: 2,
+    });
+    expect(facts.configuration.tools).toEqual(next.configuration.tools);
+  });
+
+  it('refuses a skill the agent lacks, a version not newer, an unknown one, a stale agent and anyone but a person with specialist.manage', async () => {
+    const w = await world();
+    const agent = await legacy(w);
+    const id = agent.identity.id;
+    const up = (input: Record<string, unknown>, tenant = w.tenantA) =>
+      codeOf(() => w.management.upgradeSkill(tenant, id, input));
+    const v = agent.version;
+    expect(await up({ fromVersion: v, skillId: 'pipeline_analysis', version: 1 })).toBe(
+      'invalid_specialist:skillId',
+    );
+    expect(await up({ fromVersion: v, skillId: 'nope', version: 1 })).toBe(
+      'invalid_specialist:version',
+    );
+    expect(await up({ fromVersion: v, skillId: 'customer_follow_up', version: 1 })).toBe(
+      'invalid_specialist:version',
+    );
+    expect(await up({ fromVersion: v, skillId: 'customer_follow_up', version: 9 })).toBe(
+      'invalid_specialist:version',
+    );
+    expect(await up({ fromVersion: v, skillId: 'customer_follow_up', version: 2, x: 1 })).toBe(
+      'invalid_specialist:x',
+    );
+    expect(await up({ fromVersion: v - 1, skillId: 'customer_follow_up', version: 2 })).toBe(
+      'specialist_concurrency_conflict',
+    );
+    expect(await up({ fromVersion: v, skillId: 'customer_follow_up', version: 2 }, w.tenantB)).toBe(
+      'specialist_not_found',
+    );
+    const gia = await resolveTenant({ ...as(ALICE), actor: 'gia' }, w.orgA, w.tenancy);
+    expect(await up({ fromVersion: v, skillId: 'customer_follow_up', version: 2 }, gia)).toBe(
+      'permission_denied',
+    );
+    expect((await w.repository.find(w.orgA, id))?.version).toBe(v);
   });
 });
 

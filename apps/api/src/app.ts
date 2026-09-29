@@ -2,6 +2,7 @@ import { createAIUsageLedger, type AIUsageStore } from '@melonoffice/ai-usage';
 import { createActivityService } from '@melonoffice/activity';
 import {
   createAgentTaskService,
+  TASK_PROPOSAL_LIMITS,
   type AgentTaskRepository,
   type TaskKickoff,
 } from '@melonoffice/agents';
@@ -868,6 +869,21 @@ export function createApp({
         ...(agentTasks.outputs === undefined
           ? {}
           : { outputs: createAgentOutputStore(agentTasks.outputs) }),
+        ...(commercial === undefined
+          ? {}
+          : {
+              // The same contacts, in the same order, as the worker gave the agent (ADR-0084).
+              contacts: {
+                async list(tenant) {
+                  const page = await commercial.customers.list(
+                    tenant,
+                    {},
+                    { limit: TASK_PROPOSAL_LIMITS.contacts },
+                  );
+                  return page.items.map((c) => ({ id: c.id, name: c.displayName ?? '(no name)' }));
+                },
+              },
+            }),
       });
     } else if (tenancy !== undefined) {
       const unavailable = (c: Context<Env>) => c.json({ error: 'agent_tasks_not_configured' }, 503);

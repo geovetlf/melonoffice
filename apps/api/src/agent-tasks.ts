@@ -1,7 +1,10 @@
 import {
   AGENT_TASK_NODE,
+  AGENT_TASK_SCHEDULE_NODE,
   isAgentTaskError,
   parseAgentAnswer,
+  resolveContactRef,
+  type TaskContacts,
   type AgentTaskError,
   type AgentTaskService,
   type TaskWithExecution,
@@ -74,18 +77,87 @@ export function registerAgentTaskRoutes(
     readonly tasksFor: (requestId: string | undefined) => AgentTaskService;
     /** Where the worker keeps agents' answers. Absent: tasks show no answer. */
     readonly outputs?: Pick<AgentOutputStore, 'find'>;
+    /** The contacts a proposed follow-up names, read as the caller (`contact.read`). */
+    readonly contacts?: TaskContacts;
   },
 ): void {
-  const { tasksFor, outputs } = dependencies;
+  const { tasksFor, outputs, contacts } = dependencies;
+
+  /**
+   * Where the follow-up the agent proposed stands (ADR-0084): waiting for a person's approval,
+   * scheduled, rejected, expired, or not put to anyone (it did not resolve, or the follow-up
+   * service would refuse it).
+   */
+  function followUpState(execution: NonNullable<TaskWithExecution['execution']>) {
+    const node = execution.nodes.find((n) => n.id === AGENT_TASK_SCHEDULE_NODE);
+    if (node === undefined) return 'not_scheduled';
+    if (node.status === 'completed') return 'scheduled';
+    if (node.status === 'skipped') return 'not_scheduled';
+    const code = execution.failure?.code;
+    if (code === 'approval_rejected') return 'rejected';
+    if (code === 'approval_expired') return 'expired';
+    if (execution.status === 'failed' || execution.status === 'cancelled') return 'not_scheduled';
+    if (node.approvalId !== undefined) return 'waiting_approval';
+    return 'preparing';
+  }
 
   async function view(tenant: TenantContext, found: TaskWithExecution) {
     const { task, execution } = found;
-    let answer: { answer: string; missing: string[] } | null = null;
-    // Only a verified answer is shown: a completed execution passed its verification (ADR-0029).
-    if (execution?.status === 'completed' && outputs !== undefined) {
+    let answer: {
+      answer: string;
+      missing: string[];
+      facts: number;
+      followUp: {
+        contactId: string | null;
+        contactName: string | null;
+        type: string;
+        title: string;
+        date: string;
+        time: string;
+        state: string;
+        approvalId: string | null;
+      } | null;
+    } | null = null;
+    // The answer is shown once the agent's work passed its shape check (ADR-0063): when the task
+    // completed and was verified, or while its proposed follow-up waits on a person or after the
+    // person turned it down (ADR-0084), where the answer itself is the one checked the same way.
+    const work = execution?.nodes.find((n) => n.id === AGENT_TASK_NODE);
+    const code = execution?.failure?.code;
+    const readable =
+      execution !== undefined &&
+      work?.status === 'completed' &&
+      (execution.status === 'completed' ||
+        execution.status === 'waiting_approval' ||
+        execution.status === 'running' ||
+        (execution.status === 'failed' && code !== undefined && code.startsWith('approval_')));
+    if (readable && execution !== undefined && outputs !== undefined) {
       const record = await outputs.find(tenant, task.id, AGENT_TASK_NODE);
       const parsed = record === undefined ? undefined : parseAgentAnswer(record.output);
-      if (parsed !== undefined) answer = { answer: parsed.answer, missing: [...parsed.missing] };
+      if (parsed !== undefined) {
+        let followUp = null;
+        if (parsed.followUp !== null) {
+          const list = contacts === undefined ? [] : await contacts.list(tenant).catch(() => []);
+          const contact = resolveContactRef(list, parsed.followUp.contact);
+          const node = execution.nodes.find((n) => n.id === AGENT_TASK_SCHEDULE_NODE);
+          const state = followUpState(execution);
+          followUp = {
+            contactId: contact?.id ?? null,
+            contactName: contact?.name ?? null,
+            type: parsed.followUp.type,
+            title: parsed.followUp.title,
+            date: parsed.followUp.date,
+            time: parsed.followUp.time,
+            state,
+            approvalId: state === 'waiting_approval' ? (node?.approvalId ?? null) : null,
+          };
+        }
+        answer = {
+          answer: parsed.answer,
+          missing: [...parsed.missing],
+          facts: parsed.facts.length,
+          followUp,
+        };
+      }
     }
     return {
       id: task.id,

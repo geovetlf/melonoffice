@@ -1,5 +1,6 @@
 import type { Firestore } from '@google-cloud/firestore';
 import {
+  contactRef,
   createAgentTaskService,
   InMemoryAgentTaskRepository,
   parseAgentAnswer,
@@ -20,7 +21,7 @@ import {
   VERTEX_AI_PROVIDER,
   VERTEX_AI_PROVIDER_ID,
 } from '@melonoffice/ai-vertex';
-import { InMemoryApprovalRepository } from '@melonoffice/approvals';
+import { createApprovalService, InMemoryApprovalRepository } from '@melonoffice/approvals';
 import { createAuditService, InMemoryAuditStore, type AuditEvent } from '@melonoffice/audit';
 import type { AuthenticatedContext } from '@melonoffice/auth';
 import {
@@ -29,6 +30,8 @@ import {
   type KnowledgeRepository,
 } from '@melonoffice/brain';
 import {
+  createCustomerService,
+  createFollowUpService,
   InMemoryConversationRepository,
   type ConversationRepository,
 } from '@melonoffice/conversations';
@@ -236,7 +239,11 @@ describe.each(STORES)('AE-2 agent tasks with storage in %s', (_storage, createSt
       organizations: stores.tenancy,
       authorization,
       skills: createSkillCatalogue(),
-      tools: () => undefined,
+      // The commercial agent's follow-up (ADR-0084), granted by its skill.
+      tools: (id, version) =>
+        id === 'follow_up_schedule' && version === 2
+          ? { riskLevel: 'low', approval: 'approval_required', permissions: ['follow_up.manage'] }
+          : undefined,
       now,
     });
     const brain = createCompanyBrain({
@@ -282,25 +289,41 @@ describe.each(STORES)('AE-2 agent tasks with storage in %s', (_storage, createSt
     // The worker's composition, exactly as in production: conversation turns and agent tasks
     // share one runtime, routed by what the execution is.
     const conversation = createConversationAgentParts({ stores, now });
-    const routed = routeAgentWork(
-      conversation,
-      createAgentTaskParts({
-        stores: {
-          tenancy: stores.tenancy,
-          specialists: stores.specialists,
-          tasks: stores.tasks,
-          knowledge: stores.knowledge,
-          outputs: stores.outputs,
-        },
-        now,
-      }),
-    );
+    // Follow-ups (C5) with a queue that only records: the same service the worker schedules with.
+    const queued: string[] = [];
+    const followUps = createFollowUpService({
+      repository: stores.conversations,
+      organizations: stores.tenancy,
+      authorization,
+      timeZone: async () => 'America/Lima',
+      scheduler: { schedule: async (ref) => void queued.push(ref.followUpId) },
+      now,
+    });
+    const taskParts = createAgentTaskParts({
+      stores: {
+        tenancy: stores.tenancy,
+        specialists: stores.specialists,
+        tasks: stores.tasks,
+        knowledge: stores.knowledge,
+        outputs: stores.outputs,
+      },
+      proposals: {
+        conversations: stores.conversations,
+        followUps,
+        timeZone: async () => 'America/Lima',
+      },
+      now,
+    });
+    const routed = routeAgentWork(conversation, taskParts);
     const dispatched: JobId[] = [];
     const { jobs, runtime } = createWorkerRuntime({
       stores,
       environment: 'dev',
       leaseMs: LEASE_MS,
-      tools: { registry: createToolRegistry(TOOL_CATALOGUE), executors: conversation.executors },
+      tools: {
+        registry: createToolRegistry(TOOL_CATALOGUE),
+        executors: { ...conversation.executors, ...taskParts.executors },
+      },
       ai: createProviderRegistry({
         providers: [VERTEX_AI_PROVIDER],
         models: VERTEX_AI_MODELS,
@@ -315,6 +338,7 @@ describe.each(STORES)('AE-2 agent tasks with storage in %s', (_storage, createSt
       verifier: routed.verifier,
       outputs: conversation.outputs,
       onStopped: routed.onStopped,
+      ...(taskParts.onEnded === undefined ? {} : { onEnded: taskParts.onEnded }),
       dispatcher: { dispatch: async (id) => void dispatched.push(id) },
       now,
     });
@@ -376,6 +400,20 @@ describe.each(STORES)('AE-2 agent tasks with storage in %s', (_storage, createSt
 
     const promptOf = (call: ProviderCall | undefined) => JSON.stringify(call?.messages ?? []);
 
+    const approvals = createApprovalService({
+      repository: stores.approvals,
+      organizations: stores.tenancy,
+      authorization,
+      audit,
+      now,
+    });
+    const customers = createCustomerService({
+      repository: stores.conversations,
+      organizations: stores.tenancy,
+      authorization,
+      now,
+    });
+
     return {
       stores,
       orgA,
@@ -383,6 +421,11 @@ describe.each(STORES)('AE-2 agent tasks with storage in %s', (_storage, createSt
       tenantA,
       tenantB,
       brain,
+      approvals,
+      customers,
+      followUps,
+      queued,
+      runtime,
       tasks,
       executions,
       providerCalls,
@@ -430,6 +473,8 @@ describe.each(STORES)('AE-2 agent tasks with storage in %s', (_storage, createSt
     expect(parseAgentAnswer(must(record).output)).toEqual({
       answer: 'El Combo Familiar cuesta S/ 25. Sugiero ofrecerlo a clientes que piden para cuatro.',
       missing: ['Margen del Combo Familiar'],
+      followUp: null,
+      facts: [],
     });
   });
 
@@ -497,6 +542,121 @@ describe.each(STORES)('AE-2 agent tasks with storage in %s', (_storage, createSt
     const prompt = w.promptOf(w.providerCalls[0]);
     expect(prompt).toContain('the company memory has nothing on this yet');
     expect(prompt).not.toContain('Combo Familiar');
+  });
+
+  /** Alice's contact Juan, and the answer that proposes calling him tomorrow at 10. */
+  async function proposing(w: Awaited<ReturnType<typeof world>>, extra: object = {}) {
+    const juan = await w.customers.create(w.tenantA, {
+      displayName: 'Juan Pérez',
+      phone: '+51999888777',
+    });
+    w.setModel(async () =>
+      answer({
+        answer: 'Te propongo llamar a Juan mañana a las 10.',
+        missing: [],
+        followUp: {
+          contact: contactRef(juan.id),
+          type: 'call',
+          title: 'Llamar a Juan por el pedido',
+          date: '2026-09-30',
+          time: '10:00',
+        },
+        ...extra,
+      }),
+    );
+    const lucia = await w.agent();
+    const asked = await w.tasks.assign(w.tenantA, lucia.identity.id, {
+      request: 'Llama a Juan mañana a las 10 por su pedido',
+    });
+    await w.drive();
+    return { juan, taskId: asked.task.id };
+  }
+
+  it("7. the commercial agent's follow-up waits for a person's approval, then is scheduled (ADR-0084)", async () => {
+    const w = await world();
+    const { juan, taskId } = await proposing(w);
+    // The model saw Juan by reference only, and was offered the follow-up.
+    const prompt = w.promptOf(w.providerCalls[0]);
+    expect(prompt).toContain(contactRef(juan.id));
+    expect(prompt).not.toContain(juan.id);
+    let { execution } = await w.tasks.get(w.tenantA, taskId);
+    expect(execution?.status).toBe('waiting_approval');
+    const node = execution?.nodes.find((n) => n.id === 'schedule');
+    expect(node?.approvalId).toBeDefined();
+    expect(w.queued).toEqual([]);
+    const approval = await w.approvals.get(w.tenantA, must(node?.approvalId));
+    expect(approval).toMatchObject({
+      status: 'pending',
+      riskLevel: 'low',
+      operation: { toolId: 'follow_up_schedule', toolVersion: 2, nodeId: 'schedule' },
+    });
+
+    // A person approves; the task is handed back to the worker and the follow-up is scheduled.
+    await w.approvals.approve(w.tenantA, approval.id);
+    await w.runtime.resume(w.tenantA, taskId);
+    await w.drive();
+    ({ execution } = await w.tasks.get(w.tenantA, taskId));
+    expect(execution?.status).toBe('completed');
+    expect(execution?.verification?.result).toBe('passed');
+    const list = await w.followUps.list(w.tenantA);
+    expect(list.items).toHaveLength(1);
+    expect(list.items[0]).toMatchObject({
+      contactId: juan.id,
+      type: 'call',
+      title: 'Llamar a Juan por el pedido',
+      source: 'agent',
+      status: 'scheduled',
+      createdBy: ALICE,
+    });
+    expect(w.queued).toHaveLength(1);
+    const events = await w.stores.events();
+    expect(events.map((e) => e.action)).toContain('follow_up.created');
+    // Created by the runtime, for Alice who asked the task.
+    expect(events.find((e) => e.action === 'follow_up.created')?.actor).toMatchObject({
+      type: 'system',
+      id: 'runtime',
+      initiatedBy: ALICE,
+    });
+  });
+
+  it('8. a rejected follow-up is never scheduled; the answer stands (ADR-0084)', async () => {
+    const w = await world();
+    const { taskId } = await proposing(w);
+    let { execution } = await w.tasks.get(w.tenantA, taskId);
+    const node = execution?.nodes.find((n) => n.id === 'schedule');
+    await w.approvals.reject(w.tenantA, must(node?.approvalId));
+    await w.runtime.resume(w.tenantA, taskId);
+    await w.drive();
+    ({ execution } = await w.tasks.get(w.tenantA, taskId));
+    expect(execution).toMatchObject({ status: 'failed', failure: { code: 'approval_rejected' } });
+    expect((await w.followUps.list(w.tenantA)).items).toEqual([]);
+    expect(w.queued).toEqual([]);
+    const record = await w.outputs.find(w.tenantA, taskId, 'work');
+    expect(parseAgentAnswer(must(record).output)?.answer).toContain('llamar a Juan');
+  });
+
+  it('9. facts the agent proposed wait in the company memory for the owner (ADR-0084)', async () => {
+    const w = await world();
+    const { taskId } = await proposing(w, {
+      followUp: null,
+      facts: [
+        {
+          domain: 'operations',
+          key: 'opening_days',
+          valueType: 'list',
+          items: ['domingo'],
+          confidence: 0.9,
+        },
+      ],
+    });
+    const { execution } = await w.tasks.get(w.tenantA, taskId);
+    // No follow-up proposed: the schedule node is skipped and the task completes.
+    expect(execution?.status).toBe('completed');
+    expect(execution?.nodes.find((n) => n.id === 'schedule')?.status).toBe('skipped');
+    const facts = await w.brain.list(w.tenantA, { domain: 'operations' });
+    const opening = facts.find((f) => f.key === 'opening_days');
+    expect(opening).toMatchObject({ verification: 'proposed', needsConfirmation: true });
+    expect(opening?.provenance).toMatchObject({ sourceType: 'agent', sourceId: taskId });
   });
 });
 

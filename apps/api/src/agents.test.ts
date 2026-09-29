@@ -125,6 +125,7 @@ describe.each(STORES)('agents with storage in %s', (_name, createStores) => {
       permissions: {
         required: [
           'contact.read',
+          'follow_up.manage',
           'follow_up.read',
           'knowledge.read',
           'opportunity.read',
@@ -132,6 +133,8 @@ describe.each(STORES)('agents with storage in %s', (_name, createStores) => {
         ],
         missing: [],
       },
+      // Made from today's template: nothing newer to move to.
+      upgrades: [],
     });
 
     const events = (await stores.auditEvents()).filter((e) => e.action.startsWith('specialist.'));
@@ -143,6 +146,46 @@ describe.each(STORES)('agents with storage in %s', (_name, createStores) => {
     expect(events.every((e) => e.organizationId === orgA)).toBe(true);
     expect(JSON.stringify(events)).not.toContain('Lucía');
     expect(JSON.stringify(events)).not.toContain('pollo');
+  });
+
+  it('moves an agent to a newer skill version only when a person asks (ADR-0084)', async () => {
+    const { stores, call, orgA, base } = await setup();
+    const id = (
+      await call('token-alice', 'POST', `${base(orgA)}/specialists`, {
+        templateId: 'research',
+        displayName: 'Iris',
+      })
+    ).body.id as string;
+    // As an agent made before version 2 was: company_knowledge@1.
+    const current = await stores.specialists.find(orgA as never, id as never);
+    if (current === undefined) throw new Error('agent not stored');
+    await call('token-alice', 'PATCH', `${base(orgA)}/specialists/${id}`, {
+      fromVersion: 1,
+      configuration: {
+        ...current.configuration,
+        skills: current.configuration.skills.map((s) =>
+          s.id === 'company_knowledge' ? { ...s, version: 1 } : s,
+        ),
+      },
+    });
+    const before = await call('token-alice', 'GET', `${base(orgA)}/specialists/${id}/capabilities`);
+    expect(before.body.upgrades).toEqual([{ skillId: 'company_knowledge', from: 1, to: 2 }]);
+    const upgrade = (body: Record<string, unknown>) =>
+      call('token-alice', 'POST', `${base(orgA)}/specialists/${id}/skills/upgrade`, body);
+    expect(await upgrade({ fromVersion: 2, skillId: 'company_knowledge', version: 3 })).toEqual({
+      status: 400,
+      body: { error: 'invalid_specialist', field: 'version' },
+    });
+    const moved = await upgrade({ fromVersion: 2, skillId: 'company_knowledge', version: 2 });
+    expect(moved.status).toBe(200);
+    expect(moved.body).toMatchObject({ version: 3 });
+    expect(moved.body.skills).toContainEqual({ id: 'company_knowledge', version: 2 });
+    const after = await call('token-alice', 'GET', `${base(orgA)}/specialists/${id}/capabilities`);
+    expect(after.body.upgrades).toEqual([]);
+    expect(await upgrade({ fromVersion: 3, skillId: 'company_knowledge', version: 2 })).toEqual({
+      status: 400,
+      body: { error: 'invalid_specialist', field: 'version' },
+    });
   });
 
   it('answers bad requests and conflicts with stable codes', async () => {

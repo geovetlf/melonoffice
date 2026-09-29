@@ -54,14 +54,17 @@ const action = (
  * Tools join as each gets a place in the catalogue, with the approval their risk level needs.
  */
 export const ACTION_CATALOGUE: readonly ActionDefinition[] = Object.freeze([
+  // An agent proposes only when one of its skills grants it (ADR-0083, ADR-0084).
   action('knowledge.propose_fact', {
     permission: 'knowledge.propose',
     confirmation: 'person_confirms',
+    proposers: ['gia', 'agent'],
     maxCredits: 0,
   }),
   action('follow_up.schedule', {
     permission: 'follow_up.manage',
     confirmation: 'person_confirms',
+    proposers: ['gia', 'agent'],
     maxCredits: 0,
   }),
   action('agent_task.assign', {

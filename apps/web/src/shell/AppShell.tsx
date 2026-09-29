@@ -258,8 +258,15 @@ export function AppShell(locale: LocaleProps) {
                   client: clients.agentTasks,
                   canAsk: canAskAgents,
                   stop: canCancelExecutions ? clients.executions.cancel : undefined,
+                  // The follow-up an agent proposed is approved where the task is read (ADR-0084).
+                  decide: canDecidePlans
+                    ? async (approvalId: string, decision: 'approve' | 'reject') => {
+                        await clients.approvals.decide(approvalId, decision);
+                      }
+                    : undefined,
                 },
                 agents: clients.agents,
+                canManageAgents,
               }
             : {})}
         />

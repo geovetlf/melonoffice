@@ -1,4 +1,5 @@
 import { ROLES, createAuthorizationService, type Permission } from '@melonoffice/rbac';
+import { contactRef } from '@melonoffice/agents';
 import { describe, expect, it } from 'vitest';
 import { setupApp, STORES, type Stores } from './test-api.js';
 
@@ -13,7 +14,12 @@ interface Task {
   readonly request: string;
   readonly status: string;
   readonly failure: string | null;
-  readonly answer: { readonly answer: string; readonly missing: readonly string[] } | null;
+  readonly answer: {
+    readonly answer: string;
+    readonly missing: readonly string[];
+    readonly facts?: number;
+    readonly followUp?: Record<string, unknown> | null;
+  } | null;
 }
 interface Body {
   readonly [key: string]: unknown;
@@ -138,6 +144,81 @@ describe.each(STORES)('agent tasks with storage in %s', (_name, createStores) =>
       status: 'completed',
       answer: { answer: 'Tienes 3 oportunidades abiertas.', missing: [] },
     });
+  });
+
+  it('shows the follow-up the agent proposed, where it stands, and the answer meanwhile (ADR-0084)', async () => {
+    const { call, orgA, base, agent, stores, agentOutputs } = await setup();
+    const id = await agent();
+    const juan = (
+      await call('token-alice', 'POST', `${base(orgA)}/customers`, {
+        displayName: 'Juan Pérez',
+        phone: '+51999888777',
+      })
+    ).body.id as string;
+    const asked = await call('token-alice', 'POST', `${base(orgA)}/specialists/${id}/tasks`, {
+      request: 'Llama a Juan mañana a las 10',
+    });
+    const taskId = asked.body.id as string;
+    await agentOutputs.save({
+      organizationId: orgA as never,
+      executionId: taskId as never,
+      nodeId: 'work' as never,
+      requestId: 'req-1',
+      output: {
+        structured: {
+          answer: 'Te propongo llamar a Juan.',
+          missing: [],
+          followUp: {
+            contact: contactRef(juan),
+            type: 'call',
+            title: 'Llamar a Juan',
+            date: '2026-09-30',
+            time: '10:00',
+          },
+          facts: [],
+        },
+      },
+      createdAt: new Date().toISOString() as never,
+    });
+    const set = (status: string, schedule: Record<string, unknown>, failure?: string) =>
+      stores.executions.update(orgA as never, taskId as never, (current) => ({
+        execution: {
+          ...current,
+          status: status as never,
+          nodes: current.nodes.map((n) =>
+            n.id === 'work' ? { ...n, status: 'completed' as const } : { ...n, ...schedule },
+          ),
+          ...(failure === undefined ? {} : { failure: { code: failure } as never }),
+          revision: current.revision + 1,
+        },
+        events: [],
+      }));
+    const read = async () =>
+      (await call('token-alice', 'GET', `${base(orgA)}/agent-tasks/${taskId}`)).body;
+
+    await set('waiting_approval', { approvalId: 'approval-1' });
+    const waiting = await read();
+    expect(waiting.answer).toEqual({
+      answer: 'Te propongo llamar a Juan.',
+      missing: [],
+      facts: 0,
+      followUp: {
+        contactId: juan,
+        contactName: 'Juan Pérez',
+        type: 'call',
+        title: 'Llamar a Juan',
+        date: '2026-09-30',
+        time: '10:00',
+        state: 'waiting_approval',
+        approvalId: 'approval-1',
+      },
+    });
+    await set('failed', { status: 'pending' }, 'approval_rejected');
+    const rejected = await read();
+    expect(rejected.answer?.answer).toBe('Te propongo llamar a Juan.');
+    expect(rejected.answer?.followUp).toMatchObject({ state: 'rejected', approvalId: null });
+    await set('completed', { status: 'completed' });
+    expect((await read()).answer?.followUp).toMatchObject({ state: 'scheduled' });
   });
 
   it('refuses malformed requests with the field, and inactive or unknown agents', async () => {

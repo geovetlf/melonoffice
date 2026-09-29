@@ -28,7 +28,7 @@ export interface FollowUpView {
   readonly when: FollowUpWhen;
   readonly days: number;
   readonly status: FollowUpStatus;
-  readonly source: 'manual' | 'gia' | 'rule';
+  readonly source: 'manual' | 'gia' | 'agent' | 'rule';
   readonly cancelReason: string | null;
   readonly failure: string | null;
   readonly revision: number;

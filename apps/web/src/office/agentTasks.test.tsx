@@ -130,7 +130,13 @@ describe('the tasks section (ADR-0063)', () => {
     };
     return client;
   }
-  const show = (client: AgentTasksClient, extra: { canAsk?: boolean } = {}) =>
+  const show = (
+    client: AgentTasksClient,
+    extra: {
+      canAsk?: boolean;
+      decide?: (id: string, decision: 'approve' | 'reject') => Promise<void>;
+    } = {},
+  ) =>
     render(
       <I18nProvider locale="en" messages={catalogs.en}>
         <AgentTasks
@@ -140,6 +146,7 @@ describe('the tasks section (ADR-0063)', () => {
           canAsk={extra.canAsk ?? true}
           agentActive
           refreshMs={5}
+          decide={extra.decide}
         />
       </I18nProvider>,
     );
@@ -194,5 +201,116 @@ describe('the tasks section (ADR-0063)', () => {
     await waitFor(() => expect(keys).toHaveLength(3));
     expect(new Set(keys).size).toBe(1);
     await waitFor(() => expect((box as HTMLTextAreaElement).value).toBe(''));
+  });
+
+  describe('what the agent proposed (ADR-0084)', () => {
+    const followUp = (state: string, approvalId: string | null = 'ap-1') => ({
+      contactId: 'contact-1',
+      contactName: 'Juan Pérez',
+      type: 'call',
+      title: 'Llamar para confirmar el pedido',
+      date: '2026-10-02',
+      time: '10:00',
+      state,
+      approvalId,
+    });
+    const answered = (extra: Record<string, unknown>) =>
+      task({
+        status: 'running',
+        answer: { answer: 'Juan pidió que lo llamemos.', missing: [], ...extra },
+      } as Partial<AgentTaskView>);
+
+    it('shows the proposed follow-up and lets a person approve it', async () => {
+      const client = fakeClient([[answered({ followUp: followUp('waiting_approval') })]]);
+      let approved = false;
+      // Until the person decides, every read shows the follow-up waiting; after, scheduled.
+      client.get = vi.fn(async () =>
+        approved
+          ? task({
+              status: 'completed',
+              completedAt: '2026-09-29T12:02:00Z',
+              answer: {
+                answer: 'Juan pidió que lo llamemos.',
+                missing: [],
+                followUp: followUp('scheduled'),
+              },
+            } as Partial<AgentTaskView>)
+          : answered({ followUp: followUp('waiting_approval') }),
+      );
+      const decide = vi.fn(async () => {
+        approved = true;
+      });
+      show(client, { decide });
+      const group = within(await screen.findByRole('group', { name: 'Proposed follow-up' }));
+      expect(group.getByText('Llamar para confirmar el pedido')).toBeTruthy();
+      expect(group.getByRole('link', { name: 'Juan Pérez' })).toBeTruthy();
+      expect(
+        group.getByText('Waiting for your approval. It is scheduled only if you approve it.'),
+      ).toBeTruthy();
+      fireEvent.click(group.getByRole('button', { name: 'Approve and schedule' }));
+      await waitFor(() => expect(decide).toHaveBeenCalledWith('ap-1', 'approve'));
+      expect(await screen.findByText('Scheduled. You can see it in Follow-ups.')).toBeTruthy();
+    });
+
+    it('asks before rejecting, and does nothing when the person says no', async () => {
+      const decide = vi.fn(async () => undefined);
+      const confirm = vi.spyOn(globalThis, 'confirm').mockReturnValueOnce(false);
+      show(fakeClient([[answered({ followUp: followUp('waiting_approval') })]]), { decide });
+      fireEvent.click(await screen.findByRole('button', { name: 'Reject' }));
+      expect(confirm).toHaveBeenCalledWith('Reject this follow-up? It will not be scheduled.');
+      expect(decide).not.toHaveBeenCalled();
+      confirm.mockReturnValueOnce(true);
+      fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
+      await waitFor(() => expect(decide).toHaveBeenCalledWith('ap-1', 'reject'));
+      confirm.mockRestore();
+    });
+
+    it('sends a person without approval rights to Approvals, with no buttons', async () => {
+      show(fakeClient([[answered({ followUp: followUp('waiting_approval') })]]));
+      expect(await screen.findByRole('link', { name: 'Review in Approvals' })).toBeTruthy();
+      expect(screen.queryByRole('button', { name: 'Approve and schedule' })).toBeNull();
+    });
+
+    it('says a rejected follow-up was not scheduled, without calling the task failed', async () => {
+      show(
+        fakeClient([
+          [
+            task({
+              status: 'failed',
+              failure: 'approval_rejected',
+              answer: {
+                answer: 'Juan pidió que lo llamemos.',
+                missing: [],
+                followUp: followUp('rejected', null),
+              },
+            } as Partial<AgentTaskView>),
+          ],
+        ]),
+      );
+      expect(await screen.findByText('Rejected. It was not scheduled.')).toBeTruthy();
+      expect(screen.getByText('Answered')).toBeTruthy();
+      expect(
+        screen.queryByText('The agent could not finish this task. Nothing was done on its behalf.'),
+      ).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Reject' })).toBeNull();
+    });
+
+    it('counts the facts it proposed and links to the company memory', async () => {
+      show(
+        fakeClient([
+          [
+            task({
+              status: 'completed',
+              completedAt: '2026-09-29T12:02:00Z',
+              answer: { answer: 'Listo.', missing: [], facts: 2 },
+            } as Partial<AgentTaskView>),
+          ],
+        ]),
+      );
+      expect(
+        await screen.findByText(/Proposed 2 facts for the company memory\. You confirm them\./),
+      ).toBeTruthy();
+      expect(screen.getByRole('link', { name: 'Review in Memory' })).toBeTruthy();
+    });
   });
 });

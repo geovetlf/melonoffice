@@ -17,12 +17,15 @@ import {
 } from '@melonoffice/specialists';
 import { isResolvedTenant, type TenantContext } from '@melonoffice/tenancy';
 import { AgentTaskError } from './errors.js';
+import { AGENT_FOLLOW_UP_TOOL, AGENT_TASK_SCHEDULE_NODE } from './proposals.js';
 
 /**
  * Tasks for agents (Agent Engine phase 2, ADR-0063). A person asks one of the organization's
  * active agents to do something; the task is an execution of that agent, run by the existing
- * runtime, with one `agent` node whose model call goes through the AI Gateway. Nothing here runs
- * a model, reaches a tool or leaves MelonOffice: this is only how a task is asked and read.
+ * runtime, with one `agent` node whose model call goes through the AI Gateway. An agent whose
+ * version has `follow_up_schedule@2` gets a second, `tool` node after it, for the follow-up it may
+ * propose; it runs only through the tool gate and a person's approval (ADR-0084). Nothing here
+ * runs a model, reaches a tool or leaves MelonOffice: this is only how a task is asked and read.
  */
 
 /** What an agent task's execution points at (`execution.input.type`). */
@@ -283,6 +286,9 @@ export function createAgentTaskService(options: AgentTaskServiceOptions): AgentT
       let execution = await executionOf(tenant, id);
       if (execution === undefined) {
         const ref = { type: AGENT_TASK_INPUT, id };
+        const schedules = agent.configuration.tools.some(
+          (t) => t.id === AGENT_FOLLOW_UP_TOOL.id && t.version === AGENT_FOLLOW_UP_TOOL.version,
+        );
         try {
           execution = await executions.create(tenant, {
             mode: 'execute',
@@ -299,9 +305,32 @@ export function createAgentTaskService(options: AgentTaskServiceOptions): AgentT
                   id: s.id as string,
                   version: String(s.version),
                 })),
+                ...(schedules
+                  ? [
+                      {
+                        kind: 'tool',
+                        id: AGENT_FOLLOW_UP_TOOL.id,
+                        version: String(AGENT_FOLLOW_UP_TOOL.version),
+                      },
+                    ]
+                  : []),
               ],
             },
-            nodes: [{ id: AGENT_TASK_NODE, type: 'agent', label: AGENT_TASK_INPUT, input: ref }],
+            nodes: [
+              { id: AGENT_TASK_NODE, type: 'agent', label: AGENT_TASK_INPUT, input: ref },
+              ...(schedules
+                ? [
+                    {
+                      id: AGENT_TASK_SCHEDULE_NODE,
+                      type: 'tool' as const,
+                      label: AGENT_FOLLOW_UP_TOOL.id,
+                      input: ref,
+                      dependsOn: [AGENT_TASK_NODE],
+                      tool: { ...AGENT_FOLLOW_UP_TOOL },
+                    },
+                  ]
+                : []),
+            ],
             idempotencyKey: key,
             ...(requestId === undefined ? {} : { requestId }),
           });

@@ -44,24 +44,49 @@ describe('skills grant only what exists, and only to agents (SK-1)', () => {
     }
   });
 
-  it("every template's skills resolve, and grant no tool (a new agent starts with none)", () => {
+  it("every template's skills resolve; only the commercial agent's grant a tool: its follow-up, approved each time (ADR-0084)", () => {
     const catalogue = createSkillCatalogue();
+    const tools = defaultToolRegistry();
     for (const template of AGENT_TEMPLATES) {
       for (const ref of template.skills) {
         expect(catalogue.resolve(ref.id, ref.version), `${template.id}: ${ref.id}`).toBeDefined();
       }
-      expect([...grantsOf(template.skills, catalogue).tools]).toEqual([]);
+      const granted = [...grantsOf(template.skills, catalogue).tools];
+      expect(granted, template.id).toEqual(
+        template.id === 'commercial' ? ['follow_up_schedule@2'] : [],
+      );
+      for (const key of granted) {
+        const [id, version] = key.split('@');
+        expect(tools.resolve(id as string, Number(version))?.version.approvalPolicy).toBe(
+          'approval_required',
+        );
+      }
+      // Every agent may propose facts for the company memory, for the owner to confirm.
+      expect([...grantsOf(template.skills, catalogue).actions]).toContain('knowledge.propose_fact');
     }
   });
 
-  it('only conversation_reply grants tools today, and no skill grants an action', () => {
+  it('what each skill grants, exactly (ADR-0083, ADR-0084)', () => {
     expect(
       SKILL_CATALOGUE.filter((s) => s.tools.length > 0).map((s) => [
-        s.id,
+        `${s.id}@${s.version}`,
         s.tools.map((t) => `${t.id}@${t.versions.join('|')}`),
       ]),
-    ).toEqual([['conversation_reply', ['message_send@2|3', 'conversation_handoff@1']]]);
-    expect(SKILL_CATALOGUE.flatMap((s) => s.actions)).toEqual([]);
+    ).toEqual([
+      ['conversation_reply@1', ['message_send@2|3', 'conversation_handoff@1']],
+      ['customer_follow_up@2', ['follow_up_schedule@2']],
+    ]);
+    expect(
+      SKILL_CATALOGUE.filter((s) => s.actions.length > 0).map((s) => [
+        `${s.id}@${s.version}`,
+        [...s.actions],
+      ]),
+    ).toEqual([
+      ['company_knowledge@2', ['knowledge.propose_fact']],
+      ['customer_follow_up@2', ['follow_up.schedule']],
+    ]);
+    // Version 1 of every skill grants no action, as before.
+    expect(SKILL_CATALOGUE.filter((s) => s.version === 1).flatMap((s) => s.actions)).toEqual([]);
   });
 
   it('a published skill version never changes: a change needs a new version', () => {
@@ -78,9 +103,11 @@ describe('skills grant only what exists, and only to agents (SK-1)', () => {
       {
         "campaign_analysis@1": "d71dcf655bed",
         "company_knowledge@1": "39a1e0299b99",
+        "company_knowledge@2": "a70483029a3a",
         "content_drafting@1": "39a1e0299b99",
         "conversation_reply@1": "338e7530cc39",
         "customer_follow_up@1": "ffa7c617dfde",
+        "customer_follow_up@2": "bc1f3e84c7c7",
         "design_briefing@1": "39a1e0299b99",
         "finance_review@1": "b6fdaaa61bbc",
         "market_research@1": "973fa6cccfce",
@@ -131,8 +158,8 @@ describe('agents gain no capability by default (SK-2)', () => {
     expect(grantsOf(pinned, wider).actions.size).toBe(0);
     // Templates name their skills and versions; a new skill joins none of them.
     expect(AGENT_TEMPLATES.find((t) => t.id === 'commercial')?.skills).toEqual([
-      { id: 'company_knowledge', version: 1 },
-      { id: 'customer_follow_up', version: 1 },
+      { id: 'company_knowledge', version: 2 },
+      { id: 'customer_follow_up', version: 2 },
       { id: 'pipeline_analysis', version: 1 },
     ]);
     for (const template of AGENT_TEMPLATES) {

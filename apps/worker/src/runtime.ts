@@ -87,6 +87,11 @@ export interface WorkerRuntimeOptions {
   /** Told when an execution stops without completing (ADR-0043). */
   readonly onStopped?: ExecutionStopHook;
   /**
+   * Told when an execution ended, besides the plan conductor (ADR-0084: an agent task's proposed
+   * facts go to Company Brain). A failure here is logged and changes nothing that ended.
+   */
+  readonly onEnded?: ExecutionEndHook;
+  /**
    * The plans, for the plan conductor (WF-1, ADR-0070): when one of a plan's steps ends, its next
    * steps start, or the plan closes. Absent: a plan step ends and nothing follows.
    */
@@ -195,7 +200,7 @@ export function createWorkerRuntime(options: WorkerRuntimeOptions): {
   // The plan conductor (ADR-0070) starts a plan's next steps through this same runtime, as the
   // runtime of the person the plan runs for: their delegated start, then the step's first node.
   const plans = options.plans;
-  const onEnded: ExecutionEndHook | undefined =
+  const conductor: ExecutionEndHook | undefined =
     plans === undefined
       ? undefined
       : {
@@ -217,6 +222,23 @@ export function createWorkerRuntime(options: WorkerRuntimeOptions): {
               ...clock,
               ...(logger === undefined ? {} : { logger: logger.child({ component: 'plans' }) }),
             }).advance(tenant, step.planId);
+          },
+        };
+  const extra = options.onEnded;
+  const onEnded: ExecutionEndHook | undefined =
+    extra === undefined
+      ? conductor
+      : {
+          async ended(tenant, execution, status) {
+            try {
+              await extra.ended(tenant, execution, status);
+            } catch (error) {
+              logger?.warn('execution end hook failed', {
+                executionId: execution.id,
+                code: (error as { code?: unknown }).code ?? 'error',
+              });
+            }
+            await conductor?.ended(tenant, execution, status);
           },
         };
   const runtime: Runtime = createRuntime({

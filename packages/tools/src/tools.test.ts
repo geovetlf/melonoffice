@@ -409,6 +409,40 @@ describe('follow_up_schedule (TL-1, ADR-0068)', () => {
       'assignedTo',
       'source',
     ]);
-    expect(defaultToolRegistry().resolve('follow_up_schedule', 2)).toBeUndefined();
+    expect(defaultToolRegistry().resolve('follow_up_schedule', 3)).toBeUndefined();
+  });
+
+  it("version 2 is an agent's (ADR-0084): the runtime's only, approved by a person every time", () => {
+    const v = defaultToolRegistry().resolve('follow_up_schedule', 2)?.version;
+    expect(v).toMatchObject({
+      category: 'crm',
+      action: 'schedule',
+      mutating: true,
+      permissions: ['follow_up.manage'],
+      credentials: [],
+      riskLevel: 'low',
+      approvalPolicy: 'approval_required',
+      approvalTtlSeconds: 172_800,
+      retryPolicy: { maxAttempts: 1, backoffMs: 0 },
+      provider: { kind: 'internal', id: 'follow_up' },
+      environments: ['dev'],
+      invocationModes: ['runtime'],
+    });
+    // No assignee, opportunity or description: only what the person approves, from an agent.
+    const schema = v?.inputSchema as {
+      properties: Record<string, { enum?: readonly string[] }>;
+      required: readonly string[];
+    };
+    expect(Object.keys(schema.properties)).toEqual([
+      'requestKey',
+      'contactId',
+      'type',
+      'title',
+      'date',
+      'time',
+      'source',
+    ]);
+    expect(schema.properties.source?.enum).toEqual(['agent']);
+    expect(schema.required).toContain('source');
   });
 });

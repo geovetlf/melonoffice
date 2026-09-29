@@ -1,3 +1,4 @@
+import { taskOf } from '@melonoffice/agents';
 import {
   createAIGateway,
   createModelPolicyCatalogue,
@@ -171,8 +172,14 @@ export function createAgentTurns(options: AgentTurnsOptions): AgentTurns {
           approval.organizationId,
           approval.operation.executionId,
         );
-        // Only an agent's turn is handed back here; other work has no delivery in the API yet.
-        if (execution === undefined || turnOf(execution) === undefined) return;
+        // An agent's turn, or an agent task's follow-up (ADR-0084), is handed back to the worker;
+        // other work has no delivery in the API yet.
+        if (
+          execution === undefined ||
+          (turnOf(execution) === undefined && taskOf(execution) === undefined)
+        ) {
+          return;
+        }
         await runtime.resume(tenant, execution.id);
       } catch (error) {
         const code = (error as { code?: unknown }).code;
