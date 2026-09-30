@@ -25,6 +25,10 @@ Phases 2 to 4a and the invitations built the partner and agency layer in the API
      - An admin invites by email, with the mode and the scopes to ask for, none ticked by default and sensitive ones flagged.
      - The link is shown once with a copy button, since the API keeps only its hash.
      - Withdrawing asks first.
+     - Each invitation shows when it was created and when it expires or expired.
+     - `branding` is asked for only in white-label mode.
+     - The API's refusals read as their own message (duplicate pending invitation, invalid email, no permission, limit, conflict, no longer pending); an unknown code is shown as it is. The console holds no authorization of its own: it hides what the role cannot do, and the API decides.
+     - There is no company field: the recipient's company is the one they already belong to (ADR-0089).
    - **People**: the account's members. An admin adds a person by user id with one of the account's roles, or removes one after confirming.
    - **Brand**: the account's own level. Admins edit it; others see it.
 
