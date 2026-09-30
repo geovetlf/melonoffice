@@ -101,7 +101,7 @@ export function Notifications({
       <summary className="topbar__icon" aria-label={label}>
         <Icon name="bell" size={20} />
         {waiting === 0 ? null : (
-          <span className="notifications__count" aria-hidden="true">
+          <span className="mo-badge mo-badge--count notifications__count" aria-hidden="true">
             {waiting > 99 ? '99+' : waiting}
           </span>
         )}

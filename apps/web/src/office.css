@@ -131,9 +131,7 @@ a.sidebar__item:hover {
   flex: 1;
 }
 
-.sidebar__soon,
-.panel__sample,
-.coming__soon {
+.panel__sample {
   padding: 1px var(--mo-space-2);
   border: 1px solid var(--mo-color-border);
   border-radius: var(--mo-radius-pill);
@@ -175,7 +173,7 @@ a.sidebar__item:hover {
 .topbar {
   position: sticky;
   top: 0;
-  z-index: 20;
+  z-index: var(--mo-layer-sticky);
   display: flex;
   align-items: center;
   gap: var(--mo-space-4);
@@ -307,9 +305,9 @@ a.sidebar__item:hover {
   list-style: none;
   border: 1px solid var(--mo-color-border);
   border-radius: var(--mo-radius-lg);
-  background: var(--mo-color-surface-glass);
-  backdrop-filter: blur(14px);
+  background: var(--mo-color-surface-elevated);
   box-shadow: var(--mo-shadow-lg);
+  z-index: var(--mo-layer-popover);
 }
 
 .search__results a {
@@ -322,7 +320,7 @@ a.sidebar__item:hover {
 }
 
 .search__results a:hover {
-  background: var(--mo-color-accent-soft);
+  background: var(--mo-color-hover);
 }
 
 .search__detail,
@@ -361,15 +359,14 @@ a.sidebar__item:hover {
   position: absolute;
   top: calc(100% + var(--mo-space-2));
   right: 0;
-  z-index: 30;
+  z-index: var(--mo-layer-popover);
   display: grid;
   gap: var(--mo-space-3);
   min-width: 16rem;
   padding: var(--mo-space-4);
   border: 1px solid var(--mo-color-border);
   border-radius: var(--mo-radius-lg);
-  background: var(--mo-color-surface-glass);
-  backdrop-filter: blur(14px);
+  background: var(--mo-color-surface-elevated);
   box-shadow: var(--mo-shadow-lg);
 }
 
@@ -826,10 +823,11 @@ a.sidebar__item:hover {
 }
 
 .panel {
-  padding: var(--mo-space-4);
+  padding: var(--mo-space-6);
   border: 1px solid var(--mo-color-border);
-  border-radius: 20px;
+  border-radius: var(--mo-radius-xl);
   background: var(--mo-color-surface);
+  box-shadow: var(--mo-shadow-sm);
 }
 
 .panel__header {
@@ -847,12 +845,20 @@ a.sidebar__item:hover {
   flex: 1;
   margin: 0;
   font-size: var(--mo-font-size-md);
+  font-weight: var(--mo-font-weight-semibold);
+  letter-spacing: var(--mo-font-tracking-tight);
 }
 
 .panel__empty {
   margin: 0;
   color: var(--mo-color-text-secondary);
   font-size: var(--mo-font-size-sm);
+}
+
+/* A list that failed says so in the danger colour; loading and empty stay quiet. */
+.panel__empty[role='alert'] {
+  color: var(--mo-color-danger);
+  font-weight: var(--mo-font-weight-medium);
 }
 
 .panel__list,
@@ -914,21 +920,7 @@ a.sidebar__item:hover {
 }
 
 .period-picker__option {
-  min-height: 32px;
-  padding: 0 var(--mo-space-3);
-  border: 1px solid var(--mo-color-border);
-  border-radius: var(--mo-radius-pill);
-  background: transparent;
-  color: var(--mo-color-text-secondary);
-  font: inherit;
   font-size: var(--mo-font-size-xs);
-  cursor: pointer;
-}
-
-.period-picker__option[aria-pressed='true'] {
-  border-color: var(--mo-color-accent);
-  background: var(--mo-color-accent-soft);
-  color: var(--mo-color-accent);
 }
 
 .activity__link {
@@ -1176,8 +1168,6 @@ a.sidebar__item:hover {
 
 /* The Conversations Center keeps its light surface inside the dark frame. */
 .light-surface {
-  border-radius: 20px;
-  background: var(--mo-color-surface-subtle);
   color: var(--mo-color-text-primary);
 }
 
@@ -1528,10 +1518,10 @@ a.sidebar__item:hover {
   .sidebar {
     position: fixed;
     inset: 0 auto 0 0;
-    z-index: 40;
+    z-index: var(--mo-layer-sheet);
     width: min(18rem, 85vw);
     transform: translateX(-100%);
-    transition: transform 220ms ease;
+    transition: transform var(--mo-motion-duration-base) var(--mo-motion-ease-standard);
     visibility: hidden;
   }
 
@@ -1543,9 +1533,9 @@ a.sidebar__item:hover {
   .app__scrim {
     position: fixed;
     inset: 0;
-    z-index: 35;
+    z-index: var(--mo-layer-scrim);
     display: block;
-    background: rgb(0 0 0 / 0.5);
+    background: var(--mo-color-scrim);
   }
 
   .topbar__menu {
@@ -2009,26 +1999,9 @@ a.sidebar__item:hover {
   gap: var(--mo-space-2);
 }
 
-.customers__tab {
-  display: inline-flex;
-  gap: var(--mo-space-2);
-  align-items: center;
-  padding: var(--mo-space-2) var(--mo-space-3);
-  border: 1px solid var(--mo-color-border);
-  border-radius: 999px;
-  background: transparent;
-  color: var(--mo-color-text-secondary);
-  font: inherit;
-  cursor: pointer;
-}
-
-.customers__tab[aria-selected='true'] {
-  background: var(--mo-color-accent-soft);
-  color: var(--mo-color-text-primary);
-}
-
 .customers__count {
-  font-weight: 600;
+  font-weight: var(--mo-font-weight-semibold);
+  font-variant-numeric: tabular-nums;
 }
 
 .customers__list,
@@ -2241,18 +2214,7 @@ a.sidebar__item:hover {
 }
 
 .memory__badge {
-  display: inline-block;
   margin-right: var(--mo-space-1);
-  padding: 0 var(--mo-space-2);
-  border: 1px solid var(--mo-color-border);
-  border-radius: 999px;
-}
-
-.memory__badge--proposed,
-.memory__badge--unverified,
-.memory__badge--inactive {
-  background: var(--mo-color-accent-soft);
-  color: var(--mo-color-text-primary);
 }
 
 .memory__actions {
@@ -2714,7 +2676,7 @@ a.sidebar__item:hover {
 .gia-quick {
   position: fixed;
   inset: 0;
-  z-index: 50;
+  z-index: var(--mo-layer-dialog);
   display: grid;
   place-items: start center;
   padding: 15vh var(--mo-space-4) 0;
@@ -2723,22 +2685,25 @@ a.sidebar__item:hover {
 .gia-quick__scrim {
   position: absolute;
   inset: 0;
-  background: rgb(0 0 0 / 40%);
+  background: var(--mo-color-scrim);
 }
 
 .gia-quick__box {
   position: relative;
-  width: min(560px, 100%);
-  padding: var(--mo-space-4);
-  border-radius: 16px;
-  background: var(--mo-color-surface-glass);
+  width: min(35rem, 100%);
+  padding: var(--mo-space-6);
+  border: 1px solid var(--mo-color-border);
+  border-radius: var(--mo-radius-xl);
+  background: var(--mo-color-surface-elevated);
   color: inherit;
-  box-shadow: 0 16px 48px rgb(0 0 0 / 25%);
+  box-shadow: var(--mo-shadow-lg);
 }
 
 .gia-quick__title {
-  margin: 0 0 var(--mo-space-2);
-  font-size: var(--mo-font-size-md, 1rem);
+  margin: 0 0 var(--mo-space-3);
+  font-size: var(--mo-font-size-lg);
+  font-weight: var(--mo-font-weight-semibold);
+  letter-spacing: var(--mo-font-tracking-tight);
 }
 
 .gia-quick__box .gia-bar__input {
@@ -2807,18 +2772,6 @@ a.sidebar__item:hover {
   overflow-wrap: anywhere;
 }
 
-.platform__badge {
-  padding: 0 var(--mo-space-2);
-  border-radius: 999px;
-  border: 1px solid currentcolor;
-  font-size: var(--mo-font-size-xs);
-}
-
-.platform__provider[data-health='degraded'] .platform__badge,
-.platform__provider[data-health='unavailable'] .platform__badge {
-  font-weight: 700;
-}
-
 /* A wide table scrolls inside its own box, never the page. */
 .platform__scroll {
   max-width: 100%;
@@ -2837,14 +2790,8 @@ a.sidebar__item:hover {
   position: absolute;
   top: -4px;
   right: -6px;
-  min-width: 1.25rem;
-  padding: 0 4px;
-  border-radius: 999px;
-  background: var(--mo-color-accent);
-  color: var(--mo-color-text-on-accent);
-  font-size: var(--mo-font-size-xxs);
-  font-weight: 700;
   line-height: 1.25rem;
+  box-shadow: 0 0 0 2px var(--mo-color-surface);
   text-align: center;
 }
 
@@ -2854,7 +2801,7 @@ a.sidebar__item:hover {
 
 .notifications__title {
   margin: 0;
-  font-weight: 600;
+  font-weight: var(--mo-font-weight-semibold);
 }
 
 .notifications__list {
@@ -2867,9 +2814,10 @@ a.sidebar__item:hover {
 
 .notifications__item {
   width: 100%;
-  padding: var(--mo-space-2);
+  min-height: 2.5rem;
+  padding: var(--mo-space-2) var(--mo-space-3);
   border: 0;
-  border-radius: var(--mo-radius-md, 8px);
+  border-radius: var(--mo-radius-md);
   background: none;
   color: inherit;
   font: inherit;
@@ -2877,9 +2825,12 @@ a.sidebar__item:hover {
   cursor: pointer;
 }
 
-.notifications__item:hover,
+.notifications__item:hover {
+  background: var(--mo-color-hover);
+}
+
 .notifications__item:focus-visible {
-  background: var(--mo-color-accent-soft);
+  outline-offset: -2px;
 }
 
 .platform .ai-usage__breakdown {
@@ -2920,4 +2871,9 @@ a.sidebar__item:hover {
   padding-left: var(--mo-space-6);
   color: var(--mo-color-text-secondary);
   font-size: var(--mo-font-size-sm);
+}
+
+/* The Agents page's own action sits at the start of its column. */
+.agents__create {
+  justify-self: start;
 }

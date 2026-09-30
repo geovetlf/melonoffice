@@ -270,7 +270,7 @@ function SeatPanel({
               onClick={(event) => event.preventDefault()}
             >
               <FormattedMessage id={`office.seats.action.${action}`} />
-              <span className="coming__soon">
+              <span className="mo-badge mo-badge--outline coming__soon">
                 <FormattedMessage id="common.soon" />
               </span>
             </button>

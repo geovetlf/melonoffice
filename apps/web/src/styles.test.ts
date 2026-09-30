@@ -28,4 +28,10 @@ describe('type in the stylesheets', () => {
   it.each(sheets)('$name sets tracking from the tokens', ({ css }) => {
     expect(css).not.toMatch(/letter-spacing:\s*-?[\d.]+(em|px|rem)\s*;/);
   });
+
+  it.each(sheets)('$name stacks overlays on the layer tokens', ({ css }) => {
+    // Small values order parts of one drawing; anything that floats over the page uses a layer.
+    const raw = [...css.matchAll(/z-index:\s*(\d+)\s*;/g)].map((m) => Number(m[1]));
+    for (const value of raw) expect(value).toBeLessThan(10);
+  });
 });

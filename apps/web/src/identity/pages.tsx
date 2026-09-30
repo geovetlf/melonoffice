@@ -24,17 +24,19 @@ export function LanguageSwitcher({ locale, onLocaleChange }: LocaleProps) {
       <span id={labelId}>
         <FormattedMessage id="language.label" />
       </span>
-      {SUPPORTED_LOCALES.map((option) => (
-        <Button
-          key={option}
-          variant="secondary"
-          lang={option}
-          aria-pressed={option === locale}
-          onClick={() => onLocaleChange(option)}
-        >
-          <FormattedMessage id={`language.name.${option}`} />
-        </Button>
-      ))}
+      <span className="mo-segmented">
+        {SUPPORTED_LOCALES.map((option) => (
+          <button
+            key={option}
+            type="button"
+            lang={option}
+            aria-pressed={option === locale}
+            onClick={() => onLocaleChange(option)}
+          >
+            <FormattedMessage id={`language.name.${option}`} />
+          </button>
+        ))}
+      </span>
     </nav>
   );
 }

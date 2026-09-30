@@ -113,7 +113,7 @@ export function AIUsagePage({
           <button
             key={p}
             type="button"
-            className="period-picker__option"
+            className="mo-chip period-picker__option"
             aria-pressed={period === p}
             onClick={() => {
               setPeriod(p);
@@ -183,7 +183,11 @@ export function AIUsagePage({
                 value: names(intl, filter.dimension, filter.key),
               }}
             />{' '}
-            <button type="button" className="customers__tab" onClick={() => setFilter(undefined)}>
+            <button
+              type="button"
+              className="mo-button mo-button--ghost mo-button--sm"
+              onClick={() => setFilter(undefined)}
+            >
               <FormattedMessage id="aiUsage.events.clear" />
             </button>
           </p>
@@ -195,7 +199,11 @@ export function AIUsagePage({
           name={(dimension, key) => names(intl, dimension, key)}
         />
         {nextCursor !== null && events.status === 'ready' ? (
-          <button type="button" className="customers__tab" onClick={() => void more()}>
+          <button
+            type="button"
+            className="mo-button mo-button--secondary"
+            onClick={() => void more()}
+          >
             <FormattedMessage id="aiUsage.events.more" />
           </button>
         ) : null}

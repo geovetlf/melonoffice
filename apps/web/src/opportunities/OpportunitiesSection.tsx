@@ -192,7 +192,7 @@ export function OpportunitiesSection({
             type="button"
             role="tab"
             aria-selected={s === status}
-            className="customers__tab"
+            className="mo-chip customers__tab"
             onClick={() => setStatus(s)}
           >
             <FormattedMessage id={`opportunities.status.${s}`} />

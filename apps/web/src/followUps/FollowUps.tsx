@@ -463,7 +463,7 @@ export function FollowUpsSection({
               type="button"
               role="tab"
               aria-selected={mine === value}
-              className="customers__tab"
+              className="mo-chip customers__tab"
               onClick={() => setMine(value)}
             >
               <FormattedMessage id={value ? 'followUps.mine' : 'followUps.all'} />

@@ -123,7 +123,7 @@ export function AgentSheet({
         </div>
         <button
           type="button"
-          className="agent-sheet__close"
+          className="mo-button mo-button--ghost mo-button--icon agent-sheet__close"
           aria-label={intl.formatMessage({ id: 'office.sheet.close' })}
           onClick={onClose}
         >
@@ -199,7 +199,7 @@ export function AgentSheet({
           {access.tasks?.canAsk === true && agent.status === 'active' ? (
             <button
               type="button"
-              className="agent-sheet__action agent-sheet__action--primary"
+              className="mo-button mo-button--primary mo-button--sm"
               aria-expanded={instructing}
               onClick={() => setInstructing((open) => !open)}
             >
@@ -210,7 +210,7 @@ export function AgentSheet({
           {canPause ? (
             <button
               type="button"
-              className="agent-sheet__action"
+              className="mo-button mo-button--secondary mo-button--sm"
               disabled={busy}
               onClick={() => void togglePause()}
             >
@@ -220,14 +220,18 @@ export function AgentSheet({
               />
             </button>
           ) : null}
-          <button type="button" className="agent-sheet__action" onClick={() => navigate(place)}>
+          <button
+            type="button"
+            className="mo-button mo-button--secondary mo-button--sm"
+            onClick={() => navigate(place)}
+          >
             <Icon name="user" size={16} />
             <FormattedMessage id="office.sheet.work" />
           </button>
           {access.canReadDocuments === true ? (
             <button
               type="button"
-              className="agent-sheet__action"
+              className="mo-button mo-button--secondary mo-button--sm"
               onClick={() => navigate(paths.documents())}
             >
               <Icon name="documents" size={16} />
@@ -235,7 +239,11 @@ export function AgentSheet({
             </button>
           ) : null}
           {access.tasks === undefined ? null : (
-            <button type="button" className="agent-sheet__action" onClick={() => navigate(place)}>
+            <button
+              type="button"
+              className="mo-button mo-button--secondary mo-button--sm"
+              onClick={() => navigate(place)}
+            >
               <Icon name="check" size={16} />
               <FormattedMessage id="office.sheet.results" />
             </button>

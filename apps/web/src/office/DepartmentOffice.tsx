@@ -345,7 +345,7 @@ function ComingAreas({
         {areas.map((area) => (
           <li key={area} className="coming__item">
             <FormattedMessage id={`office.area.${area}`} />
-            <span className="coming__soon">
+            <span className="mo-badge mo-badge--outline coming__soon">
               <FormattedMessage id="common.soon" />
             </span>
           </li>
