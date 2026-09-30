@@ -5,6 +5,7 @@ import { navigate } from '../identity/router.js';
 import { departmentName, lookOf, officeDepartments, officeSlug } from '../office/departments.js';
 import { Icon, type IconName } from '../office/icons.js';
 import { departmentPriority, readyList, useOfficeData } from '../office/OfficeData.js';
+import { inBuildingOrder } from '../office/scene/layout.js';
 import { MELON_MARK, MELON_MARK_SRCSET } from './mark.js';
 import { paths, type Route } from './routes.js';
 
@@ -136,7 +137,7 @@ export function Sidebar({
               <FormattedMessage id="nav.memory" />
             </NavLink>
           ) : null}
-          {[...headquarters, ...floor].map((department) => {
+          {[...headquarters, ...inBuildingOrder(floor)].map((department) => {
             const slug = officeSlug(department);
             return (
               <NavLink

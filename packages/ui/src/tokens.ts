@@ -33,6 +33,10 @@ export const palette = {
   stateAttention: '#C9302C',
   statePaused: '#6F7888',
   stateOffline: '#848D9C',
+  sceneCircuit: '#7CC0FF',
+  sceneCircuitSoft: '#A0D6FF',
+  sceneScreen: '#1B2740',
+  sceneScreenDeep: '#13203A',
 } as const;
 
 /** Semantic colours used by components. Components never use palette values directly. */
@@ -68,6 +72,14 @@ export const color = {
   successSoft: palette.successSoft,
   warningSoft: palette.warningSoft,
   dangerSoft: palette.dangerSoft,
+  /**
+   * The office's own light (ADR-0096): MelonMotor's circuits and the rooms' screens, drawn over
+   * the art. They carry no text and never follow a white-label brand.
+   */
+  sceneCircuit: palette.sceneCircuit,
+  sceneCircuitSoft: palette.sceneCircuitSoft,
+  sceneScreen: palette.sceneScreen,
+  sceneScreenDeep: palette.sceneScreenDeep,
   /** An agent's state (ADR-0096): a light beside its name, always with a word. */
   stateWorking: palette.melon700,
   stateAvailable: palette.stateAvailable,

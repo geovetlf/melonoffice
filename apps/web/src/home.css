@@ -16,40 +16,24 @@
   gap: var(--mo-space-3) var(--mo-space-6);
 }
 
-.home4__kicker {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0 var(--mo-space-2);
-  margin: 0;
-  font-size: var(--mo-font-size-sm);
-}
-
-.home4__date {
-  display: inline-block;
-  color: var(--mo-color-text-secondary);
-}
-
-.home4__date::first-letter {
-  text-transform: uppercase;
-}
-
-.home4__greeting {
-  font-weight: var(--mo-font-weight-medium);
-  color: var(--mo-color-accent);
-}
-
-.home4__greeting::before {
-  content: '·';
-  margin-right: var(--mo-space-2);
-  color: var(--mo-color-text-secondary);
+.home4__heading {
+  display: grid;
+  gap: var(--mo-space-1);
+  min-width: 0;
 }
 
 .home4__title {
-  margin: 2px 0 0;
-  font-size: clamp(1.3rem, 1.05rem + 0.8vw, 1.7rem);
-  line-height: 1.15;
+  margin: 0;
+  font-size: clamp(1.5rem, 1.1rem + 1vw, 2rem);
+  font-weight: var(--mo-font-weight-bold);
+  line-height: var(--mo-font-line-height-tight);
   letter-spacing: var(--mo-font-tracking-tight);
+}
+
+.home4__context {
+  margin: 0;
+  color: var(--mo-color-text-secondary);
+  font-size: var(--mo-font-size-sm);
 }
 
 .home4__chips {
@@ -61,36 +45,18 @@
   list-style: none;
 }
 
+/* The office's two facts, quiet beside the title: who works, and what waits on the person. */
 .home4__chip {
   display: inline-flex;
   align-items: center;
   gap: var(--mo-space-2);
-  min-height: 34px;
-  padding: 0 var(--mo-space-3);
+  min-height: var(--mo-control-height-sm);
+  padding: 0 var(--mo-control-padding-sm);
   border: 1px solid var(--mo-color-border);
   border-radius: var(--mo-radius-pill);
   background: var(--mo-color-surface);
-  box-shadow: var(--mo-shadow-md);
   font-size: var(--mo-font-size-sm);
-}
-
-.home4__chip-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--mo-color-state-available);
-}
-
-.home4__chip-dot--working {
-  background: var(--mo-color-state-working);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--mo-color-state-working) 22%, transparent);
-}
-
-/* What waits on the person: the attention diamond, in the waiting colour it had. */
-.home4__chip-dot--attention {
-  border-radius: 2px;
-  background: var(--mo-color-state-waiting);
-  transform: rotate(45deg) scale(0.9);
+  font-weight: var(--mo-font-weight-medium);
 }
 
 .home4__layout {
@@ -119,6 +85,25 @@
   padding: var(--mo-space-4);
 }
 
+/* The day's activity leads the side panel; a panel with nothing to show yet stays quiet. */
+.panel--lead {
+  box-shadow: var(--mo-shadow-md);
+}
+
+.panel--quiet {
+  border-style: dashed;
+  background: transparent;
+  box-shadow: none;
+}
+
+.panel--quiet .panel__icon {
+  color: var(--mo-color-text-secondary);
+}
+
+.panel--quiet .panel__title {
+  font-size: var(--mo-font-size-sm);
+}
+
 .home4__command {
   display: grid;
   justify-items: center;
@@ -134,7 +119,7 @@
 .gia-command .gia-bar {
   width: 100%;
   padding-left: 1.25rem;
-  border: 1px solid rgb(255 255 255 / 0.95);
+  border: 1px solid color-mix(in srgb, var(--mo-color-surface) 95%, transparent);
   border-radius: var(--mo-radius-pill);
   background: var(--mo-color-surface);
   box-shadow: var(--mo-shadow-lg);
@@ -164,7 +149,7 @@
   gap: 0.45em;
   min-height: 36px;
   padding: 0 var(--mo-space-4);
-  border: 1px solid rgb(255 255 255 / 0.95);
+  border: 1px solid color-mix(in srgb, var(--mo-color-surface) 95%, transparent);
   border-radius: var(--mo-radius-pill);
   background: var(--mo-color-surface);
   box-shadow: var(--mo-shadow-sm);
@@ -214,15 +199,15 @@
   position: relative;
   overflow: hidden;
   container-type: inline-size;
-  border-radius: 18px;
+  border-radius: var(--mo-radius-xl);
   background: var(--mo-color-surface-muted);
   box-shadow:
-    0 0 0 3px rgb(255 255 255 / 0.95),
-    0 0 0 4px rgb(168 190 218 / 0.45),
-    0 16px 32px rgb(40 62 96 / 0.16);
+    0 0 0 3px var(--mo-color-surface),
+    0 0 0 4px var(--mo-color-border),
+    var(--mo-shadow-md);
   transition:
-    transform 260ms ease,
-    box-shadow 260ms ease;
+    transform var(--mo-motion-duration-base) var(--mo-motion-ease-standard),
+    box-shadow var(--mo-motion-duration-base) var(--mo-motion-ease-standard);
 }
 
 .b-room--side {
@@ -247,11 +232,15 @@
   inset: 0;
   z-index: 7;
   border-radius: inherit;
-  background: linear-gradient(155deg, rgb(255 255 255 / 0.22), transparent 28%);
+  background: linear-gradient(
+    155deg,
+    color-mix(in srgb, var(--mo-color-surface) 22%, transparent),
+    transparent 28%
+  );
   box-shadow:
-    inset 0 0 0 1px rgb(255 255 255 / 0.75),
-    inset 0 12px 20px -14px rgb(255 255 255 / 0.95),
-    inset 0 -14px 22px -16px rgb(30 50 80 / 0.3);
+    inset 0 0 0 1px color-mix(in srgb, var(--mo-color-surface) 75%, transparent),
+    inset 0 12px 20px -14px color-mix(in srgb, var(--mo-color-surface) 95%, transparent),
+    inset 0 -14px 22px -16px color-mix(in srgb, var(--mo-color-text-primary) 30%, transparent);
   pointer-events: none;
 }
 
@@ -263,20 +252,36 @@
   object-fit: cover;
   user-select: none;
   transition:
-    transform 400ms ease,
-    filter 260ms ease;
+    transform var(--mo-motion-duration-slow) var(--mo-motion-ease-standard),
+    filter var(--mo-motion-duration-base) var(--mo-motion-ease-standard);
 }
 
-/* Pointing at a room: it lifts a little, its light comes up and its line lights. */
+/* Pointing at a room: it lifts a little and its edge takes the network's light. */
 .b-room--department:hover,
-.b-room--department:focus-within,
-/* GIA and MelonMotor sit in the network's light. */
-.b-room--gia,
+.b-room--department:focus-within {
+  z-index: 2;
+  transform: translateY(-2px);
+  box-shadow:
+    0 0 0 3px var(--mo-color-surface),
+    0 0 0 4px color-mix(in srgb, var(--mo-color-scene-circuit) 55%, transparent),
+    var(--mo-shadow-lg);
+}
+
+/* GIA is the heart of the office: her room holds the expressive melon's light. */
+.b-room--gia {
+  box-shadow:
+    0 0 0 3px var(--mo-color-surface),
+    0 0 0 4px color-mix(in srgb, var(--mo-color-accent-expressive) 45%, transparent),
+    0 0 32px color-mix(in srgb, var(--mo-color-accent-expressive) 28%, transparent),
+    var(--mo-shadow-md);
+}
+
+/* MelonMotor is the infrastructure: the network's edge, and no glow of its own. */
 .b-room--motor {
   box-shadow:
-    0 0 0 3px rgb(255 255 255),
-    0 0 0 4px rgb(124 192 255 / 0.5),
-    0 0 36px rgb(84 160 255 / 0.4);
+    0 0 0 3px var(--mo-color-surface),
+    0 0 0 4px color-mix(in srgb, var(--mo-color-scene-circuit) 40%, transparent),
+    var(--mo-shadow-md);
 }
 
 .b-room--gia:hover,
@@ -284,11 +289,24 @@
 .b-room--motor:hover,
 .b-room--motor:focus-within {
   z-index: 2;
-  transform: translateY(-3px);
+  transform: translateY(-2px);
+}
+
+.b-room--gia:hover,
+.b-room--gia:focus-within {
   box-shadow:
-    0 0 0 3px rgb(255 255 255),
-    0 0 0 5px rgb(124 192 255 / 0.55),
-    0 22px 40px rgb(40 62 96 / 0.24);
+    0 0 0 3px var(--mo-color-surface),
+    0 0 0 5px color-mix(in srgb, var(--mo-color-accent-expressive) 60%, transparent),
+    0 0 36px color-mix(in srgb, var(--mo-color-accent-expressive) 34%, transparent),
+    var(--mo-shadow-lg);
+}
+
+.b-room--motor:hover,
+.b-room--motor:focus-within {
+  box-shadow:
+    0 0 0 3px var(--mo-color-surface),
+    0 0 0 5px color-mix(in srgb, var(--mo-color-scene-circuit) 55%, transparent),
+    var(--mo-shadow-lg);
 }
 
 .b-room:hover .b-room__art,
@@ -322,9 +340,8 @@
   max-width: 88%;
   padding: 0.3em 0.75em 0.3em 0.3em;
   border-radius: var(--mo-radius-pill);
-  background: rgb(255 255 255 / 0.94);
-  box-shadow: 0 6px 16px rgb(36 58 92 / 0.16);
-  backdrop-filter: blur(8px);
+  background: var(--mo-color-surface-glass);
+  box-shadow: var(--mo-shadow-md);
   font-size: clamp(var(--mo-font-size-xxs), 3.3cqw, 0.95rem);
   line-height: 1.2;
   white-space: nowrap;
@@ -386,8 +403,8 @@
   max-width: 60%;
   padding: 0.4em 0.9em;
   border-radius: var(--mo-radius-pill);
-  background: rgb(255 255 255 / 0.95);
-  box-shadow: 0 6px 16px rgb(36 58 92 / 0.18);
+  background: color-mix(in srgb, var(--mo-color-surface) 95%, transparent);
+  box-shadow: var(--mo-shadow-md);
   font-size: clamp(var(--mo-font-size-xxs), 3.1cqw, 0.88rem);
   font-weight: var(--mo-font-weight-medium);
   pointer-events: none;
@@ -455,8 +472,8 @@
   margin: 0;
   padding: 0.55em 0.7em;
   border-radius: 12px;
-  background: rgb(255 255 255 / 0.96);
-  box-shadow: 0 10px 24px rgb(36 58 92 / 0.2);
+  background: color-mix(in srgb, var(--mo-color-surface) 96%, transparent);
+  box-shadow: var(--mo-shadow-md);
   font-size: clamp(var(--mo-font-size-xxs), 2.6cqw, 0.78rem);
   list-style: none;
   opacity: 0;
@@ -509,7 +526,7 @@
 }
 
 .wall-screen--working {
-  box-shadow: 0 0 14px rgb(124 192 255 / 0.55);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--mo-color-scene-circuit) 55%, transparent);
 }
 
 .wall-screen--attention {
@@ -524,7 +541,7 @@
   background: linear-gradient(
     100deg,
     transparent 30%,
-    rgb(190 225 255 / 0.22) 50%,
+    color-mix(in srgb, var(--mo-color-scene-circuit-soft) 22%, transparent) 50%,
     transparent 70%
   );
   transform: translateX(-100%);
@@ -550,7 +567,7 @@
   height: 3px;
   overflow: hidden;
   border-radius: 2px;
-  background: rgb(255 255 255 / 0.18);
+  background: color-mix(in srgb, var(--mo-color-surface) 18%, transparent);
 }
 
 .wall-screen__bar::after {
@@ -558,7 +575,7 @@
   position: absolute;
   inset: 0 70% 0 0;
   border-radius: 2px;
-  background: #7cc0ff;
+  background: var(--mo-color-scene-circuit);
   animation: wall-screen-work 2.6s ease-in-out infinite;
 }
 
@@ -609,7 +626,7 @@
 
 /* The monitor's state over the art's screen: on standby when off, dimmed for an ambient figure. */
 .desk__screen {
-  fill: #1b2740;
+  fill: var(--mo-color-scene-screen);
   opacity: 0.92;
 }
 
@@ -622,12 +639,12 @@
 }
 
 .desk__monitor--working .desk__screen {
-  fill: #13203a;
+  fill: var(--mo-color-scene-screen-deep);
   opacity: 0.55;
 }
 
 .desk__lines rect {
-  fill: #7cc0ff;
+  fill: var(--mo-color-scene-circuit);
   opacity: 0.95;
   transform-box: fill-box;
   transform-origin: left center;
@@ -636,7 +653,7 @@
 
 .desk__lines rect:nth-child(2) {
   animation-delay: 0.8s;
-  fill: #ffb27a;
+  fill: var(--mo-color-accent-expressive);
 }
 
 .desk__lines rect:nth-child(3) {
@@ -651,23 +668,6 @@
 
   50% {
     transform: scaleX(1);
-  }
-}
-
-.desk__breath {
-  transform-box: fill-box;
-  transform-origin: center bottom;
-  animation: desk-breath 5.5s ease-in-out infinite;
-}
-
-@keyframes desk-breath {
-  0%,
-  100% {
-    transform: none;
-  }
-
-  50% {
-    transform: translateY(-0.5px);
   }
 }
 
@@ -741,7 +741,9 @@
 
 .b-desk__agent:hover .desk,
 .b-desk__agent:focus-visible .desk {
-  filter: drop-shadow(0 0 6px rgb(160 210 255 / 0.95));
+  filter: drop-shadow(
+    0 0 6px color-mix(in srgb, var(--mo-color-scene-circuit-soft) 95%, transparent)
+  );
 }
 
 .b-desk__tip {
@@ -756,7 +758,7 @@
   padding: 6px 10px;
   border-radius: 10px;
   background: var(--mo-color-surface);
-  box-shadow: 0 8px 20px rgb(36 58 92 / 0.22);
+  box-shadow: var(--mo-shadow-md);
   font-size: var(--mo-font-size-xs);
   text-align: left;
   opacity: 0;
@@ -799,8 +801,12 @@
   left: 50%;
   z-index: 1;
   width: 4px;
-  background: linear-gradient(180deg, rgb(160 214 255 / 0), rgb(160 214 255 / 0.95));
-  box-shadow: 0 0 12px 2px rgb(124 192 255 / 0.7);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--mo-color-scene-circuit-soft) 0%, transparent),
+    color-mix(in srgb, var(--mo-color-scene-circuit-soft) 95%, transparent)
+  );
+  box-shadow: 0 0 12px 2px color-mix(in srgb, var(--mo-color-scene-circuit) 70%, transparent);
   transform: translateX(-50%);
   pointer-events: none;
 }
@@ -827,19 +833,23 @@
   aspect-ratio: 1;
   border-radius: 50%;
   background:
-    radial-gradient(circle at 34% 28%, rgb(255 255 255 / 0.85), transparent 32%),
+    radial-gradient(
+      circle at 34% 28%,
+      color-mix(in srgb, var(--mo-color-surface) 85%, transparent),
+      transparent 32%
+    ),
     radial-gradient(
       circle at 50% 55%,
-      rgb(214 236 255 / 0.55),
-      rgb(110 180 255 / 0.4) 70%,
-      rgb(80 150 255 / 0.65)
+      color-mix(in srgb, var(--mo-color-surface) 60%, transparent),
+      color-mix(in srgb, var(--mo-color-accent-expressive) 30%, transparent) 70%,
+      color-mix(in srgb, var(--mo-color-accent-expressive) 55%, transparent)
     );
   box-shadow:
-    0 0 0 2px rgb(255 255 255 / 0.85),
-    0 0 26px 6px rgb(124 192 255 / 0.75),
-    inset 0 0 22px rgb(90 169 255 / 0.7);
+    0 0 0 2px color-mix(in srgb, var(--mo-color-surface) 85%, transparent),
+    0 0 26px 6px color-mix(in srgb, var(--mo-color-accent-expressive) 45%, transparent),
+    inset 0 0 22px color-mix(in srgb, var(--mo-color-accent-expressive) 45%, transparent);
   transform: translate(-50%, -50%);
-  transition: transform 260ms ease;
+  transition: transform var(--mo-motion-duration-base) var(--mo-motion-ease-standard);
 }
 
 .b-gia__sphere::after {
@@ -848,20 +858,7 @@
   inset: -12%;
   border: 2px solid color-mix(in srgb, var(--mo-color-accent-expressive) 70%, transparent);
   border-radius: 50%;
-  animation: gia-ring 4s ease-in-out infinite;
-}
-
-@keyframes gia-ring {
-  0%,
-  100% {
-    opacity: 0.25;
-    transform: scale(0.96);
-  }
-
-  50% {
-    opacity: 0.8;
-    transform: scale(1.04);
-  }
+  opacity: 0.6;
 }
 
 .b-gia:hover .b-gia__sphere,
@@ -884,8 +881,8 @@
   min-width: 58%;
   padding: 0.45em 1em;
   border-radius: 14px;
-  background: rgb(255 255 255 / 0.95);
-  box-shadow: 0 8px 20px rgb(36 58 92 / 0.2);
+  background: color-mix(in srgb, var(--mo-color-surface) 95%, transparent);
+  box-shadow: var(--mo-shadow-md);
   font-size: clamp(var(--mo-font-size-xxs), 4.6cqw, 0.95rem);
   line-height: 1.3;
   white-space: nowrap;
@@ -904,7 +901,6 @@
   height: 0.55em;
   border-radius: 50%;
   background: var(--mo-color-state-available);
-  animation: desk-light 2.8s ease-in-out infinite;
 }
 
 .b-gia__role {
@@ -920,8 +916,12 @@
   left: 50%;
   z-index: 1;
   width: 4px;
-  background: linear-gradient(180deg, rgb(160 214 255 / 0.95), rgb(160 214 255 / 0));
-  box-shadow: 0 0 12px 2px rgb(124 192 255 / 0.7);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--mo-color-scene-circuit-soft) 95%, transparent),
+    color-mix(in srgb, var(--mo-color-scene-circuit-soft) 0%, transparent)
+  );
+  box-shadow: 0 0 12px 2px color-mix(in srgb, var(--mo-color-scene-circuit) 70%, transparent);
   transform: translateX(-50%);
   pointer-events: none;
 }
@@ -958,21 +958,9 @@
     var(--mo-color-accent-expressive)
   );
   box-shadow:
-    0 0 0 2px rgb(255 255 255 / 0.7),
+    0 0 0 2px color-mix(in srgb, var(--mo-color-surface) 70%, transparent),
     0 0 22px color-mix(in srgb, var(--mo-color-accent-expressive) 70%, transparent);
   transform: translate(-50%, -50%);
-  animation: motor-glow 4s ease-in-out infinite;
-}
-
-@keyframes motor-glow {
-  0%,
-  100% {
-    filter: drop-shadow(0 0 0 color-mix(in srgb, var(--mo-color-accent) 0%, transparent));
-  }
-
-  50% {
-    filter: drop-shadow(0 0 10px color-mix(in srgb, var(--mo-color-accent) 70%, transparent));
-  }
 }
 
 .b-motor__text {
@@ -984,8 +972,8 @@
   min-width: 58%;
   padding: 0.45em 1em;
   border-radius: 14px;
-  background: rgb(255 255 255 / 0.95);
-  box-shadow: 0 8px 20px rgb(36 58 92 / 0.2);
+  background: color-mix(in srgb, var(--mo-color-surface) 95%, transparent);
+  box-shadow: var(--mo-shadow-md);
   line-height: 1.3;
   text-align: center;
   transform: translateX(-50%);
@@ -996,8 +984,8 @@
 .b-motor:focus-visible .b-motor__text,
 .b-motor[aria-expanded='true'] .b-motor__text {
   box-shadow:
-    0 0 0 2px rgb(124 192 255 / 0.7),
-    0 10px 24px rgb(36 58 92 / 0.24);
+    0 0 0 2px color-mix(in srgb, var(--mo-color-scene-circuit) 70%, transparent),
+    var(--mo-shadow-lg);
 }
 
 .b-motor__name {
@@ -1032,37 +1020,36 @@
 }
 
 .circuit__glow {
-  stroke: rgb(84 160 255 / 0.5);
+  stroke: color-mix(in srgb, var(--mo-color-scene-circuit) 50%, transparent);
   stroke-width: 12;
   filter: blur(3px);
 }
 
 .circuit__trace {
-  stroke: rgb(236 246 255);
+  stroke: var(--mo-color-scene-circuit-soft);
   stroke-width: 2.5;
 }
 
 .circuit__node {
-  fill: #f2f8ff;
-  stroke: rgb(124 192 255 / 0.9);
+  fill: var(--mo-color-scene-circuit-soft);
+  stroke: color-mix(in srgb, var(--mo-color-scene-circuit) 90%, transparent);
   stroke-width: 1.5;
 }
 
 .circuit__core {
-  fill: #fff;
-  stroke: rgb(124 192 255 / 0.95);
+  fill: var(--mo-color-surface);
+  stroke: color-mix(in srgb, var(--mo-color-scene-circuit) 95%, transparent);
   stroke-width: 3;
-  filter: drop-shadow(0 0 6px rgb(124 192 255 / 0.9));
+  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--mo-color-scene-circuit) 90%, transparent));
 }
 
-/* Nobody active: faint. Agents ready: a quiet, breathing line. Working: bright. */
+/* Nobody active: faint. Agents ready: a quiet, still line. Working: bright, with its pulses. */
 .circuit--off {
   opacity: 0.5;
 }
 
 .circuit--ready {
   opacity: 0.8;
-  animation: circuit-breathe 5s ease-in-out infinite;
 }
 
 .circuit--busy,
@@ -1085,7 +1072,7 @@
 }
 
 .circuit--hot .circuit__glow {
-  stroke: rgb(124 192 255 / 0.55);
+  stroke: color-mix(in srgb, var(--mo-color-scene-circuit) 55%, transparent);
   stroke-width: 13;
 }
 
@@ -1094,11 +1081,11 @@
 }
 
 .circuit__halo {
-  fill: rgb(124 192 255 / 0.5);
+  fill: color-mix(in srgb, var(--mo-color-scene-circuit) 50%, transparent);
 }
 
 .circuit__dot {
-  fill: #fff;
+  fill: var(--mo-color-surface);
 }
 
 .circuit__pulse--coral .circuit__halo {
@@ -1106,22 +1093,11 @@
 }
 
 .circuit__pulse--coral .circuit__dot {
-  fill: #fff1ea;
+  fill: var(--mo-color-surface);
 }
 
 .circuit__pulse--scan .circuit__halo {
-  fill: rgb(255 255 255 / 0.55);
-}
-
-@keyframes circuit-breathe {
-  0%,
-  100% {
-    opacity: 0.5;
-  }
-
-  50% {
-    opacity: 0.8;
-  }
+  fill: color-mix(in srgb, var(--mo-color-surface) 55%, transparent);
 }
 
 /* MelonMotor's panel and an agent's card. */
@@ -1363,7 +1339,14 @@
     min-height: 0;
   }
 
+  /*
+   * When the window is wider than the rooms need, the building is centred in the height it has,
+   * so the spare space frames it evenly above and below instead of opening one gap.
+   */
   .home4__office {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
     min-height: 0;
     container-type: size;
   }
@@ -1389,7 +1372,6 @@
 
   .home4__side .panel {
     padding: var(--mo-space-3) var(--mo-space-4);
-    border-radius: 16px;
   }
 
   .home4__side .panel__header {
@@ -1482,7 +1464,7 @@
     inset: auto 0 0;
     z-index: 3;
     height: 2px;
-    background: linear-gradient(90deg, transparent, rgb(124 192 255), transparent);
+    background: linear-gradient(90deg, transparent, var(--mo-color-scene-circuit), transparent);
     opacity: 0;
     transform: translateX(-100%);
     pointer-events: none;
@@ -1495,7 +1477,7 @@
   }
 
   .b-room--attention::before {
-    background: linear-gradient(90deg, transparent, rgb(255 138 92), transparent);
+    background: linear-gradient(90deg, transparent, var(--mo-color-accent-expressive), transparent);
   }
 
   .building__frame {
@@ -1508,7 +1490,7 @@
   .building__frame > .b-room {
     grid-row: auto;
     grid-column: auto;
-    border-radius: 14px;
+    border-radius: var(--mo-radius-lg);
   }
 
   .building__frame > .b-room--gia {
@@ -1531,6 +1513,33 @@
 
   .b-room--motor .b-room__art {
     object-position: center 45%;
+  }
+
+  /*
+   * A tablet in portrait: the full-width centre rooms would be as tall as a phone's screen. They
+   * widen instead, and GIA's sphere follows the height it is given.
+   */
+  @media (min-width: 30rem) {
+    .building__frame > .b-room--hq {
+      aspect-ratio: 12 / 5;
+    }
+
+    .building__frame > .b-room--gia {
+      aspect-ratio: 11 / 5;
+    }
+
+    .building__frame > .b-room--motor {
+      aspect-ratio: 3 / 1;
+    }
+
+    .b-gia .b-gia__sphere {
+      width: auto;
+      height: 58%;
+    }
+
+    .building__frame > .b-room--side {
+      aspect-ratio: 16 / 10;
+    }
   }
 
   .b-room--lounge,

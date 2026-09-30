@@ -15,18 +15,29 @@ import { paths } from '../shell/routes.js';
  * and meetings wait for a calendar connection. No panel shows example data.
  */
 
+/**
+ * How much a panel weighs beside the others: the day's activity leads, what waits on the person
+ * follows, and a panel with nothing to show yet (meetings, with no calendar) stays quiet.
+ */
+export type PanelLevel = 'lead' | 'default' | 'quiet';
+
 export function Panel({
   titleId,
   icon,
+  level = 'default',
   children,
 }: {
   readonly titleId: string;
   readonly icon: IconName;
+  readonly level?: PanelLevel;
   readonly children: ReactNode;
 }) {
   const id = `panel-${titleId.replaceAll('.', '-')}`;
   return (
-    <section className="panel" aria-labelledby={id}>
+    <section
+      className={level === 'default' ? 'panel' : `panel panel--${level}`}
+      aria-labelledby={id}
+    >
       <header className="panel__header">
         <Icon name={icon} size={18} className="panel__icon" />
         <h2 id={id} className="panel__title">
@@ -48,11 +59,16 @@ export function RecentActivity({ shown = 3 }: { readonly shown?: number } = {}) 
   const state = useActivity(period);
   const more = state.status === 'ready' && state.page.items.length > shown;
   return (
-    <Panel titleId="home.activity.title" icon="reports">
+    <Panel titleId="home.activity.title" icon="reports" level="lead">
       {state.status === 'hidden' ? null : (
         <PeriodPicker period={period} onChange={setPeriod} labelId="activity.period.label" />
       )}
       <ActivityList state={state} max={shown} />
+      {state.status === 'ready' && state.page.items.length === 0 ? (
+        <p className="panel__hint">
+          <FormattedMessage id="home.activity.emptyHint" />
+        </p>
+      ) : null}
       {more ? (
         <button type="button" className="panel__link" onClick={() => navigate(paths.gia())}>
           <FormattedMessage id="home.activity.all" />
@@ -68,7 +84,7 @@ export function RecentActivity({ shown = 3 }: { readonly shown?: number } = {}) 
  */
 export function UpcomingMeetings() {
   return (
-    <Panel titleId="home.meetings.title" icon="calendar">
+    <Panel titleId="home.meetings.title" icon="calendar" level="quiet">
       <p className="panel__empty">
         <FormattedMessage id="home.meetings.noCalendar" />
       </p>
@@ -121,7 +137,7 @@ export function CreditsUsage({
       ) : (
         <div className="credits">
           <p className="credits__balance">
-            <span className="credits__number">{intl.formatNumber(balance)}</span>
+            <span className="credits__number mo-figure">{intl.formatNumber(balance)}</span>
             {allotment === undefined ? null : (
               <span className="credits__of"> / {intl.formatNumber(allotment)}</span>
             )}

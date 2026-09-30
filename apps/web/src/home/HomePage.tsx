@@ -1,4 +1,5 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
+import { StatusDot } from '@melonoffice/ui';
 import { useCallback, useRef, useState, useSyncExternalStore } from 'react';
 import type { ApprovalsClient } from '../approvals/approvalsClient.js';
 import type { AutomationsClient } from '../automations/automationsClient.js';
@@ -65,12 +66,11 @@ export function HomePage({
   const opener = useRef<HTMLElement | null>(null);
   const shown = useEntriesShown();
 
-  const active = agents.filter((s) => s.status === 'active').length;
+  const activeAgents = agents.filter((s) => s.status === 'active');
+  const active = activeAgents.length;
+  const activeDepartments = new Set(activeAgents.map((s) => s.departmentId)).size;
   const working = agents.filter((s) => workStateOf(s, work.get(s.id)) === 'working').length;
   const waiting = attentionCount(today);
-  const [now] = useState(() => new Date());
-  const hour = now.getHours();
-  const partOfDay = hour < 12 ? 'morning' : hour < 19 ? 'afternoon' : 'evening';
 
   const closeAgent = useCallback(() => {
     setAgent(undefined);
@@ -81,31 +81,33 @@ export function HomePage({
   return (
     <div className="home4">
       <header className="home4__header">
-        <div>
-          <div className="home4__kicker">
-            <time className="home4__date" dateTime={now.toISOString().slice(0, 10)}>
-              {intl.formatDate(now, { weekday: 'long', day: 'numeric', month: 'long' })}
-            </time>
-            <span className="home4__greeting">
-              <FormattedMessage id={`home.greeting.${partOfDay}`} />
-            </span>
-          </div>
+        <div className="home4__heading">
           <h1 className="home4__title">
             <FormattedMessage id={active > 0 ? 'home.hero.working' : 'home.hero.ready'} />
           </h1>
+          {specialists.status === 'ready' ? (
+            <p className="home4__context">
+              {active > 0 ? (
+                <FormattedMessage
+                  id="home.context.active"
+                  values={{ agents: active, departments: activeDepartments }}
+                />
+              ) : (
+                <FormattedMessage id="home.context.none" />
+              )}
+            </p>
+          ) : null}
         </div>
         <ul className="home4__chips" aria-label={intl.formatMessage({ id: 'home.chips.label' })}>
           {specialists.status === 'ready' ? (
             <li className="home4__chip">
-              <span className="home4__chip-dot home4__chip-dot--working" />
+              <StatusDot state={working > 0 ? 'working' : 'offline'} />
               <FormattedMessage id="home.chips.working" values={{ count: working }} />
             </li>
           ) : null}
           {waiting === undefined ? null : (
             <li className="home4__chip">
-              <span
-                className={`home4__chip-dot${waiting > 0 ? ' home4__chip-dot--attention' : ''}`}
-              />
+              <StatusDot state={waiting > 0 ? 'attention' : 'available'} />
               <FormattedMessage id="home.chips.attention" values={{ count: waiting }} />
             </li>
           )}
