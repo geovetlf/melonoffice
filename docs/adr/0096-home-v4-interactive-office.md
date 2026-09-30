@@ -74,3 +74,16 @@ Geovet asked for the offices to read as a real office of the future where AI age
 - **Reduced motion** stops every pulse, sweep and breath and keeps the static lines.
 - **Performance.** SMIL and CSS only (`transform`, `opacity`, `filter`), no new dependencies, and art stays WebP.
 - **Diseño.** The Home draws whatever the department catalogue returns. If Diseño is listed in an organisation, its room is drawn with its own art.
+
+## Amendment (2026-09-30): the pixel reference
+
+Geovet supplied a reference image of the Home and asked for it to be followed faithfully in composition, proportions, spacing and styling, while every piece stays real HTML, CSS and React with real data.
+
+- **Board 3x3.** The office is three rows of three glass capsules, with the centre column narrower (10 : 7 : 10). The rows are Comercial | Consejo | Operaciones, Marketing | GIA | Finanzas and Investigación | MelonMotor | the sixth room. Catalogue types are placed in that order (`layout.ts`). Any other department follows in the business profile's order (ADR-0048), and the building still grows a row for every two more departments.
+- **GIA** has her own central room. Clicking it opens GIA. **Consejo** has its own board room above her, and **MelonMotor** sits below her.
+- **Rooms** are re-baked with a closer camera, big wall screens that show each department's function, dark chairs, plants and people seen from behind at their desks. Seats come from the art's floor corners (`roomFloor.ts`).
+- **Circuits** are measured from the rooms as laid out. They run from a hub between GIA and MelonMotor along the gaps into each room. Their levels and pulses still come only from real agent states.
+- **Chrome.** The palette moves to cool greys and blues. The top bar shows the credit balance when there is one, and the organisation's name moves into the account menu. The command box is a white pill with an orange send button and suggestion chips under it. MelonMotor's tagline is "Conecta y potencia tu empresa".
+- **Real data rule.** The reference's activity, tasks, meetings and counts are examples. The Home shows real data or the empty states in the same places. There is no credit bar while plans have no allotment.
+- **Diseño** is retired into Marketing (ADR-0047), so the sixth room is a meeting room unless an organisation has one more department.
+- **Mobile** stacks Consejo, GIA and MelonMotor at full width, then the departments two per row.

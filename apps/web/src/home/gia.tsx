@@ -151,10 +151,10 @@ export function GiaCommandBar({
               type="button"
               className="gia-suggest__item gia-suggest__more"
               aria-expanded={expanded}
-              aria-label={intl.formatMessage({ id: 'home.suggest.more' })}
               onClick={() => setExpanded((open) => !open)}
             >
-              <Icon name="more" size={18} />
+              <Icon name="apps" size={16} />
+              <FormattedMessage id="home.suggest.more" />
             </button>
           </li>
         )}

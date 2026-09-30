@@ -1,10 +1,11 @@
 /**
- * The office's 3D art (Home V4): rooms and workstations modelled in three.js and rendered with
+ * The office's 3D art (Home): rooms and workstations modelled in three.js and rendered with
  * physical materials, soft shadows, image-based light and ambient occlusion, then saved as
  * pictures. It runs only when the art is baked (bake.mjs); the app ships the pictures.
  *
- * Rooms keep the slots the Home places its controls on: a side room is 16:10 with its big screen
- * at `SIDE_SCREEN`, and the floor from 60% down stays clear for the workstations.
+ * Every room is a diorama: an open box seen from the front and above, as in the Home's reference
+ * design, its walls cut so the work inside shows. A department's room keeps its floor clear for
+ * the Home to seat its workstations, and each bake reports where that floor is in the picture.
  */
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
@@ -13,6 +14,8 @@ import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { Reflector } from 'three/addons/objects/Reflector.js';
+import { circuitTexture, outsideTexture, posterTexture, wallDisplay } from './displays.js';
 import {
   at,
   bookshelf,
@@ -31,10 +34,8 @@ import {
   plant,
   sofa,
 } from './furniture.js';
-import { makeMaterials, panelTexture, random, screenTexture } from './materials.js';
+import { makeMaterials, random } from './materials.js';
 import { LOOKS, person } from './people.js';
-
-export const SIDE_SCREEN = { x: 0.355, y: 0.17, w: 0.29, h: 0.25 };
 
 const renderer = new THREE.WebGLRenderer({
   antialias: true,
@@ -44,7 +45,7 @@ const renderer = new THREE.WebGLRenderer({
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.VSMShadowMap;
 renderer.toneMapping = THREE.AgXToneMapping;
-renderer.toneMappingExposure = 0.92;
+renderer.toneMappingExposure = 0.78;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 document.body.appendChild(renderer.domElement);
 
@@ -54,31 +55,32 @@ const environment = new THREE.PMREMGenerator(renderer).fromScene(
   0.04,
 ).texture;
 
+/** Warm morning light through the windows, a soft cool fill from the room. */
 function sceneWith(background = null) {
   const scene = new THREE.Scene();
   scene.environment = environment;
-  scene.environmentIntensity = 0.55;
+  scene.environmentIntensity = 0.45;
   scene.background = background;
-  // Daylight through the building's glass: a neutral key light from the front left.
-  const sun = new THREE.DirectionalLight('#f6f9ff', 2.3);
-  sun.position.set(-4, 7, 8);
+  const sun = new THREE.DirectionalLight('#ffd6a6', 3.6);
+  sun.position.set(-6, 9, 7);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
-  sun.shadow.camera.left = -6;
-  sun.shadow.camera.right = 6;
-  sun.shadow.camera.top = 6;
-  sun.shadow.camera.bottom = -6;
-  sun.shadow.radius = 8;
+  sun.shadow.camera.left = -7;
+  sun.shadow.camera.right = 7;
+  sun.shadow.camera.top = 7;
+  sun.shadow.camera.bottom = -7;
+  sun.shadow.radius = 10;
   sun.shadow.blurSamples = 16;
   sun.shadow.bias = -0.0004;
   scene.add(sun);
-  scene.add(new THREE.HemisphereLight('#f4f8ff', '#b7c0cc', 0.6));
+  scene.add(new THREE.HemisphereLight('#eef3fb', '#cbbfae', 0.45));
   return scene;
 }
 
 function render(scene, camera, width, height, ao = true, glow = scene.background !== null) {
   renderer.setPixelRatio(1);
   renderer.setSize(width, height, false);
+  renderer.setClearColor(0x000000, 0);
   if (!ao) {
     renderer.render(scene, camera);
     return renderer.domElement.toDataURL('image/png');
@@ -88,16 +90,16 @@ function render(scene, camera, width, height, ao = true, glow = scene.background
   composer.addPass(new RenderPass(scene, camera));
   const gtao = new GTAOPass(scene, camera, width, height);
   gtao.updateGtaoMaterial({
-    radius: 0.45,
+    radius: 0.5,
     distanceExponent: 1.6,
     thickness: 1.2,
     scale: 1.1,
     samples: 16,
   });
-  gtao.blendIntensity = 0.85;
+  gtao.blendIntensity = 0.9;
   composer.addPass(gtao);
-  // Lit lines and screens glow softly (rooms only: the glow would not survive transparency).
-  if (glow) composer.addPass(new UnrealBloomPass(new THREE.Vector2(width, height), 0.5, 0.35, 2.2));
+  // Screens and lines of light glow softly (rooms only: the glow would not survive transparency).
+  if (glow) composer.addPass(new UnrealBloomPass(new THREE.Vector2(width, height), 0.35, 0.3, 1.6));
   composer.addPass(new OutputPass());
   composer.render();
   const data = renderer.domElement.toDataURL('image/png');
@@ -107,39 +109,64 @@ function render(scene, camera, width, height, ao = true, glow = scene.background
 
 /* ------------------------------------------------------------------ rooms */
 
-/*
- * Every room is a box open at the front, seen from high up and straight on, with a shifted lens
- * so walls stay upright (as in architectural drawings). The front opening fills the picture
- * exactly, so rooms side by side in the Home join into one building: the back wall's foot is at
- * 60% of the height in every room, the back wall is three quarters as wide as the picture.
- */
-const ROOM = { h: 3.5, d: 5 };
-const VIEW = { distance: 3 * ROOM.d, height: 1.6 * ROOM.h };
+const ROOM = { d: 5.2, h: 2.7, wall: 0.16 };
+/** A side room is 7 m wide; the centre rooms are narrower, as the Home's columns (10 : 7 : 10). */
+const SIDE_W = 7;
+const CENTRE_W = 4.9;
+export const SIDE_ASPECT = 1.8;
+export const CENTRE_ASPECT = 1.26;
 
-function roomCamera(w, h = ROOM.h) {
-  const camera = new THREE.PerspectiveCamera(30, w / h, 0.5, 80);
-  camera.position.set(0, VIEW.height, ROOM.d / 2 + VIEW.distance);
-  camera.lookAt(0, VIEW.height, 0);
-  camera.updateMatrixWorld();
-  const n = camera.near / VIEW.distance;
-  camera.projectionMatrix.makePerspective(
-    (-w / 2) * n,
-    (w / 2) * n,
-    (h - VIEW.height) * n,
-    -VIEW.height * n,
-    camera.near,
-    camera.far,
-  );
-  camera.projectionMatrixInverse.copy(camera.projectionMatrix).invert();
+/**
+ * The camera: in front and above, looking down at 27°, close in: the room's front corners fall
+ * just outside the picture and the back wall's top just above it, so the room fills its frame.
+ */
+const PITCH_ROOM = THREE.MathUtils.degToRad(27);
+/** How far past the picture's sides the front corners go, and where the back wall's top is. */
+const ZOOM = { sides: -1.22, top: 1.04 };
+
+function roomCamera(w, aspect) {
+  const camera = new THREE.PerspectiveCamera(30, aspect, 0.3, 80);
+  const place = (distance, targetY) => {
+    camera.position.set(
+      0,
+      targetY + Math.sin(PITCH_ROOM) * distance,
+      Math.cos(PITCH_ROOM) * distance,
+    );
+    camera.lookAt(0, targetY, 0);
+    camera.updateMatrixWorld();
+    camera.updateProjectionMatrix();
+  };
+  const u = (x, y, z) => new THREE.Vector3(x, y, z).project(camera);
+  let targetY = 0.6;
+  let distance = 10;
+  for (let round = 0; round < 6; round += 1) {
+    // The distance that puts the front corners at the picture's sides.
+    let near = 2;
+    let far = 40;
+    for (let i = 0; i < 40; i += 1) {
+      distance = (near + far) / 2;
+      place(distance, targetY);
+      if (u(-w / 2 - ROOM.wall, 0, ROOM.d / 2).x < ZOOM.sides) near = distance;
+      else far = distance;
+    }
+    // The height that puts the back wall's top just inside the top edge.
+    let low = -3;
+    let high = 4;
+    for (let i = 0; i < 40; i += 1) {
+      targetY = (low + high) / 2;
+      place(distance, targetY);
+      if (u(0, ROOM.h, BACK - ROOM.wall).y > ZOOM.top) low = targetY;
+      else high = targetY;
+    }
+  }
+  place(distance, targetY);
   return camera;
 }
 
-/** Where a picture's point (0..1) lands on the plane z = `z`. */
-function onPlane(camera, u, v, z) {
-  const p = new THREE.Vector3(u * 2 - 1, 1 - v * 2, 0.5).unproject(camera);
-  const dir = p.sub(camera.position).normalize();
-  const t = (z - camera.position.z) / dir.z;
-  return camera.position.clone().add(dir.multiplyScalar(t));
+/** Where a point of the floor (or any point) lands in the picture, as fractions. */
+function project(camera, x, y, z) {
+  const p = new THREE.Vector3(x, y, z).project(camera);
+  return [+((p.x + 1) / 2).toFixed(4), +((1 - p.y) / 2).toFixed(4)];
 }
 
 const BACK = -ROOM.d / 2;
@@ -153,242 +180,268 @@ function ledLine(len, material = m.led, alongZ = false, thick = 0.018) {
   );
 }
 
+/** A picture that glows as a screen does: untouched by the room's light. */
+function glowing(map) {
+  return new THREE.MeshBasicMaterial({ map, toneMapped: false });
+}
+
 /**
- * The shell: a polished pale floor, a white back wall with lines of light at its foot and near
- * the top, and side walls of glass (a bright corridor behind) or white fluted panels.
+ * The shell: a glossy pale floor on a white slab, a white back wall and two side walls cut at
+ * their tops, one of them a tall window onto a bright morning.
  */
-function shell(scene, w, { wall = m.wall, left = 'glass', right = 'fluted' } = {}) {
-  const { d, h } = ROOM;
-  const floorGeometry = new THREE.PlaneGeometry(w, d + 0.02);
+function shell(scene, w, { window: windowSide = 'left', wall = m.wall } = {}) {
+  const { d, h, wall: t } = ROOM;
+  const floorGeometry = new THREE.PlaneGeometry(w, d);
   floorGeometry.attributes.uv.array.forEach(
     (v, i, a) => (a[i] = v * (i % 2 === 0 ? w / 2.4 : d / 2.4)),
   );
   const floor = mesh(floorGeometry, m.floor, { cast: false });
   floor.rotation.x = -Math.PI / 2;
   scene.add(floor);
-  // The slab edge at the front: the building's floor, cut, with a line of light in it.
-  scene.add(at(box(w + 0.02, 0.18, 0.1, m.slab, 0.002), 0, -0.09, d / 2 - 0.05));
-  scene.add(at(ledLine(w), 0, -0.03, d / 2 + 0.005));
-  scene.add(
-    at(mesh(new THREE.PlaneGeometry(w, h + 1.5), wall, { cast: false }), 0, (h + 1.5) / 2, BACK),
-  );
-  // A shadow gap at the wall's foot with light in it, and a cove of light up high.
-  scene.add(at(box(w, 0.06, 0.03, m.white), 0, 0.07, BACK + 0.015));
-  scene.add(at(ledLine(w, m.led, false, 0.012), 0, 0.02, BACK + 0.02));
-  scene.add(at(ledLine(w, m.lampGlow, false, 0.02), 0, 2.72, BACK + 0.02));
-  for (const [side, kind] of [
-    [-1, left],
-    [1, right],
-  ]) {
-    const x = side * (w / 2);
-    const plane = (material, dx = 0) => {
-      const p = mesh(new THREE.PlaneGeometry(d, h + 1.5), material, { cast: false });
-      p.rotation.y = -side * (Math.PI / 2);
-      p.position.set(x + dx, (h + 1.5) / 2, 0);
-      return p;
-    };
-    if (kind === 'glass') {
-      // A glass partition in slim aluminium frames, a bright corridor behind it.
-      scene.add(plane(m.corridor, side * 0.9));
-      for (let z = BACK; z <= d / 2 + 0.01; z += d / 3)
-        scene.add(at(box(0.025, h + 1.5, 0.03, m.aluminium), x, (h + 1.5) / 2, z));
-      scene.add(at(box(0.025, 0.03, d, m.aluminium), x, 0.015, 0));
-      scene.add(at(ledLine(d, m.led, true, 0.01), x - side * 0.02, 2.5, 0));
-      scene.add(plane(m.glass));
+  // Polished: the room shows softly in the floor.
+  const mirror = new Reflector(new THREE.PlaneGeometry(w, d), {
+    textureWidth: 1024,
+    textureHeight: 1024,
+    color: '#c2c6cc',
+  });
+  mirror.rotation.x = -Math.PI / 2;
+  mirror.position.y = -0.002;
+  scene.add(mirror);
+  // The slab under the floor, its front edge lit.
+  scene.add(at(box(w + 2 * t, 0.22, d + t, m.white, 0.02), 0, -0.11, -t / 2));
+  scene.add(at(ledLine(w - 0.4, m.led, false, 0.014), 0, -0.05, d / 2 + 0.005));
+  // The back wall, cut at the top.
+  scene.add(at(box(w + 2 * t, h, t, wall, 0.01), 0, h / 2, BACK - t / 2));
+  scene.add(at(box(w, 0.05, 0.02, m.white), 0, 0.025, BACK + 0.01));
+  scene.add(at(ledLine(w - 0.2, m.lampGlow, false, 0.016), 0, h - 0.08, BACK + 0.03));
+  for (const side of [-1, 1]) {
+    const x = side * (w / 2 + t / 2);
+    if ((side === -1 ? 'left' : 'right') === windowSide) {
+      // A tall window: a sill, a head, slim dark mullions and the bright day behind.
+      scene.add(at(box(t, 0.42, d, m.white, 0.01), x, 0.21, 0));
+      scene.add(at(box(t, 0.3, d, m.white, 0.01), x, h - 0.15, 0));
+      scene.add(at(box(t + 0.04, 0.03, d, m.stone), x, 0.43, 0));
+      const panes = 3;
+      for (let i = 0; i <= panes; i += 1) {
+        const z = BACK + (i * d) / panes;
+        scene.add(at(box(0.05, h - 0.72, 0.05, m.blackMetal), x, 0.42 + (h - 0.72) / 2, z));
+      }
+      const glass = mesh(new THREE.PlaneGeometry(d, h - 0.72), m.glass, { cast: false });
+      glass.rotation.y = side * (Math.PI / 2);
+      glass.position.set(x, 0.42 + (h - 0.72) / 2, 0);
+      scene.add(glass);
+      const day = mesh(new THREE.PlaneGeometry(d * 1.6, h * 1.6), glowing(outsideTexture(7)), {
+        cast: false,
+        receive: false,
+      });
+      day.rotation.y = -side * (Math.PI / 2);
+      day.position.set(x + side * 1.4, h * 0.55, 0);
+      scene.add(day);
+      // The morning coming in.
+      const spill = new THREE.PointLight('#ffe9cc', 6, 7, 1.4);
+      spill.position.set(x - side * 0.8, h * 0.7, 0);
+      scene.add(spill);
     } else {
-      // White fluted panels with a vertical line of light where they meet the back wall.
-      scene.add(plane(m.wallTint, side * 0.05));
-      for (let z = BACK + 0.12; z <= d / 2; z += 0.14)
-        scene.add(
-          at(box(0.04, h + 1.5, 0.1, m.composite, 0.02), x - side * 0.02, (h + 1.5) / 2, z),
-        );
-      scene.add(at(box(0.012, h + 1.5, 0.012, m.led), x - side * 0.04, (h + 1.5) / 2, BACK + 0.05));
+      scene.add(at(box(t, h, d, wall, 0.01), x, h / 2, 0));
     }
+  }
+  // Warm downlights where the ceiling would be.
+  for (const lx of [-w / 4, w / 4]) {
+    const lamp = new THREE.PointLight('#ffd9ad', 3.2, 6, 1.5);
+    lamp.position.set(lx, h + 0.4, 0.2);
+    scene.add(lamp);
   }
 }
 
-/** The big screen on the back wall, exactly where the Home draws the screen: frameless. */
-function wallScreenFrame(scene, camera, rect) {
+/** The big screen on the back wall, glowing with the department's work. */
+function bigScreen(scene, kind, seed, cx, bottom, w) {
+  const h = w * (860 / 1600);
   const z = BACK + 0.03;
-  const a = onPlane(camera, rect.x, rect.y, z);
-  const b = onPlane(camera, rect.x + rect.w, rect.y + rect.h, z);
-  const w = b.x - a.x;
-  const h = a.y - b.y;
-  const cx = (a.x + b.x) / 2;
-  const cy = (a.y + b.y) / 2;
-  scene.add(at(box(w + 0.03, h + 0.03, 0.03, m.bezel, 0.006), cx, cy, z));
-  const face = mesh(new THREE.PlaneGeometry(w, h), m.screenOff, { cast: false });
-  face.position.set(cx, cy, z + 0.016);
-  scene.add(face);
-  // A soft line of light under it.
-  scene.add(at(ledLine(w * 0.7, m.led, false, 0.008), cx, cy - h / 2 - 0.05, z + 0.01));
-  return { cx, cy, w, h, bottom: cy - h / 2 };
-}
-
-/** A glass display standing off the wall, glowing with the department's work. */
-function glassPanel(kind, w, h, seed) {
-  const g = new THREE.Group();
-  const face = mesh(new THREE.PlaneGeometry(w, h), m.holo(panelTexture(kind, seed)), {
+  scene.add(at(box(w + 0.05, h + 0.05, 0.04, m.bezel, 0.01), cx, bottom + h / 2, z));
+  const face = mesh(new THREE.PlaneGeometry(w, h), glowing(wallDisplay(kind, seed)), {
     cast: false,
   });
-  face.position.z = 0.06;
+  face.position.set(cx, bottom + h / 2, z + 0.022);
+  scene.add(face);
+  const wash = new THREE.PointLight('#8fc4ff', 1.6, 3.2, 1.6);
+  wash.position.set(cx, bottom + h / 2, z + 0.7);
+  scene.add(wash);
+  return { cx, cy: bottom + h / 2, w, h };
+}
+
+/** A framed picture on the back wall. */
+function framed(map, w, h) {
+  const g = new THREE.Group();
+  g.add(at(box(w + 0.04, h + 0.04, 0.03, m.white, 0.004), 0, 0, 0));
+  const face = mesh(
+    new THREE.PlaneGeometry(w, h),
+    new THREE.MeshStandardMaterial({ map, roughness: 0.7 }),
+    {
+      cast: false,
+    },
+  );
+  face.position.z = 0.016;
   g.add(face);
-  // Standoffs and a faint glow on the wall behind.
-  for (const sx of [-1, 1]) {
-    for (const sy of [-1, 1]) {
-      g.add(
-        at(
-          cylinder(0.012, 0.012, 0.06, m.aluminium),
-          sx * (w / 2 - 0.05),
-          sy * (h / 2 - 0.05),
-          0.03,
-        ),
-      );
+  return g;
+}
+
+/** Floating white shelves with books, pots and a few objects. */
+function shelves(seed, w = 1.2, levels = 3) {
+  const r = random(seed);
+  const g = new THREE.Group();
+  for (let i = 0; i < levels; i += 1) {
+    const y = 1.0 + i * 0.42;
+    g.add(at(box(w, 0.035, 0.26, m.composite, 0.008), 0, y, 0));
+    let x = -w / 2 + 0.08;
+    while (x < w / 2 - 0.15) {
+      if (r() < 0.25) {
+        g.add(
+          at(
+            plant(m, r() < 0.5 ? 'snake' : 'bush', seed + i * 7 + Math.floor(x * 10), 0.32),
+            x + 0.08,
+            y + 0.02,
+            0,
+          ),
+        );
+        x += 0.24;
+      } else {
+        const n = 3 + Math.floor(r() * 5);
+        for (let b = 0; b < n; b += 1) {
+          const bh = 0.16 + r() * 0.08;
+          const book = box(
+            0.035,
+            bh,
+            0.18,
+            new THREE.MeshStandardMaterial({
+              color: ['#e9e4dc', '#c8d3e0', '#2f3b4c', '#d9b98c', '#8fa3b8', '#f4efe9'][
+                Math.floor(r() * 6)
+              ],
+              roughness: 0.8,
+            }),
+            0.003,
+          );
+          book.position.set(x + b * 0.04, y + 0.02 + bh / 2, 0);
+          g.add(book);
+        }
+        x += n * 0.04 + 0.12;
+      }
     }
   }
-  const halo = mesh(
-    new THREE.PlaneGeometry(w + 0.2, h + 0.2),
-    new THREE.MeshBasicMaterial({
-      color: '#a9d2ff',
-      transparent: true,
-      opacity: 0.18,
-      depthWrite: false,
-    }),
-    { cast: false, receive: false },
-  );
-  halo.position.z = 0.005;
-  g.add(halo);
   return g;
 }
 
-function cylinder(rt, rb, h, material, segments = 24) {
-  const c = mesh(new THREE.CylinderGeometry(rt, rb, h, segments), material);
-  c.rotation.x = Math.PI / 2;
-  return c;
-}
-
-/** A low white sideboard floating off the floor, lit from beneath. */
-function credenza(w, seed) {
+/** A low white cabinet with drawers. */
+function lowCabinet(w, seed) {
   const g = new THREE.Group();
-  g.add(at(box(w, 0.42, 0.42, m.composite, 0.012), 0, 0.36, 0));
-  g.add(at(ledLine(w - 0.1, m.led, false, 0.01), 0, 0.14, 0.18));
-  const doors = Math.round(w / 0.45);
-  for (let i = 1; i < doors; i += 1) {
-    g.add(at(box(0.006, 0.38, 0.006, m.stone), -w / 2 + i * (w / doors), 0.36, 0.212));
-  }
-  g.add(at(papers(m, 3, seed), -w / 2 + 0.3, 0.57, 0));
-  g.add(at(plant(m, 'snake', seed + 3, 0.55), w / 2 - 0.25, 0.57, 0));
+  g.add(at(box(w, 0.62, 0.45, m.composite, 0.012), 0, 0.31, 0));
+  const n = Math.max(2, Math.round(w / 0.5));
+  for (let i = 1; i < n; i += 1)
+    g.add(at(box(0.006, 0.56, 0.006, m.stone), -w / 2 + i * (w / n), 0.31, 0.226));
+  g.add(at(papers(m, 2, seed), -w / 2 + 0.3, 0.62, 0));
+  g.add(at(plant(m, 'snake', seed + 3, 0.5), w / 2 - 0.22, 0.62, 0));
   return g;
 }
 
-/** A white, lit cabinet: files and devices behind frosted glass. */
-function cabinet(seed, h = 1.2) {
-  const g = new THREE.Group();
-  g.add(at(box(0.6, h, 0.45, m.composite, 0.01), 0, h / 2, 0));
-  g.add(at(box(0.52, h - 0.12, 0.01, m.frosted, 0.004), 0, h / 2, 0.23));
-  for (let i = 0; i < 3; i += 1)
-    g.add(at(ledLine(0.5, m.led, false, 0.006), 0, 0.2 + i * ((h - 0.2) / 3), 0.2));
-  g.add(at(papers(m, 3, seed), 0, h, 0));
-  return g;
-}
-
-const PANELS = {
-  growth: ['funnel', 'pipeline'], // Comercial: leads, the funnel, the pipeline.
-  dashboard: ['kanban', 'flow'], // Operaciones: tasks and processes.
-  social: ['creatives', 'social'], // Marketing: creatives and social content.
-  video: ['layouts', 'creatives'], // Diseño: interfaces, prototypes, images.
-  network: ['network', 'documents'], // Investigación: data, documents, trends.
-  finance: ['charts', 'donut'], // Finanzas: dashboards and indicators.
-  map: ['objectives', 'charts'], // Consejo: objectives and the company's figures.
+/** Which graphics each department's walls carry, and the season of its room. */
+const ROOMS = {
+  growth: { side: 'dashboard', board: 'prints' }, // Comercial: funnel, pipeline, leads.
+  dashboard: { side: 'growth', board: 'prints' }, // Operaciones: kanban and processes.
+  social: { side: 'network', board: 'moodboard' }, // Marketing: campaigns and creatives.
+  video: { side: 'social', board: 'moodboard' }, // Diseño: moodboards and prototypes.
+  network: { side: 'finance', board: 'prints' }, // Investigación: data and trends.
+  finance: { side: 'map', board: 'prints' }, // Finanzas: incomes, costs, charts.
+  generic: { side: 'finance', board: 'prints' },
 };
 
-/** What sits on each department's walls: the room says what the department does. */
-function decorate(scene, camera, motif, seed, w) {
-  const screen = wallScreenFrame(scene, camera, SIDE_SCREEN);
-  const half = w / 2;
-  const leftX = (-half + screen.cx - screen.w / 2) / 2 + 0.08;
-  const rightX = (half + screen.cx + screen.w / 2) / 2 - 0.08;
-  const [left, right] = PANELS[motif] ?? ['default', 'default'];
-  scene.add(at(credenza(screen.w * 0.9, seed), 0, 0, BACK + 0.24));
-  scene.add(at(glassPanel(left, 1.05, 0.7, seed), leftX, 1.5, BACK + 0.02));
-  scene.add(at(glassPanel(right, 0.85, 0.55, seed + 1), rightX, 1.62, BACK + 0.02));
-  scene.add(at(cabinet(seed, 1.0), rightX, 0, BACK + 0.3));
-  // Plants in the back corners.
-  scene.add(at(plant(m, 'tall', seed + 11, 1.05), -half + 0.32, 0, BACK + 0.4));
-  scene.add(at(plant(m, 'bush', seed + 13, 1.1), half - 0.28, 0, BACK + 0.45));
-  // Lines of light in the floor along the rows of desks.
-  for (const z of [0.2, 1.6]) scene.add(at(ledLine(w - 1.2, m.led, false, 0.008), 0, 0.003, z));
+/** The part of the floor the Home seats workstations on, in metres. */
+const DESK_FLOOR = { x: 2.7, back: -1.0, front: 1.9 };
+
+function floorCorners(camera, halfWidth, back, front) {
+  return [
+    project(camera, -halfWidth, 0, back),
+    project(camera, halfWidth, 0, back),
+    project(camera, halfWidth, 0, front),
+    project(camera, -halfWidth, 0, front),
+  ];
 }
 
-/** The accent of each department's monitors: the office's blue, or the brand's coral. */
-const SCREEN_HUES = { growth: '#ff8a5c', social: '#ff8a5c', map: '#ff8a5c' };
-
-const SIDE_W = ROOM.h * 1.6;
-const CENTRE_W = (ROOM.h * 640) / 600;
-const CHAIR = '#cfd5dd';
-
-export function sideRoom(motif, seed, width = 1920, height = 1200) {
-  const scene = sceneWith(new THREE.Color('#e9edf2'));
-  const camera = roomCamera(SIDE_W);
-  shell(scene, SIDE_W, {
-    left: seed % 2 === 0 ? 'glass' : 'fluted',
-    right: seed % 2 === 0 ? 'fluted' : 'glass',
-  });
+/**
+ * A department's room: its big screen on the back wall, its boards and prints, a window on one
+ * side and shelves on the other, plants in the corners and a clear floor for the desks.
+ */
+export function sideRoom(motif, seed, width = 1152, height = 640) {
+  const scene = sceneWith(new THREE.Color('#eef1f5'));
+  const w = SIDE_W;
+  const camera = roomCamera(w, SIDE_ASPECT);
+  const windowSide = seed % 2 === 0 ? 'right' : 'left';
+  shell(scene, w, { window: windowSide });
+  let screen;
+  const half = w / 2;
+  const screenX = windowSide === 'left' ? 0.35 : -0.35;
   if (motif === 'meeting') {
-    wallScreenFrame(scene, camera, { ...SIDE_SCREEN, y: 0.2, h: 0.2 });
-    const table = meetingTable(m, 2.6, 1.1);
-    table.position.set(0, 0, 0.3);
+    bigScreen(scene, 'generic', seed, 0, 1.05, 2.4);
+    const table = meetingTable(m, 3.2, 1.3);
+    table.position.set(0, 0, 0.4);
     scene.add(table);
-    scene.add(at(ledLine(2.4, m.led, false, 0.01), 0, 0.72, 0.86));
-    const fabric = m.fabric(CHAIR, 3);
+    const fabric = m.fabric('#2d3139', 3);
     for (let i = 0; i < 3; i += 1) {
       for (const side of [-1, 1]) {
         const c = officeChair(m, fabric);
-        c.position.set(-0.85 + i * 0.85, 0, 0.3 + side * 0.85);
+        c.position.set(-1.05 + i * 1.05, 0, 0.4 + side * 1.0);
         c.rotation.y = side === 1 ? Math.PI : 0;
         scene.add(c);
       }
     }
-    scene.add(at(plant(m, 'tall', seed, 1.05), -SIDE_W / 2 + 0.35, 0, BACK + 0.4));
-    scene.add(at(plant(m, 'tall', seed + 2, 1.05), SIDE_W / 2 - 0.35, 0, BACK + 0.4));
-    scene.add(at(glassPanel('objectives', 0.8, 0.55, seed), -1.75, 1.55, BACK + 0.02));
-    scene.add(at(glassPanel('default', 0.8, 0.55, seed + 1), 1.75, 1.55, BACK + 0.02));
+    scene.add(at(plant(m, 'tall', seed, 1.25), -half + 0.45, 0, BACK + 0.5));
+    scene.add(at(plant(m, 'tall', seed + 2, 1.2), half - 0.45, 0, BACK + 0.5));
+    scene.add(at(plant(m, 'bush', seed + 4, 1.2), half - 0.5, 0, 2.0));
   } else {
-    decorate(scene, camera, motif, seed, SIDE_W);
-  }
-  return render(scene, camera, width, height);
-}
-
-/** The city through headquarters' glass: pale towers under a clear sky. */
-function cityView() {
-  const c = document.createElement('canvas');
-  c.width = 1024;
-  c.height = 640;
-  const g = c.getContext('2d');
-  const sky = g.createLinearGradient(0, 0, 0, 640);
-  sky.addColorStop(0, '#bcd6f2');
-  sky.addColorStop(0.8, '#eef3fa');
-  g.fillStyle = sky;
-  g.fillRect(0, 0, 1024, 640);
-  const r = random(5);
-  for (const [tone, top] of [
-    ['rgba(170,190,215,0.55)', 320],
-    ['rgba(130,152,182,0.7)', 220],
-  ]) {
-    let x = -20;
-    while (x < 1024) {
-      const bw = 50 + r() * 80;
-      const bh = 180 + r() * top;
-      g.fillStyle = tone;
-      g.fillRect(x, 640 - bh, bw - 8, bh);
-      g.fillStyle = 'rgba(235,245,255,0.35)';
-      for (let y = 640 - bh + 12; y < 630; y += 18) g.fillRect(x + 6, y, bw - 20, 3);
-      x += bw;
+    const look = ROOMS[motif] ?? ROOMS.generic;
+    const big = bigScreen(scene, motif, seed, screenX, 1.0, 3.0);
+    screen = [
+      ...project(camera, big.cx - big.w / 2, big.cy + big.h / 2, BACK + 0.05),
+      ...project(camera, big.cx + big.w / 2, big.cy - big.h / 2, BACK + 0.05),
+    ];
+    // Beside the screen: a moodboard or prints, and a second, smaller screen.
+    const boardX = screenX + (windowSide === 'left' ? -2.35 : 2.35);
+    if (look.board === 'moodboard') {
+      scene.add(at(framed(posterTexture(seed, 3, 2), 1.3, 1.1), boardX, 1.65, BACK + 0.02));
+    } else {
+      scene.add(at(framed(posterTexture(seed, 1, 1), 0.46, 0.6), boardX - 0.3, 1.75, BACK + 0.02));
+      scene.add(
+        at(framed(posterTexture(seed + 5, 1, 1), 0.46, 0.6), boardX + 0.3, 1.75, BACK + 0.02),
+      );
     }
+    const small = mesh(
+      new THREE.PlaneGeometry(0.62, 0.36),
+      glowing(wallDisplay(look.side, seed + 9)),
+      {
+        cast: false,
+      },
+    );
+    const smallX = screenX + (windowSide === 'left' ? 2.05 : -2.05);
+    small.position.set(smallX, 1.95, BACK + 0.04);
+    scene.add(at(box(0.66, 0.4, 0.03, m.bezel, 0.006), smallX, 1.95, BACK + 0.02), small);
+    scene.add(at(lowCabinet(1.5, seed), screenX, 0, BACK + 0.26));
+    // The solid side wall: shelves and a tall plant.
+    const wallX = windowSide === 'left' ? half - 0.14 : -half + 0.14;
+    const sh = shelves(seed + 20, 1.6, 3);
+    sh.rotation.y = windowSide === 'left' ? -Math.PI / 2 : Math.PI / 2;
+    sh.position.set(wallX, 0, BACK + 1.2);
+    scene.add(sh);
+    // Plants: tall ones in the back corners, a bush at the front by the window.
+    scene.add(at(plant(m, 'tall', seed + 11, 1.3), -half + 0.4, 0, BACK + 0.45));
+    scene.add(at(plant(m, 'tall', seed + 13, 1.25), half - 0.4, 0, BACK + 0.45));
+    const windowX = windowSide === 'left' ? -half + 0.45 : half - 0.45;
+    scene.add(at(plant(m, 'bush', seed + 17, 1.35), windowX, 0, 2.05));
+    scene.add(at(plant(m, 'tall', seed + 19, 1.1), windowX, 0, 0.6));
   }
-  const t = new THREE.CanvasTexture(c);
-  t.colorSpace = THREE.SRGBColorSpace;
-  return t;
+  const data = render(scene, camera, width, height);
+  return {
+    data,
+    floor: floorCorners(camera, DESK_FLOOR.x, DESK_FLOOR.back, DESK_FLOOR.front),
+    screen,
+  };
 }
 
 /** A ring of light lying on the floor (or a platform). */
@@ -399,242 +452,345 @@ function lightRing(radius, material = m.led, tube = 0.014) {
 }
 
 /**
- * Headquarters: the executive centre. Consejo's strategy table by the glass, and GIA on a round,
- * lit platform at the heart of the room, a quiet ring of light above her.
+ * Consejo: the board room. An oval white table, dark chairs, the world and the company's
+ * objectives on the screen, plants either side.
  */
-export function headquarters(width = 1280, height = 1200) {
-  const scene = sceneWith(new THREE.Color('#e9edf2'));
+export function headquarters(width = 806, height = 640) {
+  const scene = sceneWith(new THREE.Color('#eef1f5'));
   const w = CENTRE_W;
-  const camera = roomCamera(w);
-  shell(scene, w, { wall: m.wallTint, left: 'glass', right: 'glass' });
-  // Floor-to-ceiling glass over the city.
-  const view = mesh(
-    new THREE.PlaneGeometry(w - 0.4, 2.3),
-    new THREE.MeshBasicMaterial({ map: cityView() }),
-    { cast: false },
-  );
-  view.position.set(0, 1.4, BACK + 0.01);
-  scene.add(view);
-  for (let i = 0; i <= 3; i += 1)
-    scene.add(
-      at(box(0.03, 2.4, 0.05, m.aluminium), -(w - 0.4) / 2 + (i * (w - 0.4)) / 3, 1.4, BACK + 0.04),
-    );
-  scene.add(at(box(w - 0.35, 0.04, 0.08, m.aluminium), 0, 0.25, BACK + 0.05));
-  const daylight = new THREE.SpotLight('#eef5ff', 14, 12, 0.9, 0.8, 1.2);
-  daylight.position.set(0, 2.2, BACK - 0.6);
-  daylight.target.position.set(0, 0, 1.5);
-  scene.add(daylight, daylight.target);
-  // Consejo's strategy table: white, round, a glass display of objectives above it.
+  const camera = roomCamera(w, CENTRE_ASPECT);
+  shell(scene, w, { window: 'left' });
+  bigScreen(scene, 'map', 5, 0.25, 1.05, 2.4);
   const table = new THREE.Group();
-  table.add(at(mesh(new THREE.CylinderGeometry(0.5, 0.5, 0.04, 64), m.composite), 0, 0.74, 0));
-  table.add(at(mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.72, 16), m.aluminium), 0, 0.37, 0));
-  table.add(at(lightRing(0.46, m.led, 0.006), 0, 0.765, 0));
-  for (let i = 0; i < 4; i += 1) {
-    const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
-    const c = officeChair(m, m.fabric(CHAIR, 12 + i));
-    c.position.set(Math.sin(a) * 0.8, 0, Math.cos(a) * 0.8);
+  const top = mesh(new THREE.CylinderGeometry(1, 1, 0.05, 96), m.composite);
+  top.scale.set(1.25, 1, 0.62);
+  top.position.y = 0.74;
+  table.add(top);
+  table.add(at(mesh(new THREE.CylinderGeometry(0.16, 0.22, 0.72, 32), m.composite), 0, 0.36, 0));
+  table.add(at(lightRing(0.3, m.led, 0.006), 0, 0.77, 0));
+  const fabric = m.fabric('#2d3139', 12);
+  for (let i = 0; i < 8; i += 1) {
+    const a = (i / 8) * Math.PI * 2;
+    const c = officeChair(m, fabric);
+    c.position.set(Math.sin(a) * 1.55, 0, Math.cos(a) * 0.95);
     c.rotation.y = a + Math.PI;
     table.add(c);
   }
-  table.position.set(-1.05, 0, BACK + 1.2);
+  table.position.set(0.1, 0, 0.1);
   scene.add(table);
-  const board = glassPanel('objectives', 0.9, 0.6, 7);
-  board.position.set(-1.05, 1.55, BACK + 0.5);
-  scene.add(board);
-  // GIA's platform: a low white disc ringed in coral light, her white desk on it, a ring of
-  // light standing behind her: the intelligence at the centre of the office.
-  const centre = new THREE.Group();
-  centre.add(at(mesh(new THREE.CylinderGeometry(1.0, 1.05, 0.12, 96), m.composite), 0, 0.06, 0));
-  centre.add(at(lightRing(1.03, m.ledCoral, 0.014), 0, 0.1, 0));
-  centre.add(at(lightRing(0.82, m.led, 0.007), 0, 0.125, 0));
-  const deskTop = box(1.3, 0.04, 0.6, m.composite, 0.015);
-  deskTop.position.set(0, 0.86, 0.12);
-  centre.add(deskTop);
-  const pedestal = box(1.16, 0.72, 0.08, m.composite, 0.015);
-  pedestal.position.set(0, 0.48, 0.36);
-  centre.add(pedestal);
-  centre.add(at(ledLine(1.12, m.ledCoral, false, 0.012), 0, 0.3, 0.405));
-  const gia = person(
-    { skin: '#eec5a6', hair: '#3a2419', top: '#f4efe9', jacket: '#e8704a', style: 'bun' },
-    { turn: 0 },
-  );
-  gia.position.set(0, 0.12, -0.32);
-  const chair = officeChair(m, m.fabric('#f1f3f6', 4));
-  chair.position.set(0, 0.12, -0.5);
-  centre.add(chair, gia);
-  centre.add(
-    at(
-      laptop(m, new THREE.MeshBasicMaterial({ map: screenTexture('map', '#ff8a5c', 3) })),
-      0,
-      0.885,
-      0.1,
-    ),
-  );
-  const giaScreen = mesh(
-    new THREE.PlaneGeometry(0.56, 0.34),
-    m.holo(panelTexture('objectives', 5), 0.95),
-    { cast: false },
-  );
-  giaScreen.position.set(-0.52, 1.18, 0.2);
-  giaScreen.rotation.y = 0.35;
-  centre.add(giaScreen);
-  const halo = mesh(new THREE.TorusGeometry(0.42, 0.012, 12, 128), m.ledCoral, { cast: false });
-  halo.position.set(0, 1.42, -0.62);
-  centre.add(halo);
-  const haloInner = mesh(new THREE.TorusGeometry(0.34, 0.005, 12, 128), m.led, { cast: false });
-  haloInner.position.set(0, 1.42, -0.63);
-  centre.add(haloInner);
-  const glow = new THREE.PointLight('#ff9a6a', 1.8, 3, 1.6);
-  glow.position.set(0, 1.4, 0.3);
-  centre.add(glow);
-  centre.position.set(0.35, 0, 0.7);
-  scene.add(centre);
-  scene.add(at(plant(m, 'tall', 21, 1.05), w / 2 - 0.35, 0, BACK + 0.45));
-  return render(scene, camera, width, height);
+  const rug = mesh(new THREE.PlaneGeometry(3.8, 2.6), m.fabric('#6d737c', 4), { cast: false });
+  rug.rotation.x = -Math.PI / 2;
+  rug.position.set(0.1, 0.004, 0.1);
+  scene.add(rug);
+  scene.add(at(plant(m, 'tall', 21, 1.3), -w / 2 + 0.45, 0, BACK + 0.45));
+  scene.add(at(plant(m, 'tall', 23, 1.3), w / 2 - 0.42, 0, BACK + 0.45));
+  scene.add(at(plant(m, 'bush', 25, 1.2), w / 2 - 0.45, 0, 1.9));
+  const data = render(scene, camera, width, height);
+  return { data, floor: floorCorners(camera, 1.9, 1.2, 2.2) };
 }
 
 /**
- * The atrium: MelonMotor, the office's nervous system. A glass column of lit layers rises from
- * a ring in the floor; lines of light leave it for the rooms either side.
+ * GIA's place at the centre of the office: a bright, curved gallery with a lit platform in its
+ * middle, rings of light on the floor. GIA herself is drawn by the Home over the platform.
  */
-export function atrium(width = 1280, height = 1200) {
-  const scene = sceneWith(new THREE.Color('#e9edf2'));
+export function giaRoom(width = 806, height = 640) {
+  const scene = sceneWith(new THREE.Color('#eef2f8'));
   const w = CENTRE_W;
-  const camera = roomCamera(w);
-  shell(scene, w, { wall: m.wall, left: 'glass', right: 'glass' });
-  // The wall behind: dark glass traced with lines of light, the office's circuits.
-  const circuitWall = mesh(
-    new THREE.PlaneGeometry(w - 0.6, 2.4),
-    m.holo(panelTexture('circuit', 9), 1),
+  const camera = roomCamera(w, CENTRE_ASPECT);
+  shell(scene, w, { window: 'none', wall: m.wallTint });
+  // Glass displays along both walls: the work GIA oversees.
+  for (const side of [-1, 1]) {
+    for (let i = 0; i < 3; i += 1) {
+      const panel = mesh(
+        new THREE.PlaneGeometry(0.8, 0.9),
+        glowing(
+          wallDisplay(
+            ['growth', 'finance', 'social', 'dashboard', 'network', 'map'][i + (side + 1) * 1.5],
+            30 + i,
+          ),
+        ),
+        {
+          cast: false,
+        },
+      );
+      panel.rotation.y = -side * (Math.PI / 2);
+      panel.position.set(side * (w / 2 - 0.02), 1.4, BACK + 0.9 + i * 1.3);
+      scene.add(panel);
+    }
+  }
+  // The back wall opens onto a hall of light: a corridor with lines of light running away.
+  const hall = new THREE.Group();
+  const hallW = 2.2;
+  const hallH = 2.3;
+  const hallD = 5;
+  const hallWall = new THREE.MeshStandardMaterial({ color: '#eef4fb', roughness: 0.5 });
+  hall.add(at(box(hallW, 0.05, hallD, m.floor), 0, -0.02, -hallD / 2));
+  hall.add(at(box(hallW, 0.05, hallD, hallWall), 0, hallH, -hallD / 2));
+  for (const sx of [-1, 1]) {
+    hall.add(at(box(0.05, hallH, hallD, hallWall), sx * (hallW / 2), hallH / 2, -hallD / 2));
+    for (let i = 0; i < 5; i += 1) {
+      hall.add(
+        at(box(0.02, hallH - 0.2, 0.03, m.led), sx * (hallW / 2 - 0.04), hallH / 2, -0.4 - i * 1.0),
+      );
+    }
+  }
+  for (let i = 0; i < 5; i += 1)
+    hall.add(at(box(hallW - 0.1, 0.02, 0.03, m.led), 0, hallH - 0.04, -0.4 - i * 1.0));
+  hall.add(
+    at(
+      mesh(
+        new THREE.PlaneGeometry(hallW, hallH),
+        new THREE.MeshBasicMaterial({ color: '#dff0ff' }),
+        { cast: false },
+      ),
+      0,
+      hallH / 2,
+      -hallD + 0.05,
+    ),
+  );
+  const hallLight = new THREE.PointLight('#bfe0ff', 6, 6, 1.2);
+  hallLight.position.set(0, 1.6, -2);
+  hall.add(hallLight);
+  hall.position.set(0, 0, BACK - ROOM.wall);
+  scene.add(hall);
+  // The wall around the opening, instead of the shell's plain wall.
+  scene.traverse((o) => {
+    if (o.isMesh && Math.abs(o.position.z - (BACK - ROOM.wall / 2)) < 0.001 && o.position.y > 0.5) {
+      o.visible = false;
+    }
+  });
+  const sideW = (w + 2 * ROOM.wall - hallW) / 2;
+  for (const sx of [-1, 1])
+    scene.add(
+      at(
+        box(sideW, ROOM.h, ROOM.wall, m.wallTint, 0.01),
+        sx * (hallW / 2 + sideW / 2),
+        ROOM.h / 2,
+        BACK - ROOM.wall / 2,
+      ),
+    );
+  scene.add(
+    at(
+      box(hallW, ROOM.h - hallH, ROOM.wall, m.wallTint, 0.01),
+      0,
+      hallH + (ROOM.h - hallH) / 2,
+      BACK - ROOM.wall / 2,
+    ),
+  );
+  for (const x of [-hallW / 2, hallW / 2])
+    scene.add(at(box(0.04, hallH, 0.04, m.led), x, hallH / 2, BACK + 0.02));
+  scene.add(at(box(hallW, 0.04, 0.04, m.led), 0, hallH, BACK + 0.02));
+  const blue = new THREE.PointLight('#8fc4ff', 5, 6, 1.4);
+  blue.position.set(0, 2.2, 0);
+  scene.add(blue);
+  // The platform: white, round, ringed in blue and GIA's coral.
+  const centre = new THREE.Group();
+  centre.add(at(mesh(new THREE.CylinderGeometry(1.3, 1.36, 0.14, 128), m.composite), 0, 0.07, 0));
+  centre.add(at(mesh(new THREE.CylinderGeometry(0.95, 1.0, 0.1, 128), m.white), 0, 0.19, 0));
+  centre.add(at(lightRing(1.34, m.ledCoral, 0.02), 0, 0.12, 0));
+  centre.add(at(lightRing(0.98, m.led, 0.016), 0, 0.235, 0));
+  centre.add(at(lightRing(0.7, m.led, 0.01), 0, 0.245, 0));
+  centre.add(at(lightRing(1.7, m.led, 0.01), 0, 0.006, 0));
+  centre.add(at(lightRing(2.05, m.ledCoral, 0.008), 0, 0.006, 0));
+  const glow = new THREE.PointLight('#9fd0ff', 5, 4, 1.4);
+  glow.position.set(0, 1.2, 0.2);
+  centre.add(glow);
+  const warm = new THREE.PointLight('#ffb48a', 2.5, 3, 1.6);
+  warm.position.set(0, 0.5, 1.2);
+  centre.add(warm);
+  centre.position.set(0, 0, 0.55);
+  scene.add(centre);
+  const data = render(scene, camera, width, height);
+  return { data, gia: project(camera, 0, 1.25, 0.55) };
+}
+
+/**
+ * MelonMotor: the office's engine room. A stack of glass cubes lit from inside rises from a
+ * ringed base, circuits on the wall behind, plants either side.
+ */
+export function atrium(width = 806, height = 640) {
+  const scene = sceneWith(new THREE.Color('#dfe8f5'));
+  const w = CENTRE_W;
+  const camera = roomCamera(w, CENTRE_ASPECT);
+  shell(scene, w, { window: 'none', wall: m.wallTint });
+  const wallPanel = mesh(
+    new THREE.PlaneGeometry(w - 0.3, ROOM.h - 0.25),
+    glowing(circuitTexture(9)),
     {
       cast: false,
     },
   );
-  circuitWall.position.set(0, 1.45, BACK + 0.03);
-  scene.add(circuitWall);
+  wallPanel.position.set(0, (ROOM.h - 0.25) / 2 + 0.05, BACK + 0.02);
+  scene.add(wallPanel);
+  for (const side of [-1, 1]) {
+    const panel = mesh(
+      new THREE.PlaneGeometry(ROOM.d - 0.4, ROOM.h - 0.4),
+      glowing(circuitTexture(12 + side)),
+      {
+        cast: false,
+      },
+    );
+    panel.rotation.y = -side * (Math.PI / 2);
+    panel.position.set(side * (w / 2 - 0.02), ROOM.h / 2, 0);
+    scene.add(panel);
+  }
   const core = new THREE.Group();
-  core.add(at(mesh(new THREE.CylinderGeometry(0.85, 0.9, 0.08, 96), m.composite), 0, 0.04, 0));
-  core.add(at(lightRing(0.84, m.led, 0.016), 0, 0.085, 0));
-  core.add(at(lightRing(0.6, m.ledCoral, 0.012), 0, 0.086, 0));
-  // The column: a tall glass prism with lit layers inside, rising through the atrium.
-  const glassBlock = new THREE.MeshPhysicalMaterial({
-    color: '#dcecff',
-    roughness: 0.06,
-    transmission: 0.6,
+  core.add(at(mesh(new THREE.CylinderGeometry(1.2, 1.26, 0.12, 128), m.composite), 0, 0.06, 0));
+  core.add(at(lightRing(1.24, m.led, 0.02), 0, 0.12, 0));
+  core.add(at(lightRing(0.95, m.ledCoral, 0.012), 0, 0.125, 0));
+  const glassBlock = new THREE.MeshStandardMaterial({
+    color: '#2a6fe0',
+    roughness: 0.15,
+    metalness: 0.1,
     transparent: true,
-    opacity: 0.5,
-    emissive: '#5aa7ff',
-    emissiveIntensity: 0.25,
+    opacity: 0.82,
+    emissive: '#2f7dff',
+    emissiveIntensity: 0.9,
   });
-  core.add(at(box(0.5, 2.5, 0.5, glassBlock, 0.03), 0, 1.33, 0));
-  for (let i = 0; i < 9; i += 1) {
-    const s = 0.3 - (i % 3) * 0.05;
-    core.add(at(box(s, 0.035, s, i % 4 === 2 ? m.ledCoral : m.led, 0.008), 0, 0.3 + i * 0.26, 0));
+  const innerGlow = new THREE.MeshBasicMaterial({ color: '#9fd4ff', toneMapped: false });
+  const edge = m.led;
+  const cube = (s) => {
+    const g = new THREE.Group();
+    g.add(box(s, s, s, glassBlock, 0.02));
+    g.add(box(s * 0.35, s * 0.35, s * 0.35, innerGlow, 0.01));
+    const e = new THREE.EdgesGeometry(new THREE.BoxGeometry(s, s, s));
+    g.add(
+      new THREE.LineSegments(
+        e,
+        new THREE.LineBasicMaterial({ color: '#e6f4ff', toneMapped: false }),
+      ),
+    );
+    return g;
+  };
+  const s = 0.42;
+  const layers = [
+    [3, 0],
+    [2, 1],
+    [1, 2],
+  ];
+  for (const [n, level] of layers) {
+    for (let i = 0; i < n; i += 1) {
+      for (let j = 0; j < n; j += 1) {
+        const c = cube(s);
+        c.position.set(
+          (i - (n - 1) / 2) * (s + 0.02),
+          0.12 + s / 2 + level * (s + 0.02),
+          (j - (n - 1) / 2) * (s + 0.02),
+        );
+        core.add(c);
+      }
+    }
   }
-  for (const [sx, sz] of [
-    [-1, -1],
-    [1, -1],
-    [-1, 1],
-    [1, 1],
-  ]) {
-    core.add(at(box(0.012, 2.5, 0.012, m.led), sx * 0.25, 1.33, sz * 0.25));
-  }
-  const glow = new THREE.PointLight('#8fc4ff', 3, 4.5, 1.6);
-  glow.position.y = 1.2;
+  core.add(at(ledLine(0.02, edge), 0, 0, 0));
+  const glow = new THREE.PointLight('#6fb4ff', 6, 5, 1.4);
+  glow.position.y = 2.0;
   core.add(glow);
-  // Grooves of light in the floor, out to the rooms either side.
-  for (const x of [-1, 1])
-    core.add(at(ledLine(w / 2 - 0.9, m.led, false, 0.01), x * (w / 4 + 0.45), 0.004, 0));
-  core.position.set(0, 0, 0.75);
+  core.position.set(0, 0, 0.5);
   scene.add(core);
-  scene.add(at(plant(m, 'tall', 31, 1.05), -w / 2 + 0.35, 0, BACK + 0.45));
-  return render(scene, camera, width, height);
+  scene.add(at(plant(m, 'tall', 31, 1.25), -w / 2 + 0.45, 0, BACK + 0.5));
+  scene.add(at(plant(m, 'tall', 33, 1.2), w / 2 - 0.45, 0, BACK + 0.5));
+  scene.add(at(plant(m, 'bush', 35, 1.1), -w / 2 + 0.45, 0, 1.8));
+  scene.add(at(plant(m, 'bush', 37, 1.1), w / 2 - 0.45, 0, 1.8));
+  const data = render(scene, camera, width, height);
+  return { data };
 }
 
-/** The lounge: a white sofa, a low table, shelves and plants. */
-export function lounge(width = 1280, height = 1200) {
-  const scene = sceneWith(new THREE.Color('#e9edf2'));
+/** The lounge, for floors added below the first three: a sofa, shelves and plants. */
+export function lounge(width = 806, height = 640) {
+  const scene = sceneWith(new THREE.Color('#eef1f5'));
   const w = CENTRE_W;
-  const camera = roomCamera(w);
-  shell(scene, w, { wall: m.wallTint, left: 'fluted', right: 'glass' });
-  scene.add(at(bookshelf(m, 1.1, 2.1, 41), -0.9, 0, BACK + 0.2));
-  scene.add(at(bookshelf(m, 1.1, 2.1, 42), 0.9, 0, BACK + 0.2));
-  const s = sofa(m, m.fabric('#e4e7ec', 6), 1.9);
-  s.position.set(0, 0, -0.5);
+  const camera = roomCamera(w, CENTRE_ASPECT);
+  shell(scene, w, { window: 'right' });
+  scene.add(at(bookshelf(m, 1.2, 2.1, 41), -1.2, 0, BACK + 0.2));
+  scene.add(at(bookshelf(m, 1.2, 2.1, 42), 0.2, 0, BACK + 0.2));
+  const s = sofa(m, m.fabric('#e4e7ec', 6), 2.2);
+  s.position.set(0, 0, 0.2);
   scene.add(s);
-  scene.add(at(coffeeTable(m, 0.45), 0, 0, 0.55));
-  scene.add(at(mug(m), 0.1, 0.44, 0.55));
-  scene.add(at(papers(m, 2, 4), -0.15, 0.44, 0.45));
-  scene.add(at(floorLamp(m), 1.35, 0, -0.7));
-  scene.add(at(plant(m, 'bush', 44, 1.2), -1.4, 0, 1.6));
-  const rug = mesh(new THREE.CircleGeometry(1.4, 64), m.rug, { cast: false });
-  rug.rotation.x = -Math.PI / 2;
-  rug.position.set(0, 0.004, 0.3);
-  scene.add(rug);
-  return render(scene, camera, width, height);
+  scene.add(at(coffeeTable(m, 0.45), 0, 0, 1.3));
+  scene.add(at(mug(m), 0.1, 0.44, 1.3));
+  scene.add(at(floorLamp(m), 1.6, 0, -0.4));
+  scene.add(at(plant(m, 'bush', 44, 1.3), -1.8, 0, 1.8));
+  const data = render(scene, camera, width, height);
+  return { data };
 }
 
 /* ------------------------------------------------------------- workstations */
 
 /*
- * A workstation is drawn in layers so the Home can seat a person or not, and keep its state:
- * the chair (with the shadows on the floor), the person, then the desk in front. Each layer is
- * drawn in the Home's workstation box: 88 units wide from (-44, -66), where the desk's front edge
- * sits at y = -2, and 110 tall so the desk's legs and shadow fit under it.
+ * A workstation is drawn in two layers so the Home can seat a person or not: the desk (its
+ * monitor facing the room, the chair in front of it and the shadows), then the person, seen from
+ * behind at the room's angle. The person's layer is cut where the chair's back hides them.
+ *
+ * Each layer is drawn in the Home's workstation box: 100 units wide from (-50, -80), 100 tall,
+ * where the point of the floor under the middle of the workstation sits at (0, 0).
  */
-export const DESK_BOX = { x: -44, y: -66, w: 88, h: 110 };
-const UNIT = 1.4 / 84; // The desk (1.4 m) spans 84 units.
+export const DESK_BOX = { x: -50, y: -80, w: 100, h: 100 };
+const UNIT = 1.9 / 100; // The box is 1.9 m wide.
+/** The room camera's angle down at the desks. */
+const PITCH = 27;
+
+const MONITOR_HUES = ['#5aa9ff'];
 
 function workstationScene(motif) {
   const scene = sceneWith(null);
-  scene.environmentIntensity = 0.7;
-  const catcher = mesh(new THREE.PlaneGeometry(6, 6), new THREE.ShadowMaterial({ opacity: 0.28 }), {
+  scene.environmentIntensity = 0.75;
+  const catcher = mesh(new THREE.PlaneGeometry(6, 6), new THREE.ShadowMaterial({ opacity: 0.26 }), {
     cast: false,
   });
   catcher.rotation.x = -Math.PI / 2;
   scene.add(catcher);
-  const parts = { catcher, chair: new THREE.Group(), people: [], front: new THREE.Group() };
-  const chair = officeChair(m, m.fabric(CHAIR, 8));
-  chair.position.set(0, 0, -0.58);
-  parts.chair.add(chair);
-  scene.add(parts.chair);
-  for (const look of LOOKS) {
-    const p = person(look, { turn: 0.32 });
-    p.position.set(0, 0, -0.42);
-    p.visible = false;
-    parts.people.push(p);
-    scene.add(p);
-  }
-  const top = desk(m);
-  parts.front.add(top);
+  const station = new THREE.Group();
+  // The desk, far side, with a drawer unit; the monitor faces whoever sits (and the camera).
+  const top = desk(m, 1.4, 0.7);
+  top.rotation.y = Math.PI;
+  top.position.set(0, 0, -0.55);
+  station.add(top);
+  station.add(at(box(0.4, 0.6, 0.55, m.composite, 0.01), 0.45, 0.3, -0.55));
   const screen = new THREE.MeshBasicMaterial({
-    map: screenTexture(motif, SCREEN_HUES[motif] ?? '#7cc0ff', 12),
+    map: wallDisplay(motif === 'map' ? 'map' : motif, 12),
+    toneMapped: false,
   });
-  const display = monitor(m, screen, 0.56, 0.33);
-  display.position.set(-0.42, 0.7525, -0.08);
-  display.rotation.y = 0.55;
-  parts.front.add(display);
-  parts.front.add(at(keyboard(m), 0.02, 0.76, 0.08));
-  parts.front.add(at(mug(m, m.terracotta), 0.52, 0.7525, -0.05));
-  parts.front.add(at(papers(m, 3, 3), 0.36, 0.7525, 0.12));
-  parts.front.add(at(plant(m, 'snake', 9, 0.35), 0.58, 0.7525, -0.22));
-  scene.add(parts.front);
-  // The camera: as in the rooms, a little above and in front, looking slightly down.
+  const display = monitor(m, screen, 0.66, 0.38);
+  display.position.set(-0.2, 0.7525, -0.72);
+  station.add(display);
+  station.add(
+    at(
+      laptop(m, new THREE.MeshBasicMaterial({ map: wallDisplay('finance', 3), toneMapped: false })),
+      0.42,
+      0.7525,
+      -0.6,
+      -0.35,
+    ),
+  );
+  station.add(at(keyboard(m), -0.12, 0.76, -0.42));
+  station.add(at(mug(m), -0.58, 0.7525, -0.45));
+  station.add(at(plant(m, 'snake', 9, 0.3), 0.6, 0.7525, -0.78));
+  const chair = officeChair(m, m.fabric('#2d3139', 8));
+  chair.rotation.y = Math.PI;
+  chair.position.set(0, 0, 0.12);
+  station.add(chair);
+  scene.add(station);
+  const people = LOOKS.map((look) => {
+    const p = person(look, { turn: 0.2 });
+    p.rotation.y = Math.PI;
+    p.position.set(0, 0, -0.02);
+    p.visible = false;
+    scene.add(p);
+    return p;
+  });
+  const pitch = THREE.MathUtils.degToRad(PITCH);
   const camera = new THREE.OrthographicCamera(
     DESK_BOX.x * UNIT,
     (DESK_BOX.x + DESK_BOX.w) * UNIT,
-    (DESK_BOX.h / 2) * UNIT,
-    (-DESK_BOX.h / 2) * UNIT,
+    -DESK_BOX.y * UNIT,
+    -(DESK_BOX.y + DESK_BOX.h) * UNIT,
     0.1,
-    30,
+    40,
   );
-  const pitch = THREE.MathUtils.degToRad(16);
-  camera.position.set(0, 0.745 + Math.sin(pitch) * 8, 0.35 + Math.cos(pitch) * 8);
-  camera.lookAt(0, 0.745, 0.35);
-  // Shift up so the desk's front edge lands at y = -2 in the box.
-  const ndcY = 1 - (2 * (-2 - DESK_BOX.y)) / DESK_BOX.h;
-  const up = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion);
-  camera.position.addScaledVector(up, -ndcY * ((DESK_BOX.h / 2) * UNIT));
+  // Looking at the middle of the workstation's floor, which lands at (0, 0) in the box.
+  const anchor = new THREE.Vector3(0, 0, -0.25);
+  camera.position.set(0, Math.sin(pitch) * 10, anchor.z + Math.cos(pitch) * 10);
+  camera.lookAt(anchor);
   camera.updateMatrixWorld();
   camera.updateProjectionMatrix();
   // The monitor's screen, in the box's units, for the Home's state overlay.
@@ -646,7 +802,7 @@ function workstationScene(motif) {
     [1, -1],
     [-1, -1],
   ].map(([sx, sy]) => {
-    const p = new THREE.Vector3((sx * (0.56 - 0.024)) / 2, (sy * (0.33 - 0.024)) / 2, 0)
+    const p = new THREE.Vector3((sx * (0.66 - 0.024)) / 2, (sy * (0.38 - 0.024)) / 2, 0)
       .applyMatrix4(face.matrixWorld)
       .project(camera);
     return [
@@ -654,40 +810,28 @@ function workstationScene(motif) {
       +(DESK_BOX.y + ((1 - p.y) / 2) * DESK_BOX.h).toFixed(2),
     ];
   });
-  return { scene, camera, parts, corners };
+  return { scene, camera, station, catcher, people, corners };
 }
 
-function hideColour(object, hide) {
+function ghost(object, hide) {
   object.traverse((o) => {
     if (o.isMesh) {
-      o.material = Array.isArray(o.material) ? o.material : o.material;
       o.userData.material ??= o.material;
-      if (hide) {
-        // Still casts shadows and hides what is behind it, but draws nothing.
-        const ghost = new THREE.MeshBasicMaterial({ colorWrite: false });
-        o.material = ghost;
-      } else {
-        o.material = o.userData.material;
-      }
+      o.material = hide ? new THREE.MeshBasicMaterial({ colorWrite: false }) : o.userData.material;
     }
   });
 }
 
-/** The layers: `back` (chair and shadows), `person-N`, `front` (desk, monitor, things). */
-export function workstation(layer, motif = 'generic', width = 352, height = 440) {
-  const { scene, camera, parts, corners } = workstationScene(motif);
+/** The layers: `desk` (desk, monitor, chair, shadows) and `person-N` (cut by the chair). */
+export function workstation(layer, motif = 'generic', width = 400, height = 400) {
+  const { scene, camera, station, catcher, people, corners } = workstationScene(motif);
   const which = layer.startsWith('person-') ? Number(layer.slice(7)) : -1;
-  parts.people.forEach((p, i) => (p.visible = i === which || layer === 'back-person'));
-  if (layer === 'back') {
-    parts.people.forEach((p) => (p.visible = false));
-    hideColour(parts.front, true);
-  } else if (layer === 'front') {
-    parts.catcher.visible = false;
-    parts.chair.visible = false;
-  } else {
-    parts.catcher.visible = false;
-    parts.chair.visible = false;
-    hideColour(parts.front, true);
+  people.forEach((p, i) => (p.visible = i === which));
+  if (which >= 0) {
+    catcher.visible = false;
+    ghost(station, true);
   }
-  return { data: render(scene, camera, width, height, layer !== 'back'), corners };
+  return { data: render(scene, camera, width, height, which < 0), corners };
 }
+
+export { MONITOR_HUES };

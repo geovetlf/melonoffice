@@ -29,25 +29,28 @@ const MOTIFS = [
   'generic',
   'meeting',
 ];
+const SIDE = [1152, 640];
+const CENTRE = [806, 640];
 const jobs = [
   ...MOTIFS.map((motif, i) => ({
     name: `room-${motif}`,
     call: ['sideRoom', motif, i + 1],
-    size: [960, 600],
+    size: SIDE,
   })),
-  { name: 'headquarters', call: ['headquarters'], size: [640, 600] },
-  { name: 'atrium', call: ['atrium'], size: [640, 600] },
-  { name: 'lounge', call: ['lounge'], size: [640, 600] },
-  ...['back', ...[0, 1, 2, 3, 4, 5].map((i) => `person-${i}`)].map((layer) => ({
-    name: `desk-${layer}`,
-    call: ['workstation', layer, 'generic'],
-    size: [176, 220],
-  })),
-  // The desk in front, its monitor showing the department's kind of work.
+  { name: 'headquarters', call: ['headquarters'], size: CENTRE },
+  { name: 'gia', call: ['giaRoom'], size: CENTRE },
+  { name: 'atrium', call: ['atrium'], size: CENTRE },
+  { name: 'lounge', call: ['lounge'], size: CENTRE },
+  // A workstation: the desk (its monitor showing the department's kind of work), and a person.
   ...[...MOTIFS.filter((motif) => motif !== 'meeting'), 'map'].map((motif) => ({
-    name: `desk-front-${motif}`,
-    call: ['workstation', 'front', motif],
-    size: [176, 220],
+    name: `desk-${motif}`,
+    call: ['workstation', 'desk', motif],
+    size: [200, 200],
+  })),
+  ...[0, 1, 2, 3, 4, 5].map((i) => ({
+    name: `desk-person-${i}`,
+    call: ['workstation', `person-${i}`, 'generic'],
+    size: [200, 200],
   })),
 ].filter((job) => !only || only.includes(job.name));
 
@@ -101,11 +104,21 @@ for (const job of jobs) {
         context.drawImage(image, 0, 0, canvas.width, canvas.height);
         return canvas.toDataURL('image/webp', quality);
       };
-      return { x2: encode(1), x1: encode(0.5), corners: value.corners };
+      return {
+        x2: encode(1),
+        x1: encode(0.5),
+        corners: value.corners,
+        floor: value.floor,
+        gia: value.gia,
+        screen: value.screen,
+      };
     },
     { fn, args, w, h, quality: QUALITY },
   );
   corners ??= result.corners;
+  if (result.floor) console.log('FLOOR', job.name, JSON.stringify(result.floor));
+  if (result.gia) console.log('GIA', JSON.stringify(result.gia));
+  if (result.screen) console.log('SCREEN', job.name, JSON.stringify(result.screen));
   await writeFile(join(out, `${job.name}@2x.webp`), Buffer.from(result.x2.split(',')[1], 'base64'));
   // Workstations are small in the Home and drawn in SVG, which takes one picture: 2x only.
   if (!job.name.startsWith('desk-')) {

@@ -69,7 +69,7 @@ function weave(base, seed) {
 function tiles(seed) {
   const r = random(seed);
   return canvas(1024, 1024, (g, w, h) => {
-    g.fillStyle = '#dfe3e9';
+    g.fillStyle = '#e6e3de';
     g.fillRect(0, 0, w, h);
     for (let i = 0; i < 900; i += 1) {
       g.fillStyle = `rgba(${r() < 0.5 ? '255,255,255' : '160,170,185'},${0.05 + r() * 0.06})`;
@@ -89,6 +89,8 @@ function tiles(seed) {
 export function makeMaterials() {
   const floor = new THREE.MeshPhysicalMaterial({
     map: texture(tiles(7), [1, 1]),
+    transparent: true,
+    opacity: 0.62,
     roughness: 0.22,
     clearcoat: 0.6,
     clearcoatRoughness: 0.2,
@@ -102,11 +104,11 @@ export function makeMaterials() {
   // Pale grey composite: sideboards, shelving, frames.
   const stone = new THREE.MeshStandardMaterial({ color: '#d8dde4', roughness: 0.4 });
   const wall = new THREE.MeshStandardMaterial({
-    map: texture(noise('#eff1f4', 3, 4), [3, 3]),
+    map: texture(noise('#f4f1ec', 3, 4), [3, 3]),
     roughness: 0.9,
   });
   const wallTint = new THREE.MeshStandardMaterial({
-    map: texture(noise('#e9edf2', 4, 4), [3, 3]),
+    map: texture(noise('#eef0f3', 4, 4), [3, 3]),
     roughness: 0.9,
   });
   const ceiling = new THREE.MeshStandardMaterial({ color: '#f6f0ea', roughness: 0.95 });

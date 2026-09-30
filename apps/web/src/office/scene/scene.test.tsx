@@ -55,34 +55,34 @@ const task = (status: string, extra: Partial<AgentTaskView> = {}): AgentTaskView
   }) as AgentTaskView;
 
 describe('the building (Home V4)', () => {
-  it('puts the departments either side of headquarters, MelonMotor and the lounge', () => {
+  it('puts the departments either side of Consejo, GIA and MelonMotor, in the reference order', () => {
     const floors = buildingFloors(
       ['operations', 'sales', 'marketing', 'research', 'finance'].map(department),
     );
     expect(floors).toHaveLength(MIN_FLOORS);
-    expect(floors.map((floor) => floor.centre)).toEqual(['headquarters', 'motor', 'lounge']);
+    expect(floors.map((floor) => floor.centre)).toEqual(['headquarters', 'gia', 'motor']);
     expect(
       floors.flatMap((floor) =>
         [floor.left, floor.right].map((room) =>
           room.kind === 'department' ? room.department.typeId : room.kind,
         ),
       ),
-    ).toEqual(['operations', 'sales', 'marketing', 'research', 'finance', 'meeting']);
+    ).toEqual(['sales', 'operations', 'marketing', 'finance', 'research', 'meeting']);
   });
 
   it('grows a floor for every two more departments, so no department is left out', () => {
     const many = Array.from({ length: 9 }, (_, i) => department(`custom_${i}`));
     const floors = buildingFloors(many);
     expect(floors).toHaveLength(5);
-    expect(floors.slice(2).every((floor) => floor.centre === 'lounge')).toBe(true);
+    expect(floors.slice(3).every((floor) => floor.centre === 'lounge')).toBe(true);
     expect(
       floors.flatMap((f) => [f.left, f.right]).filter((r) => r.kind === 'department'),
     ).toHaveLength(9);
-    // An office with no departments still has GIA's headquarters and MelonMotor.
+    // An office with no departments still has Consejo's room, GIA and MelonMotor.
     expect(buildingFloors([]).map((floor) => floor.centre)).toEqual([
       'headquarters',
+      'gia',
       'motor',
-      'lounge',
     ]);
   });
 });

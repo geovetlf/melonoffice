@@ -1,11 +1,12 @@
 import type { DepartmentView } from '../officeClient.js';
 
 /**
- * How the Home's building is laid out (Home V4): floors of three rooms, a department either side
- * of a centre column. The centre holds headquarters (Consejo, with GIA) on the top floor,
- * MelonMotor's atrium below it and a lounge further down. Departments fill the side rooms in the
- * order they are given (the business profile's order, ADR-0048); a side room with no department
- * left is a meeting room. The building grows a floor for every two more departments, so a custom
+ * How the Home's office is laid out: rows of three rooms, a department either side of a centre
+ * column. The centre holds Consejo's board room on top, GIA at the heart of the office below it,
+ * MelonMotor under GIA and a lounge further down. Departments fill the side rooms row by row in
+ * the Home's reference order (Comercial and Operaciones, Marketing and Finanzas, then
+ * Investigación), by catalogue type; any other department follows in the order it is given (the
+ * business profile's order, ADR-0048). A side room with no department left is a meeting room. The building grows a floor for every two more departments, so a custom
  * department always gets a room and no department is assumed to exist.
  */
 
@@ -13,7 +14,7 @@ export type SideRoom =
   | { readonly kind: 'department'; readonly department: DepartmentView }
   | { readonly kind: 'meeting' };
 
-export type CentreRoom = 'headquarters' | 'motor' | 'lounge';
+export type CentreRoom = 'headquarters' | 'gia' | 'motor' | 'lounge';
 
 export interface Floor {
   readonly left: SideRoom;
@@ -21,10 +22,21 @@ export interface Floor {
   readonly right: SideRoom;
 }
 
-/** A building never has fewer floors than this: headquarters, MelonMotor and the lounge. */
+/** An office never has fewer rows than this: Consejo, GIA and MelonMotor. */
 export const MIN_FLOORS = 3;
 
-export function buildingFloors(departments: readonly DepartmentView[]): readonly Floor[] {
+const CENTRE: readonly CentreRoom[] = ['headquarters', 'gia', 'motor'];
+
+/** Where the catalogue's departments sit, by type: left then right, row by row. */
+const PLACES: readonly string[] = ['sales', 'operations', 'marketing', 'finance', 'research'];
+
+const place = (department: DepartmentView) => {
+  const at = PLACES.indexOf(department.typeId ?? '');
+  return at === -1 ? PLACES.length : at;
+};
+
+export function buildingFloors(given: readonly DepartmentView[]): readonly Floor[] {
+  const departments = [...given].sort((a, b) => place(a) - place(b));
   const count = Math.max(MIN_FLOORS, Math.ceil(departments.length / 2));
   const room = (i: number): SideRoom => {
     const department = departments[i];
@@ -32,7 +44,7 @@ export function buildingFloors(departments: readonly DepartmentView[]): readonly
   };
   return Array.from({ length: count }, (_, floor) => ({
     left: room(floor * 2),
-    centre: floor === 0 ? 'headquarters' : floor === 1 ? 'motor' : 'lounge',
+    centre: CENTRE[floor] ?? 'lounge',
     right: room(floor * 2 + 1),
   }));
 }
