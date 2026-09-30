@@ -1,6 +1,6 @@
 # Phase 2: typeface for the Home
 
-Three candidate typefaces on the real Home, for Geovet to choose from. **No typeface is chosen yet.** The app keeps Onest (ADR-0106) until a choice is made.
+Three candidate typefaces on the real Home, compared for Geovet to choose from. **Instrument Sans was chosen** (see the decision at the end and [ADR-0107](../../adr/0107-instrument-sans.md)).
 
 ## How the comparison was made
 
@@ -60,3 +60,37 @@ At these sizes no text wraps differently: the side panel and the sidebar are the
 | Density                   | The widest: about 5% wider than Figtree.                                                                   | The densest.                                                                                 | In between.                                                                                         |
 | Desktop / phone           | Good on both. At 390 the search placeholder is cut sooner, because the glyphs are wider.                   | Good on both. The most text fits.                                                            | Good on desktop. On a phone the 11 to 12 px text is the hardest of the three to read.               |
 | Beside the 3D office      | The friendliest next to the soft 3D rooms and GIA.                                                         | Neutral: it disappears against the art.                                                      | Sharp against the soft rooms: more "control room", less "office".                                   |
+
+## Decision: C, Instrument Sans ([ADR-0107](../../adr/0107-instrument-sans.md))
+
+Geovet chose Instrument Sans. It is now the app's typeface, with type tokens that correct what the comparison showed: a 0.05 em word spacing for its narrow space, headline and uppercase tracking set once, and 11 px as the smallest size.
+
+Before and after, at 2x. Each image has three columns: Onest on `main`, Instrument Sans with no adjustment, and Instrument Sans with the ADR-0107 tokens.
+
+| Part of the Home | Before and after                         |
+| ---------------- | ---------------------------------------- |
+| Sidebar          | [ba-sidebar](final/ba-sidebar.jpg)       |
+| Top bar          | [ba-topbar](final/ba-topbar.jpg)         |
+| Header           | [ba-header](final/ba-header.jpg)         |
+| A room's label   | [ba-room](final/ba-room.jpg)             |
+| Side panel       | [ba-side-panel](final/ba-side-panel.jpg) |
+| Command box      | [ba-command](final/ba-command.jpg)       |
+
+The app with Instrument Sans:
+
+- Home at 1440 ([office at work](final/home-active-1440.jpg), [new office](final/home-empty-1440.jpg)), [1024](final/home-active-1024.jpg) and [390](final/home-active-390.jpg).
+- Other screens: [GIA](final/gia-1440.jpg), [Agents](final/agents-1440.jpg), [Approvals](final/approvals-1440.jpg) and the [Comercial office](final/office-sales-1440.jpg).
+
+### Validation
+
+| Check                     | Result                                                                                                                           |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Small text (11–12 px)     | Meta strings keep their spaces ("Tú · hace 8 minutos"), and nothing is below 11 px.                                              |
+| Hierarchy                 | Titles, panel headings and body text separate clearly. Uppercase labels are semibold at 12 px with one tracking amount.          |
+| Density                   | Same layout as before: side panel 733 px, sidebar 398 px; the title is 364 px, Onest was 362 px ([metrics](final/metrics.json)). |
+| Titles                    | Tight (-0.01 em) and technical, with no crowding.                                                                                |
+| Navigation                | Items read clearly; the active item and the "Pronto" badges are unchanged.                                                       |
+| Buttons, chips and badges | Readable at every size. The notification count is 11 px bold.                                                                    |
+| Figures (credits, counts) | Tabular in the credit balance, and narrow elsewhere, as the typeface draws them.                                                 |
+| Desktop and phone         | 1440, 1024 and 390 hold. Room labels fit, and the phone placeholder is cut as before.                                            |
+| Contrast and white-label  | Unchanged from ADR-0106: colour tokens and their tests were not touched.                                                         |

@@ -196,9 +196,9 @@ importers:
       '@fontsource-variable/figtree':
         specifier: 5.3.0
         version: 5.3.0
-      '@fontsource-variable/instrument-sans':
-        specifier: 5.3.0
-        version: 5.3.0
+      '@fontsource-variable/onest':
+        specifier: 5.3.1
+        version: 5.3.1
       '@melonoffice/config':
         specifier: workspace:*
         version: link:../../packages/config
@@ -1438,9 +1438,9 @@ importers:
 
   packages/ui:
     dependencies:
-      '@fontsource-variable/onest':
-        specifier: 5.3.1
-        version: 5.3.1
+      '@fontsource-variable/instrument-sans':
+        specifier: 5.3.0
+        version: 5.3.0
     devDependencies:
       '@melonoffice/config':
         specifier: workspace:*

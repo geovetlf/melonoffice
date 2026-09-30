@@ -66,13 +66,13 @@
 .sidebar__logo {
   font-size: var(--mo-font-size-xl);
   font-weight: var(--mo-font-weight-bold);
-  letter-spacing: -0.02em;
+  letter-spacing: var(--mo-font-tracking-tight);
   color: var(--mo-color-accent);
 }
 
 .sidebar__tagline {
   font-size: var(--mo-font-size-xs);
-  letter-spacing: 0.12em;
+  letter-spacing: var(--mo-font-tracking-wide);
   text-transform: uppercase;
   color: var(--mo-color-text-secondary);
 }
@@ -80,9 +80,9 @@
 .sidebar__heading {
   margin: 0 0 var(--mo-space-1);
   padding: 0 var(--mo-space-3);
-  font-size: 0.8125rem;
-  font-weight: var(--mo-font-weight-medium);
-  letter-spacing: 0.1em;
+  font-size: var(--mo-font-size-xs);
+  font-weight: var(--mo-font-weight-semibold);
+  letter-spacing: var(--mo-font-tracking-wide);
   text-transform: uppercase;
   color: var(--mo-color-text-secondary);
 }
@@ -102,7 +102,7 @@
   min-height: 40px;
   padding: 7px var(--mo-space-3);
   border-radius: var(--mo-radius-md);
-  font-size: 1.02rem;
+  font-size: var(--mo-font-size-md);
   text-decoration: none;
   color: var(--mo-color-text-primary);
   transition: background-color 160ms ease;
@@ -137,7 +137,7 @@ a.sidebar__item:hover {
   padding: 1px var(--mo-space-2);
   border: 1px solid var(--mo-color-border);
   border-radius: var(--mo-radius-pill);
-  font-size: 0.6875rem;
+  font-size: var(--mo-font-size-xxs);
   color: var(--mo-color-text-secondary);
 }
 
@@ -440,7 +440,7 @@ a.sidebar__item:hover {
   margin: var(--mo-space-1) 0 var(--mo-space-2);
   font-size: clamp(1.75rem, 1.2rem + 1.8vw, 2.75rem);
   line-height: 1.1;
-  letter-spacing: -0.02em;
+  letter-spacing: var(--mo-font-tracking-tight);
 }
 
 .home__subtitle {
@@ -2566,7 +2566,7 @@ a.sidebar__item:hover {
 }
 
 .documents__meta {
-  font-size: 0.875rem;
+  font-size: var(--mo-font-size-sm);
 }
 
 /* AI usage and credits (ADR-0074, ADR-0081). */
@@ -2619,19 +2619,19 @@ a.sidebar__item:hover {
 }
 
 .ai-usage__total dt {
-  font-size: 0.875rem;
+  font-size: var(--mo-font-size-sm);
 }
 
 .ai-usage__total dd {
   margin: var(--mo-space-1) 0 0;
-  font-size: 1.5rem;
+  font-size: var(--mo-font-size-xl);
   font-weight: 700;
 }
 
 .ai-usage__note {
   grid-column: 1 / -1;
   margin: 0;
-  font-size: 0.875rem;
+  font-size: var(--mo-font-size-sm);
 }
 
 .ai-usage__breakdowns {
@@ -2647,7 +2647,7 @@ a.sidebar__item:hover {
 .ai-usage__table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.875rem;
+  font-size: var(--mo-font-size-sm);
 }
 
 .ai-usage__table th,
@@ -2766,13 +2766,13 @@ a.sidebar__item:hover {
 
 .command-center__figure dd {
   margin: 0;
-  font-size: 1.25rem;
+  font-size: var(--mo-font-size-lg);
   font-weight: 700;
 }
 
 .command-center__big {
   margin: var(--mo-space-2) 0;
-  font-size: 1.25rem;
+  font-size: var(--mo-font-size-lg);
   font-weight: 700;
 }
 
@@ -2811,7 +2811,7 @@ a.sidebar__item:hover {
   padding: 0 var(--mo-space-2);
   border-radius: 999px;
   border: 1px solid currentcolor;
-  font-size: 0.75rem;
+  font-size: var(--mo-font-size-xs);
 }
 
 .platform__provider[data-health='degraded'] .platform__badge,
@@ -2842,7 +2842,7 @@ a.sidebar__item:hover {
   border-radius: 999px;
   background: var(--mo-color-accent);
   color: var(--mo-color-text-on-accent);
-  font-size: 0.6875rem;
+  font-size: var(--mo-font-size-xxs);
   font-weight: 700;
   line-height: 1.25rem;
   text-align: center;
@@ -2919,5 +2919,5 @@ a.sidebar__item:hover {
   margin: var(--mo-space-2) 0 0;
   padding-left: var(--mo-space-6);
   color: var(--mo-color-text-secondary);
-  font-size: 0.875rem;
+  font-size: var(--mo-font-size-sm);
 }

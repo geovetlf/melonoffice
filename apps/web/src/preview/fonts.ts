@@ -1,20 +1,21 @@
 import { font } from '@melonoffice/ui';
 
 /**
- * The typefaces compared for the Home redesign (phase 2). Each replaces only the first family of
- * the token `--mo-font-family`, so every option keeps the same fallbacks, sizes and weights.
- * Onest is the app's own (packages/ui); the others load here, for the preview only.
+ * The typefaces compared for the Home redesign (phase 2, ADR-0107). Each replaces only the first
+ * family of the token `--mo-font-family`, so every option keeps the same fallbacks, sizes and
+ * weights. Instrument Sans, the one chosen, is the app's own (packages/ui); the others load here,
+ * for the preview only.
  */
 export const REVIEW_FONTS = {
-  onest: { family: 'Onest Variable', load: () => Promise.resolve() },
+  onest: {
+    family: 'Onest Variable',
+    load: () => import('@fontsource-variable/onest/wght.css'),
+  },
   figtree: {
     family: 'Figtree Variable',
     load: () => import('@fontsource-variable/figtree/wght.css'),
   },
-  'instrument-sans': {
-    family: 'Instrument Sans Variable',
-    load: () => import('@fontsource-variable/instrument-sans/wght.css'),
-  },
+  'instrument-sans': { family: 'Instrument Sans Variable', load: () => Promise.resolve() },
 } as const;
 
 export type ReviewFont = keyof typeof REVIEW_FONTS;
