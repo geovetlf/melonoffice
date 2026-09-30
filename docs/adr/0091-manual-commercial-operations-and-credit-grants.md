@@ -22,6 +22,7 @@ Before any payment provider exists, MelonOffice sells by hand: a partner is agre
    - `POST /v1/platform/commercial-accounts/:id/limits {limits:{customers, members}, expectedUpdatedAt}`, with `members ≥ 1`; a closed account cannot change.
    - Both change the account only from the version read (`updatedAt`) in one transaction with their audit event (`commercial_account.status_changed`, `commercial_account.limits_changed`); a stale version is `commercial_conflict` (409).
    - Creating an account and adding a member now require the named user id to exist.
+   - An owner cannot accept a pending request from a suspended or closed account (`commercial_account_inactive`, 409); they can still end it. Invitations already refused this.
 
 3. **Manual credit grants through the one Credits engine.** `CreditService.grantAsPlatform(admin, organizationId, {amount, referenceId, reason})` writes a normal `grant` ledger entry on the organization's existing wallet. It is not AI consumption, and there is no second wallet, balance, price or payment. `POST /v1/platform/organizations/:id/credit-grants {amount, reason, idempotencyKey}`:
    - `amount`: a whole number of credits, 1 to 10^12. `reason`: one of `manual_purchase`, `courtesy`, `support_compensation`, `testing` (codes, never free text). `idempotencyKey`: a UUID.
