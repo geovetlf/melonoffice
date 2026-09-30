@@ -22,7 +22,7 @@
   --office-state-attention: #d4372c;
   --office-state-paused: #9a8a7e;
   --office-state-offline: #c4b8ad;
-  --sidebar-width: 16.75rem;
+  --sidebar-width: 17.5rem;
 
   display: grid;
   grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
@@ -122,7 +122,7 @@
   min-height: 40px;
   padding: 7px var(--mo-space-3);
   border-radius: var(--mo-radius-md);
-  font-size: 0.975rem;
+  font-size: 1.02rem;
   text-decoration: none;
   color: var(--office-text);
   transition: background-color 160ms ease;

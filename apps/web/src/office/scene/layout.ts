@@ -36,16 +36,3 @@ export function buildingFloors(departments: readonly DepartmentView[]): readonly
     right: room(floor * 2 + 1),
   }));
 }
-
-/**
- * Where a room's middle is in the building, as fractions of its width and height: the columns
- * are 3 : 2 : 3 and every floor is as tall as the others. MelonMotor's lines are drawn from these.
- */
-export function roomCentre(
-  floors: number,
-  floor: number,
-  side: 'left' | 'centre' | 'right',
-): { readonly x: number; readonly y: number } {
-  const x = side === 'left' ? 1.5 / 8 : side === 'centre' ? 4 / 8 : 6.5 / 8;
-  return { x, y: (floor + 0.5) / floors };
-}

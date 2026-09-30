@@ -60,3 +60,17 @@ Geovet asked for the offices, furniture and agents to be redrawn in a modern 3D 
 - A workstation is three layers (chair and shadow, person, desk), so the Home still seats an agent or not. The monitor shows the department's kind of work, with no words or figures. The agent's state is drawn over it (dark when paused or offline, dimmed for an ambient figure, moving lines while working), and the state light is unchanged.
 - GIA is part of headquarters' art. Her link covers her and keeps the chip, which now carries her avatar.
 - The art carries no text or data, so any room or person can be replaced by other art (a 3D artist's renders, for example) at the same sizes and slots without changing code.
+
+## Amendment (2026-09-30): the office of the future and MelonMotor's circuits
+
+Geovet asked for the offices to read as a real office of the future where AI agents work: glass, metal, white and light grey, integrated light and discreet holographic touches, with no wood and nothing that looks like a spaceship or a game. MelonMotor becomes the building's nervous system, with circuits that move with real activity.
+
+- **Materials.** The art is re-baked with no wood: a light composite floor with a clear coat, white composite and aluminium furniture, smoked glass, fine LED lines under screens and along the floor, and a soft bloom only on light sources. The palette stays cool; coral marks GIA and attention. Green is not used.
+- **Each room shows its function** on glass panels behind the desks, with shapes and no words or figures: Comercial a funnel and a pipeline, Operaciones a kanban and a process flow, Marketing campaign creatives, Diseño layouts and creatives, Investigación a data network and documents, Finanzas charts, Consejo objectives and strategy in headquarters.
+- **GIA** stands on a lit platform at the centre of headquarters, part of the building. Her link and chip are unchanged.
+- **MelonMotor** is a glass column of light in the atrium with a circuit wall behind it. Its link and panel are unchanged.
+- **Circuits** (`apps/web/src/office/scene/circuits.ts`) are drawn in SVG over the building: from the core to GIA and to each department's screen, with 45° corners. Each circuit's level comes only from its agents' real states (`attention`, `busy`, `ready`, `off`). Busy circuits carry one pulse per working agent (three at most) plus one returning; attention carries coral pulses back to the core; a circuit with nobody active is faint and still. GIA's trunk carries one pulse per active department at once. Hovering or focusing a room lights its circuit; opening MelonMotor shows the flows through the core. Nothing is invented: with no activity nothing moves.
+- **Oficina viva.** Screens refresh with a slow sweep and circuits breathe when ready. On a phone, where the circuits are hidden, each working room shows a thin moving data line.
+- **Reduced motion** stops every pulse, sweep and breath and keeps the static lines.
+- **Performance.** SMIL and CSS only (`transform`, `opacity`, `filter`), no new dependencies, and art stays WebP.
+- **Diseño.** The Home draws whatever the department catalogue returns. If Diseño is listed in an organisation, its room is drawn with its own art.

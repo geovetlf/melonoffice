@@ -198,10 +198,13 @@
   gap: 6px;
   padding: 6px;
   border-radius: 24px;
-  background: linear-gradient(180deg, #e7d8c9, #d9c5b1);
+  border: 1px solid rgb(255 255 255 / 0.9);
+  background:
+    radial-gradient(60% 50% at 50% 45%, rgb(124 192 255 / 0.22), transparent 70%),
+    linear-gradient(180deg, #eef2f7, #dde4ed);
   box-shadow:
-    0 1px 0 rgb(255 255 255 / 0.8) inset,
-    0 24px 60px rgb(74 46 28 / 0.18);
+    0 1px 0 rgb(255 255 255 / 0.9) inset,
+    0 24px 60px rgb(36 58 92 / 0.16);
   overflow: hidden;
   isolation: isolate;
 }
@@ -210,7 +213,7 @@
   position: relative;
   overflow: hidden;
   container-type: inline-size;
-  background: #efe3d6;
+  background: #e9edf2;
 }
 
 .b-room--side {
@@ -229,13 +232,13 @@
   border-radius: 14px;
 }
 
-/* The floor's slab: a warm line of light along the ceiling. */
+/* The floor's slab: a cool line of light along the ceiling. */
 .b-room::after {
   content: '';
   position: absolute;
   inset: 0 0 auto;
-  height: 3px;
-  background: linear-gradient(90deg, transparent, rgb(255 214 160 / 0.9), transparent);
+  height: 2px;
+  background: linear-gradient(90deg, transparent, rgb(170 214 255 / 0.95), transparent);
   pointer-events: none;
 }
 
@@ -263,8 +266,10 @@
 
 .b-room__link:hover,
 .b-room__link:focus-visible {
-  background: rgb(255 236 214 / 0.14);
-  box-shadow: inset 0 0 0 2px rgb(242 120 75 / 0.55);
+  background: rgb(214 234 255 / 0.12);
+  box-shadow:
+    inset 0 0 0 2px rgb(124 192 255 / 0.75),
+    inset 0 0 28px rgb(124 192 255 / 0.28);
 }
 
 .b-room__link:focus-visible {
@@ -291,9 +296,11 @@
   gap: 0.45em;
   max-width: 94%;
   padding: 0.3em 0.6em 0.3em 0.3em;
+  border: 1px solid rgb(255 255 255 / 0.9);
   border-radius: 10px;
-  background: rgb(255 253 251 / 0.95);
-  box-shadow: 0 4px 12px rgb(74 46 28 / 0.16);
+  background: rgb(255 255 255 / 0.82);
+  box-shadow: 0 4px 14px rgb(36 58 92 / 0.14);
+  backdrop-filter: blur(8px);
   font-size: clamp(0.72rem, 3.3cqw, 0.9rem);
   line-height: 1.2;
   white-space: nowrap;
@@ -405,9 +412,10 @@
   overflow: hidden;
   border-radius: 3px;
   background:
-    radial-gradient(120% 90% at 20% 0%, rgb(255 180 140 / 0.18), transparent 60%),
-    linear-gradient(180deg, #2b2628, #1d1a1c);
-  color: #fbeee4;
+    radial-gradient(120% 90% at 20% 0%, rgb(124 192 255 / 0.24), transparent 60%),
+    linear-gradient(180deg, #17243b, #0d1627);
+  box-shadow: 0 0 18px rgb(124 192 255 / 0.25);
+  color: #eaf3ff;
   font-size: clamp(0.42rem, 2.15cqw, 0.66rem);
   line-height: 1.25;
   pointer-events: none;
@@ -434,7 +442,34 @@
 
 .wall-screen__state,
 .wall-screen__rest {
-  color: rgb(251 238 228 / 0.7);
+  color: rgb(234 243 255 / 0.7);
+}
+
+/* The screen refreshing: a soft band of light passes over it now and then. */
+.wall-screen::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    100deg,
+    transparent 30%,
+    rgb(170 214 255 / 0.16) 50%,
+    transparent 70%
+  );
+  transform: translateX(-100%);
+  animation: wall-screen-refresh 7s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes wall-screen-refresh {
+  0%,
+  60% {
+    transform: translateX(-100%);
+  }
+
+  100% {
+    transform: translateX(100%);
+  }
 }
 
 .wall-screen--idle .wall-screen__rest {
@@ -823,7 +858,8 @@
 }
 
 /* MelonMotor's lines, over the whole building. */
-.motor-lines {
+/* MelonMotor's circuits: traces of light from the core to GIA and every department. */
+.circuits {
   position: absolute;
   inset: 6px;
   z-index: 4;
@@ -832,31 +868,105 @@
   pointer-events: none;
 }
 
-.motor-lines__line {
-  stroke: rgb(242 120 75 / 0.32);
-  stroke-width: 1.2;
-  stroke-dasharray: 2 5;
-  vector-effect: non-scaling-stroke;
+.circuit {
+  transition: opacity 300ms ease;
 }
 
-.motor-lines__line--busy,
-.motor-lines__line--gia {
-  stroke: rgb(242 120 75 / 0.62);
-}
-
-.motor-lines__flow {
+.circuit__glow,
+.circuit__trace {
   fill: none;
-  stroke: rgb(217 144 28 / 0.6);
-  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
   vector-effect: non-scaling-stroke;
 }
 
-.motor-lines__pulse {
-  fill: #f2784b;
+.circuit__glow {
+  stroke: rgb(124 192 255 / 0.22);
+  stroke-width: 7;
 }
 
-.motor-lines__pulse--flow {
-  fill: #d9901c;
+.circuit__trace {
+  stroke: rgb(170 214 255 / 0.9);
+  stroke-width: 1.5;
+}
+
+.circuit__node {
+  fill: #f2f8ff;
+  stroke: rgb(124 192 255 / 0.9);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.circuit__core {
+  fill: #fff;
+  stroke: rgb(124 192 255 / 0.9);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+/* Nobody active: faint. Agents ready: a quiet, breathing line. Working: bright. */
+.circuit--off {
+  opacity: 0.3;
+}
+
+.circuit--ready {
+  opacity: 0.6;
+  animation: circuit-breathe 5s ease-in-out infinite;
+}
+
+.circuit--busy,
+.circuit--attention,
+.circuit--hot {
+  opacity: 1;
+}
+
+.circuit--attention .circuit__trace,
+.circuit--flow .circuit__trace {
+  stroke: rgb(255 160 120 / 0.95);
+}
+
+.circuit--attention .circuit__glow {
+  stroke: rgb(255 138 92 / 0.25);
+}
+
+.circuit--hot .circuit__glow {
+  stroke: rgb(124 192 255 / 0.4);
+  stroke-width: 10;
+}
+
+.circuit--hot {
+  animation: none;
+}
+
+.circuit__halo {
+  fill: rgb(124 192 255 / 0.45);
+}
+
+.circuit__dot {
+  fill: #fff;
+}
+
+.circuit__pulse--coral .circuit__halo {
+  fill: rgb(255 138 92 / 0.55);
+}
+
+.circuit__pulse--coral .circuit__dot {
+  fill: #fff1ea;
+}
+
+.circuit__pulse--scan .circuit__halo {
+  fill: rgb(255 255 255 / 0.5);
+}
+
+@keyframes circuit-breathe {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+
+  50% {
+    opacity: 0.75;
+  }
 }
 
 /* MelonMotor's panel and an agent's card. */
@@ -1250,6 +1360,29 @@
  * department opens full screen (its office); an agent's card rises from the bottom.
  */
 @media (max-width: 48rem) {
+  /* No room for circuits on a phone: a room whose agents work carries a moving line of light. */
+  .b-room--department::before {
+    content: '';
+    position: absolute;
+    inset: auto 0 0;
+    z-index: 3;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, rgb(124 192 255), transparent);
+    opacity: 0;
+    transform: translateX(-100%);
+    pointer-events: none;
+  }
+
+  .b-room--working::before,
+  .b-room--attention::before {
+    opacity: 1;
+    animation: room-data 2.8s linear infinite;
+  }
+
+  .b-room--attention::before {
+    background: linear-gradient(90deg, transparent, rgb(255 138 92), transparent);
+  }
+
   .building__frame {
     grid-template-columns: 1fr 1fr;
     gap: 6px;
@@ -1276,12 +1409,12 @@
   }
 
   .b-room--motor .b-room__art {
-    object-position: center 85%;
+    object-position: center 45%;
   }
 
   .b-room--lounge,
   .b-room--meeting,
-  .motor-lines,
+  .circuits,
   .b-room__desks,
   .wall-screen {
     display: none;
@@ -1450,6 +1583,16 @@
   }
 }
 
+@keyframes room-data {
+  from {
+    transform: translateX(-100%);
+  }
+
+  to {
+    transform: translateX(100%);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .desk__breath,
   .desk__lines rect,
@@ -1458,6 +1601,9 @@
   .b-gia__dot,
   .b-motor__mark,
   .wall-screen__bar::after,
+  .wall-screen::after,
+  .circuit--ready,
+  .b-room--department::before,
   .agent-sheet,
   .motor-panel {
     animation: none;

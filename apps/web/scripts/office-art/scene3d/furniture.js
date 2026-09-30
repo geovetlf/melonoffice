@@ -27,18 +27,18 @@ function cylinder(rt, rb, h, material, segments = 24) {
   return mesh(new THREE.CylinderGeometry(rt, rb, h, segments), material);
 }
 
-/** A white-oak desk on thin black legs. */
+/** A white composite desk on slim aluminium legs, a line of light under its front edge. */
 export function desk(m, w = 1.4, d = 0.7) {
   const g = new THREE.Group();
-  g.add(at(box(w, 0.035, d, m.oak, 0.008), 0, 0.735, 0));
+  g.add(at(box(w, 0.035, d, m.composite, 0.008), 0, 0.735, 0));
   for (const sx of [-1, 1]) {
-    // A-frame legs.
-    g.add(at(box(0.035, 0.72, 0.035, m.blackMetal), sx * (w / 2 - 0.08), 0.36, d / 2 - 0.08));
-    g.add(at(box(0.035, 0.72, 0.035, m.blackMetal), sx * (w / 2 - 0.08), 0.36, -d / 2 + 0.08));
-    g.add(at(box(0.035, 0.03, d - 0.12, m.blackMetal), sx * (w / 2 - 0.08), 0.06, 0));
+    g.add(at(box(0.035, 0.72, 0.035, m.aluminium), sx * (w / 2 - 0.08), 0.36, d / 2 - 0.08));
+    g.add(at(box(0.035, 0.72, 0.035, m.aluminium), sx * (w / 2 - 0.08), 0.36, -d / 2 + 0.08));
+    g.add(at(box(0.035, 0.03, d - 0.12, m.aluminium), sx * (w / 2 - 0.08), 0.06, 0));
   }
+  g.add(at(box(w - 0.3, 0.008, 0.008, m.led), 0, 0.71, d / 2 - 0.06));
   // A modesty panel on the side away from whoever sits there.
-  g.add(at(box(w - 0.22, 0.46, 0.018, m.oak, 0.004), 0, 0.49, d / 2 - 0.1));
+  g.add(at(box(w - 0.22, 0.46, 0.018, m.composite, 0.004), 0, 0.49, d / 2 - 0.1));
   return g;
 }
 
@@ -106,16 +106,16 @@ export function officeChair(m, fabric) {
   g.add(at(cylinder(0.025, 0.025, 0.36, m.aluminium), 0, 0.27, 0));
   for (let i = 0; i < 5; i += 1) {
     const a = (i / 5) * Math.PI * 2;
-    const leg = box(0.3, 0.025, 0.04, m.blackMetal);
+    const leg = box(0.3, 0.025, 0.04, m.aluminium);
     leg.position.set(Math.cos(a) * 0.15, 0.06, Math.sin(a) * 0.15);
     leg.rotation.y = -a;
     g.add(leg);
   }
-  for (const sx of [-1, 1]) g.add(at(box(0.04, 0.2, 0.3, m.blackMetal, 0.01), sx * 0.26, 0.6, 0));
+  for (const sx of [-1, 1]) g.add(at(box(0.04, 0.2, 0.3, m.aluminium, 0.01), sx * 0.26, 0.6, 0));
   return g;
 }
 
-/** A lounge chair or sofa in fabric on oak legs. */
+/** A sofa in fabric on slim legs. */
 export function sofa(m, fabric, w = 1.8) {
   const g = new THREE.Group();
   g.add(at(box(w, 0.2, 0.8, fabric, 0.06), 0, 0.3, 0));
@@ -129,14 +129,14 @@ export function sofa(m, fabric, w = 1.8) {
   }
   for (const sx of [-1, 1]) {
     for (const sz of [-1, 1])
-      g.add(at(cylinder(0.02, 0.015, 0.2, m.oak), sx * (w / 2 - 0.1), 0.1, sz * 0.32));
+      g.add(at(cylinder(0.02, 0.015, 0.2, m.composite), sx * (w / 2 - 0.1), 0.1, sz * 0.32));
   }
   return g;
 }
 
 export function coffeeTable(m, r = 0.4) {
   const g = new THREE.Group();
-  g.add(at(cylinder(r, r, 0.03, m.oak, 48), 0, 0.42, 0));
+  g.add(at(cylinder(r, r, 0.03, m.composite, 48), 0, 0.42, 0));
   g.add(at(cylinder(0.03, 0.05, 0.4, m.blackMetal), 0, 0.2, 0));
   g.add(at(cylinder(0.2, 0.2, 0.02, m.blackMetal), 0, 0.01, 0));
   return g;
@@ -144,7 +144,7 @@ export function coffeeTable(m, r = 0.4) {
 
 export function meetingTable(m, w = 2.6, d = 1.1) {
   const g = new THREE.Group();
-  const top = mesh(new RoundedBoxGeometry(w, 0.04, d, 4, 0.02), m.walnut);
+  const top = mesh(new RoundedBoxGeometry(w, 0.04, d, 4, 0.02), m.stone);
   top.position.y = 0.74;
   g.add(top);
   for (const sx of [-1, 1])
@@ -152,15 +152,15 @@ export function meetingTable(m, w = 2.6, d = 1.1) {
   return g;
 }
 
-/** A walnut shelf of books, a few objects and a plant. */
+/** A pale shelf of books and a few objects. */
 export function bookshelf(m, w = 1.2, h = 2.0, seed = 1) {
   const r = random(seed);
   const g = new THREE.Group();
   const d = 0.34;
-  g.add(at(box(w, 0.03, d, m.walnut), 0, h, 0));
-  g.add(at(box(w, 0.03, d, m.walnut), 0, 0.015, 0));
-  for (const sx of [-1, 1]) g.add(at(box(0.03, h, d, m.walnut), sx * (w / 2 - 0.015), h / 2, 0));
-  g.add(at(box(w, h, 0.02, m.walnut), 0, h / 2, -d / 2 + 0.01));
+  g.add(at(box(w, 0.03, d, m.stone), 0, h, 0));
+  g.add(at(box(w, 0.03, d, m.stone), 0, 0.015, 0));
+  for (const sx of [-1, 1]) g.add(at(box(0.03, h, d, m.stone), sx * (w / 2 - 0.015), h / 2, 0));
+  g.add(at(box(w, h, 0.02, m.stone), 0, h / 2, -d / 2 + 0.01));
   const shelves = 4;
   const bookColors = [
     '#e9dfd2',
@@ -175,7 +175,7 @@ export function bookshelf(m, w = 1.2, h = 2.0, seed = 1) {
   ];
   for (let s = 0; s < shelves; s += 1) {
     const y = 0.03 + (s * (h - 0.05)) / shelves;
-    if (s > 0) g.add(at(box(w - 0.04, 0.025, d - 0.02, m.walnut), 0, y, 0));
+    if (s > 0) g.add(at(box(w - 0.04, 0.025, d - 0.02, m.stone), 0, y, 0));
     let x = -w / 2 + 0.05;
     const kind = Math.floor(r() * 3);
     while (x < w / 2 - 0.1) {
@@ -245,7 +245,7 @@ export function plant(m, kind = 'tall', seed = 1, scale = 1) {
     for (let s = 0; s < stems; s += 1) {
       const sx = (r() - 0.5) * (kind === 'tall' ? 0.02 : 0.14);
       const sz = (r() - 0.5) * (kind === 'tall' ? 0.02 : 0.14);
-      const stem = cylinder(0.012, 0.016, top, m.walnut, 8);
+      const stem = cylinder(0.012, 0.016, top, m.stone, 8);
       stem.position.set(sx, potH + top / 2, sz);
       g.add(stem);
       const leaves = kind === 'tall' ? 26 : 9;
@@ -304,7 +304,7 @@ export function floorLamp(m) {
 }
 
 /** A framed board on the wall. */
-export function board(m, material, w = 1.2, h = 0.75, frame = m.walnut) {
+export function board(m, material, w = 1.2, h = 0.75, frame = m.stone) {
   const g = new THREE.Group();
   g.add(at(box(w + 0.05, h + 0.05, 0.03, frame, 0.004), 0, 0, 0));
   const face = mesh(new THREE.PlaneGeometry(w, h), material, { cast: false });
