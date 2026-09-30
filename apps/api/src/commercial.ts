@@ -45,6 +45,7 @@ import {
   type CommercialContext,
   type CustomerAccess,
   type CommercialRepository,
+  type PlatformAdminContext,
   type TenancyStore,
   type TenantContext,
 } from '@melonoffice/tenancy';
@@ -313,6 +314,40 @@ export function registerCommercialRoutes(app: Hono<AuthEnv>, deps: CommercialDep
   });
 
   /**
+   * A platform administrator's change to an account (ADR-0091): the administrator check first,
+   * then the change. Every refusal after the check (bad input, a transition the account cannot
+   * make, a close not confirmed, a stale version) is audited as denied with its code, so every
+   * attempt leaves a trace, not only the ones that changed something.
+   */
+  const platformChange = (
+    c: Context<AuthEnv>,
+    action: 'commercial_account.status_changed' | 'commercial_account.limits_changed',
+    work: (admin: PlatformAdminContext) => Promise<Response>,
+  ) =>
+    guarded(c, async () => {
+      const admin = await platformAdminOf(c, admins, { audit, action });
+      if (admin instanceof Response) return admin;
+      const response = await guarded(c, () => work(admin));
+      if (response.status >= 400) {
+        const payload = (await response
+          .clone()
+          .json()
+          .catch(() => ({}))) as Record<string, unknown>;
+        const id = c.req.param('accountId') ?? '';
+        await recordOutcome(c, audit, {
+          action,
+          result: 'denied',
+          actor: actorOf(c.get('auth')),
+          actorRole: admin.role,
+          ...(UUID.test(id) ? { target: { type: 'commercial_account', id } } : {}),
+          reason: typeof payload.error === 'string' ? payload.error : `http_${response.status}`,
+          ...requestFields(c),
+        });
+      }
+      return response;
+    });
+
+  /**
    * The account the platform administrator names in the path, with the version they read. Every
    * refusal after the administrator check says what was wrong with the request, never whether
    * another account exists: the administrator sees every account anyway.
@@ -335,12 +370,7 @@ export function registerCommercialRoutes(app: Hono<AuthEnv>, deps: CommercialDep
   // final and asks for the account's exact name. Nothing is deleted: members, relationships,
   // invitations, brand and history stay, and the id is never reused.
   app.post('/v1/platform/commercial-accounts/:accountId/status', (c) =>
-    guarded(c, async () => {
-      const admin = await platformAdminOf(c, admins, {
-        audit,
-        action: 'commercial_account.status_changed',
-      });
-      if (admin instanceof Response) return admin;
+    platformChange(c, 'commercial_account.status_changed', async (admin) => {
       const input = await body(c);
       const status = input.status;
       if (status !== 'active' && status !== 'suspended' && status !== 'closed') {
@@ -382,12 +412,7 @@ export function registerCommercialRoutes(app: Hono<AuthEnv>, deps: CommercialDep
   // Changes an account's limits (ADR-0091). A lower limit removes nobody: it only stops new
   // customers or members until the account is under it again.
   app.post('/v1/platform/commercial-accounts/:accountId/limits', (c) =>
-    guarded(c, async () => {
-      const admin = await platformAdminOf(c, admins, {
-        audit,
-        action: 'commercial_account.limits_changed',
-      });
-      if (admin instanceof Response) return admin;
+    platformChange(c, 'commercial_account.limits_changed', async (admin) => {
       const input = await body(c);
       const limits = input.limits as Record<string, unknown> | undefined;
       if (

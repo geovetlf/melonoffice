@@ -766,7 +766,7 @@ export const AUDIT_ACTIONS = {
   'commercial_account.status_changed': {
     category: 'commercial',
     description:
-      "The platform administrator suspended, reactivated or closed a partner or agency account (ADR-0091); `transition` is the change. Nothing is deleted: its members, customers and history stay. Denied when the caller is not a verified platform administrator.",
+      'The platform administrator suspended, reactivated or closed a partner or agency account (ADR-0091); `transition` is the change. Nothing is deleted: its members, customers and history stay. Denied when the caller is not a verified platform administrator.',
     results: ['success', 'denied'],
   },
   'commercial_account.limits_changed': {

@@ -131,10 +131,17 @@ describe.each(STORES)('platform operations with storage in %s', (_name, createSt
         { from: 'active', to: 'closed' },
       ]);
       expect(changes.every((e) => e.actorRole === 'platform_admin')).toBe(true);
+      // The refused attempts are recorded too, with why, and change nothing.
+      expect(
+        changes.filter((e) => e.result === 'denied').map((e) => [e.reason, e.target?.id]),
+      ).toEqual([
+        ['close_not_confirmed', partnerA.id],
+        ['invalid_account_transition', partnerA.id],
+      ]);
     });
 
-    it('refuses a stale version, an unknown status and an unknown account', async () => {
-      const { call, accounts, partnerA } = await setup();
+    it('refuses a stale version, an unknown status and an unknown account, audited', async () => {
+      const { call, accounts, partnerA, events } = await setup();
       const path = `${accounts}/${partnerA.id}/status`;
       expect(
         await call('alice', 'POST', path, {
@@ -154,6 +161,13 @@ describe.each(STORES)('platform operations with storage in %s', (_name, createSt
           })
         ).status,
       ).toBe(404);
+      expect(
+        (await events('commercial_account.status_changed')).map((e) => [e.result, e.reason]),
+      ).toEqual([
+        ['denied', 'commercial_conflict'],
+        ['denied', 'invalid_commercial_request'],
+        ['denied', 'commercial_account_not_found'],
+      ]);
     });
 
     it('changes limits; a lower limit stops new additions and removes nobody', async () => {
