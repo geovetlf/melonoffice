@@ -84,6 +84,19 @@ export class InMemoryCommercialStore implements CommercialRepository {
     this.putMembership(firstAdmin);
   }
 
+  async saveAccount(
+    account: CommercialAccount,
+    expected: CommercialAccount,
+    events: readonly AuditEvent[],
+  ) {
+    const current = await this.findAccount(account.id);
+    if (current === undefined || current.updatedAt !== expected.updatedAt) {
+      throw new TenancyError('commercial_conflict');
+    }
+    this.#record(events);
+    this.putAccount(account);
+  }
+
   async saveMembership(
     membership: CommercialMembership,
     expected: CommercialMembership | undefined,

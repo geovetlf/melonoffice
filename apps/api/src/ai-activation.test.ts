@@ -252,9 +252,11 @@ describe.each(STORES)('assisted AI on Vertex AI with storage in %s (ADR-0038)', 
     };
     expect((await read('token-alice', '/v1/platform/access')).body).toEqual({
       platformAdmin: true,
+      emailVerified: true,
     });
     expect((await read('token-bob', '/v1/platform/access')).body).toEqual({
       platformAdmin: false,
+      emailVerified: false,
     });
 
     const ai = await read('token-alice', '/v1/platform/ai');

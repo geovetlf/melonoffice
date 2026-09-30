@@ -5,11 +5,12 @@ import {
   type AuditService,
 } from '@melonoffice/audit';
 import { isAIUsageError, type AIUsageLedger } from '@melonoffice/ai-usage';
-import type { AuthenticatedContext } from '@melonoffice/auth';
+import type { UserDirectory } from '@melonoffice/auth';
 import type { BillingService } from '@melonoffice/billing';
 import type {
   BillingRelationship,
   CommercialAccount,
+  CommercialAccountId,
   CommercialAccountType,
   CommercialMembership,
   CustomerMode,
@@ -26,6 +27,7 @@ import {
   type Permission,
 } from '@melonoffice/rbac';
 import {
+  canChangeAccountStatus,
   canChangeRelationshipStatus,
   commercialMembershipIdOf,
   customerAccessOf,
@@ -43,6 +45,7 @@ import {
   type CommercialContext,
   type CustomerAccess,
   type CommercialRepository,
+  type PlatformAdminContext,
   type TenancyStore,
   type TenantContext,
 } from '@melonoffice/tenancy';
@@ -51,6 +54,7 @@ import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import { recordOutcome, requestFields } from './audit.js';
 import type { AuthEnv } from './auth.js';
 import { withPermission } from './authorization.js';
+import { platformAdminOf } from './platform-admin.js';
 
 /**
  * The commercial layer's routes (ADR-0086), over ADR-0085's model:
@@ -74,6 +78,8 @@ export interface CommercialDependencies {
   readonly authorization: AuthorizationService;
   readonly commercialAuthorization: CommercialAuthorization;
   readonly audit: AuditService;
+  /** Who has signed in, so only a real user is added to an account (ADR-0091). */
+  readonly users?: Pick<UserDirectory, 'findById'>;
   /** The plan in force, for a customer's summary. Absent: the summary says `null`. */
   readonly currentPlan?: (organizationId: OrganizationId) => Promise<PlanRef | undefined>;
   /** A customer's subscription, for its `billing` scope (ADR-0088). Absent: `null`. */
@@ -120,6 +126,8 @@ const accountView = (a: CommercialAccount) => ({
   name: a.name,
   status: a.status,
   limits: a.limits ?? null,
+  // The version a platform change names (ADR-0091).
+  updatedAt: a.updatedAt,
 });
 
 const memberView = (m: CommercialMembership) => ({
@@ -212,31 +220,26 @@ export function registerCommercialRoutes(app: Hono<AuthEnv>, deps: CommercialDep
   const { guarded, inAccount } = createCommercialGuard(deps);
 
   const event = (input: AuditEventInput, at: Date) => buildAuditEvent(input, at);
+  /** Whether this user has signed in to MelonOffice; true when no directory is wired (tests). */
+  const userExists = async (userId: UserId) =>
+    deps.users === undefined || (await deps.users.findById(userId)) !== undefined;
 
   // ---------------------------------------------------------------- platform administrator
 
-  const isPlatformAdmin = (auth: AuthenticatedContext) =>
-    auth.actor === 'user' && admins.has(auth.userId);
-
   app.get('/v1/platform/commercial-accounts', async (c) => {
-    const auth = c.get('auth');
-    if (!isPlatformAdmin(auth)) return c.json({ error: 'platform_forbidden' }, 403);
+    const admin = await platformAdminOf(c, admins);
+    if (admin instanceof Response) return admin;
     const accounts = await commercial.listAccounts();
     return c.json({ accounts: accounts.map(accountView) });
   });
 
   app.post('/v1/platform/commercial-accounts', async (c) => {
     const auth = c.get('auth');
-    if (!isPlatformAdmin(auth)) {
-      await recordOutcome(c, audit, {
-        action: 'commercial_account.created',
-        result: 'denied',
-        actor: actorOf(auth),
-        reason: 'not_platform_admin',
-        ...requestFields(c),
-      });
-      return c.json({ error: 'platform_forbidden' }, 403);
-    }
+    const platform = await platformAdminOf(c, admins, {
+      audit,
+      action: 'commercial_account.created',
+    });
+    if (platform instanceof Response) return platform;
     const input = await body(c);
     if (!isCommercialAccountType(input.type)) return bad(c, 'type');
     let name: string;
@@ -258,6 +261,7 @@ export function registerCommercialRoutes(app: Hono<AuthEnv>, deps: CommercialDep
     ) {
       return bad(c, 'limits');
     }
+    if (!(await userExists(input.adminUserId as UserId))) return bad(c, 'adminUserId');
     const at = now();
     const iso = at.toISOString() as IsoTimestamp;
     const account: CommercialAccount = {
@@ -282,6 +286,7 @@ export function registerCommercialRoutes(app: Hono<AuthEnv>, deps: CommercialDep
     const common = {
       result: 'success',
       actor: actorOf(auth),
+      actorRole: platform.role,
       commercialAccountId: account.id,
       ...requestFields(c),
     } as const;
@@ -307,6 +312,144 @@ export function registerCommercialRoutes(app: Hono<AuthEnv>, deps: CommercialDep
     ]);
     return c.json({ account: accountView(account), admin: memberView(admin) }, 201);
   });
+
+  /**
+   * A platform administrator's change to an account (ADR-0091): the administrator check first,
+   * then the change. Every refusal after the check (bad input, a transition the account cannot
+   * make, a close not confirmed, a stale version) is audited as denied with its code, so every
+   * attempt leaves a trace, not only the ones that changed something.
+   */
+  const platformChange = (
+    c: Context<AuthEnv>,
+    action: 'commercial_account.status_changed' | 'commercial_account.limits_changed',
+    work: (admin: PlatformAdminContext) => Promise<Response>,
+  ) =>
+    guarded(c, async () => {
+      const admin = await platformAdminOf(c, admins, { audit, action });
+      if (admin instanceof Response) return admin;
+      const response = await guarded(c, () => work(admin));
+      if (response.status >= 400) {
+        const payload = (await response
+          .clone()
+          .json()
+          .catch(() => ({}))) as Record<string, unknown>;
+        const id = c.req.param('accountId') ?? '';
+        await recordOutcome(c, audit, {
+          action,
+          result: 'denied',
+          actor: actorOf(c.get('auth')),
+          actorRole: admin.role,
+          ...(UUID.test(id) ? { target: { type: 'commercial_account', id } } : {}),
+          reason: typeof payload.error === 'string' ? payload.error : `http_${response.status}`,
+          ...requestFields(c),
+        });
+      }
+      return response;
+    });
+
+  /**
+   * The account the platform administrator names in the path, with the version they read. Every
+   * refusal after the administrator check says what was wrong with the request, never whether
+   * another account exists: the administrator sees every account anyway.
+   */
+  const accountToChange = async (c: Context<AuthEnv>, input: Record<string, unknown>) => {
+    const id = c.req.param('accountId') ?? '';
+    const account = UUID.test(id)
+      ? await commercial.findAccount(id as CommercialAccountId)
+      : undefined;
+    if (account === undefined) return c.json({ error: 'commercial_account_not_found' }, 404);
+    if (typeof input.expectedUpdatedAt !== 'string') return bad(c, 'expectedUpdatedAt');
+    if (input.expectedUpdatedAt !== account.updatedAt) {
+      throw new TenancyError('commercial_conflict');
+    }
+    return account;
+  };
+
+  // Suspends, reactivates or closes an account (ADR-0091). Suspended: nobody in it can act, since
+  // `resolveCommercialContext` requires an active account; reactivated: they can again. Closed is
+  // final and asks for the account's exact name. Nothing is deleted: members, relationships,
+  // invitations, brand and history stay, and the id is never reused.
+  app.post('/v1/platform/commercial-accounts/:accountId/status', (c) =>
+    platformChange(c, 'commercial_account.status_changed', async (admin) => {
+      const input = await body(c);
+      const status = input.status;
+      if (status !== 'active' && status !== 'suspended' && status !== 'closed') {
+        return bad(c, 'status');
+      }
+      const account = await accountToChange(c, input);
+      if (account instanceof Response) return account;
+      if (!canChangeAccountStatus(account.status, status)) {
+        return c.json({ error: 'invalid_account_transition' }, 409);
+      }
+      if (status === 'closed' && input.confirmName !== account.name) {
+        return c.json({ error: 'close_not_confirmed' }, 400);
+      }
+      const at = now();
+      const next: CommercialAccount = {
+        ...account,
+        status,
+        updatedAt: at.toISOString() as IsoTimestamp,
+      };
+      await commercial.saveAccount(next, account, [
+        event(
+          {
+            action: 'commercial_account.status_changed',
+            result: 'success',
+            actor: actorOf(c.get('auth')),
+            actorRole: admin.role,
+            commercialAccountId: account.id,
+            target: { type: 'commercial_account', id: account.id },
+            transition: { from: account.status, to: status },
+            ...requestFields(c),
+          },
+          at,
+        ),
+      ]);
+      return c.json({ account: accountView(next) });
+    }),
+  );
+
+  // Changes an account's limits (ADR-0091). A lower limit removes nobody: it only stops new
+  // customers or members until the account is under it again.
+  app.post('/v1/platform/commercial-accounts/:accountId/limits', (c) =>
+    platformChange(c, 'commercial_account.limits_changed', async (admin) => {
+      const input = await body(c);
+      const limits = input.limits as Record<string, unknown> | undefined;
+      if (
+        typeof limits !== 'object' ||
+        limits === null ||
+        !isLimit(limits.customers) ||
+        !isLimit(limits.members) ||
+        limits.members < 1
+      ) {
+        return bad(c, 'limits');
+      }
+      const account = await accountToChange(c, input);
+      if (account instanceof Response) return account;
+      if (account.status === 'closed') return c.json({ error: 'commercial_account_closed' }, 409);
+      const at = now();
+      const next: CommercialAccount = {
+        ...account,
+        limits: { customers: limits.customers, members: limits.members },
+        updatedAt: at.toISOString() as IsoTimestamp,
+      };
+      await commercial.saveAccount(next, account, [
+        event(
+          {
+            action: 'commercial_account.limits_changed',
+            result: 'success',
+            actor: actorOf(c.get('auth')),
+            actorRole: admin.role,
+            commercialAccountId: account.id,
+            target: { type: 'commercial_account', id: account.id },
+            ...requestFields(c),
+          },
+          at,
+        ),
+      ]);
+      return c.json({ account: accountView(next) });
+    }),
+  );
 
   // ---------------------------------------------------------------- partner and agency
 
@@ -355,6 +498,9 @@ export function registerCommercialRoutes(app: Hono<AuthEnv>, deps: CommercialDep
       }
       const userId = input.userId as UserId;
       const role = input.role;
+      // Only someone who has signed in to MelonOffice can be added (ADR-0091); whether they agree
+      // to join is not asked yet (an invitation for members is a separate step).
+      if (!(await userExists(userId))) return bad(c, 'userId');
       const account = await commercial.findAccount(context.commercialAccountId);
       if (account === undefined) throw new TenancyError('commercial_account_forbidden');
       const current = await commercial.findMembership(context.commercialAccountId, userId);

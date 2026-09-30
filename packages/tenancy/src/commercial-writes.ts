@@ -32,6 +32,15 @@ export interface CommercialRepository extends CommercialStore {
     events: readonly AuditEvent[],
   ): Promise<void>;
   /**
+   * Changes an existing account: its status or its limits (ADR-0091). The id, type and history
+   * stay; `expected` is the version read, so a concurrent change gets `commercial_conflict`.
+   */
+  saveAccount(
+    account: CommercialAccount,
+    expected: CommercialAccount,
+    events: readonly AuditEvent[],
+  ): Promise<void>;
+  /**
    * Creates or changes a membership. `limit`, when given, is the most active members the account
    * may have, counted in the same step so concurrent additions cannot pass it.
    */

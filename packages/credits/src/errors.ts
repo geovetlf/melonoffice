@@ -4,6 +4,7 @@
  */
 export type CreditsErrorCode =
   | 'unresolved_tenant'
+  | 'unresolved_platform_admin'
   | 'organization_inactive'
   | 'invalid_amount'
   | 'invalid_reference'

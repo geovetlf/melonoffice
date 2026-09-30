@@ -140,6 +140,7 @@ import { registerConnectionRoutes } from './connections.js';
 import { registerConversationRoutes } from './conversations.js';
 import { registerCreditRoutes } from './credits.js';
 import { registerAIUsageRoutes } from './ai-usage.js';
+import { registerPlatformCreditRoutes } from './platform-credits.js';
 import { registerPlatformRoutes } from './platform.js';
 import { registerEntitlementRoutes } from './entitlements.js';
 import { registerExecutionRoutes } from './executions.js';
@@ -1266,14 +1267,25 @@ export function createApp({
       }
     }
     if (tenancy !== undefined && credits !== undefined) {
+      const creditService = createCreditService({ store: credits, organizations: tenancy });
       registerCreditRoutes(app, {
         store: tenancy,
         authorization,
         audit,
-        credits: createCreditService({ store: credits, organizations: tenancy }),
+        credits: creditService,
+      });
+      registerPlatformCreditRoutes(app, {
+        admins: new Set(platformAdmins),
+        audit,
+        credits: creditService,
+        wallets: credits,
+        organizations: tenancy,
       });
     } else if (tenancy !== undefined) {
       app.all('/v1/organizations/:organizationId/credits', (c) =>
+        c.json({ error: 'credits_not_configured' }, 503),
+      );
+      app.all('/v1/platform/organizations/*', (c) =>
         c.json({ error: 'credits_not_configured' }, 503),
       );
     }
@@ -1289,6 +1301,7 @@ export function createApp({
         authorization,
         commercialAuthorization: createCommercialAuthorization(),
         audit,
+        ...(auth === undefined ? {} : { users: auth.users }),
         ...(plans === undefined
           ? {}
           : {

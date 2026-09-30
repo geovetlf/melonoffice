@@ -32,6 +32,8 @@ export interface AuditDocument {
   readonly actorId: string | null;
   /** For the system actor: the user who started the work it did. */
   readonly actorInitiatedBy: string | null;
+  /** `platform_admin` when the platform administrator acted (ADR-0091); absent otherwise. */
+  readonly actorRole?: string | null;
   readonly organizationId: string | null;
   /** The partner or agency account (ADR-0086); absent on events before it existed. */
   readonly commercialAccountId?: string | null;
@@ -86,6 +88,7 @@ export function toAuditDocument(event: AuditEvent): AuditDocument {
     actorId: system?.id ?? null,
     actorInitiatedBy: system?.initiatedBy ?? null,
     organizationId: event.organizationId ?? null,
+    ...(event.actorRole === undefined ? {} : { actorRole: event.actorRole }),
     ...(event.commercialAccountId === undefined
       ? {}
       : { commercialAccountId: event.commercialAccountId }),
@@ -217,6 +220,7 @@ export function fromAuditDocument(id: string, d: AuditDocument): AuditEvent {
           ? { type: 'system', id: d.actorId, initiatedBy: d.actorInitiatedBy, via: d.actorVia }
           : { type: d.actorType },
     ...(d.organizationId === null ? {} : { organizationId: d.organizationId }),
+    ...(d.actorRole === 'platform_admin' ? { actorRole: 'platform_admin' as const } : {}),
     ...(d.commercialAccountId == null ? {} : { commercialAccountId: d.commercialAccountId }),
     ...(d.targetType === null ? {} : { target: { type: d.targetType, id: d.targetId } }),
     ...(d.targetVersion == null ? {} : { targetVersion: d.targetVersion }),

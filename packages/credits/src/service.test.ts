@@ -10,6 +10,7 @@ import type {
 import {
   createOrganization,
   InMemoryTenancyStore,
+  resolvePlatformAdmin,
   resolveTenant,
   type TenantContext,
 } from '@melonoffice/tenancy';
@@ -411,7 +412,14 @@ describe('tenancy', () => {
       store: new InMemoryCreditStore(),
       organizations: new InMemoryTenancyStore(),
     });
-    expect(Object.keys(service).sort()).toEqual(['balanceOf', 'consume', 'grant', 'refund']);
+    // `grantAsPlatform` is the same grant, authorized by the platform administrator (ADR-0091).
+    expect(Object.keys(service).sort()).toEqual([
+      'balanceOf',
+      'consume',
+      'grant',
+      'grantAsPlatform',
+      'refund',
+    ]);
   });
 });
 
@@ -440,5 +448,78 @@ describe('validation through the service', () => {
     await expect(resolveTenant(as(ALICE), missing, tenancy)).rejects.toThrow();
     const forged = Object.freeze({ organizationId: missing }) as unknown as TenantContext;
     expect(await codeOf(service.grant(forged, req(1, 'g')))).toBe('unresolved_tenant');
+  });
+});
+
+describe('manual grants by the platform administrator (ADR-0091)', () => {
+  const admins = new Set<string>([BOB]);
+
+  it('adds to the same wallet and ledger, once per reference, audited as the administrator', async () => {
+    const { service, credits, a, tenantA, creditEvents } = await world();
+    const admin = resolvePlatformAdmin(as(BOB), admins);
+    const first = await service.grantAsPlatform(
+      admin,
+      a.organization.id,
+      req(40, 'platform-grant:k1', 'courtesy'),
+    );
+    const again = await service.grantAsPlatform(
+      admin,
+      a.organization.id,
+      req(40, 'platform-grant:k1', 'courtesy'),
+    );
+    expect(first).toMatchObject({ balance: 40, replayed: false });
+    expect(again).toMatchObject({ balance: 40, replayed: true, entry: first.entry });
+    expect(await balance(service, tenantA)).toBe(40);
+    expect((await credits.ledger(a.organization.id)).map((e) => e.type)).toEqual(['grant']);
+    expect(
+      await codeOf(
+        service.grantAsPlatform(admin, a.organization.id, req(41, 'platform-grant:k1', 'courtesy')),
+      ),
+    ).toBe('credits_reference_conflict');
+    expect(creditEvents()).toEqual([
+      expect.objectContaining({
+        action: 'credits.platform_grant',
+        actor: { type: 'user', userId: BOB, via: 'direct' },
+        actorRole: 'platform_admin',
+        organizationId: a.organization.id,
+        reference: 'platform-grant:k1',
+        reason: 'courtesy',
+      }),
+    ]);
+    // Spending it later is ordinary consumption from the same wallet.
+    expect((await service.consume(tenantA, req(15, 'use-1'))).balance).toBe(25);
+  });
+
+  it('refuses a context it did not issue, an inactive organization and bad amounts', async () => {
+    const { service, a } = await world();
+    const forged = Object.freeze({ userId: BOB, role: 'platform_admin' as const });
+    expect(await codeOf(service.grantAsPlatform(forged, a.organization.id, req(1, 'r1')))).toBe(
+      'unresolved_platform_admin',
+    );
+    const admin = resolvePlatformAdmin(as(BOB), admins);
+    expect(
+      await codeOf(
+        service.grantAsPlatform(
+          admin,
+          '99999999-9999-4999-8999-999999999999' as OrganizationId,
+          req(1, 'r2'),
+        ),
+      ),
+    ).toBe('organization_inactive');
+    expect(await codeOf(service.grantAsPlatform(admin, a.organization.id, req(0, 'r3')))).toBe(
+      'invalid_amount',
+    );
+  });
+
+  it('is only issued to a listed administrator acting directly with a verified email', () => {
+    expect(() => resolvePlatformAdmin(as(ALICE), admins)).toThrow('platform_forbidden');
+    expect(() => resolvePlatformAdmin(actAsGia(as(BOB)), admins)).toThrow('platform_forbidden');
+    expect(() =>
+      resolvePlatformAdmin(
+        Object.freeze({ actor: 'user', userId: BOB, emailVerified: false }),
+        admins,
+      ),
+    ).toThrow('platform_email_unverified');
+    expect(resolvePlatformAdmin(as(BOB), admins)).toEqual({ userId: BOB, role: 'platform_admin' });
   });
 });

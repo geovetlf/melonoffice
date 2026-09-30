@@ -1,8 +1,10 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
 import { Button } from '@melonoffice/ui';
 import { useEffect, useId, useState, type FormEvent } from 'react';
+import { CreditGrant } from './CreditGrant.js';
 import {
-  PlatformRequestError,
+  errorOf,
+  type CommercialAccountStatus,
   type CommercialAccountView,
   type DomainStatus,
   type DomainView,
@@ -12,7 +14,9 @@ import {
 /**
  * The platform administrator's commercial tools (ADR-0088): create partner and agency accounts
  * with their first admin and limits (ADR-0086, "Solo plataforma"), and register domains and move
- * them through their statuses (ADR-0087). The server decides and audits every step.
+ * them through their statuses (ADR-0087); suspend, reactivate or close an account and change its
+ * limits, and add credits to an organization by hand (ADR-0091). The server decides and audits
+ * every step; this only asks.
  */
 
 type Load<T> = readonly T[] | 'loading' | 'error';
@@ -25,10 +29,10 @@ const NEXT: Readonly<Record<DomainStatus, readonly DomainStatus[]>> = {
   disabled: ['pending_verification'],
 };
 
-const errorOf = (error: unknown) =>
-  error instanceof PlatformRequestError
-    ? [error.code, error.field].filter((x) => x !== undefined).join(': ') || String(error.status)
-    : 'network';
+/** The account statuses the API allows next; closed is final. */
+const ACCOUNT_NEXT: Readonly<
+  Record<CommercialAccountStatus, readonly Exclude<CommercialAccountStatus, 'closed'>[]>
+> = { active: ['suspended'], suspended: ['active'], closed: [] };
 
 export function CommercialAdmin({
   client,
@@ -75,20 +79,16 @@ export function CommercialAdmin({
         ) : (
           <ul className="documents__list" aria-label="accounts">
             {accounts.map((a) => (
-              <li key={a.id} className="documents__item">
-                <span className="documents__name">{a.name}</span>
-                <span className="documents__meta">
-                  <FormattedMessage id={`partners.type.${a.type}`} /> · {a.status} ·{' '}
-                  <FormattedMessage
-                    id="platform.commercial.limits"
-                    values={{
-                      customers: a.limits?.customers ?? 0,
-                      members: a.limits?.members ?? 0,
-                    }}
-                  />
-                </span>
-                <code className="documents__meta">{a.id}</code>
-              </li>
+              <AccountRow
+                key={a.id}
+                account={a}
+                client={client}
+                onChange={(next) =>
+                  setAccounts((list) =>
+                    Array.isArray(list) ? list.map((x) => (x.id === next.id ? next : x)) : list,
+                  )
+                }
+              />
             ))}
           </ul>
         )}
@@ -98,6 +98,8 @@ export function CommercialAdmin({
           onCreated={(a) => setAccounts((list) => (Array.isArray(list) ? [a, ...list] : [a]))}
         />
       </section>
+
+      <CreditGrant client={client} />
 
       <section className="dept-office__section" aria-labelledby="platform-domains">
         <h2 id="platform-domains">
@@ -139,6 +141,165 @@ export function CommercialAdmin({
         />
       </section>
     </>
+  );
+}
+
+function AccountRow({
+  account: a,
+  client,
+  onChange,
+}: {
+  readonly account: CommercialAccountView;
+  readonly client: PlatformClient;
+  readonly onChange: (a: CommercialAccountView) => void;
+}) {
+  const id = useId();
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState<string>();
+  const [closing, setClosing] = useState(false);
+  const [typed, setTyped] = useState('');
+  const [editing, setEditing] = useState(false);
+  const [customers, setCustomers] = useState('');
+  const [members, setMembers] = useState('');
+
+  const run = async (change: () => Promise<CommercialAccountView>) => {
+    setBusy(true);
+    setFailed(undefined);
+    try {
+      onChange(await change());
+      setClosing(false);
+      setEditing(false);
+      setTyped('');
+    } catch (error) {
+      setFailed(errorOf(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const status = a.status as CommercialAccountStatus;
+  const open = status !== 'closed';
+  return (
+    <li className="documents__item" aria-label={a.name}>
+      <span className="documents__name">{a.name}</span>
+      <span className="documents__meta">
+        <FormattedMessage id={`partners.type.${a.type}`} /> ·{' '}
+        <FormattedMessage id={`platform.commercial.status.${status}`} /> ·{' '}
+        <FormattedMessage
+          id="platform.commercial.limits"
+          values={{ customers: a.limits?.customers ?? 0, members: a.limits?.members ?? 0 }}
+        />
+      </span>
+      <code className="documents__meta">{a.id}</code>
+      {open ? (
+        <div className="partners__actions">
+          {(ACCOUNT_NEXT[status] ?? []).map((next) => (
+            <Button
+              key={next}
+              variant="secondary"
+              disabled={busy}
+              onClick={() => void run(() => client.setAccountStatus(a, next))}
+            >
+              <FormattedMessage id={`platform.commercial.to.${next}`} />
+            </Button>
+          ))}
+          <Button
+            variant="secondary"
+            disabled={busy}
+            onClick={() => {
+              setEditing((x) => !x);
+              setClosing(false);
+              setCustomers(String(a.limits?.customers ?? 0));
+              setMembers(String(a.limits?.members ?? 1));
+            }}
+          >
+            <FormattedMessage id="platform.commercial.editLimits" />
+          </Button>
+          <Button
+            variant="secondary"
+            disabled={busy}
+            onClick={() => {
+              setClosing((x) => !x);
+              setEditing(false);
+              setTyped('');
+            }}
+          >
+            <FormattedMessage id="platform.commercial.to.closed" />
+          </Button>
+        </div>
+      ) : null}
+      {editing ? (
+        <form
+          className="platform__form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void run(() =>
+              client.setAccountLimits(a, {
+                customers: Number(customers),
+                members: Number(members),
+              }),
+            );
+          }}
+        >
+          <label htmlFor={`${id}-customers`}>
+            <FormattedMessage id="platform.commercial.customers" />
+          </label>
+          <input
+            id={`${id}-customers`}
+            type="number"
+            min={0}
+            value={customers}
+            onChange={(e) => setCustomers(e.target.value)}
+            required
+          />
+          <label htmlFor={`${id}-members`}>
+            <FormattedMessage id="platform.commercial.members" />
+          </label>
+          <input
+            id={`${id}-members`}
+            type="number"
+            min={1}
+            value={members}
+            onChange={(e) => setMembers(e.target.value)}
+            required
+          />
+          <Button type="submit" disabled={busy}>
+            <FormattedMessage id="platform.commercial.saveLimits" />
+          </Button>
+        </form>
+      ) : null}
+      {closing ? (
+        <form
+          className="platform__form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void run(() => client.setAccountStatus(a, 'closed', typed));
+          }}
+        >
+          <p className="customers__meta">
+            <FormattedMessage id="platform.commercial.closeWarning" />
+          </p>
+          <label htmlFor={`${id}-confirm`}>
+            <FormattedMessage id="platform.commercial.closeConfirm" values={{ name: a.name }} />
+          </label>
+          <input
+            id={`${id}-confirm`}
+            value={typed}
+            onChange={(e) => setTyped(e.target.value)}
+            autoComplete="off"
+            spellCheck={false}
+          />
+          <Button type="submit" disabled={busy || typed !== a.name}>
+            <FormattedMessage id="platform.commercial.closeForGood" />
+          </Button>
+        </form>
+      ) : null}
+      {failed === undefined ? null : (
+        <p className="panel__empty" role="alert">
+          <FormattedMessage id="platform.refused" values={{ reason: failed }} />
+        </p>
+      )}
+    </li>
   );
 }
 

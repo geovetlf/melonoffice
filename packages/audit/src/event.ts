@@ -132,6 +132,11 @@ export interface AuditEvent {
   readonly action: AuditAction;
   readonly result: AuditResult;
   readonly actor: AuditActor;
+  /**
+   * The authority the actor used when it is not a membership: `platform_admin` for the MelonOffice
+   * platform administrator (ADR-0091). Absent on every other event.
+   */
+  readonly actorRole?: 'platform_admin';
   /** The organization the actor was authorized to act in, from a resolved tenant. Never client input. */
   readonly organizationId?: OrganizationId;
   /**
@@ -308,6 +313,9 @@ export function buildAuditEvent(input: AuditEventInput, at: Date): AuditEvent {
   ) {
     throw new Error('invalid audit decision');
   }
+  if (input.actorRole !== undefined && input.actorRole !== 'platform_admin') {
+    throw new Error('invalid audit actor role');
+  }
   const actor: AuditActor = copyActor(input.actor);
   const requested = input.requestedOrganizationId;
   return Object.freeze({
@@ -316,6 +324,7 @@ export function buildAuditEvent(input: AuditEventInput, at: Date): AuditEvent {
     action: input.action,
     result: input.result,
     actor,
+    ...(input.actorRole === undefined ? {} : { actorRole: input.actorRole }),
     ...(input.organizationId === undefined ? {} : { organizationId: input.organizationId }),
     ...(input.commercialAccountId === undefined
       ? {}

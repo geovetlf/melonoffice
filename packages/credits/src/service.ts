@@ -1,11 +1,22 @@
-import { actorOf, buildAuditEvent, type AuditAction } from '@melonoffice/audit';
+import {
+  actorOf,
+  buildAuditEvent,
+  type AuditAction,
+  type AuditEventInput,
+} from '@melonoffice/audit';
 import type {
   CreditEntryType,
   CreditLedgerEntry,
   IsoTimestamp,
   OrganizationId,
 } from '@melonoffice/domain';
-import { isResolvedTenant, type TenancyStore, type TenantContext } from '@melonoffice/tenancy';
+import {
+  isResolvedPlatformAdmin,
+  isResolvedTenant,
+  type PlatformAdminContext,
+  type TenancyStore,
+  type TenantContext,
+} from '@melonoffice/tenancy';
 import { CreditsError } from './errors.js';
 import { applyOperation, entryIdOf, type CreditOperation } from './ledger.js';
 import type { CreditStore } from './store.js';
@@ -57,6 +68,18 @@ export interface CreditService {
     tenant: TenantContext,
     request: CreditRequest & { readonly refundOf: string },
   ): Promise<CreditResult>;
+  /**
+   * Adds credits by hand, for the MelonOffice platform administrator (ADR-0091). It is the same
+   * `grant` on the same wallet and ledger, only authorized by a resolved `PlatformAdminContext`
+   * instead of a membership, and audited as `credits.platform_grant` with the administrator as the
+   * actor. The same `referenceId` in the same organization replays the first grant: nothing moves
+   * twice.
+   */
+  grantAsPlatform(
+    admin: PlatformAdminContext,
+    organizationId: OrganizationId,
+    request: CreditRequest,
+  ): Promise<CreditResult>;
 }
 
 export interface CreditServiceOptions {
@@ -91,6 +114,17 @@ export function createCreditService({
     operation: Exclude<CreditOperation, { type: 'adjustment' }>,
   ): Promise<CreditResult> {
     const organizationId = await organizationOf(tenant);
+    return write(organizationId, operation, {
+      action: ACTION[operation.type],
+      actor: actorOf(tenant),
+    });
+  }
+
+  async function write(
+    organizationId: OrganizationId,
+    operation: Exclude<CreditOperation, { type: 'adjustment' }>,
+    by: Pick<AuditEventInput, 'action' | 'actor' | 'actorRole'>,
+  ): Promise<CreditResult> {
     return store.transact(organizationId, async (tx) => {
       const id = entryIdOf(organizationId, String(operation.referenceId));
       const wallet = await tx.wallet();
@@ -119,9 +153,8 @@ export function createCreditService({
       // The fact goes to the audit log in the same write; the amounts stay in the ledger.
       const event = buildAuditEvent(
         {
-          action: ACTION[operation.type],
+          ...by,
           result: 'success',
-          actor: actorOf(tenant),
           organizationId,
           target: { type: 'credit_entry', id: entry.id },
           reference: entry.referenceId,
@@ -164,6 +197,22 @@ export function createCreditService({
     consume: (tenant, request) => post(tenant, { type: 'consume', ...pick(request) }),
     refund: (tenant, request) =>
       post(tenant, { type: 'refund', ...pick(request), refundOf: request.refundOf }),
+    async grantAsPlatform(admin, organizationId, request) {
+      if (!isResolvedPlatformAdmin(admin)) throw new CreditsError('unresolved_platform_admin');
+      const organization = await organizations.findOrganization(organizationId);
+      if (organization?.id !== organizationId || organization.status !== 'active') {
+        throw new CreditsError('organization_inactive');
+      }
+      return write(
+        organization.id,
+        { type: 'grant', ...pick(request) },
+        {
+          action: 'credits.platform_grant',
+          actor: { type: 'user', userId: admin.userId, via: 'direct' },
+          actorRole: 'platform_admin',
+        },
+      );
+    },
   };
 }
 

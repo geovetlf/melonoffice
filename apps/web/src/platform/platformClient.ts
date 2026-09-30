@@ -91,6 +91,12 @@ export class PlatformRequestError extends Error {
   }
 }
 
+/** What a refusal says, for the screen: the API's code and field, or the HTTP status. */
+export const errorOf = (error: unknown) =>
+  error instanceof PlatformRequestError
+    ? [error.code, error.field].filter((x) => x !== undefined).join(': ') || String(error.status)
+    : 'network';
+
 /** A partner or agency account as the platform administrator sees it (ADR-0086). */
 export interface CommercialAccountView {
   readonly id: string;
@@ -98,6 +104,40 @@ export interface CommercialAccountView {
   readonly name: string;
   readonly status: string;
   readonly limits: { readonly customers: number; readonly members: number } | null;
+  /** The version the server changes it from (ADR-0091): sent back with every change. */
+  readonly updatedAt: string;
+}
+
+export type CommercialAccountStatus = 'active' | 'suspended' | 'closed';
+
+/** Why the platform administrator adds credits by hand (ADR-0091): codes the API accepts. */
+export const GRANT_REASONS = [
+  'manual_purchase',
+  'courtesy',
+  'support_compensation',
+  'testing',
+] as const;
+export type GrantReason = (typeof GRANT_REASONS)[number];
+
+/** The organization about to receive credits, as the confirmation shows it. */
+export interface PlatformOrganizationView {
+  readonly organization: { readonly id: string; readonly name: string; readonly status: string };
+  readonly credits: { readonly balance: number; readonly updatedAt: string } | null;
+}
+
+export interface CreditGrantResult {
+  readonly grant: {
+    readonly id: string;
+    readonly organizationId: string;
+    readonly amount: number;
+    readonly reason: GrantReason;
+    readonly idempotencyKey: string;
+    readonly balanceAfter: number;
+    readonly createdAt: string;
+  };
+  readonly balance: number;
+  /** True when this key had already granted: the first grant is answered, nothing moved again. */
+  readonly replayed: boolean;
 }
 
 export type DomainStatus = 'pending_verification' | 'verified' | 'active' | 'disabled';
@@ -129,12 +169,37 @@ export interface PlatformClient {
   domains(): Promise<readonly DomainView[]>;
   createDomain(hostname: string, target: DomainView['target']): Promise<DomainView>;
   setDomainStatus(domain: DomainView, status: DomainStatus): Promise<DomainView>;
+  /** Suspend, reactivate or close; closing names the account exactly, as confirmation. */
+  setAccountStatus(
+    account: CommercialAccountView,
+    status: CommercialAccountStatus,
+    confirmName?: string,
+  ): Promise<CommercialAccountView>;
+  setAccountLimits(
+    account: CommercialAccountView,
+    limits: { readonly customers: number; readonly members: number },
+  ): Promise<CommercialAccountView>;
+  organization(organizationId: string): Promise<PlatformOrganizationView>;
+  grantCredits(
+    organizationId: string,
+    grant: {
+      readonly amount: number;
+      readonly reason: GrantReason;
+      readonly idempotencyKey: string;
+    },
+  ): Promise<CreditGrantResult>;
 }
 
 export function createPlatformClient(request: ReplyRequest): PlatformClient {
   const read = async <T>(path: string): Promise<T> => {
     const response = await request(path, {});
-    if (!response.ok) throw new PlatformRequestError(response.status);
+    if (!response.ok) {
+      const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+      throw new PlatformRequestError(
+        response.status,
+        typeof payload.error === 'string' ? payload.error : undefined,
+      );
+    }
     return (await response.json()) as T;
   };
   const write = async <T>(path: string, body: object): Promise<T> => {
@@ -181,5 +246,28 @@ export function createPlatformClient(request: ReplyRequest): PlatformClient {
         `/v1/platform/domain-bindings/${encodeURIComponent(domain.hostname)}/status`,
         { status, expectedUpdatedAt: domain.updatedAt },
       ).then((body) => body.domain),
+    setAccountStatus: (account, status, confirmName) =>
+      write<{ account: CommercialAccountView }>(
+        `/v1/platform/commercial-accounts/${encodeURIComponent(account.id)}/status`,
+        {
+          status,
+          expectedUpdatedAt: account.updatedAt,
+          ...(confirmName === undefined ? {} : { confirmName }),
+        },
+      ).then((body) => body.account),
+    setAccountLimits: (account, limits) =>
+      write<{ account: CommercialAccountView }>(
+        `/v1/platform/commercial-accounts/${encodeURIComponent(account.id)}/limits`,
+        { limits, expectedUpdatedAt: account.updatedAt },
+      ).then((body) => body.account),
+    organization: (organizationId) =>
+      read<PlatformOrganizationView>(
+        `/v1/platform/organizations/${encodeURIComponent(organizationId)}`,
+      ),
+    grantCredits: (organizationId, grant) =>
+      write<CreditGrantResult>(
+        `/v1/platform/organizations/${encodeURIComponent(organizationId)}/credit-grants`,
+        grant,
+      ),
   };
 }

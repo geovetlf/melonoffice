@@ -729,6 +729,12 @@ export const AUDIT_ACTIONS = {
     description: "Credits were added to an organization's wallet (ADR-0023).",
     results: ['success'],
   },
+  'credits.platform_grant': {
+    category: 'credits',
+    description:
+      "The platform administrator added credits to an organization's wallet by hand (ADR-0091): `actorRole` is platform_admin, `target` the ledger entry with the amount, `reason` the grant's reason code and `reference` its idempotency key. Denied when the caller is not a verified platform administrator or the request is invalid; failure when the ledger refused it.",
+    results: ['success', 'denied', 'failure'],
+  },
   'credits.consume': {
     category: 'credits',
     description: "Credits were spent from an organization's wallet.",
@@ -745,10 +751,28 @@ export const AUDIT_ACTIONS = {
       "Someone read the platform AI view (ADR-0082): providers, models, routing and health, or every organization's AI usage and internal cost; `reference` names the view. Denied when they are not a platform administrator.",
     results: ['success', 'denied'],
   },
+  'platform.organization_read': {
+    category: 'platform',
+    description:
+      "The platform administrator looked up one organization's name, status and credit balance before a manual credit grant (ADR-0091). Denied when the caller is not a verified platform administrator.",
+    results: ['success', 'denied'],
+  },
   'commercial_account.created': {
     category: 'commercial',
     description:
       'The platform administrator created a partner or agency account and named its first admin (ADR-0086). Denied when the caller is not a platform administrator.',
+    results: ['success', 'denied'],
+  },
+  'commercial_account.status_changed': {
+    category: 'commercial',
+    description:
+      'The platform administrator suspended, reactivated or closed a partner or agency account (ADR-0091); `transition` is the change. Nothing is deleted: its members, customers and history stay. Denied when the caller is not a verified platform administrator.',
+    results: ['success', 'denied'],
+  },
+  'commercial_account.limits_changed': {
+    category: 'commercial',
+    description:
+      "The platform administrator changed a partner or agency account's customer and member limits (ADR-0091). Denied when the caller is not a verified platform administrator.",
     results: ['success', 'denied'],
   },
   'commercial_membership.created': {

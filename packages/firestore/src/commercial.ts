@@ -371,6 +371,26 @@ export class FirestoreCommercialStore implements CommercialRepository {
     });
   }
 
+  async saveAccount(
+    account: CommercialAccount,
+    expected: CommercialAccount,
+    events: readonly AuditEvent[],
+  ) {
+    if (account.id !== expected.id) throw new Error('account id does not match the one read');
+    await this.db.runTransaction(async (tx) => {
+      const ref = this.db.collection(COMMERCIAL_ACCOUNTS).doc(account.id);
+      const snapshot = await tx.get(ref);
+      const current = snapshot.exists
+        ? toAccount(snapshot.id, snapshot.data() as AccountDocument)
+        : undefined;
+      if (current === undefined || current.updatedAt !== expected.updatedAt) {
+        throw new TenancyError('commercial_conflict');
+      }
+      tx.set(ref, accountDocument(account));
+      this.#audit(tx, events);
+    });
+  }
+
   async saveMembership(
     membership: CommercialMembership,
     expected: CommercialMembership | undefined,

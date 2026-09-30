@@ -21,7 +21,10 @@ export type TenancyErrorCode =
   | 'commercial_conflict'
   | 'commercial_limit_reached'
   // Invitations by email (ADR-0089).
-  | 'invalid_invitation_email';
+  | 'invalid_invitation_email'
+  // The platform administrator (ADR-0091).
+  | 'platform_forbidden'
+  | 'platform_email_unverified';
 
 export class TenancyError extends Error {
   override readonly name = 'TenancyError';

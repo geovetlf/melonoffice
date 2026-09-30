@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { CommercialAdmin } from './CommercialAdmin.js';
 import {
   PlatformRequestError,
+  type CommercialAccountView,
   type DomainView,
   type NewCommercialAccount,
   type PlatformClient,
@@ -14,11 +15,38 @@ afterEach(cleanup);
 const ME = '11111111-0000-4000-8000-000000000001';
 const ORG = 'aaaaaaaa-0000-4000-8000-00000000000a';
 
-function fake() {
+const PARTNER: CommercialAccountView = {
+  id: 'acc-9',
+  type: 'partner',
+  name: 'Partner Z',
+  status: 'active',
+  limits: { customers: 5, members: 2 },
+  updatedAt: 'v0',
+};
+
+function fake(accounts: CommercialAccountView[] = []) {
   const created: NewCommercialAccount[] = [];
   const moves: [string, string][] = [];
+  const changes: unknown[] = [];
+  let version = 0;
   const client = {
-    commercialAccounts: async () => [],
+    commercialAccounts: async () => accounts,
+    setAccountStatus: async (a: CommercialAccountView, status: string, confirmName?: string) => {
+      changes.push({ id: a.id, from: a.updatedAt, status, confirmName });
+      if (status === 'closed' && confirmName !== a.name) {
+        throw new PlatformRequestError(400, 'close_not_confirmed');
+      }
+      version += 1;
+      return { ...a, status, updatedAt: `v${version}` };
+    },
+    setAccountLimits: async (a: CommercialAccountView, limits: CommercialAccountView['limits']) => {
+      changes.push({ id: a.id, from: a.updatedAt, limits });
+      if (limits !== null && limits.members < 1) {
+        throw new PlatformRequestError(400, 'invalid_commercial_request', 'limits');
+      }
+      version += 1;
+      return { ...a, limits, updatedAt: `v${version}` };
+    },
     createCommercialAccount: async (input: NewCommercialAccount) => {
       if (input.name === 'Taken') {
         throw new PlatformRequestError(400, 'invalid_commercial_request', 'name');
@@ -30,6 +58,7 @@ function fake() {
         name: input.name,
         status: 'active',
         limits: input.limits,
+        updatedAt: 'v0',
       };
     },
     domains: async (): Promise<DomainView[]> => [
@@ -51,7 +80,7 @@ function fake() {
       return { ...d, status, updatedAt: 't2' };
     },
   } as unknown as PlatformClient;
-  return { client, created, moves };
+  return { client, created, moves, changes };
 }
 
 const show = (client: PlatformClient) =>
@@ -99,6 +128,58 @@ describe("the platform administrator's partners and domains (ADR-0088)", () => {
     expect(moves).toEqual([
       ['app.a.example', 'verified'],
       ['app.a.example', 'active'],
+    ]);
+  });
+
+  it('suspends and reactivates an account from the version shown, and changes its limits', async () => {
+    const { client, changes } = fake([PARTNER]);
+    show(client);
+    const row = within(await screen.findByRole('listitem', { name: 'Partner Z' }));
+    expect(row.getByText(/Active/)).toBeTruthy();
+    fireEvent.click(row.getByRole('button', { name: 'Suspend' }));
+    expect(await row.findByText(/Suspended/)).toBeTruthy();
+    expect(row.queryByRole('button', { name: 'Suspend' })).toBeNull();
+    fireEvent.click(row.getByRole('button', { name: 'Reactivate' }));
+    expect(await row.findByRole('button', { name: 'Suspend' })).toBeTruthy();
+    fireEvent.click(row.getByRole('button', { name: 'Change limits' }));
+    fireEvent.change(row.getByLabelText('Most people'), { target: { value: '0' } });
+    fireEvent.submit(
+      row.getByRole('button', { name: 'Save limits' }).closest('form') as HTMLElement,
+    );
+    expect(await row.findByText('Refused: invalid_commercial_request: limits')).toBeTruthy();
+    fireEvent.change(row.getByLabelText('Most people'), { target: { value: '4' } });
+    fireEvent.submit(
+      row.getByRole('button', { name: 'Save limits' }).closest('form') as HTMLElement,
+    );
+    expect(await row.findByText(/up to 5 customers and 4 people/)).toBeTruthy();
+    expect(changes).toEqual([
+      { id: 'acc-9', from: 'v0', status: 'suspended', confirmName: undefined },
+      { id: 'acc-9', from: 'v1', status: 'active', confirmName: undefined },
+      { id: 'acc-9', from: 'v2', limits: { customers: 5, members: 0 } },
+      { id: 'acc-9', from: 'v2', limits: { customers: 5, members: 4 } },
+    ]);
+  });
+
+  it('closes an account only after its exact name is typed, and then offers nothing more', async () => {
+    const { client, changes } = fake([PARTNER]);
+    show(client);
+    const row = within(await screen.findByRole('listitem', { name: 'Partner Z' }));
+    fireEvent.click(row.getByRole('button', { name: 'Close' }));
+    const closeForGood = row.getByRole('button', { name: 'Close for good' }) as HTMLButtonElement;
+    expect(closeForGood.disabled).toBe(true);
+    fireEvent.change(row.getByLabelText('Type Partner Z to close it'), {
+      target: { value: 'partner z' },
+    });
+    expect(closeForGood.disabled).toBe(true);
+    expect(changes).toEqual([]);
+    fireEvent.change(row.getByLabelText('Type Partner Z to close it'), {
+      target: { value: 'Partner Z' },
+    });
+    fireEvent.click(closeForGood);
+    expect(await row.findByText(/Closed/)).toBeTruthy();
+    expect(row.queryByRole('button')).toBeNull();
+    expect(changes).toEqual([
+      { id: 'acc-9', from: 'v0', status: 'closed', confirmName: 'Partner Z' },
     ]);
   });
 });
