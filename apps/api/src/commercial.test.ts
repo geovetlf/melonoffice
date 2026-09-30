@@ -110,7 +110,7 @@ describe.each(STORES)('the commercial layer with storage in %s', (_name, createS
     const listed = await call('alice', 'GET', '/v1/platform/commercial-accounts');
     expect((listed.body.accounts as unknown[]).length).toBe(3);
     for (const bad of [
-      { type: 'reseller', name: 'X', adminUserId: ids.carol, limits: { customers: 1, members: 1 } },
+      { type: 'oem', name: 'X', adminUserId: ids.carol, limits: { customers: 1, members: 1 } },
       { type: 'partner', name: '', adminUserId: ids.carol, limits: { customers: 1, members: 1 } },
       { type: 'partner', name: 'X', adminUserId: 'carol', limits: { customers: 1, members: 1 } },
       { type: 'partner', name: 'X', adminUserId: ids.carol },

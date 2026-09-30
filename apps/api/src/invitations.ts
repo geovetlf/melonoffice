@@ -2,9 +2,7 @@ import { actorOf, buildAuditEvent, type AuditEventInput } from '@melonoffice/aud
 import type { AuthenticatedContext } from '@melonoffice/auth';
 import type {
   BillingRelationship,
-  CommercialAccountType,
   CustomerInvitation,
-  CustomerMode,
   CustomerRelationship,
   IsoTimestamp,
 } from '@melonoffice/domain';
@@ -14,6 +12,7 @@ import {
   INVITATION_TTL_MS,
   invitationStatusAt,
   isCustomerInvitationId,
+  customerModesOf,
   isCustomerMode,
   isInvitationToken,
   isInvitedPerson,
@@ -63,12 +62,6 @@ export interface InvitationMailer {
 export interface InvitationDependencies extends CommercialDependencies {
   readonly mailer?: InvitationMailer;
 }
-
-/** The modes each kind of account may use, as for a request by id (ADR-0086). */
-const MODES: Readonly<Record<CommercialAccountType, readonly CustomerMode[]>> = {
-  partner: ['direct', 'reseller', 'white_label', 'oem', 'enterprise'],
-  agency: ['agency'],
-};
 
 const bad = (c: Context<AuthEnv>, field: string) =>
   c.json({ error: 'invalid_commercial_request', field }, 400);
@@ -165,7 +158,9 @@ export function registerInvitationRoutes(app: Hono<AuthEnv>, deps: InvitationDep
       } catch {
         return bad(c, 'email');
       }
-      if (!isCustomerMode(input.mode) || !MODES[context.accountType].includes(input.mode)) {
+      const account = await commercial.findAccount(context.commercialAccountId);
+      if (account === undefined) throw new TenancyError('commercial_account_forbidden');
+      if (!isCustomerMode(input.mode) || !customerModesOf(account).includes(input.mode)) {
         return bad(c, 'mode');
       }
       let scopes;
@@ -178,8 +173,7 @@ export function registerInvitationRoutes(app: Hono<AuthEnv>, deps: InvitationDep
       if (billing !== undefined && billing !== 'customer' && billing !== 'commercial_account') {
         return bad(c, 'billing');
       }
-      const account = await commercial.findAccount(context.commercialAccountId);
-      if (account?.limits?.customers === undefined) {
+      if (account.limits?.customers === undefined) {
         throw new TenancyError('commercial_limit_reached');
       }
       const at = now();

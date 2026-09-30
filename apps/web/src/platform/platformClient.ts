@@ -97,13 +97,22 @@ export const errorOf = (error: unknown) =>
     ? [error.code, error.field].filter((x) => x !== undefined).join(': ') || String(error.status)
     : 'network';
 
-/** A partner or agency account as the platform administrator sees it (ADR-0086). */
+/** Its limits; `resellers` only for a white label (ADR-0098). */
+export interface AccountLimits {
+  readonly customers: number;
+  readonly members: number;
+  readonly resellers?: number;
+}
+
+/** A commercial account as the platform administrator sees it (ADR-0086, ADR-0098). */
 export interface CommercialAccountView {
   readonly id: string;
-  readonly type: 'partner' | 'agency';
+  readonly type: 'reseller' | 'white_label' | 'partner' | 'agency';
   readonly name: string;
   readonly status: string;
-  readonly limits: { readonly customers: number; readonly members: number } | null;
+  readonly limits: AccountLimits | null;
+  /** The white label a reseller works under; null for any other account. */
+  readonly parentAccountId?: string | null;
   /** The version the server changes it from (ADR-0091): sent back with every change. */
   readonly updatedAt: string;
 }
@@ -153,10 +162,11 @@ export interface DomainView {
 }
 
 export interface NewCommercialAccount {
-  readonly type: 'partner' | 'agency';
+  /** Only what MelonOffice sells now (ADR-0098); partner and agency accounts stay as they are. */
+  readonly type: 'reseller' | 'white_label';
   readonly name: string;
   readonly adminUserId: string;
-  readonly limits: { readonly customers: number; readonly members: number };
+  readonly limits: AccountLimits;
 }
 
 export interface PlatformClient {
@@ -177,7 +187,7 @@ export interface PlatformClient {
   ): Promise<CommercialAccountView>;
   setAccountLimits(
     account: CommercialAccountView,
-    limits: { readonly customers: number; readonly members: number },
+    limits: AccountLimits,
   ): Promise<CommercialAccountView>;
   organization(organizationId: string): Promise<PlatformOrganizationView>;
   grantCredits(

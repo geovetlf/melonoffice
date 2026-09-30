@@ -367,6 +367,12 @@ export const PERMISSIONS = {
     description:
       'See and change the brand shown to one white-label customer, only while that customer grants the `branding` scope (ADR-0087).',
   },
+  'commercial.manage_resellers': {
+    resource: 'commercial',
+    action: 'manage_resellers',
+    description:
+      "Create your white label's resellers and invite each one's first admin, and suspend or reactivate them, within its reseller limit (ADR-0098). Never another white label's resellers, nor their customers' own data.",
+  },
 } as const satisfies Record<string, PermissionDefinition>;
 
 export interface PermissionDefinition {

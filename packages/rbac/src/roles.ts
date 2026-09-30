@@ -72,10 +72,36 @@ export type Role = keyof typeof ROLES;
 /**
  * Roles in a partner or agency account (ADR-0086, Geovet's decision "Admin y soporte"). An admin
  * runs the account; support and managers only read. A role only works in an account of its own
- * type (`partner.*` in a partner, `agency.*` in an agency). What a role may see inside a customer
+ * type (`reseller.*` in a reseller, `white_label.*` in a white label, `partner.*` in a partner,
+ * `agency.*` in an agency). What a role may see inside a customer
  * is further limited to the scopes that customer granted.
  */
 export const COMMERCIAL_ROLES = {
+  // A reseller (ADR-0098): its own customers only.
+  'reseller.admin': [
+    'commercial.read',
+    'commercial.manage_members',
+    'commercial.invite_customer',
+    'customer.read_summary',
+    'customer.read_usage',
+    'customer.read_billing',
+    'commercial.manage_brand',
+    'customer.manage_brand',
+  ],
+  'reseller.support': ['commercial.read', 'customer.read_summary', 'customer.read_usage'],
+  // A white label (ADR-0098): the same over its direct customers, and its resellers.
+  'white_label.admin': [
+    'commercial.read',
+    'commercial.manage_members',
+    'commercial.invite_customer',
+    'commercial.manage_resellers',
+    'customer.read_summary',
+    'customer.read_usage',
+    'customer.read_billing',
+    'commercial.manage_brand',
+    'customer.manage_brand',
+  ],
+  'white_label.support': ['commercial.read', 'customer.read_summary', 'customer.read_usage'],
   'partner.admin': [
     'commercial.read',
     'commercial.manage_members',
