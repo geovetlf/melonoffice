@@ -34,6 +34,7 @@ import {
   FirestoreChannelConnectionRepository,
   FirestoreChannelTemplateRepository,
   FirestoreConnectionRateLimiter,
+  FirestoreRequestRateLimiter,
   FirestoreConversationRepository,
   FirestoreBusinessProfileRepository,
   FirestoreKnowledgeRepository,
@@ -153,6 +154,8 @@ function services(projectId: string) {
     commercialAccounts: new FirestoreCommercialStore(firestore),
     // Brands and domains (ADR-0087): two collections, read by id.
     brands: new FirestoreBrandStore(firestore),
+    // One limit per person on sensitive requests, shared by every instance (ADR-0092).
+    requestLimiter: new FirestoreRequestRateLimiter(firestore),
     billing: new FirestoreBillingStore(firestore),
     executions,
     approvals,
