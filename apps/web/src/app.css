@@ -4,6 +4,10 @@
   padding: var(--mo-space-12) var(--mo-space-4);
 }
 
+.public--wide {
+  max-width: 72rem;
+}
+
 .public__header h1 {
   margin: 0;
   font-size: var(--mo-font-size-xxl);

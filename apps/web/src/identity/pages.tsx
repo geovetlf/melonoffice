@@ -191,12 +191,18 @@ export function AccessDenied() {
 
 /**
  * The gate to every signed-in page: waits for the session, sends anyone without one to sign-in,
- * and shows the page only to a signed-in member of an organization.
+ * and shows the page only to a signed-in member of an organization; a person with none creates
+ * one, unless the caller shows them something else.
  */
 export function ProtectedRoute({
   children,
+  withoutOrganization,
   ...locale
-}: LocaleProps & { readonly children: ReactNode }) {
+}: LocaleProps & {
+  readonly children: ReactNode;
+  /** What a signed-in person with no organization sees instead of creating one (ADR-0094). */
+  readonly withoutOrganization?: ReactNode;
+}) {
   const { state, retry, signOut } = useAuth();
   switch (state.status) {
     case 'loading':
@@ -229,6 +235,7 @@ export function ProtectedRoute({
       );
     case 'signed_in':
       if (state.workspace === undefined) {
+        if (withoutOrganization !== undefined) return <>{withoutOrganization}</>;
         return (
           <PublicFrame {...locale}>
             <CreateOrganization />

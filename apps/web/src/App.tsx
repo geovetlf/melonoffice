@@ -1,3 +1,4 @@
+import { WithoutOrganization } from './commercial/WithoutOrganization.js';
 import { AuthProvider } from './identity/AuthProvider.js';
 import {
   Loading,
@@ -13,6 +14,7 @@ import { InvitePage } from './invitations/InvitePage.js';
 import { JoinPage } from './invitations/JoinPage.js';
 import { INVITE_PATH, JOIN_PATH } from './invitations/invitationToken.js';
 import { AppShell } from './shell/AppShell.js';
+import { paths } from './shell/routes.js';
 
 export interface AppProps extends LocaleProps {
   /** The sign-in services: still loading, ready, or `undefined` when this site has none set up. */
@@ -46,7 +48,12 @@ function Pages(locale: LocaleProps) {
   if (path === INVITE_PATH) return <InvitePage {...locale} />;
   if (path === JOIN_PATH) return <JoinPage {...locale} />;
   return (
-    <ProtectedRoute {...locale}>
+    <ProtectedRoute
+      {...locale}
+      withoutOrganization={
+        <WithoutOrganization {...locale} partnerConsole={path === paths.partnerConsole()} />
+      }
+    >
       <AppShell {...locale} />
     </ProtectedRoute>
   );

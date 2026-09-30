@@ -23,5 +23,5 @@ The closing audit left one P1 consent gap: a partner or agency admin could add a
 
 - Nobody becomes a member of a commercial account without accepting, signed in with the invited email verified.
 - The hash, token and other people's data never leave the API; the lookup answers only the account's name and type, the role, the status and the dates.
-- Known gap: a member with no company of their own is still sent to create one before reaching `/partner` (next block).
+- A member with no company of their own reaches the console without creating one: [ADR-0094](0094-partner-members-without-a-company.md).
 - Tests: API on memory and the Firestore emulator (invite, lookup, accept, reject, revoke, wrong or unverified email, limits, inactive account, already a member, role changes only by invitation); web (console invite and withdraw, join decision and refusals, link kept apart).
