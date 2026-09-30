@@ -1,8 +1,10 @@
 import {
   CREATE_AUTH_URI_URL,
   REFRESH_URL,
+  SEND_CODE_URL,
   SIGN_IN_URL,
   SIGN_IN_WITH_IDP_URL,
+  SIGN_UP_URL,
 } from './identityPlatform.js';
 
 /** Google's page the fake sends a Google sign-in to (ADR-0105). */
@@ -38,6 +40,8 @@ export interface FakeBackend {
      * disabled; `linked` as it does for an email that signs in with a password already.
      */
     google?: 'on' | 'off' | 'linked';
+    /** Addresses Identity Platform sent a password reset email to (ADR-0105). */
+    passwordResets?: string[];
     /** The API's answer to every `/v1/...` call, if forced. */
     apiStatus?: number;
     registered: boolean;
@@ -247,6 +251,25 @@ export function fakeBackend(): FakeBackend {
       }
       const { idToken, refreshToken } = issue();
       return json(200, { idToken, refreshToken, expiresIn: String(options.idTokenSeconds) });
+    }
+    if (url === `${SIGN_UP_URL}?key=${KEY}`) {
+      const { email, password } = JSON.parse(body ?? '{}') as Record<string, string>;
+      if (email === 'ana@example.com') {
+        return json(400, { error: { code: 400, message: 'EMAIL_EXISTS' } });
+      }
+      if ((password ?? '').length < 6) {
+        return json(400, { error: { code: 400, message: 'WEAK_PASSWORD : too short' } });
+      }
+      const { idToken, refreshToken } = issue();
+      return json(200, { idToken, refreshToken, expiresIn: String(options.idTokenSeconds) });
+    }
+    if (url === `${SEND_CODE_URL}?key=${KEY}`) {
+      const { requestType, email } = JSON.parse(body ?? '{}') as Record<string, string>;
+      if (requestType === 'PASSWORD_RESET') {
+        // Like Identity Platform with email enumeration protection: every address is accepted.
+        (options.passwordResets ??= []).push(email ?? '');
+      }
+      return json(200, { email });
     }
     if (url === `${CREATE_AUTH_URI_URL}?key=${KEY}`) {
       const { providerId } = JSON.parse(body ?? '{}') as Record<string, string>;

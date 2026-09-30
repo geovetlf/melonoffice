@@ -1,11 +1,15 @@
 import { WithoutOrganization } from './commercial/WithoutOrganization.js';
 import { AuthProvider } from './identity/AuthProvider.js';
 import {
+  FORGOT_PASSWORD_PATH,
+  ForgotPasswordPage,
   Loading,
   LoginPage,
   NotConfigured,
   ProtectedRoute,
   PublicFrame,
+  SIGN_UP_PATH,
+  SignUpPage,
   type LocaleProps,
 } from './identity/pages.js';
 import { usePath } from './identity/router.js';
@@ -22,7 +26,7 @@ export interface AppProps extends LocaleProps {
 }
 
 /**
- * The web app (ADR-0036): `/login` is public, `/invite` walks an invited person in (ADR-0089),
+ * The web app (ADR-0036): `/login`, `/signup` and `/forgot-password` are public (ADR-0105), `/invite` walks an invited person in (ADR-0089),
  * `/join` walks someone invited to a partner or agency account in (ADR-0093), and every other
  * path is behind `ProtectedRoute`.
  */
@@ -45,6 +49,8 @@ export function App({ identity, ...locale }: AppProps) {
 function Pages(locale: LocaleProps) {
   const path = usePath();
   if (path === '/login') return <LoginPage {...locale} />;
+  if (path === SIGN_UP_PATH) return <SignUpPage {...locale} />;
+  if (path === FORGOT_PASSWORD_PATH) return <ForgotPasswordPage {...locale} />;
   if (path === INVITE_PATH) return <InvitePage {...locale} />;
   if (path === JOIN_PATH) return <JoinPage {...locale} />;
   return (

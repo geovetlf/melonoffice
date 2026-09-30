@@ -60,15 +60,85 @@
   margin-top: var(--mo-space-4);
 }
 
-/* "or", between the password form and "Sign in with Google" (ADR-0105). */
-.login__or {
-  margin: var(--mo-space-4) 0 var(--mo-space-2);
+/* Sign-in, sign-up and password reset (ADR-0105): one short column, the same on every screen. */
+.login input::placeholder {
+  color: var(--mo-color-text-secondary);
+  opacity: 0.7;
+}
+
+.login__forgot {
+  margin: 0;
+  text-align: right;
+  font-size: var(--mo-font-size-sm);
+}
+
+.login__hint {
+  margin: 0;
+  font-size: var(--mo-font-size-sm);
+  color: var(--mo-color-text-secondary);
+}
+
+.login .mo-button,
+.auth-google {
+  width: 100%;
+  min-height: var(--mo-min-target-size);
+}
+
+.auth-link {
+  color: var(--mo-color-accent);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.auth-link:hover,
+.auth-link:focus-visible {
+  text-decoration: underline;
+}
+
+/* "── or ──" between the email form and Google. */
+.auth-or {
+  display: flex;
+  align-items: center;
+  gap: var(--mo-space-3);
+  margin: var(--mo-space-4) 0;
+  font-size: var(--mo-font-size-sm);
+  color: var(--mo-color-text-secondary);
+}
+
+.auth-or::before,
+.auth-or::after {
+  content: '';
+  flex: 1;
+  border-top: 1px solid var(--mo-color-border);
+}
+
+.auth-google {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--mo-space-2);
+}
+
+.google-mark {
+  width: 1.125rem;
+  height: 1.125rem;
+  flex: none;
+}
+
+.auth-switch {
+  margin: var(--mo-space-4) 0 0;
   text-align: center;
   color: var(--mo-color-text-secondary);
 }
 
-.login__or + .mo-button {
-  width: 100%;
+@media (max-width: 30rem) {
+  .public {
+    padding-top: var(--mo-space-6);
+  }
+
+  .public__card {
+    padding: var(--mo-space-4);
+  }
 }
 
 .notice {
@@ -82,6 +152,10 @@
 
 .notice--danger {
   color: var(--mo-color-danger);
+}
+
+.notice--success {
+  color: var(--mo-color-success);
 }
 
 /* Conversations Center (CV-3): a list beside the open conversation; stacked on a phone. */

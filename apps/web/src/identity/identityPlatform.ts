@@ -103,6 +103,8 @@ export interface IdentityClient {
   signUp(email: string, password: string): Promise<IdentityTokens>;
   /** Has Identity Platform email this account's address a link to verify it. */
   sendVerification(idToken: string): Promise<void>;
+  /** Has Identity Platform email a link to choose a new password (its own email, not ours). */
+  sendPasswordReset(email: string): Promise<void>;
   /**
    * Starts a Google sign-in (ADR-0105). `continueUri` is this site's page Google sends the
    * browser back to; it must be an authorized redirect of the Google client and an authorized
@@ -170,6 +172,12 @@ export function createIdentityClient(
       await post(SEND_CODE_URL, {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ requestType: 'VERIFY_EMAIL', idToken }),
+      });
+    },
+    async sendPasswordReset(email) {
+      await post(SEND_CODE_URL, {
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ requestType: 'PASSWORD_RESET', email }),
       });
     },
     async startProvider(continueUri) {

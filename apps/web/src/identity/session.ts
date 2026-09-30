@@ -24,6 +24,8 @@ export interface Session {
   signUp(email: string, password: string): Promise<void>;
   /** Asks again for the verification email of the signed-in account. */
   sendVerification(): Promise<void>;
+  /** Asks for the email that lets this address choose a new password; needs no session. */
+  sendPasswordReset(email: string): Promise<void>;
   /**
    * Starts signing in with Google (ADR-0105): keeps the handle for the return trip in this tab and
    * returns Google's page to send the browser to.
@@ -144,6 +146,7 @@ export function createSession(
       if (idToken === undefined) throw new IdentityError('session_expired');
       await identity.sendVerification(idToken);
     },
+    sendPasswordReset: (email) => identity.sendPasswordReset(email),
     async startProvider(continueUri) {
       const { authUri, sessionId } = await identity.startProvider(continueUri);
       try {

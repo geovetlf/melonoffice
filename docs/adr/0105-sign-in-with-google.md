@@ -41,3 +41,17 @@ Platform's REST API with no SDK (ADR-0036), and the API accepted only tokens who
   the user id does not change.
 - The hash URL of the web service still cannot sign in (the browser key's referrer is the
   deterministic URL).
+
+## Addendum (2026-09-30): the sign-in screen
+
+Geovet's product decision: two ways in, both simple, email and password or Google.
+
+- `/login`: email, password, "Forgot your password?", "Sign in", an "or" line, "Continue with
+  Google", and "Don't have an account? Create account".
+- `/signup`: email, a password the person chooses, its confirmation, then the account is created
+  and signed in (a person with no organization creates one, as before). Google is offered here too.
+- `/forgot-password`: Identity Platform's `sendOobCode` with `PASSWORD_RESET`. The page says the
+  same whether or not the address has an account; only a network failure or a rate limit is shown.
+- No SMS, codes or MFA are added. The account's verification email (ADR-0089) is still sent after
+  sign-up, but nothing waits on it.
+- Error messages name no provider or platform setting.

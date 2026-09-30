@@ -197,7 +197,7 @@ describe('signing in with Google (ADR-0105)', () => {
   it('sends the browser to Google, to come back to the sign-in page', async () => {
     const { services, backend, store, leave } = withGoogle('/login');
     renderApp(services);
-    fireEvent.click(await screen.findByRole('button', { name: 'Sign in with Google' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue with Google' }));
     await waitFor(() => expect(leave).toHaveBeenCalledWith(GOOGLE_AUTH_URI));
     expect(JSON.parse(backend.calls[0]?.body ?? '{}')).toMatchObject({
       continueUri: `${globalThis.location.origin}/login`,
@@ -220,9 +220,9 @@ describe('signing in with Google (ADR-0105)', () => {
     const { services, backend, leave } = withGoogle('/login');
     backend.options.google = 'off';
     renderApp(services);
-    fireEvent.click(await screen.findByRole('button', { name: 'Sign in with Google' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue with Google' }));
     expect((await screen.findByRole('alert')).textContent).toBe(
-      'Sign-in with Google is not turned on for this site yet.',
+      'We could not continue with Google. Please try again later.',
     );
     expect(leave).not.toHaveBeenCalled();
   });
@@ -236,6 +236,75 @@ describe('signing in with Google (ADR-0105)', () => {
     );
     expect(path()).toBe('/login');
     expect(globalThis.location.search).toBe('');
+  });
+});
+
+describe('creating an account and resetting a password (ADR-0105)', () => {
+  it('offers email and password, Google, a reset link and account creation on sign-in', async () => {
+    const { services } = start({ path: '/login' });
+    renderApp(services);
+    expect(await screen.findByLabelText('Email')).toBeTruthy();
+    expect(screen.getByLabelText('Password')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Sign in' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Continue with Google' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('link', { name: 'Create account' }));
+    expect(await screen.findByRole('heading', { name: 'Create account' })).toBeTruthy();
+    expect(path()).toBe('/signup');
+    fireEvent.click(screen.getByRole('link', { name: 'Sign in' }));
+    fireEvent.click(await screen.findByRole('link', { name: 'Forgot your password?' }));
+    expect(path()).toBe('/forgot-password');
+  });
+
+  it('creates an account with a chosen password and goes in', async () => {
+    const { services, backend } = start({ path: '/signup' });
+    backend.options.organizations = [];
+    renderApp(services);
+    fireEvent.change(await screen.findByLabelText('Email'), {
+      target: { value: 'new@example.com' },
+    });
+    fireEvent.change(screen.getByLabelText('Create a password'), { target: { value: 'secret12' } });
+    fireEvent.change(screen.getByLabelText('Confirm password'), { target: { value: 'secret12' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create account' }));
+    expect(
+      await screen.findByText(
+        'Your account is not part of any organization yet. Create one to start.',
+      ),
+    ).toBeTruthy();
+    expect(path()).toBe('/');
+    expect(apiPaths(backend)[0]).toBe('POST /v1/me');
+  });
+
+  it('refuses passwords that do not match, and explains a taken email', async () => {
+    const { services, backend } = start({ path: '/signup' });
+    renderApp(services);
+    fireEvent.change(await screen.findByLabelText('Email'), {
+      target: { value: 'ana@example.com' },
+    });
+    fireEvent.change(screen.getByLabelText('Create a password'), { target: { value: 'secret12' } });
+    fireEvent.change(screen.getByLabelText('Confirm password'), { target: { value: 'secret13' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create account' }));
+    expect((await screen.findByRole('alert')).textContent).toBe('The passwords do not match.');
+    expect(backend.calls).toEqual([]);
+    fireEvent.change(screen.getByLabelText('Confirm password'), { target: { value: 'secret12' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create account' }));
+    expect((await screen.findByRole('alert')).textContent).toBe(
+      'An account with this email already exists. Sign in instead.',
+    );
+    expect(path()).toBe('/signup');
+  });
+
+  it('sends the reset email and says the same whether or not the address has an account', async () => {
+    const { services, backend } = start({ path: '/forgot-password' });
+    renderApp(services);
+    fireEvent.change(await screen.findByLabelText('Email'), {
+      target: { value: 'nobody@example.com' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send link' }));
+    expect((await screen.findByRole('status')).textContent).toBe(
+      'If nobody@example.com has an account, an email with the link is on its way. Check your spam folder too.',
+    );
+    expect(backend.options.passwordResets).toEqual(['nobody@example.com']);
+    expect(backend.apiCalls()).toEqual([]);
   });
 });
 

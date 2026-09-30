@@ -58,6 +58,11 @@ export interface Auth {
   signInWithGoogle(): Promise<SignInResult>;
   /** Finishes a Google sign-in from the URL Google sent the browser back to. */
   finishGoogleSignIn(requestUri: string): Promise<SignInResult>;
+  /**
+   * Asks for the password reset email. Whether the address has an account is never revealed:
+   * only a failure to reach Identity Platform is reported.
+   */
+  sendPasswordReset(email: string): Promise<SignInResult>;
   /** Asks again for the verification email. `false`: it could not be sent. */
   sendVerification(): Promise<boolean>;
   /** Takes a fresh token, so a just-verified email counts, and loads the profile again. */
@@ -214,6 +219,17 @@ export function AuthProvider({
         } catch (error) {
           return { ok: false, code: error instanceof IdentityError ? error.code : 'unavailable' };
         }
+      },
+      async sendPasswordReset(email) {
+        try {
+          await session.sendPasswordReset(email);
+        } catch (error) {
+          const code = error instanceof IdentityError ? error.code : 'unavailable';
+          // An unknown or malformed address answers like a known one.
+          if (code !== 'network' && code !== 'too_many_attempts') return { ok: true };
+          return { ok: false, code };
+        }
+        return { ok: true };
       },
       finishGoogleSignIn: (requestUri) => enter(() => session.finishProvider(requestUri)),
       async sendVerification() {
