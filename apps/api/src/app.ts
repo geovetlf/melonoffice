@@ -121,7 +121,7 @@ import { registerApprovalRoutes } from './approvals.js';
 import { registerAuthRoutes, type AuthEnv } from './auth.js';
 import { registerCors } from './cors.js';
 import { registerBillingRoutes } from './billing.js';
-import type { BrandRepository } from '@melonoffice/branding';
+import { effectiveBrandOf, PLATFORM_BRAND, type BrandRepository } from '@melonoffice/branding';
 import { registerBrandingRoutes, registerPublicBrandRoute } from './branding.js';
 import { registerCommercialRoutes, type CommercialDependencies } from './commercial.js';
 import { registerInvitationRoutes } from './invitations.js';
@@ -834,6 +834,20 @@ export function createApp({
                 // What she may prepare for the person: the same answer the screens read.
                 decisions,
                 departments: structure.departments,
+                // Her names are the organization's brand (ADR-0095), as its screens show them.
+                ...(branding === undefined
+                  ? {}
+                  : {
+                      presentation: async (organizationId: OrganizationId) => {
+                        const { brand } = await effectiveBrandOf(organizationId, branding);
+                        return {
+                          assistantName:
+                            brand.assistantName ?? PLATFORM_BRAND.assistantName ?? 'GIA',
+                          productName:
+                            brand.productName ?? PLATFORM_BRAND.productName ?? 'MelonOffice',
+                        };
+                      },
+                    }),
                 authorization,
                 audit,
                 logger: logger.child({ component: 'gia' }),
