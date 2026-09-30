@@ -284,6 +284,7 @@
   "home.tasks.title": "Today's tasks",
   "home.tasks.empty": "Nothing due today.",
   "home.activity.title": "Recent activity",
+  "home.activity.all": "See all activity",
   "activity.period.label": "Period",
   "activity.period.today": "Today",
   "activity.period.week": "This week",

@@ -1,5 +1,5 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useRef, useState, useSyncExternalStore } from 'react';
 import type { ApprovalsClient } from '../approvals/approvalsClient.js';
 import type { AutomationsClient } from '../automations/automationsClient.js';
 import type { FollowUpsClient } from '../followUps/followUpsClient.js';
@@ -12,6 +12,22 @@ import { OfficeBuilding } from '../office/scene/OfficeBuilding.js';
 import { GiaCommandBar, QuickActions } from './gia.js';
 import { CreditsUsage, RecentActivity, UpcomingMeetings } from './panels.js';
 import { attentionCount, TodayWork, useTodayWork } from './TodayWork.js';
+
+/**
+ * How many entries the day's lists show. On a computer the whole Home fits the window (see
+ * home.css), so a shorter window shows fewer, each list keeping its link to all of them.
+ */
+const FITS = '(min-width: 64rem) and (min-height: 36rem)';
+const entriesFor = (): number => {
+  if (typeof globalThis.matchMedia !== 'function' || !globalThis.matchMedia(FITS).matches) return 3;
+  const height = globalThis.innerHeight;
+  return height >= 1000 ? 3 : height >= 860 ? 2 : 1;
+};
+const onResize = (change: () => void) => {
+  globalThis.addEventListener('resize', change);
+  return () => globalThis.removeEventListener('resize', change);
+};
+const useEntriesShown = (): number => useSyncExternalStore(onResize, entriesFor, () => 3);
 
 /** What the Home's office may do, by the person's permissions (see `AppShell`). */
 export interface HomeOfficeAccess extends AgentSheetAccess {
@@ -47,6 +63,7 @@ export function HomePage({
   const [agent, setAgent] = useState<string>();
   const [motorOpen, setMotorOpen] = useState(false);
   const opener = useRef<HTMLElement | null>(null);
+  const shown = useEntriesShown();
 
   const active = agents.filter((s) => s.status === 'active').length;
   const working = agents.filter((s) => workStateOf(s, work.get(s.id)) === 'working').length;
@@ -65,12 +82,14 @@ export function HomePage({
     <div className="home4">
       <header className="home4__header">
         <div>
-          <time className="home4__date" dateTime={now.toISOString().slice(0, 10)}>
-            {intl.formatDate(now, { weekday: 'long', day: 'numeric', month: 'long' })}
-          </time>
-          <p className="home4__greeting">
-            <FormattedMessage id={`home.greeting.${partOfDay}`} />
-          </p>
+          <div className="home4__kicker">
+            <time className="home4__date" dateTime={now.toISOString().slice(0, 10)}>
+              {intl.formatDate(now, { weekday: 'long', day: 'numeric', month: 'long' })}
+            </time>
+            <span className="home4__greeting">
+              <FormattedMessage id={`home.greeting.${partOfDay}`} />
+            </span>
+          </div>
           <h1 className="home4__title">
             <FormattedMessage id={active > 0 ? 'home.hero.working' : 'home.hero.ready'} />
           </h1>
@@ -119,8 +138,8 @@ export function HomePage({
           </div>
         </div>
         <aside className="home4__side" aria-label={intl.formatMessage({ id: 'home.side.label' })}>
-          <RecentActivity />
-          <TodayWork work={today} />
+          <RecentActivity shown={shown} />
+          <TodayWork work={today} shown={shown} />
           <UpcomingMeetings />
           <CreditsUsage credits={credits} showUsage={canReadAIUsage} />
         </aside>

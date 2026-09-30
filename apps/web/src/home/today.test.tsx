@@ -164,4 +164,33 @@ describe('the Home quick actions', () => {
     await today();
     expect(screen.queryByRole('button', { name: 'Upload a file for GIA to read' })).toBeNull();
   });
+
+  it('fits a short window: fewer entries, each list keeping its way to all of them', async () => {
+    const matchMedia = vi.fn(() => ({ matches: true }));
+    vi.stubGlobal('matchMedia', matchMedia);
+    vi.stubGlobal('innerHeight', 720);
+    try {
+      open(['follow_up.read', 'approval.read'], (b) => {
+        b.options.followUps.org_1 = [followUp('fu_1', 'today'), followUp('fu_2', 'today')];
+        b.options.approvals = { org_1: [{ id: 'a1', status: 'pending' }] };
+        b.options.activity.org_1 = ['e1', 'e2'].map((id, i) => ({
+          id,
+          at: new Date(Date.now() - (i + 1) * 60_000).toISOString(),
+          action: 'organization.profile_updated',
+          result: 'success',
+          actor: 'you',
+        }));
+      });
+      const panel = within(await today());
+      expect(await panel.findByText('1 approval waiting for you')).toBeTruthy();
+      expect(panel.queryByText('Llamar fu_1')).toBeNull();
+      expect(panel.getByRole('button', { name: 'See all 2 due follow-ups' })).toBeTruthy();
+      const activity = within(await screen.findByRole('region', { name: 'Recent activity' }));
+      await activity.findByRole('button', { name: 'See all activity' });
+      expect(activity.getAllByRole('listitem')).toHaveLength(1);
+      expect(matchMedia).toHaveBeenCalledWith('(min-width: 64rem) and (min-height: 36rem)');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });

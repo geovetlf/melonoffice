@@ -40,3 +40,12 @@ Geovet asked for the Home to be redrawn after a reference image: a warm, light c
 - The Home now reads each active agent's latest task, which is up to 24 small reads per refresh. A summary endpoint can replace them later without changing the scene.
 - Screens do not show pipeline or report figures yet. That would need more reads and is left for a later step.
 - PixiJS, a router, a query library and a CSS framework are still not used.
+
+## Amendment (2026-09-30): the whole Home in one view
+
+Geovet asked for the whole Home to fit the window on a computer, with no vertical scroll outside the sidebar.
+
+- On a screen at least 64rem wide and 36rem tall, the Home is exactly as tall as the window. The header and the command box take the room they need. The building takes the rest, and its width follows from its height: each floor is a side room (16:10), so every room stays in view. Nothing is scaled or cut to fit.
+- The right panel is compact. Recent activity and today's tasks show 3, 2 or 1 entries by the window's height, and each keeps its link to all of them.
+- The sidebar keeps its own scroll. Its text and rows are about 11% larger, and it is slightly wider.
+- Below that size (a tablet in portrait, a phone), the Home flows as before.
