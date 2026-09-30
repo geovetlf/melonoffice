@@ -6,8 +6,11 @@ import type { IdTokenVerifier, VerifiedIdentity } from './identity.js';
 export const IDENTITY_PLATFORM_JWKS_URL =
   'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com';
 
-/** Only email and password sign-in is enabled (ADR-0014). Tokens from any other method are rejected. */
-const ALLOWED_SIGN_IN_PROVIDERS = new Set(['password']);
+/**
+ * Email and password (ADR-0014) and Google (ADR-0105) are the enabled sign-in methods. Tokens from
+ * any other method (anonymous, custom, phone, other identity providers) are rejected.
+ */
+const ALLOWED_SIGN_IN_PROVIDERS = new Set(['password', 'google.com']);
 
 /** Allowed clock difference between Google and this service, in seconds. */
 const CLOCK_TOLERANCE_SECONDS = 5;

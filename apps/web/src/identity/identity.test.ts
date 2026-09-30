@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { ApiError, createApiClient } from './apiClient.js';
 import { loadConfig, parseConfig } from './config.js';
 import { createIdentityClient, IdentityError } from './identityPlatform.js';
-import { REFRESH_KEY, createSession } from './session.js';
-import { API, KEY, fakeBackend, memoryStore } from './testing.js';
+import { PROVIDER_KEY, REFRESH_KEY, createSession } from './session.js';
+import { API, GOOGLE_AUTH_URI, KEY, fakeBackend, memoryStore } from './testing.js';
 
 function setup(now = () => 1_000_000) {
   const backend = fakeBackend();
@@ -29,6 +29,70 @@ describe('Identity Platform sign-in (ADR-0036)', () => {
     );
     const offline = createIdentityClient(KEY, () => Promise.reject(new TypeError('offline')));
     await expect(offline.signIn('a@b.c', 'x')).rejects.toEqual(new IdentityError('network'));
+  });
+});
+
+describe('Google sign-in (ADR-0105)', () => {
+  const BACK = 'https://web.example/login';
+
+  it('sends the browser to Google, then signs in from the page Google sends it back to', async () => {
+    const { session, store, backend } = setup();
+    expect(await session.startProvider(BACK)).toBe(GOOGLE_AUTH_URI);
+    expect(JSON.parse(backend.calls[0]?.body ?? '{}')).toEqual({
+      providerId: 'google.com',
+      continueUri: BACK,
+    });
+    expect(session.providerPending).toBe(true);
+    const events: string[] = [];
+    session.subscribe((event) => events.push(event));
+    await session.finishProvider(`${BACK}?state=s&code=c`);
+    expect(events).toEqual(['signed_in']);
+    expect(await session.token()).toBe('id-1');
+    // The handle is used once; only the refresh token stays.
+    expect([...store.data.entries()]).toEqual([[REFRESH_KEY, 'refresh-1']]);
+    expect(session.providerPending).toBe(false);
+  });
+
+  it('says so when Google sign-in is not turned on', async () => {
+    const { session, backend, store } = setup();
+    backend.options.google = 'off';
+    await expect(session.startProvider(BACK)).rejects.toEqual(
+      new IdentityError('provider_disabled'),
+    );
+    expect(store.data.has(PROVIDER_KEY)).toBe(false);
+  });
+
+  it('treats a refusal on Google, or a return with no sign-in under way, as not completed', async () => {
+    const { session } = setup();
+    await session.startProvider(BACK);
+    await expect(session.finishProvider(`${BACK}?error=access_denied&state=s`)).rejects.toEqual(
+      new IdentityError('provider_cancelled'),
+    );
+    expect(session.present).toBe(false);
+    await expect(session.finishProvider(`${BACK}?state=s&code=c`)).rejects.toEqual(
+      new IdentityError('provider_cancelled'),
+    );
+  });
+
+  it('points an email that already signs in with a password to that', async () => {
+    const { session, backend } = setup();
+    backend.options.google = 'linked';
+    await session.startProvider(BACK);
+    await expect(session.finishProvider(`${BACK}?state=s&code=c`)).rejects.toEqual(
+      new IdentityError('account_exists'),
+    );
+    expect(session.present).toBe(false);
+  });
+
+  it('accepts only a Google page to send the browser to', async () => {
+    const client = createIdentityClient(KEY, () =>
+      Promise.resolve(
+        new Response(JSON.stringify({ authUri: 'https://evil.example/', sessionId: 's' })),
+      ),
+    );
+    await expect(client.startProvider(BACK)).rejects.toEqual(
+      new IdentityError('provider_disabled'),
+    );
   });
 });
 

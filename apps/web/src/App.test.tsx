@@ -2,9 +2,16 @@ import { catalogs, I18nProvider, pseudoLocalizeCatalog } from '@melonoffice/i18n
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from './App.js';
-import { REFRESH_KEY } from './identity/session.js';
+import { PROVIDER_KEY, REFRESH_KEY } from './identity/session.js';
 import { createServices, type IdentityServices } from './identity/services.js';
-import { API, KEY, fakeBackend, memoryStore, type FakeBackend } from './identity/testing.js';
+import {
+  API,
+  GOOGLE_AUTH_URI,
+  KEY,
+  fakeBackend,
+  memoryStore,
+  type FakeBackend,
+} from './identity/testing.js';
 import { Root } from './Root.js';
 
 afterEach(cleanup);
@@ -169,6 +176,66 @@ describe('signing in (ADR-0036)', () => {
       ),
     ).toBeTruthy();
     expect(apiPaths(backend)).not.toContain('GET /v1/organizations/org_1');
+  });
+});
+
+describe('signing in with Google (ADR-0105)', () => {
+  function withGoogle(path: string) {
+    globalThis.history.replaceState(null, '', path);
+    const backend = fakeBackend();
+    const store = memoryStore();
+    const leave = vi.fn();
+    const services = createServices(
+      { apiUrl: API, identityApiKey: KEY },
+      backend.fetch,
+      store,
+      leave,
+    );
+    return { backend, store, services, leave };
+  }
+
+  it('sends the browser to Google, to come back to the sign-in page', async () => {
+    const { services, backend, store, leave } = withGoogle('/login');
+    renderApp(services);
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign in with Google' }));
+    await waitFor(() => expect(leave).toHaveBeenCalledWith(GOOGLE_AUTH_URI));
+    expect(JSON.parse(backend.calls[0]?.body ?? '{}')).toMatchObject({
+      continueUri: `${globalThis.location.origin}/login`,
+    });
+    expect(store.data.get(PROVIDER_KEY)).toBe('google-session');
+    expect(backend.apiCalls()).toEqual([]);
+  });
+
+  it('finishes the sign-in when Google sends the browser back, and drops its answer from the URL', async () => {
+    const { services, backend, store } = withGoogle('/login?state=s&code=c');
+    store.setItem(PROVIDER_KEY, 'google-session');
+    renderApp(services);
+    expect(await screen.findByRole('heading', HOME)).toBeTruthy();
+    expect(globalThis.location.search).toBe('');
+    expect(apiPaths(backend).slice(0, 1)).toEqual(['POST /v1/me']);
+    expect([...store.data.keys()]).toEqual([REFRESH_KEY]);
+  });
+
+  it('says so when Google sign-in is not turned on here', async () => {
+    const { services, backend, leave } = withGoogle('/login');
+    backend.options.google = 'off';
+    renderApp(services);
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign in with Google' }));
+    expect((await screen.findByRole('alert')).textContent).toBe(
+      'Sign-in with Google is not turned on for this site yet.',
+    );
+    expect(leave).not.toHaveBeenCalled();
+  });
+
+  it('keeps you on sign-in when you say no on Google', async () => {
+    const { services, store } = withGoogle('/login?error=access_denied&state=s');
+    store.setItem(PROVIDER_KEY, 'google-session');
+    renderApp(services);
+    expect((await screen.findByRole('alert')).textContent).toBe(
+      'Sign-in with Google was not completed. Please try again.',
+    );
+    expect(path()).toBe('/login');
+    expect(globalThis.location.search).toBe('');
   });
 });
 

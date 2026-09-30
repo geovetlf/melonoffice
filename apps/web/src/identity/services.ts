@@ -7,13 +7,16 @@ import { createSession, type KeyValueStore, type Session } from './session.js';
 export interface IdentityServices {
   readonly session: Session;
   readonly api: ApiClient;
+  /** Sends the browser to another site's page (Google's sign-in, ADR-0105). */
+  readonly leave: (url: string) => void;
 }
 
 export function createServices(
   config: WebConfig,
   fetcher: typeof fetch = (input, init) => fetch(input, init),
   store?: KeyValueStore,
+  leave: (url: string) => void = (url) => globalThis.location.assign(url),
 ): IdentityServices {
   const session = createSession(createIdentityClient(config.identityApiKey, fetcher), store);
-  return { session, api: createApiClient(config.apiUrl, session, fetcher) };
+  return { session, api: createApiClient(config.apiUrl, session, fetcher), leave };
 }
