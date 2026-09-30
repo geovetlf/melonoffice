@@ -27,7 +27,7 @@ import { describe, expect, it } from 'vitest';
 import { agentCapabilities, type ToolLookup } from './capabilities.js';
 import { createSpecialistManagement } from './management.js';
 import { InMemorySpecialistRepository } from './repository.js';
-import { createSkillCatalogue, SKILL_CATALOGUE } from './skills.js';
+import { createSkillCatalogue, grantsOf, SKILL_CATALOGUE } from './skills.js';
 import { AGENT_TEMPLATES } from './templates.js';
 
 /** Agent Engine phase 1 (ADR-0062): catalogues, management and what an agent may do. */
@@ -77,7 +77,13 @@ const TOOLS: ToolLookup = (id, version) =>
       ? { riskLevel: 'low', approval: 'auto', permissions: ['conversation.read'] }
       : id === 'follow_up_schedule' && version === 2
         ? { riskLevel: 'low', approval: 'approval_required', permissions: ['follow_up.manage'] }
-        : undefined;
+        : id === 'follow_up_schedule' && version === 3
+          ? {
+              riskLevel: 'low',
+              approval: 'approval_required',
+              permissions: ['follow_up.manage', 'contact.read'],
+            }
+          : undefined;
 
 async function world(roles: Record<string, readonly string[]> = ROLES) {
   const audit = new InMemoryAuditStore();
@@ -161,7 +167,8 @@ describe('catalogues', () => {
     const skills = createSkillCatalogue();
     expect(skills.resolve('customer_follow_up', 1)?.reads).toContain('follow_up.read');
     expect(skills.resolve('customer_follow_up', 2)?.actions).toEqual(['follow_up.schedule']);
-    expect(skills.resolve('customer_follow_up', 3)).toBeUndefined();
+    expect(skills.resolve('customer_follow_up', 3)?.departments).toEqual(['sales']);
+    expect(skills.resolve('customer_follow_up', 4)).toBeUndefined();
     expect(skills.resolve('nope', 1)).toBeUndefined();
     expect(() =>
       createSkillCatalogue([...SKILL_CATALOGUE, ...SKILL_CATALOGUE.slice(0, 1)]),
@@ -429,6 +436,47 @@ describe('upgrading a skill (ADR-0084)', () => {
       version: 2,
     });
     expect(facts.configuration.tools).toEqual(next.configuration.tools);
+  });
+
+  it('gives follow_up_schedule@3 (ADR-0104) only to a commercial agent a person upgrades', async () => {
+    const w = await world();
+    // The commercial template stays at customer_follow_up@2: nothing reaches an agent by itself.
+    const commercial = await w.management.create(w.tenantA, {
+      templateId: 'commercial',
+      displayName: 'Lucía',
+    });
+    expect(commercial.configuration.tools).toEqual([{ id: 'follow_up_schedule', version: 2 }]);
+    const upgraded = await w.management.upgradeSkill(w.tenantA, commercial.identity.id, {
+      fromVersion: commercial.version,
+      skillId: 'customer_follow_up',
+      version: 3,
+    });
+    expect(upgraded.configuration.skills).toContainEqual({ id: 'customer_follow_up', version: 3 });
+    // Version 2 is no longer granted, so it goes; version 3 comes, with the contacts it reads.
+    expect(upgraded.configuration.tools).toEqual([{ id: 'follow_up_schedule', version: 3 }]);
+    expect(upgraded.configuration.permissions).toEqual(
+      expect.arrayContaining(['follow_up.manage', 'contact.read']),
+    );
+
+    // An agent of another department can have customer_follow_up@1 or @2, never @3.
+    const finance = await legacy(w);
+    expect(
+      await codeOf(() =>
+        w.management.upgradeSkill(w.tenantA, finance.identity.id, {
+          fromVersion: finance.version,
+          skillId: 'customer_follow_up',
+          version: 3,
+        }),
+      ),
+    ).toBe('invalid_specialist:skills.department');
+    expect((await w.repository.find(w.orgA, finance.identity.id))?.version).toBe(finance.version);
+    // And were it stored anyway, the skill grants it nothing: what the Harness offers reads this.
+    const skills = createSkillCatalogue();
+    const refs = [{ id: 'customer_follow_up', version: 3 }];
+    expect([...grantsOf(refs, skills, finance.configuration.departmentId).tools]).toEqual([]);
+    expect([...grantsOf(refs, skills, upgraded.configuration.departmentId).tools]).toEqual([
+      'follow_up_schedule@3',
+    ]);
   });
 
   it('refuses a skill the agent lacks, a version not newer, an unknown one, a stale agent and anyone but a person with specialist.manage', async () => {

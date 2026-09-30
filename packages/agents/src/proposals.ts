@@ -71,9 +71,35 @@ export function resolveContactRef(
   contacts: readonly TaskContact[],
   ref: string,
 ): TaskContact | undefined {
-  const found = contacts.filter((c) => contactRef(c.id) === ref);
-  return found.length === 1 ? found[0] : undefined;
+  const found = findContactRef(contacts, ref);
+  return 'contact' in found ? found.contact : undefined;
 }
+
+/** The one contact a reference names in `contacts`, or why there is none (ADR-0104). */
+export function findContactRef(
+  contacts: readonly TaskContact[],
+  ref: string,
+):
+  | { readonly contact: TaskContact }
+  | { readonly problem: 'contact_not_found' | 'contact_ref_ambiguous' } {
+  const found = contacts.filter((c) => contactRef(c.id) === ref);
+  if (found.length > 1) return { problem: 'contact_ref_ambiguous' };
+  const [contact] = found;
+  return contact === undefined ? { problem: 'contact_not_found' } : { contact };
+}
+
+/**
+ * The tool version an agent's model asks for, mid-task, to schedule a follow-up (ADR-0104): by a
+ * contact's reference, approved by a person every time.
+ */
+export const MODEL_FOLLOW_UP_TOOL = Object.freeze({ id: 'follow_up_schedule', version: 3 });
+
+/** How the model reads `follow_up_schedule@3` among its tools, in English. */
+export const MODEL_FOLLOW_UP_DESCRIPTION =
+  'Schedules one follow-up with a contact listed in <contacts>, named by its ref (never an id or a name). ' +
+  'type is one of follow_up, call, message, review, check_in; title says what the person must do, briefly; ' +
+  'date is YYYY-MM-DD, today or later, and time is HH:MM, in the business time zone. ' +
+  'A person approves every call before it runs; its result says whether it was scheduled.';
 
 /** The follow-up an agent proposed, as it answered it. */
 export interface TaskFollowUp {

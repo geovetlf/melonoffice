@@ -81,7 +81,7 @@ const toolNodeId = (agentNodeId: string, index: number) => `${agentNodeId}_t${in
 const turnId = (first: string, number: number) => `${first}_turn${number}`;
 
 /** Where a tool node's call is: the agent node that asked for it, and which call it was. */
-function callRefOf(node: ExecutionNode): { agentNodeId: string; index: number } | undefined {
+export function callRefOf(node: ExecutionNode): { agentNodeId: string; index: number } | undefined {
   if (!isModelToolNode(node)) return undefined;
   const id = (node.input as ExecutionRef).id;
   const at = id.lastIndexOf(':');

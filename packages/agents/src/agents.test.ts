@@ -60,6 +60,8 @@ import {
   taskOf,
   type AgentContextSource,
   type AgentTaskProposalPorts,
+  findContactRef,
+  resolveContactRef,
 } from './index.js';
 
 const T0 = new Date('2026-09-29T12:00:00Z');
@@ -1042,5 +1044,29 @@ describe('What an agent proposes from a task (ADR-0084)', () => {
       await proposer(() => true).ended(w.runtime, { ...done, input: { type: 'message', id: 'm' } }),
     ).toBe(0);
     expect(ingested).toHaveLength(1);
+  });
+});
+
+describe('contact references (ADR-0084, ADR-0104)', () => {
+  const JUAN = '7c9e6679-7425-40de-944b-e07fc1f90ae7';
+  // Another contact whose id starts with the same ten hex digits: the same reference.
+  const TWIN = '7c9e6679-7400-4000-8000-000000000000';
+  const OTHER = '9b2e4c1d-0000-4000-8000-000000000001';
+
+  it('finds the one contact a reference names, and says why there is none', () => {
+    const ref = contactRef(JUAN);
+    expect(ref).toMatch(/^c_[a-p]{10}$/);
+    // The reference never carries the id itself.
+    expect(ref).not.toContain(JUAN.slice(0, 8));
+    const juan = { id: JUAN, name: 'Juan' };
+    expect(findContactRef([juan, { id: OTHER, name: 'Otro' }], ref)).toEqual({ contact: juan });
+    expect(findContactRef([{ id: OTHER, name: 'Otro' }], ref)).toEqual({
+      problem: 'contact_not_found',
+    });
+    expect(findContactRef([juan, { id: TWIN, name: 'Gemelo' }], ref)).toEqual({
+      problem: 'contact_ref_ambiguous',
+    });
+    // The display path reads the same rule: none shown when ambiguous.
+    expect(resolveContactRef([juan, { id: TWIN, name: 'Gemelo' }], ref)).toBeUndefined();
   });
 });

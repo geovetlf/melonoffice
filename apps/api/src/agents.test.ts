@@ -133,8 +133,9 @@ describe.each(STORES)('agents with storage in %s', (_name, createStores) => {
         ],
         missing: [],
       },
-      // Made from today's template: nothing newer to move to.
-      upgrades: [],
+      // The commercial template stays at customer_follow_up@2: version 3 (ADR-0104), the tool
+      // the agent asks for mid-task, is offered, and a person decides whether to move to it.
+      upgrades: [{ skillId: 'customer_follow_up', from: 2, to: 3 }],
     });
 
     const events = (await stores.auditEvents()).filter((e) => e.action.startsWith('specialist.'));

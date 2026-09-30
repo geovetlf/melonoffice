@@ -5,6 +5,7 @@ import { navigate } from '../identity/router.js';
 import { paths } from '../shell/routes.js';
 import {
   AgentTaskError,
+  followUpOfTask,
   isOpenTask,
   type AgentTaskView,
   type AgentTasksClient,
@@ -52,11 +53,12 @@ const STATUS_KEYS: Readonly<Record<string, string>> = {
   unknown: 'agentTasks.status.unknown',
 };
 export const statusKey = (task: AgentTaskView) => {
-  const state = task.answer?.followUp?.state;
-  // It answered; only the follow-up it proposed waits, or was turned down.
+  const state = followUpOfTask(task)?.state;
+  // Only the follow-up it proposed, or asked for with its tool, waits, or was turned down.
   if (state === 'waiting_approval') return 'agentTasks.status.waitingApproval';
   if (task.status === 'failed' && (state === 'rejected' || state === 'expired')) {
-    return 'agentTasks.status.completed';
+    // It had answered: that stands. It had not (its tool's call was turned down): it stopped.
+    return task.answer === null ? 'agentTasks.status.cancelled' : 'agentTasks.status.completed';
   }
   return STATUS_KEYS[task.status] ?? 'agentTasks.status.running';
 };
@@ -155,7 +157,7 @@ function TaskItem({
   readonly busy?: boolean;
 }) {
   const intl = useIntl();
-  const followUp = task.answer?.followUp ?? null;
+  const followUp = followUpOfTask(task);
   const facts = task.answer?.facts ?? 0;
   // Turned down by a person: the task stopped there, and its answer stands.
   const declined =
@@ -197,6 +199,12 @@ function TaskItem({
           )}
         </div>
       )}
+      {task.answer === null && followUp !== null ? (
+        // Asked for with the agent's tool before it answered (ADR-0104): a person decides first.
+        <div className="agent-task__answer">
+          <ProposedFollowUp followUp={followUp} onDecide={onDecide} busy={busy} />
+        </div>
+      ) : null}
       {task.status === 'completed' && task.answer === null ? (
         <p className="panel__empty">
           <FormattedMessage id="agentTasks.noAnswer" />
@@ -325,7 +333,7 @@ export function AgentTasks({
   const [deciding, setDeciding] = useState<string>();
 
   async function decideFollowUp(task: AgentTaskView, decision: 'approve' | 'reject') {
-    const approvalId = task.answer?.followUp?.approvalId;
+    const approvalId = followUpOfTask(task)?.approvalId;
     if (decide === undefined || approvalId === null || approvalId === undefined) return;
     if (decision === 'reject') {
       if (!globalThis.confirm(intl.formatMessage({ id: 'agentTasks.followUp.rejectConfirm' }))) {

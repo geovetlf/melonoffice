@@ -75,6 +75,7 @@ describe('skills grant only what exists, and only to agents (SK-1)', () => {
     ).toEqual([
       ['conversation_reply@1', ['message_send@2|3', 'conversation_handoff@1']],
       ['customer_follow_up@2', ['follow_up_schedule@2']],
+      ['customer_follow_up@3', ['follow_up_schedule@3']],
     ]);
     expect(
       SKILL_CATALOGUE.filter((s) => s.actions.length > 0).map((s) => [
@@ -84,6 +85,7 @@ describe('skills grant only what exists, and only to agents (SK-1)', () => {
     ).toEqual([
       ['company_knowledge@2', ['knowledge.propose_fact']],
       ['customer_follow_up@2', ['follow_up.schedule']],
+      ['customer_follow_up@3', ['follow_up.schedule']],
     ]);
     // Version 1 of every skill grants no action, as before.
     expect(SKILL_CATALOGUE.filter((s) => s.version === 1).flatMap((s) => s.actions)).toEqual([]);
@@ -108,6 +110,7 @@ describe('skills grant only what exists, and only to agents (SK-1)', () => {
         "conversation_reply@1": "338e7530cc39",
         "customer_follow_up@1": "ffa7c617dfde",
         "customer_follow_up@2": "bc1f3e84c7c7",
+        "customer_follow_up@3": "c559f1e6a76d",
         "design_briefing@1": "39a1e0299b99",
         "finance_review@1": "b6fdaaa61bbc",
         "market_research@1": "973fa6cccfce",

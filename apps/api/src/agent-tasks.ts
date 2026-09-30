@@ -1,11 +1,13 @@
 import type { AICallTrace } from '@melonoffice/domain';
-import { handoffForTask } from '@melonoffice/harness';
+import { callRefOf, handoffForTask } from '@melonoffice/harness';
 import {
   AGENT_TASK_NODE,
   answerNodeOf,
   AGENT_TASK_SCHEDULE_NODE,
   isAgentTaskError,
+  MODEL_FOLLOW_UP_TOOL,
   parseAgentAnswer,
+  parseTaskFollowUp,
   resolveContactRef,
   type TaskContacts,
   type AgentTaskError,
@@ -91,8 +93,10 @@ export function registerAgentTaskRoutes(
    * scheduled, rejected, expired, or not put to anyone (it did not resolve, or the follow-up
    * service would refuse it).
    */
-  function followUpState(execution: NonNullable<TaskWithExecution['execution']>) {
-    const node = execution.nodes.find((n) => n.id === AGENT_TASK_SCHEDULE_NODE);
+  function followUpState(
+    execution: NonNullable<TaskWithExecution['execution']>,
+    node = execution.nodes.find((n) => n.id === AGENT_TASK_SCHEDULE_NODE),
+  ) {
     if (node === undefined) return 'not_scheduled';
     if (node.status === 'completed') return 'scheduled';
     if (node.status === 'skipped') return 'not_scheduled';
@@ -102,6 +106,44 @@ export function registerAgentTaskRoutes(
     if (execution.status === 'failed' || execution.status === 'cancelled') return 'not_scheduled';
     if (node.approvalId !== undefined) return 'waiting_approval';
     return 'preparing';
+  }
+
+  /**
+   * The follow-up the agent asked to schedule with its own tool, `follow_up_schedule@3`
+   * (ADR-0104): its latest call, as the model made it, with the contact it names resolved here
+   * for the caller, and where it stands. It is shown while a person must approve it, before the
+   * agent has answered.
+   */
+  async function toolFollowUpOf(
+    tenant: TenantContext,
+    execution: NonNullable<TaskWithExecution['execution']>,
+  ) {
+    const node = execution.nodes.findLast(
+      (n) =>
+        n.type === 'tool' &&
+        n.tool?.id === MODEL_FOLLOW_UP_TOOL.id &&
+        n.tool.version === MODEL_FOLLOW_UP_TOOL.version,
+    );
+    const ref = node === undefined ? undefined : callRefOf(node);
+    if (node === undefined || ref === undefined || outputs === undefined) return null;
+    const record = await outputs.find(tenant, execution.id, ref.agentNodeId);
+    const call = record?.output.toolCalls?.[ref.index];
+    const asked =
+      call?.name === MODEL_FOLLOW_UP_TOOL.id ? parseTaskFollowUp(call.arguments) : undefined;
+    if (asked === undefined) return null;
+    const list = contacts === undefined ? [] : await contacts.list(tenant).catch(() => []);
+    const contact = resolveContactRef(list, asked.contact);
+    const state = followUpState(execution, node);
+    return {
+      contactId: contact?.id ?? null,
+      contactName: contact?.name ?? null,
+      type: asked.type,
+      title: asked.title,
+      date: asked.date,
+      time: asked.time,
+      state,
+      approvalId: state === 'waiting_approval' ? (node.approvalId ?? null) : null,
+    };
   }
 
   async function view(tenant: TenantContext, found: TaskWithExecution) {
@@ -181,6 +223,8 @@ export function registerAgentTaskRoutes(
       failure: execution?.failure?.code ?? null,
       completedAt: execution?.completedAt ?? null,
       answer,
+      // A follow-up the agent asked for with its tool (ADR-0104), approved by a person first.
+      toolFollowUp: execution === undefined ? null : await toolFollowUpOf(tenant, execution),
       // Whether the task now needs a person, and why (ADR-0101). Who and how is the screen's.
       handoff: handoffForTask({
         status: execution?.status ?? 'unknown',

@@ -1,6 +1,6 @@
 # MelonOffice: Skill → Tool/Action authorization matrix
 
-- Date: 2026-09-29. SK-2 (ADR-0083), updated for ADR-0084 ("Proponer y agendar").
+- Date: 2026-09-29. SK-2 (ADR-0083), updated for ADR-0084 ("Proponer y agendar") and ADR-0104 (`follow_up_schedule@3`, 2026-09-30).
 - Everything below is read from the code, not from names:
   - skills: `packages/specialists/src/skills.ts`;
   - agent templates: `packages/specialists/src/templates.ts`;
@@ -20,26 +20,28 @@
 
 ## 1. Skill → Tool/Action
 
-| Skill               | Version | Tool / action                              | Permission                                     | Human only | Approval                          | Risk   |
-| ------------------- | ------- | ------------------------------------------ | ---------------------------------------------- | ---------- | --------------------------------- | ------ |
-| conversation_reply  | 1       | `message_send` v2 (supervised agent)       | conversation.send                              | no         | yes, every reply                  | MEDIUM |
-| conversation_reply  | 1       | `message_send` v3 (autonomous agent)       | conversation.send                              | no         | no (the owner chose "autonomous") | MEDIUM |
-| conversation_reply  | 1       | `conversation_handoff` v1                  | conversation.manage                            | no         | no                                | LOW    |
-| conversation_reply  | 1       | reads conversations                        | conversation.read                              | n/a        | n/a                               | LOW    |
-| company_knowledge   | 1       | reads Company Brain (own department)       | knowledge.read                                 | n/a        | n/a                               | LOW    |
-| company_knowledge   | 2       | v1 reads + action `knowledge.propose_fact` | knowledge.read, knowledge.propose              | no         | the owner confirms each fact      | LOW    |
-| customer_follow_up  | 1       | reads contacts, opportunities, follow-ups  | contact.read, opportunity.read, follow_up.read | n/a        | n/a                               | LOW    |
-| customer_follow_up  | 2       | v1 reads + action `follow_up.schedule`     | follow_up.manage                               | no         | the person confirms               | LOW    |
-| customer_follow_up  | 2       | `follow_up_schedule` v2 (runtime only)     | follow_up.manage                               | no         | yes, every follow-up (2-day TTL)  | LOW    |
-| pipeline_analysis   | 1       | reads opportunities, reports               | opportunity.read, report.read                  | n/a        | n/a                               | LOW    |
-| campaign_analysis   | 1       | reads contacts, reports                    | contact.read, report.read                      | n/a        | n/a                               | LOW    |
-| content_drafting    | 1       | reads Company Brain                        | knowledge.read                                 | n/a        | n/a                               | LOW    |
-| design_briefing     | 1       | reads Company Brain                        | knowledge.read                                 | n/a        | n/a                               | LOW    |
-| operations_tracking | 1       | reads conversations, follow-ups            | conversation.read, follow_up.read              | n/a        | n/a                               | LOW    |
-| finance_review      | 1       | reads reports, credits                     | report.read, credits.read                      | n/a        | n/a                               | LOW    |
-| market_research     | 1       | reads Company Brain, reports               | knowledge.read, report.read                    | n/a        | n/a                               | LOW    |
+| Skill               | Version | Tool / action                                                      | Permission                                     | Human only | Approval                          | Risk   |
+| ------------------- | ------- | ------------------------------------------------------------------ | ---------------------------------------------- | ---------- | --------------------------------- | ------ |
+| conversation_reply  | 1       | `message_send` v2 (supervised agent)                               | conversation.send                              | no         | yes, every reply                  | MEDIUM |
+| conversation_reply  | 1       | `message_send` v3 (autonomous agent)                               | conversation.send                              | no         | no (the owner chose "autonomous") | MEDIUM |
+| conversation_reply  | 1       | `conversation_handoff` v1                                          | conversation.manage                            | no         | no                                | LOW    |
+| conversation_reply  | 1       | reads conversations                                                | conversation.read                              | n/a        | n/a                               | LOW    |
+| company_knowledge   | 1       | reads Company Brain (own department)                               | knowledge.read                                 | n/a        | n/a                               | LOW    |
+| company_knowledge   | 2       | v1 reads + action `knowledge.propose_fact`                         | knowledge.read, knowledge.propose              | no         | the owner confirms each fact      | LOW    |
+| customer_follow_up  | 1       | reads contacts, opportunities, follow-ups                          | contact.read, opportunity.read, follow_up.read | n/a        | n/a                               | LOW    |
+| customer_follow_up  | 2       | v1 reads + action `follow_up.schedule`                             | follow_up.manage                               | no         | the person confirms               | LOW    |
+| customer_follow_up  | 2       | `follow_up_schedule` v2 (runtime only)                             | follow_up.manage                               | no         | yes, every follow-up (2-day TTL)  | LOW    |
+| customer_follow_up  | 3       | v1 reads + action `follow_up.schedule`                             | follow_up.manage                               | no         | the person confirms               | LOW    |
+| customer_follow_up  | 3       | `follow_up_schedule` v3 (the model asks, mid-task; Comercial only) | follow_up.manage, contact.read                 | no         | yes, every call (level C)         | LOW    |
+| pipeline_analysis   | 1       | reads opportunities, reports                                       | opportunity.read, report.read                  | n/a        | n/a                               | LOW    |
+| campaign_analysis   | 1       | reads contacts, reports                                            | contact.read, report.read                      | n/a        | n/a                               | LOW    |
+| content_drafting    | 1       | reads Company Brain                                                | knowledge.read                                 | n/a        | n/a                               | LOW    |
+| design_briefing     | 1       | reads Company Brain                                                | knowledge.read                                 | n/a        | n/a                               | LOW    |
+| operations_tracking | 1       | reads conversations, follow-ups                                    | conversation.read, follow_up.read              | n/a        | n/a                               | LOW    |
+| finance_review      | 1       | reads reports, credits                                             | report.read, credits.read                      | n/a        | n/a                               | LOW    |
+| market_research     | 1       | reads Company Brain, reports                                       | knowledge.read, report.read                    | n/a        | n/a                               | LOW    |
 
-Only the v2 skills grant Decision Engine actions (ADR-0084).
+Only the v2 skills, and `customer_follow_up@3`, grant Decision Engine actions (ADR-0084). `customer_follow_up@3` is for agents of the commercial department only (ADR-0104): management refuses it elsewhere, and it grants nothing to an agent of another department. The commercial template stays at version 2; a person moves an agent to version 3.
 
 ### Tools and actions no skill grants
 

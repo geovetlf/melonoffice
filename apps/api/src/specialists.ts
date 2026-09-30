@@ -4,6 +4,7 @@ import {
   AGENT_TEMPLATES,
   agentCapabilities,
   isSpecialistError,
+  skillAllowedIn,
   type SkillCatalogue,
   type SpecialistError,
   type SpecialistManagement,
@@ -108,11 +109,14 @@ export function registerSpecialistRoutes(
         );
         const found = agentCapabilities(specialist, { skills, tools, held });
         // A newer version of a skill the agent has: only a person moves it there (ADR-0084).
+        // Only one its department may have (ADR-0104).
         const upgrades = specialist.configuration.skills.flatMap(({ id, version }) => {
           const latest = Math.max(
             ...skills
               .list()
-              .filter((s) => s.id === id)
+              .filter(
+                (s) => s.id === id && skillAllowedIn(s, specialist.configuration.departmentId),
+              )
               .map((s) => s.version),
           );
           return latest > version ? [{ skillId: id, from: version, to: latest }] : [];

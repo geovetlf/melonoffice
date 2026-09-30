@@ -1551,6 +1551,7 @@
   "agentTasks.facts.review": "Review in Memory",
   "agents.upgrade.available": "Version {version} of this skill is available.",
   "agents.upgrade.customer_follow_up.2": "Version 2 lets it propose follow-ups and schedule them, always with your approval.",
+  "agents.upgrade.customer_follow_up.3": "Version 3 lets it ask, while it works on a task, to schedule a follow-up with a customer. It is never scheduled without your approval.",
   "agents.upgrade.company_knowledge.2": "Version 2 lets it propose facts for the company memory. You confirm them.",
   "agents.upgrade.action": "Update to version {version}",
   "agents.upgrade.working": "Updating…",
