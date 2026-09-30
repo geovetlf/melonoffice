@@ -35,8 +35,16 @@ const place = (department: DepartmentView) => {
   return at === -1 ? PLACES.length : at;
 };
 
+/**
+ * Departments in the order the building reads, left then right, row by row. Any other department
+ * follows in the order given (the business profile's, ADR-0048). The sidebar lists them the same
+ * way, so the menu reads like the office.
+ */
+export const inBuildingOrder = (given: readonly DepartmentView[]): readonly DepartmentView[] =>
+  [...given].sort((a, b) => place(a) - place(b));
+
 export function buildingFloors(given: readonly DepartmentView[]): readonly Floor[] {
-  const departments = [...given].sort((a, b) => place(a) - place(b));
+  const departments = inBuildingOrder(given);
   const count = Math.max(MIN_FLOORS, Math.ceil(departments.length / 2));
   const room = (i: number): SideRoom => {
     const department = departments[i];

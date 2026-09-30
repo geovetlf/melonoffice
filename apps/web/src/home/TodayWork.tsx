@@ -118,7 +118,7 @@ export function TodayWork({
           <ul className="panel__list">
             {approvalsCount > 0 ? (
               <li className="task">
-                <span className="task__box" aria-hidden="true" />
+                <span className="task__box task__box--approval" aria-hidden="true" />
                 <button
                   type="button"
                   className="task__body task__link"
@@ -138,7 +138,10 @@ export function TodayWork({
             ) : null}
             {items.slice(0, listed).map((f) => (
               <li key={f.id} className="task">
-                <span className="task__box" aria-hidden="true" />
+                <span
+                  className={`task__box${f.when === 'overdue' ? ' task__box--overdue' : ''}`}
+                  aria-hidden="true"
+                />
                 <button
                   type="button"
                   className="task__body task__link"

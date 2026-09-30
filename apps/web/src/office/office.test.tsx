@@ -151,7 +151,7 @@ describe('the Home (ADR-0040)', () => {
     expect(
       office.getByRole('link', { name: 'Enter Finance. No agents yet. 0 of 4 workstations taken' }),
     ).toBeTruthy();
-    // The sidebar lists the same rooms apart from the tools.
+    // The sidebar lists the same rooms apart from the tools, in the order the building reads.
     const officeNav = screen.getByRole('navigation', { name: 'Office' });
     expect(
       within(officeNav)
@@ -162,11 +162,11 @@ describe('the Home (ADR-0040)', () => {
       'GIA',
       'Company memory',
       'Board',
-      'Operations',
       'Commercial',
+      'Operations',
       'Marketing',
-      'Research',
       'Finance',
+      'Research',
     ]);
     // The tools: Communications, the AI Command Center and Agents; the rest are coming. The business lives in the company
     // memory, next to the rooms (ADR-0056).

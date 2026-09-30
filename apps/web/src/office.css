@@ -856,6 +856,12 @@ a.sidebar__item:hover {
 }
 
 /* A list that failed says so in the danger colour; loading and empty stay quiet. */
+.panel__hint {
+  margin: var(--mo-space-1) 0 0;
+  color: var(--mo-color-text-secondary);
+  font-size: var(--mo-font-size-xs);
+}
+
 .panel__empty[role='alert'] {
   color: var(--mo-color-danger);
   font-weight: var(--mo-font-weight-medium);
@@ -878,13 +884,22 @@ a.sidebar__item:hover {
   gap: var(--mo-space-3);
 }
 
+/* A task still to do: an open circle; one waiting on a decision, the waiting colour; late, red. */
 .task__box {
   flex: none;
-  width: 16px;
-  height: 16px;
+  width: 1rem;
+  height: 1rem;
   margin-top: 3px;
-  border: 1.5px solid var(--mo-color-text-secondary);
-  border-radius: 4px;
+  border: 1.5px solid var(--mo-color-border-strong);
+  border-radius: 50%;
+}
+
+.task__box--approval {
+  border: 2px solid var(--mo-color-state-waiting);
+}
+
+.task__box--overdue {
+  border: 2px solid var(--mo-color-danger);
 }
 
 .task__body {

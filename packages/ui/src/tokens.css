@@ -26,6 +26,10 @@
   --mo-color-success-soft: #edf6f0;
   --mo-color-warning-soft: #f8f0de;
   --mo-color-danger-soft: #fbeae8;
+  --mo-color-scene-circuit: #7cc0ff;
+  --mo-color-scene-circuit-soft: #a0d6ff;
+  --mo-color-scene-screen: #1b2740;
+  --mo-color-scene-screen-deep: #13203a;
   --mo-color-state-working: #c0451d;
   --mo-color-state-available: #2e8a5a;
   --mo-color-state-waiting: #b87708;
