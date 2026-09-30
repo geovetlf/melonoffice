@@ -45,7 +45,7 @@ export interface NodeWorkSource {
     tenant: TenantContext,
     execution: Execution,
     node: ExecutionNode,
-  ): Promise<AgentWork | undefined>;
+  ): Promise<AgentWork | AgentWorkStop | undefined>;
   /**
    * Whether a ready node still has work to do, from what the nodes before it stored (ADR-0043):
    * `false` skips it (`pending → skipped`), and nothing runs for it. Absent, every node runs.
@@ -85,6 +85,24 @@ export interface ExecutionEndHook {
 export const RUNTIME_AI_FIELDS = ['requestId', 'executionId', 'nodeId', 'specialistId'] as const;
 
 export type AgentWork = Omit<AIRequest, (typeof RUNTIME_AI_FIELDS)[number]>;
+
+/**
+ * Work that must not run (ADR-0100): the Melon Agent Harness stopped the task at one of its
+ * limits (time, for example). No model is asked and the execution fails with `stop` as its code,
+ * so the person reads why it ended instead of a generic `input_unavailable`.
+ */
+export interface AgentWorkStop {
+  readonly stop: string;
+}
+
+const STOP_CODE = /^[a-z][a-z0-9_]{0,63}$/;
+
+export const isAgentWorkStop = (value: unknown): value is AgentWorkStop =>
+  typeof value === 'object' &&
+  value !== null &&
+  Object.keys(value).length === 1 &&
+  typeof (value as { stop?: unknown }).stop === 'string' &&
+  STOP_CODE.test((value as { stop: string }).stop);
 
 /**
  * Checks an execution's finished work and returns the evidence (ADR-0029: `output_schema` or

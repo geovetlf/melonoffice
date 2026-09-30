@@ -84,6 +84,7 @@ import {
 } from '@melonoffice/specialists';
 import { createOrganization, InMemoryTenancyStore, resolveTenant } from '@melonoffice/tenancy';
 import { createToolRegistry, TOOL_CATALOGUE } from '@melonoffice/tools';
+import { harnessTaskPolicy } from '@melonoffice/harness';
 import { describe, expect, it } from 'vitest';
 import { createAgentTaskParts, createConversationAgentParts, routeAgentWork } from './agents.js';
 import { createWorkerRuntime, type WorkerStores } from './runtime.js';
@@ -345,6 +346,14 @@ describe.each(STORES)('AE-2 agent tasks with storage in %s', (_storage, createSt
       policies: createModelPolicyCatalogue([
         { ...CONVERSATION_AGENT_POLICY, backoffMs: 0 },
         { ...AGENT_TASK_POLICY, backoffMs: 0 },
+        {
+          ...harnessTaskPolicy({
+            preferredProviders: ['nvidia'],
+            environments: ['dev'],
+            maxCostMicroUsd: CREDIT_RATE.microUsdPerCredit,
+          }),
+          backoffMs: 0,
+        },
       ]),
       work: routed.work,
       verifier: routed.verifier,
@@ -484,6 +493,17 @@ describe.each(STORES)('AE-2 agent tasks with storage in %s', (_storage, createSt
     expect(prompt).toContain('¿Cuánto cuesta el Combo Familiar');
     expect([...w.charges.values()]).toEqual([1]);
     const record = await w.outputs.find(w.tenantA, task.id, 'work');
+    // How the call was served (ADR-0100): the router's choice, its cost and credits, no budget.
+    expect(must(record).ai).toMatchObject({
+      provider: 'google-vertex-ai',
+      model: 'gemini-2.5-flash-lite',
+      fallbackFrom: null,
+      creditsConsumed: 1,
+      maxCredits: null,
+      escalation: null,
+      attempts: 1,
+    });
+    expect(must(record).ai?.actualMicroUsd).toEqual(expect.any(Number));
     expect(parseAgentAnswer(must(record).output)).toEqual({
       answer: 'El Combo Familiar cuesta S/ 25. Sugiero ofrecerlo a clientes que piden para cuatro.',
       missing: ['Margen del Combo Familiar'],
@@ -523,13 +543,15 @@ describe.each(STORES)('AE-2 agent tasks with storage in %s', (_storage, createSt
       const asked = await w.tasks.assign(w.tenantA, lucia.identity.id, { request });
       const execution = must(asked.execution);
       const node = must(execution.nodes.find((n) => n.id === 'work'));
-      return w.taskParts.work.agentWork(w.tenantA, execution, node);
+      const work = await w.taskParts.work.agentWork(w.tenantA, execution, node);
+      if (work !== undefined && 'stop' in work) throw new Error(`stopped: ${work.stop}`);
+      return work;
     };
     // Work on the text it is given: the cheapest model that fits, and no company memory.
     const classify = await workOf('Clasifica este mensaje: hola');
     expect(classify).toMatchObject({
       strategy: 'cost_optimized',
-      metadata: { harnessIntent: 'classification', harnessPolicy: 'harness_default@1' },
+      metadata: { harnessIntent: 'classification', harnessPolicy: 'harness_default@2' },
     });
     expect(JSON.stringify(classify?.messages)).not.toContain('Combo Familiar');
     // Analysis about a price: the best model allowed, and the company memory.
@@ -557,7 +579,15 @@ describe.each(STORES)('AE-2 agent tasks with storage in %s', (_storage, createSt
     });
     const execution = must(budgeted.execution);
     const node = must(execution.nodes.find((n) => n.id === 'work'));
-    expect((await w.taskParts.work.agentWork(w.tenantA, execution, node))?.maxCredits).toBe(3);
+    expect(await w.taskParts.work.agentWork(w.tenantA, execution, node)).toMatchObject({
+      maxCredits: 3,
+      // Private company data, whatever the request says: the data policy routes on it.
+      sensitivity: 'confidential',
+      metadata: { harnessData: 'company_private' },
+    });
+    // Analysis asks for the strongest model allowed, and says why on the call (ADR-0100).
+    expect(analyse?.metadata).toMatchObject({ harnessEscalation: 'complex_task' });
+    expect(classify?.metadata).not.toHaveProperty('harnessEscalation');
   });
 
   it('2. asking again with the same key is the same task: nothing new runs or is charged', async () => {

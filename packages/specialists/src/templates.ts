@@ -32,9 +32,11 @@ export interface AgentTemplate {
 
 /**
  * The model policy of an agent's tasks (ADR-0063): named here so an agent never falls back to
- * the default policy. The policy itself is configuration of the worker (Vertex AI, DEV only).
+ * the default policy. The policy itself is configuration of the worker. Version 2 (ADR-0100) pins
+ * no provider or model: the Harness and the AI Gateway's router choose per task. Agents made
+ * before it keep version 1 until a person moves them.
  */
-export const AGENT_TASK_POLICY_REF = Object.freeze({ id: 'agent_task' as PolicyId, version: 1 });
+export const AGENT_TASK_POLICY_REF = Object.freeze({ id: 'agent_task' as PolicyId, version: 2 });
 
 export const AGENT_LOCALES = ['es', 'en'] as const;
 export type AgentLocale = (typeof AGENT_LOCALES)[number];

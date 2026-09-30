@@ -1,4 +1,5 @@
 import type {
+  AICallTrace,
   AgentOutputRecord,
   ExecutionId,
   ExecutionNodeId,
@@ -29,6 +30,7 @@ export interface AgentOutputInput {
   readonly nodeId: ExecutionNodeId;
   readonly requestId: string;
   readonly output: { readonly text?: string; readonly structured?: unknown };
+  readonly ai?: AICallTrace;
 }
 
 /**
@@ -48,6 +50,51 @@ export interface AgentOutputStore {
 export const MAX_AGENT_OUTPUT_LENGTH = 16_000;
 const NODE_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const REQUEST_ID = /^[\w-]{1,128}$/;
+
+const TRACE_CODE = /^[A-Za-z0-9_./:-]{1,128}$/;
+const count = (v: unknown): boolean => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0;
+const countOrNull = (v: unknown): boolean => v === null || count(v);
+const codeOrNull = (v: unknown): boolean =>
+  v === null || (typeof v === 'string' && TRACE_CODE.test(v));
+
+/** A call trace of codes and whole numbers only, or the whole record is refused. */
+export function checkTrace(trace: AICallTrace): AICallTrace {
+  const ok =
+    typeof trace.provider === 'string' &&
+    TRACE_CODE.test(trace.provider) &&
+    typeof trace.model === 'string' &&
+    TRACE_CODE.test(trace.model) &&
+    codeOrNull(trace.strategy) &&
+    codeOrNull(trace.fallbackFrom) &&
+    codeOrNull(trace.escalation) &&
+    countOrNull(trace.estimatedMicroUsd) &&
+    countOrNull(trace.actualMicroUsd) &&
+    countOrNull(trace.creditsEstimated) &&
+    count(trace.creditsConsumed) &&
+    countOrNull(trace.maxCredits) &&
+    count(trace.attempts) &&
+    [trace.capability, trace.sensitivity, trace.dataClass, trace.intent].every(
+      (v) => v === undefined || codeOrNull(v),
+    );
+  if (!ok) throw new ExecutionError('invalid_execution', 'agent_output_trace');
+  return Object.freeze({
+    provider: trace.provider,
+    model: trace.model,
+    strategy: trace.strategy,
+    fallbackFrom: trace.fallbackFrom,
+    estimatedMicroUsd: trace.estimatedMicroUsd,
+    actualMicroUsd: trace.actualMicroUsd,
+    creditsEstimated: trace.creditsEstimated,
+    creditsConsumed: trace.creditsConsumed,
+    maxCredits: trace.maxCredits,
+    escalation: trace.escalation,
+    attempts: trace.attempts,
+    ...(typeof trace.capability === 'string' ? { capability: trace.capability } : {}),
+    ...(typeof trace.sensitivity === 'string' ? { sensitivity: trace.sensitivity } : {}),
+    ...(typeof trace.dataClass === 'string' ? { dataClass: trace.dataClass } : {}),
+    ...(typeof trace.intent === 'string' ? { intent: trace.intent } : {}),
+  });
+}
 
 export function createAgentOutputStore(
   repository: AgentOutputRepository,
@@ -82,6 +129,7 @@ export function createAgentOutputStore(
           nodeId: input.nodeId,
           requestId: input.requestId,
           output,
+          ...(input.ai === undefined ? {} : { ai: checkTrace(input.ai) }),
           createdAt: now().toISOString() as IsoTimestamp,
         }),
       );

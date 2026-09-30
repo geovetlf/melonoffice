@@ -185,6 +185,11 @@ export interface ModelPolicy {
   readonly fallback: 'none' | 'compatible';
   /** Attempts per model for transient errors (1 = no retry). */
   readonly maxAttempts: number;
+  /**
+   * The most provider calls one request may make, over every model it falls back to (ADR-0100).
+   * Absent: `maxAttempts` per model, over each compatible model.
+   */
+  readonly maxCalls?: number;
   readonly backoffMs: number;
   /** Models to prefer, in order (`provider/model`). Otherwise the router's fixed order applies. */
   readonly preferred?: readonly string[];
@@ -201,4 +206,25 @@ export interface ModelPolicy {
   readonly minimumQuality?: AIQualityTier;
   /** How the router orders the models that fit (ADR-0072). Absent: `balanced`. */
   readonly strategy?: AIRoutingStrategy;
+}
+
+/**
+ * Which data each provider may receive, per environment (ADR-0100, Geovet 2026-09-30): the data
+ * policy the AI Gateway applies before it routes a call. Configuration of each server, never a
+ * branch in code: an entry can only narrow what a provider's recorded terms allow (the registry,
+ * ADR-0080), so letting a provider receive more takes both a registry entry whose terms allow it
+ * (a contract, a paid endpoint) and a data policy entry that says so.
+ */
+export interface AIDataPolicyEntry {
+  readonly provider: string;
+  readonly environment: DeploymentEnvironment;
+  /** The highest data sensitivity this provider may receive in this environment. */
+  readonly maxSensitivity: DataSensitivity;
+}
+
+export interface AIDataPolicy {
+  readonly id: string;
+  readonly version: number;
+  /** One entry per provider and environment at most. A provider with none: its terms only. */
+  readonly entries: readonly AIDataPolicyEntry[];
 }

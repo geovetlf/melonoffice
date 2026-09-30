@@ -11,7 +11,7 @@ import {
 import { createApprovalService, type ApprovalRepository } from '@melonoffice/approvals';
 import { createAuditService, type AuditStore } from '@melonoffice/audit';
 import type { DepartmentRepository } from '@melonoffice/departments';
-import type { DeploymentEnvironment } from '@melonoffice/domain';
+import type { AIDataPolicy, DeploymentEnvironment } from '@melonoffice/domain';
 import { createExecutionService, type ExecutionRepository } from '@melonoffice/execution';
 import { createToolGate } from '@melonoffice/guardrails';
 import { createJobService, type JobRepository, type JobService } from '@melonoffice/jobs';
@@ -74,6 +74,11 @@ export interface WorkerRuntimeOptions {
    * which stops at `internal` data.
    */
   readonly policies?: ModelPolicyCatalogue;
+  /**
+   * Which data each provider may receive here (ADR-0100), applied by the gateway before routing.
+   * Absent: each provider's recorded terms only.
+   */
+  readonly dataPolicy?: AIDataPolicy;
   /**
    * Where every model call's usage and cost is recorded (the AI Usage Ledger, ADR-0074). Absent:
    * nothing is recorded; the calls and their credits are unchanged.
@@ -187,6 +192,7 @@ export function createWorkerRuntime(options: WorkerRuntimeOptions): {
         environment,
         ...(credits === undefined ? {} : { credits }),
         ...(options.usage === undefined ? {} : { usage: options.usage }),
+        ...(options.dataPolicy === undefined ? {} : { dataPolicy: options.dataPolicy }),
         audit,
         ...clock,
         ...log,

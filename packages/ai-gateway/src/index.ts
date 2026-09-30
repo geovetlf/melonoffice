@@ -5,6 +5,7 @@ export * from './adapter.js';
 export * from './response.js';
 export * from './registry.js';
 export * from './policy.js';
+export * from './data-policy.js';
 export * from './cost.js';
 export * from './credits.js';
 export * from './router.js';

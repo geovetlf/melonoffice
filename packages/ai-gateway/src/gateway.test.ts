@@ -13,6 +13,7 @@ import {
   provisionDepartments,
 } from '@melonoffice/departments';
 import type {
+  AIDataPolicy,
   AIModelDefinition,
   AIProviderDefinition,
   DepartmentTypeId,
@@ -268,6 +269,7 @@ interface WorldOptions {
   readonly usage?: AIUsageSink;
   readonly streams?: StreamScript;
   readonly creditPolicy?: CustomerCreditPolicy;
+  readonly dataPolicy?: AIDataPolicy;
 }
 
 async function world(options: WorldOptions = {}) {
@@ -339,6 +341,7 @@ async function world(options: WorldOptions = {}) {
       options.defaultPolicy ?? { ...DEFAULT_MODEL_POLICY, backoffMs: 0 },
     ),
     environment: 'environment' in options ? options.environment : 'dev',
+    ...(options.dataPolicy === undefined ? {} : { dataPolicy: options.dataPolicy }),
     ...(options.credits === 'none'
       ? {}
       : {
@@ -805,6 +808,60 @@ describe('AI gateway: the 20 security cases of the X4 brief', () => {
         requestId: 'req-1',
       }),
     ]);
+  });
+
+  it('caps the provider calls of one request over every fallback (ADR-0100 `maxCalls`)', async () => {
+    const down = () => ({ status: 'error', kind: 'server_error', httpStatus: 503 }) as const;
+    const { w, call } = await setup({
+      defaultPolicy: {
+        ...onlyModels('alpha/alpha-large', 'alpha/alpha-small', 'beta/beta-text'),
+        maxAttempts: 2,
+        maxCalls: 3,
+      },
+      script: { 'alpha-large': [down, down], 'alpha-small': [down, down], 'beta-text': [down] },
+    });
+    const response = await call({ quality: 'basic' });
+    expect(response).toMatchObject({ status: 'failed' });
+    // Two on the first model, one on the next, then it stops: never the six the models allow.
+    expect(w.calls).toHaveLength(3);
+  });
+
+  it('applies the data policy before routing: a provider the data may not reach is never asked (ADR-0100)', async () => {
+    const { w, call } = await setup({
+      defaultPolicy: { ...onlyModels('alpha/alpha-large', 'beta/beta-text'), maxAttempts: 1 },
+      dataPolicy: {
+        id: 'ai_data',
+        version: 1,
+        entries: [{ provider: 'alpha', environment: 'dev', maxSensitivity: 'public' }],
+      },
+    });
+    // Internal data: alpha is left out by the data policy, beta answers.
+    expect(await call({ quality: 'basic' })).toMatchObject({
+      status: 'completed',
+      provider: 'beta',
+    });
+    expect(w.calls.map((c) => c.model.id)).toEqual(['beta-text']);
+    // Public data may reach alpha.
+    expect(
+      await call({ requestId: 'req-2', sensitivity: 'public', quality: 'high' }),
+    ).toMatchObject({ provider: 'alpha' });
+    // No provider may receive the data: refused before any call, with the data policy as reason.
+    const only = await setup({
+      defaultPolicy: { ...onlyModels('alpha/alpha-large'), maxAttempts: 1 },
+      dataPolicy: {
+        id: 'ai_data',
+        version: 1,
+        entries: [
+          { provider: 'alpha', environment: 'dev', maxSensitivity: 'public' },
+          { provider: 'beta', environment: 'dev', maxSensitivity: 'public' },
+        ],
+      },
+    });
+    expect(await only.call()).toMatchObject({
+      status: 'denied',
+      code: 'data_policy_not_allowed',
+    });
+    expect(only.w.calls).toHaveLength(0);
   });
 
   it('18–19. no secret reaches logs or audit, whatever happens', async () => {

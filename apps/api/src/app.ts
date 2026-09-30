@@ -82,7 +82,7 @@ import {
   createHarnessToolDirectory,
 } from '@melonoffice/harness';
 import { createGia } from '@melonoffice/gia';
-import type { DeploymentEnvironment, OrganizationId } from '@melonoffice/domain';
+import type { AIDataPolicy, DeploymentEnvironment, OrganizationId } from '@melonoffice/domain';
 import { createToolGate } from '@melonoffice/guardrails';
 import {
   createChannelConnectionService,
@@ -307,6 +307,8 @@ export interface AppOptions {
     readonly policies?: ModelPolicyCatalogue;
     readonly creditRate?: CreditRate;
     readonly credits?: AICreditsPort;
+    /** Which data each provider may receive here (ADR-0100). Absent: its terms only. */
+    readonly dataPolicy?: AIDataPolicy;
   };
   /**
    * The Forecasting Engine (ADR-0059). Its series come from the conversations' records (C1, C2,
@@ -546,6 +548,7 @@ export function createApp({
             policies: aiPolicies,
             health: aiHealth,
             environment: ai.environment,
+            ...(ai.dataPolicy === undefined ? {} : { dataPolicy: ai.dataPolicy }),
             ...(aiCredits === undefined
               ? {}
               : { credits: { port: aiCredits, rate: ai.creditRate } }),

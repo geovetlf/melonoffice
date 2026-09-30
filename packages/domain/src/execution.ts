@@ -221,6 +221,37 @@ export interface Execution {
 }
 
 /**
+ * How one agent node's model call was served (ADR-0100): the provider and model the AI Gateway's
+ * router chose, what it was estimated to cost and cost, the credits it took, the limit it ran
+ * under and why a stronger model was asked for, if one was. Codes and numbers only.
+ */
+export interface AICallTrace {
+  readonly provider: string;
+  readonly model: string;
+  /** The routing strategy the call ran with. */
+  readonly strategy: string | null;
+  /** The model first chosen, when another one answered (`provider/model`). */
+  readonly fallbackFrom: string | null;
+  /** Millionths of a US dollar; null when the price is not known. */
+  readonly estimatedMicroUsd: number | null;
+  readonly actualMicroUsd: number | null;
+  readonly creditsEstimated: number | null;
+  readonly creditsConsumed: number;
+  /** The credits the call was allowed at most; null when no task budget applied. */
+  readonly maxCredits: number | null;
+  /** Why a stronger model was asked for (`complex_task`); null when it was not. */
+  readonly escalation: string | null;
+  readonly attempts: number;
+  /** What the call asked for (`text_generation`…). Absent on traces kept before ADR-0100's close. */
+  readonly capability?: string;
+  /** The data the call carried, as the data policy saw it (`confidential`…). */
+  readonly sensitivity?: string;
+  /** The Harness's reading of the task: its data class and intent (the decision it routed on). */
+  readonly dataClass?: string;
+  readonly intent?: string;
+}
+
+/**
  * What an agent node's model call answered (CV-6B, ADR-0043), kept so the nodes after it can use
  * it. Written once by the runtime, for the node's own request; never a decision by itself: the
  * nodes that read it check it again.
@@ -232,5 +263,7 @@ export interface AgentOutputRecord {
   /** The AI call's own id (`job-{jobId}`), the same the credits were charged under. */
   readonly requestId: string;
   readonly output: { readonly text?: string; readonly structured?: unknown };
+  /** How the call was served (ADR-0100). Absent on answers kept before it was recorded. */
+  readonly ai?: AICallTrace;
   readonly createdAt: IsoTimestamp;
 }

@@ -74,6 +74,7 @@ export function checkModelPolicy(p: ModelPolicy): ModelPolicy {
     invalid('strategy');
   }
   if (!int(p.maxAttempts, 1, 5)) invalid('maxAttempts');
+  if (p.maxCalls !== undefined && !int(p.maxCalls, 1, 20)) invalid('maxCalls');
   if (!int(p.backoffMs, 0, 30_000)) invalid('backoffMs');
   return p;
 }

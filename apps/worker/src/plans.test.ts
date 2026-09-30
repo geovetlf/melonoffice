@@ -86,6 +86,7 @@ import {
 } from '@melonoffice/specialists';
 import { createOrganization, InMemoryTenancyStore, resolveTenant } from '@melonoffice/tenancy';
 import { createToolRegistry, TOOL_CATALOGUE } from '@melonoffice/tools';
+import { harnessTaskPolicy } from '@melonoffice/harness';
 import { describe, expect, it } from 'vitest';
 import { createAgentTaskParts, createConversationAgentParts, routeAgentWork } from './agents.js';
 import { createPlanConditions } from './conditions.js';
@@ -292,6 +293,14 @@ describe.each(STORES)(
         policies: createModelPolicyCatalogue([
           { ...CONVERSATION_AGENT_POLICY, backoffMs: 0 },
           { ...AGENT_TASK_POLICY, backoffMs: 0 },
+          {
+            ...harnessTaskPolicy({
+              preferredProviders: ['nvidia'],
+              environments: ['dev'],
+              maxCostMicroUsd: CREDIT_RATE.microUsdPerCredit,
+            }),
+            backoffMs: 0,
+          },
         ]),
         work: routed.work,
         verifier: routed.verifier,

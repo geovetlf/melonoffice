@@ -1,5 +1,11 @@
-import type { AIRequest } from '@melonoffice/ai-gateway';
-import type { Execution, ExecutionJob, ExecutionNode, JobId } from '@melonoffice/domain';
+import type { AIRequest, AIResponse } from '@melonoffice/ai-gateway';
+import type {
+  AICallTrace,
+  Execution,
+  ExecutionJob,
+  ExecutionNode,
+  JobId,
+} from '@melonoffice/domain';
 import {
   isExecutionError,
   isTerminal,
@@ -13,6 +19,7 @@ import { randomUUID } from 'node:crypto';
 import { RuntimeError } from './errors.js';
 import {
   RUNTIME_AI_FIELDS,
+  isAgentWorkStop,
   type AgentOutputSink,
   type AgentWork,
   type ExecutionEndHook,
@@ -102,6 +109,40 @@ export interface RuntimeOptions {
 }
 
 const LEASE_PROOF_FIELDS = ['jobId', 'leaseId', 'revision'];
+
+/**
+ * How a model call was served (ADR-0100), from the gateway's answer and the call's own limits: the
+ * chosen provider and model, cost, credits, the budget cap and any escalation the work asked for.
+ */
+function traceOf(
+  request: Pick<AIRequest, 'capability' | 'sensitivity' | 'maxCredits' | 'metadata'>,
+  response: Extract<AIResponse, { status: 'completed' }>,
+): AICallTrace {
+  const label = (key: string) => {
+    const value = request.metadata?.[key];
+    return typeof value === 'string' ? value : undefined;
+  };
+  const escalation = label('harnessEscalation');
+  const dataClass = label('harnessData');
+  const intent = label('harnessIntent');
+  return {
+    provider: response.provider,
+    model: response.model,
+    strategy: response.strategy ?? null,
+    fallbackFrom: response.fallbackFrom,
+    estimatedMicroUsd: response.cost.estimatedMicroUsd,
+    actualMicroUsd: response.cost.actualMicroUsd,
+    creditsEstimated: response.credits.estimated,
+    creditsConsumed: response.credits.consumed,
+    maxCredits: request.maxCredits ?? null,
+    escalation: escalation ?? null,
+    attempts: response.attempts,
+    capability: request.capability,
+    sensitivity: request.sensitivity,
+    ...(dataClass === undefined ? {} : { dataClass }),
+    ...(intent === undefined ? {} : { intent }),
+  };
+}
 
 /** Exactly a lease proof. Any other field is refused, whatever it holds. */
 function checkAdvanceRequest(value: unknown): {
@@ -375,6 +416,8 @@ export function createRuntime(options: RuntimeOptions): Runtime {
       if (specialistId === undefined) return fail(execution, 'specialist_required');
       const given = work === undefined ? undefined : await work.agentWork(tenant, execution, node);
       if (given === undefined) return fail(execution, 'input_unavailable');
+      // The Harness stopped the task at a limit: its code is the execution's failure.
+      if (isAgentWorkStop(given)) return fail(execution, given.stop);
       if (
         typeof given !== 'object' ||
         given === null ||
@@ -417,6 +460,7 @@ export function createRuntime(options: RuntimeOptions): Runtime {
               nodeId: node.id,
               requestId,
               output: response.output,
+              ai: traceOf(request, response),
             });
           } catch {
             // An answer nobody can read is no answer: the node fails, and its retry rule decides.

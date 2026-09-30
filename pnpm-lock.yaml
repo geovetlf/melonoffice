@@ -1126,6 +1126,12 @@ importers:
       '@melonoffice/ai-gateway':
         specifier: workspace:*
         version: link:../ai-gateway
+      '@melonoffice/ai-nvidia':
+        specifier: workspace:*
+        version: link:../ai-nvidia
+      '@melonoffice/ai-vertex':
+        specifier: workspace:*
+        version: link:../ai-vertex
       '@melonoffice/audit':
         specifier: workspace:*
         version: link:../audit
