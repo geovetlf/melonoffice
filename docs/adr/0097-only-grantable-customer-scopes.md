@@ -1,4 +1,4 @@
-# ADR-0096: Partners ask only for customer scopes that open something (C-5f)
+# ADR-0097: Partners ask only for customer scopes that open something (C-5f)
 
 - Status: Proposed
 - Date: 2026-09-30

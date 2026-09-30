@@ -142,7 +142,7 @@ describe.each(STORES)('invitations by email with storage in %s', (_name, createS
       { email: 'not-an-email', mode: 'reseller' },
       { email: 'x@example.com', mode: 'agency' },
       { email: 'x@example.com', mode: 'reseller', scopes: ['everything'] },
-      // Known, but nothing reads it yet (ADR-0096): not asked for.
+      // Known, but nothing reads it yet (ADR-0097): not asked for.
       { email: 'x@example.com', mode: 'reseller', scopes: ['summary', 'knowledge'] },
       { email: 'x@example.com', mode: 'reseller', billing: 'someone' },
     ]) {

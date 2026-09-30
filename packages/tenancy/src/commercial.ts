@@ -93,7 +93,7 @@ export function parseCommercialAccountName(value: unknown): string {
 }
 
 /**
- * The scopes a partner may ask for now (ADR-0096): each one opens a read the API serves. The
+ * The scopes a partner may ask for now (ADR-0097): each one opens a read the API serves. The
  * others stay known, so relationships that already hold them still read, but grant nothing, and
  * no new invitation or request asks for them.
  */

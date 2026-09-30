@@ -171,7 +171,7 @@ describe.each(STORES)('the commercial layer with storage in %s', (_name, createS
     const { call, acc, rel, tenantA, tenantB, partnerA, partnerB, agencyA, relate } = await setup();
     const summary = (who: string, account: string, tenant: string) =>
       call(who, 'GET', `${acc(account)}/customers/${tenant}`);
-    // Scopes nothing reads yet are not asked for (ADR-0096).
+    // Scopes nothing reads yet are not asked for (ADR-0097).
     for (const scope of ['support', 'knowledge', 'conversations']) {
       expect(
         (

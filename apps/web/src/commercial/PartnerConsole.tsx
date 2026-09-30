@@ -26,7 +26,7 @@ import {
 
 type Load<T> = T | 'loading' | 'error';
 
-/** What a partner may ask for now (ADR-0096): each one opens a read the console shows. */
+/** What a partner may ask for now (ADR-0097): each one opens a read the console shows. */
 const SCOPES: readonly CustomerScope[] = ['summary', 'usage', 'billing', 'branding'];
 /** The modes each kind of account uses (ADR-0086). */
 const MODES: Readonly<Record<ConsoleAccount['type'], readonly string[]>> = {
