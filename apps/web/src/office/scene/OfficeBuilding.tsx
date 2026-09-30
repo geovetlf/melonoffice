@@ -370,6 +370,7 @@ function DepartmentRoom({
           ambient: workstation.occupant?.kind === 'ambient',
         }))}
         context={context}
+        motif={motif}
       />
       <Crew agents={here} context={context} name={name} />
     </div>
@@ -433,10 +434,12 @@ function Desks({
   label,
   seats,
   context,
+  motif,
 }: {
   readonly label: string;
   readonly seats: readonly DeskSeat[];
   readonly context: RoomContext;
+  readonly motif: string;
 }) {
   const intl = useIntl();
   const rows = new Set(seats.map((seat) => seat.position.row)).size || 1;
@@ -466,7 +469,7 @@ function Desks({
           // A free desk or an ambient figure: part of the picture, not a control.
           return (
             <li key={i} className="b-desk b-desk--scenery" style={style} aria-hidden="true">
-              <Workstation occupant={occupant} look={i + 2} />
+              <Workstation occupant={occupant} look={i + 2} motif={motif} />
             </li>
           );
         }
@@ -488,7 +491,7 @@ function Desks({
               )}
               onClick={(event) => context.onAgent(agent.id, event.currentTarget)}
             >
-              <Workstation occupant={occupant} look={lookIndex(agent.id)} />
+              <Workstation occupant={occupant} look={lookIndex(agent.id)} motif={motif} />
               <span className="b-desk__tip" aria-hidden="true">
                 <span className="b-desk__name">{agent.displayName}</span>
                 <AgentStatus state={state} />
@@ -659,6 +662,7 @@ function Headquarters({
             ambient: false,
           })).filter((seat) => seat.agentId !== null)}
           context={context}
+          motif="map"
         />
         <Crew agents={here} context={context} name={name} />
       </>
@@ -685,15 +689,10 @@ function Headquarters({
           navigate(paths.gia());
         }}
       >
-        <span className="b-gia__figure" aria-hidden="true">
-          <GiaAvatar size={64} decorative className="b-gia__avatar" />
-          <svg className="b-gia__desk" viewBox="0 0 120 30" aria-hidden="true" focusable="false">
-            <path d="M4 4 H116 L110 12 H10 Z" fill="#d9ad7c" />
-            <rect x="10" y="12" width="100" height="14" fill="#a8764c" />
-            <rect x="46" y="-2" width="28" height="6" rx="1" fill="#efe6dc" />
-          </svg>
-        </span>
+        {/* GIA herself is in the room's art; this is the part of the link over her. */}
+        <span className="b-gia__figure" aria-hidden="true" />
         <span className="b-gia__chip" aria-hidden="true">
+          <GiaAvatar size={28} decorative className="b-gia__avatar" />
           <span className="b-gia__name">
             <FormattedMessage id="gia.name" />
           </span>

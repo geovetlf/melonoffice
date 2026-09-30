@@ -495,34 +495,29 @@
   overflow: visible;
 }
 
-.desk__shadow {
-  fill: rgb(58 30 12 / 0.22);
-}
-
 .desk__person--faded {
   opacity: 0.55;
   filter: saturate(0.5);
 }
 
+/* The monitor's state over the art's screen: dark when off, dimmed for an ambient figure. */
 .desk__screen {
-  fill: #3a3336;
+  fill: #141315;
+  opacity: 0.94;
 }
 
 .desk__monitor--dim .desk__screen {
-  fill: #6d5d60;
+  opacity: 0.5;
 }
 
-.desk__monitor--on .desk__screen {
-  fill: #fbe3cf;
-}
-
+.desk__monitor--on .desk__screen,
 .desk__monitor--working .desk__screen {
-  fill: #fff1e4;
+  opacity: 0;
 }
 
 .desk__lines rect {
-  fill: #e0643a;
-  opacity: 0.75;
+  fill: #ff9a62;
+  opacity: 0.9;
   transform-box: fill-box;
   transform-origin: left center;
   animation: desk-typing 3.2s ease-in-out infinite;
@@ -678,10 +673,12 @@
 /* Headquarters: GIA at her desk. */
 .b-gia {
   position: absolute;
+  top: 38%;
   bottom: 6%;
   left: 50%;
   z-index: 5;
   display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
   justify-items: center;
   width: 58%;
   color: var(--office-text);
@@ -690,30 +687,19 @@
 }
 
 .b-gia__figure {
-  position: relative;
-  display: grid;
-  justify-items: center;
   width: 64%;
+  min-height: 0;
+  border-radius: 16px;
 }
 
-.b-gia__avatar {
-  width: 70%;
-  height: auto;
-  margin-bottom: -18%;
-  border-radius: 50%;
-  box-shadow: 0 0 0 3px rgb(255 253 251 / 0.9);
-}
-
-.b-gia__desk {
-  position: relative;
-  width: 100%;
-  height: auto;
-  overflow: visible;
+.b-gia:hover .b-gia__figure,
+.b-gia:focus-visible .b-gia__figure {
+  box-shadow: inset 0 0 0 2px rgb(242 120 75 / 0.45);
 }
 
 .b-gia__chip {
   display: grid;
-  grid-template-columns: auto auto;
+  grid-template-columns: auto auto auto;
   align-items: center;
   column-gap: 0.5em;
   margin-top: 4%;
@@ -759,8 +745,15 @@
   animation: desk-light 2.8s ease-in-out infinite;
 }
 
+.b-gia__avatar {
+  grid-row: span 2;
+  width: 2.2em;
+  height: 2.2em;
+  border-radius: 50%;
+}
+
 .b-gia__role {
-  grid-column: 1 / -1;
+  grid-column: 2 / -1;
   font-size: 0.85em;
   color: var(--office-muted);
 }

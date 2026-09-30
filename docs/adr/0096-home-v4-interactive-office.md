@@ -15,7 +15,7 @@ Geovet asked for the Home to be redrawn after a reference image: a warm, light c
 ## Decision
 
 1. **Three layers.** The office is drawn in three separate layers:
-   - a visual layer of raster rooms (WebP at 1x and 2x, `srcset`, lazy below the first floor), made from an SVG generator in `apps/web/scripts/office-art/` and baked by `bake.mjs`. The rooms carry no text or data, so any room art can be swapped at the same slot geometry. The reference image is a style reference only and is not shipped;
+   - a visual layer of raster rooms (WebP at 1x and 2x, `srcset`, lazy below the first floor), made in `apps/web/scripts/office-art/` and baked by `bake.mjs` (3D since the amendment below). The rooms carry no text or data, so any room art can be swapped at the same slot geometry. The reference image is a style reference only and is not shipped;
    - an interactive layer of HTML controls placed over the rooms in percentages (department links, agent buttons at their desks, GIA, MelonMotor);
    - the UI around it (header, command box, right panel, agent card, MelonMotor panel).
      Accessibility never depends on the image: every hotspot is a real link or button with its own label and keyboard focus.
@@ -49,3 +49,14 @@ Geovet asked for the whole Home to fit the window on a computer, with no vertica
 - The right panel is compact. Recent activity and today's tasks show 3, 2 or 1 entries by the window's height, and each keeps its link to all of them.
 - The sidebar keeps its own scroll. Its text and rows are about 11% larger, and it is slightly wider.
 - Below that size (a tablet in portrait, a phone), the Home flows as before.
+
+## Amendment (2026-09-30): the offices in 3D
+
+Geovet asked for the offices, furniture and agents to be redrawn in a modern 3D language (architectural visualisation, real materials, soft shadows, people in natural proportions), with nothing else on the Home changing.
+
+- The rooms and workstations are modelled in three.js (`apps/web/scripts/office-art/scene3d/`) with physical materials (oak, walnut, plaster, glass, metal, fabric), image-based light, soft shadows and ambient occlusion, and baked to WebP by `bake.mjs` in headless Chromium. three.js is a bake-time tool only: it is not a dependency of the app and nothing 3D runs in the browser.
+- Every room is an open box seen straight on with a shifted lens, so rooms side by side still read as one building. The back wall's foot is at 60% of the height and its big screen at the same rectangle as before, so every control stays where it was.
+- Each department's room says what it does: Comercial a pipeline board, Operaciones a kanban and a process, Marketing a moodboard and a campaign poster, Investigación a board of pinned findings and a library, Finanzas a chart and files. Consejo shares headquarters with GIA: a strategy table by the window, GIA at her desk. Diseño is archived and not drawn, but its room is baked for when it returns.
+- A workstation is three layers (chair and shadow, person, desk), so the Home still seats an agent or not. The monitor shows the department's kind of work, with no words or figures. The agent's state is drawn over it (dark when paused or offline, dimmed for an ambient figure, moving lines while working), and the state light is unchanged.
+- GIA is part of headquarters' art. Her link covers her and keeps the chip, which now carries her avatar.
+- The art carries no text or data, so any room or person can be replaced by other art (a 3D artist's renders, for example) at the same sizes and slots without changing code.
