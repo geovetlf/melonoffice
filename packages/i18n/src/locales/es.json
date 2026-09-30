@@ -1551,6 +1551,7 @@
   "agentTasks.facts.review": "Revisar en Memoria",
   "agents.upgrade.available": "Hay una versión {version} de esta habilidad.",
   "agents.upgrade.customer_follow_up.2": "La versión 2 le permite proponer seguimientos y agendarlos, siempre con tu aprobación.",
+  "agents.upgrade.customer_follow_up.3": "La versión 3 le permite pedir, mientras hace una tarea, que se agende un seguimiento con un cliente. Nunca se agenda sin tu aprobación.",
   "agents.upgrade.company_knowledge.2": "La versión 2 le permite proponer datos para la memoria de la empresa. Tú los confirmas.",
   "agents.upgrade.action": "Actualizar a la versión {version}",
   "agents.upgrade.working": "Actualizando…",

@@ -223,6 +223,105 @@ describe.each(STORES)('agent tasks with storage in %s', (_name, createStores) =>
     expect((await read()).answer?.followUp).toMatchObject({ state: 'scheduled' });
   });
 
+  it('shows the follow-up the agent asked for with its own tool before it answered (ADR-0104)', async () => {
+    const { call, orgA, base, agent, stores, agentOutputs } = await setup();
+    const id = await agent();
+    // A person moves the commercial agent to customer_follow_up@3.
+    const upgraded = await call(
+      'token-alice',
+      'POST',
+      `${base(orgA)}/specialists/${id}/skills/upgrade`,
+      {
+        fromVersion: 1,
+        skillId: 'customer_follow_up',
+        version: 3,
+      },
+    );
+    expect(upgraded.status).toBe(200);
+    const juan = (
+      await call('token-alice', 'POST', `${base(orgA)}/customers`, {
+        displayName: 'Juan Pérez',
+        phone: '+51999888777',
+      })
+    ).body.id as string;
+    const asked = await call('token-alice', 'POST', `${base(orgA)}/specialists/${id}/tasks`, {
+      request: 'Agenda una llamada con Juan mañana a las 10',
+    });
+    const taskId = asked.body.id as string;
+    // What the worker would have done: kept the model's tool call with the turn, and added the
+    // tool's node, waiting on a person.
+    const args = {
+      contact: contactRef(juan),
+      type: 'call',
+      title: 'Llamar a Juan',
+      date: '2026-09-30',
+      time: '10:00',
+    };
+    await agentOutputs.save({
+      organizationId: orgA as never,
+      executionId: taskId as never,
+      nodeId: 'work' as never,
+      requestId: 'req-1',
+      output: { toolCalls: [{ id: 'call_0', name: 'follow_up_schedule', arguments: args }] },
+      createdAt: new Date().toISOString() as never,
+    });
+    const approvalId = '0a0a0a0a-0000-4000-8000-00000000000b';
+    const set = (status: string, tool: Record<string, unknown>, failure?: string) =>
+      stores.executions.update(orgA as never, taskId as never, (current) => {
+        const work = current.nodes.find((n) => n.id === 'work');
+        const others = current.nodes.filter((n) => n.id !== 'work' && n.id !== 'work_t0');
+        return {
+          execution: {
+            ...current,
+            status: status as never,
+            nodes: [
+              { ...(work as object), status: 'completed' as const } as never,
+              {
+                ...(work as object),
+                id: 'work_t0',
+                type: 'tool',
+                label: 'follow_up_schedule',
+                tool: { id: 'follow_up_schedule', version: 3 },
+                input: { type: 'model_tool_call', id: 'work:0' },
+                dependsOn: ['work'],
+                approvalRequired: true,
+                status: 'pending',
+                ...tool,
+              } as never,
+              ...others,
+            ],
+            ...(failure === undefined ? {} : { failure: { code: failure } as never }),
+            revision: current.revision + 1,
+          },
+          events: [],
+        };
+      });
+    const read = async () =>
+      (await call('token-alice', 'GET', `${base(orgA)}/agent-tasks/${taskId}`)).body;
+
+    await set('waiting_approval', { approvalId });
+    const waiting = await read();
+    expect(waiting.answer).toBeNull();
+    expect(waiting.toolFollowUp).toEqual({
+      contactId: juan,
+      contactName: 'Juan Pérez',
+      type: 'call',
+      title: 'Llamar a Juan',
+      date: '2026-09-30',
+      time: '10:00',
+      state: 'waiting_approval',
+      approvalId,
+    });
+    await set('failed', { status: 'cancelled' }, 'approval_rejected');
+    expect((await read()).toolFollowUp).toMatchObject({ state: 'rejected', approvalId: null });
+    await set('running', { status: 'completed' });
+    expect((await read()).toolFollowUp).toMatchObject({ state: 'scheduled' });
+    // Bob reads nothing of it.
+    expect((await call('token-bob', 'GET', `${base(orgA)}/agent-tasks/${taskId}`)).status).toBe(
+      403,
+    );
+  });
+
   it('refuses malformed requests with the field, and inactive or unknown agents', async () => {
     const { call, orgA, base, agent } = await setup();
     const id = await agent();

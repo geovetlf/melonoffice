@@ -26,7 +26,7 @@ import {
   type SpecialistWrite,
 } from './model.js';
 import type { SpecialistRepository } from './repository.js';
-import { grantsOf, toolKey, type SkillCatalogue } from './skills.js';
+import { grantsOf, skillAllowedIn, toolKey, type SkillCatalogue } from './skills.js';
 import { AGENT_LOCALES, findAgentTemplate, type AgentLocale } from './templates.js';
 
 /**
@@ -134,6 +134,10 @@ export function createSpecialistManagement(
     for (const { id, version } of configuration.skills) {
       const found = skills.resolve(id, version);
       if (found === undefined) bad('skills.unknown');
+      // A skill for some departments only (ADR-0104) is never given to an agent of another.
+      if (found !== undefined && !skillAllowedIn(found, configuration.departmentId)) {
+        bad('skills.department');
+      }
       for (const grant of found?.tools ?? []) {
         if (!grant.versions.some((v) => assigned.has(toolKey(grant.id, v)))) bad('skills.tools');
       }

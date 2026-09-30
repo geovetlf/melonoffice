@@ -12,13 +12,14 @@ import type {
   SpecialistVersion,
 } from '@melonoffice/domain';
 import type { AgentOutputStore, VerificationInput } from '@melonoffice/execution';
-import { grantsOf, type SkillCatalogue } from '@melonoffice/specialists';
+import { grantsOf, toolKey, type SkillCatalogue } from '@melonoffice/specialists';
 import { isResolvedTenant, type TenantContext } from '@melonoffice/tenancy';
 import {
   AGENT_FOLLOW_UP_TOOL,
   AGENT_TASK_SCHEDULE_NODE,
   contactRef,
   FACTS_SCHEMA,
+  MODEL_FOLLOW_UP_TOOL,
   followUpSchema,
   parseTaskFacts,
   parseTaskFollowUp,
@@ -203,6 +204,14 @@ export interface AgentTaskProposals {
     readonly contacts: readonly TaskContact[];
     readonly today: { readonly date: string; readonly timeZone: string };
   };
+  /**
+   * The contacts the agent may schedule a follow-up with through its tool, `follow_up_schedule@3`
+   * (ADR-0104), when it may. They are shown by reference and name only.
+   */
+  readonly schedulingTool?: {
+    readonly contacts: readonly TaskContact[];
+    readonly today: { readonly date: string; readonly timeZone: string };
+  };
   readonly facts: boolean;
 }
 
@@ -222,7 +231,8 @@ export function agentTaskMessages(
   request: string,
   proposals: AgentTaskProposals = { facts: false },
 ): readonly AIMessage[] {
-  const { followUp, facts } = proposals;
+  const { followUp, facts, schedulingTool } = proposals;
+  const shown = followUp?.contacts ?? schedulingTool?.contacts;
   const shape = [
     '"answer": your answer as plain text',
     '"missing": up to 5 short items the business should provide so you could do better, or []',
@@ -242,6 +252,11 @@ export function agentTaskMessages(
       ? []
       : [
           `You may propose one follow-up, only when the request asks for one or plainly needs one, with a contact listed in <contacts> by its ref; otherwise followUp is null. A person approves it before it is scheduled, so never say it was scheduled. Today is ${followUp.today.date} in the business's time zone (${asData(followUp.today.timeZone)}); the date is today or later. Use the date and time the request gives; without a time, propose 09:00.`,
+        ]),
+    ...(schedulingTool === undefined
+      ? []
+      : [
+          `If you are offered the follow_up_schedule tool, you may call it to schedule one follow-up, only when the request asks for one or plainly needs one, with a contact listed in <contacts> by its ref. A person approves each call before it runs: until a tool result says it was scheduled, never say it was. Today is ${schedulingTool.today.date} in the business's time zone (${asData(schedulingTool.today.timeZone)}); the date is today or later. Use the date and time the request gives; without a time, use 09:00.`,
         ]),
     ...(facts
       ? [
@@ -268,13 +283,13 @@ export function agentTaskMessages(
     '<context>',
     ...context.map((c) => `${c.name}: ${asData(c.text)}`),
     '</context>',
-    ...(followUp === undefined
+    ...(shown === undefined
       ? []
       : [
           '<contacts>',
-          ...(followUp.contacts.length === 0
+          ...(shown.length === 0
             ? ['(no contacts)']
-            : followUp.contacts.map((c) => `${contactRef(c.id)}: ${asData(c.name)}`)),
+            : shown.map((c) => `${contactRef(c.id)}: ${asData(c.name)}`)),
           '</contacts>',
         ]),
     '<request>',
@@ -452,8 +467,32 @@ export function createAgentTaskWork(options: AgentTaskWorkOptions): AgentTaskWor
     configuration: SpecialistConfiguration,
   ): Promise<AgentTaskProposals> {
     if (proposals === undefined) return { facts: false };
-    const { actions } = grantsOf(configuration.skills, skills);
+    const { actions, tools } = grantsOf(configuration.skills, skills, configuration.departmentId);
     const facts = proposals.offers(tenant, PROPOSE_FACT, actions);
+    // The follow-up through the agent's own tool (ADR-0104): its version has the tool, a skill
+    // for its department grants it, and the Decision Engine offers the proposal for this person.
+    const schedulingTool =
+      !hasScheduleNode(execution) &&
+      configuration.tools.some(
+        (t) => t.id === MODEL_FOLLOW_UP_TOOL.id && t.version === MODEL_FOLLOW_UP_TOOL.version,
+      ) &&
+      tools.has(toolKey(MODEL_FOLLOW_UP_TOOL.id, MODEL_FOLLOW_UP_TOOL.version)) &&
+      configuration.permissions.includes('contact.read') &&
+      proposals.contacts !== undefined &&
+      proposals.clock !== undefined &&
+      proposals.offers(tenant, PROPOSE_FOLLOW_UP, actions);
+    if (schedulingTool && proposals.contacts !== undefined && proposals.clock !== undefined) {
+      try {
+        const [contacts, today] = await Promise.all([
+          proposals.contacts.list(tenant),
+          proposals.clock.today(tenant),
+        ]);
+        return { facts, schedulingTool: { contacts, today } };
+      } catch {
+        // The contacts could not be read now: the agent answers without them.
+        return { facts };
+      }
+    }
     const followUp =
       hasScheduleNode(execution) &&
       configuration.permissions.includes('contact.read') &&

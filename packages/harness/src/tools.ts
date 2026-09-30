@@ -61,7 +61,12 @@ export function createHarnessToolDirectory(options: {
           ? await specialists.find(organizationId, specialistId)
           : await specialists.findVersion(organizationId, specialistId, version);
       if (agent === undefined) return [];
-      const { tools } = grantsOf(agent.configuration.skills, skills);
+      // A skill for other departments grants this agent nothing (ADR-0104).
+      const { tools } = grantsOf(
+        agent.configuration.skills,
+        skills,
+        agent.configuration.departmentId,
+      );
       return agent.configuration.tools.flatMap((ref) => {
         if (!tools.has(toolKey(ref.id, ref.version))) return [];
         const found = registry.resolve(ref.id, ref.version);

@@ -295,6 +295,47 @@ describe('the tasks section (ADR-0063)', () => {
       expect(screen.queryByRole('button', { name: 'Reject' })).toBeNull();
     });
 
+    it('shows a follow-up the agent asked for with its tool before it answered (ADR-0104)', async () => {
+      const decide = vi.fn(async () => undefined);
+      show(
+        fakeClient([
+          [
+            task({
+              status: 'waiting_approval',
+              answer: null,
+              toolFollowUp: followUp('waiting_approval', 'ap-3'),
+            } as Partial<AgentTaskView>),
+          ],
+        ]),
+        { decide },
+      );
+      const group = within(await screen.findByRole('group', { name: 'Proposed follow-up' }));
+      expect(group.getByRole('link', { name: 'Juan Pérez' })).toBeTruthy();
+      expect(screen.getByText('Waiting for your approval')).toBeTruthy();
+      fireEvent.click(group.getByRole('button', { name: 'Approve and schedule' }));
+      await waitFor(() => expect(decide).toHaveBeenCalledWith('ap-3', 'approve'));
+    });
+
+    it('says a task whose tool call was rejected stopped, without an answer', async () => {
+      show(
+        fakeClient([
+          [
+            task({
+              status: 'failed',
+              failure: 'approval_rejected',
+              answer: null,
+              toolFollowUp: followUp('rejected', null),
+            } as Partial<AgentTaskView>),
+          ],
+        ]),
+      );
+      expect(await screen.findByText('Rejected. It was not scheduled.')).toBeTruthy();
+      expect(screen.getByText('Cancelled')).toBeTruthy();
+      expect(
+        screen.queryByText('The agent could not finish this task. Nothing was done on its behalf.'),
+      ).toBeNull();
+    });
+
     it('counts the facts it proposed and links to the company memory', async () => {
       show(
         fakeClient([

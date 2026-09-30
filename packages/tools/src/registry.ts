@@ -341,6 +341,52 @@ export const FOLLOW_UP_SCHEDULE_TOOL: ToolDefinition = {
       environments: ['dev'],
       invocationModes: ['runtime'],
     },
+    // Version 3 is the first tool a model may ask for in the middle of a task (ADR-0104, Geovet
+    // 2026-09-30): the commercial agent schedules a follow-up with one of the contacts it was
+    // shown, by the contact's reference only. The server resolves the reference to the contact,
+    // in the task's organization and as the person the task is for, and makes the request key;
+    // the model never names an id. A person approves every call (level C), and nothing else
+    // changes: the follow-up service's own `create`, with source `agent`.
+    {
+      toolId: 'follow_up_schedule' as ToolVersion['toolId'],
+      version: 3,
+      nameKey: 'tools.follow_up_schedule.name' as ToolVersion['nameKey'],
+      descriptionKey: 'tools.follow_up_schedule.description' as ToolVersion['descriptionKey'],
+      category: 'crm',
+      action: 'schedule',
+      mutating: true,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          contact: { type: 'string', minLength: 12, maxLength: 12 },
+          type: { type: 'string', maxLength: 16, enum: [...FOLLOW_UP_TYPE_CODES] },
+          title: { type: 'string', minLength: 1, maxLength: 120 },
+          date: { type: 'string', minLength: 10, maxLength: 10 },
+          time: { type: 'string', minLength: 5, maxLength: 5 },
+        },
+        required: ['contact', 'type', 'title', 'date', 'time'],
+      },
+      outputSchema: {
+        type: 'object',
+        properties: {
+          followUpId: { type: 'string', minLength: 36, maxLength: 36 },
+          created: { type: 'boolean' },
+        },
+        required: ['followUpId', 'created'],
+      },
+      // `contact.read`: the reference is resolved among the contacts this person may read.
+      permissions: ['follow_up.manage', 'contact.read'],
+      credentials: [],
+      riskLevel: 'low',
+      approvalPolicy: 'approval_required',
+      approvalTtlSeconds: 2 * 24 * 3600,
+      timeoutMs: 15_000,
+      // Never retried here; a repeat of the same request makes the same follow-up (its key).
+      retryPolicy: { maxAttempts: 1, backoffMs: 0 },
+      provider: { kind: 'internal', id: 'follow_up' },
+      environments: ['dev'],
+      invocationModes: ['runtime', 'model'],
+    },
   ],
 };
 

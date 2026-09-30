@@ -19,6 +19,11 @@ export interface AgentSkill extends SkillDefinition {
   readonly descriptionKey: MessageKey;
   /** The RBAC permissions that read the records this skill works from. */
   readonly reads: readonly Permission[];
+  /**
+   * The department types whose agents may have this skill (ADR-0104). Absent: any department.
+   * A skill that names some grants nothing to an agent of another department.
+   */
+  readonly departments?: readonly string[];
 }
 
 const skill = (
@@ -28,9 +33,13 @@ const skill = (
     readonly actions?: readonly string[];
     readonly reads: readonly Permission[];
     readonly version?: number;
+    readonly departments?: readonly string[];
   },
 ): AgentSkill =>
   Object.freeze({
+    ...(options.departments === undefined
+      ? {}
+      : { departments: Object.freeze([...options.departments]) }),
     id: id as SkillId,
     version: options.version ?? 1,
     nameKey: `agents.skill.${id}.name` as MessageKey,
@@ -75,6 +84,17 @@ export const SKILL_CATALOGUE: readonly AgentSkill[] = Object.freeze([
     actions: ['follow_up.schedule'],
     reads: ['contact.read', 'opportunity.read', 'follow_up.read'],
   }),
+  // Version 3 (ADR-0104): the agent itself asks, mid-task, to schedule the follow-up with
+  // `follow_up_schedule@3`, by a contact's reference; a person approves every call. For agents of
+  // the commercial department (Comercial y Ventas) only, and it reaches an agent only when a
+  // person upgrades it.
+  skill('customer_follow_up', {
+    version: 3,
+    tools: { follow_up_schedule: [3] },
+    actions: ['follow_up.schedule'],
+    reads: ['contact.read', 'opportunity.read', 'follow_up.read'],
+    departments: ['sales'],
+  }),
   skill('pipeline_analysis', { reads: ['opportunity.read', 'report.read'] }),
   skill('campaign_analysis', { reads: ['contact.read', 'report.read'] }),
   skill('content_drafting', { reads: ['knowledge.read'] }),
@@ -104,18 +124,36 @@ export function createSkillCatalogue(
 /** A tool at one version, as `id@version`. */
 export const toolKey = (id: string, version: number): string => `${id}@${version}`;
 
+/** The department type of a catalogue department's id (`{organizationId}_{typeId}`). */
+const departmentTypeOf = (departmentId: string): string => {
+  const separator = departmentId.indexOf('_');
+  return separator < 0 ? '' : departmentId.slice(separator + 1);
+};
+
+/**
+ * Whether an agent of this department may have this skill (ADR-0104): a skill that names department
+ * types is for their agents only.
+ */
+export const skillAllowedIn = (skill: AgentSkill, departmentId: string): boolean =>
+  skill.departments === undefined || skill.departments.includes(departmentTypeOf(departmentId));
+
 /**
  * What an agent's skills grant: every tool version (`id@version`) and every action. Unknown
- * skills grant nothing.
+ * skills grant nothing. Given the agent's department, a skill that is not for it grants nothing
+ * either (ADR-0104).
  */
 export function grantsOf(
   refs: readonly { readonly id: string; readonly version: number }[],
   catalogue: SkillCatalogue,
+  departmentId?: string,
 ): { readonly tools: ReadonlySet<string>; readonly actions: ReadonlySet<string> } {
   const tools = new Set<string>();
   const actions = new Set<string>();
   for (const ref of refs) {
     const found = catalogue.resolve(ref.id, ref.version);
+    if (found !== undefined && departmentId !== undefined && !skillAllowedIn(found, departmentId)) {
+      continue;
+    }
     for (const grant of found?.tools ?? []) {
       for (const version of grant.versions) tools.add(toolKey(grant.id, version));
     }

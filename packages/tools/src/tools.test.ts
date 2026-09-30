@@ -24,6 +24,11 @@ import {
 } from './registry.js';
 import { isForbiddenField, looksLikeCredential, schemaProblem, validate } from './schema.js';
 
+const must = <T>(value: T | undefined): T => {
+  if (value === undefined) throw new Error('missing');
+  return value;
+};
+
 const INPUT: ToolSchema = {
   type: 'object',
   properties: {
@@ -290,10 +295,52 @@ describe('invocation modes (ADR-0034)', () => {
     expect(codeOf(() => checkToolVersion(version({ invocationModes: ['model'] })))).toBe(
       'invocationModes.model_runtime',
     );
-    // No tool of the real catalogue says a model may ask for it yet.
-    for (const tool of TOOL_CATALOGUE) {
-      for (const v of tool.versions) expect(isModelInvocable(v)).toBe(false);
+    // In the real catalogue, only `follow_up_schedule@3` says a model may ask for it (ADR-0104).
+    const modelTools = TOOL_CATALOGUE.flatMap((tool) =>
+      tool.versions.filter(isModelInvocable).map((v) => `${v.toolId}@${v.version}`),
+    );
+    expect(modelTools).toEqual(['follow_up_schedule@3']);
+  });
+
+  it('follow_up_schedule@3 takes a contact reference, never an id, and a person approves it', () => {
+    const tool = must(TOOL_CATALOGUE.find((t) => t.id === 'follow_up_schedule'));
+    const v3 = must(tool.versions[2]);
+    expect(v3).toMatchObject({
+      version: 3,
+      mutating: true,
+      approvalPolicy: 'approval_required',
+      provider: { kind: 'internal', id: 'follow_up' },
+      invocationModes: ['runtime', 'model'],
+      permissions: ['follow_up.manage', 'contact.read'],
+    });
+    const input = v3.inputSchema;
+    expect(input.type === 'object' ? Object.keys(input.properties).sort() : []).toEqual([
+      'contact',
+      'date',
+      'time',
+      'title',
+      'type',
+    ]);
+    const call = {
+      contact: 'c_abcdefghij',
+      type: 'call',
+      title: 'Llamar',
+      date: '2026-10-02',
+      time: '09:00',
+    };
+    expect(validate(input, call)).toEqual({ valid: true });
+    // No id, key, assignee, opportunity or source can be sent with it: the schema is closed.
+    for (const extra of ['contactId', 'requestKey', 'assignedTo', 'opportunityId', 'source']) {
+      expect(validate(input, { ...call, [extra]: 'x'.repeat(36) }).valid).toBe(false);
     }
+    // Versions 1 and 2 are exactly as they were: never a model's.
+    expect(tool.versions.slice(0, 2).map((v) => v.invocationModes)).toEqual([
+      ['human'],
+      ['runtime'],
+    ]);
+    expect(tool.versions[1]?.inputSchema).toMatchObject({
+      required: ['requestKey', 'contactId', 'title', 'date', 'time', 'source'],
+    });
   });
 });
 
@@ -422,7 +469,7 @@ describe('follow_up_schedule (TL-1, ADR-0068)', () => {
       'assignedTo',
       'source',
     ]);
-    expect(defaultToolRegistry().resolve('follow_up_schedule', 3)).toBeUndefined();
+    expect(defaultToolRegistry().resolve('follow_up_schedule', 4)).toBeUndefined();
   });
 
   it("version 2 is an agent's (ADR-0084): the runtime's only, approved by a person every time", () => {

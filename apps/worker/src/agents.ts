@@ -5,6 +5,9 @@ import {
   createAgentTaskVerifier,
   createAgentTaskWork,
   createBrainContextSource,
+  findContactRef,
+  MODEL_FOLLOW_UP_DESCRIPTION,
+  MODEL_FOLLOW_UP_TOOL,
   taskFollowUpKey,
   TASK_PROPOSAL_LIMITS,
   type AgentTaskProposalPorts,
@@ -51,6 +54,7 @@ import {
   createHarnessToolDirectory,
   createHarnessToolLoop,
   createHarnessToolOffer,
+  type HarnessLimits,
 } from '@melonoffice/harness';
 import type { Logger } from '@melonoffice/observability';
 import { planStepOf, type PlanRepository } from '@melonoffice/planning';
@@ -220,6 +224,8 @@ export function createAgentTaskParts(options: {
   readonly tools?: {
     readonly registry: Pick<ToolRegistry, 'resolve'>;
     readonly executors: readonly string[];
+    /** The Harness's limits. Absent: its defaults (ADR-0100); tests set smaller ones. */
+    readonly limits?: HarnessLimits;
   };
   readonly logger?: Logger;
   readonly now?: () => Date;
@@ -373,13 +379,22 @@ export function createAgentTaskParts(options: {
     brain,
     onError: (code) => logger?.warn('agent_task.facts_not_proposed', { code }),
   });
+  const taskContacts = proposals.contacts;
   const taskExecutors: ToolExecutors =
-    records === undefined
+    records === undefined || taskContacts === undefined
       ? {}
       : {
           follow_up: createAgentFollowUpScheduleExecutor({
             followUps: records.followUps,
             organizations: stores.tenancy,
+            // A model's contact reference (ADR-0104), resolved here only: among the contacts of
+            // the task's organization the person may read, the very ones a task is shown.
+            contacts: {
+              async resolve(tenant, ref) {
+                const found = findContactRef(await taskContacts.list(tenant), ref);
+                return 'contact' in found ? { contactId: found.contact.id } : found;
+              },
+            },
           }),
         };
   // Tools in the middle of a task (ADR-0103): the agent asks, the Harness decides each call with
@@ -398,6 +413,11 @@ export function createAgentTaskParts(options: {
             executors: [...options.tools.executors, ...Object.keys(taskExecutors)],
           }),
           outputs,
+          describe: (tool) =>
+            tool.toolId === MODEL_FOLLOW_UP_TOOL.id && tool.version === MODEL_FOLLOW_UP_TOOL.version
+              ? MODEL_FOLLOW_UP_DESCRIPTION
+              : `${tool.toolId.replace(/_/g, ' ')} (${tool.action}).`,
+          ...(options.tools.limits === undefined ? {} : { limits: options.tools.limits }),
           now: clock,
         });
   const taskWork = createAgentTaskWork({

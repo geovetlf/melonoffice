@@ -35,7 +35,16 @@ export interface AgentTaskView {
     /** The follow-up it proposed, and where it stands (ADR-0084). */
     readonly followUp?: TaskFollowUpView | null;
   } | null;
+  /**
+   * A follow-up the agent asked to schedule with its own tool, and where it stands (ADR-0104): it
+   * can wait for a person's approval before the agent has answered.
+   */
+  readonly toolFollowUp?: TaskFollowUpView | null;
 }
+
+/** The follow-up a task proposed or asked for with its tool, if any. */
+export const followUpOfTask = (task: AgentTaskView): TaskFollowUpView | null =>
+  task.answer?.followUp ?? task.toolFollowUp ?? null;
 
 export type TaskFollowUpState =
   'preparing' | 'waiting_approval' | 'scheduled' | 'rejected' | 'expired' | 'not_scheduled';

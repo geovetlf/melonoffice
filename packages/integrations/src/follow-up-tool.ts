@@ -18,11 +18,12 @@ import {
 } from '@melonoffice/tenancy';
 import {
   FOLLOW_UP_SCHEDULE_TOOL,
+  FOLLOW_UP_TYPE_CODES,
   type ToolExecutionContext,
   type ToolExecutor,
   type ToolExecutorOutcome,
 } from '@melonoffice/tools';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { ToolInvoker } from './outbound.js';
 
 /** `follow_up_schedule` version 1: the one a person invokes (TL-1, ADR-0068). */
@@ -85,6 +86,77 @@ export function createFollowUpScheduleExecutor(options: {
 export const AGENT_FOLLOW_UP_SCHEDULE = FOLLOW_UP_SCHEDULE_TOOL.versions[1] as NonNullable<
   (typeof FOLLOW_UP_SCHEDULE_TOOL.versions)[1]
 >;
+/** Version 3 (ADR-0104): the one an agent's model asks for mid-task, by a contact's reference. */
+export const MODEL_FOLLOW_UP_SCHEDULE = FOLLOW_UP_SCHEDULE_TOOL.versions[2] as NonNullable<
+  (typeof FOLLOW_UP_SCHEDULE_TOOL.versions)[2]
+>;
+
+/**
+ * Where a contact's reference in a task leads (ADR-0104), resolved on the server only: among the
+ * contacts of the task's organization that the person the task is for may read, the one contact
+ * the reference names. None, or more than one: nothing is scheduled.
+ */
+export interface AgentContactResolver {
+  resolve(
+    tenant: TenantContext,
+    ref: string,
+  ): Promise<
+    | { readonly contactId: string }
+    | { readonly problem: 'contact_not_found' | 'contact_ref_ambiguous' }
+  >;
+}
+
+/** A follow-up as a model asks for it with `follow_up_schedule@3`: a reference, never an id. */
+interface ModelFollowUp {
+  readonly contact: string;
+  readonly type: string;
+  readonly title: string;
+  readonly date: string;
+  readonly time: string;
+}
+
+const MODEL_FOLLOW_UP_KEYS = ['contact', 'date', 'time', 'title', 'type'];
+const CONTACT_REF = /^c_[a-p]{10}$/;
+const DATE = /^\d{4}-\d{2}-\d{2}$/;
+const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
+// eslint-disable-next-line no-control-regex
+const CONTROL = /[\u0000-\u001f\u007f]/;
+
+/** The model's call, exactly its five fields, each well formed; anything else is refused. */
+function modelFollowUpOf(input: unknown): ModelFollowUp | undefined {
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) return undefined;
+  const value = input as Record<string, unknown>;
+  if (Object.keys(value).sort().join() !== MODEL_FOLLOW_UP_KEYS.join()) return undefined;
+  const { contact, type, title, date, time } = value;
+  if (typeof contact !== 'string' || !CONTACT_REF.test(contact)) return undefined;
+  if (typeof type !== 'string' || !(FOLLOW_UP_TYPE_CODES as readonly string[]).includes(type)) {
+    return undefined;
+  }
+  if (typeof title !== 'string') return undefined;
+  const text = title.normalize('NFC').trim();
+  if (text.length === 0 || [...text].length > 120 || CONTROL.test(text)) return undefined;
+  if (typeof date !== 'string' || !DATE.test(date) || Number.isNaN(Date.parse(date))) {
+    return undefined;
+  }
+  if (typeof time !== 'string' || !TIME.test(time)) return undefined;
+  return { contact, type, title: text, date, time };
+}
+
+/**
+ * The request key of a follow-up an agent asked for in a task: made by the server from the task
+ * and the resolved request, never by the model. The same request in the same task, by a retry, a
+ * loop or a repeated call, is the same key, so the follow-up service makes it once.
+ */
+export const modelFollowUpKey = (
+  executionId: string,
+  request: { readonly contactId: string } & Omit<ModelFollowUp, 'contact'>,
+): string =>
+  `agent-task-${executionId}-${createHash('sha256')
+    .update(
+      JSON.stringify([request.contactId, request.type, request.title, request.date, request.time]),
+    )
+    .digest('hex')
+    .slice(0, 32)}`;
 
 /**
  * The executor of `follow_up_schedule` version 2 (ADR-0084), in the worker. The gate calls it only
@@ -96,10 +168,83 @@ export const AGENT_FOLLOW_UP_SCHEDULE = FOLLOW_UP_SCHEDULE_TOOL.versions[1] as N
 export function createAgentFollowUpScheduleExecutor(options: {
   readonly followUps: Pick<FollowUpService, 'create'>;
   readonly organizations: TenancyStore;
+  /** Resolves a model's contact reference (ADR-0104). Absent: version 3 never runs here. */
+  readonly contacts?: AgentContactResolver;
 }): ToolExecutor {
-  const { followUps, organizations } = options;
+  const { followUps, organizations, contacts } = options;
+
+  /** Runs the follow-up service's own `create` as the runtime for the task's person. */
+  async function create(
+    context: ToolExecutionContext,
+    input:
+      | Record<string, unknown>
+      | ((tenant: TenantContext) => Promise<Record<string, unknown> | string>),
+  ): Promise<ToolExecutorOutcome> {
+    let tenant: TenantContext;
+    try {
+      tenant = await resolveRuntimeTenant(
+        context.actor.userId,
+        context.organizationId,
+        organizations,
+      );
+    } catch {
+      return { status: 'failure', code: 'permission_denied' };
+    }
+    try {
+      const request = typeof input === 'function' ? await input(tenant) : input;
+      if (typeof request === 'string') return { status: 'failure', code: request };
+      const { followUp, created } = await followUps.create(tenant, request);
+      return { status: 'success', output: { followUpId: followUp.id, created } };
+    } catch (error) {
+      if (isConversationError(error) && CODE.test(error.code)) {
+        return { status: 'failure', code: error.code };
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Version 3 (ADR-0104): after a person approved this exact call. The reference is resolved here,
+   * among the contacts of the execution's organization the person may read; the request key is
+   * made here; the follow-up service checks the rest (the contact, the date and time, the limits).
+   */
+  async function modelCall(context: ToolExecutionContext, input: unknown) {
+    if (
+      context.actor.via !== 'runtime' ||
+      context.specialistId === undefined ||
+      contacts === undefined
+    ) {
+      return { status: 'failure', code: 'tool_not_runtime_invokable' } as const;
+    }
+    // Never without a person's approval of this call, whatever the policy said.
+    if (context.approvalId === undefined)
+      return { status: 'failure', code: 'approval_missing' } as const;
+    const call = modelFollowUpOf(input);
+    if (call === undefined) return { status: 'failure', code: 'invalid_input' } as const;
+    return create(context, async (tenant) => {
+      const found = await contacts.resolve(tenant, call.contact);
+      if ('problem' in found) return found.problem;
+      const request = { ...call, contactId: found.contactId };
+      return {
+        requestKey: modelFollowUpKey(context.executionId, request),
+        contactId: found.contactId,
+        type: call.type,
+        title: call.title,
+        date: call.date,
+        time: call.time,
+        source: 'agent',
+      };
+    });
+  }
+
   return {
     async execute(context: ToolExecutionContext, input: unknown): Promise<ToolExecutorOutcome> {
+      if (
+        context.toolId === MODEL_FOLLOW_UP_SCHEDULE.toolId &&
+        context.toolVersion === MODEL_FOLLOW_UP_SCHEDULE.version
+      ) {
+        return modelCall(context, input);
+      }
       if (
         context.toolId !== AGENT_FOLLOW_UP_SCHEDULE.toolId ||
         context.toolVersion !== AGENT_FOLLOW_UP_SCHEDULE.version ||
@@ -109,28 +254,7 @@ export function createAgentFollowUpScheduleExecutor(options: {
       ) {
         return { status: 'failure', code: 'tool_not_runtime_invokable' };
       }
-      let tenant: TenantContext;
-      try {
-        tenant = await resolveRuntimeTenant(
-          context.actor.userId,
-          context.organizationId,
-          organizations,
-        );
-      } catch {
-        return { status: 'failure', code: 'permission_denied' };
-      }
-      try {
-        const { followUp, created } = await followUps.create(
-          tenant,
-          input as Record<string, unknown>,
-        );
-        return { status: 'success', output: { followUpId: followUp.id, created } };
-      } catch (error) {
-        if (isConversationError(error) && CODE.test(error.code)) {
-          return { status: 'failure', code: error.code };
-        }
-        throw error;
-      }
+      return create(context, input as Record<string, unknown>);
     },
   };
 }
