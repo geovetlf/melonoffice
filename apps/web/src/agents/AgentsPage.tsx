@@ -13,6 +13,7 @@ import {
   type AgentTemplateView,
   type AgentsClient,
 } from './agentsClient.js';
+import { errorCode } from '../shell/errors.js';
 
 /**
  * Agents (ADR-0025, ADR-0062): every agent of the organization by status, creating one from a
@@ -34,10 +35,7 @@ const ERRORS: ReadonlySet<string> = new Set([
   'specialist_concurrency_conflict',
 ]);
 
-const codeOf = (error: unknown) => {
-  const code = error instanceof AgentRequestError ? (error.code ?? 'generic') : 'generic';
-  return ERRORS.has(code) ? code : 'generic';
-};
+const codeOf = (error: unknown) => errorCode(error, AgentRequestError, ERRORS);
 
 export function AgentsPage({
   client,

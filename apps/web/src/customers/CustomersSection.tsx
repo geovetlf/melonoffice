@@ -16,6 +16,7 @@ import {
   type CustomerStage,
   type CustomersClient,
 } from './customersClient.js';
+import { errorMessage } from '../shell/errors.js';
 
 /** Today's date (YYYY-MM-DD) in the business's time zone, to mark a next action as overdue. */
 export function todayIn(timeZone: string, now: Date = new Date()): string {
@@ -27,10 +28,7 @@ export function todayIn(timeZone: string, now: Date = new Date()): string {
   }).format(now);
 }
 
-const errorKey = (error: unknown): string =>
-  error instanceof CustomerRequestError && error.code !== undefined
-    ? `customers.error.${error.code}`
-    : 'customers.error.generic';
+const errorKey = (error: unknown): string => errorMessage(error, CustomerRequestError, 'customers');
 
 type Load<T> =
   | { readonly status: 'loading' }

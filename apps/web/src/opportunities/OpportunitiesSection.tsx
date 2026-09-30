@@ -22,6 +22,7 @@ import {
   type StageInput,
   type StageView,
 } from './opportunitiesClient.js';
+import { errorMessage } from '../shell/errors.js';
 
 type IntlShape = ReturnType<typeof useIntl>;
 
@@ -59,9 +60,7 @@ export const stageName = (intl: IntlShape, stage: Pick<StageView, 'name' | 'name
   stage.name ?? (stage.nameKey === null ? stage.id : intl.formatMessage({ id: stage.nameKey }));
 
 const errorKey = (error: unknown): string =>
-  error instanceof OpportunityRequestError && error.code !== undefined
-    ? `opportunities.error.${error.code}`
-    : 'opportunities.error.generic';
+  errorMessage(error, OpportunityRequestError, 'opportunities');
 
 /**
  * Opportunities and pipeline (C2, ADR-0054), in the Comercial office: the organization's own

@@ -10,6 +10,7 @@ import {
   type DocumentsClient,
   type DocumentView,
 } from './documentsClient.js';
+import { errorCode } from '../shell/errors.js';
 
 /**
  * Documents (DOC-3): upload a file to the organization and see whether Company Brain read its
@@ -108,8 +109,7 @@ export function DocumentsPage({
       setUpload({ status: 'done', document });
       await load();
     } catch (error) {
-      const code = error instanceof DocumentRequestError ? (error.code ?? 'generic') : 'generic';
-      setUpload({ status: 'failed', code: UPLOAD_ERRORS.has(code) ? code : 'generic' });
+      setUpload({ status: 'failed', code: errorCode(error, DocumentRequestError, UPLOAD_ERRORS) });
     } finally {
       if (input.current !== null) input.current.value = '';
     }

@@ -2,6 +2,7 @@ import { FormattedMessage, useIntl } from '@melonoffice/i18n';
 import { Button } from '@melonoffice/ui';
 import { useState, type FormEvent } from 'react';
 import { MemoryRequestError, type MemoryClient } from './memoryClient.js';
+import { errorMessage } from '../shell/errors.js';
 
 /**
  * Teaching the company's memory (ADR-0051): a person tells GIA something about the business and
@@ -35,10 +36,7 @@ export function TellGia({
   const [outcome, setOutcome] = useState<Outcome>();
 
   const failed = (error: unknown): Outcome => {
-    const id =
-      error instanceof MemoryRequestError && error.code !== undefined
-        ? `memory.error.${error.code}`
-        : 'memory.error.generic';
+    const id = errorMessage(error, MemoryRequestError, 'memory');
     return {
       kind: 'message',
       id: Object.hasOwn(intl.messages, id) ? id : 'memory.error.generic',

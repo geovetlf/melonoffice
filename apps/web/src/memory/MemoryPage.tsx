@@ -17,6 +17,7 @@ import {
   type MemoryClient,
   type Verification,
 } from './memoryClient.js';
+import { errorMessage } from '../shell/errors.js';
 
 /**
  * The company's memory (ADR-0056): where a person reads, completes and corrects what Company
@@ -31,10 +32,7 @@ type Intl = ReturnType<typeof useIntl>;
 /** How many of the latest changes the history of changes shows. */
 const RECENT_CHANGES = 30;
 
-const errorKey = (error: unknown): string =>
-  error instanceof MemoryRequestError && error.code !== undefined
-    ? `memory.error.${error.code}`
-    : 'memory.error.generic';
+const errorKey = (error: unknown): string => errorMessage(error, MemoryRequestError, 'memory');
 
 /** A fact's name: its own label, the catalogue's name for its key, or the key made readable. */
 export function factName(

@@ -8,6 +8,7 @@ import {
   type ApprovalView,
   type ApprovalsClient,
 } from './approvalsClient.js';
+import { errorCode } from '../shell/errors.js';
 
 /**
  * The approval center (ADR-0026): every operation agents asked a person to approve, in one list,
@@ -71,8 +72,7 @@ export function ApprovalsPage({
       );
       setNotice({ code: decision === 'approve' ? 'approved' : 'rejected' });
     } catch (error) {
-      const code = error instanceof ApprovalRequestError ? (error.code ?? 'generic') : 'generic';
-      setNotice({ code: DECIDE_ERRORS.has(code) ? code : 'generic' });
+      setNotice({ code: errorCode(error, ApprovalRequestError, DECIDE_ERRORS) });
       // What happened may have changed it: read the list again.
       client.list().then(setItems, () => undefined);
     } finally {
