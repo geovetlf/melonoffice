@@ -1738,12 +1738,8 @@
   "console.brand.title": "Your brand",
   "console.brand.lead.partner": "Your white-label customers see this brand, unless you set one for them.",
   "console.brand.lead.agency": "Your account's own brand. An agency's customers keep MelonOffice's brand.",
-  "console.scope.sensitive": "(their company's own content)",
   "console.scope.summary": "Their company's name, status and plan",
   "console.scope.usage": "How much AI they use, in credits",
   "console.scope.billing": "Their subscription and who pays it",
-  "console.scope.branding": "Their brand, to show your own (white label)",
-  "console.scope.support": "Support in their workspace",
-  "console.scope.knowledge": "Their company's memory",
-  "console.scope.conversations": "Their conversations"
+  "console.scope.branding": "Their brand, to show your own (white label)"
 }

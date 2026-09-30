@@ -1738,12 +1738,8 @@
   "console.brand.title": "Tu marca",
   "console.brand.lead.partner": "Tus clientes de marca blanca ven esta marca, salvo que les pongas una propia.",
   "console.brand.lead.agency": "La marca propia de tu cuenta. Los clientes de una agencia mantienen la marca de MelonOffice.",
-  "console.scope.sensitive": "(contenido propio de su empresa)",
   "console.scope.summary": "Nombre, estado y plan de su empresa",
   "console.scope.usage": "Cuánta IA usa, en créditos",
   "console.scope.billing": "Su suscripción y quién la paga",
-  "console.scope.branding": "Su marca, para mostrar la tuya (marca blanca)",
-  "console.scope.support": "Soporte en su espacio de trabajo",
-  "console.scope.knowledge": "La memoria de su empresa",
-  "console.scope.conversations": "Sus conversaciones"
+  "console.scope.branding": "Su marca, para mostrar la tuya (marca blanca)"
 }

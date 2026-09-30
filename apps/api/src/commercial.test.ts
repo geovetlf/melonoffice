@@ -171,6 +171,18 @@ describe.each(STORES)('the commercial layer with storage in %s', (_name, createS
     const { call, acc, rel, tenantA, tenantB, partnerA, partnerB, agencyA, relate } = await setup();
     const summary = (who: string, account: string, tenant: string) =>
       call(who, 'GET', `${acc(account)}/customers/${tenant}`);
+    // Scopes nothing reads yet are not asked for (ADR-0097).
+    for (const scope of ['support', 'knowledge', 'conversations']) {
+      expect(
+        (
+          await call('carol', 'POST', `${acc(partnerA)}/customers`, {
+            organizationId: tenantA,
+            mode: 'reseller',
+            scopes: [scope],
+          })
+        ).body,
+      ).toEqual({ error: 'invalid_commercial_request', field: 'scopes' });
+    }
     // Knowing the id is not enough, and a pending invitation grants nothing.
     await call('carol', 'POST', `${acc(partnerA)}/customers`, {
       organizationId: tenantA,

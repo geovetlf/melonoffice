@@ -40,6 +40,7 @@ import {
   newCommercialAccountId,
   parseCommercialAccountName,
   parseCustomerScopes,
+  parseRequestedCustomerScopes,
   resolveCommercialContext,
   TenancyError,
   type CommercialContext,
@@ -607,7 +608,7 @@ export function registerCommercialRoutes(app: Hono<AuthEnv>, deps: CommercialDep
       }
       let scopes;
       try {
-        scopes = parseCustomerScopes(input.scopes ?? []);
+        scopes = parseRequestedCustomerScopes(input.scopes ?? []);
       } catch {
         return bad(c, 'scopes');
       }
