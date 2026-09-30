@@ -51,7 +51,9 @@ import {
   classifyTask,
   contextPlanOf,
   createAgentHarness,
+  createCrmContextSource,
   createDecisionAgentRouter,
+  crmContextText,
   createHarnessAgentWork,
   createHarnessContextSource,
   createHarnessToolDirectory,
@@ -1024,5 +1026,79 @@ describe('Multi-step plans, limits and hand-off (ADR-0101)', () => {
       code: 'credit_limit_exceeded',
     });
     expect(at('failed', 'provider_unavailable')).toMatchObject({ reason: 'repeated_error' });
+  });
+});
+
+describe('The CRM as context (ADR-0102)', () => {
+  const insights = {
+    timeZone: 'America/Lima',
+    today: '2026-09-30',
+    contacts: {
+      counts: { lead: 3, customer: 5, inactive: 1 },
+      leadsWithoutNextAction: 2,
+      overdueNextAction: 1,
+      inactiveCustomers: 1,
+      newToday: 0,
+      newThisWeek: 2,
+    },
+    opportunities: {
+      counts: { open: 4, won: 2, lost: 1 },
+      openValue: [
+        { currency: 'PEN', amountMinor: 1_250_000, count: 3 },
+        { currency: 'JPY', amountMinor: 5000, count: 1 },
+      ],
+      wonThisMonth: [],
+      closingSoon: 1,
+      closeDatePassed: 0,
+      quiet: 2,
+    },
+    followUps: { open: 3, overdue: 1, today: 1 },
+  } as never;
+  const configuration = (permissions: string[]) => ({ permissions }) as never;
+  const tenant = {} as TenantContext;
+
+  it('gives an agent the counts and totals its configuration may read, never records', async () => {
+    const source = createCrmContextSource({ insights: { read: async () => insights } });
+    const [all] = await source.read(tenant, {
+      configuration: configuration(['contact.read', 'opportunity.read', 'follow_up.read']),
+      request: 'x',
+    });
+    expect(all?.name).toBe('crm_context');
+    expect(all?.text).toContain('Contacts: 3 leads, 5 customers, 1 inactive.');
+    expect(all?.text).toContain('Open value: 12,500.00 PEN, 5,000 JPY.');
+    expect(all?.text).toContain('Follow-ups open: 3; overdue 1; today 1.');
+    const [some] = await source.read(tenant, {
+      configuration: configuration(['opportunity.read']),
+      request: 'x',
+    });
+    expect(some?.text).toContain('Opportunities: 4 open');
+    expect(some?.text).not.toContain('Contacts');
+    expect(some?.text).not.toContain('Follow-ups');
+  });
+
+  it("says so when the agent may not read them, and when they cannot be read, and never reads another's", async () => {
+    let reads = 0;
+    const source = createCrmContextSource({
+      insights: {
+        read: async () => {
+          reads += 1;
+          throw new Error('down');
+        },
+      },
+    });
+    expect(
+      await source.read(tenant, { configuration: configuration(['knowledge.read']), request: 'x' }),
+    ).toEqual([{ name: 'crm_context', text: '(this agent may not read the customer records)' }]);
+    expect(reads).toBe(0);
+    expect(
+      await source.read(tenant, { configuration: configuration(['contact.read']), request: 'x' }),
+    ).toEqual([{ name: 'crm_context', text: '(the customer records could not be read now)' }]);
+    // A part the person may not read comes back null from the insights: nothing of it is shown.
+    const text = crmContextText({ ...(insights as object), contacts: null } as never, {
+      contacts: true,
+      opportunities: false,
+      followUps: false,
+    });
+    expect(text).toBe('(the customer records are not available to this agent)');
   });
 });

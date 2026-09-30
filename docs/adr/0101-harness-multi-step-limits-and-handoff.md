@@ -85,4 +85,4 @@ Only the decision and its reason are built here. Who the person is and how they 
 - A complex task now becomes a plan a person approves, instead of one long model call. Each step runs as its own agent's execution with its own verification, and the whole plan is capped and loop-checked before anyone can approve it.
 - "Needs a person" has one shape across the Harness and agent tasks, ready for GIA and the screens to use.
 - In DEV the planner still depends on the one approved model (Gemini 2.5 Flash-Lite). How well it plans is not measured yet.
-- Block 4: the CRM as a context source for agent work, `agent.execution.*` events in the existing catalogue, and usage attribution per task.
+- Block 4 ([ADR-0102](0102-harness-crm-context-events-and-usage.md)): the CRM as a context source, task end and hand-off events, and usage attributed to the plan.

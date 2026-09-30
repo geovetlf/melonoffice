@@ -1425,6 +1425,43 @@ describe('AI gateway: the AI Usage Layer (ADR-0073)', () => {
     expect(JSON.stringify(event)).not.toContain('melon market');
   });
 
+  it("attributes a plan step's call to its plan too (ADR-0102)", async () => {
+    const usage = new InMemoryUsageSink();
+    const { w, specialist } = await setup({ usage });
+    const s = specialist;
+    const snapshot = {
+      schemaVersion: 1 as const,
+      components: [{ kind: 'specialist', id: s.identity.id, version: '1' }],
+    };
+    const assignment = {
+      specialistId: s.identity.id,
+      specialistVersion: s.version,
+      departmentId: s.configuration.departmentId,
+    };
+    const parent = await w.executions.create(w.tenantA, {
+      mode: 'plan',
+      input: { type: 'task', id: 'plan-1' },
+      ...assignment,
+      versionSnapshot: snapshot,
+    });
+    const child = await w.executions.create(w.tenantA, {
+      mode: 'execute',
+      input: { type: 'task', id: 'step-1' },
+      ...assignment,
+      versionSnapshot: snapshot,
+      parentExecutionId: parent.id,
+      nodes: [{ id: 'n0', type: 'agent', label: 'Think' }],
+    });
+    const step = await w.executions.start(w.tenantA, child.id);
+    expect(await w.gateway.generate(w.tenantA, requestFor(step))).toMatchObject({
+      status: 'completed',
+    });
+    expect(usage.events[0]?.attribution).toMatchObject({
+      executionId: step.id,
+      parentExecutionId: parent.id,
+    });
+  });
+
   it('never fails a call because its usage could not be recorded, and emits nothing when denied', async () => {
     const failing: AIUsageSink = {
       record: async () => {

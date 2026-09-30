@@ -875,6 +875,9 @@ export function createAIGateway(options: AIGatewayOptions): AIGateway {
     ctx.known.target = { type: 'execution', id: execution.id };
     ctx.known.attribution = {
       executionId: execution.id,
+      ...(execution.parentExecutionId === undefined
+        ? {}
+        : { parentExecutionId: execution.parentExecutionId }),
       ...(execution.workflowId === undefined ? {} : { workflowId: execution.workflowId }),
     };
     ctx.correlate({

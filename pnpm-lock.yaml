@@ -1092,6 +1092,9 @@ importers:
       '@melonoffice/agents':
         specifier: workspace:*
         version: link:../agents
+      '@melonoffice/conversations':
+        specifier: workspace:*
+        version: link:../conversations
       '@melonoffice/decisions':
         specifier: workspace:*
         version: link:../decisions

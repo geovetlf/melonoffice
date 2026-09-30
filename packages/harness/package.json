@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "@melonoffice/agents": "workspace:*",
+    "@melonoffice/conversations": "workspace:*",
     "@melonoffice/decisions": "workspace:*",
     "@melonoffice/domain": "workspace:*",
     "@melonoffice/execution": "workspace:*",

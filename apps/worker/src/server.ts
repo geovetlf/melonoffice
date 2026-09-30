@@ -156,6 +156,28 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
       dispatchDeadlineSeconds: Math.ceil(runtime.leaseMs / 1000),
     }),
   });
+  // Domain events (EV-2, ADR-0067): stored in the outbox, queued on the same queue, delivered by
+  // this worker behind the same invoker. No subscriber reacts yet: an event is stored, delivered
+  // and recorded, and starts nothing until a reaction is approved and registered here.
+  const events = createEventBus({
+    outbox: new FirestoreEventOutbox(firestore),
+    queue: {
+      enqueue: (() => {
+        const scheduler = createCloudTasksScheduler({
+          queue: runtime.queue,
+          targetUrl: `${runtime.workerUrl}${RUN_EVENT_PATH}`,
+          audience: runtime.workerUrl,
+          invokerEmail: runtime.invokerEmail,
+          dispatchDeadlineSeconds: Math.ceil(runtime.leaseMs / 1000),
+        });
+        return (ref) => scheduler.schedule(ref, new Date());
+      })(),
+    },
+    subscribers: [],
+    leaseMs: runtime.leaseMs,
+    audit: createAuditService(stores.audit),
+    logger: logger.child({ component: 'events' }),
+  });
   // Agent tasks (ADR-0063): the same runtime runs them, with Company Brain as their context. What
   // an agent proposes from a task (ADR-0084): a follow-up, scheduled with the same follow-up
   // service once a person approves it, and facts for Company Brain.
@@ -175,6 +197,8 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
       timeZone: async (organizationId) =>
         (await businessProfiles.find(organizationId))?.timeZone ?? 'America/Lima',
     },
+    // An agent task's end, and whether it now needs a person, on the event bus (ADR-0102).
+    events,
     logger: logger.child({ component: 'agent-tasks' }),
   });
   const routed = routeAgentWork(agents, taskParts);
@@ -274,28 +298,6 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
       dispatchDeadlineSeconds: Math.ceil(runtime.leaseMs / 1000),
     }),
     logger,
-  });
-  // Domain events (EV-2, ADR-0067): stored in the outbox, queued on the same queue, delivered by
-  // this worker behind the same invoker. No subscriber reacts yet: an event is stored, delivered
-  // and recorded, and starts nothing until a reaction is approved and registered here.
-  const events = createEventBus({
-    outbox: new FirestoreEventOutbox(firestore),
-    queue: {
-      enqueue: (() => {
-        const scheduler = createCloudTasksScheduler({
-          queue: runtime.queue,
-          targetUrl: `${runtime.workerUrl}${RUN_EVENT_PATH}`,
-          audience: runtime.workerUrl,
-          invokerEmail: runtime.invokerEmail,
-          dispatchDeadlineSeconds: Math.ceil(runtime.leaseMs / 1000),
-        });
-        return (ref) => scheduler.schedule(ref, new Date());
-      })(),
-    },
-    subscribers: [],
-    leaseMs: runtime.leaseMs,
-    audit: createAuditService(stores.audit),
-    logger: logger.child({ component: 'events' }),
   });
   // Forecasts (ADR-0059): the worker is the only place the model is called, with its own identity
   // on the private forecaster service. The engine re-reads each forecast and charges it once.
