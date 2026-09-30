@@ -66,9 +66,15 @@ export const color = {
   stateOffline: palette.stateOffline,
 } as const;
 
+/**
+ * Type: Instrument Sans (ADR-0107), one family for the whole app. Its space is narrow (0.2 em), so
+ * `wordSpacing` restores a 0.25 em space for running text; headlines tighten slightly and uppercase
+ * labels open by one amount everywhere. `sizeXxs` is the smallest text the app sets.
+ */
 export const font = {
   family:
-    "'Onest Variable', system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans', 'Noto Sans CJK SC', 'Noto Sans JP', sans-serif",
+    "'Instrument Sans Variable', system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans', 'Noto Sans CJK SC', 'Noto Sans JP', sans-serif",
+  sizeXxs: '0.6875rem',
   sizeXs: '0.75rem',
   sizeSm: '0.875rem',
   sizeMd: '1rem',
@@ -81,6 +87,9 @@ export const font = {
   weightBold: '700',
   lineHeight: '1.5',
   lineHeightTight: '1.2',
+  wordSpacing: '0.05em',
+  trackingTight: '-0.01em',
+  trackingWide: '0.08em',
 } as const;
 
 export const space = {

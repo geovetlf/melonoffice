@@ -29,8 +29,9 @@
   --mo-color-state-offline: #848d9c;
 
   --mo-font-family:
-    'Onest Variable', system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans', 'Noto Sans CJK SC',
-    'Noto Sans JP', sans-serif;
+    'Instrument Sans Variable', system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans',
+    'Noto Sans CJK SC', 'Noto Sans JP', sans-serif;
+  --mo-font-size-xxs: 0.6875rem;
   --mo-font-size-xs: 0.75rem;
   --mo-font-size-sm: 0.875rem;
   --mo-font-size-md: 1rem;
@@ -43,6 +44,9 @@
   --mo-font-weight-bold: 700;
   --mo-font-line-height: 1.5;
   --mo-font-line-height-tight: 1.2;
+  --mo-font-word-spacing: 0.05em;
+  --mo-font-tracking-tight: -0.01em;
+  --mo-font-tracking-wide: 0.08em;
 
   --mo-space-1: 0.25rem;
   --mo-space-2: 0.5rem;

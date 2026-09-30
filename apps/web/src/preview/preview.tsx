@@ -10,6 +10,7 @@ import { createServices } from '../identity/services.js';
 import { REFRESH_KEY } from '../identity/session.js';
 import { API, KEY, fakeBackend, memoryStore } from '../identity/testing.js';
 import { Root } from '../Root.js';
+import { applyReviewFont } from './fonts.js';
 import { SCENARIOS, type ScenarioName } from './scenarios.js';
 
 /**
@@ -18,7 +19,8 @@ import { SCENARIOS, type ScenarioName } from './scenarios.js';
  * production build has `index.html` as its one entry, so none of this ships.
  *
  * `?scenario=` picks the office's state (see `scenarios.ts`), `?route=` the page to open,
- * `?locale=` the language and `?brand=rrggbb` a white-label colour, applied as a host's brand is.
+ * `?locale=` the language, `?brand=rrggbb` a white-label colour, applied as a host's brand is, and
+ * `?font=` one of the typefaces under review (see `fonts.ts`).
  */
 const params = new URLSearchParams(globalThis.location.search);
 const scenario: ScenarioName = params.get('scenario') === 'empty' ? 'empty' : 'active';
@@ -38,6 +40,8 @@ SCENARIOS[scenario](backend);
 const services = createServices({ apiUrl: API, identityApiKey: KEY }, backend.fetch, store);
 
 globalThis.history.replaceState(null, '', route);
+
+await applyReviewFont(params.get('font'));
 
 const container = document.getElementById('root');
 if (!container) throw new Error('Missing #root element');

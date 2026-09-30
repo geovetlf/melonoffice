@@ -1,0 +1,20 @@
+{
+  "onest": {
+    "family": "\"Onest Variable\"",
+    "titleWidth": 373,
+    "sidePanelHeight": 733,
+    "sidebarNavHeight": 398
+  },
+  "figtree": {
+    "family": "\"Figtree Variable\"",
+    "titleWidth": 356,
+    "sidePanelHeight": 733,
+    "sidebarNavHeight": 398
+  },
+  "instrument-sans": {
+    "family": "\"Instrument Sans Variable\"",
+    "titleWidth": 364,
+    "sidePanelHeight": 733,
+    "sidebarNavHeight": 398
+  }
+}

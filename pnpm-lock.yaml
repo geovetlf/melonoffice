@@ -193,6 +193,12 @@ importers:
         specifier: 19.3.0
         version: 19.3.0(react@19.3.0)
     devDependencies:
+      '@fontsource-variable/figtree':
+        specifier: 5.3.0
+        version: 5.3.0
+      '@fontsource-variable/onest':
+        specifier: 5.3.1
+        version: 5.3.1
       '@melonoffice/config':
         specifier: workspace:*
         version: link:../../packages/config
@@ -1432,9 +1438,9 @@ importers:
 
   packages/ui:
     dependencies:
-      '@fontsource-variable/onest':
-        specifier: 5.3.1
-        version: 5.3.1
+      '@fontsource-variable/instrument-sans':
+        specifier: 5.3.0
+        version: 5.3.0
     devDependencies:
       '@melonoffice/config':
         specifier: workspace:*
@@ -1662,6 +1668,12 @@ packages:
     peerDependenciesMeta:
       '@noble/hashes':
         optional: true
+
+  '@fontsource-variable/figtree@5.3.0':
+    resolution: {integrity: sha512-VRVodD7OiG7apQwE8/2fMjaqpY/a0qRJqL5HtYj8CKIVps+9amaFcdfKmDIf7iqYQx6iPLlArVXAfKeIZmVcNQ==}
+
+  '@fontsource-variable/instrument-sans@5.3.0':
+    resolution: {integrity: sha512-u4gKbDBTNFGkg997tfQn3eHOhHuquWUFTRT/rwzuKtrxX5P2ekfs2x+LgBPP4P32+cC+vUwF1Cr+IdRoPQbrGw==}
 
   '@fontsource-variable/onest@5.3.1':
     resolution: {integrity: sha512-xaaw6G4HDB2/RczsWLD/2bnib4ykmQlTlBUN3GOEOiyErilZukQWVJG95h9zwAy0i8KY+QzDa+COPfqhI72Acw==}
@@ -3763,6 +3775,10 @@ snapshots:
       levn: 0.4.1
 
   '@exodus/bytes@1.16.0': {}
+
+  '@fontsource-variable/figtree@5.3.0': {}
+
+  '@fontsource-variable/instrument-sans@5.3.0': {}
 
   '@fontsource-variable/onest@5.3.1': {}
 

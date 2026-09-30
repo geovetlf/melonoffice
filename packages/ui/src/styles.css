@@ -1,5 +1,5 @@
-/* Onest (SIL Open Font License), served with the app: every device and screenshot shows the same type. */
-@import '@fontsource-variable/onest/wght.css';
+/* Instrument Sans (SIL Open Font License), served with the app: every device and screenshot shows the same type. */
+@import '@fontsource-variable/instrument-sans/wght.css';
 @import './tokens.css';
 
 *,
@@ -13,8 +13,17 @@ body {
   font-family: var(--mo-font-family);
   font-size: var(--mo-font-size-md);
   line-height: var(--mo-font-line-height);
+  word-spacing: var(--mo-font-word-spacing);
   color: var(--mo-color-text-primary);
   background: var(--mo-color-background);
+}
+
+/* Form controls reset spacing in the browser's own styles; they follow the page's type instead. */
+button,
+input,
+select,
+textarea {
+  word-spacing: inherit;
 }
 
 :focus-visible {

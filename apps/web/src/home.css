@@ -49,7 +49,7 @@
   margin: 2px 0 0;
   font-size: clamp(1.3rem, 1.05rem + 0.8vw, 1.7rem);
   line-height: 1.15;
-  letter-spacing: -0.02em;
+  letter-spacing: var(--mo-font-tracking-tight);
 }
 
 .home4__chips {
@@ -325,7 +325,7 @@
   background: rgb(255 255 255 / 0.94);
   box-shadow: 0 6px 16px rgb(36 58 92 / 0.16);
   backdrop-filter: blur(8px);
-  font-size: clamp(0.7rem, 3.3cqw, 0.95rem);
+  font-size: clamp(var(--mo-font-size-xxs), 3.3cqw, 0.95rem);
   line-height: 1.2;
   white-space: nowrap;
 }
@@ -333,7 +333,7 @@
 .b-room__sign--centre {
   left: 50%;
   transform: translateX(-50%);
-  font-size: clamp(0.7rem, 4.6cqw, 0.95rem);
+  font-size: clamp(var(--mo-font-size-xxs), 4.6cqw, 0.95rem);
 }
 
 /* A narrow centre room keeps the name; the count is in the room's label. */
@@ -388,7 +388,7 @@
   border-radius: var(--mo-radius-pill);
   background: rgb(255 255 255 / 0.95);
   box-shadow: 0 6px 16px rgb(36 58 92 / 0.18);
-  font-size: clamp(0.66rem, 3.1cqw, 0.88rem);
+  font-size: clamp(var(--mo-font-size-xxs), 3.1cqw, 0.88rem);
   font-weight: var(--mo-font-weight-medium);
   pointer-events: none;
 }
@@ -449,7 +449,7 @@
   border-radius: 12px;
   background: rgb(255 255 255 / 0.96);
   box-shadow: 0 10px 24px rgb(36 58 92 / 0.2);
-  font-size: clamp(0.62rem, 2.6cqw, 0.78rem);
+  font-size: clamp(var(--mo-font-size-xxs), 2.6cqw, 0.78rem);
   list-style: none;
   opacity: 0;
   transform: translateY(-4px);
@@ -749,7 +749,7 @@
   border-radius: 10px;
   background: var(--mo-color-surface);
   box-shadow: 0 8px 20px rgb(36 58 92 / 0.22);
-  font-size: 0.75rem;
+  font-size: var(--mo-font-size-xs);
   text-align: left;
   opacity: 0;
   transform: translate(-50%, 4px);
@@ -878,7 +878,7 @@
   border-radius: 14px;
   background: rgb(255 255 255 / 0.95);
   box-shadow: 0 8px 20px rgb(36 58 92 / 0.2);
-  font-size: clamp(0.66rem, 4.6cqw, 0.95rem);
+  font-size: clamp(var(--mo-font-size-xxs), 4.6cqw, 0.95rem);
   line-height: 1.3;
   white-space: nowrap;
   transform: translateX(-50%);
@@ -927,7 +927,7 @@
   border: 0;
   background: transparent;
   font: inherit;
-  font-size: clamp(0.66rem, 4.6cqw, 0.95rem);
+  font-size: clamp(var(--mo-font-size-xxs), 4.6cqw, 0.95rem);
   color: var(--mo-color-text-primary);
   cursor: pointer;
 }
@@ -1169,7 +1169,7 @@
 .motor-panel__title {
   margin: var(--mo-space-2) 0 0;
   font-size: var(--mo-font-size-sm);
-  letter-spacing: 0.06em;
+  letter-spacing: var(--mo-font-tracking-wide);
   text-transform: uppercase;
   color: var(--mo-color-text-secondary);
 }
@@ -1260,7 +1260,7 @@
 
 .agent-sheet__facts dt {
   font-size: var(--mo-font-size-xs);
-  letter-spacing: 0.08em;
+  letter-spacing: var(--mo-font-tracking-wide);
   text-transform: uppercase;
   color: var(--mo-color-text-secondary);
 }
@@ -1296,7 +1296,7 @@
   margin: var(--mo-space-1) 0 0;
   padding: 0;
   list-style: none;
-  font-size: 0.6875rem;
+  font-size: var(--mo-font-size-xxs);
   color: var(--mo-color-text-secondary);
 }
 
@@ -1448,12 +1448,12 @@
 
   .home4__side .panel__link {
     margin-top: var(--mo-space-1);
-    font-size: 0.8125rem;
+    font-size: var(--mo-font-size-sm);
     text-align: left;
   }
 
   .home4__side .panel__empty {
-    font-size: 0.8125rem;
+    font-size: var(--mo-font-size-sm);
   }
 
   .home4__side .credits {
@@ -1579,7 +1579,7 @@
   .b-room__sign {
     top: 5%;
     left: 5%;
-    font-size: 0.75rem;
+    font-size: var(--mo-font-size-xs);
   }
 
   .b-room--side .b-room__count {
@@ -1596,7 +1596,7 @@
     right: auto;
     bottom: 5%;
     max-width: 90%;
-    font-size: 0.7rem;
+    font-size: var(--mo-font-size-xxs);
   }
 
   .b-room__crew {
@@ -1667,7 +1667,7 @@
   }
 
   .b-gia__chip {
-    font-size: 0.72rem;
+    font-size: var(--mo-font-size-xxs);
   }
 
   .b-gia__sphere {
