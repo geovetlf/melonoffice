@@ -1092,6 +1092,9 @@ importers:
       '@melonoffice/agents':
         specifier: workspace:*
         version: link:../agents
+      '@melonoffice/ai-gateway':
+        specifier: workspace:*
+        version: link:../ai-gateway
       '@melonoffice/conversations':
         specifier: workspace:*
         version: link:../conversations
@@ -1123,9 +1126,6 @@ importers:
         specifier: workspace:*
         version: link:../tools
     devDependencies:
-      '@melonoffice/ai-gateway':
-        specifier: workspace:*
-        version: link:../ai-gateway
       '@melonoffice/ai-nvidia':
         specifier: workspace:*
         version: link:../ai-nvidia

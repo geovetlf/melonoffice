@@ -1,7 +1,18 @@
 import type { AIGateway, AIRequest } from '@melonoffice/ai-gateway';
 import type { ApprovalService } from '@melonoffice/approvals';
-import type { Execution, ExecutionNode, ExecutionRef, JobId } from '@melonoffice/domain';
-import type { AgentOutputInput, ExecutionService, VerificationInput } from '@melonoffice/execution';
+import type {
+  AgentToolCallRecord,
+  Execution,
+  ExecutionNode,
+  ExecutionRef,
+  JobId,
+} from '@melonoffice/domain';
+import type {
+  AgentOutputInput,
+  ExecutionService,
+  NodeInput,
+  VerificationInput,
+} from '@melonoffice/execution';
 import type { ToolGate } from '@melonoffice/guardrails';
 import type { JobService } from '@melonoffice/jobs';
 import type { TenantContext } from '@melonoffice/tenancy';
@@ -20,6 +31,7 @@ export interface RuntimeServices {
     | 'recordVerification'
     | 'retryNode'
     | 'markOutcomeUnknown'
+    | 'addNodes'
   >;
   readonly gate: ToolGate;
   readonly ai: AIGateway;
@@ -52,6 +64,43 @@ export interface NodeWorkSource {
    * It can only skip: it never runs, completes or fails a node.
    */
   needed?(tenant: TenantContext, execution: Execution, node: ExecutionNode): Promise<boolean>;
+  /**
+   * Whether a `tool` node's output is kept, once it ran, for the work after it: a tool an agent's
+   * model asked for (ADR-0103), whose result the agent's next turn reads. Absent: none is kept.
+   */
+  keepsToolOutput?(node: ExecutionNode): boolean;
+  /**
+   * Whether a ready `tool` node must not run because the task reached a limit (ADR-0103): the code
+   * it stopped at, or `undefined`. The execution then fails with that code and nothing runs.
+   * Absent, nothing is stopped here.
+   */
+  toolStop?(
+    tenant: TenantContext,
+    execution: Execution,
+    node: ExecutionNode,
+  ): Promise<string | undefined>;
+}
+
+/**
+ * What the Melon Agent Harness decided about the tools an agent's model asked for in the middle of
+ * its task (ADR-0103): the nodes that run them and the agent's next turn, or a stop at a limit.
+ */
+export type AgentToolPlan = { readonly nodes: readonly NodeInput[] } | AgentWorkStop;
+
+/**
+ * The Melon Agent Harness's tool loop (ADR-0103). When an agent's model answers with tool calls
+ * instead of an answer, the runtime asks it what to do with them; the runtime never runs a call
+ * itself. Each call it allows becomes a `tool` node, run through the Tool Gate like any other, and
+ * the agent gets one more turn after them. Absent, an answer with tool calls fails the execution
+ * (`tool_use_unsupported`): nothing a model asks for runs without the Harness.
+ */
+export interface AgentToolLoop {
+  plan(
+    tenant: TenantContext,
+    execution: Execution,
+    node: ExecutionNode,
+    calls: readonly AgentToolCallRecord[],
+  ): Promise<AgentToolPlan>;
 }
 
 /**

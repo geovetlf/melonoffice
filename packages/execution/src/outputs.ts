@@ -1,6 +1,7 @@
 import type {
   AICallTrace,
   AgentOutputRecord,
+  AgentToolCallRecord,
   ExecutionId,
   ExecutionNodeId,
   IsoTimestamp,
@@ -29,7 +30,12 @@ export interface AgentOutputInput {
   readonly executionId: ExecutionId;
   readonly nodeId: ExecutionNodeId;
   readonly requestId: string;
-  readonly output: { readonly text?: string; readonly structured?: unknown };
+  readonly output: {
+    readonly text?: string;
+    readonly structured?: unknown;
+    /** The tools the model asked for instead of answering (ADR-0103). */
+    readonly toolCalls?: readonly AgentToolCallRecord[];
+  };
   readonly ai?: AICallTrace;
 }
 
@@ -56,6 +62,32 @@ const count = (v: unknown): boolean => typeof v === 'number' && Number.isSafeInt
 const countOrNull = (v: unknown): boolean => v === null || count(v);
 const codeOrNull = (v: unknown): boolean =>
   v === null || (typeof v === 'string' && TRACE_CODE.test(v));
+
+const TOOL_NAME = /^[a-z][a-z0-9_]{0,63}$/;
+const TOOL_CALL_ID = /^[A-Za-z0-9_-]{1,64}$/;
+/** The most tool calls one answer may carry (the AI Gateway's own limit, ADR-0076). */
+const MAX_TOOL_CALLS = 16;
+
+/** Tool calls as the AI Gateway checked them (ADR-0076): ids, names and plain object arguments. */
+export function isToolCallList(value: unknown): value is readonly AgentToolCallRecord[] {
+  return (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.length <= MAX_TOOL_CALLS &&
+    value.every(
+      (c) =>
+        typeof c === 'object' &&
+        c !== null &&
+        typeof (c as AgentToolCallRecord).id === 'string' &&
+        TOOL_CALL_ID.test((c as AgentToolCallRecord).id) &&
+        typeof (c as AgentToolCallRecord).name === 'string' &&
+        TOOL_NAME.test((c as AgentToolCallRecord).name) &&
+        typeof (c as AgentToolCallRecord).arguments === 'object' &&
+        (c as AgentToolCallRecord).arguments !== null &&
+        !Array.isArray((c as AgentToolCallRecord).arguments),
+    )
+  );
+}
 
 /** A call trace of codes and whole numbers only, or the whole record is refused. */
 export function checkTrace(trace: AICallTrace): AICallTrace {
@@ -115,9 +147,18 @@ export function createAgentOutputStore(
       ) {
         throw new ExecutionError('invalid_execution', 'agent_output');
       }
+      const toolCalls = input.output.toolCalls;
+      if (toolCalls !== undefined && !isToolCallList(toolCalls)) {
+        throw new ExecutionError('invalid_execution', 'tool_calls');
+      }
       const output = {
         ...(typeof input.output.text === 'string' ? { text: input.output.text } : {}),
         ...(input.output.structured === undefined ? {} : { structured: input.output.structured }),
+        ...(toolCalls === undefined
+          ? {}
+          : {
+              toolCalls: toolCalls.map((c) => ({ id: c.id, name: c.name, arguments: c.arguments })),
+            }),
       };
       if (JSON.stringify(output).length > MAX_AGENT_OUTPUT_LENGTH) {
         throw new ExecutionError('invalid_execution', 'output_too_large');

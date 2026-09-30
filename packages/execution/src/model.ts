@@ -194,6 +194,8 @@ export interface NodeInput {
   readonly input?: ExecutionRef;
   /** Required on `tool` nodes and refused on any other: the exact tool version to run. */
   readonly tool?: { readonly id: string; readonly version: number };
+  /** On `tool` nodes only: a person must approve the call, whatever the tool says (ADR-0103). */
+  readonly approvalRequired?: true;
 }
 
 const TOOL_ID = /^[a-z][a-z0-9_]{0,63}$/;
@@ -217,7 +219,7 @@ function checkNodeTool(type: string, tool: unknown, field: string): ExecutionToo
 function checkNodeInput(value: unknown, index: number): ExecutionNode {
   const field = `nodes.${index}`;
   if (!isRecord(value)) return invalid(field);
-  const { id, type, label, dependsOn = [], owner, input, tool } = value;
+  const { id, type, label, dependsOn = [], owner, input, tool, approvalRequired } = value;
   if (typeof id !== 'string' || !NODE_ID.test(id)) return invalid(`${field}.id`);
   if (typeof type !== 'string' || !(NODE_TYPES as readonly string[]).includes(type)) {
     return invalid(`${field}.type`);
@@ -239,6 +241,9 @@ function checkNodeInput(value: unknown, index: number): ExecutionNode {
     return invalid(`${field}.dependsOn`);
   }
   const toolRef = checkNodeTool(type, tool, field);
+  if (approvalRequired !== undefined && (approvalRequired !== true || type !== 'tool')) {
+    return invalid(`${field}.approvalRequired`);
+  }
   return Object.freeze({
     id: id as ExecutionNodeId,
     type: type as ExecutionNodeType,
@@ -248,6 +253,7 @@ function checkNodeInput(value: unknown, index: number): ExecutionNode {
     ...(owner === undefined ? {} : { owner: checkVersionRef(owner, `${field}.owner`) }),
     ...(input === undefined ? {} : { input: checkRef(input, `${field}.input`) }),
     ...(toolRef === undefined ? {} : { tool: toolRef }),
+    ...(approvalRequired === true ? { approvalRequired: true as const } : {}),
   });
 }
 
@@ -853,6 +859,12 @@ export function checkStoredExecution(execution: Execution): Execution {
       (node.type !== 'tool' || !APPROVAL_ID.test(node.approvalId))
     ) {
       invalid('nodes.approvalId');
+    }
+    if (
+      node.approvalRequired !== undefined &&
+      (node.approvalRequired !== true || node.type !== 'tool')
+    ) {
+      invalid('nodes.approvalRequired');
     }
     const { attempt, idempotencyKey } = node;
     if (

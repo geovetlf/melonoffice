@@ -7,6 +7,7 @@ import {
   checkToolDefinition,
   checkToolVersion,
   invocationModesOf,
+  isModelInvocable,
   isHumanInvocable,
   isRuntimeInvocable,
   toolCanRun,
@@ -281,6 +282,18 @@ describe('invocation modes (ADR-0034)', () => {
         ),
       ),
     ).toBe('invocationModes.human_department');
+  });
+
+  it('offers a tool to a model only when it says `model`, always with the runtime (ADR-0103)', () => {
+    expect(isModelInvocable(version())).toBe(false);
+    expect(isModelInvocable(version({ invocationModes: ['runtime', 'model'] }))).toBe(true);
+    expect(codeOf(() => checkToolVersion(version({ invocationModes: ['model'] })))).toBe(
+      'invocationModes.model_runtime',
+    );
+    // No tool of the real catalogue says a model may ask for it yet.
+    for (const tool of TOOL_CATALOGUE) {
+      for (const v of tool.versions) expect(isModelInvocable(v)).toBe(false);
+    }
   });
 });
 

@@ -74,6 +74,15 @@ export function taskOf(execution: Execution): TaskFacts | undefined {
   });
 }
 
+/**
+ * The node whose answer is the task's (ADR-0103): its last agent turn. A task whose agent used no
+ * tools has one, `work`; one that did has a turn after each round of tools, and the last answers.
+ */
+export function answerNodeOf(execution: Execution): string {
+  const turns = execution.nodes.filter((n) => n.type === 'agent');
+  return turns.at(-1)?.id ?? AGENT_TASK_NODE;
+}
+
 const organizationOfTenant = (tenant: TenantContext): OrganizationId | undefined =>
   isResolvedTenant(tenant) ? (tenant.organizationId as OrganizationId) : undefined;
 
@@ -228,7 +237,7 @@ export function agentTaskMessages(
   ];
   const system = [
     `You are ${asData(agent.name)}, an agent of a business working inside MelonOffice for one person of that business.`,
-    'You do one task: answer the request with advice, a draft, an analysis or a plan, as text. You cannot call tools, send messages, change records, contact anyone or see anything beyond the data given. Never say that something was done, sent, scheduled or changed.',
+    'You do one task: answer the request with advice, a draft, an analysis or a plan, as text. You cannot send messages, change records, contact anyone or see anything beyond the data given, except through a tool you are offered, if any; MelonOffice decides whether each call runs, and a person may have to approve it. Never say that something was done, sent, scheduled or changed unless a tool result says so.',
     ...(followUp === undefined
       ? []
       : [
@@ -417,9 +426,10 @@ export function createAgentTaskWork(options: AgentTaskWorkOptions): AgentTaskWor
   ): Promise<Record<string, unknown> | undefined> {
     const facts = taskOf(execution);
     if (facts === undefined || proposals?.contacts === undefined) return undefined;
-    const work = execution.nodes.find((n) => n.id === AGENT_TASK_NODE);
+    const answerNode = answerNodeOf(execution);
+    const work = execution.nodes.find((n) => n.id === answerNode);
     if (work?.status !== 'completed') return undefined;
-    const record = await proposals.outputs.find(tenant, execution.id, AGENT_TASK_NODE);
+    const record = await proposals.outputs.find(tenant, execution.id, answerNode);
     const proposed = record === undefined ? undefined : parseAgentAnswer(record.output)?.followUp;
     if (proposed === undefined || proposed === null) return undefined;
     const contact = resolveContactRef(await proposals.contacts.list(tenant), proposed.contact);
@@ -532,9 +542,9 @@ export function createAgentTaskWork(options: AgentTaskWorkOptions): AgentTaskWor
   });
 }
 
-/** Where a task's answer is: its node's agent output. */
-export const agentAnswerRef = (executionId: ExecutionId) =>
-  Object.freeze({ type: 'agent_output', id: `${executionId}:${AGENT_TASK_NODE}` });
+/** Where a task's answer is: its answering node's agent output (ADR-0103: its last turn). */
+export const agentAnswerRef = (executionId: ExecutionId, nodeId: string = AGENT_TASK_NODE) =>
+  Object.freeze({ type: 'agent_output', id: `${executionId}:${nodeId}` });
 
 export interface AgentTaskVerifier {
   verify(
@@ -566,19 +576,20 @@ export function createAgentTaskVerifier(options: {
   return Object.freeze({
     async verify(tenant: TenantContext, execution: Execution) {
       if (taskOf(execution) === undefined) return undefined;
-      const node = execution.nodes.find((n) => n.id === AGENT_TASK_NODE);
+      const answerNode = answerNodeOf(execution);
+      const node = execution.nodes.find((n) => n.id === answerNode);
       if (node?.status !== 'completed') return undefined;
-      const record = await outputs.find(tenant, execution.id, AGENT_TASK_NODE);
+      const record = await outputs.find(tenant, execution.id, answerNode);
       const passed = record !== undefined && parseAgentAnswer(record.output) !== undefined;
       const nodes: VerificationInput['nodes'][number][] = [
         {
-          nodeId: AGENT_TASK_NODE,
+          nodeId: answerNode,
           policy: 'output_schema',
           checks: [
             {
               code: 'agent_answer_valid',
               result: passed ? 'passed' : 'failed',
-              evidence: node.output ?? { type: 'execution_node', id: AGENT_TASK_NODE },
+              evidence: node.output ?? { type: 'execution_node', id: answerNode },
             },
           ],
         },
@@ -602,7 +613,10 @@ export function createAgentTaskVerifier(options: {
         });
       }
       const verification: VerificationInput = { correlationId: `task-${execution.id}`, nodes };
-      return { verification, ...(passed ? { result: agentAnswerRef(execution.id) } : {}) };
+      return {
+        verification,
+        ...(passed ? { result: agentAnswerRef(execution.id, answerNode) } : {}),
+      };
     },
   });
 }
@@ -631,9 +645,10 @@ export function createAgentTaskFactProposer(options: {
       const facts = taskOf(execution);
       const organizationId = organizationOfTenant(tenant);
       if (facts === undefined || organizationId === undefined) return 0;
-      const work = execution.nodes.find((n) => n.id === AGENT_TASK_NODE);
+      const answerNode = answerNodeOf(execution);
+      const work = execution.nodes.find((n) => n.id === answerNode);
       if (work?.status !== 'completed') return 0;
-      const record = await outputs.find(tenant, execution.id, AGENT_TASK_NODE);
+      const record = await outputs.find(tenant, execution.id, answerNode);
       const candidates = record === undefined ? [] : (parseAgentAnswer(record.output)?.facts ?? []);
       if (candidates.length === 0) return 0;
       const version = await specialists.findVersion(

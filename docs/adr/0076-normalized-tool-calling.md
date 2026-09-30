@@ -57,6 +57,6 @@ A call with tools is a normal LLM call: the same usage event, cost engine and cr
 
 ## Open
 
-- The agent loop: offering an agent its allowed tools, handing each call to the Tool Gate, and feeding the results back until it answers. This is the next Agent Engine step.
+- The agent loop: offering an agent its allowed tools, handing each call to the Tool Gate, and feeding the results back until it answers. Built for agent tasks by [ADR-0103](0103-harness-tool-use-mid-task.md).
 - Streaming: done in [ADR-0077](0077-streaming.md), text only.
 - What is still to validate in DEV: a real function call on Vertex AI. The tests cover both adapters against the providers' documented formats.

@@ -211,4 +211,4 @@ The rest of the trace lives on the records that already hold it:
 - Every agent's call goes through the Harness and the data policy, with no bypass. In DEV every call with company data is served by Gemini 2.5 Flash-Lite, by policy, not by code.
 - **Production.** Using NVIDIA with company data, or in production, needs a contract or a paid endpoint from Geovet, recorded in its registry entry and the data policy.
 - **Migration.** Existing DEV agents move to version 2 only after Geovet runs the migration. Until then they keep working on version 1 (Gemini only), and the Harness's data policy, limits and profile already apply to their calls.
-- **Tool loop.** The in-task loop where an agent asks for tools mid-answer is not built here. `authorizeToolUse` is the decision it will call.
+- **Tool loop.** The in-task loop where an agent asks for tools mid-answer is [ADR-0103](0103-harness-tool-use-mid-task.md), which calls `authorizeToolUse` for every request.

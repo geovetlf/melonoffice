@@ -1481,12 +1481,16 @@ describe('Task limits (ADR-0100)', () => {
       { now: () => new Date('2026-09-30T08:11:00Z') },
     );
     const node = { id: 'work' } as ExecutionNode;
-    const late = { id: 'e', createdAt: '2026-09-30T08:00:00Z' } as Execution;
+    const late = { id: 'e', createdAt: '2026-09-30T08:00:00Z', nodes: [] } as unknown as Execution;
     expect(await shaped.agentWork({} as TenantContext, late, node)).toEqual({
       stop: 'task_time_limit_reached',
     });
     expect(asked).toBe(0);
-    const onTime = { id: 'e', createdAt: '2026-09-30T08:05:00Z' } as Execution;
+    const onTime = {
+      id: 'e',
+      createdAt: '2026-09-30T08:05:00Z',
+      nodes: [],
+    } as unknown as Execution;
     expect(await shaped.agentWork({} as TenantContext, onTime, node)).toMatchObject({
       strategy: 'cost_optimized',
       sensitivity: 'confidential',

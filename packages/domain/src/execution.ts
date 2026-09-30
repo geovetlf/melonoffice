@@ -120,6 +120,12 @@ export interface ExecutionNode {
   readonly tool?: ExecutionToolRef;
   /** The human approval this tool node waits on or ran with (ADR-0026). */
   readonly approvalId?: ApprovalId;
+  /**
+   * For `tool` nodes only: a person must approve this call, whatever the tool's own policy says
+   * (ADR-0103). Set by the Melon Agent Harness when it decided the use needs a person; the Tool
+   * Gate can only make a call stricter with it, never looser.
+   */
+  readonly approvalRequired?: true;
   readonly output?: ExecutionRef;
   readonly error?: ExecutionFailure;
   readonly startedAt?: IsoTimestamp;
@@ -251,6 +257,13 @@ export interface AICallTrace {
   readonly intent?: string;
 }
 
+/** A tool call an agent's model asked for (ADR-0076), as it is kept with its answer. */
+export interface AgentToolCallRecord {
+  readonly id: string;
+  readonly name: string;
+  readonly arguments: Readonly<Record<string, unknown>>;
+}
+
 /**
  * What an agent node's model call answered (CV-6B, ADR-0043), kept so the nodes after it can use
  * it. Written once by the runtime, for the node's own request; never a decision by itself: the
@@ -262,7 +275,15 @@ export interface AgentOutputRecord {
   readonly nodeId: ExecutionNodeId;
   /** The AI call's own id (`job-{jobId}`), the same the credits were charged under. */
   readonly requestId: string;
-  readonly output: { readonly text?: string; readonly structured?: unknown };
+  /**
+   * The answer. `toolCalls`: the tools the model asked for instead of answering (ADR-0103). A
+   * `tool` node's output is kept here too, as `structured`, when a model asked for the tool.
+   */
+  readonly output: {
+    readonly text?: string;
+    readonly structured?: unknown;
+    readonly toolCalls?: readonly AgentToolCallRecord[];
+  };
   /** How the call was served (ADR-0100). Absent on answers kept before it was recorded. */
   readonly ai?: AICallTrace;
   readonly createdAt: IsoTimestamp;

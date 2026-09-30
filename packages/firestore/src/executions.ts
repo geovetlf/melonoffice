@@ -45,6 +45,8 @@ interface NodeDocument {
   /** Absent in nodes stored before ADR-0026: read as none. */
   readonly tool?: { id: string; version: number } | null;
   readonly approvalId?: string | null;
+  /** ADR-0103. Absent on nodes stored before it. */
+  readonly approvalRequired?: boolean | null;
   readonly output: ExecutionRef | null;
   readonly error: { code: string; ref: ExecutionRef | null } | null;
   readonly startedAt: FirestoreTimestamp | null;
@@ -140,6 +142,7 @@ export function toExecutionDocument(execution: Execution): ExecutionDocument {
       input: node.input === undefined ? null : ref(node.input),
       tool: node.tool === undefined ? null : { id: node.tool.id, version: node.tool.version },
       approvalId: node.approvalId ?? null,
+      approvalRequired: node.approvalRequired ?? null,
       output: node.output === undefined ? null : ref(node.output),
       error: failureDocument(node.error),
       startedAt: atOrNull(node.startedAt),
@@ -194,6 +197,7 @@ function toExecution(id: string, d: ExecutionDocument): Execution {
     ...(n.input === null ? {} : { input: n.input }),
     ...(n.tool == null ? {} : { tool: n.tool }),
     ...(n.approvalId == null ? {} : { approvalId: n.approvalId }),
+    ...(n.approvalRequired === true ? { approvalRequired: true } : {}),
     ...(n.output === null ? {} : { output: n.output }),
     ...(n.error === null ? {} : { error: fromFailure(n.error) }),
     ...(n.startedAt === null ? {} : { startedAt: iso(n.startedAt) }),

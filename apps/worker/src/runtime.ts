@@ -26,6 +26,7 @@ import { createAuthorizationService } from '@melonoffice/rbac';
 import {
   createRuntime,
   type AgentOutputSink,
+  type AgentToolLoop,
   type ExecutionEndHook,
   type ExecutionStopHook,
   type JobDispatcher,
@@ -89,6 +90,8 @@ export interface WorkerRuntimeOptions {
   readonly dispatcher?: JobDispatcher;
   /** Keeps agent answers for the nodes after them (ADR-0043). */
   readonly outputs?: AgentOutputSink;
+  /** The Harness's tool loop (ADR-0103): what to do with tools a model asks for mid-task. */
+  readonly toolLoop?: AgentToolLoop;
   /** Told when an execution stops without completing (ADR-0043). */
   readonly onStopped?: ExecutionStopHook;
   /**
@@ -254,6 +257,7 @@ export function createWorkerRuntime(options: WorkerRuntimeOptions): {
     ...(options.verifier === undefined ? {} : { verifier: options.verifier }),
     ...(options.dispatcher === undefined ? {} : { dispatcher: options.dispatcher }),
     ...(options.outputs === undefined ? {} : { outputs: options.outputs }),
+    ...(options.toolLoop === undefined ? {} : { toolLoop: options.toolLoop }),
     ...(options.onStopped === undefined ? {} : { onStopped: options.onStopped }),
     ...(onEnded === undefined ? {} : { onEnded }),
     ...log,

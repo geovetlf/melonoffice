@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "@melonoffice/agents": "workspace:*",
+    "@melonoffice/ai-gateway": "workspace:*",
     "@melonoffice/conversations": "workspace:*",
     "@melonoffice/decisions": "workspace:*",
     "@melonoffice/domain": "workspace:*",
@@ -32,7 +33,6 @@
     "@melonoffice/tools": "workspace:*"
   },
   "devDependencies": {
-    "@melonoffice/ai-gateway": "workspace:*",
     "@melonoffice/ai-nvidia": "workspace:*",
     "@melonoffice/ai-vertex": "workspace:*",
     "@melonoffice/audit": "workspace:*",
