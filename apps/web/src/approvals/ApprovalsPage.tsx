@@ -1,3 +1,4 @@
+import { Badge, PageHeader, StateMessage } from '@melonoffice/ui';
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
 import { useEffect, useState } from 'react';
 import { navigate } from '../identity/router.js';
@@ -86,18 +87,16 @@ export function ApprovalsPage({
   const shown = tab === 'pending' ? pending : decided;
 
   return (
-    <article className="dept-office approvals-page">
-      <h1 className="dept-office__title">
-        <FormattedMessage id="approvals.title" />
-      </h1>
-      <p className="documents__lead">
-        <FormattedMessage id="approvals.lead" />
-      </p>
+    <article className="mo-page approvals-page">
+      <PageHeader
+        title={<FormattedMessage id="approvals.title" />}
+        description={<FormattedMessage id="approvals.lead" />}
+      />
       {canReadPlans ? (
-        <p className="documents__hint">
+        <p className="mo-hint">
           <FormattedMessage id="approvals.plans" />{' '}
           <a
-            className="panel__link"
+            className="mo-link"
             href={paths.automations()}
             onClick={(event) => {
               event.preventDefault();
@@ -108,7 +107,7 @@ export function ApprovalsPage({
           </a>
         </p>
       ) : null}
-      <div className="memory__domains" role="tablist">
+      <div className="mo-chips" role="tablist">
         {(['pending', 'decided'] as const).map((t) => (
           <button
             key={t}
@@ -120,56 +119,53 @@ export function ApprovalsPage({
           >
             <FormattedMessage id={`approvals.tab.${t}`} />
             {items === undefined || items === 'error' ? null : (
-              <span className="customers__count">
-                {(t === 'pending' ? pending : decided).length}
-              </span>
+              <Badge>{(t === 'pending' ? pending : decided).length}</Badge>
             )}
           </button>
         ))}
       </div>
       {notice === undefined ? null : (
-        <p
-          className="panel__empty"
-          role={notice.code === 'approved' || notice.code === 'rejected' ? 'status' : 'alert'}
+        <StateMessage
+          kind={notice.code === 'approved' || notice.code === 'rejected' ? 'success' : 'error'}
         >
           <FormattedMessage id={`approvals.notice.${notice.code}`} />
-        </p>
+        </StateMessage>
       )}
       {items === undefined ? (
-        <p className="panel__empty" role="status">
+        <StateMessage kind="loading">
           <FormattedMessage id="approvals.loading" />
-        </p>
+        </StateMessage>
       ) : items === 'error' ? (
-        <p className="panel__empty" role="alert">
+        <StateMessage kind="error">
           <FormattedMessage id="approvals.error" />
-        </p>
+        </StateMessage>
       ) : shown.length === 0 ? (
-        <p className="panel__empty">
+        <StateMessage kind="empty">
           <FormattedMessage id={`approvals.none.${tab}`} />
-        </p>
+        </StateMessage>
       ) : (
-        <ul className="documents__list">
+        <ul className="mo-list">
           {shown.map((a) => {
             const agent = agents.find((s) => s.id === a.specialist.id);
             return (
-              <li key={a.id} className="approval-card">
-                <div className="documents__main">
-                  <span className="documents__name">
+              <li key={a.id} className="mo-list-item">
+                <div className="mo-list-item__main">
+                  <span className="mo-list-item__title">
                     {label(intl, 'approvals.tool', a.tool.id)}
                   </span>
-                  <span className="documents__meta">
+                  <span className="mo-list-item__meta">
                     <FormattedMessage
                       id="approvals.who"
                       values={{ agent: agent?.displayName ?? a.specialist.id }}
                     />{' '}
                     · {label(intl, 'approvals.action', a.action)}
                   </span>
-                  <span className="documents__meta">
+                  <span className="mo-list-item__meta">
                     <FormattedMessage id="approvals.why" />:{' '}
                     {label(intl, 'approvals.reason', a.reason)} ·{' '}
                     {label(intl, 'approvals.impact', a.impact)}
                   </span>
-                  <span className="documents__meta">
+                  <span className="mo-list-item__meta">
                     <FormattedMessage
                       id="approvals.risk"
                       values={{ level: label(intl, 'approvals.riskLevel', a.riskLevel) }}
@@ -184,7 +180,7 @@ export function ApprovalsPage({
                       />
                     )}
                   </span>
-                  <span className="documents__meta">
+                  <span className="mo-list-item__meta">
                     {a.status === 'pending' ? (
                       <FormattedMessage
                         id="approvals.expires"
@@ -212,7 +208,7 @@ export function ApprovalsPage({
                   </span>
                 </div>
                 {a.status === 'pending' && canDecide ? (
-                  <div className="customers__actions">
+                  <div className="mo-list-item__actions">
                     <button
                       type="button"
                       className="mo-button mo-button--primary mo-button--sm"

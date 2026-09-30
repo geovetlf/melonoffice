@@ -1,3 +1,4 @@
+import { PageHeader, StateMessage } from '@melonoffice/ui';
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
 import { useEffect, useState, type ReactNode } from 'react';
 import { periodDays, type AIUsageClient, type UsageSummary } from '../aiUsage/aiUsageClient.js';
@@ -66,13 +67,11 @@ export function CommandCenterPage({
   const count = (status: string) => agents.filter((a) => a.status === status).length;
 
   return (
-    <article className="dept-office command-center">
-      <h1 className="dept-office__title">
-        <FormattedMessage id="commandCenter.title" />
-      </h1>
-      <p className="documents__lead">
-        <FormattedMessage id="commandCenter.lead" />
-      </p>
+    <article className="mo-page command-center">
+      <PageHeader
+        title={<FormattedMessage id="commandCenter.title" />}
+        description={<FormattedMessage id="commandCenter.lead" />}
+      />
       <div className="command-center__grid">
         {usage === undefined ? null : (
           <Card
@@ -85,12 +84,12 @@ export function CommandCenterPage({
             ) : usage === 'error' ? (
               <Failed />
             ) : usage.totals.operations === 0 ? (
-              <p className="panel__empty">
+              <StateMessage kind="empty" inline>
                 <FormattedMessage id="commandCenter.ai.none" />
-              </p>
+              </StateMessage>
             ) : (
               <>
-                <dl className="command-center__figures">
+                <dl className="mo-stats">
                   <Figure
                     labelId="aiUsage.credits"
                     value={intl.formatNumber(usage.totals.credits)}
@@ -126,7 +125,7 @@ export function CommandCenterPage({
             {credits.status === 'loading' ? (
               <Loading />
             ) : credits.status === 'ready' && credits.value.status === 'present' ? (
-              <p className="command-center__big">
+              <p className="mo-figure command-center__big">
                 <FormattedMessage
                   id="commandCenter.credits.balance"
                   values={{ balance: credits.value.balance }}
@@ -148,7 +147,7 @@ export function CommandCenterPage({
             ) : waiting === 'error' ? (
               <Failed />
             ) : (
-              <p className="command-center__big">
+              <p className="mo-figure command-center__big">
                 <FormattedMessage
                   id="commandCenter.approvals.count"
                   values={{ count: waiting.filter((a) => a.status === 'pending').length }}
@@ -168,7 +167,7 @@ export function CommandCenterPage({
             ) : specialists.status !== 'ready' ? (
               <Failed />
             ) : (
-              <dl className="command-center__figures">
+              <dl className="mo-stats">
                 <Figure labelId="agents.status.active" value={intl.formatNumber(count('active'))} />
                 <Figure labelId="agents.status.draft" value={intl.formatNumber(count('draft'))} />
                 <Figure
@@ -190,7 +189,7 @@ export function CommandCenterPage({
             ) : plans === 'error' ? (
               <Failed />
             ) : (
-              <dl className="command-center__figures">
+              <dl className="mo-stats">
                 <Figure
                   labelId="automations.planStatus.approval_required"
                   value={intl.formatNumber(
@@ -229,13 +228,17 @@ function Card({
 }) {
   const id = `cc-${titleId.replaceAll('.', '-')}`;
   return (
-    <section className="dept-office__section command-center__card" aria-labelledby={id}>
-      <h2 id={id}>
+    <section className="mo-panel mo-page-section command-center__card" aria-labelledby={id}>
+      <h2 id={id} className="mo-section-title">
         <FormattedMessage id={titleId} />
       </h2>
       {children}
       {action === undefined || to === undefined ? null : (
-        <button type="button" className="panel__link" onClick={() => navigate(to)}>
+        <button
+          type="button"
+          className="mo-link-button mo-page-section__more"
+          onClick={() => navigate(to)}
+        >
           <FormattedMessage id={action} />
         </button>
       )}
@@ -245,7 +248,7 @@ function Card({
 
 function Figure({ labelId, value }: { readonly labelId: string; readonly value: string }) {
   return (
-    <div className="command-center__figure">
+    <div className="mo-stat">
       <dt>
         <FormattedMessage id={labelId} />
       </dt>
@@ -255,13 +258,13 @@ function Figure({ labelId, value }: { readonly labelId: string; readonly value: 
 }
 
 const Loading = () => (
-  <p className="panel__empty" role="status">
+  <StateMessage kind="loading" inline>
     <FormattedMessage id="aiUsage.loading" />
-  </p>
+  </StateMessage>
 );
 
 const Failed = () => (
-  <p className="panel__empty" role="alert">
+  <StateMessage kind="error">
     <FormattedMessage id="commandCenter.error" />
-  </p>
+  </StateMessage>
 );

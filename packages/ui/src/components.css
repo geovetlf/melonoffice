@@ -79,6 +79,31 @@
   border-color: var(--mo-color-danger);
 }
 
+/* A file field's button reads as a secondary button. */
+:where(input[type='file']) {
+  max-width: 100%;
+  font: inherit;
+  font-size: var(--mo-font-size-sm);
+  color: var(--mo-color-text-secondary);
+}
+
+:where(input[type='file'])::file-selector-button {
+  min-height: var(--mo-control-height-md);
+  margin-right: var(--mo-space-3);
+  padding: 0 var(--mo-control-padding-md);
+  border: 1px solid var(--mo-color-border-strong);
+  border-radius: var(--mo-radius-pill);
+  background: var(--mo-color-surface);
+  color: var(--mo-color-text-primary);
+  font: inherit;
+  font-weight: var(--mo-font-weight-semibold);
+  cursor: pointer;
+}
+
+:where(input[type='file']):hover::file-selector-button {
+  background: var(--mo-color-hover);
+}
+
 :where(input[type='checkbox'], input[type='radio']) {
   width: 1.125rem;
   height: 1.125rem;
@@ -694,6 +719,117 @@
   color: var(--mo-color-text-secondary);
 }
 
+/* A panel that is a part of a page: its h2, then what it holds, evenly spaced. */
+.mo-page-section {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  gap: var(--mo-space-4);
+  min-width: 0;
+}
+
+.mo-page-section > * {
+  min-width: 0;
+  margin-block: 0;
+}
+
+.mo-page-section__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--mo-space-2) var(--mo-space-3);
+}
+
+/* "Show more" under a list starts at its edge rather than filling the width. */
+.mo-page-section__more {
+  justify-self: start;
+}
+
+.mo-subsection-title {
+  margin: 0;
+  color: var(--mo-color-text-primary);
+  font-size: var(--mo-font-size-md);
+  font-weight: var(--mo-font-weight-semibold);
+  letter-spacing: var(--mo-font-tracking-tight);
+}
+
+/* Totals: a label and its figure, side by side where there is room. */
+.mo-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 11rem), 1fr));
+  gap: var(--mo-space-3);
+  margin: 0;
+}
+
+.mo-stat {
+  display: grid;
+  gap: var(--mo-space-1);
+  align-content: start;
+  padding: var(--mo-space-4);
+  border: 1px solid var(--mo-color-border);
+  border-radius: var(--mo-radius-lg);
+  background: var(--mo-color-surface-subtle);
+}
+
+.mo-stat > dt,
+.mo-stat__label {
+  margin: 0;
+  color: var(--mo-color-text-secondary);
+  font-size: var(--mo-font-size-sm);
+}
+
+.mo-stat > dd,
+.mo-stat__value {
+  margin: 0;
+  color: var(--mo-color-text-primary);
+  font-size: var(--mo-font-size-xl);
+  font-weight: var(--mo-font-weight-bold);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: var(--mo-font-tracking-tight);
+}
+
+/* A link inside running text. */
+.mo-link {
+  color: var(--mo-color-accent);
+  font-weight: var(--mo-font-weight-semibold);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+.mo-link:hover {
+  color: var(--mo-color-accent-hover);
+}
+
+/* A record's name that opens it: text, not a button's box, underlined so it reads as a link. */
+.mo-link-button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-color: var(--mo-color-border-strong);
+  text-underline-offset: 0.2em;
+  cursor: pointer;
+}
+
+.mo-link-button:hover:not(:disabled) {
+  color: var(--mo-color-accent);
+  text-decoration-color: currentcolor;
+}
+
+.mo-link-button:disabled {
+  text-decoration: none;
+  cursor: default;
+}
+
+.mo-link-button[aria-pressed='true'] {
+  color: var(--mo-color-accent);
+  font-weight: var(--mo-font-weight-semibold);
+}
+
 /* ---- The filter bar ---- */
 
 .mo-toolbar {
@@ -786,6 +922,11 @@
   border-radius: var(--mo-radius-lg);
   background: var(--mo-color-surface);
   box-shadow: var(--mo-shadow-sm);
+}
+
+/* Inside a panel a record needs its hairline only. */
+.mo-panel .mo-list-item {
+  box-shadow: none;
 }
 
 .mo-list-item__main {

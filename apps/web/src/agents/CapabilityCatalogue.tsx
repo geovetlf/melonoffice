@@ -1,3 +1,4 @@
+import { StateMessage } from '@melonoffice/ui';
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
 import { useEffect, useState } from 'react';
 import type { AgentsClient, AgentTemplateView, SkillView, ToolView } from './agentsClient.js';
@@ -55,38 +56,38 @@ export function CapabilityCatalogue({
       : [];
 
   return (
-    <section className="dept-office__section" aria-labelledby="capabilities-title">
-      <h2 id="capabilities-title">
+    <section className="mo-panel mo-page-section" aria-labelledby="capabilities-title">
+      <h2 id="capabilities-title" className="mo-section-title">
         <FormattedMessage id="capabilities.title" />
       </h2>
-      <p className="customers__meta">
+      <p className="mo-lead">
         <FormattedMessage id="capabilities.lead" />
       </p>
-      <h3 id="capabilities-skills">
+      <h3 id="capabilities-skills" className="mo-subsection-title">
         <FormattedMessage id="capabilities.skills" />
       </h3>
       {skills === 'loading' ? (
-        <p className="panel__empty" role="status">
+        <StateMessage kind="loading">
           <FormattedMessage id="agents.loading" />
-        </p>
+        </StateMessage>
       ) : skills === 'error' || skills === undefined ? (
-        <p className="panel__empty" role="alert">
+        <StateMessage kind="error">
           <FormattedMessage id="capabilities.error" />
-        </p>
+        </StateMessage>
       ) : skills.length === 0 ? (
-        <p className="panel__empty">
+        <StateMessage kind="empty">
           <FormattedMessage id="capabilities.noSkills" />
-        </p>
+        </StateMessage>
       ) : (
-        <ul className="documents__list" aria-labelledby="capabilities-skills">
+        <ul className="mo-list" aria-labelledby="capabilities-skills">
           {skills.map((skill) => {
             const agents = agentsWith(skill);
             return (
-              <li key={`${skill.id}@${skill.version}`} className="approval-card">
-                <div className="documents__main">
-                  <strong>{message(skill.nameKey, skill.id)}</strong>
-                  <span className="documents__meta">{message(skill.descriptionKey, '')}</span>
-                  <span className="documents__meta">
+              <li key={`${skill.id}@${skill.version}`} className="mo-list-item">
+                <div className="mo-list-item__main">
+                  <p className="mo-list-item__title">{message(skill.nameKey, skill.id)}</p>
+                  <span className="mo-list-item__meta">{message(skill.descriptionKey, '')}</span>
+                  <span className="mo-list-item__meta">
                     {skill.tools.length === 0 ? (
                       <FormattedMessage id="capabilities.noTools" />
                     ) : (
@@ -97,7 +98,7 @@ export function CapabilityCatalogue({
                     )}
                   </span>
                   {skill.reads.length === 0 ? null : (
-                    <span className="documents__meta">
+                    <span className="mo-list-item__meta">
                       <FormattedMessage
                         id="capabilities.reads"
                         values={{ records: [...new Set(skill.reads.map(readName))].join(', ') }}
@@ -105,7 +106,7 @@ export function CapabilityCatalogue({
                     </span>
                   )}
                   {agents.length === 0 ? null : (
-                    <span className="documents__meta">
+                    <span className="mo-list-item__meta">
                       <FormattedMessage
                         id="capabilities.agents"
                         values={{ agents: agents.join(', ') }}
@@ -120,36 +121,36 @@ export function CapabilityCatalogue({
       )}
       {tools === undefined ? null : (
         <>
-          <h3 id="capabilities-tools">
+          <h3 id="capabilities-tools" className="mo-subsection-title">
             <FormattedMessage id="capabilities.tools" />
           </h3>
           {tools === 'loading' ? (
-            <p className="panel__empty" role="status">
+            <StateMessage kind="loading">
               <FormattedMessage id="agents.loading" />
-            </p>
+            </StateMessage>
           ) : tools === 'error' ? (
-            <p className="panel__empty" role="alert">
+            <StateMessage kind="error">
               <FormattedMessage id="capabilities.error" />
-            </p>
+            </StateMessage>
           ) : tools.length === 0 ? (
-            <p className="panel__empty">
+            <StateMessage kind="empty">
               <FormattedMessage id="capabilities.noToolsAtAll" />
-            </p>
+            </StateMessage>
           ) : (
-            <ul className="documents__list" aria-labelledby="capabilities-tools">
+            <ul className="mo-list" aria-labelledby="capabilities-tools">
               {tools.map((tool: ToolView) => (
-                <li key={tool.id} className="approval-card">
-                  <div className="documents__main">
-                    <strong>{toolName(tool.id)}</strong>
-                    <span className="documents__meta">
+                <li key={tool.id} className="mo-list-item">
+                  <div className="mo-list-item__main">
+                    <p className="mo-list-item__title">{toolName(tool.id)}</p>
+                    <span className="mo-list-item__meta">
                       {message(`capabilities.toolDescription.${tool.id}`, '')}
                     </span>
-                    <span className="documents__meta">
+                    <span className="mo-list-item__meta">
                       <FormattedMessage id={`capabilities.toolStatus.${statusOf(tool.status)}`} />
                     </span>
                     <ul className="capabilities__versions">
                       {tool.versions.map((v) => (
-                        <li key={v.version} className="documents__meta">
+                        <li key={v.version} className="mo-list-item__meta">
                           <FormattedMessage
                             id="capabilities.version"
                             values={{ version: v.version }}

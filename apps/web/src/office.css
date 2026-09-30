@@ -2728,26 +2728,33 @@ a.sidebar__item:hover {
 /* AI Command Center (block 9). */
 .command-center__grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+  gap: var(--mo-space-4);
+}
+
+/* Figures on a card sit side by side, unboxed and smaller than a page's own totals. */
+.command-center__card .mo-stats {
+  grid-template-columns: repeat(auto-fit, minmax(5rem, 1fr));
   gap: var(--mo-space-3);
 }
 
-.command-center__figures {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--mo-space-4);
-  margin: var(--mo-space-2) 0;
+.command-center__card .mo-stat {
+  padding: 0;
+  border: 0;
+  background: none;
 }
 
-.command-center__figure dt {
+.command-center__card .mo-stat > dt {
   font-size: var(--mo-font-size-xs);
-  opacity: 0.8;
 }
 
-.command-center__figure dd {
-  margin: 0;
+.command-center__card .mo-stat > dd {
   font-size: var(--mo-font-size-lg);
-  font-weight: 700;
+}
+
+/* The card's way to where the work is done sits at its foot. */
+.command-center__card > .mo-link-button:last-child {
+  align-self: end;
 }
 
 .command-center__big {
