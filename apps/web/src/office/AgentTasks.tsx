@@ -51,7 +51,7 @@ const STATUS_KEYS: Readonly<Record<string, string>> = {
   cancelled: 'agentTasks.status.cancelled',
   unknown: 'agentTasks.status.unknown',
 };
-const statusKey = (task: AgentTaskView) => {
+export const statusKey = (task: AgentTaskView) => {
   const state = task.answer?.followUp?.state;
   // It answered; only the follow-up it proposed waits, or was turned down.
   if (state === 'waiting_approval') return 'agentTasks.status.waitingApproval';

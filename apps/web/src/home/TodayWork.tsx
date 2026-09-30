@@ -18,16 +18,19 @@ const SHOWN = 5;
 
 type Load<T> = T | 'loading' | 'error' | undefined;
 
-export function TodayWork({
-  followUps,
-  approvals,
-}: {
-  /** With `follow_up.read`. */
-  readonly followUps?: FollowUpsClient | undefined;
-  /** With `approval.read`. */
-  readonly approvals?: ApprovalsClient | undefined;
-}) {
-  const intl = useIntl();
+export type TodayWorkState = {
+  readonly due: Load<FollowUpList>;
+  readonly pending: Load<number>;
+};
+
+/**
+ * Today's work, read once for the Home: the follow-ups due and the approvals waiting, each only
+ * with its permission. The Home's header counts them and the panel lists them.
+ */
+export function useTodayWork(
+  followUps: FollowUpsClient | undefined,
+  approvals: ApprovalsClient | undefined,
+): TodayWorkState {
   const [due, setDue] = useState<Load<FollowUpList>>(
     followUps === undefined ? undefined : 'loading',
   );
@@ -49,6 +52,35 @@ export function TodayWork({
       live = false;
     };
   }, [followUps, approvals]);
+  return { due, pending };
+}
+
+/** How many things wait on the person today: approvals, and follow-ups due or overdue. */
+export function attentionCount({ due, pending }: TodayWorkState): number | undefined {
+  if (due === 'loading' || pending === 'loading') return undefined;
+  if (due === undefined && pending === undefined) return undefined;
+  const dueCount = typeof due === 'object' ? due.counts.overdue + due.counts.today : 0;
+  return dueCount + (typeof pending === 'number' ? pending : 0);
+}
+
+export function TodayWork({
+  followUps,
+  approvals,
+  work,
+}: {
+  /** With `follow_up.read`. */
+  readonly followUps?: FollowUpsClient | undefined;
+  /** With `approval.read`. */
+  readonly approvals?: ApprovalsClient | undefined;
+  /** Today's work already read by the page; without it, the panel reads it itself. */
+  readonly work?: TodayWorkState;
+}) {
+  const intl = useIntl();
+  const own = useTodayWork(
+    work === undefined ? followUps : undefined,
+    work === undefined ? approvals : undefined,
+  );
+  const { due, pending } = work ?? own;
 
   const loading = due === 'loading' || pending === 'loading';
   const items =
@@ -57,10 +89,9 @@ export function TodayWork({
       : [];
   const dueCount = typeof due === 'object' ? due.counts.overdue + due.counts.today : 0;
   const approvalsCount = typeof pending === 'number' ? pending : 0;
-
   return (
     <Panel titleId="home.tasks.title" icon="check">
-      {followUps === undefined && approvals === undefined ? (
+      {due === undefined && pending === undefined ? (
         <p className="panel__empty">
           <FormattedMessage id="home.tasks.none" />
         </p>

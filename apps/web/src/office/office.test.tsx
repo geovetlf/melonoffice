@@ -132,8 +132,10 @@ describe('the Home (ADR-0040)', () => {
     ).toBeTruthy();
     const office = await rooms();
     const links = await office.findAllByRole('link');
+    // Headquarters first, with GIA at her desk (Home V4), then the floors left to right.
     expect(links.map((link) => link.getAttribute('href'))).toEqual([
       '/office/leadership',
+      '/gia',
       '/office/operations',
       '/office/sales',
       '/office/marketing',
@@ -299,9 +301,12 @@ describe('the Home (ADR-0040)', () => {
   it('sends the bar to GIA and continues the chat in her Workplace (ADR-0052)', async () => {
     const backend = open('/');
     await rooms();
-    fireEvent.change(screen.getByRole('textbox', { name: 'Tell GIA what you need…' }), {
-      target: { value: '¿Qué pasó hoy?' },
-    });
+    fireEvent.change(
+      screen.getByRole('textbox', { name: 'What do you need me to do for your business?' }),
+      {
+        target: { value: '¿Qué pasó hoy?' },
+      },
+    );
     fireEvent.click(screen.getByRole('button', { name: 'Send to GIA' }));
     expect(await screen.findByText('Hoy no hubo actividad en tu oficina.')).toBeTruthy();
     expect(globalThis.location.pathname).toBe('/gia');
@@ -319,9 +324,12 @@ describe('the Home (ADR-0040)', () => {
     });
     await rooms();
     const before = backend.apiCalls().length;
-    fireEvent.change(screen.getByRole('textbox', { name: 'Tell GIA what you need…' }), {
-      target: { value: 'Prepara el informe' },
-    });
+    fireEvent.change(
+      screen.getByRole('textbox', { name: 'What do you need me to do for your business?' }),
+      {
+        target: { value: 'Prepara el informe' },
+      },
+    );
     fireEvent.click(screen.getByRole('button', { name: 'Send to GIA' }));
     expect(screen.getByRole('status').textContent).toBe('GIA is not available for your role.');
     expect(backend.apiCalls().length).toBe(before);
@@ -353,9 +361,9 @@ describe('the Home (ADR-0040)', () => {
   it('shows no hard-coded text on the Home: every word comes from the catalog', async () => {
     open('/', undefined, true);
     await screen.findAllByRole('link');
-    await waitFor(() => expect(document.querySelectorAll('.zone').length).toBe(6));
-    const home = document.querySelector('.home');
-    const texts = [...(home?.querySelectorAll('h1, h2, p, label, button, .zone__name') ?? [])]
+    await waitFor(() => expect(document.querySelectorAll('.b-room--department').length).toBe(6));
+    const home = document.querySelector('.home4');
+    const texts = [...(home?.querySelectorAll('h1, h2, p, label, button, .b-room__name') ?? [])]
       .map((element) => element.textContent?.trim() ?? '')
       .filter((text) => text !== '' && !/^[\d.,]+$/.test(text));
     expect(texts.length).toBeGreaterThan(10);
@@ -521,13 +529,13 @@ describe('ambient figures (ADR-0042)', () => {
 
   it('are drawn only as decoration, the same on the Home and in the office', async () => {
     open('/');
-    await waitFor(() => expect(document.querySelectorAll('.zone').length).toBe(6));
-    const marketingZone = [...document.querySelectorAll('.zone')].find((zone) =>
+    await waitFor(() => expect(document.querySelectorAll('.b-room--department').length).toBe(6));
+    const marketingZone = [...document.querySelectorAll('.b-room--department')].find((zone) =>
       zone.querySelector('a[href="/office/marketing"]'),
     );
-    const onHome = marketingZone?.querySelectorAll('.room__worker--ambient').length;
+    const onHome = marketingZone?.querySelectorAll('.desk--ambient').length;
     expect(onHome).toBe(layoutOf(department('marketing')).ambient.length);
-    for (const figure of document.querySelectorAll('.room__worker')) {
+    for (const figure of document.querySelectorAll('.desk--ambient')) {
       expect(figure.closest('[aria-hidden="true"]')).not.toBeNull();
     }
     cleanup();
@@ -576,12 +584,15 @@ describe('ambient figures (ADR-0042)', () => {
 
   it('count for nothing: the seat counters and the agent counts stay real', async () => {
     const zoneOf = (slug: string) =>
-      [...document.querySelectorAll('.zone')].find((zone) =>
+      [...document.querySelectorAll('.b-room--department')].find((zone) =>
         zone.querySelector(`a[href="/office/${slug}"]`),
       );
+    const label = (slug: string) =>
+      zoneOf(slug)?.querySelector(`a[href="/office/${slug}"]`)?.getAttribute('aria-label');
     open('/');
-    await waitFor(() => expect(document.querySelectorAll('.zone').length).toBe(6));
-    expect(zoneOf('marketing')?.querySelector('.zone__seats')?.textContent).toBe('0/6');
+    await waitFor(() => expect(document.querySelectorAll('.b-room--department').length).toBe(6));
+    expect(label('marketing')).toBe('Enter Marketing. No agents yet. 0 of 6 workstations taken');
+    expect(zoneOf('marketing')?.querySelector('.b-room__count')?.textContent).toBe('No agents');
     cleanup();
 
     open('/', (backend) => {
@@ -590,10 +601,11 @@ describe('ambient figures (ADR-0042)', () => {
       ];
     });
     await waitFor(() =>
-      expect(zoneOf('marketing')?.querySelector('.zone__seats')?.textContent).toBe('1/6'),
+      expect(label('marketing')).toBe('Enter Marketing. 1 active agent. 1 of 6 workstations taken'),
     );
+    expect(zoneOf('marketing')?.querySelector('.b-room__count')?.textContent).toBe('1 agent');
     // Two figures still decorate the room; neither is counted.
-    expect(zoneOf('marketing')?.querySelectorAll('.room__worker--ambient')).toHaveLength(2);
+    expect(zoneOf('marketing')?.querySelectorAll('.desk--ambient')).toHaveLength(2);
   });
 
   it('carry no presence, state or focus of their own', async () => {

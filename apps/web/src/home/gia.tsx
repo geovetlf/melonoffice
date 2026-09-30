@@ -1,5 +1,5 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
-import { useState, type FormEvent } from 'react';
+import { useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { useAuth } from '../identity/AuthProvider.js';
 import { navigate } from '../identity/router.js';
 import { Icon, type IconName } from '../office/icons.js';
@@ -39,9 +39,22 @@ export function GiaCard() {
   );
 }
 
-export function GiaCommandBar() {
+/** What the Home suggests asking GIA: each fills the command box, and the person sends it. */
+export const GIA_SUGGESTIONS = ['sales', 'report', 'campaign', 'document'] as const;
+
+export function GiaCommandBar({
+  suggestions = false,
+  more,
+}: {
+  /** Shows the suggestions under the box (the Home). */
+  readonly suggestions?: boolean;
+  /** Shown when the person asks for more, after the suggestions. */
+  readonly more?: ReactNode;
+} = {}) {
   const intl = useIntl();
   const [text, setText] = useState('');
+  const [expanded, setExpanded] = useState(false);
+  const input = useRef<HTMLInputElement>(null);
   const [notice, setNotice] = useState(false);
   const chat = useGiaChat();
   const { state } = useAuth();
@@ -61,7 +74,7 @@ export function GiaCommandBar() {
     navigate(paths.gia());
   };
   const soon = intl.formatMessage({ id: 'common.soon' });
-  return (
+  const form = (
     <form
       className="gia-bar"
       onSubmit={submit}
@@ -71,6 +84,7 @@ export function GiaCommandBar() {
         <Icon name="gia" size={20} />
       </span>
       <input
+        ref={input}
         className="gia-bar__input"
         value={text}
         onChange={(event) => setText(event.target.value)}
@@ -111,6 +125,42 @@ export function GiaCommandBar() {
         </p>
       ) : null}
     </form>
+  );
+  if (!suggestions) return form;
+  return (
+    <div className="gia-command">
+      {form}
+      <ul className="gia-suggest" aria-label={intl.formatMessage({ id: 'home.suggest.label' })}>
+        {GIA_SUGGESTIONS.map((id) => (
+          <li key={id}>
+            <button
+              type="button"
+              className="gia-suggest__item"
+              onClick={() => {
+                setText(intl.formatMessage({ id: `home.suggest.${id}` }));
+                input.current?.focus();
+              }}
+            >
+              <FormattedMessage id={`home.suggest.${id}`} />
+            </button>
+          </li>
+        ))}
+        {more === undefined ? null : (
+          <li>
+            <button
+              type="button"
+              className="gia-suggest__item gia-suggest__more"
+              aria-expanded={expanded}
+              aria-label={intl.formatMessage({ id: 'home.suggest.more' })}
+              onClick={() => setExpanded((open) => !open)}
+            >
+              <Icon name="more" size={18} />
+            </button>
+          </li>
+        )}
+      </ul>
+      {expanded ? more : null}
+    </div>
   );
 }
 

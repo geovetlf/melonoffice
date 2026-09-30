@@ -5,6 +5,7 @@ import { navigate } from '../identity/router.js';
 import { departmentName, lookOf, officeDepartments, officeSlug } from '../office/departments.js';
 import { Icon, type IconName } from '../office/icons.js';
 import { departmentPriority, readyList, useOfficeData } from '../office/OfficeData.js';
+import { MELON_MARK, MELON_MARK_SRCSET } from './mark.js';
 import { paths, type Route } from './routes.js';
 
 /**
@@ -100,6 +101,18 @@ export function Sidebar({
   return (
     <aside id="app-sidebar" className={`sidebar${open ? ' sidebar--open' : ''}`}>
       <div className="sidebar__brand">
+        {brand?.productName === undefined ? (
+          // MelonOffice's own mark; a white-label brand (ADR-0087) shows its name alone.
+          <img
+            className="sidebar__mark"
+            src={MELON_MARK}
+            srcSet={MELON_MARK_SRCSET}
+            sizes="40px"
+            alt=""
+            width={40}
+            height={40}
+          />
+        ) : null}
         <span className="sidebar__logo">
           {brand?.productName ?? <FormattedMessage id="app.logo" />}
         </span>
