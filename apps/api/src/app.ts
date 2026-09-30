@@ -142,6 +142,12 @@ import { registerCreditRoutes } from './credits.js';
 import { registerAIUsageRoutes } from './ai-usage.js';
 import { registerPlatformCreditRoutes } from './platform-credits.js';
 import { registerPlatformRoutes } from './platform.js';
+import {
+  registerRequestLimits,
+  type RequestLimit,
+  type RequestRateLimiter,
+  type RequestScope,
+} from './request-limits.js';
 import { registerEntitlementRoutes } from './entitlements.js';
 import { registerExecutionRoutes } from './executions.js';
 import { registerHealth } from './health.js';
@@ -349,6 +355,12 @@ export interface AppOptions {
    * 503.
    */
   readonly brands?: BrandRepository;
+  /**
+   * Limits on sensitive requests per person (ADR-0092), shared by every instance. Absent: no
+   * limit (tests that do not exercise it).
+   */
+  readonly requestLimiter?: RequestRateLimiter;
+  readonly requestLimits?: Partial<Record<RequestScope, RequestLimit>>;
 }
 
 type Env = AuthEnv;
@@ -389,6 +401,8 @@ export function createApp({
   platformAdmins = [],
   commercialAccounts,
   brands,
+  requestLimiter,
+  requestLimits,
 }: AppOptions): Hono<Env> {
   const app = new Hono<Env>();
 
@@ -459,6 +473,7 @@ export function createApp({
     app.get('/v1/public/brand', (c) => c.json({ error: 'branding_not_configured' }, 503));
   }
   registerAuthRoutes(app, auth, audit);
+  if (requestLimiter !== undefined) registerRequestLimits(app, requestLimiter, requestLimits);
   if (auth !== undefined && audit !== undefined) {
     // A new organization's Company Brain starts with its name (ADR-0051).
     registerTenancyRoutes(app, tenancy, authorization, audit, async (auth, organization) => {

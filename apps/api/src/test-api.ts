@@ -120,6 +120,7 @@ import {
   FirestoreWorkflowRepository,
   FirestoreTenancyStore,
   FirestoreBrandStore,
+  FirestoreRequestRateLimiter,
   FirestoreCommercialStore,
   MEMBERSHIPS,
   ORGANIZATIONS,
@@ -132,6 +133,7 @@ import {
   toConnectionDocument,
 } from '@melonoffice/firestore';
 import { emulatorFirestore, emulatorHost } from '@melonoffice/firestore/testing';
+import { InMemoryRequestRateLimiter, type RequestRateLimiter } from './request-limits.js';
 
 /**
  * Stands in for Identity Platform. Real signature, issuer and expiry checks are tested in
@@ -166,6 +168,8 @@ export interface Stores {
   readonly commercial: CommercialRepository;
   /** Brands and domains (ADR-0087). */
   readonly brands: InMemoryBrandRepository | FirestoreBrandStore;
+  /** Limits on sensitive requests (ADR-0092); used only when a test passes `requestLimits`. */
+  readonly requestLimiter: RequestRateLimiter;
   /** Stores a record as given, e.g. a suspended membership, the way an operator change would. */
   readonly put: (record: Organization | Membership) => Promise<void>;
   readonly billing: BillingStore;
@@ -254,6 +258,7 @@ function memoryStores(): Stores {
     tenancy,
     commercial: new InMemoryCommercialStore(events),
     brands: new InMemoryBrandRepository(events),
+    requestLimiter: new InMemoryRequestRateLimiter(),
     put: async (r) => tenancy.put(r),
     billing,
     putBilling: async (r) => billing.put(r),
@@ -312,6 +317,7 @@ function firestoreStores(): Stores {
     tenancy: new FirestoreTenancyStore(db),
     commercial: new FirestoreCommercialStore(db),
     brands: new FirestoreBrandStore(db),
+    requestLimiter: new FirestoreRequestRateLimiter(db),
     billing: new FirestoreBillingStore(db),
     async putBilling(record) {
       if ('status' in record) {
@@ -429,6 +435,7 @@ export function setupApp(
     files = new InMemoryFileStore(),
     extractor,
     platformAdmins,
+    requestLimits,
   }: {
     readonly sending?: boolean;
     readonly webOrigins?: readonly string[];
@@ -447,6 +454,8 @@ export function setupApp(
     readonly extractor?: TextExtractor;
     /** The platform administrators' user ids (ADR-0082). Absent: nobody. */
     readonly platformAdmins?: readonly string[];
+    /** Limits on sensitive requests (ADR-0092), with the stores' limiter. Absent: no limit. */
+    readonly requestLimits?: AppOptions['requestLimits'];
   } = {},
 ) {
   const lines: string[] = [];
@@ -492,6 +501,9 @@ export function setupApp(
     tenancy: stores.tenancy,
     commercialAccounts: stores.commercial,
     brands: stores.brands,
+    ...(requestLimits === undefined
+      ? {}
+      : { requestLimiter: stores.requestLimiter, requestLimits }),
     billing: stores.billing,
     executions: stores.executions,
     structure: { departments: stores.departments, specialists: stores.specialists },

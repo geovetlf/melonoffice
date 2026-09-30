@@ -53,3 +53,47 @@ export class FirestoreConnectionRateLimiter implements ConnectionRateLimiter {
     });
   }
 }
+
+/**
+ * `requestRateWindows/{scope}_{userId}`: one person's current window for one kind of sensitive
+ * request (ADR-0092): platform changes, credit grants, invitation links, partner and owner
+ * commercial changes. Only the scope, the user id, a start time and a count: no request content.
+ */
+export const REQUEST_RATE_WINDOWS = 'requestRateWindows';
+
+const REQUEST_KEY = /^([a-z_]{1,40}):([A-Za-z0-9-]{1,128})$/;
+
+/**
+ * The request limit every API instance shares: each request takes a slot in one transaction, so
+ * a person's requests spread over many instances still meet one limit.
+ */
+export class FirestoreRequestRateLimiter {
+  constructor(private readonly db: Firestore) {}
+
+  async acquire(
+    key: string,
+    limit: DeliveryPolicy['rateLimit'],
+    now: Date,
+  ): Promise<RateLimitDecision> {
+    const match = REQUEST_KEY.exec(key);
+    if (match === null) throw new Error('invalid request rate key');
+    const [, scope, subject] = match as unknown as [string, string, string];
+    const ref = this.db.collection(REQUEST_RATE_WINDOWS).doc(`${scope}_${subject}`);
+    return this.db.runTransaction(async (tx) => {
+      const data = (await tx.get(ref)).data();
+      const stored =
+        data !== undefined &&
+        data.scope === scope &&
+        data.subject === subject &&
+        typeof data.startedAt === 'number' &&
+        typeof data.count === 'number'
+          ? { startedAt: data.startedAt, count: data.count }
+          : undefined;
+      const { decision, next } = decideWindow(stored, limit, now.getTime());
+      if (next !== undefined) {
+        tx.set(ref, { scope, subject, startedAt: next.startedAt, count: next.count });
+      }
+      return decision;
+    });
+  }
+}

@@ -4,7 +4,11 @@ import {
   type ConnectionRateLimiter,
 } from '@melonoffice/integrations';
 import { describe, expect, it } from 'vitest';
-import { CONNECTION_RATE_WINDOWS, FirestoreConnectionRateLimiter } from './rate-limits.js';
+import {
+  CONNECTION_RATE_WINDOWS,
+  FirestoreConnectionRateLimiter,
+  FirestoreRequestRateLimiter,
+} from './rate-limits.js';
 import { emulatorFirestore, emulatorHost } from './testing.js';
 
 const NOW = new Date('2026-09-28T12:00:00Z');
@@ -118,5 +122,25 @@ describe.runIf(emulatorHost)('FirestoreConnectionRateLimiter (emulator)', () => 
       (await limiter.acquire({ organizationId: ORG_A, connectionId: CONN_1 }, LIMIT, at(1)))
         .allowed,
     ).toBe(true);
+  });
+});
+
+describe.runIf(emulatorHost)('request rate limiter (firestore)', () => {
+  it('keeps one window per scope and person, shared by every caller, refused past the limit', async () => {
+    const limiter = new FirestoreRequestRateLimiter(emulatorFirestore());
+    const user = crypto.randomUUID();
+    const other = crypto.randomUUID();
+    const results = await Promise.all(
+      Array.from({ length: 5 }, () => limiter.acquire(`platform_write:${user}`, LIMIT, NOW)),
+    );
+    expect(results.filter((r) => r.allowed)).toHaveLength(3);
+    expect(await limiter.acquire(`platform_write:${other}`, LIMIT, NOW)).toEqual({
+      allowed: true,
+    });
+    expect(await limiter.acquire(`credit_grant:${user}`, LIMIT, NOW)).toEqual({ allowed: true });
+    expect(await limiter.acquire(`platform_write:${user}`, LIMIT, at(60_000))).toEqual({
+      allowed: true,
+    });
+    await expect(limiter.acquire('platform_write:a/b', LIMIT, NOW)).rejects.toThrow();
   });
 });
