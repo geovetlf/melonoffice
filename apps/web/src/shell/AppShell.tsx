@@ -215,6 +215,26 @@ export function AppShell(locale: LocaleProps) {
           canReadAIUsage={canReadAIUsage}
           followUps={canReadFollowUps ? clients.followUps : undefined}
           approvals={canReadApprovals ? clients.approvals : undefined}
+          office={{
+            ...(canReadAgents
+              ? {
+                  tasks: {
+                    client: clients.agentTasks,
+                    canAsk: canAskAgents,
+                    stop: canCancelExecutions ? clients.executions.cancel : undefined,
+                    decide: canDecidePlans
+                      ? async (approvalId: string, decision: 'approve' | 'reject') => {
+                          await clients.approvals.decide(approvalId, decision);
+                        }
+                      : undefined,
+                  },
+                  agents: clients.agents,
+                  canManageAgents,
+                }
+              : {}),
+            canReadDocuments,
+            automations: canReadPlans ? clients.automations : undefined,
+          }}
         />
       );
       break;

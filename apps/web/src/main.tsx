@@ -1,6 +1,7 @@
 import '@melonoffice/ui/styles.css';
 import './app.css';
 import './office.css';
+import './home.css';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Root } from './Root.js';

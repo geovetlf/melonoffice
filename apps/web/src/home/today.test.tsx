@@ -141,6 +141,8 @@ describe('Ctrl+K asks GIA from anywhere (block 8)', () => {
 describe('the Home quick actions', () => {
   it('open only real screens the person may use, and none of tools that do not exist', async () => {
     open(['specialist.read', 'ai_usage.read', 'document.upload']);
+    // They wait behind "More actions", after the suggestions for GIA (Home V4).
+    fireEvent.click(await screen.findByRole('button', { name: 'More actions' }));
     const quick = within(await screen.findByRole('list', { name: 'Quick actions' }));
     expect(quick.getAllByRole('link').map((a) => a.textContent)).toEqual([
       'Upload a file for GIA to read',

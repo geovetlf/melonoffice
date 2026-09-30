@@ -1,5 +1,5 @@
 import { I18nProvider } from '@melonoffice/i18n';
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../App.js';
 import { createServices } from '../identity/services.js';
@@ -29,8 +29,12 @@ describe("GIA's Workplace (ADR-0050)", () => {
   it('is entered from the Home through GIA, with her face', async () => {
     open('/');
     await screen.findByRole('heading', { level: 1 });
-    const card = document.querySelector<HTMLAnchorElement>('a.gia-card');
-    if (card === null) throw new Error('no GIA card');
+    // GIA sits at her desk in headquarters (Home V4).
+    const card = await waitFor(() => {
+      const found = document.querySelector<HTMLAnchorElement>('a.b-gia');
+      if (found === null) throw new Error('no GIA at her desk');
+      return found;
+    });
     expect(card.querySelector('svg.gia-avatar')).toBeTruthy();
     fireEvent.click(card);
     const title = await screen.findByRole('heading', { level: 1, name: 'GIA' });
