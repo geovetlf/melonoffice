@@ -8,12 +8,14 @@ import {
   type CommercialAccountView,
   type DomainStatus,
   type DomainView,
+  type NewCommercialAccount,
   type PlatformClient,
 } from './platformClient.js';
 
 /**
- * The platform administrator's commercial tools (ADR-0088): create partner and agency accounts
- * with their first admin and limits (ADR-0086, "Solo plataforma"), and register domains and move
+ * The platform administrator's commercial tools (ADR-0088): create reseller and white-label accounts
+ * (ADR-0098; older partner and agency accounts keep working) with their first admin and limits
+ * (ADR-0086, "Solo plataforma"), and register domains and move
  * them through their statuses (ADR-0087); suspend, reactivate or close an account and change its
  * limits, and add credits to an organization by hand (ADR-0091). The server decides and audits
  * every step; this only asks.
@@ -161,6 +163,8 @@ function AccountRow({
   const [editing, setEditing] = useState(false);
   const [customers, setCustomers] = useState('');
   const [members, setMembers] = useState('');
+  const [resellers, setResellers] = useState('');
+  const whiteLabel = a.type === 'white_label';
 
   const run = async (change: () => Promise<CommercialAccountView>) => {
     setBusy(true);
@@ -189,6 +193,15 @@ function AccountRow({
           id="platform.commercial.limits"
           values={{ customers: a.limits?.customers ?? 0, members: a.limits?.members ?? 0 }}
         />
+        {whiteLabel ? (
+          <>
+            {' · '}
+            <FormattedMessage
+              id="platform.commercial.resellerLimit"
+              values={{ resellers: a.limits?.resellers ?? 0 }}
+            />
+          </>
+        ) : null}
       </span>
       <code className="documents__meta">{a.id}</code>
       {open ? (
@@ -211,6 +224,7 @@ function AccountRow({
               setClosing(false);
               setCustomers(String(a.limits?.customers ?? 0));
               setMembers(String(a.limits?.members ?? 1));
+              setResellers(String(a.limits?.resellers ?? 0));
             }}
           >
             <FormattedMessage id="platform.commercial.editLimits" />
@@ -237,6 +251,7 @@ function AccountRow({
               client.setAccountLimits(a, {
                 customers: Number(customers),
                 members: Number(members),
+                ...(whiteLabel ? { resellers: Number(resellers) } : {}),
               }),
             );
           }}
@@ -263,6 +278,21 @@ function AccountRow({
             onChange={(e) => setMembers(e.target.value)}
             required
           />
+          {whiteLabel ? (
+            <>
+              <label htmlFor={`${id}-resellers`}>
+                <FormattedMessage id="platform.commercial.resellers" />
+              </label>
+              <input
+                id={`${id}-resellers`}
+                type="number"
+                min={0}
+                value={resellers}
+                onChange={(e) => setResellers(e.target.value)}
+                required
+              />
+            </>
+          ) : null}
           <Button type="submit" disabled={busy}>
             <FormattedMessage id="platform.commercial.saveLimits" />
           </Button>
@@ -314,11 +344,12 @@ function NewAccount({
 }) {
   const intl = useIntl();
   const id = useId();
-  const [type, setType] = useState<'partner' | 'agency'>('partner');
+  const [type, setType] = useState<NewCommercialAccount['type']>('reseller');
   const [name, setName] = useState('');
   const [admin, setAdmin] = useState('');
   const [customers, setCustomers] = useState('');
   const [members, setMembers] = useState('');
+  const [resellers, setResellers] = useState('');
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState<string>();
 
@@ -332,7 +363,11 @@ function NewAccount({
           type,
           name,
           adminUserId: admin.trim(),
-          limits: { customers: Number(customers), members: Number(members) },
+          limits: {
+            customers: Number(customers),
+            members: Number(members),
+            ...(type === 'white_label' ? { resellers: Number(resellers) } : {}),
+          },
         }),
       );
       setName('');
@@ -355,10 +390,12 @@ function NewAccount({
       <select
         id={`${id}-type`}
         value={type}
-        onChange={(e) => setType(e.target.value === 'agency' ? 'agency' : 'partner')}
+        onChange={(e) => setType(e.target.value === 'white_label' ? 'white_label' : 'reseller')}
       >
-        <option value="partner">{intl.formatMessage({ id: 'partners.type.partner' })}</option>
-        <option value="agency">{intl.formatMessage({ id: 'partners.type.agency' })}</option>
+        <option value="reseller">{intl.formatMessage({ id: 'partners.type.reseller' })}</option>
+        <option value="white_label">
+          {intl.formatMessage({ id: 'partners.type.white_label' })}
+        </option>
       </select>
       <label htmlFor={`${id}-name`}>
         <FormattedMessage id="platform.commercial.name" />
@@ -401,6 +438,21 @@ function NewAccount({
         onChange={(e) => setMembers(e.target.value)}
         required
       />
+      {type === 'white_label' ? (
+        <>
+          <label htmlFor={`${id}-resellers`}>
+            <FormattedMessage id="platform.commercial.resellers" />
+          </label>
+          <input
+            id={`${id}-resellers`}
+            type="number"
+            min={0}
+            value={resellers}
+            onChange={(e) => setResellers(e.target.value)}
+            required
+          />
+        </>
+      ) : null}
       <Button type="submit" disabled={busy}>
         <FormattedMessage id="platform.commercial.create" />
       </Button>

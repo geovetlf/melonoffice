@@ -12,6 +12,7 @@ import {
   type ConsoleInvitation,
   type ConsoleMember,
   type ConsoleMemberInvitation,
+  type ConsoleReseller,
   type CustomerBilling,
   type CustomerSummary,
   type CustomerUsage,
@@ -28,12 +29,28 @@ type Load<T> = T | 'loading' | 'error';
 
 /** What a partner may ask for now (ADR-0097): each one opens a read the console shows. */
 const SCOPES: readonly CustomerScope[] = ['summary', 'usage', 'billing', 'branding'];
-/** The modes each kind of account uses (ADR-0086). */
-const MODES: Readonly<Record<ConsoleAccount['type'], readonly string[]>> = {
-  partner: ['direct', 'reseller', 'white_label', 'oem', 'enterprise'],
-  agency: ['agency'],
-};
+/**
+ * The modes each kind of account uses (ADR-0086, ADR-0098): a reseller under a white label sells
+ * under that brand, a reseller on its own sells MelonOffice. The API checks the same rule.
+ */
+function modesOf(account: ConsoleAccount): readonly string[] {
+  switch (account.type) {
+    case 'reseller':
+      return account.parentAccountId ? ['white_label'] : ['reseller'];
+    case 'white_label':
+      return ['white_label'];
+    case 'partner':
+      return ['direct', 'reseller', 'white_label', 'oem', 'enterprise'];
+    case 'agency':
+      return ['agency'];
+  }
+}
+/** Whether a brand of this account reaches anyone (ADR-0098): a lone reseller sells MelonOffice. */
+const hasBrand = (account: ConsoleAccount) =>
+  account.type !== 'reseller' || Boolean(account.parentAccountId);
 const ROLES: Readonly<Record<ConsoleAccount['type'], readonly string[]>> = {
+  reseller: ['reseller.admin', 'reseller.support'],
+  white_label: ['white_label.admin', 'white_label.support'],
   partner: ['partner.admin', 'partner.support'],
   agency: ['agency.admin', 'agency.manager'],
 };
@@ -59,9 +76,10 @@ type Failure = { readonly id: string; readonly reason?: string };
 export function failureOf(error: unknown): Failure {
   if (!(error instanceof ConsoleRequestError)) return { id: 'console.errors.network' };
   if (error.code === 'invalid_commercial_request') {
-    return error.field === 'email'
-      ? { id: 'console.errors.email' }
-      : { id: 'console.errors.invalid', reason: error.field ?? '' };
+    if (error.field === 'email' || error.field === 'adminEmail')
+      return { id: 'console.errors.email' };
+    if (error.field === 'limits') return { id: 'console.errors.limits' };
+    return { id: 'console.errors.invalid', reason: error.field ?? '' };
   }
   const explained =
     (error.code === undefined ? undefined : EXPLAINED[error.code]) ??
@@ -191,21 +209,26 @@ function Account({
     <>
       <Customers account={account} client={client} admin={admin} now={now} />
       <Invitations account={account} client={client} admin={admin} origin={origin} />
+      {account.type === 'white_label' ? (
+        <Resellers account={account} client={client} admin={admin} origin={origin} />
+      ) : null}
       <Members account={account} client={client} admin={admin} origin={origin} />
-      <section className="dept-office__section" aria-labelledby="console-brand">
-        <h2 id="console-brand">
-          <FormattedMessage id="console.brand.title" />
-        </h2>
-        <p className="customers__meta">
-          <FormattedMessage id={`console.brand.lead.${account.type}`} />
-        </p>
-        <BrandLevel
-          load={() => client.accountBrand(account.id)}
-          save={(config, version) => client.saveAccountBrand(account.id, config, version)}
-          canEdit={admin}
-          deps={[client, account.id]}
-        />
-      </section>
+      {hasBrand(account) ? (
+        <section className="dept-office__section" aria-labelledby="console-brand">
+          <h2 id="console-brand">
+            <FormattedMessage id="console.brand.title" />
+          </h2>
+          <p className="customers__meta">
+            <FormattedMessage id={`console.brand.lead.${account.type}`} />
+          </p>
+          <BrandLevel
+            load={() => client.accountBrand(account.id)}
+            save={(config, version) => client.saveAccountBrand(account.id, config, version)}
+            canEdit={admin}
+            deps={[client, account.id]}
+          />
+        </section>
+      ) : null}
     </>
   );
 }
@@ -346,7 +369,7 @@ function CustomerPanel({
 }) {
   const has = (s: CustomerScope) => customer.scopes.includes(s);
   const org = customer.organizationId;
-  const partnerAdmin = admin && account.type === 'partner';
+  const partnerAdmin = admin && modesOf(account).includes('white_label');
   const nothing =
     !has('summary') &&
     !has('usage') &&
@@ -624,7 +647,7 @@ function InviteForm({
 }) {
   const intl = useIntl();
   const id = useId();
-  const modes = MODES[account.type];
+  const modes = modesOf(account);
   const [email, setEmail] = useState('');
   const [mode, setMode] = useState(modes[0] ?? '');
   const [scopes, setScopes] = useState<ReadonlySet<CustomerScope>>(new Set());
@@ -944,6 +967,217 @@ function Members({
           ))}
         </ul>
       ) : null}
+      <Failed failure={failed} />
+    </section>
+  );
+}
+
+// ------------------------------------------------------------------ resellers
+
+/**
+ * A white label's resellers (ADR-0098): who they are, how many customers each serves and whether
+ * their first admin has joined. Nothing inside their customers: each customer grants its own.
+ */
+function Resellers({
+  account,
+  client,
+  admin,
+  origin,
+}: {
+  readonly account: ConsoleAccount;
+  readonly client: ConsoleClient;
+  readonly admin: boolean;
+  readonly origin: string;
+}) {
+  const intl = useIntl();
+  const id = useId();
+  const [list, setList] = useLoad(() => client.resellers(account.id), [client, account.id]);
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [customers, setCustomers] = useState('');
+  const [members, setMembers] = useState('');
+  const [link, setLink] = useState<string>();
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState<Failure>();
+
+  const run = async (work: () => Promise<void>) => {
+    setBusy(true);
+    setFailed(undefined);
+    try {
+      await work();
+    } catch (error) {
+      setFailed(failureOf(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const put = (r: ConsoleReseller) =>
+    setList((current) =>
+      typeof current === 'object'
+        ? { ...current, resellers: [...current.resellers.filter((x) => x.id !== r.id), r] }
+        : { resellers: [r], limit: null },
+    );
+  const whole = (value: string) => (/^[0-9]+$/.test(value) ? Number(value) : Number.NaN);
+  const day = (iso: string) => intl.formatDate(new Date(iso), { dateStyle: 'medium' });
+
+  return (
+    <section className="dept-office__section" aria-labelledby="console-resellers">
+      <h2 id="console-resellers">
+        <FormattedMessage id="console.resellers.title" />
+      </h2>
+      {list === 'loading' ? null : list === 'error' ? (
+        <p className="panel__empty" role="alert">
+          <FormattedMessage id="console.error" />
+        </p>
+      ) : (
+        <>
+          <p className="customers__meta">
+            <FormattedMessage
+              id={list.limit === null ? 'console.resellers.noLimit' : 'console.resellers.count'}
+              values={{ count: list.resellers.length, limit: list.limit ?? 0 }}
+            />
+          </p>
+          {list.resellers.length === 0 ? (
+            <p className="panel__empty">
+              <FormattedMessage id="console.resellers.none" />
+            </p>
+          ) : (
+            <ul className="documents__list" aria-label="resellers">
+              {list.resellers.map((r) => (
+                <li key={r.id} className="documents__item" aria-label={r.name}>
+                  <span className="documents__name">{r.name}</span>
+                  <span className="documents__meta">
+                    <FormattedMessage id={`console.resellers.status.${r.status}`} /> ·{' '}
+                    <FormattedMessage
+                      id="console.resellers.customers"
+                      values={{ count: r.customers }}
+                    />
+                    {r.pendingAdmins.map((p) => (
+                      <span key={p.email}>
+                        {' · '}
+                        <FormattedMessage
+                          id="console.resellers.pendingAdmin"
+                          values={{ email: p.email, date: day(p.expiresAt) }}
+                        />
+                      </span>
+                    ))}
+                  </span>
+                  {admin && r.status !== 'closed' ? (
+                    <Button
+                      variant="secondary"
+                      disabled={busy}
+                      onClick={() => {
+                        const next = r.status === 'active' ? 'suspended' : 'active';
+                        if (
+                          next === 'suspended' &&
+                          !globalThis.confirm(
+                            intl.formatMessage(
+                              { id: 'console.resellers.suspendConfirm' },
+                              { name: r.name },
+                            ),
+                          )
+                        ) {
+                          return;
+                        }
+                        void run(async () => {
+                          const saved = await client.setResellerStatus(account.id, r, next);
+                          put({ ...r, ...saved });
+                        });
+                      }}
+                    >
+                      <FormattedMessage
+                        id={
+                          r.status === 'active'
+                            ? 'console.resellers.suspend'
+                            : 'console.resellers.reactivate'
+                        }
+                      />
+                    </Button>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
+      )}
+      {admin && typeof list === 'object' && list.limit !== null ? (
+        <form
+          className="platform__form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void run(async () => {
+              const created = await client.createReseller(account.id, {
+                name: name.trim(),
+                adminEmail: email.trim(),
+                limits: { customers: whole(customers), members: whole(members) },
+              });
+              put(created.reseller);
+              setLink(joinLink(origin, created.token));
+              setName('');
+              setEmail('');
+              setCustomers('');
+              setMembers('');
+            });
+          }}
+        >
+          <h3>
+            <FormattedMessage id="console.resellers.new" />
+          </h3>
+          <p className="customers__meta">
+            <FormattedMessage id="console.resellers.newLead" />
+          </p>
+          <label htmlFor={`${id}-name`}>
+            <FormattedMessage id="console.resellers.name" />
+          </label>
+          <input
+            id={`${id}-name`}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            required
+          />
+          <label htmlFor={`${id}-email`}>
+            <FormattedMessage id="console.resellers.adminEmail" />
+          </label>
+          <input
+            id={`${id}-email`}
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+          />
+          <label htmlFor={`${id}-customers`}>
+            <FormattedMessage id="console.resellers.maxCustomers" />
+          </label>
+          <input
+            id={`${id}-customers`}
+            type="number"
+            min={1}
+            max={account.limits?.customers}
+            value={customers}
+            onChange={(e) => setCustomers(e.target.value)}
+            required
+          />
+          <label htmlFor={`${id}-members`}>
+            <FormattedMessage id="console.resellers.maxMembers" />
+          </label>
+          <input
+            id={`${id}-members`}
+            type="number"
+            min={1}
+            max={account.limits?.members}
+            value={members}
+            onChange={(e) => setMembers(e.target.value)}
+            required
+          />
+          <Button
+            type="submit"
+            disabled={busy || name.trim() === '' || email.trim() === '' || !customers || !members}
+          >
+            <FormattedMessage id="console.resellers.create" />
+          </Button>
+        </form>
+      ) : null}
+      {link === undefined ? null : <OnceLink link={link} onDone={() => setLink(undefined)} />}
       <Failed failure={failed} />
     </section>
   );

@@ -13,6 +13,7 @@ import {
   isTenancyError,
   newInvitationToken,
   newMemberInvitationId,
+  parentAllows,
   parseInvitationEmail,
   TenancyError,
 } from '@melonoffice/tenancy';
@@ -287,9 +288,10 @@ export function registerMemberInvitationRoutes(app: Hono<AuthEnv>, deps: Commerc
     if (input.expectedUpdatedAt !== invitation.updatedAt) {
       return c.json({ error: 'commercial_conflict' }, 409);
     }
-    // A suspended or closed account gains nobody (ADR-0091).
+    // A suspended or closed account gains nobody (ADR-0091), nor a reseller whose white label is
+    // not active (ADR-0098).
     const account = await commercial.findAccount(invitation.commercialAccountId);
-    if (account?.status !== 'active') {
+    if (account?.status !== 'active' || !(await parentAllows(account, commercial))) {
       return c.json({ error: 'commercial_account_inactive' }, 409);
     }
     const limit = account.limits?.members;

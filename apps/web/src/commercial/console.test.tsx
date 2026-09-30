@@ -13,6 +13,7 @@ import {
   type ConsoleClient,
   type ConsoleCustomer,
   type ConsoleInvitation,
+  type ConsoleReseller,
   type OwnBrand,
 } from './consoleClient.js';
 import { failureOf, lastDays, PartnerConsole } from './PartnerConsole.js';
@@ -25,14 +26,29 @@ afterEach(() => {
 const TOKEN = 'b'.repeat(43);
 const NOW = new Date('2026-09-30T12:00:00.000Z');
 
-const account = (role: string, type: 'partner' | 'agency' = 'partner'): ConsoleAccount => ({
+const account = (
+  role: string,
+  type: ConsoleAccount['type'] = 'partner',
+  extra: Partial<ConsoleAccount> = {},
+): ConsoleAccount => ({
   id: 'acc-1',
   type,
   name: 'Partner A',
   status: 'active',
   limits: { customers: 5, members: 3 },
   role,
+  ...extra,
 });
+
+const RESELLER: ConsoleReseller = {
+  id: 'r-1',
+  name: 'Reseller One',
+  status: 'active',
+  limits: { customers: 2, members: 2 },
+  updatedAt: 'r1',
+  customers: 4,
+  pendingAdmins: [],
+};
 
 const CUSTOMER: ConsoleCustomer = {
   organizationId: 'org-1',
@@ -45,11 +61,13 @@ function fake(
   role = 'partner.admin',
   customers: ConsoleCustomer[] = [CUSTOMER],
   invitations: ConsoleInvitation[] = [],
+  own: ConsoleAccount = account(role),
+  resellers: ConsoleReseller[] = [],
 ) {
   const calls: unknown[][] = [];
   let brand: OwnBrand = { own: { brandName: 'Kept', productName: 'Old' }, updatedAt: 'v1' };
   const client: ConsoleClient = {
-    accounts: async () => [account(role)],
+    accounts: async () => [own],
     members: async () => [
       { userId: 'u-1', role: 'partner.admin', status: 'active', updatedAt: 't' },
     ],
@@ -128,6 +146,35 @@ function fake(
       calls.push(['saveCustomerBrand', org, config, version]);
       brand = { own: config, updatedAt: 'v2' };
       return brand;
+    },
+    resellers: async () => ({ resellers, limit: own.limits?.resellers ?? null }),
+    createReseller: async (_id, input) => {
+      calls.push(['createReseller', input]);
+      if (input.limits.customers > (own.limits?.customers ?? 0)) {
+        throw new ConsoleRequestError(400, 'invalid_commercial_request', 'limits');
+      }
+      return {
+        reseller: {
+          id: 'r-2',
+          name: input.name,
+          status: 'active',
+          limits: input.limits,
+          updatedAt: 'n1',
+          customers: 0,
+          pendingAdmins: [{ email: input.adminEmail, expiresAt: '2026-10-07T12:00:00.000Z' }],
+        },
+        token: TOKEN,
+      };
+    },
+    setResellerStatus: async (_id, reseller, status) => {
+      calls.push(['setResellerStatus', reseller.id, reseller.updatedAt, status]);
+      return {
+        id: reseller.id,
+        name: reseller.name,
+        limits: reseller.limits,
+        status,
+        updatedAt: 'r2',
+      };
     },
   };
   return { client, calls };
@@ -476,5 +523,90 @@ describe("an organization's brand inside the app (ADR-0090)", () => {
       productName: 'Acme Office',
       primaryColor: '#123456',
     });
+  });
+});
+
+describe("a white label's resellers (ADR-0098)", () => {
+  const WL = account('white_label.admin', 'white_label', {
+    name: 'Acme',
+    limits: { customers: 5, members: 3, resellers: 2 },
+  });
+
+  it('lists its resellers with counts only, creates one and shows its admin link once', async () => {
+    const { client, calls } = fake('white_label.admin', [], [], WL, [RESELLER]);
+    vi.spyOn(globalThis, 'confirm').mockReturnValue(true);
+    show(client);
+    const list = within(await screen.findByRole('list', { name: 'resellers' }));
+    expect(list.getByText('Reseller One')).toBeTruthy();
+    expect(list.getByText(/4 customers/)).toBeTruthy();
+    expect(screen.getByText('1 of 2 resellers')).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText('Reseller name'), { target: { value: 'Two' } });
+    fireEvent.change(screen.getByLabelText("Its admin's email"), {
+      target: { value: 'two@example.com' },
+    });
+    const section = within(
+      screen.getByRole('heading', { name: 'My resellers' }).closest('section') as HTMLElement,
+    );
+    fireEvent.change(section.getByLabelText('Most customers'), { target: { value: '9' } });
+    fireEvent.change(section.getByLabelText('Most people'), { target: { value: '2' } });
+    // The browser would stop 9 above the white label's 5; the API refuses it too.
+    const form = screen.getByRole('button', { name: 'Create reseller' }).closest('form');
+    fireEvent.submit(form as HTMLElement);
+    expect(await screen.findByText(/no higher than your own/)).toBeTruthy();
+
+    fireEvent.change(section.getByLabelText('Most customers'), { target: { value: '2' } });
+    fireEvent.submit(form as HTMLElement);
+    expect(await screen.findByText(/two@example.com has not joined yet/)).toBeTruthy();
+    expect((screen.getByRole('textbox', { name: /link/i }) as HTMLInputElement).value).toContain(
+      '/join#t=',
+    );
+    expect(calls).toContainEqual([
+      'createReseller',
+      { name: 'Two', adminEmail: 'two@example.com', limits: { customers: 2, members: 2 } },
+    ]);
+
+    const one = within(screen.getByRole('listitem', { name: 'Reseller One' }));
+    fireEvent.click(one.getByRole('button', { name: 'Suspend' }));
+    expect(await one.findByRole('button', { name: 'Reactivate' })).toBeTruthy();
+    expect(calls).toContainEqual(['setResellerStatus', 'r-1', 'r1', 'suspended']);
+  });
+
+  it('support sees the resellers but changes nothing', async () => {
+    const { client } = fake('white_label.support', [], [], { ...WL, role: 'white_label.support' }, [
+      RESELLER,
+    ]);
+    show(client);
+    expect(await screen.findByText('Reseller One')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Suspend' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Create reseller' })).toBeNull();
+  });
+
+  it('says when resellers are not enabled yet, and offers no form', async () => {
+    const { client } = fake('white_label.admin', [], [], {
+      ...WL,
+      limits: { customers: 5, members: 3 },
+    });
+    show(client);
+    expect(
+      await screen.findByText('MelonOffice has not enabled resellers for your account yet.'),
+    ).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Create reseller' })).toBeNull();
+  });
+
+  it('a reseller has no resellers section; alone it sells MelonOffice and has no brand to set', async () => {
+    const lone = account('reseller.admin', 'reseller');
+    const { client } = fake('reseller.admin', [], [], lone);
+    show(client);
+    expect(await screen.findByRole('heading', { name: 'People' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'My resellers' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Your brand' })).toBeNull();
+    cleanup();
+
+    const child = account('reseller.admin', 'reseller', { parentAccountId: 'wl-1' });
+    show(fake('reseller.admin', [CUSTOMER], [], child).client);
+    expect(await screen.findByRole('heading', { name: 'Your brand' })).toBeTruthy();
+    fireEvent.click(await screen.findByRole('button', { name: 'Open' }));
+    expect(await screen.findByRole('heading', { name: 'Their white-label brand' })).toBeTruthy();
   });
 });

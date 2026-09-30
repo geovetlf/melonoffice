@@ -101,7 +101,7 @@ describe("the platform administrator's partners and domains (ADR-0088)", () => {
   it('creates an account with its first admin and limits, and shows what the API refuses', async () => {
     const { client, created } = fake();
     show(client);
-    expect(await screen.findByText('There are no partner or agency accounts yet.')).toBeTruthy();
+    expect(await screen.findByText('There are no commercial accounts yet.')).toBeTruthy();
     fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Taken' } });
     fireEvent.click(screen.getByRole('button', { name: 'Use my id' }));
     expect((screen.getByLabelText('First admin (user id)') as HTMLInputElement).value).toBe(ME);
@@ -113,7 +113,38 @@ describe("the platform administrator's partners and domains (ADR-0088)", () => {
     create();
     expect(await screen.findByText('Partner A')).toBeTruthy();
     expect(created).toEqual([
-      { type: 'partner', name: 'Partner A', adminUserId: ME, limits: { customers: 5, members: 3 } },
+      {
+        type: 'reseller',
+        name: 'Partner A',
+        adminUserId: ME,
+        limits: { customers: 5, members: 3 },
+      },
+    ]);
+  });
+
+  it('offers only a reseller or a white label, and asks a white label how many resellers (ADR-0098)', async () => {
+    const { client, created } = fake();
+    show(client);
+    await screen.findByText('There are no commercial accounts yet.');
+    const kind = screen.getByLabelText('Kind') as HTMLSelectElement;
+    expect([...kind.options].map((o) => o.value)).toEqual(['reseller', 'white_label']);
+    expect(screen.queryByLabelText('Most resellers')).toBeNull();
+    fireEvent.change(kind, { target: { value: 'white_label' } });
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Acme' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Use my id' }));
+    fireEvent.change(screen.getByLabelText('Most customers'), { target: { value: '5' } });
+    fireEvent.change(screen.getByLabelText('Most people'), { target: { value: '3' } });
+    fireEvent.change(screen.getByLabelText('Most resellers'), { target: { value: '2' } });
+    create();
+    const row = within(await screen.findByRole('listitem', { name: 'Acme' }));
+    expect(row.getByText(/up to 2 resellers/)).toBeTruthy();
+    expect(created).toEqual([
+      {
+        type: 'white_label',
+        name: 'Acme',
+        adminUserId: ME,
+        limits: { customers: 5, members: 3, resellers: 2 },
+      },
     ]);
   });
 

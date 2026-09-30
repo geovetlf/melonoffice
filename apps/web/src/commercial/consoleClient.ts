@@ -2,21 +2,39 @@ import type { ReplyRequest } from '../conversations/sendReply.js';
 import type { CustomerScope } from '../partners/partnersClient.js';
 
 /**
- * The partner and agency console through the API (ADR-0086..0090): the caller's own accounts, and
+ * The commercial console through the API (ADR-0086..0090): the caller's own accounts, and
  * inside one of them its people, customers, invitations and brand. The screen only shows and
  * sends; the API decides every access, scope and limit.
  */
 
-export type AccountType = 'partner' | 'agency';
+export type AccountType = 'reseller' | 'white_label' | 'partner' | 'agency';
 
 export interface ConsoleAccount {
   readonly id: string;
   readonly type: AccountType;
   readonly name: string;
   readonly status: string;
-  readonly limits: { readonly customers?: number; readonly members?: number } | null;
+  readonly limits: {
+    readonly customers?: number;
+    readonly members?: number;
+    readonly resellers?: number;
+  } | null;
+  /** The white label a reseller works under (ADR-0098); null for any other account. */
+  readonly parentAccountId?: string | null;
   /** The caller's role in it, e.g. `partner.admin`. */
   readonly role: string;
+}
+
+/** One of a white label's resellers (ADR-0098): the account and counts, nothing inside it. */
+export interface ConsoleReseller {
+  readonly id: string;
+  readonly name: string;
+  readonly status: 'active' | 'suspended' | 'closed';
+  readonly limits: { readonly customers?: number; readonly members?: number } | null;
+  readonly updatedAt: string;
+  readonly customers: number;
+  /** Its first admin while they have not joined yet: email and expiry, never the link. */
+  readonly pendingAdmins: readonly { readonly email: string; readonly expiresAt: string }[];
 }
 
 export interface ConsoleMember {
@@ -139,6 +157,23 @@ export interface ConsoleClient {
     expectedUpdatedAt: string | null,
   ): Promise<OwnBrand>;
   customerBrand(accountId: string, organizationId: string): Promise<OwnBrand>;
+  /** A white label's resellers (ADR-0098). */
+  resellers(
+    accountId: string,
+  ): Promise<{ readonly resellers: readonly ConsoleReseller[]; readonly limit: number | null }>;
+  createReseller(
+    accountId: string,
+    input: {
+      readonly name: string;
+      readonly adminEmail: string;
+      readonly limits: { readonly customers: number; readonly members: number };
+    },
+  ): Promise<{ readonly reseller: ConsoleReseller; readonly token: string }>;
+  setResellerStatus(
+    accountId: string,
+    reseller: ConsoleReseller,
+    status: 'active' | 'suspended',
+  ): Promise<Omit<ConsoleReseller, 'customers' | 'pendingAdmins'>>;
   saveCustomerBrand(
     accountId: string,
     organizationId: string,
@@ -237,6 +272,18 @@ export function createConsoleClient(request: ReplyRequest): ConsoleClient {
         }),
       ),
     customerBrand: async (id, org) => brandOf(await call(`${cus(id, org)}/brand`)),
+    resellers: (id) =>
+      call<{ resellers: ConsoleReseller[]; limit: number | null }>(`${acc(id)}/resellers`),
+    createReseller: (id, input) =>
+      send<{ reseller: ConsoleReseller; token: string }>(`${acc(id)}/resellers`, 'POST', input),
+    setResellerStatus: async (id, reseller, status) =>
+      (
+        await send<{ reseller: Omit<ConsoleReseller, 'customers' | 'pendingAdmins'> }>(
+          `${acc(id)}/resellers/${encodeURIComponent(reseller.id)}/status`,
+          'POST',
+          { status, expectedUpdatedAt: reseller.updatedAt },
+        )
+      ).reseller,
     saveCustomerBrand: async (id, org, config, expectedUpdatedAt) =>
       brandOf(
         await send(`${cus(id, org)}/brand`, 'PUT', {

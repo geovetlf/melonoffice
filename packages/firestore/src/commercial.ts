@@ -62,6 +62,8 @@ interface AccountDocument {
   readonly pricingProfile: PricingProfileRef | null;
   readonly commission: CommissionConfig | null;
   readonly limits: CommercialLimits | null;
+  /** The white label of a reseller (ADR-0098); absent on accounts made before it. */
+  readonly parentAccountId?: string | null;
   readonly createdAt: FirestoreTimestamp;
   readonly updatedAt: FirestoreTimestamp;
 }
@@ -150,7 +152,8 @@ function toAccount(id: string, d: AccountDocument): CommercialAccount {
     !isCommercialAccountId(id) ||
     !(COMMERCIAL_ACCOUNT_TYPES as readonly string[]).includes(d.type) ||
     !ACCOUNT_STATUSES.includes(d.status) ||
-    typeof d.name !== 'string'
+    typeof d.name !== 'string' ||
+    (d.parentAccountId != null && !isCommercialAccountId(d.parentAccountId))
   ) {
     throw new Error('invalid commercial account record');
   }
@@ -162,6 +165,9 @@ function toAccount(id: string, d: AccountDocument): CommercialAccount {
     ...(d.pricingProfile == null ? {} : { pricingProfile: d.pricingProfile }),
     ...(d.commission == null ? {} : { commission: d.commission }),
     ...(d.limits == null ? {} : { limits: d.limits }),
+    ...(d.parentAccountId == null
+      ? {}
+      : { parentAccountId: d.parentAccountId as CommercialAccountId }),
     createdAt: iso(d.createdAt),
     updatedAt: iso(d.updatedAt),
   });
@@ -311,6 +317,7 @@ const accountDocument = (a: CommercialAccount): AccountDocument => ({
   pricingProfile: a.pricingProfile ?? null,
   commission: a.commission ?? null,
   limits: a.limits ?? null,
+  parentAccountId: a.parentAccountId ?? null,
   createdAt: at(a.createdAt),
   updatedAt: at(a.updatedAt),
 });
@@ -407,6 +414,50 @@ export class FirestoreCommercialStore implements CommercialRepository {
       .where('organizationId', '==', organizationId)
       .get();
     return snapshot.docs.map((d) => toRelationship(d.id, d.data() as RelationshipDocument));
+  }
+
+  async accountsWithParent(parentId: CommercialAccountId) {
+    const snapshot = await this.db
+      .collection(COMMERCIAL_ACCOUNTS)
+      .where('parentAccountId', '==', parentId)
+      .get();
+    return snapshot.docs.map((d) => toAccount(d.id, d.data() as AccountDocument));
+  }
+
+  async createChildAccount(
+    account: CommercialAccount,
+    expectedParent: CommercialAccount,
+    firstAdmin: MemberInvitation,
+    events: readonly AuditEvent[],
+    limit: number,
+  ) {
+    if (
+      account.parentAccountId !== expectedParent.id ||
+      firstAdmin.commercialAccountId !== account.id
+    ) {
+      throw new Error('child account does not match its parent or first admin');
+    }
+    await this.db.runTransaction(async (tx) => {
+      const accounts = this.db.collection(COMMERCIAL_ACCOUNTS);
+      const parentSnapshot = await tx.get(accounts.doc(expectedParent.id));
+      const parent = parentSnapshot.exists
+        ? toAccount(parentSnapshot.id, parentSnapshot.data() as AccountDocument)
+        : undefined;
+      if (parent?.updatedAt !== expectedParent.updatedAt || parent.status !== 'active') {
+        throw new TenancyError('commercial_conflict');
+      }
+      const children = await tx.get(accounts.where('parentAccountId', '==', parent.id));
+      const open = children.docs.filter((d) => (d.data() as AccountDocument).status !== 'closed');
+      if (open.length >= limit) throw new TenancyError('commercial_limit_reached');
+      const ref = accounts.doc(account.id);
+      if ((await tx.get(ref)).exists) throw new TenancyError('commercial_conflict');
+      tx.create(ref, accountDocument(account));
+      tx.create(
+        this.db.collection(MEMBER_INVITATIONS).doc(firstAdmin.id),
+        memberInvitationDocument(firstAdmin),
+      );
+      this.#audit(tx, events);
+    });
   }
 
   async createAccount(

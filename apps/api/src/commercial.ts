@@ -10,10 +10,9 @@ import type { BillingService } from '@melonoffice/billing';
 import type {
   BillingRelationship,
   CommercialAccount,
+  CommercialLimits,
   CommercialAccountId,
-  CommercialAccountType,
   CommercialMembership,
-  CustomerMode,
   CustomerRelationship,
   IsoTimestamp,
   OrganizationId,
@@ -33,6 +32,8 @@ import {
   customerAccessOf,
   customerRelationshipIdOf,
   isCommercialAccountType,
+  customerModesOf,
+  parentAllows,
   isCustomerMode,
   isOrganizationId,
   isTenancyError,
@@ -99,15 +100,26 @@ const STATUS: Partial<Record<string, ContentfulStatusCode>> = {
   invalid_customer_scopes: 400,
 };
 
-/** The modes each kind of account may use. An agency operates; a partner sells. */
-const MODES: Readonly<Record<CommercialAccountType, readonly CustomerMode[]>> = {
-  partner: ['direct', 'reseller', 'white_label', 'oem', 'enterprise'],
-  agency: ['agency'],
-};
-
 const LIMIT_MAX = 100_000;
 const isLimit = (value: unknown): value is number =>
   typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= LIMIT_MAX;
+/**
+ * An account's limits as sent: customers and members for every kind, and resellers for a white
+ * label (ADR-0098). `undefined` when any is missing or out of range.
+ */
+export function parseAccountLimits(
+  type: CommercialAccount['type'],
+  value: unknown,
+): CommercialLimits | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const limits = value as Record<string, unknown>;
+  if (!isLimit(limits.customers) || !isLimit(limits.members) || limits.members < 1) {
+    return undefined;
+  }
+  if (type !== 'white_label') return { customers: limits.customers, members: limits.members };
+  if (!isLimit(limits.resellers)) return undefined;
+  return { customers: limits.customers, members: limits.members, resellers: limits.resellers };
+}
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -121,12 +133,14 @@ const body = async (c: Context<AuthEnv>): Promise<Record<string, unknown>> => {
     : {};
 };
 
-const accountView = (a: CommercialAccount) => ({
+export const accountView = (a: CommercialAccount) => ({
   id: a.id,
   type: a.type,
   name: a.name,
   status: a.status,
   limits: a.limits ?? null,
+  // The white label a reseller belongs to (ADR-0098).
+  parentAccountId: a.parentAccountId ?? null,
   // The version a platform change names (ADR-0091).
   updatedAt: a.updatedAt,
 });
@@ -252,16 +266,8 @@ export function registerCommercialRoutes(app: Hono<AuthEnv>, deps: CommercialDep
     if (typeof input.adminUserId !== 'string' || !UUID.test(input.adminUserId)) {
       return bad(c, 'adminUserId');
     }
-    const limits = input.limits as Record<string, unknown> | undefined;
-    if (
-      typeof limits !== 'object' ||
-      limits === null ||
-      !isLimit(limits.customers) ||
-      !isLimit(limits.members) ||
-      limits.members < 1
-    ) {
-      return bad(c, 'limits');
-    }
+    const limits = parseAccountLimits(input.type, input.limits);
+    if (limits === undefined) return bad(c, 'limits');
     if (!(await userExists(input.adminUserId as UserId))) return bad(c, 'adminUserId');
     const at = now();
     const iso = at.toISOString() as IsoTimestamp;
@@ -270,7 +276,7 @@ export function registerCommercialRoutes(app: Hono<AuthEnv>, deps: CommercialDep
       type: input.type,
       name,
       status: 'active',
-      limits: { customers: limits.customers, members: limits.members },
+      limits,
       createdAt: iso,
       updatedAt: iso,
     };
@@ -415,23 +421,15 @@ export function registerCommercialRoutes(app: Hono<AuthEnv>, deps: CommercialDep
   app.post('/v1/platform/commercial-accounts/:accountId/limits', (c) =>
     platformChange(c, 'commercial_account.limits_changed', async (admin) => {
       const input = await body(c);
-      const limits = input.limits as Record<string, unknown> | undefined;
-      if (
-        typeof limits !== 'object' ||
-        limits === null ||
-        !isLimit(limits.customers) ||
-        !isLimit(limits.members) ||
-        limits.members < 1
-      ) {
-        return bad(c, 'limits');
-      }
       const account = await accountToChange(c, input);
       if (account instanceof Response) return account;
+      const limits = parseAccountLimits(account.type, input.limits);
+      if (limits === undefined) return bad(c, 'limits');
       if (account.status === 'closed') return c.json({ error: 'commercial_account_closed' }, 409);
       const at = now();
       const next: CommercialAccount = {
         ...account,
-        limits: { customers: limits.customers, members: limits.members },
+        limits,
         updatedAt: at.toISOString() as IsoTimestamp,
       };
       await commercial.saveAccount(next, account, [
@@ -457,12 +455,15 @@ export function registerCommercialRoutes(app: Hono<AuthEnv>, deps: CommercialDep
   // The accounts the caller belongs to: active memberships in active accounts, their own only.
   app.get('/v1/commercial/accounts', async (c) => {
     const auth = c.get('auth');
-    if (auth.actor !== 'user') return c.json({ accounts: [] });
+    // Only a person with a verified email administers a commercial account (ADR-0098).
+    if (auth.actor !== 'user' || !auth.emailVerified) return c.json({ accounts: [] });
     const mine = [];
     for (const m of await commercial.membershipsOfUser(auth.userId)) {
       if (m.status !== 'active' || m.userId !== auth.userId) continue;
       const account = await commercial.findAccount(m.commercialAccountId);
-      if (account?.status === 'active') mine.push({ ...accountView(account), role: m.role });
+      if (account?.status === 'active' && (await parentAllows(account, commercial))) {
+        mine.push({ ...accountView(account), role: m.role });
+      }
     }
     return c.json({ accounts: mine });
   });
@@ -603,7 +604,9 @@ export function registerCommercialRoutes(app: Hono<AuthEnv>, deps: CommercialDep
     inAccount('commercial.invite_customer', async (c, context) => {
       const input = await body(c);
       if (!isOrganizationId(input.organizationId)) return bad(c, 'organizationId');
-      if (!isCustomerMode(input.mode) || !MODES[context.accountType].includes(input.mode)) {
+      const account = await commercial.findAccount(context.commercialAccountId);
+      if (account === undefined) throw new TenancyError('commercial_account_forbidden');
+      if (!isCustomerMode(input.mode) || !customerModesOf(account).includes(input.mode)) {
         return bad(c, 'mode');
       }
       let scopes;
@@ -619,8 +622,7 @@ export function registerCommercialRoutes(app: Hono<AuthEnv>, deps: CommercialDep
       const organizationId = input.organizationId;
       const organization = await organizations.findOrganization(organizationId);
       if (organization?.status !== 'active') throw new TenancyError('customer_forbidden');
-      const account = await commercial.findAccount(context.commercialAccountId);
-      if (account?.limits?.customers === undefined) {
+      if (account.limits?.customers === undefined) {
         throw new TenancyError('commercial_limit_reached');
       }
       const current = await commercial.findRelationship(

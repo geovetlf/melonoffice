@@ -126,6 +126,7 @@ import { registerBrandingRoutes, registerPublicBrandRoute } from './branding.js'
 import { registerCommercialRoutes, type CommercialDependencies } from './commercial.js';
 import { registerInvitationRoutes } from './invitations.js';
 import { registerMemberInvitationRoutes } from './member-invitations.js';
+import { registerResellerRoutes } from './resellers.js';
 import { DEFAULT_ACTIVITY_TIME_ZONE, registerActivityRoutes } from './activity.js';
 import { registerBrainRoutes } from './brain.js';
 import { registerBusinessRoutes } from './business.js';
@@ -1345,6 +1346,8 @@ export function createApp({
       registerInvitationRoutes(app, commercialDeps);
       // Joining a partner or agency account only by invitation (ADR-0093).
       registerMemberInvitationRoutes(app, commercialDeps);
+      // A white label's resellers (ADR-0098).
+      registerResellerRoutes(app, commercialDeps);
     } else {
       const unavailable = (c: Context<Env>) => c.json({ error: 'commercial_not_configured' }, 503);
       app.all('/v1/platform/commercial-accounts', unavailable);

@@ -34,6 +34,8 @@ import { parseOrganizationName } from './tenant.js';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 export const COMMERCIAL_ACCOUNT_TYPES: readonly CommercialAccountType[] = Object.freeze([
+  'reseller',
+  'white_label',
   'partner',
   'agency',
 ]);
@@ -231,9 +233,47 @@ export const isResolvedCommercialContext = (context: CommercialContext): boolean
   issued.has(context);
 
 /**
+ * How each kind of account may serve a customer (ADR-0086, ADR-0098). A reseller alone serves
+ * under MelonOffice; a reseller under a white label and the white label itself serve under the
+ * white label's brand. A partner keeps its first set of modes; an agency operates.
+ */
+export function customerModesOf(
+  account: Pick<CommercialAccount, 'type' | 'parentAccountId'>,
+): readonly CustomerMode[] {
+  switch (account.type) {
+    case 'reseller':
+      return account.parentAccountId === undefined ? ['reseller'] : ['white_label'];
+    case 'white_label':
+      return ['white_label'];
+    case 'partner':
+      return ['direct', 'reseller', 'white_label', 'oem', 'enterprise'];
+    case 'agency':
+      return ['agency'];
+  }
+}
+
+/**
+ * Whether an account's white label lets it work (ADR-0098): an account with no parent always
+ * does; a reseller under a white label only while that white label is active.
+ */
+export async function parentAllows(
+  account: CommercialAccount,
+  store: Pick<CommercialStore, 'findAccount'>,
+): Promise<boolean> {
+  if (account.parentAccountId === undefined) return true;
+  if (account.type !== 'reseller') return false;
+  const parent = await store.findAccount(account.parentAccountId);
+  return (
+    parent?.id === account.parentAccountId &&
+    parent.type === 'white_label' &&
+    parent.status === 'active'
+  );
+}
+
+/**
  * Places an authenticated person in a commercial account. `requested` is only a selector; access
  * comes from their own active membership in an active account. Only a person acting for
- * themselves: GIA and the runtime have no commercial path. Every refusal is
+ * themselves, with a verified email: GIA and the runtime have no commercial path. Every refusal is
  * `commercial_account_forbidden`, so ids cannot be probed.
  */
 export async function resolveCommercialContext(
@@ -242,6 +282,8 @@ export async function resolveCommercialContext(
   store: CommercialStore,
 ): Promise<CommercialContext> {
   if (auth.actor !== 'user') throw new TenancyError('commercial_account_forbidden');
+  // Commercial administration needs a verified email, as platform administration does.
+  if (!auth.emailVerified) throw new TenancyError('commercial_account_forbidden');
   if (!isCommercialAccountId(requested)) throw new TenancyError('commercial_account_forbidden');
   const membership = await store.findMembership(requested, auth.userId);
   if (
@@ -256,6 +298,8 @@ export async function resolveCommercialContext(
   if (account?.status !== 'active' || account.id !== requested) {
     throw new TenancyError('commercial_account_forbidden');
   }
+  // A reseller works only while its white label does (ADR-0098).
+  if (!(await parentAllows(account, store))) throw new TenancyError('commercial_account_forbidden');
   const context: CommercialContext = Object.freeze({
     userId: auth.userId,
     commercialAccountId: account.id,

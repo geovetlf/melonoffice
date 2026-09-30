@@ -17,11 +17,13 @@ import {
   canChangeRelationshipStatus,
   commercialMembershipIdOf,
   customerAccessOf,
+  customerModesOf,
   customerRelationshipIdOf,
   isResolvedCommercialContext,
   listCustomersOf,
   parseCommercialAccountName,
   parseCommissionConfig,
+  parentAllows,
   parseCustomerScopes,
   resolveCommercialContext,
   type CommercialContext,
@@ -326,5 +328,61 @@ describe('commercial configuration is data, never a constant (ADR-0085)', () => 
     expect(canChangeRelationshipStatus('pending', 'active')).toBe(true);
     expect(canChangeRelationshipStatus('pending', 'suspended')).toBe(false);
     expect(canChangeRelationshipStatus('ended', 'active')).toBe(false);
+  });
+});
+
+describe('white labels sit above their resellers on the same core (ADR-0098)', () => {
+  const WL = '34343434-0000-4000-8000-000000000034' as CommercialAccountId;
+  const CHILD = '56565656-0000-4000-8000-000000000056' as CommercialAccountId;
+  const RESELLER_ADMIN = '55555555-5555-4555-8555-555555555555' as UserId;
+
+  function hierarchy(wlStatus: CommercialAccount['status'] = 'active') {
+    const w = world();
+    w.store.putAccount(account(WL, 'white_label', { status: wlStatus }));
+    w.store.putAccount(account(CHILD, 'reseller', { parentAccountId: WL }));
+    w.member(CHILD, RESELLER_ADMIN, 'reseller.admin');
+    return w;
+  }
+
+  it('offers each kind of account only its own customer modes', () => {
+    expect(customerModesOf({ type: 'white_label' })).toEqual(['white_label']);
+    expect(customerModesOf({ type: 'reseller' })).toEqual(['reseller']);
+    expect(customerModesOf({ type: 'reseller', parentAccountId: WL })).toEqual(['white_label']);
+    expect(customerModesOf({ type: 'agency' })).toEqual(['agency']);
+    expect(customerModesOf({ type: 'partner' })).toContain('direct');
+  });
+
+  it('lets a reseller work only while its white label is active', async () => {
+    const { store } = hierarchy();
+    const child = await store.findAccount(CHILD);
+    expect(child && (await parentAllows(child, store))).toBe(true);
+    const context = await resolveCommercialContext(user(RESELLER_ADMIN), CHILD, store);
+    expect(context.accountType).toBe('reseller');
+
+    for (const status of ['suspended', 'closed'] as const) {
+      const suspended = hierarchy(status).store;
+      await refused(
+        resolveCommercialContext(user(RESELLER_ADMIN), CHILD, suspended),
+        'commercial_account_forbidden',
+      );
+    }
+  });
+
+  it('never treats another kind of parent as a white label', async () => {
+    const { store } = world();
+    store.putAccount(account(CHILD, 'reseller', { parentAccountId: PARTNER_A }));
+    store.putAccount(account(WL, 'white_label', { parentAccountId: PARTNER_A }));
+    for (const id of [CHILD, WL]) {
+      const stored = await store.findAccount(id);
+      expect(stored && (await parentAllows(stored, store))).toBe(false);
+    }
+  });
+
+  it('needs a verified email for any commercial administration', async () => {
+    const { store } = world();
+    await refused(
+      resolveCommercialContext({ ...user(PARTNER_ADMIN), emailVerified: false }, PARTNER_A, store),
+      'commercial_account_forbidden',
+    );
   });
 });

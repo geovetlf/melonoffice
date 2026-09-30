@@ -72,7 +72,8 @@ export interface BrandResolutionDependencies {
 
 /**
  * An organization's brand (ADR-0087): platform, then its partner's brand when it is that
- * partner's white-label customer, then its own (its business profile's facts, then its brand
+ * partner's white-label customer (a white label, or a reseller under one: the white label's brand,
+ * then the reseller's, ADR-0098), then its own (its business profile's facts, then its brand
  * configuration), then what the partner set for it while it grants the `branding` scope.
  *
  * Only an active white-label relationship with an active partner brings a partner's levels, and
@@ -94,13 +95,36 @@ export async function effectiveBrandOf(
     relationship === undefined
       ? undefined
       : await deps.commercial.findAccount(relationship.commercialAccountId);
+  // A reseller under a white label shows the white label's brand first (ADR-0098), and only
+  // while that white label is active; a reseller alone never serves in white label.
+  const parent =
+    partner?.type === 'reseller' && partner.parentAccountId !== undefined
+      ? await deps.commercial.findAccount(partner.parentAccountId)
+      : undefined;
+  const parentApplies =
+    parent !== undefined &&
+    parent.id === partner?.parentAccountId &&
+    parent.type === 'white_label' &&
+    parent.status === 'active';
   const partnerApplies =
     relationship !== undefined &&
     partner?.status === 'active' &&
-    partner.type === 'partner' &&
-    partner.id === relationship.commercialAccountId;
+    partner.id === relationship.commercialAccountId &&
+    (partner.type === 'partner' ||
+      partner.type === 'white_label' ||
+      (partner.type === 'reseller' && parentApplies));
 
   if (partnerApplies) {
+    if (parentApplies) {
+      const whiteLabel = await deps.brands.findBrand({
+        level: 'commercial_account',
+        commercialAccountId: parent.id,
+      });
+      if (whiteLabel !== undefined) {
+        levels.push(whiteLabel.config);
+        names.push('commercial_account');
+      }
+    }
     const own = await deps.brands.findBrand({
       level: 'commercial_account',
       commercialAccountId: relationship.commercialAccountId,

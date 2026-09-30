@@ -18,10 +18,12 @@ export type CustomerInvitationId = Brand<string, 'CustomerInvitationId'>;
 export type MemberInvitationId = Brand<string, 'MemberInvitationId'>;
 
 /**
- * - `partner`: sells MelonOffice to its customers (reseller, white label, OEM).
+ * - `reseller`: sells MelonOffice to its own customers; alone, or under a white label (ADR-0098).
+ * - `white_label`: sells under its own brand, to its customers and through its resellers.
+ * - `partner`: the first partner kind (ADR-0085), kept for accounts that already exist.
  * - `agency`: operates MelonOffice for its customers (managed AI).
  */
-export type CommercialAccountType = 'partner' | 'agency';
+export type CommercialAccountType = 'reseller' | 'white_label' | 'partner' | 'agency';
 
 /**
  * - `active`: its members can act for its related customers, within the relationships' scopes.
@@ -65,9 +67,11 @@ export interface CommissionConfig {
 export interface CommercialLimits {
   readonly customers?: number;
   readonly members?: number;
+  /** How many resellers a white label may have (ADR-0098). */
+  readonly resellers?: number;
 }
 
-/** A partner or an agency. */
+/** A reseller, a white label, a partner or an agency. */
 export interface CommercialAccount {
   readonly id: CommercialAccountId;
   readonly type: CommercialAccountType;
@@ -76,6 +80,11 @@ export interface CommercialAccount {
   readonly pricingProfile?: PricingProfileRef;
   readonly commission?: CommissionConfig;
   readonly limits?: CommercialLimits;
+  /**
+   * The white label a reseller belongs to (ADR-0098), set when it is created and never changed.
+   * Only a reseller has one; the others stand alone under the platform.
+   */
+  readonly parentAccountId?: CommercialAccountId;
   readonly createdAt: IsoTimestamp;
   readonly updatedAt: IsoTimestamp;
 }
@@ -83,7 +92,8 @@ export interface CommercialAccount {
 /**
  * A role in a commercial account, as a name only. What it may do is decided by RBAC, as for
  * organization roles (ADR-0019); an unknown name grants nothing. Known names today:
- * `partner.admin`, `partner.support`, `agency.admin`, `agency.manager`.
+ * `reseller.admin`, `reseller.support`, `white_label.admin`, `white_label.support`, `partner.admin`,
+ * `partner.support`, `agency.admin`, `agency.manager`.
  */
 export type CommercialRole = string;
 

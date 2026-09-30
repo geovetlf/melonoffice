@@ -76,6 +76,32 @@ export class InMemoryCommercialStore implements CommercialRepository {
     return [...this.#relationships.values()].filter((r) => r.organizationId === organizationId);
   }
 
+  async accountsWithParent(parentId: CommercialAccountId) {
+    return [...this.#accounts.values()].filter((a) => a.parentAccountId === parentId);
+  }
+
+  async createChildAccount(
+    account: CommercialAccount,
+    expectedParent: CommercialAccount,
+    firstAdmin: MemberInvitation,
+    events: readonly AuditEvent[],
+    limit: number,
+  ) {
+    if (this.#accounts.has(account.id)) throw new TenancyError('commercial_conflict');
+    const parent = this.#accounts.get(expectedParent.id);
+    if (parent === undefined || parent.updatedAt !== expectedParent.updatedAt) {
+      throw new TenancyError('commercial_conflict');
+    }
+    if (parent.status !== 'active') throw new TenancyError('commercial_conflict');
+    const children = (await this.accountsWithParent(parent.id)).filter(
+      (a) => a.status !== 'closed',
+    ).length;
+    if (children >= limit) throw new TenancyError('commercial_limit_reached');
+    this.#record(events);
+    this.putAccount(account);
+    this.#memberInvitations.set(firstAdmin.id, Object.freeze({ ...firstAdmin }));
+  }
+
   async createAccount(
     account: CommercialAccount,
     firstAdmin: CommercialMembership,

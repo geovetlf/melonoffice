@@ -27,6 +27,20 @@ export interface CommercialRepository extends CommercialStore {
   relationshipsOfOrganization(
     organizationId: OrganizationId,
   ): Promise<readonly CustomerRelationship[]>;
+  /** The resellers of one white label (ADR-0098), in any status. */
+  accountsWithParent(parentId: CommercialAccountId): Promise<readonly CommercialAccount[]>;
+  /**
+   * A new reseller under a white label (ADR-0098), with the invitation of its first admin, in one
+   * step. The white label must still be the version read (`expectedParent`) and active, and have
+   * fewer than `limit` resellers not closed.
+   */
+  createChildAccount(
+    account: CommercialAccount,
+    expectedParent: CommercialAccount,
+    firstAdmin: MemberInvitation,
+    events: readonly AuditEvent[],
+    limit: number,
+  ): Promise<void>;
   /** A new account with its first admin. Fails if the id exists. */
   createAccount(
     account: CommercialAccount,
