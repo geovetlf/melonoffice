@@ -1,3 +1,4 @@
+import { createAICostEngine, createAIUsageLedger } from '@melonoffice/ai-usage';
 import { describe, expect, it } from 'vitest';
 import { setupApp, STORES, type Stores } from './test-api.js';
 
@@ -388,5 +389,70 @@ describe.each(STORES)('the commercial layer with storage in %s', (_name, createS
     expect((await call('bob', 'GET', '/v1/platform/commercial-accounts')).status).toBe(403);
     // Alice is the platform administrator but no member of Partner A.
     expect((await call('alice', 'GET', acc(partnerA))).status).toBe(403);
+  });
+
+  it("reads a customer's AI usage and subscription only with its scopes, and never who used it or what it cost", async () => {
+    const { call, ids, stores, acc, partnerA, relate, tenantA, tenantB } = await setup();
+    await call('carol', 'POST', `${acc(partnerA)}/members`, {
+      userId: ids.frank,
+      role: 'partner.support',
+    });
+    await relate('carol', partnerA, 'alice', tenantA, 'reseller', ['usage', 'billing']);
+    await relate('carol', partnerA, 'bob', tenantB, 'reseller', ['summary']);
+    const day = '2026-09-29';
+    const engine = createAICostEngine();
+    await createAIUsageLedger(stores.aiUsage).record({
+      id: 'usage-1',
+      occurredAt: `${day}T10:00:00.000Z`,
+      attribution: { organizationId: tenantA as never, actor: 'user', userId: ids.alice as never },
+      capability: 'llm',
+      provider: 'deepseek',
+      model: 'deepseek-chat',
+      modelVersion: 'v1',
+      operation: 'generate',
+      outcome: 'completed',
+      cost: engine.cost({
+        capability: 'llm',
+        provider: 'deepseek',
+        model: 'deepseek-chat',
+        operation: 'generate',
+        pricing: { status: 'unknown' },
+        usage: { quantities: [{ unit: 'input_tokens', quantity: 10 }] },
+      }),
+      credits: 2,
+      source: 'test',
+      requestId: 'req-usage-1',
+    });
+    const usage = `${acc(partnerA)}/customers/${tenantA}/usage?from=${day}&to=${day}`;
+    for (const who of ['carol', 'frank']) {
+      expect(await call(who, 'GET', usage)).toEqual({
+        status: 200,
+        body: {
+          from: day,
+          to: day,
+          totals: { operations: 1, credits: 2 },
+          byCapability: { llm: { operations: 1, credits: 2 } },
+        },
+      });
+    }
+    const billing = await call('carol', 'GET', `${acc(partnerA)}/customers/${tenantA}/billing`);
+    expect(billing.status).toBe(200);
+    expect(billing.body).toMatchObject({ billedTo: null });
+    expect(Object.keys(billing.body)).toEqual(['billedTo', 'subscription']);
+    // Support reads usage, never billing; a customer without the scope shows neither.
+    expect(
+      (await call('frank', 'GET', `${acc(partnerA)}/customers/${tenantA}/billing`)).body.error,
+    ).toBe('customer_forbidden');
+    for (const path of ['usage', 'billing']) {
+      expect(
+        (await call('carol', 'GET', `${acc(partnerA)}/customers/${tenantB}/${path}?from=${day}`))
+          .body.error,
+      ).toBe('customer_forbidden');
+    }
+    expect((await call('carol', 'GET', `${usage.split('?')[0]}?from=yesterday`)).status).toBe(400);
+    const denied = (await stores.auditEvents()).filter(
+      (e) => e.action === 'commercial.access' && e.permission === 'customer.read_billing',
+    );
+    expect(denied.map((e) => e.reason)).toEqual(['permission_denied', 'scope_not_granted']);
   });
 });

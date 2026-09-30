@@ -2,6 +2,7 @@ import { FormattedMessage, useIntl } from '@melonoffice/i18n';
 import { useEffect, useState } from 'react';
 import { usd } from '../aiUsage/AIUsagePage.js';
 import { periodDays, type UsagePeriod } from '../aiUsage/aiUsageClient.js';
+import { CommercialAdmin } from './CommercialAdmin.js';
 import type {
   PlatformAI,
   PlatformBucket,
@@ -25,9 +26,12 @@ const PERIODS: readonly UsagePeriod[] = ['today', 'week', 'month'];
 export function PlatformPage({
   client,
   now = () => new Date(),
+  currentUserId,
 }: {
   readonly client: PlatformClient;
   readonly now?: () => Date;
+  /** The administrator's own id, offered as a new account's first admin. */
+  readonly currentUserId?: string;
 }) {
   const intl = useIntl();
   const [ai, setAI] = useState<Load<PlatformAI>>('loading');
@@ -69,6 +73,11 @@ export function PlatformPage({
       <p className="documents__lead">
         <FormattedMessage id="platform.lead" />
       </p>
+
+      <CommercialAdmin
+        client={client}
+        {...(currentUserId === undefined ? {} : { currentUserId })}
+      />
 
       {ai === 'loading' ? (
         <Loading />

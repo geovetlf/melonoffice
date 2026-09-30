@@ -343,6 +343,18 @@ export const PERMISSIONS = {
     description:
       "See a customer's name, status, plan and subscription status, only when the customer granted the `summary` scope (ADR-0086).",
   },
+  'customer.read_usage': {
+    resource: 'customer',
+    action: 'read_usage',
+    description:
+      'See how much AI a customer used, in operations and credits by capability, only when the customer granted the `usage` scope (ADR-0088). Never who used it, nor provider cost.',
+  },
+  'customer.read_billing': {
+    resource: 'customer',
+    action: 'read_billing',
+    description:
+      "See a customer's subscription: its plan, status and who is billed, only when the customer granted the `billing` scope (ADR-0088). Nothing about payments.",
+  },
   'commercial.manage_brand': {
     resource: 'commercial',
     action: 'manage_brand',

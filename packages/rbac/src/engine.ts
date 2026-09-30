@@ -104,6 +104,8 @@ export type CommercialDecision =
 const SCOPE_OF: Readonly<Partial<Record<Permission, CustomerAccessScope>>> = {
   'customer.read_summary': 'summary',
   'customer.manage_brand': 'branding',
+  'customer.read_usage': 'usage',
+  'customer.read_billing': 'billing',
 };
 
 /**

@@ -470,9 +470,10 @@ describe('commercial authorization (ADR-0086)', () => {
     const admin = await contextAs('partner.admin');
     const support = await contextAs('partner.support');
     for (const permission of COMMERCIAL_ROLES['partner.admin']) {
-      expect(commercial.authorize(admin, permission, access(['summary', 'branding'])).allowed).toBe(
-        true,
-      );
+      expect(
+        commercial.authorize(admin, permission, access(['summary', 'branding', 'usage', 'billing']))
+          .allowed,
+      ).toBe(true);
     }
     expect(commercial.authorize(support, 'commercial.read').allowed).toBe(true);
     expect(commercial.authorize(support, 'commercial.manage_members')).toEqual({

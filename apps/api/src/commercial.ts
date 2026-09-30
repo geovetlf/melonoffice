@@ -4,7 +4,9 @@ import {
   type AuditEventInput,
   type AuditService,
 } from '@melonoffice/audit';
+import { isAIUsageError, type AIUsageLedger } from '@melonoffice/ai-usage';
 import type { AuthenticatedContext } from '@melonoffice/auth';
+import type { BillingService } from '@melonoffice/billing';
 import type {
   BillingRelationship,
   CommercialAccount,
@@ -39,6 +41,7 @@ import {
   resolveCommercialContext,
   TenancyError,
   type CommercialContext,
+  type CustomerAccess,
   type CommercialRepository,
   type TenancyStore,
   type TenantContext,
@@ -73,6 +76,10 @@ export interface CommercialDependencies {
   readonly audit: AuditService;
   /** The plan in force, for a customer's summary. Absent: the summary says `null`. */
   readonly currentPlan?: (organizationId: OrganizationId) => Promise<PlanRef | undefined>;
+  /** A customer's subscription, for its `billing` scope (ADR-0088). Absent: `null`. */
+  readonly subscriptionOf?: BillingService['subscriptionOf'];
+  /** The one AI usage ledger, for a customer's `usage` scope (ADR-0088). Absent: 503. */
+  readonly usage?: Pick<AIUsageLedger, 'summary'>;
   readonly now?: () => Date;
 }
 
@@ -94,6 +101,7 @@ const MODES: Readonly<Record<CommercialAccountType, readonly CustomerMode[]>> = 
 const LIMIT_MAX = 100_000;
 const isLimit = (value: unknown): value is number =>
   typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= LIMIT_MAX;
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 const bad = (c: Context<AuthEnv>, field: string) =>
@@ -523,9 +531,15 @@ export function registerCommercialRoutes(app: Hono<AuthEnv>, deps: CommercialDep
     }),
   );
 
-  // A customer's summary, only where it granted `summary`.
-  app.get(
-    '/v1/commercial/accounts/:accountId/customers/:organizationId',
+  /**
+   * A read inside one customer of this very account: an active relationship with an active
+   * organization, and the scope the permission needs. Every refusal is `customer_forbidden`; a
+   * missing scope or role is audited.
+   */
+  const inCustomer = (
+    permission: 'customer.read_summary' | 'customer.read_usage' | 'customer.read_billing',
+    handler: (c: Context<AuthEnv>, access: CustomerAccess) => Promise<Response>,
+  ) =>
     inAccount('commercial.read', async (c, context) => {
       const access = await customerAccessOf(
         context,
@@ -533,7 +547,7 @@ export function registerCommercialRoutes(app: Hono<AuthEnv>, deps: CommercialDep
         commercial,
         organizations,
       );
-      const decision = commercialAuthorization.authorize(context, 'customer.read_summary', access);
+      const decision = commercialAuthorization.authorize(context, permission, access);
       if (!decision.allowed) {
         await recordOutcome(c, audit, {
           action: 'commercial.access',
@@ -541,12 +555,21 @@ export function registerCommercialRoutes(app: Hono<AuthEnv>, deps: CommercialDep
           actor: actorOf(c.get('auth')),
           commercialAccountId: context.commercialAccountId,
           organizationId: access.organizationId,
-          permission: 'customer.read_summary',
+          permission,
           reason: decision.reason,
           ...requestFields(c),
         });
         return c.json({ error: 'customer_forbidden' }, 403);
       }
+      return handler(c, access);
+    });
+
+  const customer = '/v1/commercial/accounts/:accountId/customers/:organizationId';
+
+  // A customer's summary, only where it granted `summary`.
+  app.get(
+    customer,
+    inCustomer('customer.read_summary', async (c, access) => {
       const organization = await organizations.findOrganization(access.organizationId);
       if (organization === undefined) throw new TenancyError('customer_forbidden');
       const plan = (await deps.currentPlan?.(organization.id)) ?? null;
@@ -555,6 +578,54 @@ export function registerCommercialRoutes(app: Hono<AuthEnv>, deps: CommercialDep
         mode: access.mode,
         scopes: [...access.scopes],
         plan,
+      });
+    }),
+  );
+
+  // How much AI a customer used (ADR-0088), only where it granted `usage`: operations and credits,
+  // in total and by capability. Never who used it, which agent, provider or model, nor its cost.
+  app.get(
+    `${customer}/usage`,
+    inCustomer('customer.read_usage', async (c, access) => {
+      if (deps.usage === undefined) return c.json({ error: 'ai_usage_not_configured' }, 503);
+      const from = c.req.query('from') ?? now().toISOString().slice(0, 10);
+      const to = c.req.query('to') ?? from;
+      if (!DAY.test(from) || !DAY.test(to)) return c.json({ error: 'invalid_request' }, 400);
+      let summary;
+      try {
+        summary = await deps.usage.summary(access.organizationId, from, to);
+      } catch (error) {
+        if (isAIUsageError(error)) return c.json({ error: 'invalid_request' }, 400);
+        throw error;
+      }
+      const bucket = (b: { operations: number; credits: number }) => ({
+        operations: b.operations,
+        credits: b.credits,
+      });
+      return c.json({
+        from: summary.from,
+        to: summary.to,
+        totals: bucket(summary.totals),
+        byCapability: Object.fromEntries(
+          Object.entries(summary.by.capability ?? {}).map(([k, b]) => [k, bucket(b)]),
+        ),
+      });
+    }),
+  );
+
+  // A customer's subscription (ADR-0088), only where it granted `billing`: plan, status and who
+  // is billed. Nothing about payments; nothing here changes billing or credits.
+  app.get(
+    `${customer}/billing`,
+    inCustomer('customer.read_billing', async (c, access) => {
+      const relationship = await commercial.findRelationship(
+        access.commercialAccountId,
+        access.organizationId,
+      );
+      const subscription = (await deps.subscriptionOf?.(access.organizationId)) ?? null;
+      return c.json({
+        billedTo: relationship?.billing ?? null,
+        subscription,
       });
     }),
   );

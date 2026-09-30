@@ -82,9 +82,41 @@ export interface PlatformUsage {
 
 export class PlatformRequestError extends Error {
   override readonly name = 'PlatformRequestError';
-  constructor(readonly status: number) {
-    super(`platform request failed: ${status}`);
+  constructor(
+    readonly status: number,
+    readonly code?: string,
+    readonly field?: string,
+  ) {
+    super(`platform request failed: ${status}${code === undefined ? '' : ` ${code}`}`);
   }
+}
+
+/** A partner or agency account as the platform administrator sees it (ADR-0086). */
+export interface CommercialAccountView {
+  readonly id: string;
+  readonly type: 'partner' | 'agency';
+  readonly name: string;
+  readonly status: string;
+  readonly limits: { readonly customers: number; readonly members: number } | null;
+}
+
+export type DomainStatus = 'pending_verification' | 'verified' | 'active' | 'disabled';
+
+/** A domain and what it points at (ADR-0087). */
+export interface DomainView {
+  readonly hostname: string;
+  readonly target:
+    | { readonly type: 'commercial_account'; readonly commercialAccountId: string }
+    | { readonly type: 'organization'; readonly organizationId: string };
+  readonly status: DomainStatus;
+  readonly updatedAt: string;
+}
+
+export interface NewCommercialAccount {
+  readonly type: 'partner' | 'agency';
+  readonly name: string;
+  readonly adminUserId: string;
+  readonly limits: { readonly customers: number; readonly members: number };
 }
 
 export interface PlatformClient {
@@ -92,6 +124,11 @@ export interface PlatformClient {
   access(): Promise<boolean>;
   ai(): Promise<PlatformAI>;
   usage(from: string, to: string): Promise<PlatformUsage>;
+  commercialAccounts(): Promise<readonly CommercialAccountView[]>;
+  createCommercialAccount(input: NewCommercialAccount): Promise<CommercialAccountView>;
+  domains(): Promise<readonly DomainView[]>;
+  createDomain(hostname: string, target: DomainView['target']): Promise<DomainView>;
+  setDomainStatus(domain: DomainView, status: DomainStatus): Promise<DomainView>;
 }
 
 export function createPlatformClient(request: ReplyRequest): PlatformClient {
@@ -99,6 +136,22 @@ export function createPlatformClient(request: ReplyRequest): PlatformClient {
     const response = await request(path, {});
     if (!response.ok) throw new PlatformRequestError(response.status);
     return (await response.json()) as T;
+  };
+  const write = async <T>(path: string, body: object): Promise<T> => {
+    const response = await request(path, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!response.ok) {
+      throw new PlatformRequestError(
+        response.status,
+        typeof payload.error === 'string' ? payload.error : undefined,
+        typeof payload.field === 'string' ? payload.field : undefined,
+      );
+    }
+    return payload as T;
   };
   return {
     access: () =>
@@ -109,5 +162,24 @@ export function createPlatformClient(request: ReplyRequest): PlatformClient {
     ai: () => read<PlatformAI>('/v1/platform/ai'),
     usage: (from, to) =>
       read<PlatformUsage>(`/v1/platform/ai-usage?${new URLSearchParams({ from, to }).toString()}`),
+    commercialAccounts: () =>
+      read<{ accounts: CommercialAccountView[] }>('/v1/platform/commercial-accounts').then(
+        (body) => body.accounts,
+      ),
+    createCommercialAccount: (input) =>
+      write<{ account: CommercialAccountView }>('/v1/platform/commercial-accounts', input).then(
+        (body) => body.account,
+      ),
+    domains: () =>
+      read<{ domains: DomainView[] }>('/v1/platform/domain-bindings').then((body) => body.domains),
+    createDomain: (hostname, target) =>
+      write<{ domain: DomainView }>('/v1/platform/domain-bindings', { hostname, target }).then(
+        (body) => body.domain,
+      ),
+    setDomainStatus: (domain, status) =>
+      write<{ domain: DomainView }>(
+        `/v1/platform/domain-bindings/${encodeURIComponent(domain.hostname)}/status`,
+        { status, expectedUpdatedAt: domain.updatedAt },
+      ).then((body) => body.domain),
   };
 }

@@ -22,6 +22,7 @@ export type Route =
   | { readonly kind: 'approvals' }
   | { readonly kind: 'agents' }
   | { readonly kind: 'automations' }
+  | { readonly kind: 'partners' }
   | { readonly kind: 'office'; readonly slug: string }
   | { readonly kind: 'agent'; readonly slug: string; readonly agentId: string }
   | { readonly kind: 'not_found' };
@@ -54,6 +55,8 @@ export function parseRoute(path: string): Route {
   if (trimmed === '/agents') return { kind: 'agents' };
   // Automations (WF-3, ADR-0071): workflows and their plans.
   if (trimmed === '/automations') return { kind: 'automations' };
+  // Partners and agencies the owner accepts, narrows or ends (ADR-0088).
+  if (trimmed === '/settings/partners') return { kind: 'partners' };
   const parts = trimmed.split('/').slice(1);
   const [first, slug, third, agentId] = parts;
   if (first !== 'office' || slug === undefined || !SEGMENT.test(slug)) return { kind: 'not_found' };
@@ -92,6 +95,7 @@ export const paths = {
   approvals: () => '/approvals',
   agents: () => '/agents',
   automations: () => '/automations',
+  partners: () => '/settings/partners',
   office: (slug: string) => `/office/${encodeURIComponent(slug)}`,
   agent: (slug: string, agentId: string) =>
     `/office/${encodeURIComponent(slug)}/agent/${encodeURIComponent(agentId)}`,

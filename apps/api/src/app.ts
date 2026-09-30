@@ -1288,7 +1288,13 @@ export function createApp({
         authorization,
         commercialAuthorization: createCommercialAuthorization(),
         audit,
-        ...(plans === undefined ? {} : { currentPlan: (id) => plans.currentPlan(id) }),
+        ...(plans === undefined
+          ? {}
+          : {
+              currentPlan: (id) => plans.currentPlan(id),
+              subscriptionOf: (id) => plans.subscriptionOf(id),
+            }),
+        ...(usageLedger === undefined ? {} : { usage: usageLedger }),
       });
     } else {
       const unavailable = (c: Context<Env>) => c.json({ error: 'commercial_not_configured' }, 503);

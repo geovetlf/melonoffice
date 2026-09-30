@@ -44,6 +44,18 @@ export interface BillingService {
    * organization they already resolved from a tenant.
    */
   currentPlan(organizationId: OrganizationId): Promise<PlanRef | undefined>;
+  /**
+   * An organization's subscription as a partner with the customer's `billing` scope may see it
+   * (ADR-0088): its plan, its status and whether that plan is in force. Nothing when its billing
+   * cannot be read. Callers pass an organization they already reached through a customer access.
+   */
+  subscriptionOf(organizationId: OrganizationId): Promise<SubscriptionView | undefined>;
+}
+
+export interface SubscriptionView {
+  readonly plan: PlanRef;
+  readonly status: Subscription['status'];
+  readonly planInForce: boolean;
 }
 
 export interface BillingServiceOptions {
@@ -96,6 +108,17 @@ export function createBillingService({
         organizationId: organization.id,
         subscription: result.subscription,
         planInForce: isPlanInForce(result.subscription.status),
+      });
+    },
+
+    async subscriptionOf(organizationId) {
+      const result = await read(organizationId);
+      if ('reason' in result) return undefined;
+      const { plan, status } = result.subscription;
+      return Object.freeze({
+        plan: Object.freeze({ id: plan.id, version: plan.version }),
+        status,
+        planInForce: isPlanInForce(status),
       });
     },
 

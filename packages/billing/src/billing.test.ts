@@ -253,6 +253,7 @@ describe('BillingService', () => {
       reason: 'billing_missing',
     });
     expect(await service.currentPlan(a.organization.id)).toBeUndefined();
+    expect(await service.subscriptionOf(a.organization.id)).toBeUndefined();
   });
 
   it('refuses a missing subscription, and one that is not the organization', async () => {
@@ -294,6 +295,11 @@ describe('BillingService', () => {
     billing.put({ ...a.billing.subscription, status });
     expect(await service.billingOf(tenantA)).toMatchObject({ planInForce: inForce });
     expect(await service.currentPlan(a.organization.id)).toEqual(inForce ? PLAN : undefined);
+    expect(await service.subscriptionOf(a.organization.id)).toEqual({
+      plan: PLAN,
+      status,
+      planInForce: inForce,
+    });
   });
 
   it('gives the plan billing records, even one entitlements may not know', async () => {
