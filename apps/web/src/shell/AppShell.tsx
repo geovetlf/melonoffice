@@ -46,6 +46,8 @@ import { ApprovalsPage } from '../approvals/ApprovalsPage.js';
 import { createApprovalsClient } from '../approvals/approvalsClient.js';
 import { createAIUsageClient } from '../aiUsage/aiUsageClient.js';
 import { PlatformPage } from '../platform/PlatformPage.js';
+import { PartnersPage } from '../partners/PartnersPage.js';
+import { createPartnersClient } from '../partners/partnersClient.js';
 import { createPlatformClient } from '../platform/platformClient.js';
 import { DocumentsPage } from '../documents/DocumentsPage.js';
 import { createDocumentsClient } from '../documents/documentsClient.js';
@@ -83,6 +85,8 @@ export function AppShell(locale: LocaleProps) {
   const canReadDocuments = useCan('document.read');
   const canUploadDocuments = useCan('document.upload');
   const canReadAIUsage = useCan('ai_usage.read');
+  const canReadPartners = useCan('relationship.read');
+  const canManagePartners = useCan('relationship.manage');
   const canReadApprovals = useCan('approval.read');
   const canManageAgents = useCan('specialist.manage');
   const canReadTools = useCan('tool.read');
@@ -145,6 +149,7 @@ export function AppShell(locale: LocaleProps) {
             agentTasks: createAgentTasksClient(services.api.request, organizationId),
             executions: createExecutionsClient(services.api.request, organizationId),
             automations: createAutomationsClient(services.api.request, organizationId),
+            partners: createPartnersClient(services.api.request, organizationId),
           },
     [services, organizationId],
   );
@@ -334,7 +339,7 @@ export function AppShell(locale: LocaleProps) {
     case 'platform':
       page = platformAdmin ? (
         <div className="light-surface">
-          <PlatformPage client={platform} />
+          <PlatformPage client={platform} currentUserId={me.userId} />
         </div>
       ) : (
         <NotFound />
@@ -344,6 +349,15 @@ export function AppShell(locale: LocaleProps) {
       page = canReadAIUsage ? (
         <div className="light-surface">
           <AIUsagePage client={clients.aiUsage} />
+        </div>
+      ) : (
+        <NotFound />
+      );
+      break;
+    case 'partners':
+      page = canReadPartners ? (
+        <div className="light-surface">
+          <PartnersPage client={clients.partners} canManage={canManagePartners} />
         </div>
       ) : (
         <NotFound />
@@ -441,6 +455,7 @@ export function AppShell(locale: LocaleProps) {
                 canReadCommandCenter={
                   canReadAIUsage || canReadApprovals || canReadAgents || canReadPlans
                 }
+                canReadPartners={canReadPartners}
                 open={menuOpen}
                 onNavigate={() => setMenuOpen(false)}
               />

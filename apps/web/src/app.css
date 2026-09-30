@@ -417,3 +417,31 @@
 .business-form__check input {
   min-height: auto;
 }
+
+/* Partners and agencies (ADR-0088): the owner's decisions and the platform's forms. */
+.partners__scopes {
+  border: 0;
+  margin: 0.5rem 0;
+  padding: 0;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.partners__scope {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+}
+
+.partners__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.platform__form {
+  display: grid;
+  gap: 0.4rem;
+  max-width: 28rem;
+  margin-top: 1rem;
+}

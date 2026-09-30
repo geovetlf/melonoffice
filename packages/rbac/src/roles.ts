@@ -81,18 +81,22 @@ export const COMMERCIAL_ROLES = {
     'commercial.manage_members',
     'commercial.invite_customer',
     'customer.read_summary',
+    'customer.read_usage',
+    'customer.read_billing',
     'commercial.manage_brand',
     'customer.manage_brand',
   ],
-  'partner.support': ['commercial.read', 'customer.read_summary'],
+  'partner.support': ['commercial.read', 'customer.read_summary', 'customer.read_usage'],
   'agency.admin': [
     'commercial.read',
     'commercial.manage_members',
     'commercial.invite_customer',
     'customer.read_summary',
+    'customer.read_usage',
+    'customer.read_billing',
     'commercial.manage_brand',
   ],
-  'agency.manager': ['commercial.read', 'customer.read_summary'],
+  'agency.manager': ['commercial.read', 'customer.read_summary', 'customer.read_usage'],
 } as const satisfies RoleCatalogue;
 
 export type CommercialRoleName = keyof typeof COMMERCIAL_ROLES;

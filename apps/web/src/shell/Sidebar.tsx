@@ -26,6 +26,7 @@ const TOOLS: readonly { readonly id: string; readonly icon: IconName }[] = [
   { id: 'agents', icon: 'user' },
   { id: 'apps', icon: 'apps' },
   { id: 'settings', icon: 'settings' },
+  { id: 'partners', icon: 'building' },
   { id: 'platform', icon: 'cog' },
 ];
 
@@ -42,6 +43,7 @@ export function Sidebar({
   canReadAgents = false,
   canReadAutomations = false,
   canReadCommandCenter = false,
+  canReadPartners = false,
   open,
   onNavigate,
 }: {
@@ -70,6 +72,8 @@ export function Sidebar({
   readonly canReadAutomations?: boolean;
   /** The AI Command Center (block 9), for a person who may read any of its cards. */
   readonly canReadCommandCenter?: boolean;
+  /** Partners and agencies (ADR-0088), for a person with `relationship.read`. */
+  readonly canReadPartners?: boolean;
   readonly open: boolean;
   readonly onNavigate: () => void;
 }) {
@@ -235,6 +239,18 @@ export function Sidebar({
               >
                 <FormattedMessage id={`nav.${tool.id}`} />
               </NavLink>
+            ) : tool.id === 'partners' ? (
+              canReadPartners ? (
+                <NavLink
+                  key={tool.id}
+                  icon={tool.icon}
+                  path={paths.partners()}
+                  current={route.kind === 'partners'}
+                  go={go}
+                >
+                  <FormattedMessage id={`nav.${tool.id}`} />
+                </NavLink>
+              ) : null
             ) : tool.id === 'settings' && canReadConnections ? (
               <NavLink
                 key={tool.id}

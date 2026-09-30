@@ -25,6 +25,7 @@
 | Top bar: bell                         | approvals, plans, follow-ups                                     | `Notifications`            | open, then choose                           | Approvals, Automations, follow-ups                                  | COMPLETE (new): count of what waits, with loading, empty and error states    |
 | Top bar: active agents count          | specialists                                                      | `TopBar`                   | none                                        | none                                                                | real data                                                                    |
 | Sidebar "Platform"                    | platform AI view (ADR-0082)                                      | `Sidebar`                  | click                                       | `/platform`                                                         | only for platform administrators; absent for everyone else                   |
+| Sidebar "Partners and agencies"       | partners and agencies (ADR-0088)                                 | `Sidebar`                  | click                                       | `/settings/partners`                                                | only with `relationship.read` (owner); absent for everyone else              |
 
 ## What the Home needs next
 
