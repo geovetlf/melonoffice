@@ -280,3 +280,6 @@ async function answer(c: Context<AuthEnv>, run: () => Promise<Response>): Promis
     throw error;
   }
 }
+
+/** The same answers for a task started elsewhere on a person's request (the Harness, ADR-0099). */
+export const answerTaskRequest = answer;

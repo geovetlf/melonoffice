@@ -134,6 +134,9 @@ importers:
       '@melonoffice/guardrails':
         specifier: workspace:*
         version: link:../../packages/guardrails
+      '@melonoffice/harness':
+        specifier: workspace:*
+        version: link:../../packages/harness
       '@melonoffice/integrations':
         specifier: workspace:*
         version: link:../../packages/integrations
@@ -277,6 +280,9 @@ importers:
       '@melonoffice/guardrails':
         specifier: workspace:*
         version: link:../../packages/guardrails
+      '@melonoffice/harness':
+        specifier: workspace:*
+        version: link:../../packages/harness
       '@melonoffice/integrations':
         specifier: workspace:*
         version: link:../../packages/integrations
@@ -1080,6 +1086,52 @@ importers:
       '@melonoffice/credits':
         specifier: workspace:*
         version: link:../credits
+
+  packages/harness:
+    dependencies:
+      '@melonoffice/agents':
+        specifier: workspace:*
+        version: link:../agents
+      '@melonoffice/decisions':
+        specifier: workspace:*
+        version: link:../decisions
+      '@melonoffice/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@melonoffice/rbac':
+        specifier: workspace:*
+        version: link:../rbac
+      '@melonoffice/specialists':
+        specifier: workspace:*
+        version: link:../specialists
+      '@melonoffice/tenancy':
+        specifier: workspace:*
+        version: link:../tenancy
+      '@melonoffice/tools':
+        specifier: workspace:*
+        version: link:../tools
+    devDependencies:
+      '@melonoffice/ai-gateway':
+        specifier: workspace:*
+        version: link:../ai-gateway
+      '@melonoffice/audit':
+        specifier: workspace:*
+        version: link:../audit
+      '@melonoffice/auth':
+        specifier: workspace:*
+        version: link:../auth
+      '@melonoffice/config':
+        specifier: workspace:*
+        version: link:../config
+      '@melonoffice/credits':
+        specifier: workspace:*
+        version: link:../credits
+      '@melonoffice/departments':
+        specifier: workspace:*
+        version: link:../departments
+      '@melonoffice/execution':
+        specifier: workspace:*
+        version: link:../execution
 
   packages/i18n:
     dependencies:

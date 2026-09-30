@@ -38,6 +38,7 @@ import {
   createConversationHandoffExecutor,
   type IntegrationEngine,
 } from '@melonoffice/integrations';
+import { createHarnessAgentWork, createHarnessContextSource } from '@melonoffice/harness';
 import type { Logger } from '@melonoffice/observability';
 import { planStepOf, type PlanRepository } from '@melonoffice/planning';
 import { createAuthorizationService } from '@melonoffice/rbac';
@@ -247,14 +248,28 @@ export function createAgentTaskParts(options: {
     brain,
     onError: (code) => logger?.warn('agent_task.facts_not_proposed', { code }),
   });
-  return Object.freeze({
-    work: createAgentTaskWork({
+  // The Melon Agent Harness (ADR-0099): a task reads only the context it needs, and its model call
+  // carries the order to try models in for what it asks. The agent's prompt, its model policy and
+  // the AI Gateway's router are unchanged.
+  const work = createHarnessAgentWork(
+    createAgentTaskWork({
       tasks: stores.tasks,
       specialists: stores.specialists,
       skills,
-      context,
+      context: createHarnessContextSource({ sources: { company_brain: context } }),
       proposals,
     }),
+    {
+      async requestOf(tenant, execution) {
+        const facts = taskOf(execution);
+        if (facts === undefined || !isResolvedTenant(tenant)) return undefined;
+        const task = await stores.tasks.find(tenant.organizationId as OrganizationId, facts.taskId);
+        return task?.request;
+      },
+    },
+  );
+  return Object.freeze({
+    work,
     verifier: createAgentTaskVerifier({
       outputs,
       ...(records === undefined

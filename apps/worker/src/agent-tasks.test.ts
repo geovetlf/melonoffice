@@ -434,6 +434,7 @@ describe.each(STORES)('AE-2 agent tasks with storage in %s', (_storage, createSt
       agent,
       drive,
       promptOf,
+      taskParts,
       outputs: createAgentOutputStore(stores.outputs),
       setModel: (...next: (() => Promise<ProviderOutcome>)[]) => {
         modelAnswers = next;
@@ -476,6 +477,34 @@ describe.each(STORES)('AE-2 agent tasks with storage in %s', (_storage, createSt
       followUp: null,
       facts: [],
     });
+  });
+
+  it('1b. the Harness gives the model call its routing order and reads only the context it needs (ADR-0099)', async () => {
+    const w = await world();
+    await w.brain.propose(w.tenantA, price(25));
+    const lucia = await w.agent();
+    const workOf = async (request: string) => {
+      const asked = await w.tasks.assign(w.tenantA, lucia.identity.id, { request });
+      const execution = must(asked.execution);
+      const node = must(execution.nodes.find((n) => n.id === 'work'));
+      return w.taskParts.work.agentWork(w.tenantA, execution, node);
+    };
+    // Work on the text it is given: the cheapest model that fits, and no company memory.
+    const classify = await workOf('Clasifica este mensaje: hola');
+    expect(classify).toMatchObject({
+      strategy: 'cost_optimized',
+      metadata: { harnessIntent: 'classification', harnessPolicy: 'harness_default@1' },
+    });
+    expect(JSON.stringify(classify?.messages)).not.toContain('Combo Familiar');
+    // Analysis about a price: the best model allowed, and the company memory.
+    const analyse = await workOf('Analiza el precio del Combo Familiar');
+    expect(analyse).toMatchObject({
+      strategy: 'quality_first',
+      metadata: { skills: expect.any(Number) },
+    });
+    expect(JSON.stringify(analyse?.messages)).toContain('Combo Familiar');
+    // Never a model or a provider: the agent's model policy and the router still choose.
+    expect(analyse).not.toHaveProperty('quality');
   });
 
   it('2. asking again with the same key is the same task: nothing new runs or is charged', async () => {

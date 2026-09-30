@@ -74,6 +74,11 @@ import {
   type ForecastScheduler,
 } from '@melonoffice/forecasting';
 import { createDecisionEngine, DECIDERS } from '@melonoffice/decisions';
+import {
+  createAgentHarness,
+  createDecisionAgentRouter,
+  createHarnessToolDirectory,
+} from '@melonoffice/harness';
 import { createGia } from '@melonoffice/gia';
 import type { DeploymentEnvironment, OrganizationId } from '@melonoffice/domain';
 import { createToolGate } from '@melonoffice/guardrails';
@@ -156,6 +161,7 @@ import { registerHealth } from './health.js';
 import { registerPlanRoutes } from './plans.js';
 import { registerSpecialistRoutes, toolLookupOf } from './specialists.js';
 import { giaAgentsOf, registerAgentTaskRoutes } from './agent-tasks.js';
+import { registerHarnessRoutes } from './harness.js';
 import { registerDecisionRoutes } from './decisions.js';
 import { registerTenancyRoutes } from './tenancy.js';
 import { registerToolRoutes } from './tools.js';
@@ -961,10 +967,47 @@ export function createApp({
               },
             }),
       });
+      // The Melon Agent Harness (ADR-0099): a task in the person's words, routed to an agent by
+      // the Decision Engine and started as that agent's task, on the same services as above.
+      const agentDirectory = giaAgentsOf(structure);
+      registerHarnessRoutes(app, {
+        store: tenancy,
+        authorization,
+        audit,
+        harnessFor: (requestId) =>
+          createAgentHarness({
+            authorization,
+            router: createDecisionAgentRouter(decisions),
+            directory: agentDirectory,
+            tasks: createAgentTaskService({
+              tasks: agentTasks.repository,
+              specialists: structure.specialists,
+              executions: createExecutionService({
+                repository: taskExecutions,
+                organizations: tenancy,
+                assignments: specialists.assignments,
+                authorization,
+                audit,
+                ...(requestId === undefined ? {} : { requestId }),
+              }),
+              authorization,
+              ...(agentTasks.runtime === undefined ? {} : { runtime: agentTasks.runtime }),
+              ...(requestId === undefined ? {} : { requestId }),
+            }),
+            ...(aiCredits === undefined ? {} : { credits: aiCredits }),
+            tools: createHarnessToolDirectory({
+              specialists: structure.specialists,
+              skills: createSkillCatalogue(),
+              registry: tools,
+              authorization,
+            }),
+          }),
+      });
     } else if (tenancy !== undefined) {
       const unavailable = (c: Context<Env>) => c.json({ error: 'agent_tasks_not_configured' }, 503);
       app.all('/v1/organizations/:organizationId/specialists/:specialistId/tasks', unavailable);
       app.all('/v1/organizations/:organizationId/agent-tasks/*', unavailable);
+      app.all('/v1/organizations/:organizationId/harness/*', unavailable);
     }
     // Tools are listed, never run, over HTTP: only the tool gate runs them, on the server.
     if (tenancy !== undefined) {

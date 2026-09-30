@@ -1,0 +1,39 @@
+{
+  "name": "@melonoffice/harness",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "@melonoffice/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@melonoffice/agents": "workspace:*",
+    "@melonoffice/decisions": "workspace:*",
+    "@melonoffice/domain": "workspace:*",
+    "@melonoffice/rbac": "workspace:*",
+    "@melonoffice/specialists": "workspace:*",
+    "@melonoffice/tenancy": "workspace:*",
+    "@melonoffice/tools": "workspace:*"
+  },
+  "devDependencies": {
+    "@melonoffice/ai-gateway": "workspace:*",
+    "@melonoffice/audit": "workspace:*",
+    "@melonoffice/auth": "workspace:*",
+    "@melonoffice/config": "workspace:*",
+    "@melonoffice/credits": "workspace:*",
+    "@melonoffice/departments": "workspace:*",
+    "@melonoffice/execution": "workspace:*"
+  }
+}
