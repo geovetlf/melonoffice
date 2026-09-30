@@ -46,6 +46,12 @@ export interface Auth {
   readonly state: AuthState;
   readonly services: IdentityServices;
   signIn(email: string, password: string): Promise<SignInResult>;
+  /** Creates an account, signs it in and asks for its verification email (ADR-0089). */
+  signUp(email: string, password: string): Promise<SignInResult>;
+  /** Asks again for the verification email. `false`: it could not be sent. */
+  sendVerification(): Promise<boolean>;
+  /** Takes a fresh token, so a just-verified email counts, and loads the profile again. */
+  refreshIdentity(): Promise<void>;
   signOut(): void;
   /**
    * Creates the signed-in user's first organization, with them as its owner (POST
@@ -163,23 +169,47 @@ export function AuthProvider({
     };
   }, [services, session, settle, attempt]);
 
+  // Signs in (or up), then records the sign-in with the API and loads the profile.
+  const enter = useCallback(
+    async (start: () => Promise<void>): Promise<SignInResult> => {
+      try {
+        await start();
+      } catch (error) {
+        return { ok: false, code: error instanceof IdentityError ? error.code : 'unavailable' };
+      }
+      setState({ status: 'loading' });
+      try {
+        setState({ status: 'signed_in', ...(await loadProfile(services, true)) });
+      } catch (error) {
+        settle(error);
+      }
+      return { ok: true };
+    },
+    [services, settle],
+  );
+
   const auth = useMemo<Auth>(
     () => ({
       state,
       services,
-      async signIn(email, password) {
+      signIn: (email, password) => enter(() => session.signIn(email, password)),
+      signUp: (email, password) => enter(() => session.signUp(email, password)),
+      async sendVerification() {
         try {
-          await session.signIn(email, password);
-        } catch (error) {
-          return { ok: false, code: error instanceof IdentityError ? error.code : 'unavailable' };
+          await session.sendVerification();
+          return true;
+        } catch {
+          return false;
         }
+      },
+      async refreshIdentity() {
         setState({ status: 'loading' });
         try {
+          await session.token({ force: true });
           setState({ status: 'signed_in', ...(await loadProfile(services, true)) });
         } catch (error) {
           settle(error);
         }
-        return { ok: true };
       },
       signOut() {
         session.signOut();
@@ -206,7 +236,7 @@ export function AuthProvider({
         setAttempt((n) => n + 1);
       },
     }),
-    [state, services, session, settle],
+    [state, services, session, settle, enter],
   );
 
   return <AuthContext.Provider value={auth}>{children}</AuthContext.Provider>;

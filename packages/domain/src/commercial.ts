@@ -14,6 +14,7 @@ import type { Brand, IsoTimestamp, OrganizationId, UserId } from './ids.js';
 export type CommercialAccountId = Brand<string, 'CommercialAccountId'>;
 export type CommercialMembershipId = Brand<string, 'CommercialMembershipId'>;
 export type CustomerRelationshipId = Brand<string, 'CustomerRelationshipId'>;
+export type CustomerInvitationId = Brand<string, 'CustomerInvitationId'>;
 
 /**
  * - `partner`: sells MelonOffice to its customers (reseller, white label, OEM).
@@ -160,6 +161,47 @@ export interface CustomerRelationship {
   readonly billing?: BillingRelationship;
   /** Who accepted it for the customer: an owner of the organization. Absent while pending. */
   readonly acceptedBy?: UserId;
+  readonly createdAt: IsoTimestamp;
+  readonly updatedAt: IsoTimestamp;
+}
+
+/**
+ * - `pending`: sent; grants nothing. Only the invited person can take it, until it expires.
+ * - `accepted`: the invited person took it for their organization. The relationship it created is
+ *   active when they could decide for it, or pending for their owner otherwise.
+ * - `rejected`: the invited person declined it.
+ * - `revoked`: the partner or agency withdrew it before it was taken.
+ * - `expired`: nobody took it in time.
+ *
+ * Only `pending` changes, and only once.
+ */
+export type CustomerInvitationStatus = 'pending' | 'accepted' | 'rejected' | 'revoked' | 'expired';
+
+/**
+ * An invitation by email to become a partner's or agency's customer (ADR-0089). It names a
+ * person, never an organization: the organization is the one the invited person belongs to when
+ * they accept, resolved by the server. It grants nothing by itself: the scopes are only what the
+ * partner asks for, and an owner grants exactly the ones they tick, none by default.
+ *
+ * The secret the link carries is never stored: only its SHA-256 hash.
+ */
+export interface CustomerInvitation {
+  readonly id: CustomerInvitationId;
+  readonly commercialAccountId: CommercialAccountId;
+  /** The invited email, trimmed and lowercased. */
+  readonly email: string;
+  readonly mode: CustomerMode;
+  /** The scopes asked for. Never granted without the owner ticking them. */
+  readonly scopes: readonly CustomerAccessScope[];
+  readonly billing?: BillingRelationship;
+  readonly status: CustomerInvitationStatus;
+  /** Hex SHA-256 of the link's secret. */
+  readonly tokenHash: string;
+  readonly expiresAt: IsoTimestamp;
+  readonly createdBy: UserId;
+  /** Who accepted or rejected it, and for which organization when accepted. */
+  readonly decidedBy?: UserId;
+  readonly organizationId?: OrganizationId;
   readonly createdAt: IsoTimestamp;
   readonly updatedAt: IsoTimestamp;
 }

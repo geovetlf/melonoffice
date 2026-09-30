@@ -32,6 +32,7 @@ const STATUS: Record<TenancyErrorCode, ContentfulStatusCode> = {
   invalid_commission: 400,
   commercial_conflict: 409,
   commercial_limit_reached: 409,
+  invalid_invitation_email: 400,
 };
 
 /**

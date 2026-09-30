@@ -774,6 +774,41 @@ export const AUDIT_ACTIONS = {
       "An organization's owner accepted or ended a relationship with a partner or agency, or changed the scopes it grants (ADR-0086); `transition` is the status change.",
     results: ['success'],
   },
+  'customer_invitation.created': {
+    category: 'commercial',
+    description:
+      "A partner or agency invited a person by email to become its customer (ADR-0089): pending, it grants nothing; `reference` names the mode. The email and the link's secret are never recorded.",
+    results: ['success'],
+  },
+  'customer_invitation.sent': {
+    category: 'commercial',
+    description:
+      "An invitation's email was handed to the configured email provider (ADR-0089). Without a provider there is no send: the partner shares the link themselves.",
+    results: ['success', 'failure'],
+  },
+  'customer_invitation.accepted': {
+    category: 'commercial',
+    description:
+      'The invited person took an invitation for their organization (ADR-0089); the relationship is active when they could decide for it, pending for their owner otherwise. Denied when the person is not the invited one or the invitation is not pending.',
+    results: ['success', 'denied'],
+  },
+  'customer_invitation.rejected': {
+    category: 'commercial',
+    description:
+      'The invited person declined an invitation (ADR-0089). Denied when the person is not the invited one or the invitation is not pending.',
+    results: ['success', 'denied'],
+  },
+  'customer_invitation.revoked': {
+    category: 'commercial',
+    description: 'A partner or agency withdrew an invitation before it was taken (ADR-0089).',
+    results: ['success'],
+  },
+  'customer_invitation.expired': {
+    category: 'commercial',
+    description:
+      'An invitation passed its time without being taken (ADR-0089), recorded the first time anyone looks at it afterwards.',
+    results: ['success'],
+  },
   'commercial.access': {
     category: 'commercial',
     description:

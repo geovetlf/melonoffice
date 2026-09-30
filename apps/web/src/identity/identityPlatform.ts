@@ -7,6 +7,9 @@
 
 export const SIGN_IN_URL = 'https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword';
 export const REFRESH_URL = 'https://securetoken.googleapis.com/v1/token';
+export const SIGN_UP_URL = 'https://identitytoolkit.googleapis.com/v1/accounts:signUp';
+/** Asks Identity Platform to email the address a verification link (its own email, not ours). */
+export const SEND_CODE_URL = 'https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode';
 
 /** A signed-in session as Identity Platform issued it. */
 export interface IdentityTokens {
@@ -22,6 +25,8 @@ export type IdentityErrorCode =
   | 'user_disabled'
   | 'too_many_attempts'
   | 'session_expired'
+  | 'email_exists'
+  | 'weak_password'
   | 'network'
   | 'unavailable';
 
@@ -42,6 +47,10 @@ function codeOf(message: string): IdentityErrorCode {
     case 'INVALID_EMAIL':
     case 'MISSING_PASSWORD':
       return 'invalid_credentials';
+    case 'EMAIL_EXISTS':
+      return 'email_exists';
+    case 'WEAK_PASSWORD':
+      return 'weak_password';
     case 'USER_DISABLED':
       return 'user_disabled';
     case 'TOO_MANY_ATTEMPTS_TRY_LATER':
@@ -60,6 +69,10 @@ function codeOf(message: string): IdentityErrorCode {
 export interface IdentityClient {
   signIn(email: string, password: string): Promise<IdentityTokens>;
   refresh(refreshToken: string): Promise<IdentityTokens>;
+  /** Creates an email and password account (ADR-0089) and signs it in. */
+  signUp(email: string, password: string): Promise<IdentityTokens>;
+  /** Has Identity Platform email this account's address a link to verify it. */
+  sendVerification(idToken: string): Promise<void>;
 }
 
 export function createIdentityClient(
@@ -107,6 +120,19 @@ export function createIdentityClient(
         body: JSON.stringify({ email, password, returnSecureToken: true }),
       });
       return tokensOf(body.idToken, body.refreshToken, body.expiresIn);
+    },
+    async signUp(email, password) {
+      const body = await post(SIGN_UP_URL, {
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email, password, returnSecureToken: true }),
+      });
+      return tokensOf(body.idToken, body.refreshToken, body.expiresIn);
+    },
+    async sendVerification(idToken) {
+      await post(SEND_CODE_URL, {
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ requestType: 'VERIFY_EMAIL', idToken }),
+      });
     },
     async refresh(refreshToken) {
       const body = await post(REFRESH_URL, {

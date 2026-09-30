@@ -18,6 +18,10 @@ export interface Session {
   /** Whether a session can be resumed (a refresh token is held). */
   readonly present: boolean;
   signIn(email: string, password: string): Promise<void>;
+  /** Creates the account, signs it in and asks for its verification email (ADR-0089). */
+  signUp(email: string, password: string): Promise<void>;
+  /** Asks again for the verification email of the signed-in account. */
+  sendVerification(): Promise<void>;
   /** An ID token valid for at least a minute, refreshed if needed. `undefined`: no session. */
   token(options?: { readonly force?: boolean }): Promise<string | undefined>;
   /** Ends the session here: tokens forgotten. */
@@ -101,6 +105,17 @@ export function createSession(
     async signIn(email, password) {
       keep(await identity.signIn(email, password));
       emit('signed_in');
+    },
+    async signUp(email, password) {
+      keep(await identity.signUp(email, password));
+      emit('signed_in');
+      // The account exists either way; a failed email can be asked for again.
+      await identity.sendVerification(current?.idToken ?? '').catch(() => undefined);
+    },
+    async sendVerification() {
+      const idToken = await session.token();
+      if (idToken === undefined) throw new IdentityError('session_expired');
+      await identity.sendVerification(idToken);
     },
     async token({ force = false } = {}) {
       if (!force && current !== undefined && current.expiresAt - now() > MARGIN_MS) {

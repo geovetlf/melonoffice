@@ -3,6 +3,8 @@ import type {
   CommercialAccount,
   CommercialAccountId,
   CommercialMembership,
+  CustomerInvitation,
+  CustomerInvitationId,
   CustomerRelationship,
   OrganizationId,
 } from '@melonoffice/domain';
@@ -46,6 +48,35 @@ export interface CommercialRepository extends CommercialStore {
   saveRelationship(
     relationship: CustomerRelationship,
     expected: CustomerRelationship | undefined,
+    events: readonly AuditEvent[],
+    limit?: number,
+  ): Promise<void>;
+  /** One invitation by id (ADR-0089). */
+  findInvitation(id: CustomerInvitationId): Promise<CustomerInvitation | undefined>;
+  /** The invitation whose link secret has this hash. */
+  findInvitationByTokenHash(tokenHash: string): Promise<CustomerInvitation | undefined>;
+  /** The invitations of one account, in any status. */
+  invitationsOfAccount(accountId: CommercialAccountId): Promise<readonly CustomerInvitation[]>;
+  /**
+   * Creates or changes an invitation. `limit`, when given, is the most pending invitations the
+   * account may have, counted in the same step.
+   */
+  saveInvitation(
+    invitation: CustomerInvitation,
+    expected: CustomerInvitation | undefined,
+    events: readonly AuditEvent[],
+    limit?: number,
+  ): Promise<void>;
+  /**
+   * Takes an invitation: stores it accepted and creates its relationship in the same step, so
+   * neither exists without the other. Both versions are checked, and `limit` is counted as in
+   * `saveRelationship`.
+   */
+  acceptInvitation(
+    invitation: CustomerInvitation,
+    expected: CustomerInvitation,
+    relationship: CustomerRelationship,
+    expectedRelationship: CustomerRelationship | undefined,
     events: readonly AuditEvent[],
     limit?: number,
   ): Promise<void>;

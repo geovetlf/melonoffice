@@ -123,7 +123,8 @@ import { registerCors } from './cors.js';
 import { registerBillingRoutes } from './billing.js';
 import type { BrandRepository } from '@melonoffice/branding';
 import { registerBrandingRoutes, registerPublicBrandRoute } from './branding.js';
-import { registerCommercialRoutes } from './commercial.js';
+import { registerCommercialRoutes, type CommercialDependencies } from './commercial.js';
+import { registerInvitationRoutes } from './invitations.js';
 import { DEFAULT_ACTIVITY_TIME_ZONE, registerActivityRoutes } from './activity.js';
 import { registerBrainRoutes } from './brain.js';
 import { registerBusinessRoutes } from './business.js';
@@ -1281,7 +1282,7 @@ export function createApp({
         billing === undefined
           ? undefined
           : createBillingService({ billing, organizations: tenancy });
-      registerCommercialRoutes(app, {
+      const commercialDeps: CommercialDependencies = {
         commercial: commercialAccounts,
         organizations: tenancy,
         admins: new Set(platformAdmins),
@@ -1295,11 +1296,15 @@ export function createApp({
               subscriptionOf: (id) => plans.subscriptionOf(id),
             }),
         ...(usageLedger === undefined ? {} : { usage: usageLedger }),
-      });
+      };
+      registerCommercialRoutes(app, commercialDeps);
+      // No email provider is configured yet (ADR-0089): the partner shares the link itself.
+      registerInvitationRoutes(app, commercialDeps);
     } else {
       const unavailable = (c: Context<Env>) => c.json({ error: 'commercial_not_configured' }, 503);
       app.all('/v1/platform/commercial-accounts', unavailable);
       app.all('/v1/commercial/*', unavailable);
+      app.all('/v1/invitations/*', unavailable);
       app.all('/v1/organizations/:organizationId/commercial-relationships', unavailable);
       app.all('/v1/organizations/:organizationId/commercial-relationships/*', unavailable);
     }
