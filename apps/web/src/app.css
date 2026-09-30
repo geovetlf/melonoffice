@@ -46,26 +46,11 @@
   gap: var(--mo-space-2);
 }
 
-.login input {
-  min-height: var(--mo-min-target-size);
-  padding: var(--mo-space-2) var(--mo-space-3);
-  border: 1px solid var(--mo-color-border);
-  border-radius: var(--mo-radius-md);
-  font: inherit;
-  color: var(--mo-color-text-primary);
-  background: var(--mo-color-surface);
-}
-
 .login .mo-button {
   margin-top: var(--mo-space-4);
 }
 
 /* Sign-in, sign-up and password reset (ADR-0105): one short column, the same on every screen. */
-.login input::placeholder {
-  color: var(--mo-color-text-secondary);
-  opacity: 0.7;
-}
-
 .login__forgot {
   margin: 0;
   text-align: right;
@@ -296,8 +281,8 @@
 .connections__eyebrow {
   margin: 0;
   font-size: var(--mo-font-size-xs);
+  font-weight: var(--mo-font-weight-semibold);
   color: var(--mo-color-text-secondary);
-  text-transform: uppercase;
 }
 
 .connections__list {
@@ -391,17 +376,6 @@
   gap: var(--mo-space-1);
 }
 
-.connection-form input,
-.connection-form select {
-  min-height: var(--mo-min-target-size);
-  padding: var(--mo-space-2) var(--mo-space-3);
-  border: 1px solid var(--mo-color-border);
-  border-radius: var(--mo-radius-md);
-  font: inherit;
-  color: var(--mo-color-text-primary);
-  background: var(--mo-color-surface);
-}
-
 .connection-setup {
   padding: var(--mo-space-3);
   background: var(--mo-color-surface-subtle);
@@ -468,18 +442,14 @@
   border: 0;
 }
 
-.business-form textarea {
-  padding: var(--mo-space-2) var(--mo-space-3);
-  border: 1px solid var(--mo-color-border);
-  border-radius: var(--mo-radius-md);
-  font: inherit;
-  color: var(--mo-color-text-primary);
-  background: var(--mo-color-surface);
-  resize: vertical;
+/* A field never widens the form past its column (a long option in a select would). */
+.business-form > * {
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .business-form input[readonly] {
-  background: var(--mo-color-surface-subtle);
+  background-color: var(--mo-color-surface-subtle);
 }
 
 .business-form__channels {

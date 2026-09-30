@@ -70,7 +70,7 @@ export function MotorPanel({
         </div>
         <button
           type="button"
-          className="agent-sheet__close"
+          className="mo-button mo-button--ghost mo-button--icon agent-sheet__close"
           aria-label={intl.formatMessage({ id: 'office.motor.close' })}
           onClick={onClose}
         >

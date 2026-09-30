@@ -1,4 +1,5 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
+import { Button } from '@melonoffice/ui';
 import { useEffect, useState, type FormEvent } from 'react';
 import { navigate } from '../identity/router.js';
 import { readyList, useOfficeData, useSpecialistSaved } from '../office/OfficeData.js';
@@ -104,9 +105,9 @@ export function AgentsPage({
             }}
           />
         ) : (
-          <button type="button" className="customers__tab" onClick={() => setCreating(true)}>
+          <Button className="agents__create" onClick={() => setCreating(true)}>
             <FormattedMessage id="agents.create" />
-          </button>
+          </Button>
         )
       ) : null}
       {notice === undefined ? null : (
@@ -172,7 +173,7 @@ export function AgentsPage({
                             <button
                               key={to}
                               type="button"
-                              className="customers__tab"
+                              className="mo-button mo-button--secondary mo-button--sm"
                               disabled={busy !== undefined}
                               onClick={() => void move(agent, to)}
                             >
@@ -327,12 +328,12 @@ function CreateAgent({
           <div className="customers__actions">
             <button
               type="submit"
-              className="customers__tab"
+              className="mo-button mo-button--primary"
               disabled={sending || chosen === undefined || name.trim() === ''}
             >
               <FormattedMessage id={sending ? 'agents.create.sending' : 'agents.create.submit'} />
             </button>
-            <button type="button" className="customers__tab" onClick={onCancel}>
+            <button type="button" className="mo-button mo-button--ghost" onClick={onCancel}>
               <FormattedMessage id="agents.create.cancel" />
             </button>
           </div>

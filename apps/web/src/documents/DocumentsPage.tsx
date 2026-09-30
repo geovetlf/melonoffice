@@ -218,7 +218,7 @@ export function DocumentsPage({
                 </div>
                 <button
                   type="button"
-                  className="customers__tab"
+                  className="mo-button mo-button--secondary mo-button--sm"
                   onClick={() => void download(d)}
                   aria-label={intl.formatMessage({ id: 'documents.download' }, { name: d.name })}
                 >
@@ -229,7 +229,11 @@ export function DocumentsPage({
           </ul>
         )}
         {nextCursor !== null ? (
-          <button type="button" className="customers__tab" onClick={() => void load(nextCursor)}>
+          <button
+            type="button"
+            className="mo-button mo-button--secondary"
+            onClick={() => void load(nextCursor)}
+          >
             <FormattedMessage id="documents.more" />
           </button>
         ) : null}

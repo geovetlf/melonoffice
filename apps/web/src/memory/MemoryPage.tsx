@@ -1,5 +1,5 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
-import { Button } from '@melonoffice/ui';
+import { Badge, Button, type BadgeTone } from '@melonoffice/ui';
 import { useCallback, useState, type FormEvent, type ReactNode } from 'react';
 import { formatMoney, minorDigits, toMinor } from '../opportunities/OpportunitiesSection.js';
 import { useRead } from '../shell/useRead.js';
@@ -15,6 +15,7 @@ import {
   type KnowledgeValue,
   type KnowledgeVersion,
   type MemoryClient,
+  type Verification,
 } from './memoryClient.js';
 
 /**
@@ -284,18 +285,27 @@ function Review({
   );
 }
 
+/** How far a fact can be trusted, as a badge's tone: what waits on a person reads as a warning. */
+const VERIFICATION_TONE: Record<Verification, BadgeTone> = {
+  proposed: 'warning',
+  unverified: 'warning',
+  confirmed: 'success',
+  calculated: 'neutral',
+  imported: 'neutral',
+};
+
 /** Where a fact came from, how far it can be trusted, when and which version. */
 function Origin({ item }: { readonly item: KnowledgeItem }) {
   const intl = useIntl();
   return (
     <p className="memory__origin">
-      <span className={`memory__badge memory__badge--${item.verification}`}>
+      <Badge tone={VERIFICATION_TONE[item.verification]} className="memory__badge">
         <FormattedMessage id={`memory.verification.${item.verification}`} />
-      </span>
+      </Badge>
       {item.status === 'active' ? null : (
-        <span className="memory__badge memory__badge--inactive">
+        <Badge outline className="memory__badge">
           <FormattedMessage id={`memory.status.${item.status}`} />
-        </span>
+        </Badge>
       )}{' '}
       <FormattedMessage id={`memory.source.${item.source.type}`} /> ·{' '}
       <FormattedMessage id={`memory.recorder.${item.source.recordedBy}`} /> ·{' '}
@@ -354,7 +364,7 @@ function Knowledge({
         <button
           type="button"
           role="tab"
-          className="customers__tab"
+          className="mo-chip customers__tab"
           aria-selected={view === 'all'}
           onClick={() => setView('all')}
         >
@@ -365,7 +375,7 @@ function Knowledge({
             key={d}
             type="button"
             role="tab"
-            className="customers__tab"
+            className="mo-chip customers__tab"
             aria-selected={view === d}
             onClick={() => setView(d)}
           >
@@ -376,7 +386,7 @@ function Knowledge({
         <button
           type="button"
           role="tab"
-          className="customers__tab"
+          className="mo-chip customers__tab"
           aria-selected={recent}
           onClick={() => setView('recent')}
         >

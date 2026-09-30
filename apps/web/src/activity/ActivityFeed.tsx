@@ -215,7 +215,7 @@ export function PeriodPicker({
         <button
           key={p}
           type="button"
-          className="period-picker__option"
+          className="mo-chip period-picker__option"
           aria-pressed={p === period}
           onClick={() => onChange(p)}
         >

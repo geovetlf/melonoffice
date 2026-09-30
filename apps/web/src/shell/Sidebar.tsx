@@ -301,7 +301,7 @@ export function Sidebar({
                   <span className="sidebar__label">
                     <FormattedMessage id={`nav.${tool.id}`} />
                   </span>
-                  <span className="sidebar__soon">
+                  <span className="mo-badge mo-badge--outline sidebar__soon">
                     <FormattedMessage id="common.soon" />
                   </span>
                 </span>

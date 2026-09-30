@@ -1,4 +1,5 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
+import { Badge } from '@melonoffice/ui';
 import { useEffect, useState } from 'react';
 import { usd } from '../aiUsage/AIUsagePage.js';
 import { periodDays, type UsagePeriod } from '../aiUsage/aiUsageClient.js';
@@ -22,6 +23,9 @@ type IntlShape = ReturnType<typeof useIntl>;
 type Load<T> = T | 'loading' | 'error';
 
 const PERIODS: readonly UsagePeriod[] = ['today', 'week', 'month'];
+
+/** A provider's health as a badge's tone. */
+const HEALTH_TONE = { available: 'success', degraded: 'warning', unavailable: 'danger' } as const;
 
 export function PlatformPage({
   client,
@@ -106,9 +110,9 @@ export function PlatformPage({
                 {ai.providers.map((p) => (
                   <li key={p.id} className="platform__provider" data-health={p.health}>
                     <span className="platform__name">{p.name}</span>
-                    <span className="platform__badge">
+                    <Badge tone={HEALTH_TONE[p.health]}>
                       <FormattedMessage id={`platform.health.${p.health}`} />
-                    </span>
+                    </Badge>
                     <span className="customers__meta">
                       {p.id} · {p.environments.join(', ')} ·{' '}
                       <FormattedMessage
@@ -242,7 +246,7 @@ export function PlatformPage({
             <button
               key={p}
               type="button"
-              className="period-picker__option"
+              className="mo-chip period-picker__option"
               aria-pressed={period === p}
               onClick={() => setPeriod(p)}
             >

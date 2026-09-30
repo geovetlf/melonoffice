@@ -114,7 +114,7 @@ export function ApprovalsPage({
             key={t}
             type="button"
             role="tab"
-            className="customers__tab"
+            className="mo-chip customers__tab"
             aria-selected={tab === t}
             onClick={() => setTab(t)}
           >
@@ -215,7 +215,7 @@ export function ApprovalsPage({
                   <div className="customers__actions">
                     <button
                       type="button"
-                      className="customers__tab"
+                      className="mo-button mo-button--primary mo-button--sm"
                       disabled={busy !== undefined}
                       onClick={() => void decide(a, 'approve')}
                     >
@@ -223,7 +223,7 @@ export function ApprovalsPage({
                     </button>
                     <button
                       type="button"
-                      className="customers__tab"
+                      className="mo-button mo-button--danger mo-button--sm"
                       disabled={busy !== undefined}
                       onClick={() => void decide(a, 'reject')}
                     >

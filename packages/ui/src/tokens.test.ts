@@ -55,6 +55,14 @@ describe('contrast (WCAG 2.2 AA)', () => {
     expect(contrastRatio(foreground, background)).toBeGreaterThanOrEqual(AA_NON_TEXT);
   });
 
+  it.each([
+    ['success', color.success, color.successSoft],
+    ['warning', color.warning, color.warningSoft],
+    ['danger', color.danger, color.dangerSoft],
+  ])('keeps %s text readable on its soft background', (_label, foreground, background) => {
+    expect(contrastRatio(foreground, background)).toBeGreaterThanOrEqual(AA_TEXT);
+  });
+
   it('keeps text on the accent and on its hover readable', () => {
     expect(contrastRatio(color.textOnAccent, color.accent)).toBeGreaterThanOrEqual(AA_TEXT);
     expect(contrastRatio(color.textOnAccent, mix(color.accent, 0.84, '#000000'))).toBeGreaterThan(

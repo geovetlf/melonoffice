@@ -276,15 +276,16 @@ export function ConversationsCenter({
       </div>
       <div className="inbox__tabs" role="tablist">
         {TABS.map((option) => (
-          <Button
+          <button
             key={option}
+            type="button"
             role="tab"
-            variant="secondary"
+            className="mo-chip"
             aria-selected={option === tab}
             onClick={() => setTab(option)}
           >
             <FormattedMessage id={`conversations.tab.${option}`} />
-          </Button>
+          </button>
         ))}
       </div>
       {error === undefined ? null : (

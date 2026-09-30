@@ -106,7 +106,7 @@ export function CustomersSection({
             type="button"
             role="tab"
             aria-selected={s === stage}
-            className="customers__tab"
+            className="mo-chip customers__tab"
             onClick={() => setStage(s)}
           >
             <FormattedMessage id={`customers.stage.${s}.plural`} />

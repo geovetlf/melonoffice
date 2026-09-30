@@ -83,10 +83,14 @@
 
 .home4__chip-dot--working {
   background: var(--mo-color-state-working);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--mo-color-state-working) 22%, transparent);
 }
 
+/* What waits on the person: the attention diamond, in the waiting colour it had. */
 .home4__chip-dot--attention {
+  border-radius: 2px;
   background: var(--mo-color-state-waiting);
+  transform: rotate(45deg) scale(0.9);
 }
 
 .home4__layout {
@@ -113,10 +117,6 @@
 
 .home4__side .panel {
   padding: var(--mo-space-4);
-  border: 1px solid var(--mo-color-border);
-  border-radius: 18px;
-  background: var(--mo-color-surface);
-  box-shadow: var(--mo-shadow-md);
 }
 
 .home4__command {
@@ -414,24 +414,32 @@
   background: var(--mo-color-state-available);
 }
 
+/* The state's shape as well as its colour (packages/ui `.mo-dot`): halo, ring, diamond, square. */
 .b-room__dot--working {
   background: var(--mo-color-state-working);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--mo-color-state-working) 22%, transparent);
 }
 
 .b-room__dot--waiting,
 .b-room__dot--processing {
-  background: var(--mo-color-state-waiting);
+  border: 2px solid var(--mo-color-state-waiting);
+  background: transparent;
 }
 
 .b-room__dot--attention {
+  border-radius: 2px;
   background: var(--mo-color-state-attention);
+  transform: rotate(45deg) scale(0.9);
 }
 
 .b-room__dot--paused {
+  border-radius: 2px;
   background: var(--mo-color-state-paused);
 }
 
 .b-room__dot--offline {
+  width: 0.5em;
+  height: 0.5em;
   background: var(--mo-color-state-offline);
 }
 
@@ -664,7 +672,7 @@
 }
 
 .desk__light {
-  stroke: #fff;
+  stroke: var(--mo-color-surface);
   stroke-width: 1.4;
 }
 
@@ -1129,14 +1137,14 @@
   position: absolute;
   top: 50%;
   left: 50%;
-  z-index: 20;
+  z-index: var(--mo-layer-popover);
   display: grid;
   gap: var(--mo-space-2);
   width: min(24rem, calc(100% - 2rem));
   max-height: calc(100% - 2rem);
   padding: var(--mo-space-4);
   overflow: auto;
-  border-radius: 20px;
+  border-radius: var(--mo-radius-xl);
   transform: translate(-50%, -50%);
 }
 
@@ -1169,8 +1177,7 @@
 .motor-panel__title {
   margin: var(--mo-space-2) 0 0;
   font-size: var(--mo-font-size-sm);
-  letter-spacing: var(--mo-font-tracking-wide);
-  text-transform: uppercase;
+  font-weight: var(--mo-font-weight-semibold);
   color: var(--mo-color-text-secondary);
 }
 
@@ -1207,12 +1214,13 @@
   top: 5rem;
   right: var(--mo-space-4);
   bottom: var(--mo-space-4);
-  z-index: 40;
+  z-index: var(--mo-layer-sheet);
   display: flex;
   flex-direction: column;
   width: min(26rem, calc(100vw - 2rem));
-  border-radius: 22px;
-  animation: sheet-in 220ms ease;
+  overflow: hidden;
+  border-radius: var(--mo-radius-xl);
+  animation: sheet-in var(--mo-motion-duration-base) var(--mo-motion-ease-standard);
 }
 
 @keyframes sheet-in {
@@ -1232,16 +1240,7 @@
 }
 
 .agent-sheet__close {
-  display: inline-grid;
-  place-items: center;
   flex: none;
-  width: var(--mo-min-target-size);
-  height: var(--mo-min-target-size);
-  border: 1px solid var(--mo-color-border);
-  border-radius: 50%;
-  background: var(--mo-color-surface);
-  color: var(--mo-color-text-primary);
-  cursor: pointer;
 }
 
 .agent-sheet__body {
@@ -1260,8 +1259,7 @@
 
 .agent-sheet__facts dt {
   font-size: var(--mo-font-size-xs);
-  letter-spacing: var(--mo-font-tracking-wide);
-  text-transform: uppercase;
+  font-weight: var(--mo-font-weight-semibold);
   color: var(--mo-color-text-secondary);
 }
 
@@ -1314,35 +1312,6 @@
   display: flex;
   flex-wrap: wrap;
   gap: var(--mo-space-2);
-}
-
-.agent-sheet__action {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--mo-space-2);
-  min-height: 40px;
-  padding: 0 var(--mo-space-3);
-  border: 1px solid var(--mo-color-border);
-  border-radius: var(--mo-radius-pill);
-  background: var(--mo-color-surface);
-  font: inherit;
-  font-size: var(--mo-font-size-sm);
-  color: var(--mo-color-text-primary);
-  cursor: pointer;
-}
-
-.agent-sheet__action:hover {
-  background: var(--mo-color-hover);
-}
-
-.agent-sheet__action--primary {
-  border-color: transparent;
-  background: var(--mo-color-accent);
-  color: var(--mo-color-text-on-accent);
-}
-
-.agent-sheet__action--primary:hover {
-  background: var(--mo-color-accent-hover);
 }
 
 .agent-sheet__notice {
@@ -1683,13 +1652,13 @@
     left: 0;
     width: auto;
     max-height: 82vh;
-    border-radius: 22px 22px 0 0;
+    border-radius: var(--mo-radius-xl) var(--mo-radius-xl) 0 0;
     transform: none;
-    animation: sheet-up 220ms ease;
+    animation: sheet-up var(--mo-motion-duration-base) var(--mo-motion-ease-standard);
   }
 
   .motor-panel {
-    z-index: 40;
+    z-index: var(--mo-layer-sheet);
   }
 
   .home4__side {

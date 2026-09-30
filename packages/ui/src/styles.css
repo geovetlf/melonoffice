@@ -1,6 +1,7 @@
 /* Instrument Sans (SIL Open Font License), served with the app: every device and screenshot shows the same type. */
 @import '@fontsource-variable/instrument-sans/wght.css';
 @import './tokens.css';
+@import './components.css';
 
 *,
 *::before,
@@ -27,50 +28,6 @@ textarea {
 }
 
 :focus-visible {
-  outline: 3px solid var(--mo-color-focus-ring);
-  outline-offset: 2px;
-}
-
-.mo-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: var(--mo-min-target-size);
-  min-width: var(--mo-min-target-size);
-  padding: var(--mo-space-2) var(--mo-space-4);
-  border: 1px solid transparent;
-  border-radius: var(--mo-radius-pill);
-  font: inherit;
-  font-weight: var(--mo-font-weight-medium);
-  cursor: pointer;
-}
-
-.mo-button--primary {
-  background: var(--mo-color-accent);
-  color: var(--mo-color-text-on-accent);
-}
-
-.mo-button--primary:hover {
-  background: var(--mo-color-accent-hover);
-}
-
-.mo-button--secondary {
-  background: var(--mo-color-surface);
-  color: var(--mo-color-text-primary);
-  border-color: var(--mo-color-border);
-}
-
-.mo-button--secondary:hover {
-  background: var(--mo-color-surface-muted);
-}
-
-.mo-button[aria-pressed='true'] {
-  border-color: var(--mo-color-accent);
-  box-shadow: inset 0 0 0 1px var(--mo-color-accent);
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  .mo-button {
-    transition: background-color var(--mo-motion-duration-fast) var(--mo-motion-ease-standard);
-  }
+  outline: var(--mo-state-focus-ring-width) solid var(--mo-color-focus-ring);
+  outline-offset: var(--mo-state-focus-ring-offset);
 }

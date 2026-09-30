@@ -1,0 +1,124 @@
+/* Layout of the component gallery only (preview). Components bring their own look. */
+.gallery {
+  display: grid;
+  gap: var(--mo-space-6);
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: var(--mo-space-8) var(--mo-space-4);
+}
+
+.gallery__title {
+  margin: 0;
+  font-size: var(--mo-font-size-xxl);
+  letter-spacing: var(--mo-font-tracking-tight);
+}
+
+.gallery__row {
+  display: grid;
+  gap: var(--mo-space-2);
+  margin-bottom: var(--mo-space-4);
+}
+
+.gallery__label {
+  margin: 0;
+}
+
+.gallery__items {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--mo-space-3);
+}
+
+.gallery__end {
+  justify-content: flex-end;
+}
+
+.gallery__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(16rem, 100%), 1fr));
+  gap: var(--mo-space-4);
+  align-items: start;
+}
+
+.gallery__wide {
+  grid-column: 1 / -1;
+}
+
+.gallery__check,
+.gallery__state {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--mo-space-2);
+  font-size: var(--mo-font-size-sm);
+}
+
+.gallery__tabs {
+  width: min(100%, 24rem);
+}
+
+.gallery__credits {
+  display: grid;
+  gap: var(--mo-space-2);
+  width: min(100%, 18rem);
+}
+
+.gallery__figure {
+  margin: 0;
+  color: var(--mo-color-text-secondary);
+  font-size: var(--mo-font-size-sm);
+}
+
+.gallery__figure .mo-figure {
+  font-size: var(--mo-font-size-xxl);
+}
+
+.gallery__menu {
+  justify-self: start;
+}
+
+.gallery__tooltip {
+  display: flex;
+  align-items: center;
+  gap: var(--mo-space-3);
+}
+
+.gallery__stage {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(18rem, 100%), 1fr));
+  gap: var(--mo-space-6);
+  align-items: start;
+  padding: var(--mo-space-6);
+  border-radius: var(--mo-radius-lg);
+  background: var(--mo-color-scrim);
+}
+
+.gallery__dialog {
+  display: grid;
+  gap: var(--mo-space-3);
+  padding: var(--mo-space-6);
+  border-radius: var(--mo-radius-xl);
+}
+
+.gallery__sheet {
+  display: grid;
+  overflow: hidden;
+  border-radius: var(--mo-radius-xl);
+}
+
+.gallery__sheet .mo-sheet__body {
+  display: grid;
+  gap: var(--mo-space-3);
+}
+
+.gallery__who {
+  display: grid;
+  flex: 1;
+}
+
+.gallery__card {
+  display: grid;
+  gap: var(--mo-space-1);
+  font: inherit;
+  text-align: left;
+}

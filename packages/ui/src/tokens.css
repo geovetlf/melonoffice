@@ -9,6 +9,8 @@
   --mo-color-border: #dce1e8;
   --mo-color-border-strong: #7d8696;
   --mo-color-hover: rgb(24 32 46 / 0.05);
+  --mo-color-pressed: rgb(24 32 46 / 0.09);
+  --mo-color-scrim: rgb(24 32 46 / 0.36);
   --mo-color-text-primary: #18202e;
   --mo-color-text-secondary: #556072;
   --mo-color-text-on-accent: #ffffff;
@@ -21,6 +23,9 @@
   --mo-color-success: #2e7d4f;
   --mo-color-warning: #8a5f00;
   --mo-color-danger: #b42318;
+  --mo-color-success-soft: #edf6f0;
+  --mo-color-warning-soft: #f8f0de;
+  --mo-color-danger-soft: #fbeae8;
   --mo-color-state-working: #c0451d;
   --mo-color-state-available: #2e8a5a;
   --mo-color-state-waiting: #b87708;
@@ -70,6 +75,21 @@
   --mo-motion-duration-base: 200ms;
   --mo-motion-duration-slow: 400ms;
   --mo-motion-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+
+  --mo-control-height-sm: 2rem;
+  --mo-control-height-md: 2.75rem;
+  --mo-control-padding-sm: 0.75rem;
+  --mo-control-padding-md: 1.125rem;
+
+  --mo-layer-sticky: 20;
+  --mo-layer-popover: 30;
+  --mo-layer-scrim: 35;
+  --mo-layer-sheet: 40;
+  --mo-layer-dialog: 50;
+
+  --mo-state-disabled-opacity: 0.5;
+  --mo-state-focus-ring-width: 3px;
+  --mo-state-focus-ring-offset: 2px;
 
   --mo-min-target-size: 44px;
 }

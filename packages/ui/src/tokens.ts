@@ -25,6 +25,9 @@ export const palette = {
   statusSuccess: '#2E7D4F',
   statusWarning: '#8A5F00',
   statusDanger: '#B42318',
+  successSoft: '#EDF6F0',
+  warningSoft: '#F8F0DE',
+  dangerSoft: '#FBEAE8',
   stateAvailable: '#2E8A5A',
   stateWaiting: '#B87708',
   stateAttention: '#C9302C',
@@ -45,6 +48,10 @@ export const color = {
   /** Outlines that identify a control on their own (WCAG non-text contrast). */
   borderStrong: palette.slate500,
   hover: 'rgb(24 32 46 / 0.05)',
+  /** A control held down, over any surface. */
+  pressed: 'rgb(24 32 46 / 0.09)',
+  /** Behind a dialog, a sheet or the phone menu. */
+  scrim: 'rgb(24 32 46 / 0.36)',
   textPrimary: palette.ink900,
   textSecondary: palette.graphite600,
   textOnAccent: palette.white,
@@ -57,6 +64,10 @@ export const color = {
   success: palette.statusSuccess,
   warning: palette.statusWarning,
   danger: palette.statusDanger,
+  /** Tinted backgrounds for status badges and messages; their status colour reads on them. */
+  successSoft: palette.successSoft,
+  warningSoft: palette.warningSoft,
+  dangerSoft: palette.dangerSoft,
   /** An agent's state (ADR-0096): a light beside its name, always with a word. */
   stateWorking: palette.melon700,
   stateAvailable: palette.stateAvailable,
@@ -126,6 +137,33 @@ export const motion = {
   easeStandard: 'cubic-bezier(0.2, 0, 0, 1)',
 } as const;
 
+/**
+ * Controls: `md` is the target size (44 px) for buttons and fields; `sm` (32 px) is for dense
+ * filters and chips inside a panel, still above WCAG 2.2's 24 px minimum.
+ */
+export const control = {
+  heightSm: '2rem',
+  heightMd: '2.75rem',
+  paddingSm: '0.75rem',
+  paddingMd: '1.125rem',
+} as const;
+
+/** Stacking of what floats over the page, lowest first. */
+export const layer = {
+  sticky: '20',
+  popover: '30',
+  scrim: '35',
+  sheet: '40',
+  dialog: '50',
+} as const;
+
+/** Interaction states every control shares. */
+export const state = {
+  disabledOpacity: '0.5',
+  focusRingWidth: '3px',
+  focusRingOffset: '2px',
+} as const;
+
 /** Minimum interactive target size (WCAG 2.2 target size, and touch). */
 export const minTargetSize = '44px';
 
@@ -142,6 +180,9 @@ export function cssVariables(): Record<string, string> {
   for (const [name, value] of Object.entries(radius)) vars[`--mo-radius-${name}`] = value;
   for (const [name, value] of Object.entries(shadow)) vars[`--mo-shadow-${name}`] = value;
   for (const [name, value] of Object.entries(motion)) vars[`--mo-motion-${kebab(name)}`] = value;
+  for (const [name, value] of Object.entries(control)) vars[`--mo-control-${kebab(name)}`] = value;
+  for (const [name, value] of Object.entries(layer)) vars[`--mo-layer-${name}`] = value;
+  for (const [name, value] of Object.entries(state)) vars[`--mo-state-${kebab(name)}`] = value;
   vars['--mo-min-target-size'] = minTargetSize;
   return vars;
 }
