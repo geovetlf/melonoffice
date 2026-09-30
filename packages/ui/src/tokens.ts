@@ -1,53 +1,74 @@
 /**
- * Design tokens v0: the MelonOffice melon/coral identity on warm neutrals.
- * Green is used only as a status colour, never as a brand colour.
+ * Design tokens v1: MelonOffice's melon on cool porcelain, the materials of the office's rooms.
+ * There is one set of tokens for the whole app; screens build on these and never define their
+ * own palette. Green is used only as a status colour, never as a brand colour.
  *
- * `tokens.css` exposes the same values as CSS custom properties; a test keeps
- * both in sync.
+ * `tokens.css` exposes the same values as CSS custom properties; a test keeps both in sync. The
+ * accent, its hover and soft tints, the expressive melon and the focus ring follow a white-label
+ * brand's colour at run time (`applyBrand` in the web app); nothing else does.
  */
 
 export const palette = {
-  melon500: '#F2784B',
-  melon600: '#D95F32',
-  melon700: '#A8431E',
-  coral400: '#FF9A6B',
-  amber400: '#F5B942',
-  cream50: '#FFF8F3',
-  sand100: '#F6EDE6',
-  sand200: '#E9DCD2',
-  stone600: '#6E5A4F',
-  charcoal800: '#3A2A24',
-  charcoal900: '#241915',
+  porcelain: '#F3F5F8',
+  porcelain50: '#F8F9FB',
+  mist200: '#E9EDF2',
+  mist300: '#DCE1E8',
+  slate500: '#7D8696',
+  graphite600: '#556072',
+  ink900: '#18202E',
   white: '#FFFFFF',
+  /** The functional melon: text, buttons and controls (WCAG AA on every surface). */
+  melon700: '#C0451D',
+  /** The expressive melon: GIA, glows and pulses. Never small text. */
+  melon400: '#FF8A5C',
+  amber400: '#F5B942',
   statusSuccess: '#2E7D4F',
-  statusWarning: '#9A6A00',
+  statusWarning: '#8A5F00',
   statusDanger: '#B42318',
+  stateAvailable: '#2E8A5A',
+  stateWaiting: '#B87708',
+  stateAttention: '#C9302C',
+  statePaused: '#6F7888',
+  stateOffline: '#848D9C',
 } as const;
 
 /** Semantic colours used by components. Components never use palette values directly. */
 export const color = {
+  background: palette.porcelain,
   surface: palette.white,
-  surfaceSubtle: palette.cream50,
-  surfaceMuted: palette.sand100,
-  border: palette.sand200,
-  textPrimary: palette.charcoal900,
-  textSecondary: palette.stone600,
+  surfaceElevated: palette.white,
+  surfaceSubtle: palette.porcelain50,
+  surfaceMuted: palette.mist200,
+  /** Glass over the office's art: panels and plates that sit on a room. */
+  surfaceGlass: 'rgb(255 255 255 / 0.94)',
+  border: palette.mist300,
+  /** Outlines that identify a control on their own (WCAG non-text contrast). */
+  borderStrong: palette.slate500,
+  hover: 'rgb(24 32 46 / 0.05)',
+  textPrimary: palette.ink900,
+  textSecondary: palette.graphite600,
   textOnAccent: palette.white,
   accent: palette.melon700,
-  accentHover: palette.charcoal800,
-  accentDecorative: palette.melon500,
+  accentHover: 'color-mix(in srgb, var(--mo-color-accent) 84%, #000000)',
+  accentSoft: 'color-mix(in srgb, var(--mo-color-accent) 12%, transparent)',
+  accentExpressive: palette.melon400,
   highlight: palette.amber400,
   focusRing: palette.melon700,
-  sidebarBackground: palette.charcoal900,
-  sidebarText: palette.cream50,
   success: palette.statusSuccess,
   warning: palette.statusWarning,
   danger: palette.statusDanger,
+  /** An agent's state (ADR-0096): a light beside its name, always with a word. */
+  stateWorking: palette.melon700,
+  stateAvailable: palette.stateAvailable,
+  stateWaiting: palette.stateWaiting,
+  stateAttention: palette.stateAttention,
+  statePaused: palette.statePaused,
+  stateOffline: palette.stateOffline,
 } as const;
 
 export const font = {
   family:
-    "system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans', 'Noto Sans CJK SC', 'Noto Sans JP', sans-serif",
+    "'Onest Variable', system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans', 'Noto Sans CJK SC', 'Noto Sans JP', sans-serif",
   sizeXs: '0.75rem',
   sizeSm: '0.875rem',
   sizeMd: '1rem',
@@ -56,8 +77,10 @@ export const font = {
   sizeXxl: '2rem',
   weightRegular: '400',
   weightMedium: '500',
+  weightSemibold: '600',
   weightBold: '700',
   lineHeight: '1.5',
+  lineHeightTight: '1.2',
 } as const;
 
 export const space = {
@@ -70,11 +93,28 @@ export const space = {
   12: '3rem',
 } as const;
 
+/** Corners by hierarchy: controls are small, panels medium, rooms and sheets large. */
 export const radius = {
   sm: '6px',
   md: '10px',
   lg: '16px',
+  xl: '20px',
   pill: '999px',
+} as const;
+
+/** Elevation, tinted with the ink colour: a resting panel, a raised card, an overlay. */
+export const shadow = {
+  sm: '0 1px 2px rgb(24 32 46 / 0.06)',
+  md: '0 1px 2px rgb(24 32 46 / 0.05), 0 8px 24px rgb(24 32 46 / 0.07)',
+  lg: '0 2px 6px rgb(24 32 46 / 0.06), 0 18px 48px rgb(24 32 46 / 0.14)',
+} as const;
+
+/** Motion answers a person or shows real work; these keep it short and consistent. */
+export const motion = {
+  durationFast: '120ms',
+  durationBase: '200ms',
+  durationSlow: '400ms',
+  easeStandard: 'cubic-bezier(0.2, 0, 0, 1)',
 } as const;
 
 /** Minimum interactive target size (WCAG 2.2 target size, and touch). */
@@ -91,6 +131,8 @@ export function cssVariables(): Record<string, string> {
   for (const [name, value] of Object.entries(font)) vars[`--mo-font-${kebab(name)}`] = value;
   for (const [name, value] of Object.entries(space)) vars[`--mo-space-${name}`] = value;
   for (const [name, value] of Object.entries(radius)) vars[`--mo-radius-${name}`] = value;
+  for (const [name, value] of Object.entries(shadow)) vars[`--mo-shadow-${name}`] = value;
+  for (const [name, value] of Object.entries(motion)) vars[`--mo-motion-${kebab(name)}`] = value;
   vars['--mo-min-target-size'] = minTargetSize;
   return vars;
 }

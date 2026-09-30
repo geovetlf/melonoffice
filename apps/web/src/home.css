@@ -27,7 +27,7 @@
 
 .home4__date {
   display: inline-block;
-  color: var(--office-muted);
+  color: var(--mo-color-text-secondary);
 }
 
 .home4__date::first-letter {
@@ -36,13 +36,13 @@
 
 .home4__greeting {
   font-weight: var(--mo-font-weight-medium);
-  color: var(--office-accent);
+  color: var(--mo-color-accent);
 }
 
 .home4__greeting::before {
   content: '·';
   margin-right: var(--mo-space-2);
-  color: var(--office-muted);
+  color: var(--mo-color-text-secondary);
 }
 
 .home4__title {
@@ -67,10 +67,10 @@
   gap: var(--mo-space-2);
   min-height: 34px;
   padding: 0 var(--mo-space-3);
-  border: 1px solid var(--office-line);
+  border: 1px solid var(--mo-color-border);
   border-radius: var(--mo-radius-pill);
-  background: var(--office-panel);
-  box-shadow: var(--office-shadow);
+  background: var(--mo-color-surface);
+  box-shadow: var(--mo-shadow-md);
   font-size: var(--mo-font-size-sm);
 }
 
@@ -78,15 +78,15 @@
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--office-state-available);
+  background: var(--mo-color-state-available);
 }
 
 .home4__chip-dot--working {
-  background: var(--office-state-working);
+  background: var(--mo-color-state-working);
 }
 
 .home4__chip-dot--attention {
-  background: var(--office-state-waiting);
+  background: var(--mo-color-state-waiting);
 }
 
 .home4__layout {
@@ -113,10 +113,10 @@
 
 .home4__side .panel {
   padding: var(--mo-space-4);
-  border: 1px solid var(--office-line);
+  border: 1px solid var(--mo-color-border);
   border-radius: 18px;
-  background: var(--office-panel);
-  box-shadow: var(--office-shadow);
+  background: var(--mo-color-surface);
+  box-shadow: var(--mo-shadow-md);
 }
 
 .home4__command {
@@ -136,18 +136,16 @@
   padding-left: 1.25rem;
   border: 1px solid rgb(255 255 255 / 0.95);
   border-radius: var(--mo-radius-pill);
-  background: #fff;
-  box-shadow:
-    0 0 0 1px rgb(30 48 86 / 0.06),
-    0 12px 32px rgb(30 48 86 / 0.14);
+  background: var(--mo-color-surface);
+  box-shadow: var(--mo-shadow-lg);
 }
 
 .gia-command .gia-bar__send {
   width: 48px;
   height: 48px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #ffa24c, #f2782e);
-  box-shadow: 0 6px 16px rgb(242 120 46 / 0.4);
+  background: var(--mo-color-accent);
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--mo-color-accent) 35%, transparent);
 }
 
 .gia-suggest {
@@ -168,17 +166,17 @@
   padding: 0 var(--mo-space-4);
   border: 1px solid rgb(255 255 255 / 0.95);
   border-radius: var(--mo-radius-pill);
-  background: #fff;
-  box-shadow: 0 4px 12px rgb(30 48 86 / 0.08);
+  background: var(--mo-color-surface);
+  box-shadow: var(--mo-shadow-sm);
   font: inherit;
   font-size: var(--mo-font-size-sm);
-  color: var(--office-text);
+  color: var(--mo-color-text-primary);
   cursor: pointer;
 }
 
 .gia-suggest__item:hover {
-  border-color: rgb(242 120 75 / 0.45);
-  background: var(--office-accent-soft);
+  border-color: color-mix(in srgb, var(--mo-color-accent) 45%, transparent);
+  background: var(--mo-color-accent-soft);
 }
 
 .gia-command .quick-actions {
@@ -197,10 +195,10 @@
 .building__notice {
   margin: 0;
   padding: var(--mo-space-8);
-  border: 1px solid var(--office-line);
+  border: 1px solid var(--mo-color-border);
   border-radius: 24px;
-  background: var(--office-panel);
-  color: var(--office-muted);
+  background: var(--mo-color-surface);
+  color: var(--mo-color-text-secondary);
 }
 
 .building__frame {
@@ -217,7 +215,7 @@
   overflow: hidden;
   container-type: inline-size;
   border-radius: 18px;
-  background: #eef1f5;
+  background: var(--mo-color-surface-muted);
   box-shadow:
     0 0 0 3px rgb(255 255 255 / 0.95),
     0 0 0 4px rgb(168 190 218 / 0.45),
@@ -305,7 +303,7 @@
   inset: 0;
   z-index: 1;
   display: block;
-  color: var(--office-text);
+  color: var(--mo-color-text-primary);
   text-decoration: none;
 }
 
@@ -351,8 +349,12 @@
   width: 1.8em;
   height: 1.8em;
   border-radius: 50%;
-  background: color-mix(in srgb, var(--zone-hue, #f2784b) 20%, white);
-  color: color-mix(in srgb, var(--zone-hue, #f2784b) 80%, #3a1d10);
+  background: color-mix(in srgb, var(--zone-hue, var(--mo-color-accent)) 20%, white);
+  color: color-mix(
+    in srgb,
+    var(--zone-hue, var(--mo-color-accent)) 80%,
+    var(--mo-color-text-primary)
+  );
 }
 
 .b-room__name {
@@ -361,7 +363,7 @@
 
 .b-room__count {
   font-size: 0.86em;
-  color: var(--office-muted);
+  color: var(--mo-color-text-secondary);
 }
 
 .b-room__count::before {
@@ -370,7 +372,7 @@
 }
 
 .b-room__go {
-  color: var(--office-text);
+  color: var(--mo-color-text-primary);
 }
 
 .b-room__status {
@@ -409,28 +411,28 @@
   width: 0.65em;
   height: 0.65em;
   border-radius: 50%;
-  background: var(--office-state-available);
+  background: var(--mo-color-state-available);
 }
 
 .b-room__dot--working {
-  background: var(--office-state-working);
+  background: var(--mo-color-state-working);
 }
 
 .b-room__dot--waiting,
 .b-room__dot--processing {
-  background: var(--office-state-waiting);
+  background: var(--mo-color-state-waiting);
 }
 
 .b-room__dot--attention {
-  background: var(--office-state-attention);
+  background: var(--mo-color-state-attention);
 }
 
 .b-room__dot--paused {
-  background: var(--office-state-paused);
+  background: var(--mo-color-state-paused);
 }
 
 .b-room__dot--offline {
-  background: var(--office-state-offline);
+  background: var(--mo-color-state-offline);
 }
 
 /* A room's agents, shown while the pointer or the focus is on it. */
@@ -480,7 +482,7 @@
 .b-room__peek-state {
   grid-column: 2;
   overflow: hidden;
-  color: var(--office-muted);
+  color: var(--mo-color-text-secondary);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -503,7 +505,7 @@
 }
 
 .wall-screen--attention {
-  box-shadow: 0 0 14px rgb(255 138 92 / 0.55);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--mo-color-accent-expressive) 55%, transparent);
 }
 
 /* A band of light passes over a live screen now and then. */
@@ -553,7 +555,7 @@
 }
 
 .wall-screen--attention .wall-screen__bar::after {
-  background: #ff8a5c;
+  background: var(--mo-color-accent-expressive);
 }
 
 @keyframes wall-screen-work {
@@ -667,28 +669,28 @@
 }
 
 .desk__light--working {
-  fill: var(--office-state-working);
+  fill: var(--mo-color-state-working);
 }
 
 .desk__light--available {
-  fill: var(--office-state-available);
+  fill: var(--mo-color-state-available);
 }
 
 .desk__light--waiting,
 .desk__light--processing {
-  fill: var(--office-state-waiting);
+  fill: var(--mo-color-state-waiting);
 }
 
 .desk__light--attention {
-  fill: var(--office-state-attention);
+  fill: var(--mo-color-state-attention);
 }
 
 .desk__light--paused {
-  fill: var(--office-state-paused);
+  fill: var(--mo-color-state-paused);
 }
 
 .desk__light--offline {
-  fill: var(--office-state-offline);
+  fill: var(--mo-color-state-offline);
 }
 
 .desk__light--working,
@@ -745,7 +747,7 @@
   max-width: 16rem;
   padding: 6px 10px;
   border-radius: 10px;
-  background: var(--office-panel);
+  background: var(--mo-color-surface);
   box-shadow: 0 8px 20px rgb(36 58 92 / 0.22);
   font-size: 0.75rem;
   text-align: left;
@@ -770,7 +772,7 @@
 .b-desk__task {
   max-width: 14rem;
   overflow: hidden;
-  color: var(--office-muted);
+  color: var(--mo-color-text-secondary);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -799,7 +801,7 @@
   position: absolute;
   inset: 0;
   z-index: 5;
-  color: var(--office-text);
+  color: var(--mo-color-text-primary);
   text-decoration: none;
 }
 
@@ -836,7 +838,7 @@
   content: '';
   position: absolute;
   inset: -12%;
-  border: 2px solid rgb(255 170 130 / 0.7);
+  border: 2px solid color-mix(in srgb, var(--mo-color-accent-expressive) 70%, transparent);
   border-radius: 50%;
   animation: gia-ring 4s ease-in-out infinite;
 }
@@ -893,12 +895,12 @@
   width: 0.55em;
   height: 0.55em;
   border-radius: 50%;
-  background: var(--office-state-available);
+  background: var(--mo-color-state-available);
   animation: desk-light 2.8s ease-in-out infinite;
 }
 
 .b-gia__role {
-  color: var(--office-muted);
+  color: var(--mo-color-text-secondary);
 }
 
 /* MelonMotor: its mark in front of the cubes, its name below; it opens the flows. */
@@ -926,7 +928,7 @@
   background: transparent;
   font: inherit;
   font-size: clamp(0.66rem, 4.6cqw, 0.95rem);
-  color: var(--office-text);
+  color: var(--mo-color-text-primary);
   cursor: pointer;
 }
 
@@ -942,10 +944,14 @@
   height: auto;
   padding: 2.5%;
   border-radius: 22%;
-  background: linear-gradient(160deg, #ffb36b, #f2784b);
+  background: linear-gradient(
+    160deg,
+    color-mix(in srgb, var(--mo-color-accent-expressive) 70%, var(--mo-color-highlight)),
+    var(--mo-color-accent-expressive)
+  );
   box-shadow:
     0 0 0 2px rgb(255 255 255 / 0.7),
-    0 0 22px rgb(255 150 90 / 0.7);
+    0 0 22px color-mix(in srgb, var(--mo-color-accent-expressive) 70%, transparent);
   transform: translate(-50%, -50%);
   animation: motor-glow 4s ease-in-out infinite;
 }
@@ -953,11 +959,11 @@
 @keyframes motor-glow {
   0%,
   100% {
-    filter: drop-shadow(0 0 0 rgb(242 120 75 / 0));
+    filter: drop-shadow(0 0 0 color-mix(in srgb, var(--mo-color-accent) 0%, transparent));
   }
 
   50% {
-    filter: drop-shadow(0 0 10px rgb(242 120 75 / 0.7));
+    filter: drop-shadow(0 0 10px color-mix(in srgb, var(--mo-color-accent) 70%, transparent));
   }
 }
 
@@ -992,7 +998,7 @@
 
 .b-motor__tagline {
   max-width: 11em;
-  color: var(--office-muted);
+  color: var(--mo-color-text-secondary);
 }
 
 /* MelonMotor's network: lines of light in the gaps between the rooms, GIA's beam above it. */
@@ -1058,16 +1064,16 @@
 }
 
 .circuit--gia .circuit__glow {
-  stroke: rgb(255 170 130 / 0.35);
+  stroke: color-mix(in srgb, var(--mo-color-accent-expressive) 35%, transparent);
 }
 
 .circuit--attention .circuit__trace,
 .circuit--flow .circuit__trace {
-  stroke: rgb(255 170 135 / 0.95);
+  stroke: color-mix(in srgb, var(--mo-color-accent-expressive) 95%, transparent);
 }
 
 .circuit--attention .circuit__glow {
-  stroke: rgb(255 138 92 / 0.35);
+  stroke: color-mix(in srgb, var(--mo-color-accent-expressive) 35%, transparent);
 }
 
 .circuit--hot .circuit__glow {
@@ -1088,7 +1094,7 @@
 }
 
 .circuit__pulse--coral .circuit__halo {
-  fill: rgb(255 138 92 / 0.6);
+  fill: color-mix(in srgb, var(--mo-color-accent-expressive) 60%, transparent);
 }
 
 .circuit__pulse--coral .circuit__dot {
@@ -1113,10 +1119,10 @@
 /* MelonMotor's panel and an agent's card. */
 .motor-panel,
 .agent-sheet {
-  border: 1px solid var(--office-line);
-  background: var(--office-panel);
-  box-shadow: 0 24px 60px rgb(74 46 28 / 0.25);
-  color: var(--office-text);
+  border: 1px solid var(--mo-color-border);
+  background: var(--mo-color-surface);
+  box-shadow: var(--mo-shadow-lg);
+  color: var(--mo-color-text-primary);
 }
 
 .motor-panel {
@@ -1151,7 +1157,7 @@
 .agent-sheet__header p {
   margin: 2px 0 0;
   font-size: var(--mo-font-size-sm);
-  color: var(--office-muted);
+  color: var(--mo-color-text-secondary);
 }
 
 .motor-panel__header > div,
@@ -1165,7 +1171,7 @@
   font-size: var(--mo-font-size-sm);
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--office-muted);
+  color: var(--mo-color-text-secondary);
 }
 
 .motor-panel__list {
@@ -1181,7 +1187,7 @@
   gap: 2px;
   padding: var(--mo-space-2) var(--mo-space-3);
   border-radius: 12px;
-  background: var(--office-accent-soft);
+  background: var(--mo-color-accent-soft);
 }
 
 .motor-panel__route {
@@ -1193,7 +1199,7 @@
 
 .motor-panel__meta {
   font-size: var(--mo-font-size-sm);
-  color: var(--office-muted);
+  color: var(--mo-color-text-secondary);
 }
 
 .agent-sheet {
@@ -1218,7 +1224,7 @@
 
 .agent-sheet__header {
   padding: var(--mo-space-4);
-  border-bottom: 1px solid var(--office-line);
+  border-bottom: 1px solid var(--mo-color-border);
 }
 
 .agent-sheet__header h2:focus-visible {
@@ -1231,10 +1237,10 @@
   flex: none;
   width: var(--mo-min-target-size);
   height: var(--mo-min-target-size);
-  border: 1px solid var(--office-line);
+  border: 1px solid var(--mo-color-border);
   border-radius: 50%;
-  background: var(--office-panel);
-  color: var(--office-text);
+  background: var(--mo-color-surface);
+  color: var(--mo-color-text-primary);
   cursor: pointer;
 }
 
@@ -1256,7 +1262,7 @@
   font-size: var(--mo-font-size-xs);
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--office-muted);
+  color: var(--mo-color-text-secondary);
 }
 
 .agent-sheet__facts dd {
@@ -1272,7 +1278,7 @@
 .agent-sheet__meta,
 .agent-sheet__none {
   font-size: var(--mo-font-size-sm);
-  color: var(--office-muted);
+  color: var(--mo-color-text-secondary);
 }
 
 .agent-sheet__answer {
@@ -1291,17 +1297,17 @@
   padding: 0;
   list-style: none;
   font-size: 0.6875rem;
-  color: var(--office-muted);
+  color: var(--mo-color-text-secondary);
 }
 
 .agent-sheet__steps li {
   padding-top: 6px;
-  border-top: 3px solid var(--office-line);
+  border-top: 3px solid var(--mo-color-border);
 }
 
 .agent-sheet__steps .agent-sheet__step--done {
-  border-top-color: var(--office-accent);
-  color: var(--office-text);
+  border-top-color: var(--mo-color-accent);
+  color: var(--mo-color-text-primary);
 }
 
 .agent-sheet__actions {
@@ -1316,33 +1322,33 @@
   gap: var(--mo-space-2);
   min-height: 40px;
   padding: 0 var(--mo-space-3);
-  border: 1px solid var(--office-line);
+  border: 1px solid var(--mo-color-border);
   border-radius: var(--mo-radius-pill);
-  background: var(--office-panel);
+  background: var(--mo-color-surface);
   font: inherit;
   font-size: var(--mo-font-size-sm);
-  color: var(--office-text);
+  color: var(--mo-color-text-primary);
   cursor: pointer;
 }
 
 .agent-sheet__action:hover {
-  background: var(--office-hover);
+  background: var(--mo-color-hover);
 }
 
 .agent-sheet__action--primary {
   border-color: transparent;
-  background: linear-gradient(135deg, #f2784b, #e85d3a);
-  color: #fff;
+  background: var(--mo-color-accent);
+  color: var(--mo-color-text-on-accent);
 }
 
 .agent-sheet__action--primary:hover {
-  background: linear-gradient(135deg, #e8683c, #d64f2e);
+  background: var(--mo-color-accent-hover);
 }
 
 .agent-sheet__notice {
   margin: 0;
   font-size: var(--mo-font-size-sm);
-  color: var(--office-muted);
+  color: var(--mo-color-text-secondary);
 }
 
 .agent-sheet .agent-tasks {
@@ -1625,7 +1631,7 @@
   }
 
   .b-crew .agent-avatar {
-    box-shadow: 0 0 0 2px #fff;
+    box-shadow: 0 0 0 2px var(--mo-color-surface);
   }
 
   .b-crew__light {
@@ -1634,30 +1640,30 @@
     bottom: 6px;
     width: 10px;
     height: 10px;
-    border: 2px solid #fff;
+    border: 2px solid var(--mo-color-surface);
     border-radius: 50%;
-    background: var(--office-state-available);
+    background: var(--mo-color-state-available);
   }
 
   .b-crew__light--working {
-    background: var(--office-state-working);
+    background: var(--mo-color-state-working);
   }
 
   .b-crew__light--waiting,
   .b-crew__light--processing {
-    background: var(--office-state-waiting);
+    background: var(--mo-color-state-waiting);
   }
 
   .b-crew__light--attention {
-    background: var(--office-state-attention);
+    background: var(--mo-color-state-attention);
   }
 
   .b-crew__light--paused {
-    background: var(--office-state-paused);
+    background: var(--mo-color-state-paused);
   }
 
   .b-crew__light--offline {
-    background: var(--office-state-offline);
+    background: var(--mo-color-state-offline);
   }
 
   .b-gia__chip {

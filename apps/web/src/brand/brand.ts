@@ -1,4 +1,4 @@
-import { contrastRatio } from '@melonoffice/ui';
+import { color, contrastRatio } from '@melonoffice/ui';
 import { createContext, useContext } from 'react';
 
 /**
@@ -63,11 +63,15 @@ export async function loadPublicBrand(
   }
 }
 
-/** White text on buttons stays readable (WCAG AA): a color that fails is not applied. */
+/**
+ * White text on buttons, and the colour as text on the app's background, stay readable
+ * (WCAG AA): a colour that fails either is not applied.
+ */
 const READABLE = 4.5;
 
 /**
- * Applies a brand to the page: its title, its icon and its main color. The platform's own brand
+ * Applies a brand to the page: its title, its icon and its main color, which the app's accent
+ * tokens follow everywhere. The platform's own brand
  * changes nothing, so a MelonOffice page stays exactly as built.
  */
 export function applyBrand(brand: PublicBrand, doc: Document = document): void {
@@ -84,10 +88,19 @@ export function applyBrand(brand: PublicBrand, doc: Document = document): void {
   }
   if (
     brand.primaryColor !== undefined &&
-    contrastRatio('#ffffff', brand.primaryColor) >= READABLE
+    contrastRatio(color.textOnAccent, brand.primaryColor) >= READABLE &&
+    contrastRatio(color.background, brand.primaryColor) >= READABLE
   ) {
-    doc.documentElement.style.setProperty('--mo-color-accent', brand.primaryColor);
-    doc.documentElement.style.setProperty('--mo-color-focus-ring', brand.primaryColor);
+    // The whole app reads these tokens (packages/ui): buttons, links, the sidebar, the office.
+    // The hover and soft tints are mixed from the accent in CSS; the expressive tone (GIA,
+    // glows) is a lighter mix of the brand's colour, used for decoration and never for text.
+    const root = doc.documentElement.style;
+    root.setProperty('--mo-color-accent', brand.primaryColor);
+    root.setProperty('--mo-color-focus-ring', brand.primaryColor);
+    root.setProperty(
+      '--mo-color-accent-expressive',
+      `color-mix(in srgb, ${brand.primaryColor} 70%, #ffffff)`,
+    );
   }
 }
 

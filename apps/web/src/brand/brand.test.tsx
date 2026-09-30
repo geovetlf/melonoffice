@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { Root } from '../Root.js';
@@ -53,7 +54,21 @@ describe('the brand of this host', () => {
     // Yellow under white text is unreadable: MelonOffice's color stays.
     expect(document.documentElement.style.getPropertyValue('--mo-color-accent')).toBe('');
     applyBrand({ context: 'organization', primaryColor: '#123abc' });
-    expect(document.documentElement.style.getPropertyValue('--mo-color-accent')).toBe('#123abc');
+    const root = document.documentElement.style;
+    expect(root.getPropertyValue('--mo-color-accent')).toBe('#123abc');
+    expect(root.getPropertyValue('--mo-color-focus-ring')).toBe('#123abc');
+    expect(root.getPropertyValue('--mo-color-accent-expressive')).toContain('#123abc');
+  });
+
+  it('keeps the accent in the tokens, so a brand reaches the signed-in app', () => {
+    // Every screen reads the accent from packages/ui's tokens, which `applyBrand` sets: no
+    // stylesheet keeps its own melon, and the old office palette is gone.
+    for (const sheet of ['app.css', 'office.css', 'home.css']) {
+      const css = readFileSync(`${import.meta.dirname}/../${sheet}`, 'utf8');
+      expect(css).not.toMatch(/--office-/);
+      expect(css).not.toMatch(/#(f2784b|e0643a|a8431e|e85d3a|ff8a5c|c0451d)\b/i);
+      expect(css).not.toMatch(/rgb\(242 120 75/);
+    }
   });
 
   it('names the product on the sign-in page by the brand of this host', async () => {
