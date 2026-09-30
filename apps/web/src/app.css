@@ -445,3 +445,40 @@
   max-width: 28rem;
   margin-top: 1rem;
 }
+
+/* The partner console and brand forms (ADR-0090). */
+.brand-form {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.6rem;
+}
+
+.brand-form__field {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.console__customer {
+  flex-basis: 100%;
+  display: grid;
+  gap: 0.75rem;
+  padding: 0.75rem 0 0.25rem;
+}
+
+.console__table {
+  border-collapse: collapse;
+  max-width: 100%;
+}
+
+.console__table th,
+.console__table td {
+  text-align: left;
+  padding: 0.25rem 0.75rem 0.25rem 0;
+}
+
+.console__table td:not(:first-child) {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}

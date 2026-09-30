@@ -23,6 +23,8 @@ export type Route =
   | { readonly kind: 'agents' }
   | { readonly kind: 'automations' }
   | { readonly kind: 'partners' }
+  | { readonly kind: 'brand' }
+  | { readonly kind: 'partnerConsole' }
   | { readonly kind: 'office'; readonly slug: string }
   | { readonly kind: 'agent'; readonly slug: string; readonly agentId: string }
   | { readonly kind: 'not_found' };
@@ -57,6 +59,9 @@ export function parseRoute(path: string): Route {
   if (trimmed === '/automations') return { kind: 'automations' };
   // Partners and agencies the owner accepts, narrows or ends (ADR-0088).
   if (trimmed === '/settings/partners') return { kind: 'partners' };
+  // The organization's own brand (ADR-0090), and a partner's or agency's console.
+  if (trimmed === '/settings/brand') return { kind: 'brand' };
+  if (trimmed === '/partner') return { kind: 'partnerConsole' };
   const parts = trimmed.split('/').slice(1);
   const [first, slug, third, agentId] = parts;
   if (first !== 'office' || slug === undefined || !SEGMENT.test(slug)) return { kind: 'not_found' };
@@ -96,6 +101,8 @@ export const paths = {
   agents: () => '/agents',
   automations: () => '/automations',
   partners: () => '/settings/partners',
+  brand: () => '/settings/brand',
+  partnerConsole: () => '/partner',
   office: (slug: string) => `/office/${encodeURIComponent(slug)}`,
   agent: (slug: string, agentId: string) =>
     `/office/${encodeURIComponent(slug)}/agent/${encodeURIComponent(agentId)}`,
