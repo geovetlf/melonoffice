@@ -29,5 +29,8 @@
     "@types/react-dom": "19.3.0",
     "react": "19.3.0",
     "react-dom": "19.3.0"
+  },
+  "dependencies": {
+    "@fontsource-variable/onest": "5.3.1"
   }
 }

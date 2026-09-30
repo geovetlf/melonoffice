@@ -1,26 +1,36 @@
-/* Design tokens v0. Generated values must match src/tokens.ts (checked by tokens.test.ts). */
+/* Design tokens v1. Generated values must match src/tokens.ts (checked by tokens.test.ts). */
 :root {
+  --mo-color-background: #f3f5f8;
   --mo-color-surface: #ffffff;
-  --mo-color-surface-subtle: #fff8f3;
-  --mo-color-surface-muted: #f6ede6;
-  --mo-color-border: #e9dcd2;
-  --mo-color-text-primary: #241915;
-  --mo-color-text-secondary: #6e5a4f;
+  --mo-color-surface-elevated: #ffffff;
+  --mo-color-surface-subtle: #f8f9fb;
+  --mo-color-surface-muted: #e9edf2;
+  --mo-color-surface-glass: rgb(255 255 255 / 0.94);
+  --mo-color-border: #dce1e8;
+  --mo-color-border-strong: #7d8696;
+  --mo-color-hover: rgb(24 32 46 / 0.05);
+  --mo-color-text-primary: #18202e;
+  --mo-color-text-secondary: #556072;
   --mo-color-text-on-accent: #ffffff;
-  --mo-color-accent: #a8431e;
-  --mo-color-accent-hover: #3a2a24;
-  --mo-color-accent-decorative: #f2784b;
+  --mo-color-accent: #c0451d;
+  --mo-color-accent-hover: color-mix(in srgb, var(--mo-color-accent) 84%, #000000);
+  --mo-color-accent-soft: color-mix(in srgb, var(--mo-color-accent) 12%, transparent);
+  --mo-color-accent-expressive: #ff8a5c;
   --mo-color-highlight: #f5b942;
-  --mo-color-focus-ring: #a8431e;
-  --mo-color-sidebar-background: #241915;
-  --mo-color-sidebar-text: #fff8f3;
+  --mo-color-focus-ring: #c0451d;
   --mo-color-success: #2e7d4f;
-  --mo-color-warning: #9a6a00;
+  --mo-color-warning: #8a5f00;
   --mo-color-danger: #b42318;
+  --mo-color-state-working: #c0451d;
+  --mo-color-state-available: #2e8a5a;
+  --mo-color-state-waiting: #b87708;
+  --mo-color-state-attention: #c9302c;
+  --mo-color-state-paused: #6f7888;
+  --mo-color-state-offline: #848d9c;
 
   --mo-font-family:
-    system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans', 'Noto Sans CJK SC', 'Noto Sans JP',
-    sans-serif;
+    'Onest Variable', system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans', 'Noto Sans CJK SC',
+    'Noto Sans JP', sans-serif;
   --mo-font-size-xs: 0.75rem;
   --mo-font-size-sm: 0.875rem;
   --mo-font-size-md: 1rem;
@@ -29,8 +39,10 @@
   --mo-font-size-xxl: 2rem;
   --mo-font-weight-regular: 400;
   --mo-font-weight-medium: 500;
+  --mo-font-weight-semibold: 600;
   --mo-font-weight-bold: 700;
   --mo-font-line-height: 1.5;
+  --mo-font-line-height-tight: 1.2;
 
   --mo-space-1: 0.25rem;
   --mo-space-2: 0.5rem;
@@ -43,7 +55,17 @@
   --mo-radius-sm: 6px;
   --mo-radius-md: 10px;
   --mo-radius-lg: 16px;
+  --mo-radius-xl: 20px;
   --mo-radius-pill: 999px;
+
+  --mo-shadow-sm: 0 1px 2px rgb(24 32 46 / 0.06);
+  --mo-shadow-md: 0 1px 2px rgb(24 32 46 / 0.05), 0 8px 24px rgb(24 32 46 / 0.07);
+  --mo-shadow-lg: 0 2px 6px rgb(24 32 46 / 0.06), 0 18px 48px rgb(24 32 46 / 0.14);
+
+  --mo-motion-duration-fast: 120ms;
+  --mo-motion-duration-base: 200ms;
+  --mo-motion-duration-slow: 400ms;
+  --mo-motion-ease-standard: cubic-bezier(0.2, 0, 0, 1);
 
   --mo-min-target-size: 44px;
 }

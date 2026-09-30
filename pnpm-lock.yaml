@@ -1431,6 +1431,10 @@ importers:
         version: link:../config
 
   packages/ui:
+    dependencies:
+      '@fontsource-variable/onest':
+        specifier: 5.3.1
+        version: 5.3.1
     devDependencies:
       '@melonoffice/config':
         specifier: workspace:*
@@ -1658,6 +1662,9 @@ packages:
     peerDependenciesMeta:
       '@noble/hashes':
         optional: true
+
+  '@fontsource-variable/onest@5.3.1':
+    resolution: {integrity: sha512-xaaw6G4HDB2/RczsWLD/2bnib4ykmQlTlBUN3GOEOiyErilZukQWVJG95h9zwAy0i8KY+QzDa+COPfqhI72Acw==}
 
   '@formatjs/fast-memoize@3.1.7':
     resolution: {integrity: sha512-zXfhLpvA6T7+efdt9JLbBwZ00tT7NsBMDVnDu8rpHeNNv8KfRZAMo2gkG0k9lK/Nzc//3kJ9pImsfuJxk3KhUA==}
@@ -3756,6 +3763,8 @@ snapshots:
       levn: 0.4.1
 
   '@exodus/bytes@1.16.0': {}
+
+  '@fontsource-variable/onest@5.3.1': {}
 
   '@formatjs/fast-memoize@3.1.7': {}
 

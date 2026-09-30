@@ -1,3 +1,5 @@
+/* Onest (SIL Open Font License), served with the app: every device and screenshot shows the same type. */
+@import '@fontsource-variable/onest/wght.css';
 @import './tokens.css';
 
 *,
@@ -12,7 +14,7 @@ body {
   font-size: var(--mo-font-size-md);
   line-height: var(--mo-font-line-height);
   color: var(--mo-color-text-primary);
-  background: var(--mo-color-surface-subtle);
+  background: var(--mo-color-background);
 }
 
 :focus-visible {
@@ -60,6 +62,6 @@ body {
 
 @media (prefers-reduced-motion: no-preference) {
   .mo-button {
-    transition: background-color 120ms ease-out;
+    transition: background-color var(--mo-motion-duration-fast) var(--mo-motion-ease-standard);
   }
 }
