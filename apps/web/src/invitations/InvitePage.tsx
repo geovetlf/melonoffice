@@ -76,7 +76,7 @@ export function InvitePage(locale: LocaleProps) {
 }
 
 /** A new account for the invited person, or a way to sign in with the one they have. */
-function CreateAccount() {
+export function CreateAccount() {
   const { signUp } = useAuth();
   const intl = useIntl();
   const id = useId();
@@ -145,7 +145,7 @@ function CreateAccount() {
 }
 
 /** Identity Platform emails the link; once followed, a fresh token carries the verified email. */
-function VerifyEmail({ email }: { readonly email: string | null }) {
+export function VerifyEmail({ email }: { readonly email: string | null }) {
   const { sendVerification, refreshIdentity, signOut } = useAuth();
   const [sent, setSent] = useState<boolean>();
   return (

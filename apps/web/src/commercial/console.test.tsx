@@ -53,9 +53,25 @@ function fake(
     members: async () => [
       { userId: 'u-1', role: 'partner.admin', status: 'active', updatedAt: 't' },
     ],
-    addMember: async (_id, userId, r) => {
-      calls.push(['addMember', userId, r]);
-      return { userId, role: r, status: 'active', updatedAt: 't2' };
+    memberInvitations: async () => [],
+    inviteMember: async (_id, input) => {
+      calls.push(['inviteMember', input]);
+      return {
+        invitation: {
+          id: 'mi-1',
+          email: input.email,
+          role: input.role,
+          status: 'pending',
+          expiresAt: '2026-10-07T12:00:00.000Z',
+          createdAt: 'm0',
+          updatedAt: 'm1',
+        },
+        token: TOKEN,
+      };
+    },
+    revokeMemberInvitation: async (_id, invitation) => {
+      calls.push(['revokeMemberInvitation', invitation.id, invitation.updatedAt]);
+      return { ...invitation, status: 'revoked', updatedAt: 'm2' };
     },
     revokeMember: async (_id, userId) => {
       calls.push(['revokeMember', userId]);
@@ -347,22 +363,28 @@ describe('the partner console (ADR-0090)', () => {
     expect(screen.getByText(/No se concede nada automáticamente/)).toBeTruthy();
   });
 
-  it('an admin adds a person by user id with one of the account’s roles', async () => {
+  it('an admin invites a person by email; they join only by accepting the link', async () => {
     const { client, calls } = fake();
+    vi.spyOn(globalThis, 'confirm').mockReturnValue(true);
     show(client);
-    const add = await screen.findByRole('button', { name: 'Add' });
-    expect((add as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.change(screen.getByLabelText('Their MelonOffice user id'), {
-      target: { value: '11111111-1111-4111-8111-111111111111' },
-    });
-    fireEvent.click(add);
-    await waitFor(() =>
-      expect(calls).toContainEqual([
-        'addMember',
-        '11111111-1111-4111-8111-111111111111',
-        'partner.support',
-      ]),
+    const section = within(
+      (await screen.findByRole('heading', { name: 'People' })).closest('section') as HTMLElement,
     );
+    const send = section.getByRole('button', { name: 'Invite to the account' });
+    expect((send as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(section.getByLabelText('Their email'), {
+      target: { value: 'ana@example.com' },
+    });
+    fireEvent.submit(send.closest('form') as HTMLFormElement);
+    const link = (await section.findByLabelText('Invitation link')) as HTMLInputElement;
+    expect(link.value).toBe(`https://app.example/join#t=${TOKEN}`);
+    expect(calls).toContainEqual([
+      'inviteMember',
+      { email: 'ana@example.com', role: 'partner.support' },
+    ]);
+    const row = within(await section.findByRole('listitem', { name: 'ana@example.com' }));
+    fireEvent.click(row.getByRole('button', { name: 'Withdraw' }));
+    await waitFor(() => expect(calls).toContainEqual(['revokeMemberInvitation', 'mi-1', 'm1']));
   });
 });
 

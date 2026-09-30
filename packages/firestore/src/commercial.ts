@@ -24,6 +24,8 @@ import type {
   CustomerRelationshipId,
   CustomerRelationshipStatus,
   IsoTimestamp,
+  MemberInvitation,
+  MemberInvitationId,
   OrganizationId,
   PricingProfileRef,
   UserId,
@@ -38,6 +40,7 @@ import {
   isCommercialAccountId,
   isCustomerInvitationId,
   isInvitationTokenHash,
+  isMemberInvitationId,
   isOrganizationId,
   TenancyError,
   type CommercialRepository,
@@ -49,6 +52,7 @@ export const COMMERCIAL_ACCOUNTS = 'commercialAccounts';
 export const COMMERCIAL_MEMBERSHIPS = 'commercialMemberships';
 export const CUSTOMER_RELATIONSHIPS = 'customerRelationships';
 export const CUSTOMER_INVITATIONS = 'customerInvitations';
+export const MEMBER_INVITATIONS = 'memberInvitations';
 
 /** `commercialAccounts/{accountId}` */
 interface AccountDocument {
@@ -98,6 +102,20 @@ interface InvitationDocument {
   readonly createdBy: string;
   readonly decidedBy: string | null;
   readonly organizationId: string | null;
+  readonly createdAt: FirestoreTimestamp;
+  readonly updatedAt: FirestoreTimestamp;
+}
+
+/** `memberInvitations/{invitationId}` (ADR-0093). Only the link secret's hash is stored. */
+interface MemberInvitationDocument {
+  readonly commercialAccountId: string;
+  readonly email: string;
+  readonly role: string;
+  readonly status: string;
+  readonly tokenHash: string;
+  readonly expiresAt: FirestoreTimestamp;
+  readonly createdBy: string;
+  readonly decidedBy: string | null;
   readonly createdAt: FirestoreTimestamp;
   readonly updatedAt: FirestoreTimestamp;
 }
@@ -242,6 +260,46 @@ const invitationDocument = (i: CustomerInvitation): InvitationDocument => ({
   createdBy: i.createdBy,
   decidedBy: i.decidedBy ?? null,
   organizationId: i.organizationId ?? null,
+  createdAt: at(i.createdAt),
+  updatedAt: at(i.updatedAt),
+});
+
+function toMemberInvitation(id: string, d: MemberInvitationDocument): MemberInvitation {
+  if (
+    !isMemberInvitationId(id) ||
+    !isCommercialAccountId(d.commercialAccountId) ||
+    typeof d.email !== 'string' ||
+    typeof d.role !== 'string' ||
+    !(INVITATION_STATUSES as readonly string[]).includes(d.status) ||
+    !isInvitationTokenHash(d.tokenHash) ||
+    typeof d.createdBy !== 'string'
+  ) {
+    throw new Error('invalid member invitation record');
+  }
+  return Object.freeze({
+    id,
+    commercialAccountId: d.commercialAccountId,
+    email: d.email,
+    role: d.role,
+    status: d.status as CustomerInvitationStatus,
+    tokenHash: d.tokenHash,
+    expiresAt: iso(d.expiresAt),
+    createdBy: d.createdBy as UserId,
+    ...(d.decidedBy === null ? {} : { decidedBy: d.decidedBy as UserId }),
+    createdAt: iso(d.createdAt),
+    updatedAt: iso(d.updatedAt),
+  });
+}
+
+const memberInvitationDocument = (i: MemberInvitation): MemberInvitationDocument => ({
+  commercialAccountId: i.commercialAccountId,
+  email: i.email,
+  role: i.role,
+  status: i.status,
+  tokenHash: i.tokenHash,
+  expiresAt: at(i.expiresAt),
+  createdBy: i.createdBy,
+  decidedBy: i.decidedBy ?? null,
   createdAt: at(i.createdAt),
   updatedAt: at(i.updatedAt),
 });
@@ -557,6 +615,112 @@ export class FirestoreCommercialStore implements CommercialRepository {
       }
       tx.set(invitationRef, invitationDocument(invitation));
       tx.set(relationshipRef, relationshipDocument(relationship));
+      this.#audit(tx, events);
+    });
+  }
+
+  async findMemberInvitation(id: MemberInvitationId) {
+    if (!isMemberInvitationId(id)) return undefined;
+    const snapshot = await this.db.collection(MEMBER_INVITATIONS).doc(id).get();
+    return snapshot.exists
+      ? toMemberInvitation(snapshot.id, snapshot.data() as MemberInvitationDocument)
+      : undefined;
+  }
+
+  async findMemberInvitationByTokenHash(tokenHash: string) {
+    if (!isInvitationTokenHash(tokenHash)) return undefined;
+    const snapshot = await this.db
+      .collection(MEMBER_INVITATIONS)
+      .where('tokenHash', '==', tokenHash)
+      .limit(1)
+      .get();
+    const [doc] = snapshot.docs;
+    return doc === undefined
+      ? undefined
+      : toMemberInvitation(doc.id, doc.data() as MemberInvitationDocument);
+  }
+
+  async memberInvitationsOfAccount(accountId: CommercialAccountId) {
+    const snapshot = await this.db
+      .collection(MEMBER_INVITATIONS)
+      .where('commercialAccountId', '==', accountId)
+      .get();
+    return snapshot.docs.map((d) => toMemberInvitation(d.id, d.data() as MemberInvitationDocument));
+  }
+
+  async saveMemberInvitation(
+    invitation: MemberInvitation,
+    expected: MemberInvitation | undefined,
+    events: readonly AuditEvent[],
+    limit?: number,
+  ) {
+    await this.db.runTransaction(async (tx) => {
+      const ref = this.db.collection(MEMBER_INVITATIONS).doc(invitation.id);
+      const snapshot = await tx.get(ref);
+      const current = snapshot.exists
+        ? toMemberInvitation(snapshot.id, snapshot.data() as MemberInvitationDocument)
+        : undefined;
+      if (current?.updatedAt !== expected?.updatedAt) throw new TenancyError('commercial_conflict');
+      if (limit !== undefined && invitation.status === 'pending' && current === undefined) {
+        const pending = await tx.get(
+          this.db
+            .collection(MEMBER_INVITATIONS)
+            .where('commercialAccountId', '==', invitation.commercialAccountId)
+            .where('status', '==', 'pending'),
+        );
+        if (pending.size >= limit) throw new TenancyError('commercial_limit_reached');
+      }
+      tx.set(ref, memberInvitationDocument(invitation));
+      this.#audit(tx, events);
+    });
+  }
+
+  async acceptMemberInvitation(
+    invitation: MemberInvitation,
+    expected: MemberInvitation,
+    membership: CommercialMembership,
+    expectedMembership: CommercialMembership | undefined,
+    events: readonly AuditEvent[],
+    limit: number,
+  ) {
+    if (
+      membership.id !== commercialMembershipIdOf(membership.commercialAccountId, membership.userId)
+    ) {
+      throw new Error('membership id does not match its account and user');
+    }
+    await this.db.runTransaction(async (tx) => {
+      const invitationRef = this.db.collection(MEMBER_INVITATIONS).doc(invitation.id);
+      const membershipRef = this.db.collection(COMMERCIAL_MEMBERSHIPS).doc(membership.id);
+      const [invitationSnapshot, membershipSnapshot, active] = await Promise.all([
+        tx.get(invitationRef),
+        tx.get(membershipRef),
+        tx.get(
+          this.db
+            .collection(COMMERCIAL_MEMBERSHIPS)
+            .where('commercialAccountId', '==', membership.commercialAccountId)
+            .where('status', '==', 'active'),
+        ),
+      ]);
+      const currentInvitation = invitationSnapshot.exists
+        ? toMemberInvitation(
+            invitationSnapshot.id,
+            invitationSnapshot.data() as MemberInvitationDocument,
+          )
+        : undefined;
+      const currentMembership = membershipSnapshot.exists
+        ? toMembership(membershipSnapshot.id, membershipSnapshot.data() as MembershipDocument)
+        : undefined;
+      if (
+        currentInvitation?.updatedAt !== expected.updatedAt ||
+        currentMembership?.updatedAt !== expectedMembership?.updatedAt
+      ) {
+        throw new TenancyError('commercial_conflict');
+      }
+      if (currentMembership?.status !== 'active' && active.size >= limit) {
+        throw new TenancyError('commercial_limit_reached');
+      }
+      tx.set(invitationRef, memberInvitationDocument(invitation));
+      tx.set(membershipRef, membershipDocument(membership));
       this.#audit(tx, events);
     });
   }

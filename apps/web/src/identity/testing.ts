@@ -122,6 +122,8 @@ export interface FakeBackend {
     };
     /** Uploading a document fails with this code and status. */
     documentUploadFails?: { readonly error: string; readonly status: number };
+    /** The partner or agency accounts the person belongs to (ADR-0090), as the API lists them. */
+    commercialAccounts: Record<string, unknown>[];
     metrics: Record<
       string,
       {
@@ -202,6 +204,7 @@ export function fakeBackend(): FakeBackend {
     aiUsage: {},
     documents: {},
     metrics: {},
+    commercialAccounts: [],
   };
   const uploads: FakeBackend['uploads'] = [];
   const cancelled: string[] = [];
@@ -261,6 +264,9 @@ export function fakeBackend(): FakeBackend {
       if (method === 'POST') options.registered = true;
       if (!options.registered) return json(403, { error: 'user_not_registered' });
       return json(200, me);
+    }
+    if (path === '/v1/commercial/accounts') {
+      return json(200, { accounts: options.commercialAccounts });
     }
     if (path === '/v1/me/organizations') {
       return json(200, {

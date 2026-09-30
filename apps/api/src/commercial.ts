@@ -487,7 +487,8 @@ export function registerCommercialRoutes(app: Hono<AuthEnv>, deps: CommercialDep
     }),
   );
 
-  // Adds a person, or changes their role. `expectedUpdatedAt` names the version read, if any.
+  // Changes an active member's role. `expectedUpdatedAt` names the version read. Nobody joins
+  // here: a new member, or one removed, joins only by accepting an invitation (ADR-0093).
   app.post(
     '/v1/commercial/accounts/:accountId/members',
     inAccount('commercial.manage_members', async (c, context) => {
@@ -498,50 +499,38 @@ export function registerCommercialRoutes(app: Hono<AuthEnv>, deps: CommercialDep
       }
       const userId = input.userId as UserId;
       const role = input.role;
-      // Only someone who has signed in to MelonOffice can be added (ADR-0091); whether they agree
-      // to join is not asked yet (an invitation for members is a separate step).
-      if (!(await userExists(userId))) return bad(c, 'userId');
-      const account = await commercial.findAccount(context.commercialAccountId);
-      if (account === undefined) throw new TenancyError('commercial_account_forbidden');
       const current = await commercial.findMembership(context.commercialAccountId, userId);
-      if (current !== undefined && current.updatedAt !== input.expectedUpdatedAt) {
+      if (current === undefined || current.status !== 'active') {
+        return c.json({ error: 'member_invitation_required' }, 409);
+      }
+      if (current.updatedAt !== input.expectedUpdatedAt) {
         throw new TenancyError('commercial_conflict');
       }
-      if (userId === context.userId && role !== current?.role) {
+      if (userId === context.userId && role !== current.role) {
         // Nobody changes their own role: an admin cannot lock the account out by accident.
         return c.json({ error: 'cannot_change_own_role' }, 409);
       }
       const at = now();
       const membership: CommercialMembership = {
-        id: commercialMembershipIdOf(context.commercialAccountId, userId),
-        commercialAccountId: context.commercialAccountId,
-        userId,
+        ...current,
         role,
-        status: 'active',
-        createdAt: current?.createdAt ?? (at.toISOString() as IsoTimestamp),
         updatedAt: at.toISOString() as IsoTimestamp,
       };
-      if (account.limits?.members === undefined) throw new TenancyError('commercial_limit_reached');
-      await commercial.saveMembership(
-        membership,
-        current,
-        [
-          event(
-            {
-              action: 'commercial_membership.created',
-              result: 'success',
-              actor: actorOf(c.get('auth')),
-              commercialAccountId: context.commercialAccountId,
-              target: { type: 'commercial_membership', id: membership.id },
-              reference: role,
-              ...requestFields(c),
-            },
-            at,
-          ),
-        ],
-        account.limits.members,
-      );
-      return c.json({ member: memberView(membership) }, current === undefined ? 201 : 200);
+      await commercial.saveMembership(membership, current, [
+        event(
+          {
+            action: 'commercial_membership.updated',
+            result: 'success',
+            actor: actorOf(c.get('auth')),
+            commercialAccountId: context.commercialAccountId,
+            target: { type: 'commercial_membership', id: membership.id },
+            reference: role,
+            ...requestFields(c),
+          },
+          at,
+        ),
+      ]);
+      return c.json({ member: memberView(membership) });
     }),
   );
 

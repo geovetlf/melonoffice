@@ -43,7 +43,7 @@ export const DEFAULT_REQUEST_LIMITS: Readonly<Record<RequestScope, RequestLimit>
 };
 
 const CREDIT_GRANT = /^\/v1\/platform\/organizations\/[^/]+\/credit-grants$/;
-const INVITATION_TOKEN = /^\/v1\/invitations\/(lookup|accept|reject)$/;
+const INVITATION_TOKEN = /^\/v1\/(member-)?invitations\/(lookup|accept|reject)$/;
 const RELATIONSHIPS = /^\/v1\/organizations\/[^/]+\/commercial-relationships(\/|$)/;
 
 /**

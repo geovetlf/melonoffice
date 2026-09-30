@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { setupApp, STORES, type Stores } from './test-api.js';
+import { joinAccount, setupApp, STORES, type Stores } from './test-api.js';
 
 /**
  * Manual commercial operations by the platform administrator (ADR-0091): suspending, reactivating
@@ -219,7 +219,7 @@ describe.each(STORES)('platform operations with storage in %s', (_name, createSt
     });
 
     it('changes limits; a lower limit stops new additions and removes nobody', async () => {
-      const { call, accounts, partnerA, current, ids, events } = await setup();
+      const { call, accounts, partnerA, current, events } = await setup();
       const limits = `${accounts}/${partnerA.id}/limits`;
       expect(
         (
@@ -239,10 +239,7 @@ describe.each(STORES)('platform operations with storage in %s', (_name, createSt
         members: 1,
       });
       // Carol stays; nobody new can be added past the limit.
-      const added = await call('carol', 'POST', `/v1/commercial/accounts/${partnerA.id}/members`, {
-        userId: ids.dave,
-        role: 'partner.support',
-      });
+      const added = await joinAccount(call, 'carol', partnerA.id, 'dave', 'partner.support');
       expect(added).toEqual({ status: 409, body: { error: 'commercial_limit_reached' } });
       expect(
         (await events('commercial_account.limits_changed')).filter((e) => e.result === 'success'),
@@ -322,6 +319,7 @@ describe.each(STORES)('platform operations with storage in %s', (_name, createSt
           })
         ).body,
       ).toEqual({ error: 'invalid_commercial_request', field: 'adminUserId' });
+      // Nobody joins by id: only by accepting an invitation (ADR-0093).
       expect(
         (
           await call('carol', 'POST', `/v1/commercial/accounts/${partnerA.id}/members`, {
@@ -329,7 +327,7 @@ describe.each(STORES)('platform operations with storage in %s', (_name, createSt
             role: 'partner.support',
           })
         ).body,
-      ).toEqual({ error: 'invalid_commercial_request', field: 'userId' });
+      ).toEqual({ error: 'member_invitation_required' });
     });
   });
 

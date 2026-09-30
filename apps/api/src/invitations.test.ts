@@ -1,7 +1,7 @@
 import type { IsoTimestamp, OrganizationId, UserId } from '@melonoffice/domain';
 import { membershipIdOf } from '@melonoffice/tenancy';
 import { describe, expect, it } from 'vitest';
-import { setupApp, STORES, type Stores } from './test-api.js';
+import { joinAccount, setupApp, STORES, type Stores } from './test-api.js';
 
 /**
  * Invitations by email (ADR-0089), against memory and, where the emulator runs, Firestore.
@@ -67,11 +67,8 @@ describe.each(STORES)('invitations by email with storage in %s', (_name, createS
     };
     const partnerA = await account('Partner A', 'carol');
     const partnerB = await account('Partner B', 'dave');
-    const support = await call('carol', 'POST', `/v1/commercial/accounts/${partnerA}/members`, {
-      userId: ids.frank,
-      role: 'partner.support',
-    });
-    expect(support.status).toBe(201);
+    const support = await joinAccount(call, 'carol', partnerA, 'frank', 'partner.support');
+    expect(support.status).toBe(200);
     const invitations = (id: string) => `/v1/commercial/accounts/${id}/invitations`;
     const invite = async (email: string, scopes: string[] = ['summary', 'usage'], by = 'carol') => {
       const sent = await call(by, 'POST', invitations(by === 'dave' ? partnerB : partnerA), {
