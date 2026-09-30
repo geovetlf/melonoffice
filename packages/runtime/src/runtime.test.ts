@@ -50,6 +50,7 @@ import type {
 } from '@melonoffice/domain';
 import {
   attachApproval,
+  checkTrace,
   createAgentOutputStore,
   createExecutionService,
   InMemoryAgentOutputRepository,
@@ -1300,6 +1301,33 @@ describe.each(STORES)('runtime advance() with storage in %s', (storage, createSt
     expect(w.providerCalls).toHaveLength(0);
   });
 
+  it('32a. fails with the code the Harness stopped the work at, and asks no model (ADR-0100)', async () => {
+    const w = await world({
+      work: {
+        toolInput: async () => INPUT,
+        agentWork: async () => ({ stop: 'task_time_limit_reached' }),
+      },
+    });
+    const execution = await w.started([{ id: 'n0' }]);
+    const claim = await firstClaim(w, execution);
+    expect(await w.runtime.advance(claim.lease)).toEqual({
+      outcome: 'failed',
+      code: 'task_time_limit_reached',
+    });
+    expect(w.providerCalls).toHaveLength(0);
+    // A stop that is not a plain code is not a stop: its text never becomes the failure.
+    const odd = await world({
+      work: {
+        toolInput: async () => INPUT,
+        agentWork: async () => ({ stop: 'Not A Code' }) as never,
+      },
+    });
+    const other = await odd.started([{ id: 'n0' }]);
+    const result = await odd.runtime.advance((await firstClaim(odd, other)).lease);
+    expect(result).toMatchObject({ outcome: 'failed' });
+    expect(result).not.toMatchObject({ code: 'Not A Code' });
+  });
+
   it('32b. fails safely when a node has nothing to work on, or a type with no behaviour yet', async () => {
     const empty = await world({ work: 'none' });
     const tooled = await empty.started([{ id: 'n0', tool: 'lookup' }]);
@@ -1379,8 +1407,22 @@ describe.each(STORES)('runtime advance() with storage in %s', (storage, createSt
         nodeId: 'n0',
         requestId: `job-${claim.job.id}`,
         output: { text: 'Summary ready.' },
+        // How the call was served (ADR-0100): the router's choice, cost, credits and limits.
+        ai: expect.objectContaining({
+          provider: expect.any(String),
+          model: expect.any(String),
+          fallbackFrom: null,
+          creditsConsumed: expect.any(Number),
+          maxCredits: null,
+          escalation: null,
+          attempts: 1,
+        }),
       }),
     ]);
+    // A trace that is not codes and whole numbers is never kept.
+    expect(() =>
+      checkTrace({ ...must(repository.records()[0]?.ai), provider: 'no spaces allowed' }),
+    ).toThrow('agent_output_trace');
   });
 
   it('36. an answer that cannot be kept fails the node, never completes it', async () => {

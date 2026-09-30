@@ -8,6 +8,7 @@ import type { DecisionAgent, DecisionEngine, DecisionItem } from '@melonoffice/d
 import type {
   AIQualityTier,
   AIRoutingStrategy,
+  DataSensitivity,
   Execution,
   ExecutionNode,
   OrganizationId,
@@ -15,6 +16,7 @@ import type {
 } from '@melonoffice/domain';
 import type { AuthorizationService } from '@melonoffice/rbac';
 import { isResolvedTenant, type TenantContext } from '@melonoffice/tenancy';
+import { sensitivityOfData, type HarnessDataClass } from './data.js';
 import { handoffTo, type HandoffToHuman } from './handoff.js';
 import { classifyTask, departmentOf } from './intent.js';
 import {
@@ -22,6 +24,7 @@ import {
   DEFAULT_HARNESS_LIMITS,
   depthProblem,
   planLimitProblem,
+  type HarnessLimitCode,
   type HarnessLimits,
 } from './limits.js';
 import {
@@ -31,6 +34,7 @@ import {
   type HarnessExecutionContext,
   type HarnessTask,
   type HarnessVerdict,
+  type TaskClassification,
 } from './model.js';
 import {
   checkProfilePolicy,
@@ -41,6 +45,7 @@ import {
   type HarnessProfilePolicy,
 } from './profile.js';
 import type { HarnessPlanner } from './planning.js';
+import { aiNeedOf } from './routing.js';
 import { harnessToolOf, type HarnessToolDirectory } from './tools.js';
 
 /**
@@ -100,6 +105,7 @@ export interface AgentHarnessOptions {
    * a multi-step task runs as one agent task, as in block 1.
    */
   readonly planner?: HarnessPlanner;
+  /** What one task may use at most. Absent: `DEFAULT_HARNESS_LIMITS`. */
   readonly limits?: HarnessLimits;
 }
 
@@ -166,6 +172,12 @@ export function checkHarnessTask(value: unknown): HarnessTask {
     ...(maxCredits === undefined ? {} : { maxCredits }),
   });
 }
+
+/**
+ * The data of every task given today: the organization's own (ADR-0100). Never lowered on what a
+ * request says, so the data policy always sees the task as private.
+ */
+const TASK_DATA: HarnessDataClass = 'company_private';
 
 const contextOf = (tenant: TenantContext): HarnessExecutionContext =>
   Object.freeze({
@@ -280,7 +292,10 @@ export function createAgentHarness(options: AgentHarnessOptions): AgentHarness {
       agent: chosen === null ? null : Object.freeze({ ...chosen }),
       candidates: Object.freeze(candidates.map((c) => Object.freeze({ ...c }))),
       model: modelProfileOf(classification, policy),
+      need: aiNeedOf('text'),
       tools: Object.freeze(granted.map(harnessToolOf)),
+      data: Object.freeze({ class: TASK_DATA, sensitivity: sensitivityOfData(TASK_DATA) }),
+      limits,
       budget: Object.freeze(budget),
       verdict,
       handoff: handoff as HandoffToHuman | null,
@@ -416,6 +431,7 @@ export function createDecisionAgentRouter(
 
 /** The parts of an AI call the Harness may set. */
 interface ShapeableWork {
+  readonly sensitivity?: DataSensitivity;
   readonly strategy?: AIRoutingStrategy;
   readonly quality?: AIQualityTier;
   readonly maxCredits?: number;
@@ -430,22 +446,62 @@ const MAX_METADATA_ENTRIES = 20;
  * when the policy sets one, a quality floor. What the work already set stays: the Harness never
  * overrides a caller's explicit choice, and never names a model or a provider.
  */
+/**
+ * Why the Harness asked for the strongest model the policy allows instead of the cheapest that
+ * fits (ADR-0100): the task is complex (analysis and planning always are). Recorded on the call's
+ * trace. A model that fails is replaced by the gateway's fallback, recorded as `fallbackFrom`.
+ */
+export type HarnessEscalation = 'complex_task';
+
+const escalationOf = (strategy: AIRoutingStrategy): HarnessEscalation | undefined =>
+  strategy === 'quality_first' ? 'complex_task' : undefined;
+
+const SENSITIVITIES: readonly DataSensitivity[] = [
+  'public',
+  'internal',
+  'confidential',
+  'restricted',
+];
+
+/** The higher of two sensitivities: the Harness only ever raises what a call carries. */
+const higher = (a: DataSensitivity | undefined, b: DataSensitivity): DataSensitivity =>
+  a !== undefined && SENSITIVITIES.indexOf(a) > SENSITIVITIES.indexOf(b) ? a : b;
+
+/**
+ * Work the Harness has no request for (a conversation agent's turn, a plan's step): read as a
+ * simple question, so it gets the cheapest model that fits and is never labelled as escalated.
+ */
+const ROUTINE_WORK: TaskClassification = Object.freeze({
+  intent: 'question',
+  domains: Object.freeze([]),
+  complexity: 'simple',
+  asksForPerson: false,
+  signals: Object.freeze(['kind:routine_work']),
+});
+
 export function withHarnessProfile<W extends ShapeableWork>(
   work: W,
-  request: string,
+  request: string | TaskClassification,
   policy: HarnessProfilePolicy = DEFAULT_HARNESS_PROFILE_POLICY,
   budget?: { readonly remainingCredits: number },
+  data: HarnessDataClass = TASK_DATA,
 ): W {
-  const classification = classifyTask(request);
+  const classification = typeof request === 'string' ? classifyTask(request) : request;
   const profile = modelProfileOf(classification, policy);
+  // Only the Harness's own choice is an escalation: a strategy the caller set stays the caller's.
+  const escalation = work.strategy === undefined ? escalationOf(profile.strategy) : undefined;
   const labels = {
     harnessIntent: classification.intent,
     harnessComplexity: classification.complexity,
     harnessPolicy: `${policy.id}@${policy.version}`,
+    harnessData: data,
+    ...(escalation === undefined ? {} : { harnessEscalation: escalation }),
   };
   const metadata = { ...labels, ...(work.metadata ?? {}) };
   return {
     ...work,
+    // The data policy routes on this: never below what the task's data is.
+    sensitivity: higher(work.sensitivity, sensitivityOfData(data)),
     strategy: work.strategy ?? profile.strategy,
     ...(work.quality === undefined && profile.minimumQuality !== undefined
       ? { quality: profile.minimumQuality }
@@ -461,25 +517,35 @@ export function withHarnessProfile<W extends ShapeableWork>(
   };
 }
 
+/** Work the Harness stopped at a limit (the runtime fails the execution with this code). */
+export interface HarnessStop {
+  readonly stop: HarnessLimitCode;
+}
+
 /**
- * An agent work source whose model calls carry the Harness's profile and what is left of the
- * task's budget. `taskOf` gives the person's request and budget (the task's), from storage;
- * without one the call is left as the inner source made it.
+ * An agent work source whose model calls all go through the Harness (ADR-0100): the task's data
+ * class (so the data policy applies before routing), its model profile, what is left of its
+ * budget, and its time limit. There is no way around it: work with no request (a conversation
+ * turn, a plan step) still gets the data class, the limits and the cheapest fitting model.
+ *
+ * `taskOf` gives the person's request and budget, from storage, when the execution has them.
  */
-export function createHarnessAgentWork<
-  W extends ShapeableWork,
-  S extends {
-    agentWork(
-      tenant: TenantContext,
-      execution: Execution,
-      node: ExecutionNode,
-    ): Promise<W | undefined>;
-  },
->(
+type AgentWorkSource = {
+  agentWork(
+    tenant: TenantContext,
+    execution: Execution,
+    node: ExecutionNode,
+  ): Promise<ShapeableWork | undefined>;
+};
+
+/** The call a work source makes. */
+type WorkOf<S extends AgentWorkSource> = Exclude<Awaited<ReturnType<S['agentWork']>>, undefined>;
+
+export function createHarnessAgentWork<S extends AgentWorkSource>(
   inner: S,
   options: {
     /** The person's request of the execution and its budget, from storage. */
-    readonly taskOf: (
+    readonly taskOf?: (
       tenant: TenantContext,
       execution: Execution,
     ) => Promise<{ readonly request: string; readonly maxCredits?: number } | undefined>;
@@ -489,16 +555,32 @@ export function createHarnessAgentWork<
      */
     readonly spent?: (tenant: TenantContext, execution: Execution) => Promise<number>;
     readonly policy?: HarnessProfilePolicy;
+    readonly limits?: HarnessLimits;
+    readonly now?: () => Date;
   },
-): S {
+): Omit<S, 'agentWork'> & {
+  agentWork(
+    tenant: TenantContext,
+    execution: Execution,
+    node: ExecutionNode,
+  ): Promise<WorkOf<S> | HarnessStop | undefined>;
+} {
   const policy = checkProfilePolicy(options.policy ?? DEFAULT_HARNESS_PROFILE_POLICY);
+  const limits = checkHarnessLimits(options.limits ?? DEFAULT_HARNESS_LIMITS);
+  const now = options.now ?? (() => new Date());
   return Object.freeze({
     ...inner,
     async agentWork(tenant: TenantContext, execution: Execution, node: ExecutionNode) {
-      const work = await inner.agentWork(tenant, execution, node);
+      // Time first: a task past its limit asks no model and reads nothing more.
+      const started = Date.parse(execution.startedAt ?? execution.createdAt);
+      if (Number.isFinite(started) && now().getTime() - started > limits.maxDurationMs) {
+        return Object.freeze({ stop: 'task_time_limit_reached' as const });
+      }
+      const work = (await inner.agentWork(tenant, execution, node)) as WorkOf<S> | undefined;
       if (work === undefined) return undefined;
-      const task = await options.taskOf(tenant, execution);
-      if (task === undefined) return work;
+      const task =
+        options.taskOf === undefined ? undefined : await options.taskOf(tenant, execution);
+      if (task === undefined) return withHarnessProfile(work, ROUTINE_WORK, policy);
       const budget =
         task.maxCredits === undefined
           ? undefined

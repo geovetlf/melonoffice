@@ -116,6 +116,7 @@ const DENIALS: Readonly<Record<string, ConversationError['code']>> = {
   credits_insufficient: 'ai_credits_insufficient',
   credit_limit_exceeded: 'ai_credits_insufficient',
   // The policy found models but allows none of them for this call (ADR-0038).
+  data_policy_not_allowed: 'ai_policy_denied',
   sensitivity_not_allowed: 'ai_policy_denied',
   provider_not_allowed: 'ai_policy_denied',
   model_not_allowed: 'ai_policy_denied',

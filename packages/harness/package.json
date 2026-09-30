@@ -33,6 +33,8 @@
   },
   "devDependencies": {
     "@melonoffice/ai-gateway": "workspace:*",
+    "@melonoffice/ai-nvidia": "workspace:*",
+    "@melonoffice/ai-vertex": "workspace:*",
     "@melonoffice/audit": "workspace:*",
     "@melonoffice/auth": "workspace:*",
     "@melonoffice/config": "workspace:*",

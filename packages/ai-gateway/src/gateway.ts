@@ -16,6 +16,7 @@ import {
   type CustomerCreditPolicy,
 } from '@melonoffice/ai-usage';
 import type {
+  AIDataPolicy,
   AIRoutingStrategy,
   AIUsageAttribution,
   AIUsageEvent,
@@ -41,6 +42,7 @@ import {
 } from './adapter.js';
 import { costMicroUsd, type CreditRate } from './cost.js';
 import { creditReferenceOf, type AICreditsPort } from './credits.js';
+import { checkDataPolicy } from './data-policy.js';
 import { createProviderHealthTracker, type ProviderHealthTracker } from './health.js';
 import type { ModelPolicyCatalogue } from './policy.js';
 import { modelKey, type ProviderRegistry } from './registry.js';
@@ -180,6 +182,11 @@ export interface AIGatewayOptions {
    * AI capability (ADR-0073). Absent: none is emitted. A failed emit never fails the call.
    */
   readonly usage?: AIUsageSink;
+  /**
+   * Which data each provider may receive in this environment (ADR-0100), applied before routing.
+   * Absent: each provider's recorded terms only.
+   */
+  readonly dataPolicy?: AIDataPolicy;
   /** How long one attempt may take. */
   readonly timeoutMs?: number;
   readonly now?: () => Date;
@@ -253,6 +260,8 @@ export function createAIGateway(options: AIGatewayOptions): AIGateway {
   const health = options.health ?? createProviderHealthTracker();
   const usageSink = options.usage;
   const costEngine = createAICostEngine();
+  const dataPolicy =
+    options.dataPolicy === undefined ? undefined : checkDataPolicy(options.dataPolicy);
 
   /** What the provider's answer says of its health, with how long it asked to wait on a 429. */
   function recordHealth(providerId: string, outcome: Attempt): void {
@@ -395,6 +404,7 @@ export function createAIGateway(options: AIGatewayOptions): AIGateway {
       },
       health.unavailable(),
       (id) => health.status(id),
+      dataPolicy,
     );
     if (route.status === 'none') return deny(route.reason);
     const { strategy } = route;
@@ -628,6 +638,10 @@ export function createAIGateway(options: AIGatewayOptions): AIGateway {
         callLog.warn('ai provider fallback', { from: modelKey(previous.provider, previous.id) });
       }
       for (let n = 1; n <= policy.maxAttempts; n += 1) {
+        // The policy's cap on provider calls for one request, over every model (ADR-0100).
+        if (policy.maxCalls !== undefined && progress.attempts >= policy.maxCalls) {
+          return giveUp(ctx, lastKind, progress);
+        }
         progress.attempts += 1;
         const call = providerCall(request, prepared, candidate);
         const result = await attempt(candidate, call, callLog);

@@ -7,6 +7,7 @@ import {
   createModelPolicyCatalogue,
   createProviderRegistry,
   CREDIT_RATE,
+  dataPolicyFromEnv,
 } from '@melonoffice/ai-gateway';
 import {
   AGENT_TASK_POLICY,
@@ -20,7 +21,18 @@ import {
   DEEPSEEK_MODELS,
   DEEPSEEK_PROVIDER,
 } from '@melonoffice/ai-deepseek';
-import { createNvidiaAdapter, NVIDIA_MODELS, NVIDIA_PROVIDER } from '@melonoffice/ai-nvidia';
+import {
+  createNvidiaAdapter,
+  NVIDIA_MODELS,
+  NVIDIA_PROVIDER,
+  NVIDIA_TRIAL_DATA_POLICY,
+} from '@melonoffice/ai-nvidia';
+import {
+  DEFAULT_HARNESS_LIMITS,
+  harnessConversationPolicy,
+  harnessDataPolicy,
+  harnessTaskPolicy,
+} from '@melonoffice/harness';
 import { createAuditService } from '@melonoffice/audit';
 import { createServiceIdentityVerifier } from '@melonoffice/auth';
 import { createCreditService } from '@melonoffice/credits';
@@ -241,6 +253,13 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
     );
   }
   const aiRegistered = aiProviders.length > 0;
+  /** How every agent's calls are routed (ADR-0100): configuration, never a branch in code. */
+  const HARNESS_ROUTE = {
+    preferredProviders: [NVIDIA_PROVIDER.id],
+    environments: ['dev'],
+    maxCostMicroUsd: CREDIT_RATE.microUsdPerCredit,
+    maxModelCalls: DEFAULT_HARNESS_LIMITS.maxModelCalls,
+  } as const;
   const aiRegistry = aiRegistered
     ? createProviderRegistry({ providers: aiProviders, models: aiModels, adapters: aiAdapters })
     : createProviderRegistry({
@@ -261,6 +280,17 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
       executors: { ...agents.executors, ...taskParts.executors },
     },
     ai: aiRegistry,
+    // The data policy before routing (ADR-0100): NVIDIA gets public, synthetic and test data only
+    // while it is on trial terms; `AI_DATA_POLICY` changes it for this environment.
+    ...(runtime.environment === undefined
+      ? {}
+      : {
+          dataPolicy: dataPolicyFromEnv(
+            process.env,
+            runtime.environment,
+            harnessDataPolicy(NVIDIA_TRIAL_DATA_POLICY),
+          ),
+        }),
     ...(aiRegistered
       ? {
           credits: {
@@ -270,7 +300,18 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
             }),
             rate: CREDIT_RATE,
           },
-          policies: createModelPolicyCatalogue([CONVERSATION_AGENT_POLICY, AGENT_TASK_POLICY]),
+          policies: createModelPolicyCatalogue([
+            // Version 1 stays registered for executions that started under it; the agent policy
+            // migration (ADR-0100) moves every agent to version 2.
+            CONVERSATION_AGENT_POLICY,
+            AGENT_TASK_POLICY,
+            // Every agent through the Harness (ADR-0100): no model pinned; NVIDIA evaluated first
+            // (Geovet, 2026-09-30) wherever the data policy and its terms let it take the call,
+            // then the task's strategy, with automatic fallback. At most one credit per call, as
+            // before, and the task's limit of provider calls.
+            harnessTaskPolicy(HARNESS_ROUTE),
+            harnessConversationPolicy(HARNESS_ROUTE),
+          ]),
           // Every agent's model call is recorded in the AI Usage Ledger (ADR-0074).
           usage: createAIUsageLedger(new FirestoreAIUsageStore(firestore)),
         }

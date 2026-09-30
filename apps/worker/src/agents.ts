@@ -135,12 +135,17 @@ export function createConversationAgentParts(
   }
   return Object.freeze({
     executors,
-    work: createAgentTurnWork({
-      conversations: stores.conversations,
-      specialists: stores.specialists,
-      outputs,
-      ...clock,
-    }),
+    // Every agent's call goes through the Harness (ADR-0100): the data policy, the limits and the
+    // cheapest fitting model apply to a conversation turn too. No bypass.
+    work: createHarnessAgentWork(
+      createAgentTurnWork({
+        conversations: stores.conversations,
+        specialists: stores.specialists,
+        outputs,
+        ...clock,
+      }),
+      { ...clock },
+    ),
     verifier: createAgentTurnVerifier({ outputs, conversations: stores.conversations }),
     outputs,
     onStopped: createAgentTurnStopHook({
@@ -362,6 +367,7 @@ export function createAgentTaskParts(options: {
       proposals,
     }),
     {
+      now: clock,
       async taskOf(tenant, execution) {
         const facts = taskOf(execution);
         if (facts === undefined || !isResolvedTenant(tenant)) return undefined;
@@ -406,13 +412,17 @@ export function createAgentTaskParts(options: {
       ? {}
       : {
           steps: Object.freeze({
-            work: createPlanStepWork({
-              plans: stores.plans,
-              specialists: stores.specialists,
-              skills,
-              context,
-              outputs,
-            }),
+            // A plan's step is an agent's call too: through the Harness (ADR-0100).
+            work: createHarnessAgentWork(
+              createPlanStepWork({
+                plans: stores.plans,
+                specialists: stores.specialists,
+                skills,
+                context,
+                outputs,
+              }),
+              { now: clock },
+            ),
             verifier: createPlanStepVerifier({ outputs }),
           }),
         }),

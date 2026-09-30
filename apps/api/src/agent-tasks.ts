@@ -1,3 +1,4 @@
+import type { AICallTrace } from '@melonoffice/domain';
 import { handoffForTask } from '@melonoffice/harness';
 import {
   AGENT_TASK_NODE,
@@ -122,6 +123,9 @@ export function registerAgentTaskRoutes(
     // The answer is shown once the agent's work passed its shape check (ADR-0063): when the task
     // completed and was verified, or while its proposed follow-up waits on a person or after the
     // person turned it down (ADR-0084), where the answer itself is the one checked the same way.
+    // How the task's model call was served (ADR-0100): provider, model, cost, credits, the limit
+    // and any escalation. Codes and numbers only; shown only with the answer it served.
+    let ai: AICallTrace | null = null;
     const work = execution?.nodes.find((n) => n.id === AGENT_TASK_NODE);
     const code = execution?.failure?.code;
     const readable =
@@ -133,6 +137,7 @@ export function registerAgentTaskRoutes(
         (execution.status === 'failed' && code !== undefined && code.startsWith('approval_')));
     if (readable && execution !== undefined && outputs !== undefined) {
       const record = await outputs.find(tenant, task.id, AGENT_TASK_NODE);
+      ai = record?.ai ?? null;
       const parsed = record === undefined ? undefined : parseAgentAnswer(record.output);
       if (parsed !== undefined) {
         let followUp = null;
@@ -168,6 +173,7 @@ export function registerAgentTaskRoutes(
       requestedBy: task.requestedBy,
       createdAt: task.createdAt,
       maxCredits: task.maxCredits ?? null,
+      ai,
       status: execution?.status ?? 'unknown',
       failure: execution?.failure?.code ?? null,
       completedAt: execution?.completedAt ?? null,

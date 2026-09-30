@@ -35,6 +35,7 @@ function strategyView(strategy: ExecutionStrategy) {
     agent: strategy.agent,
     candidates: strategy.candidates,
     model: { strategy: strategy.model.strategy },
+    need: strategy.need.kind,
     tools: strategy.tools,
     budget: strategy.budget.status,
     maxCredits: strategy.budget.maxCredits,

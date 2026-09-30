@@ -1,4 +1,8 @@
-import type { AIModelDefinition, AIProviderDefinition } from '@melonoffice/domain';
+import type {
+  AIDataPolicyEntry,
+  AIModelDefinition,
+  AIProviderDefinition,
+} from '@melonoffice/domain';
 
 /**
  * NVIDIA, through its official hosted API (the NVIDIA API Catalog, build.nvidia.com), as one more
@@ -104,6 +108,16 @@ export const NEMOTRON_3_NANO_MODEL: AIModelDefinition = Object.freeze({
 });
 
 export const NVIDIA_MODELS: readonly AIModelDefinition[] = Object.freeze([NEMOTRON_3_NANO_MODEL]);
+
+/**
+ * The data policy for NVIDIA while it is used under its trial terms (Geovet, 2026-09-30 09:09Z,
+ * ADR-0100): public, synthetic and test data only, in DEV. Configuration each server starts from
+ * (`AI_DATA_POLICY` replaces it): with a contract or a paid endpoint whose terms allow company
+ * data, its registry entry and this policy change, not the code that routes.
+ */
+export const NVIDIA_TRIAL_DATA_POLICY: readonly AIDataPolicyEntry[] = Object.freeze([
+  Object.freeze({ provider: NVIDIA_PROVIDER_ID, environment: 'dev', maxSensitivity: 'public' }),
+]);
 
 /**
  * Models whose chat template takes `enable_thinking` (their model card says so): switched off for

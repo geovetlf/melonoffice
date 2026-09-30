@@ -1,7 +1,11 @@
+import type { HarnessDataClass } from './data.js';
 import type { HandoffToHuman } from './handoff.js';
+import type { HarnessLimits } from './limits.js';
+import type { HarnessAINeed } from './routing.js';
 import type {
   AIQualityTier,
   AIRoutingStrategy,
+  DataSensitivity,
   OrganizationId,
   SpecialistId,
   UserId,
@@ -72,9 +76,21 @@ export interface ModelProfile {
 export type ToolAuthorizationClass =
   'informative' | 'reversible' | 'sensitive' | 'external' | 'irreversible';
 
+/**
+ * The three levels of tool use (Geovet, 2026-09-30):
+ *
+ * - `A`, safe reads: automatic when the agent has the permission;
+ * - `B`, reversible or low-risk changes inside MelonOffice: automatic under the agent's
+ *   permissions and the organization's policy;
+ * - `C`, sensitive actions (sending outside, paying, billing, deleting, permissions, publishing,
+ *   hiring, critical settings): a person approves, when the policy asks for it.
+ */
+export type ToolLevel = 'A' | 'B' | 'C';
+
 export interface HarnessTool {
   readonly id: string;
   readonly version: number;
+  readonly level: ToolLevel;
   readonly authorization: ToolAuthorizationClass;
   /** Whether each use waits on a person's approval at the gate. */
   readonly approvalRequired: boolean;
@@ -132,8 +148,20 @@ export interface ExecutionStrategy {
   /** When the person must choose: the agents that fit. */
   readonly candidates: readonly HarnessAgent[];
   readonly model: ModelProfile;
+  /**
+   * The kind of AI work the task needs and what the router selects on for it (ADR-0100). A task
+   * given as words is `text`; other kinds come with the inputs that carry them.
+   */
+  readonly need: HarnessAINeed;
   /** The tools the chosen agent's skills grant that this person may use. */
   readonly tools: readonly HarnessTool[];
+  /**
+   * What the task's data is and how sensitive (ADR-0100): the data policy decides, before any
+   * routing, which providers may receive it.
+   */
+  readonly data: { readonly class: HarnessDataClass; readonly sensitivity: DataSensitivity };
+  /** What the task may use at most. */
+  readonly limits: HarnessLimits;
   /**
    * The credits side: whether the balance allows starting, and the task's own budget when the
    * person set one (ADR-0100). Each model call is then limited to what is left of it.

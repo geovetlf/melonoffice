@@ -1,4 +1,5 @@
 import type {
+  AIDataPolicy,
   AICapability,
   AILatencyTier,
   AIModality,
@@ -10,6 +11,7 @@ import type {
 } from '@melonoffice/domain';
 import type { ProviderHealth } from './adapter.js';
 import { costMicroUsd } from './cost.js';
+import { dataPolicyAllows } from './data-policy.js';
 import {
   modelKey,
   sensitivityRank,
@@ -45,6 +47,7 @@ export const DEFAULT_ROUTING_STRATEGY: AIRoutingStrategy = 'balanced';
  */
 export type RouteRefusal =
   | 'no_model_available'
+  | 'data_policy_not_allowed'
   | 'capability_unsupported'
   | 'modality_unsupported'
   | 'requirements_unmet'
@@ -77,14 +80,15 @@ const rank = <T extends string>(list: readonly T[], value: T): number => list.in
 
 /**
  * Chooses a model (ADR-0027, ADR-0072). Deterministic: equal inputs give the same answer, in the
- * same order. No AI: the candidates are filtered by fixed rules (capability, modality, context
+ * same order. No AI: the candidates are filtered by fixed rules (first the data policy, ADR-0100:
+ * a provider the call's data may not reach is never a candidate; then capability, modality, context
  * and output size, structured output, tools, streaming, policy, status, environment, sensitivity,
  * quality, latency, cost limit, provider health), and only then ordered: the policy's preferred
  * list first, then the routing strategy, then the model's priority and its id. A strategy only
  * orders; it can never bring back a model a filter left out.
  *
  * `unavailable` holds the providers known to be down; they are left out. `health` says how the
- * rest are doing, for `reliability_first`.
+ * rest are doing, for `reliability_first`. `dataPolicy` is the server's data policy (ADR-0100).
  */
 export function routeModel(
   registry: ProviderRegistry,
@@ -93,6 +97,7 @@ export function routeModel(
   request: RouteRequest,
   unavailable: ReadonlySet<string> = new Set(),
   health: (providerId: string) => ProviderHealth = () => 'available',
+  dataPolicy?: AIDataPolicy,
 ): RouteDecision {
   const strategy = request.strategy ?? policy.strategy ?? DEFAULT_ROUTING_STRATEGY;
   const limit = [request.maxCostMicroUsd, policy.maxCostMicroUsd].filter(
@@ -116,6 +121,12 @@ export function routeModel(
     });
 
   const steps: [RouteRefusal, (r: ResolvedModel) => boolean][] = [
+    // The data policy before anything else (Geovet, 2026-09-30): what the call carries decides
+    // which providers may be considered at all, whatever their capability, price or preference.
+    [
+      'data_policy_not_allowed',
+      (r) => dataPolicyAllows(dataPolicy, r.provider.id, environment, request.sensitivity),
+    ],
     [
       'capability_unsupported',
       (r) =>

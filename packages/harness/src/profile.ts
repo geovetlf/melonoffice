@@ -35,20 +35,21 @@ const STRATEGIES: readonly AIRoutingStrategy[] = [
 const QUALITIES: readonly AIQualityTier[] = ['basic', 'standard', 'high'];
 
 /**
- * The initial policy: simple readings go to the cheapest model that fits, analysis and planning
- * to the best, the rest balanced. No quality floor: with only Gemini 2.5 Flash-Lite (`basic`)
+ * The policy: economic first (Geovet, 2026-09-30 09:03Z). Every task goes to the cheapest model
+ * that fits; only a complex task (analysis and planning always are) asks for the strongest one the
+ * policy allows, and its call is labelled `complex_task`. No quality floor: with only Gemini 2.5 Flash-Lite (`basic`)
  * approved (D-7), a floor would refuse every complex task instead of answering it.
  */
 export const DEFAULT_HARNESS_PROFILE_POLICY: HarnessProfilePolicy = Object.freeze({
   id: 'harness_default',
-  version: 1,
+  version: 2,
   intents: Object.freeze({
     question: Object.freeze({ strategy: 'cost_optimized' }),
     classification: Object.freeze({ strategy: 'cost_optimized' }),
     extraction: Object.freeze({ strategy: 'cost_optimized' }),
     summary: Object.freeze({ strategy: 'cost_optimized' }),
-    generation: Object.freeze({ strategy: 'balanced' }),
-    action: Object.freeze({ strategy: 'balanced' }),
+    generation: Object.freeze({ strategy: 'cost_optimized' }),
+    action: Object.freeze({ strategy: 'cost_optimized' }),
     analysis: Object.freeze({ strategy: 'quality_first' }),
     planning: Object.freeze({ strategy: 'quality_first' }),
   }),

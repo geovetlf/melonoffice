@@ -307,6 +307,12 @@ export const AUDIT_ACTIONS = {
       'A specialist moved to another department of its organization by the catalogue migration (ADR-0047), as a new configuration version (`targetVersion`); earlier versions stay as they were.',
     results: ['success'],
   },
+  'specialist.model_policy_changed': {
+    category: 'specialist',
+    description:
+      "An agent moved to the Melon Agent Harness's model policy by the agent policy migration (ADR-0100), as a new configuration version (`targetVersion`); `reference` names the new policy (`policy:id:version`). Earlier versions stay as they were.",
+    results: ['success'],
+  },
   'specialist.created': {
     category: 'specialist',
     description:

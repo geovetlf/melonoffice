@@ -279,7 +279,7 @@ logger.info('forecasting', {
 // The AI Gateway (ADR-0027, ADR-0038): Vertex AI with Gemini 2.5 Flash-Lite (D-7) and the credit
 // rate (D-12), only where Terraform sets the environment and the Vertex AI project (DEV today).
 // Anywhere else nothing is registered and every AI call is denied before reaching a provider.
-const ai = aiConfigurationOf(config);
+const ai = aiConfigurationOf({ ...config, env: process.env });
 logger.info('ai', { enabled: ai.registry !== undefined, environment: ai.environment ?? null });
 
 const app = createApp({

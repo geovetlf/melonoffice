@@ -12,7 +12,7 @@ import type {
   Specialist,
   UserId,
 } from '@melonoffice/domain';
-import { CONVERSATION_AGENT_POLICY_REF } from '@melonoffice/ai-vertex';
+import { HARNESS_CONVERSATION_POLICY_REF } from '@melonoffice/harness';
 import {
   checkOverride,
   isEntitlementKey,
@@ -258,7 +258,7 @@ export async function seedTestAgent(input: {
             { id: 'conversation_handoff', version: 1 },
           ],
           permissions: ['conversation.manage', 'conversation.read', 'conversation.send'],
-          policies: { model: CONVERSATION_AGENT_POLICY_REF },
+          policies: { model: HARNESS_CONVERSATION_POLICY_REF },
           conversation: {
             instructions: TEST_AGENT.instructions,
             channels: ['whatsapp'],

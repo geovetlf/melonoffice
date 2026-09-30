@@ -213,6 +213,7 @@ const DENIALS: Readonly<Record<string, GiaError['code']>> = {
   organization_inactive: 'organization_inactive',
   credits_insufficient: 'ai_credits_insufficient',
   credit_limit_exceeded: 'ai_credits_insufficient',
+  data_policy_not_allowed: 'ai_policy_denied',
   sensitivity_not_allowed: 'ai_policy_denied',
   provider_not_allowed: 'ai_policy_denied',
   model_not_allowed: 'ai_policy_denied',

@@ -1,6 +1,13 @@
 import type { AgentContextSource } from '@melonoffice/agents';
 import { createAgentTaskService, InMemoryAgentTaskRepository } from '@melonoffice/agents';
-import { createProviderRegistry, DEFAULT_MODEL_POLICY, routeModel } from '@melonoffice/ai-gateway';
+import {
+  createProviderRegistry,
+  dataPolicyFromEnv,
+  DEFAULT_MODEL_POLICY,
+  routeModel,
+} from '@melonoffice/ai-gateway';
+import { NVIDIA_MODELS, NVIDIA_PROVIDER } from '@melonoffice/ai-nvidia';
+import { VERTEX_AI_MODELS, VERTEX_AI_PROVIDER } from '@melonoffice/ai-vertex';
 import { createAuditService, InMemoryAuditStore } from '@melonoffice/audit';
 import type { AuthenticatedContext } from '@melonoffice/auth';
 import { openWallet } from '@melonoffice/credits';
@@ -45,7 +52,9 @@ import {
 import { createToolRegistry, TOOL_CATALOGUE } from '@melonoffice/tools';
 import { describe, expect, it } from 'vitest';
 import {
+  aiNeedOf,
   authorizationClassOf,
+  authorizeToolUse,
   checkHarnessTask,
   checkProfilePolicy,
   classifyTask,
@@ -58,9 +67,18 @@ import {
   createHarnessContextSource,
   createHarnessToolDirectory,
   createPlanningHarnessPlanner,
+  DEFAULT_HARNESS_LIMITS,
   DEFAULT_HARNESS_PROFILE_POLICY,
+  HARNESS_AI_KINDS,
+  HARNESS_CONVERSATION_POLICY_REF,
   HARNESS_RISK_POLICY,
+  HARNESS_TASK_POLICY_REF,
   handoffForTask,
+  harnessConversationPolicy,
+  harnessDataPolicy,
+  harnessTaskPolicy,
+  sensitivityOfData,
+  toolLevelOf,
   isHarnessError,
   planLimitProblem,
   modelProfileOf,
@@ -354,11 +372,16 @@ describe('Reading a task (ADR-0099 §4)', () => {
 });
 
 describe('Model profile (ADR-0099 §5)', () => {
-  it('asks for the cheapest fitting model for simple work and the best for complex work', () => {
+  it('is economic first: the cheapest fitting model unless the task is complex', () => {
     expect(modelProfileOf(classifyTask('Clasifica este mensaje'))).toEqual({
       strategy: 'cost_optimized',
     });
-    expect(modelProfileOf(classifyTask('Redacta un saludo'))).toEqual({ strategy: 'balanced' });
+    expect(modelProfileOf(classifyTask('Redacta un saludo'))).toEqual({
+      strategy: 'cost_optimized',
+    });
+    expect(modelProfileOf(classifyTask('Envía el resumen al equipo'))).toMatchObject({
+      strategy: 'cost_optimized',
+    });
     expect(modelProfileOf(classifyTask('Analiza las ventas del mes'))).toEqual({
       strategy: 'quality_first',
     });
@@ -557,7 +580,13 @@ describe('Tools (ADR-0099 §16, §18)', () => {
       specialistId: lucia.identity.id,
     });
     expect(strategy.tools).toEqual([
-      { id: 'follow_up_schedule', version: 2, authorization: 'sensitive', approvalRequired: true },
+      {
+        id: 'follow_up_schedule',
+        version: 2,
+        level: 'C',
+        authorization: 'sensitive',
+        approvalRequired: true,
+      },
     ]);
     const narrowed = await world({ without: ['follow_up.manage'] });
     const other = await narrowed.agent();
@@ -586,6 +615,9 @@ describe('Preparing and starting a task (ADR-0099 block 1)', () => {
       agent: { id: lucia.identity.id, name: 'Lucía', department: 'sales' },
       model: { strategy: 'quality_first' },
       budget: { status: 'available', maxCredits: null },
+      // The owner's own words and the company's records: private, whatever the request says.
+      data: { class: 'company_private', sensitivity: 'confidential' },
+      limits: DEFAULT_HARNESS_LIMITS,
       verdict: 'ready',
       reasons: ['only_candidate'],
     });
@@ -757,6 +789,12 @@ describe('Preparing and starting a task (ADR-0099 block 1)', () => {
   });
 });
 
+/** A shaped call, when the Harness did not stop it. */
+const workOf = <T extends object>(value: T | undefined) =>
+  value === undefined || 'stop' in value
+    ? undefined
+    : (value as Exclude<T, { readonly stop: string }>);
+
 describe("The model profile on the runtime's call (ADR-0099 §5)", () => {
   const work: {
     readonly taskType: string;
@@ -786,7 +824,9 @@ describe("The model profile on the runtime's call (ADR-0099 §5)", () => {
       metadata: {
         harnessIntent: 'analysis',
         harnessComplexity: 'complex',
-        harnessPolicy: 'harness_default@1',
+        harnessPolicy: 'harness_default@2',
+        harnessData: 'company_private',
+        harnessEscalation: 'complex_task',
         skills: 2,
       },
     });
@@ -807,7 +847,7 @@ describe("The model profile on the runtime's call (ADR-0099 §5)", () => {
     expect(floored.quality).toBe('high');
   });
 
-  it("shapes the agent task's call from the stored request, and leaves other work alone", async () => {
+  it("shapes the agent task's call from the stored request, and routine work with no bypass", async () => {
     const execution = { id: 'e1' } as Execution;
     const node = { id: 'work' } as ExecutionNode;
     const inner = {
@@ -819,8 +859,21 @@ describe("The model profile on the runtime's call (ADR-0099 §5)", () => {
       taskOf: async (_t, e) => (e.id === 'e1' ? { request: 'Clasifica este mensaje' } : undefined),
     });
     const w = await world();
-    expect((await shaped.agentWork(w.alice, execution, node))?.strategy).toBe('cost_optimized');
-    expect(await shaped.agentWork(w.alice, { id: 'e2' } as Execution, node)).toEqual(work);
+    expect(workOf(await shaped.agentWork(w.alice, execution, node))?.strategy).toBe(
+      'cost_optimized',
+    );
+    // Work with no request (a conversation turn, a plan step) still goes through the Harness.
+    expect(await shaped.agentWork(w.alice, { id: 'e2' } as Execution, node)).toEqual({
+      ...work,
+      strategy: 'cost_optimized',
+      metadata: {
+        harnessIntent: 'question',
+        harnessComplexity: 'simple',
+        harnessPolicy: 'harness_default@2',
+        harnessData: 'company_private',
+        skills: 2,
+      },
+    });
     expect(await shaped.toolInput()).toBe('kept');
   });
 });
@@ -863,11 +916,11 @@ describe('Task budget (ADR-0100)', () => {
         },
       ).agentWork(w.alice, { id: 'e1' } as Execution, node);
     // Enough: the call may spend what is left.
-    expect((await left(4))?.maxCredits).toBe(6);
+    expect(workOf(await left(4))?.maxCredits).toBe(6);
     // The call's own lower limit stays.
-    expect((await left(4, 2))?.maxCredits).toBe(2);
+    expect(workOf(await left(4, 2))?.maxCredits).toBe(2);
     // Spent: the gateway refuses every priced model (`credit_limit_exceeded`) and nothing runs.
-    expect((await left(12))?.maxCredits).toBe(0);
+    expect(workOf(await left(12))?.maxCredits).toBe(0);
     // No budget: no cap from the Harness.
     const free = await createHarnessAgentWork(
       {
@@ -1007,7 +1060,11 @@ describe('Multi-step plans, limits and hand-off (ADR-0101)', () => {
       'too_many_agents',
     );
     expect(
-      planLimitProblem([s('a', 'x'), s('b', 'x')], { maxSteps: 1, maxAgents: 1, maxDepth: 1 }),
+      planLimitProblem([s('a', 'x'), s('b', 'x')], {
+        ...DEFAULT_HARNESS_LIMITS,
+        maxSteps: 1,
+        maxAgents: 1,
+      }),
     ).toBe('too_many_steps');
   });
 
@@ -1100,5 +1157,408 @@ describe('The CRM as context (ADR-0102)', () => {
       followUps: false,
     });
     expect(text).toBe('(the customer records are not available to this agent)');
+  });
+});
+
+describe('Routing with NVIDIA evaluated first (ADR-0100, Geovet 2026-09-30)', () => {
+  const noop = (provider: typeof NVIDIA_PROVIDER) => ({
+    providerId: provider.id,
+    adapterVersion: '1',
+    capabilities: () => provider.capabilities,
+    health: async () => 'available' as const,
+    generate: async () => ({ status: 'error' as const, kind: 'unavailable' as const }),
+  });
+  const registry = createProviderRegistry({
+    providers: [NVIDIA_PROVIDER, VERTEX_AI_PROVIDER],
+    models: [...NVIDIA_MODELS, ...VERTEX_AI_MODELS],
+    adapters: [noop(NVIDIA_PROVIDER), noop(VERTEX_AI_PROVIDER)],
+  });
+  const policy = harnessTaskPolicy({
+    preferredProviders: [NVIDIA_PROVIDER.id],
+    environments: ['dev'],
+    maxCostMicroUsd: 10_000,
+  });
+  const route = (
+    overrides: {
+      sensitivity?: 'public' | 'internal' | 'confidential';
+      structuredOutput?: boolean;
+    } = {},
+    environment: 'dev' | 'prod' = 'dev',
+    unavailable: ReadonlySet<string> = new Set(),
+  ) =>
+    routeModel(
+      registry,
+      policy,
+      environment,
+      {
+        capability: 'text_generation',
+        inputModalities: ['text'],
+        outputModality: 'text',
+        sensitivity: overrides.sensitivity ?? 'public',
+        estimatedInputTokens: 500,
+        maxOutputTokens: 500,
+        ...(overrides.structuredOutput === undefined
+          ? {}
+          : { structuredOutput: overrides.structuredOutput }),
+        strategy: 'cost_optimized',
+      },
+      unavailable,
+    );
+  const providers = (decision: ReturnType<typeof route>) =>
+    decision.status === 'selected' ? decision.candidates.map((c) => c.provider.id) : [];
+
+  it('pins no provider or model, and names NVIDIA only as an order', () => {
+    expect(policy).not.toHaveProperty('allowedProviders');
+    expect(policy).not.toHaveProperty('allowedModels');
+    expect(policy).toMatchObject({
+      id: 'agent_task',
+      version: 2,
+      fallback: 'compatible',
+      preferredProviders: ['nvidia'],
+      maxSensitivity: 'confidential',
+    });
+    expect(HARNESS_TASK_POLICY_REF).toEqual({ id: 'agent_task', version: 2 });
+  });
+
+  it('tries NVIDIA first where its terms allow the call, with the next compatible model as fallback', () => {
+    const decision = route();
+    // The router records why: a preferred provider won.
+    expect(decision).toMatchObject({ status: 'selected', reason: 'preferred' });
+    expect(providers(decision)).toEqual([NVIDIA_PROVIDER.id, VERTEX_AI_PROVIDER.id]);
+    // NVIDIA down: the next compatible model, with nobody choosing it by hand.
+    expect(providers(route({}, 'dev', new Set([NVIDIA_PROVIDER.id])))).toEqual([
+      VERTEX_AI_PROVIDER.id,
+    ]);
+  });
+
+  it('never sends NVIDIA what its trial terms forbid: company data, a shape it cannot give, production', () => {
+    // The company's own records (agent tasks are `confidential`): NVIDIA's terms cap it at public.
+    expect(providers(route({ sensitivity: 'confidential' }))).toEqual([VERTEX_AI_PROVIDER.id]);
+    expect(providers(route({ sensitivity: 'internal' }))).toEqual([VERTEX_AI_PROVIDER.id]);
+    // A structured answer, as agent tasks ask for: not documented on NVIDIA's hosted endpoint.
+    expect(providers(route({ structuredOutput: true }))).toEqual([VERTEX_AI_PROVIDER.id]);
+    // Production: neither the policy nor NVIDIA's registration allows it.
+    expect(route({}, 'prod')).toMatchObject({ status: 'none' });
+  });
+});
+
+describe('Escalation, budget across a retry and AI needs (ADR-0100)', () => {
+  const work = {
+    taskType: 'agent_task',
+    capability: 'text_generation',
+    messages: [],
+    outputModality: 'text',
+    maxOutputTokens: 100,
+    sensitivity: 'confidential',
+  } as {
+    taskType: string;
+    capability: string;
+    messages: never[];
+    outputModality: string;
+    maxOutputTokens: number;
+    sensitivity: 'confidential';
+    strategy?: AIRoutingStrategy;
+    quality?: 'basic' | 'standard' | 'high';
+    maxCredits?: number;
+    metadata?: Record<string, string | number | boolean>;
+  };
+
+  it('says why it asks for the strongest model, and caps each call at what is left of the budget', async () => {
+    const node = { id: 'work' } as unknown as ExecutionNode;
+    const execution = { id: 'e' } as unknown as Execution;
+    const shaped = (request: string, strategy?: AIRoutingStrategy) =>
+      createHarnessAgentWork(
+        {
+          agentWork: async (t: TenantContext, e: Execution, n: ExecutionNode) =>
+            t && e && n ? { ...work, ...(strategy === undefined ? {} : { strategy }) } : undefined,
+        },
+        {
+          taskOf: async () => ({ request, maxCredits: 3 }),
+          spent: async (_t, e) => (e.id === 'e' ? 2 : 0),
+        },
+      ).agentWork({} as TenantContext, execution, node);
+    const simple = await shaped('Clasifica este mensaje');
+    expect(simple).toMatchObject({ strategy: 'cost_optimized', maxCredits: 1 });
+    expect(workOf(simple)?.metadata).not.toHaveProperty('harnessEscalation');
+    expect(await shaped('Analiza las ventas de esta semana')).toMatchObject({
+      strategy: 'quality_first',
+      metadata: { harnessEscalation: 'complex_task' },
+    });
+    expect(
+      await shaped(`Redacta una propuesta. ${'Detalle del cliente. '.repeat(40)}`),
+    ).toMatchObject({
+      strategy: 'quality_first',
+      metadata: { harnessEscalation: 'complex_task' },
+    });
+    // A strategy the caller chose stays the caller's: no escalation is claimed for it.
+    const chosen = await shaped('Analiza las ventas de esta semana', 'balanced');
+    expect(chosen).toMatchObject({ strategy: 'balanced' });
+    expect(workOf(chosen)?.metadata).not.toHaveProperty('harnessEscalation');
+  });
+
+  it('knows what each kind of AI work needs from the router, and refuses what nothing carries yet', () => {
+    expect(HARNESS_AI_KINDS).toEqual([
+      'text',
+      'vision',
+      'audio',
+      'video',
+      'embedding',
+      'image',
+      'document',
+      'voice',
+    ]);
+    expect(aiNeedOf('text')).toMatchObject({ supported: true, capability: 'text_generation' });
+    expect(aiNeedOf('vision')).toMatchObject({
+      capability: 'image_understanding',
+      inputModalities: ['text', 'image'],
+    });
+    expect(aiNeedOf('voice')).toMatchObject({ capability: 'speech', outputModality: 'audio' });
+    expect(aiNeedOf('embedding')).toMatchObject({ capability: 'embeddings' });
+    expect(aiNeedOf('video')).toEqual({ kind: 'video', supported: false });
+  });
+});
+
+describe('Data policy before routing (ADR-0100, Geovet 2026-09-30 09:09Z)', () => {
+  const noop = (provider: typeof NVIDIA_PROVIDER) => ({
+    providerId: provider.id,
+    adapterVersion: '1',
+    capabilities: () => provider.capabilities,
+    health: async () => 'available' as const,
+    generate: async () => ({ status: 'error' as const, kind: 'unavailable' as const }),
+  });
+  const [nemotron] = NVIDIA_MODELS;
+  if (nemotron?.terms === undefined) throw new Error('no NVIDIA model');
+  const privateTerms = { ...nemotron.terms, contentUse: 'not_used' as const };
+  /**
+   * NVIDIA as it would be registered under a contract that allows company data: made up for this
+   * test (no such contract exists). It shows the data policy, not the code, keeps data off it.
+   */
+  const contracted = createProviderRegistry({
+    providers: [{ ...NVIDIA_PROVIDER, maxSensitivity: 'confidential' }, VERTEX_AI_PROVIDER],
+    models: [
+      {
+        ...nemotron,
+        structuredOutput: true,
+        maxSensitivity: 'confidential',
+        terms: privateTerms,
+      },
+      ...VERTEX_AI_MODELS,
+    ],
+    adapters: [noop(NVIDIA_PROVIDER), noop(VERTEX_AI_PROVIDER)],
+  });
+  const policy = harnessTaskPolicy({
+    preferredProviders: [NVIDIA_PROVIDER.id],
+    environments: ['dev'],
+    maxCostMicroUsd: 10_000,
+  });
+  const trial = harnessDataPolicy([
+    { provider: NVIDIA_PROVIDER.id, environment: 'dev', maxSensitivity: 'public' },
+  ]);
+  const route = (
+    registry: typeof contracted,
+    sensitivity: 'public' | 'confidential',
+    dataPolicy = trial,
+    extra: { maxCostMicroUsd?: number } = {},
+  ) =>
+    routeModel(
+      registry,
+      policy,
+      'dev',
+      {
+        capability: 'text_generation',
+        inputModalities: ['text'],
+        outputModality: 'text',
+        sensitivity,
+        estimatedInputTokens: 500,
+        maxOutputTokens: 500,
+        strategy: 'cost_optimized',
+        ...extra,
+      },
+      new Set(),
+      () => 'available',
+      dataPolicy,
+    );
+  const providers = (decision: ReturnType<typeof route>) =>
+    decision.status === 'selected' ? decision.candidates.map((c) => c.provider.id) : [];
+
+  it('sends private company data only where the data policy allows, and falls back on its own', () => {
+    // Every task a person gives is private: routed as `confidential`.
+    expect(sensitivityOfData('company_private')).toBe('confidential');
+    expect(sensitivityOfData('synthetic')).toBe('public');
+    // Even with terms that would allow it, the data policy keeps company data off NVIDIA: Gemini.
+    expect(providers(route(contracted, 'confidential'))).toEqual([VERTEX_AI_PROVIDER.id]);
+    // Public, synthetic or test data: NVIDIA first, Gemini as the fallback.
+    expect(providers(route(contracted, 'public'))).toEqual([
+      NVIDIA_PROVIDER.id,
+      VERTEX_AI_PROVIDER.id,
+    ]);
+  });
+
+  it('is configuration per environment and provider: a contract changes the policy, not the code', () => {
+    const withContract = dataPolicyFromEnv({ AI_DATA_POLICY: 'nvidia:confidential' }, 'dev', trial);
+    expect(withContract.entries).toEqual([
+      { provider: 'nvidia', environment: 'dev', maxSensitivity: 'confidential' },
+    ]);
+    expect(providers(route(contracted, 'confidential', withContract))[0]).toBe(NVIDIA_PROVIDER.id);
+    // The data policy can never go past what a provider's recorded terms allow (the trial ones).
+    const real = createProviderRegistry({
+      providers: [NVIDIA_PROVIDER, VERTEX_AI_PROVIDER],
+      models: [...NVIDIA_MODELS, ...VERTEX_AI_MODELS],
+      adapters: [noop(NVIDIA_PROVIDER), noop(VERTEX_AI_PROVIDER)],
+    });
+    expect(providers(route(real, 'confidential', withContract))).toEqual([VERTEX_AI_PROVIDER.id]);
+    // Unset: the server's defaults. Malformed: refused, never guessed.
+    expect(dataPolicyFromEnv({}, 'dev', trial)).toEqual(trial);
+    expect(() => dataPolicyFromEnv({ AI_DATA_POLICY: 'nvidia' }, 'dev', trial)).toThrow();
+    expect(() => dataPolicyFromEnv({ AI_DATA_POLICY: 'nvidia:secret' }, 'dev', trial)).toThrow();
+  });
+
+  it('refuses a call no authorized provider may receive, before looking at anything else', () => {
+    const only = createProviderRegistry({
+      providers: [{ ...NVIDIA_PROVIDER, maxSensitivity: 'confidential' }],
+      models: [
+        {
+          ...nemotron,
+          maxSensitivity: 'confidential',
+          terms: privateTerms,
+        },
+      ],
+      adapters: [noop(NVIDIA_PROVIDER)],
+    });
+    expect(route(only, 'confidential')).toEqual({
+      status: 'none',
+      reason: 'data_policy_not_allowed',
+    });
+  });
+
+  it('never takes NVIDIA as free: a price above the cap, or no known price, moves the call on', () => {
+    const priced = (pricing: (typeof nemotron)['pricing']) =>
+      createProviderRegistry({
+        providers: [NVIDIA_PROVIDER, VERTEX_AI_PROVIDER],
+        models: [{ ...nemotron, pricing }, ...VERTEX_AI_MODELS],
+        adapters: [noop(NVIDIA_PROVIDER), noop(VERTEX_AI_PROVIDER)],
+      });
+    // A paid endpoint whose price is over the call's cap: the next compatible model.
+    const expensive = priced({
+      ...nemotron.pricing,
+      inputMicroUsdPerMillionTokens: 50_000_000,
+      outputMicroUsdPerMillionTokens: 50_000_000,
+    } as (typeof nemotron)['pricing']);
+    expect(providers(route(expensive, 'public'))).toEqual([VERTEX_AI_PROVIDER.id]);
+    // No known price: it cannot be shown to respect the cap, so it is left out.
+    const unknown = priced({ status: 'unknown' } as (typeof nemotron)['pricing']);
+    expect(providers(route(unknown, 'public'))).toEqual([VERTEX_AI_PROVIDER.id]);
+  });
+
+  it('routes existing conversation agents through the Harness as well: no provider or model pinned', () => {
+    const conversation = harnessConversationPolicy({
+      preferredProviders: [NVIDIA_PROVIDER.id],
+      environments: ['dev'],
+      maxModelCalls: DEFAULT_HARNESS_LIMITS.maxModelCalls,
+    });
+    expect(HARNESS_CONVERSATION_POLICY_REF).toEqual({ id: 'conversation_agent', version: 2 });
+    expect(conversation).not.toHaveProperty('allowedProviders');
+    expect(conversation).not.toHaveProperty('allowedModels');
+    expect(conversation).toMatchObject({
+      fallback: 'compatible',
+      maxCalls: 3,
+      allowedCapabilities: ['text_generation'],
+      allowedModalities: ['text'],
+    });
+  });
+});
+
+describe('Task limits (ADR-0100)', () => {
+  it('stops a task past its time before any model is asked, and says why', async () => {
+    let asked = 0;
+    const shaped = createHarnessAgentWork(
+      {
+        agentWork: async () => {
+          asked += 1;
+          return { maxOutputTokens: 100, sensitivity: 'confidential' as const };
+        },
+      },
+      { now: () => new Date('2026-09-30T08:11:00Z') },
+    );
+    const node = { id: 'work' } as ExecutionNode;
+    const late = { id: 'e', createdAt: '2026-09-30T08:00:00Z' } as Execution;
+    expect(await shaped.agentWork({} as TenantContext, late, node)).toEqual({
+      stop: 'task_time_limit_reached',
+    });
+    expect(asked).toBe(0);
+    const onTime = { id: 'e', createdAt: '2026-09-30T08:05:00Z' } as Execution;
+    expect(await shaped.agentWork({} as TenantContext, onTime, node)).toMatchObject({
+      strategy: 'cost_optimized',
+      sensitivity: 'confidential',
+    });
+  });
+
+  it('never lowers what a call carries', () => {
+    const shaped = withHarnessProfile(
+      { maxOutputTokens: 1, sensitivity: 'restricted' as const },
+      'Clasifica',
+    );
+    expect(shaped.sensitivity).toBe('restricted');
+    const unset: { maxOutputTokens: number; sensitivity?: 'public' } = { maxOutputTokens: 1 };
+    expect(withHarnessProfile(unset, 'Clasifica').sensitivity).toBe('confidential');
+  });
+});
+
+describe('Tool levels A/B/C (Geovet 2026-09-30)', () => {
+  const registry = createToolRegistry(TOOL_CATALOGUE);
+  const tool = (id: string, version: number) => {
+    const found = registry.resolve(id, version);
+    if (found === undefined) throw new Error(`no tool ${id}@${version}`);
+    return found.version;
+  };
+  const decide = (
+    id: string,
+    version: number,
+    extra: Partial<Parameters<typeof authorizeToolUse>[0]> = {},
+  ) =>
+    authorizeToolUse({
+      tool: tool(id, version),
+      granted: true,
+      toolCallsUsed: 0,
+      maxToolCalls: DEFAULT_HARNESS_LIMITS.maxToolCalls,
+      ...extra,
+    });
+
+  it('runs a reversible change inside MelonOffice by itself, and asks a person for the rest', () => {
+    // Handing a conversation to a person: internal, low risk, reversible.
+    expect(toolLevelOf(tool('conversation_handoff', 1))).toBe('B');
+    expect(decide('conversation_handoff', 1)).toEqual({
+      decision: 'allow',
+      level: 'B',
+      reason: 'automatic',
+    });
+    // Sending a message outside MelonOffice: level C, a person approves.
+    expect(decide('message_send', 3)).toEqual({
+      decision: 'approval_required',
+      level: 'C',
+      reason: 'sensitive_action',
+    });
+    // A tool whose own policy asks for approval stays with a person.
+    expect(decide('follow_up_schedule', 2)).toMatchObject({ decision: 'approval_required' });
+  });
+
+  it('never lets an agent decide alone: no grant, no budget, or a denied tool is refused', () => {
+    expect(decide('conversation_handoff', 1, { granted: false })).toMatchObject({
+      decision: 'deny',
+      reason: 'not_granted',
+    });
+    expect(
+      decide('conversation_handoff', 1, { toolCallsUsed: DEFAULT_HARNESS_LIMITS.maxToolCalls }),
+    ).toMatchObject({ decision: 'deny', reason: 'tool_call_limit_reached' });
+    const critical = { ...tool('conversation_handoff', 1), riskLevel: 'critical' as const };
+    expect(
+      authorizeToolUse({ tool: critical, granted: true, toolCallsUsed: 0, maxToolCalls: 5 }),
+    ).toMatchObject({ decision: 'deny', reason: 'tool_denied' });
+    // An organization may keep level B for a person.
+    expect(decide('conversation_handoff', 1, { policy: { automatic: ['A'] } })).toEqual({
+      decision: 'approval_required',
+      level: 'B',
+      reason: 'organization_policy',
+    });
   });
 });

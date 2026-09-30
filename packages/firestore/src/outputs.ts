@@ -1,13 +1,14 @@
 import type { Firestore, Timestamp as FirestoreTimestamp } from '@google-cloud/firestore';
 import { Timestamp } from '@google-cloud/firestore';
 import type {
+  AICallTrace,
   AgentOutputRecord,
   ExecutionId,
   ExecutionNodeId,
   IsoTimestamp,
   OrganizationId,
 } from '@melonoffice/domain';
-import type { AgentOutputRepository } from '@melonoffice/execution';
+import { checkTrace, type AgentOutputRepository } from '@melonoffice/execution';
 
 /**
  * `agentOutputs/{executionId}_{nodeId}` (ADR-0043): an agent node's answer, kept for the nodes
@@ -23,6 +24,8 @@ interface AgentOutputDocument {
   readonly requestId: string;
   /** JSON, so any structured answer is stored exactly as the model gave it. */
   readonly output: string;
+  /** How the call was served (ADR-0100): codes and whole numbers. Absent on older answers. */
+  readonly ai?: AICallTrace;
   readonly createdAt: FirestoreTimestamp;
 }
 
@@ -36,6 +39,7 @@ export class FirestoreAgentOutputRepository implements AgentOutputRepository {
       nodeId: record.nodeId,
       requestId: record.requestId,
       output: JSON.stringify(record.output),
+      ...(record.ai === undefined ? {} : { ai: { ...record.ai } }),
       createdAt: Timestamp.fromDate(new Date(record.createdAt)),
     };
     await this.db
@@ -62,6 +66,13 @@ export class FirestoreAgentOutputRepository implements AgentOutputRepository {
     }
     if (typeof output !== 'object' || output === null || Array.isArray(output)) return undefined;
     const { text, structured } = output as { text?: unknown; structured?: unknown };
+    let ai: AICallTrace | undefined;
+    try {
+      ai = data.ai === undefined ? undefined : checkTrace(data.ai);
+    } catch {
+      // A trace that is not what the runtime writes is left out; the answer stands.
+      ai = undefined;
+    }
     return Object.freeze({
       organizationId,
       executionId,
@@ -71,6 +82,7 @@ export class FirestoreAgentOutputRepository implements AgentOutputRepository {
         ...(typeof text === 'string' ? { text } : {}),
         ...(structured === undefined ? {} : { structured }),
       },
+      ...(ai === undefined ? {} : { ai }),
       createdAt: data.createdAt.toDate().toISOString() as IsoTimestamp,
     });
   }

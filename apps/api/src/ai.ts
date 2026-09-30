@@ -3,6 +3,7 @@ import {
   createModelPolicyCatalogue,
   createProviderRegistry,
   CREDIT_RATE,
+  dataPolicyFromEnv,
   modelKey,
   type CreditRate,
   type ModelPolicyCatalogue,
@@ -21,8 +22,20 @@ import {
   DEEPSEEK_MODELS,
   DEEPSEEK_PROVIDER,
 } from '@melonoffice/ai-deepseek';
-import { createNvidiaAdapter, NVIDIA_MODELS, NVIDIA_PROVIDER } from '@melonoffice/ai-nvidia';
-import type { DeploymentEnvironment, ModelPolicy, PolicyId, SecretRef } from '@melonoffice/domain';
+import {
+  createNvidiaAdapter,
+  NVIDIA_MODELS,
+  NVIDIA_PROVIDER,
+  NVIDIA_TRIAL_DATA_POLICY,
+} from '@melonoffice/ai-nvidia';
+import type {
+  AIDataPolicy,
+  DeploymentEnvironment,
+  ModelPolicy,
+  PolicyId,
+  SecretRef,
+} from '@melonoffice/domain';
+import { harnessDataPolicy } from '@melonoffice/harness';
 import {
   aiProviderKeysFromSecrets,
   createSecretManagerStore,
@@ -95,6 +108,8 @@ export interface AIConfiguration {
   readonly registry?: ProviderRegistry;
   readonly policies?: ModelPolicyCatalogue;
   readonly creditRate?: CreditRate;
+  /** Which data each provider may receive here (ADR-0100), applied before routing. */
+  readonly dataPolicy?: AIDataPolicy;
 }
 
 /**
@@ -115,6 +130,8 @@ export function aiConfigurationOf(config: {
   readonly fetch?: typeof fetch;
   /** Where AI provider keys are read; Secret Manager unless given (tests). */
   readonly secrets?: SecretStore;
+  /** The process environment, for `AI_DATA_POLICY` (ADR-0100). */
+  readonly env?: Readonly<Record<string, string | undefined>>;
 }): AIConfiguration {
   const { deploymentEnvironment: environment, vertexAI, deepSeek, nvidia } = config;
   if (environment === undefined) return {};
@@ -165,6 +182,13 @@ export function aiConfigurationOf(config: {
   if (providers.length === 0) return { environment };
   return {
     environment,
+    // The data policy before routing (ADR-0100): NVIDIA gets public, synthetic and test data only
+    // while it is on trial terms; `AI_DATA_POLICY` changes it for this environment.
+    dataPolicy: dataPolicyFromEnv(
+      config.env ?? {},
+      environment,
+      harnessDataPolicy(NVIDIA_TRIAL_DATA_POLICY),
+    ),
     registry: createProviderRegistry({ providers, models, adapters }),
     policies: createModelPolicyCatalogue([
       CONVERSATION_ASSIST_POLICY,
