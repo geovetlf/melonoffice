@@ -1,34 +1,34 @@
 /*
- * The signed-in app (ADR-0040, Home V4): a warm, light office. Scoped custom properties build on the design
+ * The signed-in app (ADR-0040, Home V4): a light, cool office with the brand's orange. Scoped custom properties build on the design
  * tokens (packages/ui). Motion is transform and opacity only, slow and small, and switched off
  * when the person asks for reduced motion.
  */
 .app {
-  --office-bg: #f6f0ea;
-  --office-panel: #fffdfb;
-  --office-panel-strong: rgb(255 253 251 / 0.96);
-  --office-line: rgb(74 46 28 / 0.11);
-  --office-text: #2a1d17;
-  --office-muted: #76604f;
+  --office-bg: #eef1f7;
+  --office-panel: #ffffff;
+  --office-panel-strong: rgb(255 255 255 / 0.96);
+  --office-line: rgb(30 48 86 / 0.1);
+  --office-text: #1c2230;
+  --office-muted: #5f6878;
   --office-accent: #e0643a;
   --office-accent-soft: rgb(242 120 75 / 0.12);
   --office-highlight: #d9901c;
   --office-focus: #a8431e;
-  --office-hover: rgb(74 46 28 / 0.05);
-  --office-shadow: 0 1px 2px rgb(74 46 28 / 0.06), 0 8px 24px rgb(74 46 28 / 0.07);
+  --office-hover: rgb(30 48 86 / 0.05);
+  --office-shadow: 0 1px 2px rgb(30 48 86 / 0.05), 0 8px 24px rgb(30 48 86 / 0.07);
   --office-state-working: #e0643a;
   --office-state-available: #3f9a6b;
   --office-state-waiting: #d9901c;
   --office-state-attention: #d4372c;
-  --office-state-paused: #9a8a7e;
-  --office-state-offline: #c4b8ad;
+  --office-state-paused: #8a93a3;
+  --office-state-offline: #b8c0cc;
   --sidebar-width: 17.5rem;
 
   display: grid;
   grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
   min-height: 100vh;
   background:
-    radial-gradient(90rem 40rem at 70% -10%, rgb(242 120 75 / 0.07), transparent 60%),
+    radial-gradient(90rem 40rem at 60% -10%, rgb(124 170 255 / 0.1), transparent 60%),
     var(--office-bg);
   color: var(--office-text);
 }
@@ -235,7 +235,7 @@ a.sidebar__item:hover {
 }
 
 .topbar__agents,
-.topbar__org {
+.topbar__credits {
   display: inline-flex;
   align-items: center;
   gap: var(--mo-space-2);
@@ -246,6 +246,24 @@ a.sidebar__item:hover {
   background: var(--office-panel);
   font-size: var(--mo-font-size-sm);
   white-space: nowrap;
+}
+
+.topbar__credits {
+  font-weight: var(--mo-font-weight-medium);
+}
+
+.topbar__credits .icon,
+.topbar__credits svg {
+  color: #e8a33d;
+}
+
+/* The organization's name, in the account menu. */
+.topbar__org {
+  display: flex;
+  align-items: center;
+  gap: var(--mo-space-2);
+  margin: 0;
+  font-weight: var(--mo-font-weight-bold);
 }
 
 .topbar__org-name {
@@ -338,9 +356,17 @@ a.sidebar__item:hover {
 }
 
 .user-menu summary {
+  display: flex;
+  align-items: center;
+  gap: 4px;
   list-style: none;
   cursor: pointer;
-  border-radius: 50%;
+  border-radius: var(--mo-radius-pill);
+}
+
+.user-menu__chevron {
+  color: var(--office-muted);
+  transform: rotate(90deg);
 }
 
 .user-menu summary::-webkit-details-marker {
@@ -1551,7 +1577,7 @@ a.sidebar__item:hover {
 }
 
 @media (max-width: 52rem) {
-  .topbar__org,
+  .topbar__credits,
   .topbar__agents {
     display: none;
   }

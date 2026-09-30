@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { AgentState } from '../departments.js';
 import {
-  BUILDING_WIDTH,
+  cellKey,
   circuitLevel,
-  corePoint,
+  network,
   pulsesFor,
   routeLength,
-  routeTo,
   tracePath,
+  type Rect,
 } from './circuits.js';
 
 const states = (entries: [AgentState, number][]) => new Map<AgentState, number>(entries);
@@ -48,15 +48,27 @@ describe('MelonMotor circuits', () => {
     expect(pulsesFor(states([['working', 5]]))).toBe(3);
   });
 
-  it('run from the core through the gap between the rooms to the room screen', () => {
-    const left = routeTo(2, 'left');
-    const right = routeTo(0, 'right');
-    expect(left[0]).toEqual(corePoint());
-    expect(left[1]?.x).toBeCloseTo((BUILDING_WIDTH * 3) / 8);
-    expect(left.at(-1)?.y).toBeCloseTo(229.5);
-    expect(left.at(-1)?.x).toBeLessThan((BUILDING_WIDTH * 3) / 8);
-    expect(right.at(-1)?.x).toBeGreaterThan((BUILDING_WIDTH * 5) / 8);
+  it('run from the hub between GIA and MelonMotor along the gaps into each room', () => {
+    // Three rows of rooms 100 tall, 10 apart: side rooms 180 wide, the centre 120.
+    const cells = new Map<string, Rect>();
+    for (let row = 0; row < 3; row += 1) {
+      cells.set(cellKey(row, 0), { x: 0, y: row * 110, w: 180, h: 100 });
+      cells.set(cellKey(row, 1), { x: 190, y: row * 110, w: 120, h: 100 });
+      cells.set(cellKey(row, 2), { x: 320, y: row * 110, w: 180, h: 100 });
+    }
+    const net = network(cells);
+    expect(net?.hub).toEqual({ x: 250, y: 215 });
+    const left = net?.routeTo(0, 0) ?? [];
+    expect(left[0]).toEqual({ x: 250, y: 215 });
+    expect(left[1]).toEqual({ x: 185, y: 215 });
+    expect(left.at(-1)).toEqual({ x: 177, y: 50 });
+    const right = net?.routeTo(2, 2) ?? [];
+    expect(right.at(-1)).toEqual({ x: 323, y: 270 });
+    // Consejo, above GIA, is reached from below.
+    expect(net?.routeTo(0, 1)?.at(-1)?.y).toBe(97);
     expect(routeLength(left)).toBeGreaterThan(0);
+    // Without GIA's and MelonMotor's rooms laid out there is no network yet.
+    expect(network(new Map())).toBeUndefined();
   });
 
   it('cuts the corners like a circuit board', () => {
@@ -65,6 +77,6 @@ describe('MelonMotor circuits', () => {
       { x: 20, y: 0 },
       { x: 20, y: 20 },
     ]);
-    expect(path).toBe('M0,0 L15,0 L20,5 L20,20');
+    expect(path).toBe('M0,0 L12,0 L20,8 L20,20');
   });
 });

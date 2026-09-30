@@ -132,15 +132,16 @@ describe('the Home (ADR-0040)', () => {
     ).toBeTruthy();
     const office = await rooms();
     const links = await office.findAllByRole('link');
-    // Headquarters first, with GIA at her desk (Home V4), then the floors left to right.
+    // Consejo first, then the rows of the reference: Comercial and Operaciones, GIA between
+    // Marketing and Finanzas, then Investigación.
     expect(links.map((link) => link.getAttribute('href'))).toEqual([
       '/office/leadership',
-      '/gia',
-      '/office/operations',
       '/office/sales',
+      '/office/operations',
+      '/gia',
       '/office/marketing',
-      '/office/research',
       '/office/finance',
+      '/office/research',
     ]);
     expect(
       office.getByRole('link', {

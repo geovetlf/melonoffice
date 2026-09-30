@@ -34,8 +34,12 @@ export function TopBar({
   readonly notifications?: Parameters<typeof Notifications>[0];
 }) {
   const intl = useIntl();
-  const { specialists } = useOfficeData();
+  const { specialists, credits } = useOfficeData();
   const active = readyList(specialists).filter((s) => s.status === 'active').length;
+  const balance =
+    credits.status === 'ready' && credits.value.status === 'present'
+      ? credits.value.balance
+      : undefined;
   return (
     <header className="topbar">
       <button
@@ -60,15 +64,25 @@ export function TopBar({
             <FormattedMessage id="office.agents.active" values={{ count: active }} />
           </span>
         ) : null}
-        <span className="topbar__org">
-          <Icon name="building" size={16} />
-          <span className="topbar__org-name">{organizationName}</span>
-        </span>
+        {balance === undefined ? null : (
+          <span className="topbar__credits">
+            <Icon name="credits" size={16} />
+            <FormattedMessage id="topbar.credits" values={{ count: balance }} />
+          </span>
+        )}
         <details className="user-menu">
           <summary aria-label={intl.formatMessage({ id: 'topbar.account' })}>
             <AgentAvatar name={email} size={36} />
+            <Icon name="chevron" size={14} className="user-menu__chevron" />
           </summary>
           <div className="user-menu__panel">
+            <p className="topbar__org">
+              <Icon name="building" size={16} />
+              <span className="visually-hidden">
+                <FormattedMessage id="topbar.organization" />:{' '}
+              </span>
+              <span className="topbar__org-name">{organizationName}</span>
+            </p>
             <p className="user-menu__email">{email}</p>
             <LanguageSwitcher {...locale} />
             <Button variant="secondary" onClick={onSignOut}>

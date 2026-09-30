@@ -2,57 +2,82 @@ import type { AgentState } from '../departments.js';
 import type { Floor } from './layout.js';
 
 /**
- * MelonMotor's circuits (Home V4): the lines of light that join the office's core to GIA and to
- * every department, drawn over the building. Geometry and activity only; the drawing is in
- * `OfficeBuilding`.
+ * MelonMotor's network: the lines of light that join GIA, MelonMotor and every department,
+ * drawn over the office. Geometry and activity only; the drawing is in `OfficeBuilding`.
  *
- * The drawing's units: a floor is 100 tall and the building is `BUILDING_WIDTH` wide per floor
- * (three rooms, 3 : 2 : 3, each side room 16:10). A circuit leaves the core in the atrium, runs
- * along the floor to the gap between the columns, climbs or drops in that gap to the room's
- * floor, then runs along the back wall into the room's big screen: the work reaches the screen.
+ * The lines run in the gaps between the rooms, in pixels of the office as it is laid out. They
+ * meet at the hub between GIA and MelonMotor: a trunk rises into GIA and drops into MelonMotor,
+ * and a line runs from the hub along the gaps to each department's room.
  */
-
-/** The building's width in drawing units: a side room is 16:10 and 3/8 of the width. */
-export const BUILDING_WIDTH = (8 / 3) * 160;
-
-/** The big screen's rectangle in a side room, as fractions (the art's `SIDE_SCREEN`). */
-const SCREEN = { x: 0.355, y: 0.17, w: 0.29, h: 0.25 };
 
 export interface Point {
   readonly x: number;
   readonly y: number;
 }
 
-/** The core: MelonMotor's column in the atrium, on the second floor. */
-export function corePoint(): Point {
-  return { x: BUILDING_WIDTH / 2, y: 100 + 55 };
+export interface Rect {
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+  readonly h: number;
 }
 
-/** GIA at her platform in headquarters, on the top floor. */
-export function giaPoint(): Point {
-  return { x: BUILDING_WIDTH / 2 + 9, y: 62 };
+/** The rooms as laid out: `row-column` to the room's box, in the office's pixels. */
+export type Cells = ReadonlyMap<string, Rect>;
+
+export const cellKey = (row: number, column: number) => `${row}-${column}`;
+
+/** What the lines are drawn from: GIA's room, MelonMotor's and the columns beside them. */
+export interface Network {
+  readonly hub: Point;
+  readonly gia: readonly Point[];
+  readonly motor: readonly Point[];
+  /** The route to a room at `row`, `column` (0 left, 1 centre, 2 right). */
+  readonly routeTo: (row: number, column: number) => readonly Point[] | undefined;
 }
 
-/** The route from the core to a side room's screen, as the corners of the line. */
-export function routeTo(floor: number, side: 'left' | 'right'): readonly Point[] {
-  const core = corePoint();
-  const column = (BUILDING_WIDTH * 3) / 8;
-  const gap = side === 'left' ? column : BUILDING_WIDTH - column;
-  const y = floor * 100 + (SCREEN.y + SCREEN.h / 2) * 100;
-  const screen =
-    side === 'left' ? column * (SCREEN.x + SCREEN.w) : BUILDING_WIDTH - column + column * SCREEN.x;
-  return [core, { x: gap, y: core.y }, { x: gap, y }, { x: screen, y }];
+export function network(cells: Cells): Network | undefined {
+  const gia = cells.get(cellKey(1, 1));
+  const motor = cells.get(cellKey(2, 1));
+  const left = cells.get(cellKey(1, 0));
+  const right = cells.get(cellKey(1, 2));
+  if (gia === undefined || motor === undefined || left === undefined || right === undefined) {
+    return undefined;
+  }
+  const cx = gia.x + gia.w / 2;
+  const hub = { x: cx, y: (gia.y + gia.h + motor.y) / 2 };
+  const gapLeft = (left.x + left.w + gia.x) / 2;
+  const gapRight = (gia.x + gia.w + right.x) / 2;
+  return {
+    hub,
+    gia: [hub, { x: cx, y: gia.y + gia.h - 2 }],
+    motor: [hub, { x: cx, y: motor.y + 2 }],
+    routeTo(row, column) {
+      const room = cells.get(cellKey(row, column));
+      if (room === undefined) return undefined;
+      if (column === 1) {
+        // Consejo, above GIA: round GIA's room by the left gap, then into the room from below.
+        const above = cells.get(cellKey(row + 1, 1));
+        if (above === undefined) return undefined;
+        const between = (room.y + room.h + above.y) / 2;
+        return [
+          hub,
+          { x: gapLeft, y: hub.y },
+          { x: gapLeft, y: between },
+          { x: cx - room.w * 0.18, y: between },
+          { x: cx - room.w * 0.18, y: room.y + room.h - 3 },
+        ];
+      }
+      const gap = column === 0 ? gapLeft : gapRight;
+      const y = room.y + room.h * 0.5;
+      const edge = column === 0 ? room.x + room.w - 3 : room.x + 3;
+      return [hub, { x: gap, y: hub.y }, { x: gap, y }, { x: edge, y }];
+    },
+  };
 }
 
-/** The route from the core up to GIA. */
-export function routeToGia(): readonly Point[] {
-  const core = corePoint();
-  const gia = giaPoint();
-  return [core, { x: core.x, y: 100 - 8 }, { x: gia.x, y: 100 - 8 - 9 }, gia];
-}
-
-/** An SVG path through the points, its corners cut at 45° like a circuit board's traces. */
-export function tracePath(points: readonly Point[], chamfer = 5): string {
+/** An SVG path through the points, its corners rounded off at 45°. */
+export function tracePath(points: readonly Point[], chamfer = 8): string {
   if (points.length === 0) return '';
   const parts = [`M${round(points[0]?.x)},${round(points[0]?.y)}`];
   for (let i = 1; i < points.length; i += 1) {
@@ -84,7 +109,7 @@ export function routeLength(points: readonly Point[]): number {
 }
 
 /**
- * How much a department's circuit carries, from its agents' real states:
+ * How much a department's line carries, from its agents' real states:
  * - `attention`: something needs the person (an approval, a failure);
  * - `busy`: at least one agent is working;
  * - `ready`: agents are there, none working;
@@ -100,27 +125,36 @@ export function circuitLevel(states: ReadonlyMap<AgentState, number>): CircuitLe
   return 'off';
 }
 
-/** How many pulses a busy circuit carries at once: one per working agent, three at most. */
+/** How many pulses a busy line carries at once: one per working agent, three at most. */
 export function pulsesFor(states: ReadonlyMap<AgentState, number>): number {
   const working = (states.get('working') ?? 0) + (states.get('processing') ?? 0);
   return Math.max(0, Math.min(3, working));
 }
 
-/** The side rooms that hold a department, with their floor and side. */
-export function departmentRooms(floors: readonly Floor[]): readonly {
-  readonly floor: number;
-  readonly side: 'left' | 'right';
+/** The rooms that hold a department, with their row and column. */
+export function departmentRooms(
+  floors: readonly Floor[],
+  headquarters: readonly { readonly id: string; readonly typeId: string | null }[] = [],
+): readonly {
+  readonly row: number;
+  readonly column: number;
   readonly id: string;
   readonly type: string;
 }[] {
-  const rooms: { floor: number; side: 'left' | 'right'; id: string; type: string }[] = [];
-  floors.forEach((level, floor) => {
-    for (const side of ['left', 'right'] as const) {
+  const rooms: { row: number; column: number; id: string; type: string }[] = [];
+  const board = headquarters[0];
+  if (board !== undefined)
+    rooms.push({ row: 0, column: 1, id: board.id, type: board.typeId ?? board.id });
+  floors.forEach((level, row) => {
+    for (const [side, column] of [
+      ['left', 0],
+      ['right', 2],
+    ] as const) {
       const room = level[side];
       if (room.kind !== 'department') continue;
       rooms.push({
-        floor,
-        side,
+        row,
+        column,
         id: room.department.id,
         type: room.department.typeId ?? room.department.id,
       });

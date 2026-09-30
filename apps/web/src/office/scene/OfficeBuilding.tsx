@@ -1,5 +1,12 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
-import { useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import {
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+  type RefObject,
+} from 'react';
 import { GiaAvatar } from '../../gia/GiaAvatar.js';
 import { navigate } from '../../identity/router.js';
 import { paths } from '../../shell/routes.js';
@@ -18,27 +25,35 @@ import type { DepartmentView, SpecialistView } from '../officeClient.js';
 import { departmentPriority, readyList, useOfficeData } from '../OfficeData.js';
 import { agentsSummary, seatsSummary } from '../OfficeScene.js';
 import { navigateInto, prefersReducedMotion } from '../transition.js';
-import { agentAt, seatAgents, type SeatPosition } from '../workstations.js';
+import { agentAt, seatAgents } from '../workstations.js';
 import { isCurrentTask, workStateOf, type AgentWork } from './agentWork.js';
 import {
-  BUILDING_WIDTH,
+  cellKey,
   circuitLevel,
-  corePoint,
   departmentRooms,
-  giaPoint,
+  network,
   pulsesFor,
   routeLength,
-  routeTo,
-  routeToGia,
   tracePath,
+  type Cells,
+  type Point,
+  type Rect,
 } from './circuits.js';
 import { buildingFloors, type CentreRoom, type Floor, type SideRoom } from './layout.js';
 import type { MotorState } from './motor.js';
 import { MELON_MARK } from '../../shell/mark.js';
+import {
+  CENTRE_FLOOR,
+  CENTRE_FLOOR_WIDTH,
+  homeSeats,
+  screenOf,
+  type HomeSeat,
+} from './roomFloor.js';
 import { Workstation, type DeskOccupant } from './Workstation.js';
 
 /**
- * The Home's office (Home V4): the organization's building, seen whole. Three layers, kept apart:
+ * The Home's office: the organization's rooms seen whole, three by three, with GIA at the heart
+ * of it and MelonMotor beneath her. Three layers, kept apart:
  *
  * - the picture: each room is a baked image (`./art`, drawn by `scripts/office-art`), with no
  *   data in it;
@@ -73,6 +88,8 @@ export function OfficeBuilding({
   );
   const floors = buildingFloors(floor);
   const context: RoomContext = { agents, work, onAgent };
+  const frame = useRef<HTMLDivElement>(null);
+  const cells = useCells(frame, `${departments.status}:${floors.length}`);
   // The department under the pointer or the focus: its circuit lights up.
   const [hot, setHot] = useState<string | null>(null);
   const heat = (target: EventTarget) =>
@@ -107,6 +124,7 @@ export function OfficeBuilding({
               the rooms themselves are the links and buttons inside. */}
           {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions */}
           <div
+            ref={frame}
             className="building__frame"
             style={{ '--floors': floors.length } as CSSProperties}
             aria-label={intl.formatMessage({ id: 'office.scene.rooms' })}
@@ -127,7 +145,14 @@ export function OfficeBuilding({
                 onMotor={onMotor}
               />
             ))}
-            <Circuits floors={floors} context={context} motor={motor} hot={hot} />
+            <Circuits
+              floors={floors}
+              headquarters={headquarters}
+              cells={cells}
+              context={context}
+              motor={motor}
+              hot={hot}
+            />
           </div>
         </>
       )}
@@ -158,7 +183,10 @@ function FloorRooms({
 }) {
   // The first floor is on screen at once; the ones below load as the person gets to them.
   const eager = index === 0;
-  const place = (column: number) => ({ '--row': index + 1, '--column': column }) as CSSProperties;
+  const place = (column: number): Place => ({
+    style: { '--row': index + 1, '--column': column } as CSSProperties,
+    slot: cellKey(index, column - 1),
+  });
   const left = <SideRoomView room={floor.left} context={context} eager={eager} place={place(1)} />;
   const right = (
     <SideRoomView room={floor.right} context={context} eager={eager} place={place(3)} />
@@ -175,8 +203,8 @@ function FloorRooms({
     />
   );
   // Each room is placed in its column by the grid, so the reading order can differ from the
-  // picture's: headquarters (and GIA) come first, then the floors left to right.
-  return floor.centre === 'headquarters' ? (
+  // picture's: GIA and Consejo come first, then the rows left to right.
+  return floor.centre === 'headquarters' || floor.centre === 'gia' ? (
     <>
       {centre}
       {left}
@@ -212,7 +240,7 @@ function RoomPicture({
       className="b-room__art"
       src={one}
       srcSet={two === undefined ? undefined : `${one} ${width}w, ${two} ${width * 2}w`}
-      sizes="(max-width: 48rem) 50vw, 25vw"
+      sizes="(max-width: 48rem) 50vw, 26vw"
       alt=""
       loading={eager ? 'eager' : 'lazy'}
       decoding="async"
@@ -289,8 +317,11 @@ function stateWords(intl: ReturnType<typeof useIntl>, states: ReadonlyMap<AgentS
     .join(', ');
 }
 
-/** Where a room sits in the building's grid (its floor and column). */
-type Place = CSSProperties;
+/** Where a room sits in the office's grid: its row and column, and its slot for the lines. */
+interface Place {
+  readonly style: CSSProperties;
+  readonly slot: string;
+}
 
 function SideRoomView({
   room,
@@ -305,8 +336,13 @@ function SideRoomView({
 }) {
   if (room.kind === 'meeting') {
     return (
-      <div className="b-room b-room--side b-room--meeting" style={place} aria-hidden="true">
-        <RoomPicture name="room-meeting" width={480} eager={eager} />
+      <div
+        className="b-room b-room--side b-room--meeting"
+        style={place.style}
+        data-slot={place.slot}
+        aria-hidden="true"
+      >
+        <RoomPicture name="room-meeting" width={576} eager={eager} />
       </div>
     );
   }
@@ -334,21 +370,17 @@ function DepartmentRoom({
   const { here, states, lead, current } = roomState(department, context);
   const seating = seatAgents(department, context.agents);
   const motif = ART[`./art/room-${look.motif}.webp`] === undefined ? 'generic' : look.motif;
+  const seats = homeSeats(seating.workstations.length);
   return (
     <div
       ref={box}
       className={`b-room b-room--side b-room--department${lead === undefined ? '' : ` b-room--${lead}`}`}
-      style={{ ...place, '--zone-hue': look.hue } as CSSProperties}
+      style={{ ...place.style, '--zone-hue': look.hue } as CSSProperties}
+      data-slot={place.slot}
       data-room={department.id}
     >
-      <RoomPicture name={`room-${motif}`} width={480} eager={eager} />
-      <WallScreen
-        name={name}
-        icon={look.icon}
-        agents={here.length}
-        lead={lead}
-        task={current?.request}
-      />
+      <RoomPicture name={`room-${motif}`} width={576} eager={eager} />
+      <WallScreen rect={screenOf(motif)} lead={lead} />
       <a
         href={href}
         className="b-room__link"
@@ -359,16 +391,7 @@ function DepartmentRoom({
           navigateInto(href, box.current);
         }}
       >
-        <span className="b-room__sign" aria-hidden="true">
-          <span className="b-room__icon">
-            <Icon name={look.icon} size={16} />
-          </span>
-          <span className="b-room__name">{name}</span>
-          <span className="b-room__count">
-            <FormattedMessage id="office.building.agents" values={{ count: here.length }} />
-          </span>
-          <Icon name="chevron" size={14} className="b-room__go" />
-        </span>
+        <RoomSign icon={look.icon} name={name} agents={here.length} />
       </a>
       <span className="b-room__status" aria-hidden="true">
         {current !== undefined ? (
@@ -384,10 +407,11 @@ function DepartmentRoom({
           </span>
         )}
       </span>
+      <RoomPeek agents={here} context={context} />
       <Desks
         label={intl.formatMessage({ id: 'office.building.desks' }, { name })}
-        seats={seating.workstations.map((workstation) => ({
-          position: workstation.position,
+        seats={seating.workstations.map((workstation, i) => ({
+          position: seats[i] ?? { x: 0.5, y: 0.8, width: 0.2, row: 0 },
           agentId: agentAt(workstation),
           ambient: workstation.occupant?.kind === 'ambient',
         }))}
@@ -399,59 +423,104 @@ function DepartmentRoom({
   );
 }
 
-/**
- * The department's big screen: what its agents are really doing. With a task under way it shows
- * the task in the words it was asked; otherwise the department's name, resting. Never a figure
- * or a chart that the records do not hold.
- */
-function WallScreen({
-  name,
+/** A room's name plate: its icon, its name and how many agents work there. */
+function RoomSign({
   icon,
+  name,
   agents,
-  lead,
-  task,
+  centre = false,
 }: {
-  readonly name: string;
   readonly icon: ReturnType<typeof lookOf>['icon'];
+  readonly name: string;
   readonly agents: number;
-  readonly lead: AgentState | undefined;
-  readonly task: string | undefined;
+  readonly centre?: boolean;
 }) {
   return (
+    <span className={`b-room__sign${centre ? ' b-room__sign--centre' : ''}`} aria-hidden="true">
+      <span className="b-room__icon">
+        <Icon name={icon} size={16} />
+      </span>
+      <span className="b-room__name">{name}</span>
+      <span className="b-room__count">
+        <FormattedMessage id="office.building.agents" values={{ count: agents }} />
+      </span>
+      <Icon name="chevron" size={14} className="b-room__go" />
+    </span>
+  );
+}
+
+/**
+ * What a room shows when the pointer or the focus is on it: its agents and their states. The
+ * room's link already says all of it to a screen reader.
+ */
+function RoomPeek({
+  agents,
+  context,
+}: {
+  readonly agents: readonly SpecialistView[];
+  readonly context: RoomContext;
+}) {
+  if (agents.length === 0) return null;
+  return (
+    <ul className="b-room__peek" aria-hidden="true">
+      {agents.slice(0, 4).map((agent) => {
+        const state = workStateOf(agent, context.work.get(agent.id)) ?? 'offline';
+        const task = context.work.get(agent.id);
+        return (
+          <li key={agent.id}>
+            <span className={`b-room__dot b-room__dot--${state}`} />
+            <span className="b-room__peek-name">{agent.displayName}</span>
+            <span className="b-room__peek-state">
+              {isCurrentTask(task) ? (
+                task.request
+              ) : (
+                <FormattedMessage id={`office.agentState.${state}`} />
+              )}
+            </span>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+/**
+ * The department's big screen is part of the room's picture, showing the kind of work it does.
+ * While its agents work, a band of light runs over it and a bar fills under it: the screen is
+ * live. Never a figure or a chart that the records do not hold.
+ */
+function WallScreen({
+  rect,
+  lead,
+}: {
+  readonly rect: readonly [number, number, number, number];
+  readonly lead: AgentState | undefined;
+}) {
+  const [left, top, right, bottom] = rect;
+  const live = lead === 'working' || lead === 'attention' || lead === 'processing';
+  return (
     <div
-      className={`wall-screen${task === undefined ? ' wall-screen--idle' : ''}${lead === 'working' ? ' wall-screen--working' : ''}`}
+      className={`wall-screen${live ? ' wall-screen--working' : ' wall-screen--idle'}${lead === 'attention' ? ' wall-screen--attention' : ''}`}
+      style={{
+        left: `${left * 100}%`,
+        top: `${top * 100}%`,
+        width: `${(right - left) * 100}%`,
+        height: `${(bottom - top) * 100}%`,
+      }}
       aria-hidden="true"
     >
-      <span className="wall-screen__head">
-        <Icon name={icon} size={12} />
-        <span>{name}</span>
-      </span>
-      {task !== undefined ? (
-        <>
-          <span className="wall-screen__task">{task}</span>
-          {lead === undefined ? null : (
-            <span className="wall-screen__state">
-              <FormattedMessage id={`office.agentState.${lead}`} />
-            </span>
-          )}
-          {lead === 'working' ? <span className="wall-screen__bar" /> : null}
-        </>
-      ) : (
-        <span className="wall-screen__rest">
-          <FormattedMessage id={agents === 0 ? 'office.zone.noAgents' : 'office.building.noTask'} />
-        </span>
-      )}
+      {live ? <span className="wall-screen__bar" /> : null}
     </div>
   );
 }
 
 interface DeskSeat {
-  readonly position: SeatPosition;
+  readonly position: HomeSeat;
   readonly agentId: string | null;
   readonly ambient: boolean;
 }
 
-/** The room's workstations, where the drawing puts them; a real agent's is a button. */
+/** The room's workstations, where the floor puts them; a real agent's is a button. */
 function Desks({
   label,
   seats,
@@ -464,13 +533,9 @@ function Desks({
   readonly motif: string;
 }) {
   const intl = useIntl();
-  const rows = new Set(seats.map((seat) => seat.position.row)).size || 1;
   return (
     <ul className="b-room__desks" aria-label={label}>
       {seats.map((seat, i) => {
-        const perRow = seats.filter((s) => s.position.row === seat.position.row).length || 1;
-        const depth = 1 - (rows - 1 - seat.position.row) * 0.12;
-        const width = Math.min(21, 66 / perRow) * depth;
         const agent =
           seat.agentId === null ? undefined : context.agents.find((a) => a.id === seat.agentId);
         const state =
@@ -484,7 +549,7 @@ function Desks({
         const style = {
           '--seat-x': seat.position.x,
           '--seat-y': seat.position.y,
-          '--desk-w': `${width}%`,
+          '--desk-w': `${seat.position.width * 100}%`,
           zIndex: 3 + seat.position.row,
         } as CSSProperties;
         if (agent === undefined || state === undefined) {
@@ -517,6 +582,7 @@ function Desks({
               <span className="b-desk__tip" aria-hidden="true">
                 <span className="b-desk__name">{agent.displayName}</span>
                 <AgentStatus state={state} />
+                {isCurrentTask(task) ? <span className="b-desk__task">{task.request}</span> : null}
               </span>
             </button>
           </li>
@@ -576,11 +642,11 @@ function lookIndex(id: string): number {
   return hash;
 }
 
-/** Where the leadership's agents sit in headquarters, either side of GIA's desk. */
-const HQ_SEATS: readonly SeatPosition[] = [
-  { x: 0.2, y: 0.9, row: 1 },
-  { x: 0.8, y: 0.9, row: 1 },
-];
+/** Where Consejo's agents sit: either side of the board table, at the front of the room. */
+const HQ_SEATS = homeSeats(2, CENTRE_FLOOR, CENTRE_FLOOR_WIDTH, [
+  [0.04, 0.55],
+  [0.96, 0.55],
+]);
 
 function CentreRoomView({
   kind,
@@ -604,24 +670,37 @@ function CentreRoomView({
       <Headquarters departments={headquarters} context={context} eager={eager} place={place} />
     );
   }
+  if (kind === 'gia') {
+    return <GiaRoom context={context} eager={eager} place={place} />;
+  }
   if (kind === 'motor') {
     return (
-      <div className="b-room b-room--centre b-room--motor" style={place}>
-        <RoomPicture name="atrium" width={320} eager={eager} />
+      <div
+        className="b-room b-room--centre b-room--motor"
+        style={place.style}
+        data-slot={place.slot}
+      >
+        <RoomPicture name="atrium" width={403} eager={eager} />
         <MotorButton open={motorOpen} onClick={onMotor} />
       </div>
     );
   }
   return (
-    <div className="b-room b-room--centre b-room--lounge" style={place} aria-hidden="true">
-      <RoomPicture name="lounge" width={320} eager={eager} />
+    <div
+      className="b-room b-room--centre b-room--lounge"
+      style={place.style}
+      data-slot={place.slot}
+      aria-hidden="true"
+    >
+      <RoomPicture name="lounge" width={403} eager={eager} />
     </div>
   );
 }
 
 /**
- * Consejo y Dirección, where GIA sits (ADR-0005): her desk at the centre, the department's own
- * agents either side. With no leadership department, the room is still GIA's.
+ * Consejo y Dirección's board room (ADR-0005), above GIA: the board table, the company's
+ * objectives on the screen, the department's own agents either side. With no leadership
+ * department it stays a board room with no way in.
  */
 function Headquarters({
   departments,
@@ -637,7 +716,6 @@ function Headquarters({
   const intl = useIntl();
   const box = useRef<HTMLDivElement>(null);
   const department = departments[0];
-  const active = context.agents.filter((agent) => agent.status === 'active').length;
   let room: ReactNode = null;
   if (department !== undefined) {
     const name = departmentName(intl, department);
@@ -660,22 +738,14 @@ function Headquarters({
             navigateInto(href, box.current);
           }}
         >
-          <span className="b-room__sign b-room__sign--centre" aria-hidden="true">
-            <span className="b-room__icon">
-              <Icon name={lookOf(department).icon} size={16} />
-            </span>
-            <span className="b-room__name">{name}</span>
-            <span className="b-room__count">
-              <FormattedMessage id="office.building.agents" values={{ count: here.length }} />
-            </span>
-            <Icon name="chevron" size={14} className="b-room__go" />
-          </span>
+          <RoomSign icon={lookOf(department).icon} name={name} agents={here.length} centre />
           {lead === undefined ? null : (
             <span className="visually-hidden">
               <AgentStatus state={lead} count={states.get(lead) ?? 0} />
             </span>
           )}
         </a>
+        <RoomPeek agents={here} context={context} />
         <Desks
           label={intl.formatMessage({ id: 'office.building.desks' }, { name })}
           seats={HQ_SEATS.map((position, i) => ({
@@ -696,12 +766,36 @@ function Headquarters({
       className={`b-room b-room--centre b-room--hq${department === undefined ? '' : ' b-room--department'}`}
       style={
         department === undefined
-          ? place
-          : ({ ...place, '--zone-hue': lookOf(department).hue } as CSSProperties)
+          ? place.style
+          : ({ ...place.style, '--zone-hue': lookOf(department).hue } as CSSProperties)
       }
+      data-slot={place.slot}
+      data-room={department?.id}
     >
-      <RoomPicture name="headquarters" width={320} eager={eager} />
+      <RoomPicture name="headquarters" width={403} eager={eager} />
       {room}
+    </div>
+  );
+}
+
+/**
+ * GIA at the heart of the office: her face in a sphere of light over her platform, and the
+ * whole room is the way to her workplace.
+ */
+function GiaRoom({
+  context,
+  eager,
+  place,
+}: {
+  readonly context: RoomContext;
+  readonly eager: boolean;
+  readonly place: Place;
+}) {
+  const intl = useIntl();
+  const active = context.agents.filter((agent) => agent.status === 'active').length;
+  return (
+    <div className="b-room b-room--centre b-room--gia" style={place.style} data-slot={place.slot}>
+      <RoomPicture name="gia" width={403} eager={eager} />
       <a
         href={paths.gia()}
         className="b-gia"
@@ -711,16 +805,13 @@ function Headquarters({
           navigate(paths.gia());
         }}
       >
-        {/* GIA herself is in the room's art; this is the part of the link over her. */}
-        <span className="b-gia__figure" aria-hidden="true" />
+        <span className="b-gia__sphere" aria-hidden="true">
+          <GiaAvatar size={96} decorative className="b-gia__avatar" />
+        </span>
         <span className="b-gia__chip" aria-hidden="true">
-          <GiaAvatar size={28} decorative className="b-gia__avatar" />
           <span className="b-gia__name">
             <FormattedMessage id="gia.name" />
-          </span>
-          <span className="b-gia__online">
             <span className="b-gia__dot" />
-            <FormattedMessage id="office.building.giaOnline" />
           </span>
           <span className="b-gia__role">
             <FormattedMessage id="office.building.giaCoordinates" values={{ count: active }} />
@@ -756,26 +847,73 @@ function MotorButton({ open, onClick }: { readonly open: boolean; readonly onCli
 }
 
 /**
- * MelonMotor's circuits: lines of light from the core in the atrium to GIA and to every
- * department's screen. They carry what really happens: pulses run along a department's line
- * while its agents work (one per working agent, up to three, out to the room and back), in coral
- * when something needs the person, and between departments for MelonMotor's real hand-offs. A
- * department with agents but no work keeps a quiet line; one with nobody active, a faint one.
- * Pointing at a room lights its line. No pulses with reduced motion.
+ * The rooms' boxes as laid out, in the office's pixels, measured again whenever the office
+ * changes size. Empty until the office has been laid out (and in tests, where nothing is).
+ */
+function useCells(frame: RefObject<HTMLDivElement | null>, layout: string) {
+  const [cells, setCells] = useState<{ cells: Cells; width: number; height: number }>({
+    cells: new Map(),
+    width: 0,
+    height: 0,
+  });
+  useLayoutEffect(() => {
+    const element = frame.current;
+    if (element === null) return undefined;
+    const measure = () => {
+      const origin = element.getBoundingClientRect();
+      const next = new Map<string, Rect>();
+      for (const room of element.querySelectorAll<HTMLElement>('[data-slot]')) {
+        const box = room.getBoundingClientRect();
+        const slot = room.dataset['slot'];
+        if (slot === undefined || box.width === 0) continue;
+        next.set(slot, {
+          x: box.left - origin.left,
+          y: box.top - origin.top,
+          w: box.width,
+          h: box.height,
+        });
+      }
+      setCells({ cells: next, width: origin.width, height: origin.height });
+    };
+    measure();
+    if (typeof ResizeObserver !== 'function') return undefined;
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [frame, layout]);
+  return cells;
+}
+
+/**
+ * MelonMotor's network: lines of light from the hub between GIA and MelonMotor to GIA, to
+ * MelonMotor and to every department. They carry what really happens: pulses run along a
+ * department's line while its agents work (one per working agent, up to three, out to the room
+ * and back), in coral when something needs the person, and between departments for MelonMotor's
+ * real hand-offs; GIA's trunk carries a pulse for each department at work. A department with
+ * agents but no work keeps a quiet line; one with nobody active, a faint one. Pointing at a room
+ * lights its line. No pulses with reduced motion.
  */
 function Circuits({
   floors,
+  headquarters,
+  cells,
   context,
   motor,
   hot,
 }: {
   readonly floors: readonly Floor[];
+  readonly headquarters: readonly DepartmentView[];
+  readonly cells: { readonly cells: Cells; readonly width: number; readonly height: number };
   readonly context: RoomContext;
   readonly motor: MotorState;
   readonly hot: string | null;
 }) {
   const moving = !prefersReducedMotion();
-  const rooms = departmentRooms(floors).map((room) => {
+  const net = network(cells.cells);
+  if (net === undefined) return null;
+  const rooms = departmentRooms(floors, headquarters).flatMap((room) => {
+    const route = net.routeTo(room.row, room.column);
+    if (route === undefined) return [];
     const department = context.agents.filter(
       (agent) => agent.departmentId === room.id && agent.status !== 'archived',
     );
@@ -784,52 +922,54 @@ function Circuits({
       const state = workStateOf(agent, context.work.get(agent.id));
       if (state !== undefined) states.set(state, (states.get(state) ?? 0) + 1);
     }
-    const route = routeTo(room.floor, room.side);
-    return {
-      ...room,
-      route,
-      path: tracePath(route),
-      length: routeLength(route),
-      level: circuitLevel(states),
-      pulses: pulsesFor(states),
-    };
+    return [
+      {
+        ...room,
+        route,
+        path: tracePath(route),
+        length: routeLength(route),
+        level: circuitLevel(states),
+        pulses: pulsesFor(states),
+      },
+    ];
   });
   const active = rooms.filter((room) => room.level === 'busy' || room.level === 'attention');
-  const toGia = routeToGia();
-  const giaPath = tracePath(toGia);
-  const giaLength = routeLength(toGia);
   const byType = new Map(rooms.map((room) => [room.type, room]));
   const flows = motor.status === 'ready' ? motor.flows : [];
-  const core = corePoint();
-  const gia = giaPoint();
-  return (
-    <svg
-      className="circuits"
-      viewBox={`0 0 ${BUILDING_WIDTH} ${floors.length * 100}`}
-      preserveAspectRatio="none"
-      aria-hidden="true"
-      focusable="false"
-    >
-      <g className={`circuit circuit--gia circuit--${active.length > 0 ? 'busy' : 'ready'}`}>
-        <path d={giaPath} className="circuit__glow" />
-        <path d={giaPath} className="circuit__trace" />
-        <circle cx={gia.x} cy={gia.y} r="1.6" className="circuit__node" />
+  const trunk = (points: readonly Point[], name: string) => {
+    const path = tracePath(points);
+    const seconds = routeLength(points) / SPEED;
+    return (
+      <g className={`circuit circuit--${name} circuit--${active.length > 0 ? 'busy' : 'ready'}`}>
+        <path d={path} className="circuit__glow" />
+        <path d={path} className="circuit__trace" />
         {moving
           ? active.map((room, i) => (
               <Pulse
                 key={room.id}
-                path={giaPath}
-                seconds={giaLength / SPEED}
+                path={path}
+                seconds={seconds}
                 offset={i / Math.max(1, active.length)}
-                back={i % 2 === 1}
+                back={name === 'motor'}
                 tone={room.level === 'attention' ? 'coral' : 'light'}
               />
             ))
           : null}
       </g>
+    );
+  };
+  return (
+    <svg
+      className="circuits"
+      viewBox={`0 0 ${Math.round(cells.width)} ${Math.round(cells.height)}`}
+      aria-hidden="true"
+      focusable="false"
+    >
+      {trunk(net.gia, 'gia')}
+      {trunk(net.motor, 'motor')}
       {rooms.map((room) => {
         const seconds = room.length / SPEED;
-        const end = room.route[room.route.length - 1] ?? core;
+        const end = room.route[room.route.length - 1] ?? net.hub;
         return (
           <g
             key={room.id}
@@ -837,7 +977,7 @@ function Circuits({
           >
             <path d={room.path} className="circuit__glow" />
             <path d={room.path} className="circuit__trace" />
-            <circle cx={end.x} cy={end.y} r="1.6" className="circuit__node" />
+            <circle cx={end.x} cy={end.y} r="3" className="circuit__node" />
             {moving && room.level === 'busy'
               ? Array.from({ length: room.pulses }, (_, i) => (
                   <Pulse
@@ -878,13 +1018,13 @@ function Circuits({
           </g>
         );
       })}
-      <circle cx={core.x} cy={core.y} r="2.4" className="circuit__core" />
+      <circle cx={net.hub.x} cy={net.hub.y} r="5" className="circuit__core" />
     </svg>
   );
 }
 
-/** Drawing units a pulse travels in a second. */
-const SPEED = 70;
+/** Pixels a pulse travels in a second. */
+const SPEED = 140;
 
 /** A packet of light running along a circuit, `offset` of the way through its cycle. */
 function Pulse({
@@ -903,8 +1043,8 @@ function Pulse({
   const dur = Math.max(1.2, seconds);
   return (
     <g className={`circuit__pulse circuit__pulse--${tone}`}>
-      <circle r="3.2" className="circuit__halo" />
-      <circle r="1.2" className="circuit__dot" />
+      <circle r="7" className="circuit__halo" />
+      <circle r="2.4" className="circuit__dot" />
       <animateMotion
         dur={`${dur.toFixed(2)}s`}
         begin={`${(-offset * dur).toFixed(2)}s`}

@@ -240,22 +240,22 @@ export function plant(m, kind = 'tall', seed = 1, scale = 1) {
       g.add(l);
     }
   } else {
-    const stems = kind === 'tall' ? 1 : 5;
+    const stems = kind === 'tall' ? 3 : 5;
     const top = kind === 'tall' ? 1.3 : 0.45;
     for (let s = 0; s < stems; s += 1) {
-      const sx = (r() - 0.5) * (kind === 'tall' ? 0.02 : 0.14);
-      const sz = (r() - 0.5) * (kind === 'tall' ? 0.02 : 0.14);
+      const sx = (r() - 0.5) * (kind === 'tall' ? 0.16 : 0.14);
+      const sz = (r() - 0.5) * (kind === 'tall' ? 0.16 : 0.14);
       const stem = cylinder(0.012, 0.016, top, m.stone, 8);
       stem.position.set(sx, potH + top / 2, sz);
       g.add(stem);
-      const leaves = kind === 'tall' ? 26 : 9;
+      const leaves = kind === 'tall' ? 20 : 14;
       for (let i = 0; i < leaves; i += 1) {
         const l = mesh(leafGeometry, r() < 0.55 ? m.leaf : m.leafLight);
-        const y = potH + top * (kind === 'tall' ? 0.35 + r() * 0.68 : 0.4 + r() * 0.7);
+        const y = potH + top * (kind === 'tall' ? 0.25 + r() * 0.78 : 0.3 + r() * 0.8);
         const a = r() * Math.PI * 2;
         l.position.set(sx + Math.cos(a) * 0.03, y, sz + Math.sin(a) * 0.03);
         l.rotation.set(-0.6 - r() * 0.7, a, 0, 'YXZ');
-        l.scale.setScalar((kind === 'tall' ? 0.9 : 0.8) + r() * 0.5);
+        l.scale.setScalar((kind === 'tall' ? 1.05 : 0.95) + r() * 0.55);
         g.add(l);
       }
     }
