@@ -598,6 +598,329 @@
   }
 }
 
+/* ---- Pages: the frame every page but the Home shares (phase 5). ---- */
+
+.mo-page {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  gap: var(--mo-space-6);
+  width: 100%;
+  max-width: 76rem;
+  min-width: 0;
+  margin: 0 auto;
+}
+
+.mo-page > * {
+  min-width: 0;
+}
+
+.mo-page-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--mo-space-4);
+}
+
+.mo-page-header__leading {
+  flex: none;
+}
+
+.mo-page-header__text {
+  display: grid;
+  flex: 1 1 20rem;
+  gap: var(--mo-space-2);
+  min-width: 0;
+}
+
+.mo-page-header__eyebrow {
+  margin: 0;
+  color: var(--mo-color-text-secondary);
+  font-size: var(--mo-font-size-xs);
+  font-weight: var(--mo-font-weight-semibold);
+}
+
+.mo-page-header__title {
+  margin: 0;
+  color: var(--mo-color-text-primary);
+  font-size: clamp(1.5rem, 1.2rem + 1vw, 2rem);
+  font-weight: var(--mo-font-weight-semibold);
+  line-height: var(--mo-font-line-height-tight);
+  letter-spacing: var(--mo-font-tracking-tight);
+  overflow-wrap: anywhere;
+}
+
+/* The shell moves focus to the title on a new page; the page itself shows where it is. */
+.mo-page-header__title:focus:not(:focus-visible) {
+  outline: none;
+}
+
+.mo-page-header__description {
+  max-width: 60ch;
+  margin: 0;
+  color: var(--mo-color-text-secondary);
+  font-size: var(--mo-font-size-md);
+}
+
+.mo-page-header__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--mo-space-2);
+  color: var(--mo-color-text-secondary);
+  font-size: var(--mo-font-size-sm);
+}
+
+.mo-page-header__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--mo-space-2);
+}
+
+/* A section of a page: its h2 and what goes with it, the same size on every page. */
+.mo-section-title {
+  margin: 0;
+  color: var(--mo-color-text-primary);
+  font-size: var(--mo-font-size-lg);
+  font-weight: var(--mo-font-weight-semibold);
+  line-height: var(--mo-font-line-height-tight);
+  letter-spacing: var(--mo-font-tracking-tight);
+}
+
+.mo-lead {
+  max-width: 65ch;
+  margin: 0;
+  color: var(--mo-color-text-secondary);
+}
+
+/* ---- The filter bar ---- */
+
+.mo-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--mo-space-2) var(--mo-space-3);
+  min-width: 0;
+}
+
+.mo-toolbar > .mo-search,
+.mo-toolbar > .mo-toolbar__grow {
+  flex: 1 1 16rem;
+  min-width: 0;
+}
+
+.mo-toolbar__label {
+  color: var(--mo-color-text-secondary);
+  font-size: var(--mo-font-size-sm);
+}
+
+/* ---- Tables ---- */
+
+.mo-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--mo-color-border);
+  border-radius: var(--mo-radius-lg);
+  background: var(--mo-color-surface);
+  overscroll-behavior-x: contain;
+}
+
+.mo-table {
+  width: 100%;
+  border-collapse: collapse;
+  color: var(--mo-color-text-primary);
+  font-size: var(--mo-font-size-sm);
+}
+
+.mo-table__caption {
+  padding: var(--mo-space-3) var(--mo-space-4) 0;
+  color: var(--mo-color-text-secondary);
+  font-size: var(--mo-font-size-sm);
+  text-align: left;
+}
+
+.mo-table th,
+.mo-table td {
+  padding: var(--mo-space-2) var(--mo-space-4);
+  border-bottom: 1px solid var(--mo-color-border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.mo-table thead th {
+  color: var(--mo-color-text-secondary);
+  font-size: var(--mo-font-size-xs);
+  font-weight: var(--mo-font-weight-semibold);
+  white-space: nowrap;
+}
+
+.mo-table tbody tr:last-child > * {
+  border-bottom: 0;
+}
+
+.mo-table .mo-table__num {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* ---- Lists of records ---- */
+
+.mo-list {
+  display: grid;
+  gap: var(--mo-space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mo-list-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--mo-space-3);
+  padding: var(--mo-space-4);
+  border: 1px solid var(--mo-color-border);
+  border-radius: var(--mo-radius-lg);
+  background: var(--mo-color-surface);
+  box-shadow: var(--mo-shadow-sm);
+}
+
+.mo-list-item__main {
+  display: grid;
+  flex: 1 1 18rem;
+  gap: var(--mo-space-1);
+  min-width: 0;
+}
+
+.mo-list-item__heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--mo-space-2);
+  min-width: 0;
+}
+
+.mo-list-item__title {
+  margin: 0;
+  color: var(--mo-color-text-primary);
+  font-size: var(--mo-font-size-md);
+  font-weight: var(--mo-font-weight-semibold);
+  line-height: var(--mo-font-line-height-tight);
+  overflow-wrap: anywhere;
+}
+
+.mo-list-item__meta {
+  margin: 0;
+  color: var(--mo-color-text-secondary);
+  font-size: var(--mo-font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+.mo-list-item__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--mo-space-2);
+}
+
+/* ---- Forms ---- */
+
+.mo-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--mo-space-4);
+  max-width: 44rem;
+}
+
+.mo-form > * {
+  min-width: 0;
+}
+
+.mo-form-section {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--mo-space-4);
+}
+
+.mo-form-section__header {
+  display: grid;
+  gap: var(--mo-space-1);
+}
+
+.mo-form-section__title {
+  margin: 0;
+  font-size: var(--mo-font-size-md);
+  font-weight: var(--mo-font-weight-semibold);
+  letter-spacing: var(--mo-font-tracking-tight);
+}
+
+.mo-form-section__description {
+  margin: 0;
+  color: var(--mo-color-text-secondary);
+  font-size: var(--mo-font-size-sm);
+}
+
+.mo-form-section__fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
+  gap: var(--mo-space-4);
+}
+
+.mo-form-section__fields > * {
+  min-width: 0;
+}
+
+.mo-form__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--mo-space-2);
+}
+
+/*
+ * On a tablet, a phone or any touch screen, the dense controls of a page grow to the 44 px target
+ * size. The Home's panels keep theirs.
+ */
+@media (max-width: 48rem), (pointer: coarse) {
+  .mo-page .mo-chip,
+  .mo-page .mo-button--sm {
+    min-height: var(--mo-control-height-md);
+  }
+
+  .mo-page .mo-segmented > button {
+    min-height: calc(var(--mo-control-height-md) - 6px);
+  }
+
+  .mo-page-header__actions {
+    width: 100%;
+  }
+}
+
+@media (max-width: 40rem) {
+  .mo-page {
+    gap: var(--mo-space-4);
+  }
+
+  .mo-list-item {
+    padding: var(--mo-space-3);
+  }
+
+  .mo-list-item__actions {
+    width: 100%;
+  }
+
+  /* Chips stay on one line and scroll inside the bar, never the page. */
+  .mo-toolbar > .mo-chips {
+    flex-wrap: nowrap;
+    max-width: 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+}
+
 /* ---- Feedback ---- */
 
 .mo-spinner {
