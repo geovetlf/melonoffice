@@ -7,14 +7,15 @@ import {
   type OrganizationBrandClient,
 } from '../brand/organizationBrand.js';
 import { parseRoute, paths } from '../shell/routes.js';
-import type {
-  ConsoleAccount,
-  ConsoleClient,
-  ConsoleCustomer,
-  ConsoleInvitation,
-  OwnBrand,
+import {
+  ConsoleRequestError,
+  type ConsoleAccount,
+  type ConsoleClient,
+  type ConsoleCustomer,
+  type ConsoleInvitation,
+  type OwnBrand,
 } from './consoleClient.js';
-import { lastDays, PartnerConsole } from './PartnerConsole.js';
+import { failureOf, lastDays, PartnerConsole } from './PartnerConsole.js';
 
 afterEach(() => {
   cleanup();
@@ -40,9 +41,12 @@ const CUSTOMER: ConsoleCustomer = {
   name: 'Tenant A',
 };
 
-function fake(role = 'partner.admin', customers: ConsoleCustomer[] = [CUSTOMER]) {
+function fake(
+  role = 'partner.admin',
+  customers: ConsoleCustomer[] = [CUSTOMER],
+  invitations: ConsoleInvitation[] = [],
+) {
   const calls: unknown[][] = [];
-  const invitations: ConsoleInvitation[] = [];
   let brand: OwnBrand = { own: { brandName: 'Kept', productName: 'Old' }, updatedAt: 'v1' };
   const client: ConsoleClient = {
     accounts: async () => [account(role)],
@@ -88,7 +92,7 @@ function fake(role = 'partner.admin', customers: ConsoleCustomer[] = [CUSTOMER])
           scopes: input.scopes,
           status: 'pending',
           expiresAt: '2026-10-07T12:00:00.000Z',
-          createdAt: 'c',
+          createdAt: '2026-09-30T12:00:00.000Z',
           updatedAt: 'u1',
         },
         token: TOKEN,
@@ -113,9 +117,9 @@ function fake(role = 'partner.admin', customers: ConsoleCustomer[] = [CUSTOMER])
   return { client, calls };
 }
 
-const show = (client: ConsoleClient) =>
+const show = (client: ConsoleClient, locale: 'en' | 'es' = 'en') =>
   render(
-    <I18nProvider locale="en">
+    <I18nProvider locale={locale}>
       <PartnerConsole client={client} origin="https://app.example" now={() => NOW} />
     </I18nProvider>,
   );
@@ -202,6 +206,145 @@ describe('the partner console (ADR-0090)', () => {
     fireEvent.click(row.getByRole('button', { name: 'Withdraw' }));
     expect(await row.findByText(/Withdrawn/)).toBeTruthy();
     expect(calls).toContainEqual(['revokeInvitation', 'inv-1', 'u1']);
+  });
+
+  it('lists every state with its dates; only a pending one can be withdrawn', async () => {
+    const at = (day: string) => `2026-${day}T12:00:00.000Z`;
+    const row = (email: string, status: ConsoleInvitation['status'], expires: string) => ({
+      id: `inv-${status}`,
+      email,
+      mode: 'direct',
+      scopes: [],
+      status,
+      expiresAt: at(expires),
+      createdAt: at('09-20'),
+      updatedAt: 'u',
+    });
+    const { client } = fake(
+      'partner.admin',
+      [],
+      [
+        row('p@example.com', 'pending', '10-05'),
+        row('a@example.com', 'accepted', '09-27'),
+        row('r@example.com', 'rejected', '09-27'),
+        row('w@example.com', 'revoked', '09-27'),
+        row('e@example.com', 'expired', '09-27'),
+      ],
+    );
+    show(client);
+    const pending = within(await screen.findByRole('listitem', { name: 'p@example.com' }));
+    expect(pending.getByText(/Waiting · created Sep 20, 2026 · expires Oct 5, 2026/)).toBeTruthy();
+    expect(pending.getByRole('button', { name: 'Withdraw' })).toBeTruthy();
+    const expired = within(screen.getByRole('listitem', { name: 'e@example.com' }));
+    expect(expired.getByText(/Expired · created Sep 20, 2026 · expired Sep 27, 2026/)).toBeTruthy();
+    for (const [email, label] of [
+      ['a@example.com', 'Accepted'],
+      ['r@example.com', 'Declined'],
+      ['w@example.com', 'Withdrawn'],
+      ['e@example.com', 'Expired'],
+    ] as const) {
+      const item = within(screen.getByRole('listitem', { name: email }));
+      expect(item.getByText(new RegExp(label))).toBeTruthy();
+      expect(item.queryByRole('button', { name: 'Withdraw' })).toBeNull();
+    }
+    // What the API never sends is never shown: no hash, no token.
+    expect(document.body.textContent).not.toMatch(/tokenHash|#t=/);
+  });
+
+  it('says clearly why an invitation was refused', async () => {
+    const { client } = fake();
+    const refusals = [
+      new ConsoleRequestError(409, 'invitation_exists'),
+      new ConsoleRequestError(400, 'invalid_commercial_request', 'email'),
+      new ConsoleRequestError(403, 'commercial_account_forbidden'),
+    ];
+    client.invite = async () => {
+      throw refusals.shift() ?? new Error('offline');
+    };
+    show(client);
+    fireEvent.change(await screen.findByLabelText('Email'), {
+      target: { value: 'ana@example.com' },
+    });
+    const send = screen.getByRole('button', { name: 'Create invitation' });
+    for (const text of [
+      /already a pending invitation for that email/,
+      /That email is not valid/,
+      /do not have permission/,
+      /Could not reach MelonOffice/,
+    ]) {
+      fireEvent.click(send);
+      expect(await screen.findByText(text)).toBeTruthy();
+    }
+    expect(screen.queryByLabelText('Invitation link')).toBeNull();
+  });
+
+  it('maps each refusal to a message and shows unknown codes as they are', () => {
+    const e = (status: number, code?: string, field?: string) =>
+      failureOf(new ConsoleRequestError(status, code, field));
+    expect(e(409, 'commercial_limit_reached')).toEqual({ id: 'console.errors.limit' });
+    expect(e(409, 'invitation_not_pending')).toEqual({ id: 'console.errors.not_pending' });
+    expect(e(409, 'commercial_conflict')).toEqual({ id: 'console.errors.conflict' });
+    expect(e(403, 'something_new')).toEqual({ id: 'console.errors.forbidden' });
+    expect(e(400, 'invalid_commercial_request', 'scopes')).toEqual({
+      id: 'console.errors.invalid',
+      reason: 'scopes',
+    });
+    expect(e(500)).toEqual({ id: 'console.errors.other', reason: '500' });
+    expect(failureOf(new TypeError('fetch failed'))).toEqual({ id: 'console.errors.network' });
+  });
+
+  it('asks for branding only for a white-label customer', async () => {
+    const { client, calls } = fake();
+    show(client);
+    const form = (await screen.findByRole('button', { name: 'Create invitation' })).closest('form');
+    if (form === null) throw new Error('no form');
+    const brand = /brand/i;
+    expect(within(form).queryByRole('checkbox', { name: brand })).toBeNull();
+    fireEvent.change(within(form).getByLabelText('How you work with them'), {
+      target: { value: 'white_label' },
+    });
+    fireEvent.click(within(form).getByRole('checkbox', { name: brand }));
+    fireEvent.change(within(form).getByLabelText('How you work with them'), {
+      target: { value: 'reseller' },
+    });
+    expect(within(form).queryByRole('checkbox', { name: brand })).toBeNull();
+    fireEvent.change(within(form).getByLabelText('Email'), {
+      target: { value: 'b@example.com' },
+    });
+    fireEvent.submit(form);
+    await waitFor(() =>
+      expect(calls).toContainEqual([
+        'invite',
+        { email: 'b@example.com', mode: 'reseller', scopes: [] },
+      ]),
+    );
+  });
+
+  it('copies the link, and says so when the browser cannot', async () => {
+    const writeText = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValue(new Error('no'));
+    vi.stubGlobal('navigator', { ...globalThis.navigator, clipboard: { writeText } });
+    try {
+      const { client } = fake();
+      show(client);
+      fireEvent.change(await screen.findByLabelText('Email'), {
+        target: { value: 'ana@example.com' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Create invitation' }));
+      fireEvent.click(await screen.findByRole('button', { name: 'Copy link' }));
+      expect(await screen.findByRole('button', { name: 'Copied' })).toBeTruthy();
+      expect(writeText).toHaveBeenCalledWith(`https://app.example/invite#t=${TOKEN}`);
+      fireEvent.click(screen.getByRole('button', { name: 'Copied' }));
+      expect(await screen.findByText(/could not copy it/)).toBeTruthy();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('speaks Spanish', async () => {
+    const { client } = fake();
+    show(client, 'es');
+    expect(await screen.findByRole('button', { name: 'Crear invitación' })).toBeTruthy();
+    expect(screen.getByText(/No se concede nada automáticamente/)).toBeTruthy();
   });
 
   it('an admin adds a person by user id with one of the account’s roles', async () => {

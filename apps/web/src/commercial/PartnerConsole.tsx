@@ -46,10 +46,45 @@ const ROLES: Readonly<Record<ConsoleAccount['type'], readonly string[]>> = {
 };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
-const reasonOf = (error: unknown) =>
-  error instanceof ConsoleRequestError
-    ? [error.code, error.field].filter((x) => x !== undefined).join(': ') || String(error.status)
-    : 'network';
+/** The API's refusals this console explains in words; any other shows its code. */
+const EXPLAINED: Readonly<Record<string, string>> = {
+  invitation_exists: 'console.errors.invitation_exists',
+  commercial_limit_reached: 'console.errors.limit',
+  permission_denied: 'console.errors.forbidden',
+  commercial_account_forbidden: 'console.errors.forbidden',
+  customer_forbidden: 'console.errors.forbidden',
+  invitation_not_pending: 'console.errors.not_pending',
+  invitation_not_found: 'console.errors.not_found',
+  commercial_conflict: 'console.errors.conflict',
+  cannot_revoke_self: 'console.errors.self',
+  cannot_change_own_role: 'console.errors.self',
+  member_not_found: 'console.errors.not_found',
+};
+
+/** A refusal as the person reads it: a message id, and the code when there is no message. */
+type Failure = { readonly id: string; readonly reason?: string };
+
+export function failureOf(error: unknown): Failure {
+  if (!(error instanceof ConsoleRequestError)) return { id: 'console.errors.network' };
+  if (error.code === 'invalid_commercial_request') {
+    return error.field === 'email'
+      ? { id: 'console.errors.email' }
+      : { id: 'console.errors.invalid', reason: error.field ?? '' };
+  }
+  const explained =
+    (error.code === undefined ? undefined : EXPLAINED[error.code]) ??
+    (error.status === 403 ? 'console.errors.forbidden' : undefined);
+  return explained === undefined
+    ? { id: 'console.errors.other', reason: error.code ?? String(error.status) }
+    : { id: explained };
+}
+
+const Failed = ({ failure }: { readonly failure: Failure | undefined }) =>
+  failure === undefined ? null : (
+    <p className="panel__empty" role="alert">
+      <FormattedMessage id={failure.id} values={{ reason: failure.reason ?? '' }} />
+    </p>
+  );
 
 /** The last 30 days, today included, as the API's `from` and `to` (UTC days). */
 export function lastDays(now: Date, days = 30): { from: string; to: string } {
@@ -505,6 +540,9 @@ function Invitations({
       <h2 id="console-invitations">
         <FormattedMessage id="console.invitations.title" />
       </h2>
+      <p className="customers__meta">
+        <FormattedMessage id="console.invitations.lead" />
+      </p>
       {admin ? (
         <InviteForm
           account={account}
@@ -544,7 +582,7 @@ function Invitations({
 /** The link, shown once: the API keeps only its hash, so it cannot be shown again. */
 function OnceLink({ link, onDone }: { readonly link: string; readonly onDone: () => void }) {
   const id = useId();
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState<boolean>();
   return (
     <div className="notice" role="status">
       <p>
@@ -556,14 +594,26 @@ function OnceLink({ link, onDone }: { readonly link: string; readonly onDone: ()
       <input id={id} readOnly value={link} onFocus={(e) => e.target.select()} />
       <Button
         onClick={() => {
-          void globalThis.navigator?.clipboard?.writeText(link).then(
+          const clipboard = globalThis.navigator?.clipboard;
+          if (clipboard === undefined) {
+            setCopied(false);
+            return;
+          }
+          clipboard.writeText(link).then(
             () => setCopied(true),
             () => setCopied(false),
           );
         }}
       >
-        <FormattedMessage id={copied ? 'console.invitations.copied' : 'console.invitations.copy'} />
+        <FormattedMessage
+          id={copied === true ? 'console.invitations.copied' : 'console.invitations.copy'}
+        />
       </Button>
+      {copied === false ? (
+        <p className="documents__meta">
+          <FormattedMessage id="console.invitations.copyFailed" />
+        </p>
+      ) : null}
       <Button variant="secondary" onClick={onDone}>
         <FormattedMessage id="console.invitations.done" />
       </Button>
@@ -587,7 +637,7 @@ function InviteForm({
   const [mode, setMode] = useState(modes[0] ?? '');
   const [scopes, setScopes] = useState<ReadonlySet<CustomerScope>>(new Set());
   const [busy, setBusy] = useState(false);
-  const [failed, setFailed] = useState<string>();
+  const [failed, setFailed] = useState<Failure>();
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -597,13 +647,14 @@ function InviteForm({
       const sent = await client.invite(account.id, {
         email: email.trim(),
         mode,
-        scopes: SCOPES.filter((s) => scopes.has(s)),
+        // Branding only means something for a white-label customer (ADR-0087).
+        scopes: SCOPES.filter((s) => scopes.has(s) && (s !== 'branding' || mode === 'white_label')),
       });
       onSent(sent.invitation, sent.token);
       setEmail('');
       setScopes(new Set());
     } catch (error) {
-      setFailed(reasonOf(error));
+      setFailed(failureOf(error));
     } finally {
       setBusy(false);
     }
@@ -642,7 +693,7 @@ function InviteForm({
         <legend>
           <FormattedMessage id="console.invitations.asks" />
         </legend>
-        {SCOPES.map((scope) => (
+        {SCOPES.filter((scope) => scope !== 'branding' || mode === 'white_label').map((scope) => (
           <label key={scope} className="partners__scope">
             <input
               type="checkbox"
@@ -667,11 +718,7 @@ function InviteForm({
       <Button type="submit" disabled={busy || email.trim() === ''}>
         <FormattedMessage id="console.invitations.send" />
       </Button>
-      {failed === undefined ? null : (
-        <p className="panel__empty" role="alert">
-          <FormattedMessage id="platform.refused" values={{ reason: failed }} />
-        </p>
-      )}
+      <Failed failure={failed} />
     </form>
   );
 }
@@ -689,19 +736,25 @@ function InvitationRow({
 }) {
   const intl = useIntl();
   const [busy, setBusy] = useState(false);
-  const [failed, setFailed] = useState<string>();
+  const [failed, setFailed] = useState<Failure>();
+  const day = (iso: string) => intl.formatDate(new Date(iso), { dateStyle: 'medium' });
   return (
     <li className="documents__item" aria-label={i.email}>
       <span className="documents__name">{i.email}</span>
       <span className="documents__meta">
         <FormattedMessage id={`partners.mode.${i.mode}`} /> ·{' '}
-        <FormattedMessage id={`console.invitation.${i.status}`} />
-        {i.status === 'pending' ? (
+        <FormattedMessage id={`console.invitation.${i.status}`} /> ·{' '}
+        <FormattedMessage id="console.invitation.created" values={{ date: day(i.createdAt) }} />
+        {i.status === 'pending' || i.status === 'expired' ? (
           <>
             {' · '}
             <FormattedMessage
-              id="console.invitation.expires"
-              values={{ date: intl.formatDate(new Date(i.expiresAt), { dateStyle: 'medium' }) }}
+              id={
+                i.status === 'pending'
+                  ? 'console.invitation.expires'
+                  : 'console.invitation.expiredOn'
+              }
+              values={{ date: day(i.expiresAt) }}
             />
           </>
         ) : null}
@@ -726,7 +779,7 @@ function InvitationRow({
                 setBusy(false);
               },
               (error: unknown) => {
-                setFailed(reasonOf(error));
+                setFailed(failureOf(error));
                 setBusy(false);
               },
             );
@@ -735,11 +788,7 @@ function InvitationRow({
           <FormattedMessage id="console.invitation.revoke" />
         </Button>
       ) : null}
-      {failed === undefined ? null : (
-        <p className="panel__empty" role="alert">
-          <FormattedMessage id="platform.refused" values={{ reason: failed }} />
-        </p>
-      )}
+      <Failed failure={failed} />
     </li>
   );
 }
@@ -762,7 +811,7 @@ function Members({
   const [userId, setUserId] = useState('');
   const [role, setRole] = useState(roles[roles.length - 1] ?? '');
   const [busy, setBusy] = useState(false);
-  const [failed, setFailed] = useState<string>();
+  const [failed, setFailed] = useState<Failure>();
 
   const run = async (work: () => Promise<void>) => {
     setBusy(true);
@@ -770,7 +819,7 @@ function Members({
     try {
       await work();
     } catch (error) {
-      setFailed(reasonOf(error));
+      setFailed(failureOf(error));
     } finally {
       setBusy(false);
     }
@@ -860,11 +909,7 @@ function Members({
           </Button>
         </form>
       ) : null}
-      {failed === undefined ? null : (
-        <p className="panel__empty" role="alert">
-          <FormattedMessage id="platform.refused" values={{ reason: failed }} />
-        </p>
-      )}
+      <Failed failure={failed} />
     </section>
   );
 }
