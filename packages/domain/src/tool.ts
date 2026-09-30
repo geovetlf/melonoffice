@@ -60,9 +60,11 @@ export interface ToolProvider {
 /**
  * Who may invoke a tool through the gate (ADR-0034). `runtime`: the execution runtime, for a
  * specialist (ADR-0031). `human`: the authenticated user acting directly, synchronously, for a
- * tool built for it. Each mode is explicit: allowing one never implies the other.
+ * tool built for it. `model`: an agent's model may ask for it in the middle of a task, and the
+ * Melon Agent Harness decides (ADR-0103); the runtime still runs it, so it comes with `runtime`.
+ * Each mode is explicit: allowing one never implies the other.
  */
-export type ToolInvocationMode = 'runtime' | 'human';
+export type ToolInvocationMode = 'runtime' | 'human' | 'model';
 
 export interface ToolRetryPolicy {
   /** 1 means no retry. */

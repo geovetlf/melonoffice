@@ -48,6 +48,7 @@ export const ENVIRONMENTS = [
 export const INVOCATION_MODES = [
   'runtime',
   'human',
+  'model',
 ] as const satisfies readonly ToolInvocationMode[];
 
 /** Who may invoke a tool version (ADR-0034). Unset means the runtime only. */
@@ -60,6 +61,20 @@ export const isHumanInvocable = (v: ToolVersion): boolean => invocationModesOf(v
 /** Whether the runtime may invoke this version: unless it names its modes without `runtime`. */
 export const isRuntimeInvocable = (v: ToolVersion): boolean =>
   invocationModesOf(v).includes('runtime');
+
+/**
+ * The input kind of a `tool` node the Melon Agent Harness added because an agent's model asked for
+ * the tool in the middle of a task (ADR-0103). Its `id` is `{agentNodeId}:{callIndex}`: the call
+ * the node runs, read back from that agent node's kept answer. The Tool Gate only runs a tool that
+ * says `model` for such a node.
+ */
+export const MODEL_TOOL_CALL_INPUT = 'model_tool_call';
+
+/**
+ * Whether an agent's model may ask for this version in the middle of a task (ADR-0103): only when
+ * it says `model`. No tool is offered to a model because it exists.
+ */
+export const isModelInvocable = (v: ToolVersion): boolean => invocationModesOf(v).includes('model');
 
 export const isDeploymentEnvironment = (value: unknown): value is DeploymentEnvironment =>
   typeof value === 'string' && (ENVIRONMENTS as readonly string[]).includes(value);
@@ -150,6 +165,10 @@ export function checkToolVersion(v: ToolVersion): ToolVersion {
     if (v.invocationModes.includes('human')) {
       if (v.approvalPolicy !== 'auto') invalid('invocationModes.human_approval');
       if (v.departmentTypes !== undefined) invalid('invocationModes.human_department');
+    }
+    // A model's call is run by the runtime, with every check the runtime's calls have.
+    if (v.invocationModes.includes('model') && !v.invocationModes.includes('runtime')) {
+      invalid('invocationModes.model_runtime');
     }
   }
   return v;

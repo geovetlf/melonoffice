@@ -211,6 +211,12 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
     },
     // An agent task's end, and whether it now needs a person, on the event bus (ADR-0102).
     events,
+    // Tools mid-task (ADR-0103): only ones that say a model may ask for them, with an executor
+    // here. The catalogue has none yet, so agents are offered no tools until one is added.
+    tools: {
+      registry: createToolRegistry(TOOL_CATALOGUE),
+      executors: Object.keys(agents.executors),
+    },
     logger: logger.child({ component: 'agent-tasks' }),
   });
   const routed = routeAgentWork(agents, taskParts);
@@ -320,6 +326,7 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
     verifier: routed.verifier,
     outputs: agents.outputs,
     onStopped: routed.onStopped,
+    toolLoop: routed.toolLoop,
     ...(taskParts.onEnded === undefined ? {} : { onEnded: taskParts.onEnded }),
     plans,
     // Plans' condition steps (WF-4, ADR-0075): decided by the Decision Engine, rules only.

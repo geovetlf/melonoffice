@@ -54,6 +54,7 @@ import {
 import {
   createToolRegistry,
   digestOf,
+  MODEL_TOOL_CALL_INPUT,
   type ToolExecutionContext,
   type ToolExecutor,
   type ToolExecutorOutcome,
@@ -172,6 +173,8 @@ const TOOLS: readonly ToolDefinition[] = [
   tool('human_risky', { invocationModes: ['human'], riskLevel: 'high' }),
   tool('human_slow', { invocationModes: ['human'], timeoutMs: 20 }),
   tool('human_retired', { invocationModes: ['human'] }, 'paused'),
+  // ADR-0103: a tool an agent's model may ask for mid-task.
+  tool('model_lookup', { invocationModes: ['runtime', 'model'] }),
 ];
 
 const ASSIGNED = TOOLS.map((t) => ({ id: t.id, version: 1 }));
@@ -1344,5 +1347,70 @@ describe('SK-2: a tool reaches an agent only through one of its skills (ADR-0083
     const { w, invoke } = await agentWith(FIXTURE_SKILL, 'lookup');
     expect(await invoke(w.runtimeB)).toEqual({ status: 'denied', code: 'execution_not_found' });
     expect(w.calls).toHaveLength(0);
+  });
+});
+
+describe('tools a model asked for mid-task (ADR-0103)', () => {
+  /** An execution whose one node is a call a model asked for, as the Harness's loop adds it. */
+  async function modelCall(toolId: string, approvalRequired?: true) {
+    const w = await world();
+    const specialist = await w.seed(w.orgA);
+    const created = await w.executions.create(w.tenantA, {
+      mode: 'execute',
+      input: { type: 'task', id: 'task-1' },
+      specialistId: specialist.identity.id,
+      specialistVersion: specialist.version,
+      departmentId: specialist.configuration.departmentId,
+      versionSnapshot: {
+        schemaVersion: 1,
+        components: [{ kind: 'specialist', id: specialist.identity.id, version: '1' }],
+      },
+      nodes: [
+        {
+          id: 'work_t0',
+          type: 'tool',
+          label: toolId,
+          input: { type: MODEL_TOOL_CALL_INPUT, id: 'work:0' },
+          tool: { id: toolId, version: 1 },
+          ...(approvalRequired === undefined ? {} : { approvalRequired }),
+        },
+      ],
+    });
+    const execution = await w.executions.start(w.tenantA, created.id);
+    const invoke = () =>
+      w.gate.invoke(w.runtimeA, { executionId: execution.id, nodeId: 'work_t0', input: INPUT });
+    return { w, execution, invoke };
+  }
+
+  it('runs only a tool that says a model may ask for it', async () => {
+    const refused = await modelCall('lookup');
+    expect(await refused.invoke()).toEqual({ status: 'denied', code: 'tool_not_model_invocable' });
+    expect(refused.w.calls).toHaveLength(0);
+    const allowed = await modelCall('model_lookup');
+    expect(await allowed.invoke()).toMatchObject({ status: 'success', output: { count: 3 } });
+    expect(allowed.w.calls).toHaveLength(1);
+  });
+
+  it('asks a person when the Harness said so, whatever the tool’s own `auto` policy', async () => {
+    const { w, invoke } = await modelCall('model_lookup', true);
+    const first = await invoke();
+    expect(first.status).toBe('requires_approval');
+    expect(w.calls).toHaveLength(0);
+    const approvalId = first.status === 'requires_approval' ? first.approvalId : undefined;
+    await w.approvals.approve(w.tenantA, must(approvalId));
+    expect(await invoke()).toMatchObject({ status: 'success' });
+    expect(w.calls[0]?.context).toMatchObject({ approvalId });
+  });
+
+  it('refuses the approval mark on anything but a tool node', async () => {
+    const w = await world();
+    await expect(
+      w.executions.create(w.tenantA, {
+        mode: 'execute',
+        input: { type: 'task', id: 'task-1' },
+        versionSnapshot: { schemaVersion: 1, components: [] },
+        nodes: [{ id: 'work', type: 'agent', label: 'agent', approvalRequired: true }],
+      }),
+    ).rejects.toMatchObject({ code: 'invalid_execution' });
   });
 });

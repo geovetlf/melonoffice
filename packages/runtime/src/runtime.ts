@@ -21,6 +21,7 @@ import {
   RUNTIME_AI_FIELDS,
   isAgentWorkStop,
   type AgentOutputSink,
+  type AgentToolLoop,
   type AgentWork,
   type ExecutionEndHook,
   type ExecutionStopHook,
@@ -105,6 +106,8 @@ export interface RuntimeOptions {
   readonly onStopped?: ExecutionStopHook;
   /** Told when an execution ended, completed or failed (ADR-0070). */
   readonly onEnded?: ExecutionEndHook;
+  /** Decides what to do with the tools an agent's model asks for mid-task (ADR-0103). */
+  readonly toolLoop?: AgentToolLoop;
   readonly logger?: Logger;
 }
 
@@ -181,8 +184,18 @@ function readyNode(execution: Execution): ExecutionNode | undefined {
 }
 
 export function createRuntime(options: RuntimeOptions): Runtime {
-  const { jobs, services, work, verifier, dispatcher, outputs, onStopped, onEnded, logger } =
-    options;
+  const {
+    jobs,
+    services,
+    work,
+    verifier,
+    dispatcher,
+    outputs,
+    onStopped,
+    onEnded,
+    toolLoop,
+    logger,
+  } = options;
 
   const logOf = (job: ExecutionJob, leaseId?: string) =>
     logger === undefined
@@ -379,6 +392,10 @@ export function createRuntime(options: RuntimeOptions): Runtime {
     }
 
     async function runTool(execution: Execution, node: ExecutionNode): Promise<AdvanceResult> {
+      // The task reached a limit (its time, ADR-0103): the tool does not run.
+      const stop =
+        work?.toolStop === undefined ? undefined : await work.toolStop(tenant, execution, node);
+      if (stop !== undefined) return fail(execution, stop);
       const input = work === undefined ? undefined : await work.toolInput(tenant, execution, node);
       if (input === undefined) return fail(execution, 'input_unavailable');
       const result = await s.gate.invoke(tenant, {
@@ -388,6 +405,21 @@ export function createRuntime(options: RuntimeOptions): Runtime {
       });
       switch (result.status) {
         case 'success':
+          // A tool a model asked for (ADR-0103): its output is kept for the agent's next turn.
+          // The gate already checked it against the tool's output schema.
+          if (outputs !== undefined && work?.keepsToolOutput?.(node) === true) {
+            try {
+              await outputs.record(tenant, {
+                executionId: execution.id,
+                nodeId: node.id,
+                requestId: `job-${job.id}`,
+                output: { structured: result.output },
+              });
+            } catch {
+              // The tool ran: the agent's next turn reads that its output is not available.
+              log?.warn('tool output not kept');
+            }
+          }
           return progress();
         case 'failure':
         case 'timeout': {
@@ -453,13 +485,31 @@ export function createRuntime(options: RuntimeOptions): Runtime {
         return unknown(execution, node);
       }
       if (response.status === 'completed') {
+        const calls = response.output.toolCalls;
+        // Tools the model asked for instead of answering (ADR-0103): only the Harness's loop
+        // decides about them, and only from a kept answer. Without either, nothing runs.
+        if (calls !== undefined && (toolLoop === undefined || outputs === undefined)) {
+          await s.executions.runtimeChangeNode(tenant, execution.id, {
+            nodeId: node.id,
+            from: 'running',
+            to: 'completed',
+            output: { type: 'ai_request', id: requestId },
+          });
+          return fail(await load(), 'tool_use_unsupported');
+        }
         if (outputs !== undefined) {
           try {
             await outputs.record(tenant, {
               executionId: execution.id,
               nodeId: node.id,
               requestId,
-              output: response.output,
+              output: {
+                ...(response.output.text === undefined ? {} : { text: response.output.text }),
+                ...(response.output.structured === undefined
+                  ? {}
+                  : { structured: response.output.structured }),
+                ...(calls === undefined ? {} : { toolCalls: calls }),
+              },
               ai: traceOf(request, response),
             });
           } catch {
@@ -474,6 +524,23 @@ export function createRuntime(options: RuntimeOptions): Runtime {
             const stored = moved.nodes.find((n) => n.id === node.id);
             return stored === undefined ? step(moved, false) : failed(moved, stored);
           }
+        }
+        if (calls !== undefined && toolLoop !== undefined) {
+          const current = await load();
+          const plan = await toolLoop.plan(tenant, current, node, calls);
+          if (isAgentWorkStop(plan)) {
+            // The answer is kept; the task stops at the Harness's limit, and no tool runs.
+            await s.executions.runtimeChangeNode(tenant, execution.id, {
+              nodeId: node.id,
+              from: 'running',
+              to: 'completed',
+              output: { type: 'ai_request', id: requestId },
+            });
+            return fail(await load(), plan.stop);
+          }
+          // Added while this node still runs: a worker lost now leaves the node running, so its
+          // outcome is unknown and nothing is run twice (ADR-0029).
+          await s.executions.addNodes(tenant, execution.id, plan.nodes);
         }
         await s.executions.runtimeChangeNode(tenant, execution.id, {
           nodeId: node.id,

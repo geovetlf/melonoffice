@@ -28,9 +28,16 @@ export function authorizationClassOf(version: ToolVersion): ToolAuthorizationCla
   return 'reversible';
 }
 
-/** The tools an agent may use for this person. */
+/**
+ * The tools an agent may use for this person: of its current version, or of the exact `version` an
+ * execution runs (ADR-0103), which is the one the Tool Gate checks.
+ */
 export interface HarnessToolDirectory {
-  granted(tenant: TenantContext, specialistId: SpecialistId): Promise<readonly ToolVersion[]>;
+  granted(
+    tenant: TenantContext,
+    specialistId: SpecialistId,
+    version?: number,
+  ): Promise<readonly ToolVersion[]>;
 }
 
 /**
@@ -39,16 +46,20 @@ export interface HarnessToolDirectory {
  * A tool the person may not use is never offered, whatever the agent's skills say.
  */
 export function createHarnessToolDirectory(options: {
-  readonly specialists: Pick<SpecialistRepository, 'find'>;
+  readonly specialists: Pick<SpecialistRepository, 'find' | 'findVersion'>;
   readonly skills: SkillCatalogue;
   readonly registry: Pick<ToolRegistry, 'resolve'>;
   readonly authorization: Pick<AuthorizationService, 'authorize'>;
 }): HarnessToolDirectory {
   const { specialists, skills, registry, authorization } = options;
   return Object.freeze({
-    async granted(tenant: TenantContext, specialistId: SpecialistId) {
+    async granted(tenant: TenantContext, specialistId: SpecialistId, version?: number) {
       if (!isResolvedTenant(tenant) || !isSpecialistId(specialistId)) return [];
-      const agent = await specialists.find(tenant.organizationId as OrganizationId, specialistId);
+      const organizationId = tenant.organizationId as OrganizationId;
+      const agent =
+        version === undefined
+          ? await specialists.find(organizationId, specialistId)
+          : await specialists.findVersion(organizationId, specialistId, version);
       if (agent === undefined) return [];
       const { tools } = grantsOf(agent.configuration.skills, skills);
       return agent.configuration.tools.flatMap((ref) => {

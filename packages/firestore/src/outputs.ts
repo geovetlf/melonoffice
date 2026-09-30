@@ -8,7 +8,7 @@ import type {
   IsoTimestamp,
   OrganizationId,
 } from '@melonoffice/domain';
-import { checkTrace, type AgentOutputRepository } from '@melonoffice/execution';
+import { checkTrace, isToolCallList, type AgentOutputRepository } from '@melonoffice/execution';
 
 /**
  * `agentOutputs/{executionId}_{nodeId}` (ADR-0043): an agent node's answer, kept for the nodes
@@ -65,7 +65,11 @@ export class FirestoreAgentOutputRepository implements AgentOutputRepository {
       return undefined;
     }
     if (typeof output !== 'object' || output === null || Array.isArray(output)) return undefined;
-    const { text, structured } = output as { text?: unknown; structured?: unknown };
+    const { text, structured, toolCalls } = output as {
+      text?: unknown;
+      structured?: unknown;
+      toolCalls?: unknown;
+    };
     let ai: AICallTrace | undefined;
     try {
       ai = data.ai === undefined ? undefined : checkTrace(data.ai);
@@ -81,6 +85,8 @@ export class FirestoreAgentOutputRepository implements AgentOutputRepository {
       output: {
         ...(typeof text === 'string' ? { text } : {}),
         ...(structured === undefined ? {} : { structured }),
+        // Tool calls the model asked for (ADR-0103), only as the runtime wrote them.
+        ...(isToolCallList(toolCalls) ? { toolCalls } : {}),
       },
       ...(ai === undefined ? {} : { ai }),
       createdAt: data.createdAt.toDate().toISOString() as IsoTimestamp,

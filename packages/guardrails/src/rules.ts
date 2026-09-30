@@ -12,7 +12,9 @@ import type {
 import type { EligibilityDecision } from '@melonoffice/specialists';
 import {
   isHumanInvocable,
+  isModelInvocable,
   isRuntimeInvocable,
+  MODEL_TOOL_CALL_INPUT,
   toolCanRun,
   validate,
   type ResolvedTool,
@@ -39,6 +41,8 @@ export type GuardrailDenyReason =
   | 'tool_not_found'
   | 'tool_not_active'
   | 'tool_not_runtime_invocable'
+  /** A model asked for the tool mid-task, and the tool does not say `model` (ADR-0103). */
+  | 'tool_not_model_invocable'
   | 'tool_not_human_invokable'
   | 'execution_not_owned'
   | 'specialist_execution'
@@ -134,6 +138,7 @@ export const nodeOf = (
  *    active department, at its current version, and the user holds its permissions);
  * 8. the node's exact tool version exists and 9. the tool is `active`, and the runtime may
  *    invoke it (every tool, unless it names its invocation modes without `runtime`: ADR-0034);
+ *    a call an agent's model asked for runs only a tool that says `model` (ADR-0103);
  * 10. the specialist's version lists exactly that tool version, and one of that version's own
  *     skills grants it at that version (ADR-0069/0083): a tool reaches an agent only through a
  *     skill, never directly;
@@ -143,7 +148,8 @@ export const nodeOf = (
  * 14. a tool that changes something does not run in a read-only mode;
  * 15. an executor for the tool's provider is available;
  * 16. the input matches the tool's closed schema, with no authority or credential in it;
- * 17. the policy: `denied` denies, `approval_required` requires an approval, `auto` allows.
+ * 17. the policy: `denied` denies, `approval_required` requires an approval, `auto` allows,
+ *     unless the Harness marked the node for a person's approval (ADR-0103).
  *
  * Whether an attached approval covers the call is checked by the gate, against the approval.
  */
@@ -179,6 +185,10 @@ export function evaluatePreExecution(facts: PreExecutionFacts): GuardrailDecisio
   }
   if (!toolCanRun(tool.definition.status)) return deny('tool_not_active');
   if (!isRuntimeInvocable(tool.version)) return deny('tool_not_runtime_invocable');
+  // A call an agent's model asked for (ADR-0103) runs only a tool that says a model may ask for it.
+  if (node.input?.type === MODEL_TOOL_CALL_INPUT && !isModelInvocable(tool.version)) {
+    return deny('tool_not_model_invocable');
+  }
   const assigned = specialistVersion.configuration.tools.some(
     (t) => t.id === node.tool?.id && t.version === node.tool.version,
   );
@@ -220,7 +230,8 @@ export function evaluatePreExecution(facts: PreExecutionFacts): GuardrailDecisio
     case 'approval_required':
       return APPROVAL;
     case 'auto':
-      return ALLOW;
+      // The Melon Agent Harness decided a person approves this use (ADR-0103): stricter only.
+      return node.approvalRequired === true ? APPROVAL : ALLOW;
   }
 }
 

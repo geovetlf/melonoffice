@@ -2,6 +2,7 @@ import type { AICallTrace } from '@melonoffice/domain';
 import { handoffForTask } from '@melonoffice/harness';
 import {
   AGENT_TASK_NODE,
+  answerNodeOf,
   AGENT_TASK_SCHEDULE_NODE,
   isAgentTaskError,
   parseAgentAnswer,
@@ -126,7 +127,9 @@ export function registerAgentTaskRoutes(
     // How the task's model call was served (ADR-0100): provider, model, cost, credits, the limit
     // and any escalation. Codes and numbers only; shown only with the answer it served.
     let ai: AICallTrace | null = null;
-    const work = execution?.nodes.find((n) => n.id === AGENT_TASK_NODE);
+    // The answering node: the agent's last turn, after any tools it used (ADR-0103).
+    const answerNode = execution === undefined ? AGENT_TASK_NODE : answerNodeOf(execution);
+    const work = execution?.nodes.find((n) => n.id === answerNode);
     const code = execution?.failure?.code;
     const readable =
       execution !== undefined &&
@@ -136,7 +139,7 @@ export function registerAgentTaskRoutes(
         execution.status === 'running' ||
         (execution.status === 'failed' && code !== undefined && code.startsWith('approval_')));
     if (readable && execution !== undefined && outputs !== undefined) {
-      const record = await outputs.find(tenant, task.id, AGENT_TASK_NODE);
+      const record = await outputs.find(tenant, task.id, answerNode);
       ai = record?.ai ?? null;
       const parsed = record === undefined ? undefined : parseAgentAnswer(record.output);
       if (parsed !== undefined) {

@@ -46,6 +46,7 @@ import {
 } from './profile.js';
 import type { HarnessPlanner } from './planning.js';
 import { aiNeedOf } from './routing.js';
+import { workingTimeMs } from './tool-loop.js';
 import { harnessToolOf, type HarnessToolDirectory } from './tools.js';
 
 /**
@@ -571,9 +572,9 @@ export function createHarnessAgentWork<S extends AgentWorkSource>(
   return Object.freeze({
     ...inner,
     async agentWork(tenant: TenantContext, execution: Execution, node: ExecutionNode) {
-      // Time first: a task past its limit asks no model and reads nothing more.
-      const started = Date.parse(execution.startedAt ?? execution.createdAt);
-      if (Number.isFinite(started) && now().getTime() - started > limits.maxDurationMs) {
+      // Time first: a task past its limit asks no model and reads nothing more. The time it
+      // waited on a person's approval is not its own (ADR-0103).
+      if (workingTimeMs(execution, now()) > limits.maxDurationMs) {
         return Object.freeze({ stop: 'task_time_limit_reached' as const });
       }
       const work = (await inner.agentWork(tenant, execution, node)) as WorkOf<S> | undefined;

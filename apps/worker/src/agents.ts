@@ -1,5 +1,5 @@
 import {
-  AGENT_TASK_NODE,
+  answerNodeOf,
   parseAgentAnswer,
   createAgentTaskFactProposer,
   createAgentTaskVerifier,
@@ -48,12 +48,16 @@ import {
   handoffForTask,
   createHarnessAgentWork,
   createHarnessContextSource,
+  createHarnessToolDirectory,
+  createHarnessToolLoop,
+  createHarnessToolOffer,
 } from '@melonoffice/harness';
 import type { Logger } from '@melonoffice/observability';
 import { planStepOf, type PlanRepository } from '@melonoffice/planning';
 import { createAuthorizationService } from '@melonoffice/rbac';
 import type {
   AgentOutputSink,
+  AgentToolLoop,
   ExecutionEndHook,
   ExecutionStopHook,
   NodeWorkSource,
@@ -61,7 +65,7 @@ import type {
 } from '@melonoffice/runtime';
 import { createSkillCatalogue, type SpecialistRepository } from '@melonoffice/specialists';
 import { isResolvedTenant, type TenancyStore, type TenantContext } from '@melonoffice/tenancy';
-import type { ToolExecutors } from '@melonoffice/tools';
+import type { ToolExecutors, ToolRegistry } from '@melonoffice/tools';
 
 export interface ConversationAgentStores {
   readonly tenancy: TenancyStore;
@@ -188,6 +192,11 @@ export interface AgentTaskParts {
   readonly onEnded?: ExecutionEndHook;
   /** The steps of approved plans (ADR-0070): the same prompt and answer as a task. */
   readonly steps?: { readonly work: NodeWorkSource; readonly verifier: VerificationSource };
+  /**
+   * The Harness's tool loop for tasks (ADR-0103): what to do with the tools an agent's model asks
+   * for mid-task. Absent: agents are offered no tools, as before.
+   */
+  readonly toolLoop?: AgentToolLoop;
 }
 
 /**
@@ -203,6 +212,15 @@ export function createAgentTaskParts(options: {
    * `agent_execution.handoff` (ADR-0102). Absent: nothing is published.
    */
   readonly events?: Pick<EventBus, 'publishRuntime'>;
+  /**
+   * The tool catalogue and the providers this worker has executors for, beyond the tasks' own
+   * (ADR-0103): an agent is offered, mid-task, only a tool its skills grant, the person may use,
+   * that says a model may ask for it, and that can run here. Absent: no tool is offered.
+   */
+  readonly tools?: {
+    readonly registry: Pick<ToolRegistry, 'resolve'>;
+    readonly executors: readonly string[];
+  };
   readonly logger?: Logger;
   readonly now?: () => Date;
 }): AgentTaskParts {
@@ -325,7 +343,7 @@ export function createAgentTaskParts(options: {
     ];
     const record =
       execution.status === 'completed'
-        ? await outputs.find(tenant, task.taskId, AGENT_TASK_NODE)
+        ? await outputs.find(tenant, task.taskId, answerNodeOf(execution))
         : undefined;
     const answer = record === undefined ? undefined : parseAgentAnswer(record.output);
     const handoff = handoffForTask({
@@ -355,55 +373,75 @@ export function createAgentTaskParts(options: {
     brain,
     onError: (code) => logger?.warn('agent_task.facts_not_proposed', { code }),
   });
+  const taskExecutors: ToolExecutors =
+    records === undefined
+      ? {}
+      : {
+          follow_up: createAgentFollowUpScheduleExecutor({
+            followUps: records.followUps,
+            organizations: stores.tenancy,
+          }),
+        };
+  // Tools in the middle of a task (ADR-0103): the agent asks, the Harness decides each call with
+  // `authorizeToolUse`, and the runtime runs what it allowed through the Tool Gate.
+  const loop =
+    options.tools === undefined
+      ? undefined
+      : createHarnessToolLoop({
+          offer: createHarnessToolOffer({
+            directory: createHarnessToolDirectory({
+              specialists: stores.specialists,
+              skills,
+              registry: options.tools.registry,
+              authorization,
+            }),
+            executors: [...options.tools.executors, ...Object.keys(taskExecutors)],
+          }),
+          outputs,
+          now: clock,
+        });
+  const taskWork = createAgentTaskWork({
+    tasks: stores.tasks,
+    specialists: stores.specialists,
+    skills,
+    context,
+    proposals,
+  });
   // The Melon Agent Harness (ADR-0099): a task reads only the context it needs, and its model call
   // carries the order to try models in for what it asks. The agent's prompt, its model policy and
-  // the AI Gateway's router are unchanged.
-  const work = createHarnessAgentWork(
-    createAgentTaskWork({
-      tasks: stores.tasks,
-      specialists: stores.specialists,
-      skills,
-      context,
-      proposals,
-    }),
-    {
-      now: clock,
-      async taskOf(tenant, execution) {
-        const facts = taskOf(execution);
-        if (facts === undefined || !isResolvedTenant(tenant)) return undefined;
-        return stores.tasks.find(tenant.organizationId as OrganizationId, facts.taskId);
-      },
+  // the AI Gateway's router are unchanged. Each turn's budget is what the earlier turns left.
+  const work = createHarnessAgentWork(loop === undefined ? taskWork : loop.work(taskWork), {
+    now: clock,
+    async taskOf(tenant, execution) {
+      const facts = taskOf(execution);
+      if (facts === undefined || !isResolvedTenant(tenant)) return undefined;
+      return stores.tasks.find(tenant.organizationId as OrganizationId, facts.taskId);
     },
-  );
+    ...(loop === undefined ? {} : { spent: loop.spent }),
+  });
+  const taskVerifier = createAgentTaskVerifier({
+    outputs,
+    ...(records === undefined
+      ? {}
+      : {
+          scheduled: async (tenant, taskId) => {
+            if (!isResolvedTenant(tenant)) return false;
+            const organizationId = tenant.organizationId as OrganizationId;
+            const found = await records.conversations.findFollowUp(
+              organizationId,
+              followUpIdFor(organizationId, taskFollowUpKey(taskId)),
+            );
+            return found?.source === 'agent';
+          },
+        }),
+  });
   return Object.freeze({
     work,
-    verifier: createAgentTaskVerifier({
-      outputs,
-      ...(records === undefined
-        ? {}
-        : {
-            scheduled: async (tenant, taskId) => {
-              if (!isResolvedTenant(tenant)) return false;
-              const organizationId = tenant.organizationId as OrganizationId;
-              const found = await records.conversations.findFollowUp(
-                organizationId,
-                followUpIdFor(organizationId, taskFollowUpKey(taskId)),
-              );
-              return found?.source === 'agent';
-            },
-          }),
-    }),
-    executors:
-      records === undefined
-        ? {}
-        : {
-            follow_up: createAgentFollowUpScheduleExecutor({
-              followUps: records.followUps,
-              organizations: stores.tenancy,
-            }),
-          },
+    verifier: loop === undefined ? taskVerifier : loop.verifier(taskVerifier),
+    executors: taskExecutors,
+    ...(loop === undefined ? {} : { toolLoop: { plan: loop.plan } }),
     onEnded: {
-      async ended(tenant, execution) {
+      async ended(tenant: TenantContext, execution: Execution) {
         await facts.ended(tenant, execution);
         if (events !== undefined) await publishEnd(tenant, execution);
       },
@@ -447,7 +485,9 @@ const NO_WORK: { readonly work: NodeWorkSource; readonly verifier: VerificationS
 export function routeAgentWork(
   conversation: ConversationAgentParts,
   tasks: AgentTaskParts,
-): Pick<ConversationAgentParts, 'work' | 'verifier' | 'onStopped'> {
+): Pick<ConversationAgentParts, 'work' | 'verifier' | 'onStopped'> & {
+  readonly toolLoop: AgentToolLoop;
+} {
   const isTask = (execution: Execution) => taskOf(execution) !== undefined;
   const isStep = (execution: Execution) => planStepOf(execution) !== undefined;
   const partsOf = (execution: Execution) =>
@@ -462,7 +502,22 @@ export function routeAgentWork(
         const source = partsOf(execution).work;
         return source.needed === undefined ? true : source.needed(tenant, execution, node);
       },
+      // Which execution a node is of is not known here: every source keeps only its own.
+      keepsToolOutput: (node) =>
+        tasks.work.keepsToolOutput?.(node) === true ||
+        conversation.work.keepsToolOutput?.(node) === true,
+      toolStop: async (tenant, execution, node) => {
+        const source = partsOf(execution).work;
+        return source.toolStop === undefined ? undefined : source.toolStop(tenant, execution, node);
+      },
     } satisfies NodeWorkSource),
+    // Only agent tasks use tools mid-task (ADR-0103); anything else that asks for one stops.
+    toolLoop: Object.freeze({
+      plan: async (tenant, execution, node, calls) =>
+        isTask(execution) && tasks.toolLoop !== undefined
+          ? tasks.toolLoop.plan(tenant, execution, node, calls)
+          : { stop: 'tool_use_unsupported' },
+    } satisfies AgentToolLoop),
     verifier: Object.freeze({
       verify: (tenant, execution) => partsOf(execution).verifier.verify(tenant, execution),
     } satisfies VerificationSource),
