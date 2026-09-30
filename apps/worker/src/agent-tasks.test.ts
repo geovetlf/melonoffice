@@ -505,6 +505,15 @@ describe.each(STORES)('AE-2 agent tasks with storage in %s', (_storage, createSt
     expect(JSON.stringify(analyse?.messages)).toContain('Combo Familiar');
     // Never a model or a provider: the agent's model policy and the router still choose.
     expect(analyse).not.toHaveProperty('quality');
+    expect(analyse).not.toHaveProperty('maxCredits');
+    // A task with a budget: its one call may spend at most that (ADR-0100).
+    const budgeted = await w.tasks.assign(w.tenantA, lucia.identity.id, {
+      request: 'Redacta un saludo',
+      maxCredits: 3,
+    });
+    const execution = must(budgeted.execution);
+    const node = must(execution.nodes.find((n) => n.id === 'work'));
+    expect((await w.taskParts.work.agentWork(w.tenantA, execution, node))?.maxCredits).toBe(3);
   });
 
   it('2. asking again with the same key is the same task: nothing new runs or is charged', async () => {

@@ -517,7 +517,7 @@ describe('Preparing and starting a task (ADR-0099 block 1)', () => {
       contextPlan: ['company_brain', 'crm'],
       agent: { id: lucia.identity.id, name: 'Lucía', department: 'sales' },
       model: { strategy: 'quality_first' },
-      budget: { status: 'available' },
+      budget: { status: 'available', maxCredits: null },
       verdict: 'ready',
       reasons: ['only_candidate'],
     });
@@ -629,7 +629,11 @@ describe('Preparing and starting a task (ADR-0099 block 1)', () => {
       const w = await world({ balance });
       await w.agent();
       const { strategy, task } = await w.harness.start(w.alice, { request: 'Redacta un saludo' });
-      expect(strategy).toMatchObject({ verdict: 'refused', reasons: [reason], budget: { status } });
+      expect(strategy).toMatchObject({
+        verdict: 'refused',
+        reasons: [reason],
+        budget: { status, maxCredits: null },
+      });
       expect(task).toBeUndefined();
       expect(w.kicked).toEqual([]);
     }
@@ -744,11 +748,66 @@ describe("The model profile on the runtime's call (ADR-0099 §5)", () => {
       toolInput: async () => 'kept',
     };
     const shaped = createHarnessAgentWork(inner, {
-      requestOf: async (_t, e) => (e.id === 'e1' ? 'Clasifica este mensaje' : undefined),
+      taskOf: async (_t, e) => (e.id === 'e1' ? { request: 'Clasifica este mensaje' } : undefined),
     });
     const w = await world();
     expect((await shaped.agentWork(w.alice, execution, node))?.strategy).toBe('cost_optimized');
     expect(await shaped.agentWork(w.alice, { id: 'e2' } as Execution, node)).toEqual(work);
     expect(await shaped.toolInput()).toBe('kept');
+  });
+});
+
+describe('Task budget (ADR-0100)', () => {
+  it("keeps the person's budget on the task and in the strategy", async () => {
+    const w = await world({ balance: 5 });
+    await w.agent();
+    const { strategy, task } = await w.harness.start(w.alice, {
+      request: 'Redacta un saludo',
+      maxCredits: 10,
+    });
+    expect(strategy.budget).toEqual({ status: 'available', maxCredits: 10 });
+    // The balance is the real limit; the budget above it is said, not refused.
+    expect(strategy.reasons).toContain('budget_above_balance');
+    expect(task?.task.maxCredits).toBe(10);
+    expect(await codeOf(w.harness.prepare(w.alice, { request: 'Hola', maxCredits: 0 }))).toBe(
+      'invalid_task:maxCredits',
+    );
+    expect(
+      await codeOf(w.harness.prepare(w.alice, { request: 'Hola', maxCredits: 1.5 } as never)),
+    ).toBe('invalid_task:maxCredits');
+  });
+
+  it('caps each model call at what is left, down to nothing when the budget is spent', async () => {
+    const work = { maxOutputTokens: 100, metadata: {} };
+    const node = { id: 'work' } as ExecutionNode;
+    const w = await world();
+    const left = (spent: number, own?: number) =>
+      createHarnessAgentWork(
+        {
+          agentWork: async (tenant: TenantContext, execution: Execution, n: ExecutionNode) =>
+            tenant && execution && n
+              ? { ...work, ...(own === undefined ? {} : { maxCredits: own }) }
+              : undefined,
+        },
+        {
+          taskOf: async () => ({ request: 'Redacta un saludo', maxCredits: 10 }),
+          spent: async () => spent,
+        },
+      ).agentWork(w.alice, { id: 'e1' } as Execution, node);
+    // Enough: the call may spend what is left.
+    expect((await left(4))?.maxCredits).toBe(6);
+    // The call's own lower limit stays.
+    expect((await left(4, 2))?.maxCredits).toBe(2);
+    // Spent: the gateway refuses every priced model (`credit_limit_exceeded`) and nothing runs.
+    expect((await left(12))?.maxCredits).toBe(0);
+    // No budget: no cap from the Harness.
+    const free = await createHarnessAgentWork(
+      {
+        agentWork: async (tenant: TenantContext, execution: Execution, n: ExecutionNode) =>
+          tenant && execution && n ? work : undefined,
+      },
+      { taskOf: async () => ({ request: 'Redacta un saludo' }) },
+    ).agentWork(w.alice, { id: 'e1' } as Execution, node);
+    expect(free).not.toHaveProperty('maxCredits');
   });
 });

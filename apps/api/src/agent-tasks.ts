@@ -166,6 +166,7 @@ export function registerAgentTaskRoutes(
       request: task.request,
       requestedBy: task.requestedBy,
       createdAt: task.createdAt,
+      maxCredits: task.maxCredits ?? null,
       status: execution?.status ?? 'unknown',
       failure: execution?.failure?.code ?? null,
       completedAt: execution?.completedAt ?? null,

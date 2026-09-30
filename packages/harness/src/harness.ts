@@ -1,4 +1,9 @@
-import { checkTaskRequest, isAgentTaskError, type AgentTaskService } from '@melonoffice/agents';
+import {
+  checkTaskCredits,
+  checkTaskRequest,
+  isAgentTaskError,
+  type AgentTaskService,
+} from '@melonoffice/agents';
 import type { DecisionAgent, DecisionEngine, DecisionItem } from '@melonoffice/decisions';
 import type {
   AIQualityTier,
@@ -107,7 +112,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 export function checkHarnessTask(value: unknown): HarnessTask {
   if (!isRecord(value)) throw new HarnessError('invalid_task', 'body');
   for (const key of Object.keys(value)) {
-    if (!['request', 'specialistId', 'department', 'idempotencyKey'].includes(key)) {
+    if (!['request', 'specialistId', 'department', 'idempotencyKey', 'maxCredits'].includes(key)) {
       throw new HarnessError('invalid_task', key);
     }
   }
@@ -116,6 +121,13 @@ export function checkHarnessTask(value: unknown): HarnessTask {
     request = checkTaskRequest(value.request);
   } catch (error) {
     if (isAgentTaskError(error)) throw new HarnessError('invalid_task', 'request');
+    throw error;
+  }
+  let maxCredits: number | undefined;
+  try {
+    maxCredits = value.maxCredits === undefined ? undefined : checkTaskCredits(value.maxCredits);
+  } catch (error) {
+    if (isAgentTaskError(error)) throw new HarnessError('invalid_task', 'maxCredits');
     throw error;
   }
   const { specialistId, department, idempotencyKey } = value;
@@ -136,6 +148,7 @@ export function checkHarnessTask(value: unknown): HarnessTask {
     ...(specialistId === undefined ? {} : { specialistId }),
     ...(department === undefined ? {} : { department }),
     ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
+    ...(maxCredits === undefined ? {} : { maxCredits }),
   });
 }
 
@@ -164,7 +177,8 @@ export function createAgentHarness(options: AgentHarnessOptions): AgentHarness {
     if (plan.mode === 'multi_step') reasons.push('multi_step_runs_as_single_task');
     let agent: HarnessAgent | null = null;
     let candidates: readonly HarnessAgent[] = [];
-    let budget: ExecutionStrategy['budget'] = { status: 'unavailable' };
+    const maxCredits = task.maxCredits ?? null;
+    let budget: ExecutionStrategy['budget'] = { status: 'unavailable', maxCredits };
 
     const decide = async (): Promise<HarnessVerdict> => {
       // A person asked for a person: nothing is routed and no model is asked.
@@ -179,11 +193,13 @@ export function createAgentHarness(options: AgentHarnessOptions): AgentHarness {
         return 'refused';
       }
       if (balance.balance <= 0) {
-        budget = { status: 'insufficient' };
+        budget = { status: 'insufficient', maxCredits };
         reasons.push('insufficient_credits');
         return 'refused';
       }
-      budget = { status: 'available' };
+      budget = { status: 'available', maxCredits };
+      // The balance is the real limit: a budget above it only says how far the task may go.
+      if (maxCredits !== null && maxCredits > balance.balance) reasons.push('budget_above_balance');
 
       if (task.specialistId !== undefined) {
         const named = (await directory.active(tenant)).find((a) => a.id === task.specialistId);
@@ -254,6 +270,7 @@ export function createAgentHarness(options: AgentHarnessOptions): AgentHarness {
       const started = await tasks.assign(tenant, strategy.agent.id, {
         request: task.request,
         ...(task.idempotencyKey === undefined ? {} : { idempotencyKey: task.idempotencyKey }),
+        ...(task.maxCredits === undefined ? {} : { maxCredits: task.maxCredits }),
       });
       return Object.freeze({ strategy, task: started });
     },
@@ -316,6 +333,7 @@ export function createDecisionAgentRouter(
 interface ShapeableWork {
   readonly strategy?: AIRoutingStrategy;
   readonly quality?: AIQualityTier;
+  readonly maxCredits?: number;
   readonly metadata?: Readonly<Record<string, string | number | boolean>>;
 }
 
@@ -331,6 +349,7 @@ export function withHarnessProfile<W extends ShapeableWork>(
   work: W,
   request: string,
   policy: HarnessProfilePolicy = DEFAULT_HARNESS_PROFILE_POLICY,
+  budget?: { readonly remainingCredits: number },
 ): W {
   const classification = classifyTask(request);
   const profile = modelProfileOf(classification, policy);
@@ -347,13 +366,20 @@ export function withHarnessProfile<W extends ShapeableWork>(
       ? { quality: profile.minimumQuality }
       : {}),
     ...(Object.keys(metadata).length <= MAX_METADATA_ENTRIES ? { metadata } : {}),
+    // What is left of the task's budget caps the call: the gateway then tries only models whose
+    // estimate fits (a cheaper one when there is one) and refuses the call when none does.
+    ...(budget === undefined
+      ? {}
+      : {
+          maxCredits: Math.min(work.maxCredits ?? Infinity, Math.max(0, budget.remainingCredits)),
+        }),
   };
 }
 
 /**
- * An agent work source whose model calls carry the Harness's profile. `requestOf` gives the
- * person's request of the execution (the task's), from storage; without one the call is left as
- * the inner source made it.
+ * An agent work source whose model calls carry the Harness's profile and what is left of the
+ * task's budget. `taskOf` gives the person's request and budget (the task's), from storage;
+ * without one the call is left as the inner source made it.
  */
 export function createHarnessAgentWork<
   W extends ShapeableWork,
@@ -367,10 +393,16 @@ export function createHarnessAgentWork<
 >(
   inner: S,
   options: {
-    readonly requestOf: (
+    /** The person's request of the execution and its budget, from storage. */
+    readonly taskOf: (
       tenant: TenantContext,
       execution: Execution,
-    ) => Promise<string | undefined>;
+    ) => Promise<{ readonly request: string; readonly maxCredits?: number } | undefined>;
+    /**
+     * What the execution's AI calls already spent, in credits. Absent: nothing yet (one call per
+     * task, as agent tasks are today).
+     */
+    readonly spent?: (tenant: TenantContext, execution: Execution) => Promise<number>;
     readonly policy?: HarnessProfilePolicy;
   },
 ): S {
@@ -380,8 +412,17 @@ export function createHarnessAgentWork<
     async agentWork(tenant: TenantContext, execution: Execution, node: ExecutionNode) {
       const work = await inner.agentWork(tenant, execution, node);
       if (work === undefined) return undefined;
-      const request = await options.requestOf(tenant, execution);
-      return request === undefined ? work : withHarnessProfile(work, request, policy);
+      const task = await options.taskOf(tenant, execution);
+      if (task === undefined) return work;
+      const budget =
+        task.maxCredits === undefined
+          ? undefined
+          : {
+              remainingCredits:
+                task.maxCredits -
+                (options.spent === undefined ? 0 : await options.spent(tenant, execution)),
+            };
+      return withHarnessProfile(work, task.request, policy, budget);
     },
   });
 }

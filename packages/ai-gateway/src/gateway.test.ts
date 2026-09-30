@@ -686,6 +686,32 @@ describe('AI gateway: the 20 security cases of the X4 brief', () => {
     ).toMatchObject({ code: 'modality_unsupported' });
   });
 
+  it('14b. a preferred provider is tried first, and falls back when it is down (ADR-0100)', async () => {
+    const policy = {
+      ...onlyModels('alpha/alpha-large', 'beta/beta-text'),
+      maxAttempts: 1,
+      preferredProviders: ['beta'],
+    };
+    const preferred = await setup({ defaultPolicy: policy });
+    expect(await preferred.call()).toMatchObject({
+      status: 'completed',
+      provider: 'beta',
+      fallbackFrom: null,
+    });
+    const down = await setup({
+      defaultPolicy: policy,
+      script: { 'beta-text': [() => ({ status: 'error', kind: 'unavailable' })] },
+    });
+    // The fallback is recorded, and respects the same policy, data and credits.
+    expect(await down.call()).toMatchObject({
+      status: 'completed',
+      provider: 'alpha',
+      model: 'alpha-large',
+      fallbackFrom: 'beta/beta-text',
+      attempts: 2,
+    });
+  });
+
   it('14. an unavailable provider falls back only when the policy allows it', async () => {
     const script = (): Script => ({
       'alpha-large': [() => ({ status: 'error', kind: 'unavailable' })],

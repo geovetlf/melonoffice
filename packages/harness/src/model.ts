@@ -125,7 +125,14 @@ export interface ExecutionStrategy {
   readonly model: ModelProfile;
   /** The tools the chosen agent's skills grant that this person may use. */
   readonly tools: readonly HarnessTool[];
-  readonly budget: { readonly status: 'available' | 'insufficient' | 'unavailable' };
+  /**
+   * The credits side: whether the balance allows starting, and the task's own budget when the
+   * person set one (ADR-0100). Each model call is then limited to what is left of it.
+   */
+  readonly budget: {
+    readonly status: 'available' | 'insufficient' | 'unavailable';
+    readonly maxCredits: number | null;
+  };
   readonly verdict: HarnessVerdict;
   /** Why, as closed codes. */
   readonly reasons: readonly string[];
@@ -139,6 +146,8 @@ export interface HarnessTask {
   /** The department type the person chose, when they chose one. */
   readonly department?: string;
   readonly idempotencyKey?: string;
+  /** The most credits the task may spend (ADR-0100). Absent: no task budget. */
+  readonly maxCredits?: number;
 }
 
 export type HarnessErrorCode = 'unresolved_tenant' | 'invalid_task' | 'permission_denied';

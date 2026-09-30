@@ -260,11 +260,10 @@ export function createAgentTaskParts(options: {
       proposals,
     }),
     {
-      async requestOf(tenant, execution) {
+      async taskOf(tenant, execution) {
         const facts = taskOf(execution);
         if (facts === undefined || !isResolvedTenant(tenant)) return undefined;
-        const task = await stores.tasks.find(tenant.organizationId as OrganizationId, facts.taskId);
-        return task?.request;
+        return stores.tasks.find(tenant.organizationId as OrganizationId, facts.taskId);
       },
     },
   );

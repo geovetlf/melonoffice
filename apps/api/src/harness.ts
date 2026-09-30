@@ -36,6 +36,7 @@ function strategyView(strategy: ExecutionStrategy) {
     model: { strategy: strategy.model.strategy },
     tools: strategy.tools,
     budget: strategy.budget.status,
+    maxCredits: strategy.budget.maxCredits,
   };
 }
 
