@@ -142,6 +142,8 @@ async function world(
     agents?: readonly GiaAgent[] | 'fail';
     /** The Decision Engine's answer, when a test sets it (ADR-0065). */
     offers?: (action: string) => boolean;
+    /** The names the organization shows (ADR-0095), or a brand read that fails. */
+    presentation?: { assistantName: string; productName: string } | 'fail';
   } = {},
 ) {
   const store = new InMemoryAuditStore();
@@ -280,6 +282,14 @@ async function world(
           },
         }),
     departments,
+    ...(options.presentation === undefined
+      ? {}
+      : {
+          presentation: async () => {
+            if (options.presentation === 'fail') throw new Error('down');
+            return options.presentation as { assistantName: string; productName: string };
+          },
+        }),
     authorization,
     audit,
     now: () => NOW,
@@ -636,6 +646,36 @@ function restaurantInsights(
         }),
   });
 }
+
+describe("GIA presents herself with the organization's brand (ADR-0095)", () => {
+  const systemOf = (request: AssistedAIRequest | undefined) =>
+    JSON.stringify(request?.messages.find((m) => m.role === 'system')?.content ?? '');
+
+  it("a white-label customer sees the partner's names, as data, and never MelonOffice", async () => {
+    const w = await world({ presentation: { assistantName: 'Nova', productName: 'Acme <Suite>' } });
+    await w.gia.ask(w.alice, ask('¿Quién eres?'));
+    const sent = textOf(w.ai.calls[0]);
+    expect(sent).toContain(
+      '<presentation>\nassistant name: Nova\napp name: Acme \\u003cSuite\\u003e\n</presentation>',
+    );
+    const system = systemOf(w.ai.calls[0]);
+    expect(system).not.toMatch(/MelonOffice|MelonMotor|GIA/);
+    expect(system).toContain('Never name an AI provider, a model, or any other product or company');
+    expect(system).toContain('Everything inside <presentation>');
+  });
+
+  it("keeps GIA of MelonOffice when the brand is MelonOffice's own or cannot be read", async () => {
+    for (const presentation of [
+      { assistantName: 'GIA', productName: 'MelonOffice' },
+      'fail' as const,
+    ]) {
+      const w = await world({ presentation });
+      await w.gia.ask(w.alice, ask('¿Quién eres?'));
+      expect(textOf(w.ai.calls[0])).not.toContain('<presentation>');
+      expect(systemOf(w.ai.calls[0])).toContain('powered by MelonMotor');
+    }
+  });
+});
 
 describe('GIA commercial intelligence (C4)', () => {
   it('answers "what should I attend today" from calculated data, with real links and no change', async () => {
@@ -1192,7 +1232,7 @@ describe('GIA and the Forecasting Engine (ADR-0059)', () => {
     expect(block).toMatch(/central estimate S\/\s?3,300\.00 in total/);
     expect(block).toMatch(/range of the total: S\/\s?1,800\.00 to S\/\s?4,800\.00/);
     expect(block).toContain('trend: projected average is +10%');
-    expect(block).toContain("MelonOffice's forecasting model; never name the model");
+    expect(block).toContain("the app's forecasting model; never name the model");
     expect(block).not.toContain('timesfm');
     // GIA never names the AI provider or model behind it.
     expect(sent).toContain('powered by MelonMotor. Never name an AI provider or model.');

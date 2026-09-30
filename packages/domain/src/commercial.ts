@@ -15,6 +15,7 @@ export type CommercialAccountId = Brand<string, 'CommercialAccountId'>;
 export type CommercialMembershipId = Brand<string, 'CommercialMembershipId'>;
 export type CustomerRelationshipId = Brand<string, 'CustomerRelationshipId'>;
 export type CustomerInvitationId = Brand<string, 'CustomerInvitationId'>;
+export type MemberInvitationId = Brand<string, 'MemberInvitationId'>;
 
 /**
  * - `partner`: sells MelonOffice to its customers (reseller, white label, OEM).
@@ -202,6 +203,29 @@ export interface CustomerInvitation {
   /** Who accepted or rejected it, and for which organization when accepted. */
   readonly decidedBy?: UserId;
   readonly organizationId?: OrganizationId;
+  readonly createdAt: IsoTimestamp;
+  readonly updatedAt: IsoTimestamp;
+}
+
+/**
+ * An invitation by email to join a partner or agency account with one of its roles (ADR-0093).
+ * Nobody becomes a member without taking it: the invited person, signed in with that email
+ * verified, accepts or declines it. It follows the same statuses as a customer invitation, and
+ * only the hash of its link's secret is stored.
+ */
+export interface MemberInvitation {
+  readonly id: MemberInvitationId;
+  readonly commercialAccountId: CommercialAccountId;
+  /** The invited email, trimmed and lowercased. */
+  readonly email: string;
+  readonly role: CommercialRole;
+  readonly status: CustomerInvitationStatus;
+  /** Hex SHA-256 of the link's secret. */
+  readonly tokenHash: string;
+  readonly expiresAt: IsoTimestamp;
+  readonly createdBy: UserId;
+  /** Who accepted or declined it. */
+  readonly decidedBy?: UserId;
   readonly createdAt: IsoTimestamp;
   readonly updatedAt: IsoTimestamp;
 }

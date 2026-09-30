@@ -26,6 +26,17 @@ export interface ConsoleMember {
   readonly updatedAt: string;
 }
 
+/** An invitation to join the account (ADR-0093), as its admins see it. */
+export interface ConsoleMemberInvitation {
+  readonly id: string;
+  readonly email: string;
+  readonly role: string;
+  readonly status: 'pending' | 'accepted' | 'rejected' | 'revoked' | 'expired';
+  readonly expiresAt: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
 export interface ConsoleCustomer {
   readonly organizationId: string;
   readonly mode: string;
@@ -88,7 +99,16 @@ export class ConsoleRequestError extends Error {
 export interface ConsoleClient {
   accounts(): Promise<readonly ConsoleAccount[]>;
   members(accountId: string): Promise<readonly ConsoleMember[]>;
-  addMember(accountId: string, userId: string, role: string): Promise<ConsoleMember>;
+  /** People join only by accepting an invitation (ADR-0093); the link is answered once. */
+  memberInvitations(accountId: string): Promise<readonly ConsoleMemberInvitation[]>;
+  inviteMember(
+    accountId: string,
+    input: { readonly email: string; readonly role: string },
+  ): Promise<{ readonly invitation: ConsoleMemberInvitation; readonly token: string }>;
+  revokeMemberInvitation(
+    accountId: string,
+    invitation: ConsoleMemberInvitation,
+  ): Promise<ConsoleMemberInvitation>;
   revokeMember(accountId: string, userId: string): Promise<void>;
   customers(accountId: string): Promise<{
     readonly customers: readonly ConsoleCustomer[];
@@ -157,9 +177,23 @@ export function createConsoleClient(request: ReplyRequest): ConsoleClient {
     accounts: async () =>
       (await call<{ accounts: ConsoleAccount[] }>('/v1/commercial/accounts')).accounts,
     members: async (id) => (await call<{ members: ConsoleMember[] }>(`${acc(id)}/members`)).members,
-    addMember: async (id, userId, role) =>
-      (await send<{ member: ConsoleMember }>(`${acc(id)}/members`, 'POST', { userId, role }))
-        .member,
+    memberInvitations: async (id) =>
+      (await call<{ invitations: ConsoleMemberInvitation[] }>(`${acc(id)}/member-invitations`))
+        .invitations,
+    inviteMember: (id, input) =>
+      send<{ invitation: ConsoleMemberInvitation; token: string }>(
+        `${acc(id)}/member-invitations`,
+        'POST',
+        input,
+      ),
+    revokeMemberInvitation: async (id, invitation) =>
+      (
+        await send<{ invitation: ConsoleMemberInvitation }>(
+          `${acc(id)}/member-invitations/${encodeURIComponent(invitation.id)}/revoke`,
+          'POST',
+          { expectedUpdatedAt: invitation.updatedAt },
+        )
+      ).invitation,
     revokeMember: async (id, userId) => {
       await send(`${acc(id)}/members/${encodeURIComponent(userId)}/revoke`, 'POST', {});
     },

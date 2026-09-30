@@ -778,7 +778,13 @@ export const AUDIT_ACTIONS = {
   'commercial_membership.created': {
     category: 'commercial',
     description:
-      "A commercial account's admin added a person to it, or changed their role (ADR-0086); `reference` names the role.",
+      'A person became a member of a commercial account: its first admin when the platform created it (ADR-0086), or someone accepting an invitation (ADR-0093); `reference` names the role.',
+    results: ['success'],
+  },
+  'commercial_membership.updated': {
+    category: 'commercial',
+    description:
+      "An account admin changed an active member's role (ADR-0093); `reference` names the new role. New members join only by invitation.",
     results: ['success'],
   },
   'commercial_membership.revoked': {
@@ -831,6 +837,36 @@ export const AUDIT_ACTIONS = {
     category: 'commercial',
     description:
       'An invitation passed its time without being taken (ADR-0089), recorded the first time anyone looks at it afterwards.',
+    results: ['success'],
+  },
+  'member_invitation.created': {
+    category: 'commercial',
+    description:
+      "A partner or agency admin invited a person by email to join the account with a role (ADR-0093): pending, it grants nothing; `reference` names the role. The email and the link's secret are never recorded.",
+    results: ['success'],
+  },
+  'member_invitation.accepted': {
+    category: 'commercial',
+    description:
+      'The invited person joined the account with the invited role (ADR-0093); the membership is created in the same write. Denied when the person is not the invited one or the invitation is not pending.',
+    results: ['success', 'denied'],
+  },
+  'member_invitation.rejected': {
+    category: 'commercial',
+    description:
+      'The invited person declined to join the account (ADR-0093). Denied when the person is not the invited one or the invitation is not pending.',
+    results: ['success', 'denied'],
+  },
+  'member_invitation.revoked': {
+    category: 'commercial',
+    description:
+      'A partner or agency admin withdrew a member invitation before it was taken (ADR-0093).',
+    results: ['success'],
+  },
+  'member_invitation.expired': {
+    category: 'commercial',
+    description:
+      'A member invitation passed its time without being taken (ADR-0093), recorded the first time anyone looks at it afterwards.',
     results: ['success'],
   },
   'commercial.access': {

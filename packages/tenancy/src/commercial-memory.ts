@@ -5,6 +5,8 @@ import type {
   CommercialMembership,
   CustomerInvitation,
   CustomerInvitationId,
+  MemberInvitation,
+  MemberInvitationId,
   CustomerRelationship,
   OrganizationId,
   UserId,
@@ -18,6 +20,7 @@ export class InMemoryCommercialStore implements CommercialRepository {
   readonly #memberships = new Map<string, CommercialMembership>();
   readonly #relationships = new Map<string, CustomerRelationship>();
   readonly #invitations = new Map<string, CustomerInvitation>();
+  readonly #memberInvitations = new Map<string, MemberInvitation>();
 
   /** Receives the writes' audit events in the same step as the data. */
   constructor(private readonly audit?: InMemoryAuditStore) {}
@@ -200,6 +203,62 @@ export class InMemoryCommercialStore implements CommercialRepository {
     this.#record(events);
     this.putInvitation(invitation);
     this.putRelationship(relationship);
+  }
+
+  async findMemberInvitation(id: MemberInvitationId) {
+    return this.#memberInvitations.get(id);
+  }
+
+  async findMemberInvitationByTokenHash(tokenHash: string) {
+    return [...this.#memberInvitations.values()].find((i) => i.tokenHash === tokenHash);
+  }
+
+  async memberInvitationsOfAccount(accountId: CommercialAccountId) {
+    return [...this.#memberInvitations.values()].filter((i) => i.commercialAccountId === accountId);
+  }
+
+  async saveMemberInvitation(
+    invitation: MemberInvitation,
+    expected: MemberInvitation | undefined,
+    events: readonly AuditEvent[],
+    limit?: number,
+  ) {
+    const current = this.#memberInvitations.get(invitation.id);
+    if (current?.updatedAt !== expected?.updatedAt) throw new TenancyError('commercial_conflict');
+    if (limit !== undefined && invitation.status === 'pending' && current === undefined) {
+      const pending = (
+        await this.memberInvitationsOfAccount(invitation.commercialAccountId)
+      ).filter((i) => i.status === 'pending').length;
+      if (pending >= limit) throw new TenancyError('commercial_limit_reached');
+    }
+    this.#record(events);
+    this.#memberInvitations.set(invitation.id, Object.freeze({ ...invitation }));
+  }
+
+  async acceptMemberInvitation(
+    invitation: MemberInvitation,
+    expected: MemberInvitation,
+    membership: CommercialMembership,
+    expectedMembership: CommercialMembership | undefined,
+    events: readonly AuditEvent[],
+    limit: number,
+  ) {
+    if (this.#memberInvitations.get(invitation.id)?.updatedAt !== expected.updatedAt) {
+      throw new TenancyError('commercial_conflict');
+    }
+    const current = await this.findMembership(membership.commercialAccountId, membership.userId);
+    if (current?.updatedAt !== expectedMembership?.updatedAt) {
+      throw new TenancyError('commercial_conflict');
+    }
+    const active = [...this.#memberships.values()].filter(
+      (m) => m.commercialAccountId === membership.commercialAccountId && m.status === 'active',
+    ).length;
+    if (current?.status !== 'active' && active >= limit) {
+      throw new TenancyError('commercial_limit_reached');
+    }
+    this.#record(events);
+    this.#memberInvitations.set(invitation.id, Object.freeze({ ...invitation }));
+    this.putMembership(membership);
   }
 
   #record(events: readonly AuditEvent[]) {

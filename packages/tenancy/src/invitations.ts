@@ -3,6 +3,7 @@ import type {
   CustomerInvitation,
   CustomerInvitationId,
   CustomerInvitationStatus,
+  MemberInvitationId,
 } from '@melonoffice/domain';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { TenancyError } from './errors.js';
@@ -36,6 +37,12 @@ export const INVITATION_STATUSES: readonly CustomerInvitationStatus[] = Object.f
 export const newCustomerInvitationId = (): CustomerInvitationId =>
   randomUUID() as CustomerInvitationId;
 
+export const newMemberInvitationId = (): MemberInvitationId => randomUUID() as MemberInvitationId;
+
+/** Whether a client-sent value can be a member invitation id (ADR-0093). It grants nothing. */
+export const isMemberInvitationId = (value: unknown): value is MemberInvitationId =>
+  typeof value === 'string' && UUID.test(value);
+
 /** Whether a client-sent value can be an invitation id at all. It grants nothing. */
 export const isCustomerInvitationId = (value: unknown): value is CustomerInvitationId =>
   typeof value === 'string' && UUID.test(value);
@@ -67,7 +74,7 @@ export function parseInvitationEmail(value: unknown): string {
 
 /** A pending invitation past its time is expired, whether or not that was recorded yet. */
 export const invitationStatusAt = (
-  invitation: CustomerInvitation,
+  invitation: Pick<CustomerInvitation, 'status' | 'expiresAt'>,
   at: Date,
 ): CustomerInvitationStatus =>
   invitation.status === 'pending' && at.getTime() >= Date.parse(invitation.expiresAt)
@@ -80,7 +87,7 @@ export const invitationStatusAt = (
  */
 export const isInvitedPerson = (
   auth: AuthenticatedContext,
-  invitation: CustomerInvitation,
+  invitation: Pick<CustomerInvitation, 'email'>,
 ): boolean =>
   auth.actor === 'user' &&
   auth.emailVerified &&

@@ -67,7 +67,7 @@ import {
   prioritiesOf,
   type GiaPriorities,
 } from './priorities.js';
-import { giaMessages, giaOutputSchema, type GiaTurn } from './prompt.js';
+import { giaMessages, giaOutputSchema, type GiaPresentation, type GiaTurn } from './prompt.js';
 
 /**
  * GIA's chat (Fase 1c, ADR-0052). A person asks; GIA reads, as that person, a few Company Brain
@@ -184,6 +184,11 @@ export interface GiaOptions {
    */
   readonly decisions?: Pick<DecisionEngine, 'offers' | 'evaluateDecision'>;
   readonly departments: Pick<DepartmentRepository, 'list'>;
+  /**
+   * The names the organization shows (its resolved brand, ADR-0095). Absent or unchanged from
+   * MelonOffice's own, she presents herself as GIA, of MelonOffice.
+   */
+  readonly presentation?: (organizationId: OrganizationId) => Promise<GiaPresentation>;
   readonly authorization: Pick<AuthorizationService, 'authorize'>;
   readonly audit: AuditService;
   readonly logger?: Logger;
@@ -389,6 +394,23 @@ export function createGia(options: GiaOptions): GiaService {
     now = () => new Date(),
   } = options;
   const logger = options.logger ?? silent;
+
+  /** Her names for this organization, or none when they are MelonOffice's own or unreadable. */
+  async function presentationOf(
+    organizationId: OrganizationId,
+    log: Logger,
+  ): Promise<GiaPresentation | undefined> {
+    if (options.presentation === undefined) return undefined;
+    try {
+      const shown = await options.presentation(organizationId);
+      return shown.assistantName === 'GIA' && shown.productName === 'MelonOffice'
+        ? undefined
+        : shown;
+    } catch {
+      log.warn('gia.presentation_unavailable', {});
+      return undefined;
+    }
+  }
   const can = (tenant: TenantContext, permission: string) =>
     authorization.authorize(tenant, permission).allowed;
   // What she may prepare for the person: one answer for every proposal (ADR-0065).
@@ -553,6 +575,8 @@ export function createGia(options: GiaOptions): GiaService {
             ...insights.records.opportunities.filter((o) => o.status === 'open').map((o) => o.ref),
           ].slice(0, 50);
 
+    const shown = await presentationOf(organizationId, log);
+
     const started = performance.now();
     const response = await gateway.assist(tenant, {
       requestId,
@@ -584,6 +608,7 @@ export function createGia(options: GiaOptions): GiaService {
         ...(ranking === undefined || insights === undefined
           ? {}
           : { priorities: prioritiesBlock(ranking, insights, locale) }),
+        ...(shown === undefined ? {} : { presentation: shown }),
       }),
       outputModality: 'text',
       maxOutputTokens: GIA_LIMITS.outputTokens,

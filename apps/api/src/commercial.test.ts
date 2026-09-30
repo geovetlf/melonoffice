@@ -1,6 +1,6 @@
 import { createAICostEngine, createAIUsageLedger } from '@melonoffice/ai-usage';
 import { describe, expect, it } from 'vitest';
-import { setupApp, STORES, type Stores } from './test-api.js';
+import { joinAccount, setupApp, STORES, type Stores } from './test-api.js';
 
 /**
  * The commercial layer's routes (ADR-0086). The numbered cases are the brief's security tests;
@@ -232,15 +232,11 @@ describe.each(STORES)('the commercial layer with storage in %s', (_name, createS
 
   it('9. the web cannot raise a role: support reads, only admins manage', async () => {
     const { call, acc, ids, tenantB, partnerA } = await setup();
-    // Carol adds Frank as support. Frank cannot add people, invite, or promote himself.
-    expect(
-      (
-        await call('carol', 'POST', `${acc(partnerA)}/members`, {
-          userId: ids.frank,
-          role: 'partner.support',
-        })
-      ).status,
-    ).toBe(201);
+    // Carol invites Frank as support and he accepts. Frank cannot add people, invite, or promote
+    // himself.
+    expect((await joinAccount(call, 'carol', partnerA, 'frank', 'partner.support')).status).toBe(
+      200,
+    );
     expect((await call('frank', 'GET', `${acc(partnerA)}/members`)).status).toBe(200);
     for (const [path, body] of [
       ['members', { userId: ids.frank, role: 'partner.admin' }],
@@ -284,12 +280,10 @@ describe.each(STORES)('the commercial layer with storage in %s', (_name, createS
       status: 409,
       body: { error: 'commercial_limit_reached' },
     });
-    expect(
-      await call('carol', 'POST', `${acc(id)}/members`, {
-        userId: ids.frank,
-        role: 'partner.support',
-      }),
-    ).toEqual({ status: 409, body: { error: 'commercial_limit_reached' } });
+    expect(await joinAccount(call, 'carol', id, 'frank', 'partner.support')).toEqual({
+      status: 409,
+      body: { error: 'commercial_limit_reached' },
+    });
     // A mode the account type does not use, an unknown organization.
     expect(
       (
@@ -393,10 +387,7 @@ describe.each(STORES)('the commercial layer with storage in %s', (_name, createS
 
   it("reads a customer's AI usage and subscription only with its scopes, and never who used it or what it cost", async () => {
     const { call, ids, stores, acc, partnerA, relate, tenantA, tenantB } = await setup();
-    await call('carol', 'POST', `${acc(partnerA)}/members`, {
-      userId: ids.frank,
-      role: 'partner.support',
-    });
+    await joinAccount(call, 'carol', partnerA, 'frank', 'partner.support');
     await relate('carol', partnerA, 'alice', tenantA, 'reseller', ['usage', 'billing']);
     await relate('carol', partnerA, 'bob', tenantB, 'reseller', ['summary']);
     const day = '2026-09-29';

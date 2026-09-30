@@ -207,6 +207,44 @@ describe('a new user without an organization', () => {
   });
 });
 
+describe('a member of a partner account without a company (ADR-0094)', () => {
+  const PARTNER = {
+    id: 'acc-1',
+    type: 'partner',
+    name: 'Partner A',
+    status: 'active',
+    limits: { customers: 5, members: 3 },
+    role: 'partner.support',
+  };
+
+  it('opens the console without creating a company, and can still create one', async () => {
+    const { services, backend } = start({ path: '/login' });
+    backend.options.organizations = [];
+    backend.options.commercialAccounts = [PARTNER];
+    renderApp(services);
+    await signIn();
+    expect(await screen.findByText(/You are part of a partner or agency account/)).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Create your organization' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Open the console' }));
+    expect(globalThis.location.pathname).toBe('/partner');
+    expect(await screen.findByRole('heading', { level: 1, name: 'Partner console' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Create your organization' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Create my own company' }));
+    expect(await screen.findByRole('heading', { name: 'Create your organization' })).toBeTruthy();
+  });
+
+  it('someone in no account is not offered the console, even at its address', async () => {
+    const { services, backend } = start({ path: '/partner', refreshToken: 'refresh-kept' });
+    backend.options.organizations = [];
+    renderApp(services);
+    expect(await screen.findByRole('heading', { name: 'Create your organization' })).toBeTruthy();
+    await waitFor(() => expect(apiPaths(backend)).toContain('GET /v1/commercial/accounts'));
+    expect(await screen.findByRole('heading', { name: 'Create your organization' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Open the console' })).toBeNull();
+    expect(screen.queryByRole('heading', { level: 1, name: 'Partner console' })).toBeNull();
+  });
+});
+
 describe('a session', () => {
   it('shows loading, then the protected page, when resumed after a reload', async () => {
     const { services, backend } = start({ path: '/', refreshToken: 'refresh-kept' });
