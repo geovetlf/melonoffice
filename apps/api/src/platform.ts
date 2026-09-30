@@ -10,7 +10,8 @@ import type { AIUsageBucket, DeploymentEnvironment, OrganizationId } from '@melo
 import type { TenancyStore } from '@melonoffice/tenancy';
 import type { Context, Hono } from 'hono';
 import type { AuthEnv } from './auth.js';
-import { recordOutcome, recordRequired, requestFields } from './audit.js';
+import { platformAdminOf } from './platform-admin.js';
+import { recordRequired, requestFields } from './audit.js';
 
 /**
  * The platform AI view (ADR-0082): which AI providers and models MelonMotor has, what they cost,
@@ -50,26 +51,22 @@ export function registerPlatformRoutes(app: Hono<AuthEnv>, dependencies: Platfor
     return auth.actor === 'user' && admins.has(auth.userId);
   };
 
-  /** Runs the handler for an administrator, audited; anyone else gets 403 and a denied event. */
+  /** Runs the handler for a verified administrator, audited; anyone else gets 403 and a denied event. */
   const adminOnly =
     (view: string, handler: (c: Context<AuthEnv>) => Promise<Response>) =>
     async (c: Context<AuthEnv>) => {
       const auth = c.get('auth');
-      if (!isAdmin(c)) {
-        await recordOutcome(c, audit, {
-          action: 'platform.ai_read',
-          result: 'denied',
-          actor: actorOf(auth),
-          reference: view,
-          reason: 'not_platform_admin',
-          ...requestFields(c),
-        });
-        return c.json({ error: 'platform_forbidden' }, 403);
-      }
+      const admin = await platformAdminOf(c, admins, {
+        audit,
+        action: 'platform.ai_read',
+        reference: view,
+      });
+      if (admin instanceof Response) return admin;
       const unaudited = await recordRequired(c, audit, {
         action: 'platform.ai_read',
         result: 'success',
         actor: actorOf(auth),
+        actorRole: admin.role,
         reference: view,
         ...requestFields(c),
       });
@@ -78,7 +75,10 @@ export function registerPlatformRoutes(app: Hono<AuthEnv>, dependencies: Platfor
     };
 
   // Whether the person may open the platform view: the web shows the entry only then.
-  app.get('/v1/platform/access', (c) => c.json({ platformAdmin: isAdmin(c) }));
+  // `emailVerified` lets the screen say why an administrator is refused until they verify it.
+  app.get('/v1/platform/access', (c) =>
+    c.json({ platformAdmin: isAdmin(c), emailVerified: c.get('auth').emailVerified }),
+  );
 
   app.get(
     '/v1/platform/ai',

@@ -4,7 +4,6 @@ import {
   type AuditEventInput,
   type AuditService,
 } from '@melonoffice/audit';
-import type { AuthenticatedContext } from '@melonoffice/auth';
 import {
   accountBrandOf,
   brandConfigIdOf,
@@ -41,6 +40,7 @@ import { recordOutcome, requestFields } from './audit.js';
 import type { AuthEnv } from './auth.js';
 import { withPermission } from './authorization.js';
 import { createCommercialGuard } from './commercial.js';
+import { platformAdminOf } from './platform-admin.js';
 
 /**
  * Brands and domains (ADR-0087):
@@ -329,34 +329,17 @@ export function registerBrandingRoutes(app: Hono<AuthEnv>, deps: BrandingDepende
 
   // ---------------------------------------------------------------- platform administrator
 
-  const isPlatformAdmin = (auth: AuthenticatedContext) =>
-    auth.actor === 'user' && admins.has(auth.userId);
-
-  const refuse = async (
-    c: Context<AuthEnv>,
-    action: 'domain_binding.created' | 'domain_binding.status_changed',
-  ) => {
-    await recordOutcome(c, audit, {
-      action,
-      result: 'denied',
-      actor: actorOf(c.get('auth')),
-      reason: 'not_platform_admin',
-      ...requestFields(c),
-    });
-    return c.json({ error: 'platform_forbidden' }, 403);
-  };
-
   app.get('/v1/platform/domain-bindings', async (c) => {
-    if (!isPlatformAdmin(c.get('auth'))) return c.json({ error: 'platform_forbidden' }, 403);
+    const admin = await platformAdminOf(c, admins);
+    if (admin instanceof Response) return admin;
     return c.json({ domains: (await brands.listDomains()).map(domainView) });
   });
 
   // Registers a domain for an existing, active account or organization. It starts pending.
   app.post('/v1/platform/domain-bindings', async (c) => {
     const auth = c.get('auth');
-    if (!isPlatformAdmin(auth) || auth.actor !== 'user') {
-      return refuse(c, 'domain_binding.created');
-    }
+    const admin = await platformAdminOf(c, admins, { audit, action: 'domain_binding.created' });
+    if (admin instanceof Response) return admin;
     return guardedBranding(c, async () => {
       const input = await body(c);
       const hostname = parseHostname(input.hostname);
@@ -385,6 +368,7 @@ export function registerBrandingRoutes(app: Hono<AuthEnv>, deps: BrandingDepende
             action: 'domain_binding.created',
             result: 'success',
             actor: actorOf(auth),
+            actorRole: admin.role,
             ...(target.type === 'organization'
               ? { organizationId: target.organizationId }
               : { commercialAccountId: target.commercialAccountId }),
@@ -401,9 +385,11 @@ export function registerBrandingRoutes(app: Hono<AuthEnv>, deps: BrandingDepende
   // Moves a domain along its statuses. Verification is the administrator's for now: no DNS check.
   app.post('/v1/platform/domain-bindings/:hostname/status', async (c) => {
     const auth = c.get('auth');
-    if (!isPlatformAdmin(auth) || auth.actor !== 'user') {
-      return refuse(c, 'domain_binding.status_changed');
-    }
+    const admin = await platformAdminOf(c, admins, {
+      audit,
+      action: 'domain_binding.status_changed',
+    });
+    if (admin instanceof Response) return admin;
     return guardedBranding(c, async () => {
       const hostname = c.req.param('hostname') ?? '';
       const current = isHostname(hostname) ? await brands.findDomain(hostname) : undefined;
@@ -428,6 +414,7 @@ export function registerBrandingRoutes(app: Hono<AuthEnv>, deps: BrandingDepende
             action: 'domain_binding.status_changed',
             result: 'success',
             actor: actorOf(auth),
+            actorRole: admin.role,
             target: { type: 'domain_binding', id: hostname },
             transition: { from: current.status, to: next.status },
             ...requestFields(c),
