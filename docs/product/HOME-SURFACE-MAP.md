@@ -26,6 +26,8 @@
 | Top bar: active agents count          | specialists                                                      | `TopBar`                   | none                                        | none                                                                | real data                                                                    |
 | Sidebar "Platform"                    | platform AI view (ADR-0082)                                      | `Sidebar`                  | click                                       | `/platform`                                                         | only for platform administrators; absent for everyone else                   |
 | Sidebar "Partners and agencies"       | partners and agencies (ADR-0088)                                 | `Sidebar`                  | click                                       | `/settings/partners`                                                | only with `relationship.read` (owner); absent for everyone else              |
+| Sidebar "Brand"                       | the organization's brand (ADR-0090)                              | `Sidebar`                  | click                                       | `/settings/brand`                                                   | only with `brand.manage` (owner); absent for everyone else                   |
+| Sidebar "Partner console"             | partner and agency accounts (ADR-0090)                           | `Sidebar`                  | click                                       | `/partner`                                                          | only for a member of a commercial account; absent for everyone else          |
 
 ## What the Home needs next
 

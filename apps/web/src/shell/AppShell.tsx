@@ -47,6 +47,11 @@ import { createApprovalsClient } from '../approvals/approvalsClient.js';
 import { createAIUsageClient } from '../aiUsage/aiUsageClient.js';
 import { PlatformPage } from '../platform/PlatformPage.js';
 import { PartnersPage } from '../partners/PartnersPage.js';
+import { applyBrand, BrandContext, useBrand, type PublicBrand } from '../brand/brand.js';
+import { BrandSettings } from '../brand/BrandSettings.js';
+import { createOrganizationBrandClient } from '../brand/organizationBrand.js';
+import { PartnerConsole } from '../commercial/PartnerConsole.js';
+import { createConsoleClient } from '../commercial/consoleClient.js';
 import { createPartnersClient } from '../partners/partnersClient.js';
 import { createPlatformClient } from '../platform/platformClient.js';
 import { DocumentsPage } from '../documents/DocumentsPage.js';
@@ -87,6 +92,7 @@ export function AppShell(locale: LocaleProps) {
   const canReadAIUsage = useCan('ai_usage.read');
   const canReadPartners = useCan('relationship.read');
   const canManagePartners = useCan('relationship.manage');
+  const canManageBrand = useCan('brand.manage');
   const canReadApprovals = useCan('approval.read');
   const canManageAgents = useCan('specialist.manage');
   const canReadTools = useCan('tool.read');
@@ -116,6 +122,20 @@ export function AppShell(locale: LocaleProps) {
       live = false;
     };
   }, [platform, signedIn]);
+  // Whether this person belongs to a partner or agency (ADR-0090): the API lists only their own.
+  const commercialConsole = useMemo(() => createConsoleClient(services.api.request), [services]);
+  const [commercialMember, setCommercialMember] = useState(false);
+  useEffect(() => {
+    if (!signedIn) return;
+    let live = true;
+    commercialConsole.accounts().then(
+      (accounts) => live && setCommercialMember(accounts.length > 0),
+      () => live && setCommercialMember(false),
+    );
+    return () => {
+      live = false;
+    };
+  }, [commercialConsole, signedIn]);
   useEffect(() => {
     if (!menuOpen) return;
     const close = (event: KeyboardEvent) => {
@@ -150,9 +170,30 @@ export function AppShell(locale: LocaleProps) {
             executions: createExecutionsClient(services.api.request, organizationId),
             automations: createAutomationsClient(services.api.request, organizationId),
             partners: createPartnersClient(services.api.request, organizationId),
+            brand: createOrganizationBrandClient(services.api.request, organizationId),
           },
     [services, organizationId],
   );
+  // The organization's brand (ADR-0090), shown inside the app once one of its levels is stored:
+  // its own, or its white-label partner's. The host's brand stays below it.
+  const hostBrand = useBrand();
+  const [organizationBrand, setOrganizationBrand] = useState<PublicBrand>();
+  const [brandVersion, setBrandVersion] = useState(0);
+  useEffect(() => {
+    if (clients === undefined) return;
+    let live = true;
+    clients.brand.read().then(
+      (found) => {
+        if (!live || found.shown === undefined) return;
+        applyBrand(found.shown);
+        setOrganizationBrand(found.shown);
+      },
+      () => undefined,
+    );
+    return () => {
+      live = false;
+    };
+  }, [clients, brandVersion]);
   const can = useMemo(
     () => (permission: string) => workspace?.permissions.has(permission) === true,
     [workspace],
@@ -363,6 +404,28 @@ export function AppShell(locale: LocaleProps) {
         <NotFound />
       );
       break;
+    case 'brand':
+      page = canReadBusiness ? (
+        <div className="light-surface">
+          <BrandSettings
+            client={clients.brand}
+            canEdit={canManageBrand}
+            onSaved={() => setBrandVersion((n) => n + 1)}
+          />
+        </div>
+      ) : (
+        <NotFound />
+      );
+      break;
+    case 'partnerConsole':
+      page = commercialMember ? (
+        <div className="light-surface">
+          <PartnerConsole client={commercialConsole} origin={globalThis.location.origin} />
+        </div>
+      ) : (
+        <NotFound />
+      );
+      break;
     case 'automations':
       page =
         canReadWorkflows || canReadPlans ? (
@@ -431,61 +494,72 @@ export function AppShell(locale: LocaleProps) {
   }
 
   return (
-    <OfficeDataProvider client={clients.office} business={clients.business} can={can}>
-      <ActivityProvider client={canReadActivity ? clients.activity : undefined}>
-        <BusinessFormats locale={locale.locale}>
-          <GiaChatProvider
-            client={canAskGia ? clients.gia : undefined}
-            {...(canManageFollowUps ? { followUps: clients.followUps } : {})}
-            {...(canAskAgents ? { agentTasks: clients.agentTasks } : {})}
-          >
-            <div className="app">
-              <Sidebar
-                route={route}
-                canReadConversations={canReadConversations}
-                canReadConnections={canReadConnections}
-                canReadMemory={canReadBusiness || canReadKnowledge}
-                canReadReports={canReadReports}
-                canReadDocuments={canReadDocuments}
-                canReadAIUsage={canReadAIUsage}
-                platformAdmin={platformAdmin}
-                canReadApprovals={canReadApprovals}
-                canReadAgents={canReadAgents}
-                canReadAutomations={canReadWorkflows || canReadPlans}
-                canReadCommandCenter={
-                  canReadAIUsage || canReadApprovals || canReadAgents || canReadPlans
-                }
-                canReadPartners={canReadPartners}
-                open={menuOpen}
-                onNavigate={() => setMenuOpen(false)}
-              />
-              {menuOpen ? (
-                <div className="app__scrim" aria-hidden="true" onClick={() => setMenuOpen(false)} />
-              ) : null}
-              <div className="app__body">
-                <TopBar
-                  organizationName={workspace.organization.name}
-                  email={me.email ?? me.userId}
-                  onSignOut={signOut}
-                  menuOpen={menuOpen}
-                  onMenu={() => setMenuOpen((open) => !open)}
-                  locale={locale}
-                  notifications={{
-                    approvals: canReadApprovals ? clients.approvals : undefined,
-                    automations: canReadPlans ? clients.automations : undefined,
-                    followUps: canReadFollowUps ? clients.followUps : undefined,
-                  }}
+    <BrandContext.Provider value={organizationBrand ?? hostBrand}>
+      <OfficeDataProvider client={clients.office} business={clients.business} can={can}>
+        <ActivityProvider client={canReadActivity ? clients.activity : undefined}>
+          <BusinessFormats locale={locale.locale}>
+            <GiaChatProvider
+              client={canAskGia ? clients.gia : undefined}
+              {...(canManageFollowUps ? { followUps: clients.followUps } : {})}
+              {...(canAskAgents ? { agentTasks: clients.agentTasks } : {})}
+            >
+              <div className="app">
+                <Sidebar
+                  route={route}
+                  canReadConversations={canReadConversations}
+                  canReadConnections={canReadConnections}
+                  canReadMemory={canReadBusiness || canReadKnowledge}
+                  canReadReports={canReadReports}
+                  canReadDocuments={canReadDocuments}
+                  canReadAIUsage={canReadAIUsage}
+                  platformAdmin={platformAdmin}
+                  canReadApprovals={canReadApprovals}
+                  canReadAgents={canReadAgents}
+                  canReadAutomations={canReadWorkflows || canReadPlans}
+                  canReadCommandCenter={
+                    canReadAIUsage || canReadApprovals || canReadAgents || canReadPlans
+                  }
+                  canReadPartners={canReadPartners}
+                  canManageBrand={canManageBrand}
+                  commercialMember={commercialMember}
+                  open={menuOpen}
+                  onNavigate={() => setMenuOpen(false)}
                 />
-                <main className="app__main" key={route.kind === 'office' ? route.slug : route.kind}>
-                  {page}
-                </main>
+                {menuOpen ? (
+                  <div
+                    className="app__scrim"
+                    aria-hidden="true"
+                    onClick={() => setMenuOpen(false)}
+                  />
+                ) : null}
+                <div className="app__body">
+                  <TopBar
+                    organizationName={workspace.organization.name}
+                    email={me.email ?? me.userId}
+                    onSignOut={signOut}
+                    menuOpen={menuOpen}
+                    onMenu={() => setMenuOpen((open) => !open)}
+                    locale={locale}
+                    notifications={{
+                      approvals: canReadApprovals ? clients.approvals : undefined,
+                      automations: canReadPlans ? clients.automations : undefined,
+                      followUps: canReadFollowUps ? clients.followUps : undefined,
+                    }}
+                  />
+                  <main
+                    className="app__main"
+                    key={route.kind === 'office' ? route.slug : route.kind}
+                  >
+                    {page}
+                  </main>
+                </div>
               </div>
-            </div>
-            <GiaQuickAsk />
-          </GiaChatProvider>
-        </BusinessFormats>
-      </ActivityProvider>
-    </OfficeDataProvider>
+              <GiaQuickAsk />
+            </GiaChatProvider>
+          </BusinessFormats>
+        </ActivityProvider>
+      </OfficeDataProvider>
+    </BrandContext.Provider>
   );
 }
 

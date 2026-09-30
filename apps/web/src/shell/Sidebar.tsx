@@ -27,6 +27,8 @@ const TOOLS: readonly { readonly id: string; readonly icon: IconName }[] = [
   { id: 'apps', icon: 'apps' },
   { id: 'settings', icon: 'settings' },
   { id: 'partners', icon: 'building' },
+  { id: 'brand', icon: 'apps' },
+  { id: 'partnerConsole', icon: 'growth' },
   { id: 'platform', icon: 'cog' },
 ];
 
@@ -44,6 +46,8 @@ export function Sidebar({
   canReadAutomations = false,
   canReadCommandCenter = false,
   canReadPartners = false,
+  canManageBrand = false,
+  commercialMember = false,
   open,
   onNavigate,
 }: {
@@ -74,6 +78,10 @@ export function Sidebar({
   readonly canReadCommandCenter?: boolean;
   /** Partners and agencies (ADR-0088), for a person with `relationship.read`. */
   readonly canReadPartners?: boolean;
+  /** The organization's brand (ADR-0090), for a person with `brand.manage`. */
+  readonly canManageBrand?: boolean;
+  /** The partner and agency console (ADR-0090), for a member of a commercial account. */
+  readonly commercialMember?: boolean;
   readonly open: boolean;
   readonly onNavigate: () => void;
 }) {
@@ -246,6 +254,18 @@ export function Sidebar({
                   icon={tool.icon}
                   path={paths.partners()}
                   current={route.kind === 'partners'}
+                  go={go}
+                >
+                  <FormattedMessage id={`nav.${tool.id}`} />
+                </NavLink>
+              ) : null
+            ) : tool.id === 'brand' || tool.id === 'partnerConsole' ? (
+              (tool.id === 'brand' ? canManageBrand : commercialMember) ? (
+                <NavLink
+                  key={tool.id}
+                  icon={tool.icon}
+                  path={tool.id === 'brand' ? paths.brand() : paths.partnerConsole()}
+                  current={route.kind === tool.id}
                   go={go}
                 >
                   <FormattedMessage id={`nav.${tool.id}`} />
