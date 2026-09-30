@@ -1,5 +1,5 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
-import { useRef, type CSSProperties, type ReactNode } from 'react';
+import { useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { GiaAvatar } from '../../gia/GiaAvatar.js';
 import { navigate } from '../../identity/router.js';
 import { paths } from '../../shell/routes.js';
@@ -21,12 +21,18 @@ import { navigateInto, prefersReducedMotion } from '../transition.js';
 import { agentAt, seatAgents, type SeatPosition } from '../workstations.js';
 import { isCurrentTask, workStateOf, type AgentWork } from './agentWork.js';
 import {
-  buildingFloors,
-  roomCentre,
-  type CentreRoom,
-  type Floor,
-  type SideRoom,
-} from './layout.js';
+  BUILDING_WIDTH,
+  circuitLevel,
+  corePoint,
+  departmentRooms,
+  giaPoint,
+  pulsesFor,
+  routeLength,
+  routeTo,
+  routeToGia,
+  tracePath,
+} from './circuits.js';
+import { buildingFloors, type CentreRoom, type Floor, type SideRoom } from './layout.js';
 import type { MotorState } from './motor.js';
 import { MELON_MARK } from '../../shell/mark.js';
 import { Workstation, type DeskOccupant } from './Workstation.js';
@@ -67,6 +73,14 @@ export function OfficeBuilding({
   );
   const floors = buildingFloors(floor);
   const context: RoomContext = { agents, work, onAgent };
+  // The department under the pointer or the focus: its circuit lights up.
+  const [hot, setHot] = useState<string | null>(null);
+  const heat = (target: EventTarget) =>
+    setHot(
+      target instanceof Element
+        ? (target.closest('[data-room]')?.getAttribute('data-room') ?? null)
+        : null,
+    );
   return (
     <section className="building" aria-labelledby="building-title">
       <h2 id="building-title" className="visually-hidden">
@@ -89,11 +103,18 @@ export function OfficeBuilding({
               />
             </p>
           )}
+          {/* The listeners only light the circuits of the room under the pointer or focus;
+              the rooms themselves are the links and buttons inside. */}
+          {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions */}
           <div
             className="building__frame"
             style={{ '--floors': floors.length } as CSSProperties}
             aria-label={intl.formatMessage({ id: 'office.scene.rooms' })}
             role="group"
+            onPointerOver={(event) => heat(event.target)}
+            onPointerLeave={() => setHot(null)}
+            onFocus={(event) => heat(event.target)}
+            onBlur={() => setHot(null)}
           >
             {floors.map((level, i) => (
               <FloorRooms
@@ -106,7 +127,7 @@ export function OfficeBuilding({
                 onMotor={onMotor}
               />
             ))}
-            <MotorLines floors={floors} context={context} motor={motor} />
+            <Circuits floors={floors} context={context} motor={motor} hot={hot} />
           </div>
         </>
       )}
@@ -318,6 +339,7 @@ function DepartmentRoom({
       ref={box}
       className={`b-room b-room--side b-room--department${lead === undefined ? '' : ` b-room--${lead}`}`}
       style={{ ...place, '--zone-hue': look.hue } as CSSProperties}
+      data-room={department.id}
     >
       <RoomPicture name={`room-${motif}`} width={480} eager={eager} />
       <WallScreen
@@ -734,94 +756,164 @@ function MotorButton({ open, onClick }: { readonly open: boolean; readonly onCli
 }
 
 /**
- * MelonMotor's lines: faint connections from the atrium to every department, and a pulse only
- * where work really moves (an agent's task under way, a plan handing work from one department to
- * the next). Decoration over the picture: the Motor's panel says the same in words.
+ * MelonMotor's circuits: lines of light from the core in the atrium to GIA and to every
+ * department's screen. They carry what really happens: pulses run along a department's line
+ * while its agents work (one per working agent, up to three, out to the room and back), in coral
+ * when something needs the person, and between departments for MelonMotor's real hand-offs. A
+ * department with agents but no work keeps a quiet line; one with nobody active, a faint one.
+ * Pointing at a room lights its line. No pulses with reduced motion.
  */
-function MotorLines({
+function Circuits({
   floors,
   context,
   motor,
+  hot,
 }: {
   readonly floors: readonly Floor[];
   readonly context: RoomContext;
   readonly motor: MotorState;
+  readonly hot: string | null;
 }) {
-  const hub = roomCentre(floors.length, 1, 'centre');
-  const origin = { x: hub.x * 100, y: (hub.y + 0.28 / floors.length) * 100 };
-  const places = new Map<string, { x: number; y: number; busy: boolean }>();
-  floors.forEach((floor, i) => {
-    for (const side of ['left', 'right'] as const) {
-      const room = floor[side];
-      if (room.kind !== 'department') continue;
-      const centre = roomCentre(floors.length, i, side);
-      const busy = context.agents.some(
-        (agent) =>
-          agent.departmentId === room.department.id &&
-          isCurrentTask(context.work.get(agent.id)) &&
-          agent.status === 'active',
-      );
-      places.set(room.department.typeId ?? room.department.id, {
-        x: centre.x * 100,
-        y: centre.y * 100,
-        busy,
-      });
-    }
-  });
-  const hq = roomCentre(floors.length, 0, 'centre');
-  const flows = motor.status === 'ready' ? motor.flows : [];
   const moving = !prefersReducedMotion();
+  const rooms = departmentRooms(floors).map((room) => {
+    const department = context.agents.filter(
+      (agent) => agent.departmentId === room.id && agent.status !== 'archived',
+    );
+    const states = new Map<AgentState, number>();
+    for (const agent of department) {
+      const state = workStateOf(agent, context.work.get(agent.id));
+      if (state !== undefined) states.set(state, (states.get(state) ?? 0) + 1);
+    }
+    const route = routeTo(room.floor, room.side);
+    return {
+      ...room,
+      route,
+      path: tracePath(route),
+      length: routeLength(route),
+      level: circuitLevel(states),
+      pulses: pulsesFor(states),
+    };
+  });
+  const active = rooms.filter((room) => room.level === 'busy' || room.level === 'attention');
+  const toGia = routeToGia();
+  const giaPath = tracePath(toGia);
+  const giaLength = routeLength(toGia);
+  const byType = new Map(rooms.map((room) => [room.type, room]));
+  const flows = motor.status === 'ready' ? motor.flows : [];
+  const core = corePoint();
+  const gia = giaPoint();
   return (
     <svg
-      className="motor-lines"
-      viewBox="0 0 100 100"
+      className="circuits"
+      viewBox={`0 0 ${BUILDING_WIDTH} ${floors.length * 100}`}
       preserveAspectRatio="none"
       aria-hidden="true"
       focusable="false"
     >
-      <line
-        x1={origin.x}
-        y1={origin.y}
-        x2={hq.x * 100}
-        y2={hq.y * 100 + 8 / floors.length}
-        className="motor-lines__line motor-lines__line--gia"
-      />
-      {[...places.entries()].map(([key, place]) => (
-        <g key={key}>
-          <line
-            x1={origin.x}
-            y1={origin.y}
-            x2={place.x}
-            y2={place.y}
-            className={`motor-lines__line${place.busy ? ' motor-lines__line--busy' : ''}`}
-          />
-          {place.busy && moving ? (
-            <circle r="0.7" className="motor-lines__pulse">
-              <animateMotion
-                dur="3.2s"
-                repeatCount="indefinite"
-                path={`M${origin.x},${origin.y} L${place.x},${place.y}`}
+      <g className={`circuit circuit--gia circuit--${active.length > 0 ? 'busy' : 'ready'}`}>
+        <path d={giaPath} className="circuit__glow" />
+        <path d={giaPath} className="circuit__trace" />
+        <circle cx={gia.x} cy={gia.y} r="1.6" className="circuit__node" />
+        {moving
+          ? active.map((room, i) => (
+              <Pulse
+                key={room.id}
+                path={giaPath}
+                seconds={giaLength / SPEED}
+                offset={i / Math.max(1, active.length)}
+                back={i % 2 === 1}
+                tone={room.level === 'attention' ? 'coral' : 'light'}
               />
-            </circle>
-          ) : null}
-        </g>
-      ))}
-      {flows.map((flow, i) => {
-        const from = places.get(flow.from);
-        const to = places.get(flow.to);
-        if (from === undefined || to === undefined) return null;
-        const path = `M${from.x},${from.y} Q${origin.x},${origin.y} ${to.x},${to.y}`;
+            ))
+          : null}
+      </g>
+      {rooms.map((room) => {
+        const seconds = room.length / SPEED;
+        const end = room.route[room.route.length - 1] ?? core;
         return (
-          <g key={`${flow.planId}-${i}`}>
-            <path d={path} className="motor-lines__flow" />
-            {moving ? (
-              <circle r="0.8" className="motor-lines__pulse motor-lines__pulse--flow">
-                <animateMotion dur="4s" repeatCount="indefinite" path={path} />
-              </circle>
+          <g
+            key={room.id}
+            className={`circuit circuit--${room.level}${hot === room.id ? ' circuit--hot' : ''}`}
+          >
+            <path d={room.path} className="circuit__glow" />
+            <path d={room.path} className="circuit__trace" />
+            <circle cx={end.x} cy={end.y} r="1.6" className="circuit__node" />
+            {moving && room.level === 'busy'
+              ? Array.from({ length: room.pulses }, (_, i) => (
+                  <Pulse
+                    key={i}
+                    path={room.path}
+                    seconds={seconds}
+                    offset={i / room.pulses}
+                    tone="light"
+                  />
+                )).concat(
+                  <Pulse key="back" path={room.path} seconds={seconds * 1.3} offset={0.5} back />,
+                )
+              : null}
+            {moving && room.level === 'attention' ? (
+              <>
+                <Pulse path={room.path} seconds={seconds} offset={0} back tone="coral" />
+                <Pulse path={room.path} seconds={seconds} offset={0.5} back tone="coral" />
+              </>
+            ) : null}
+            {moving && hot === room.id && room.level !== 'busy' && room.level !== 'attention' ? (
+              <Pulse path={room.path} seconds={seconds * 0.8} offset={0} tone="scan" />
             ) : null}
           </g>
         );
       })}
+      {flows.map((flow, i) => {
+        const from = byType.get(flow.from);
+        const to = byType.get(flow.to);
+        if (from === undefined || to === undefined) return null;
+        const route = [...from.route].reverse().concat(to.route.slice(1));
+        const path = tracePath(route);
+        return (
+          <g key={`${flow.planId}-${i}`} className="circuit circuit--flow">
+            <path d={path} className="circuit__trace" />
+            {moving ? (
+              <Pulse path={path} seconds={routeLength(route) / SPEED} offset={0} tone="coral" />
+            ) : null}
+          </g>
+        );
+      })}
+      <circle cx={core.x} cy={core.y} r="2.4" className="circuit__core" />
     </svg>
+  );
+}
+
+/** Drawing units a pulse travels in a second. */
+const SPEED = 70;
+
+/** A packet of light running along a circuit, `offset` of the way through its cycle. */
+function Pulse({
+  path,
+  seconds,
+  offset,
+  back = false,
+  tone = 'light',
+}: {
+  readonly path: string;
+  readonly seconds: number;
+  readonly offset: number;
+  readonly back?: boolean;
+  readonly tone?: 'light' | 'coral' | 'scan';
+}) {
+  const dur = Math.max(1.2, seconds);
+  return (
+    <g className={`circuit__pulse circuit__pulse--${tone}`}>
+      <circle r="3.2" className="circuit__halo" />
+      <circle r="1.2" className="circuit__dot" />
+      <animateMotion
+        dur={`${dur.toFixed(2)}s`}
+        begin={`${(-offset * dur).toFixed(2)}s`}
+        repeatCount="indefinite"
+        path={path}
+        keyPoints={back ? '1;0' : '0;1'}
+        keyTimes="0;1"
+        calcMode="linear"
+      />
+    </g>
   );
 }
