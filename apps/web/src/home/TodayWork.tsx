@@ -67,6 +67,7 @@ export function TodayWork({
   followUps,
   approvals,
   work,
+  shown = SHOWN,
 }: {
   /** With `follow_up.read`. */
   readonly followUps?: FollowUpsClient | undefined;
@@ -74,6 +75,8 @@ export function TodayWork({
   readonly approvals?: ApprovalsClient | undefined;
   /** Today's work already read by the page; without it, the panel reads it itself. */
   readonly work?: TodayWorkState;
+  /** How many entries fit, the approvals line included (the Home gives fewer on a short screen). */
+  readonly shown?: number;
 }) {
   const intl = useIntl();
   const own = useTodayWork(
@@ -89,6 +92,7 @@ export function TodayWork({
       : [];
   const dueCount = typeof due === 'object' ? due.counts.overdue + due.counts.today : 0;
   const approvalsCount = typeof pending === 'number' ? pending : 0;
+  const listed = Math.max(0, shown - (approvalsCount > 0 ? 1 : 0));
   return (
     <Panel titleId="home.tasks.title" icon="check">
       {due === undefined && pending === undefined ? (
@@ -132,7 +136,7 @@ export function TodayWork({
                 </button>
               </li>
             ) : null}
-            {items.slice(0, SHOWN).map((f) => (
+            {items.slice(0, listed).map((f) => (
               <li key={f.id} className="task">
                 <span className="task__box" aria-hidden="true" />
                 <button
@@ -157,7 +161,7 @@ export function TodayWork({
               </li>
             ))}
           </ul>
-          {dueCount > Math.min(items.length, SHOWN) ? (
+          {dueCount > Math.min(items.length, listed) ? (
             <button
               type="button"
               className="panel__link"

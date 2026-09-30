@@ -118,7 +118,14 @@ export function ActivityItemText({ item }: { readonly item: ActivityItemView }) 
   );
 }
 
-export function ActivityList({ state }: { readonly state: ActivityState }) {
+export function ActivityList({
+  state,
+  max,
+}: {
+  readonly state: ActivityState;
+  /** At most this many entries, newest first (the Home shows a few). */
+  readonly max?: number;
+}) {
   const intl = useIntl();
   const ago = useAgo();
   if (state.status === 'hidden') {
@@ -148,7 +155,7 @@ export function ActivityList({ state }: { readonly state: ActivityState }) {
   }
   return (
     <ul className="panel__list">
-      {items.map((item) => {
+      {items.slice(0, max).map((item) => {
         const who = intl.formatMessage({ id: `activity.actor.${item.actor}` });
         const body = (
           <span className="task__body">

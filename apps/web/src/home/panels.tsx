@@ -42,15 +42,22 @@ export function Panel({
  * The office's real activity (ADR-0049): what the audit trail recorded today, this week or this
  * month, in the business's time zone. It is never an example.
  */
-export function RecentActivity() {
+/** The Home shows the latest few; GIA's workplace lists them all. */
+export function RecentActivity({ shown = 3 }: { readonly shown?: number } = {}) {
   const [period, setPeriod] = useState<ActivityPeriod>('today');
   const state = useActivity(period);
+  const more = state.status === 'ready' && state.page.items.length > shown;
   return (
     <Panel titleId="home.activity.title" icon="reports">
       {state.status === 'hidden' ? null : (
         <PeriodPicker period={period} onChange={setPeriod} labelId="activity.period.label" />
       )}
-      <ActivityList state={state} />
+      <ActivityList state={state} max={shown} />
+      {more ? (
+        <button type="button" className="panel__link" onClick={() => navigate(paths.gia())}>
+          <FormattedMessage id="home.activity.all" />
+        </button>
+      ) : null}
     </Panel>
   );
 }
