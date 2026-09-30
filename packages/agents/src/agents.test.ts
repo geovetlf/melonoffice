@@ -258,6 +258,8 @@ describe('Agent tasks: asking an agent (ADR-0063)', () => {
       'invalid_task:request',
     );
     expect(await ask({ request: 'Hola\u0000' })).toBe('invalid_task:request');
+    expect(await ask({ request: 'Hola', maxCredits: 0 })).toBe('invalid_task:maxCredits');
+    expect(await ask({ request: 'Hola', maxCredits: '5' })).toBe('invalid_task:maxCredits');
     expect(await ask({ request: 'Hola', idempotencyKey: 'no spaces allowed' })).toBe(
       'invalid_task:idempotencyKey',
     );
@@ -283,6 +285,16 @@ describe('Agent tasks: asking an agent (ADR-0063)', () => {
     expect(
       await codeOf(
         w.service().assign(w.alice, lucia.identity.id, { request: 'Adiós', idempotencyKey: 'abc' }),
+      ),
+    ).toBe('idempotency_conflict');
+    // The same request with another budget is another ask, not a repeat (ADR-0100).
+    expect(
+      await codeOf(
+        w.service().assign(w.alice, lucia.identity.id, {
+          request: 'Hola',
+          idempotencyKey: 'abc',
+          maxCredits: 5,
+        }),
       ),
     ).toBe('idempotency_conflict');
     // A different key is a different task.

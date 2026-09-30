@@ -35,6 +35,7 @@ import {
   InMemoryConversationRepository,
   type ConversationRepository,
 } from '@melonoffice/conversations';
+import type { EventDraft } from '@melonoffice/events';
 import { openWallet } from '@melonoffice/credits';
 import {
   DEFAULT_DEPARTMENT_CATALOGUE,
@@ -299,6 +300,11 @@ describe.each(STORES)('AE-2 agent tasks with storage in %s', (_storage, createSt
       scheduler: { schedule: async (ref) => void queued.push(ref.followUpId) },
       now,
     });
+    const published: {
+      organizationId: string;
+      initiatedBy: string;
+      drafts: readonly EventDraft[];
+    }[] = [];
     const taskParts = createAgentTaskParts({
       stores: {
         tenancy: stores.tenancy,
@@ -311,6 +317,12 @@ describe.each(STORES)('AE-2 agent tasks with storage in %s', (_storage, createSt
         conversations: stores.conversations,
         followUps,
         timeZone: async () => 'America/Lima',
+      },
+      events: {
+        async publishRuntime(organizationId, initiatedBy, drafts) {
+          published.push({ organizationId, initiatedBy, drafts });
+          return [];
+        },
       },
       now,
     });
@@ -434,6 +446,8 @@ describe.each(STORES)('AE-2 agent tasks with storage in %s', (_storage, createSt
       agent,
       drive,
       promptOf,
+      taskParts,
+      published,
       outputs: createAgentOutputStore(stores.outputs),
       setModel: (...next: (() => Promise<ProviderOutcome>)[]) => {
         modelAnswers = next;
@@ -476,6 +490,74 @@ describe.each(STORES)('AE-2 agent tasks with storage in %s', (_storage, createSt
       followUp: null,
       facts: [],
     });
+    // Its end on the event bus, as the runtime for Alice (ADR-0102): it finished, and what it
+    // could not answer goes to a person.
+    const subject = { type: 'execution', id: must(execution).id };
+    expect(w.published).toEqual([
+      {
+        organizationId: w.orgA,
+        initiatedBy: ALICE,
+        drafts: [
+          {
+            type: 'agent_task.finished',
+            subject,
+            data: { specialistId: lucia.identity.id, outcome: 'completed' },
+            idempotencyKey: `${subject.id}:finished`,
+          },
+          {
+            type: 'agent_execution.handoff',
+            subject,
+            data: { specialistId: lucia.identity.id, reason: 'missing_information', code: null },
+            idempotencyKey: `${subject.id}:handoff`,
+          },
+        ],
+      },
+    ]);
+  });
+
+  it('1b. the Harness gives the model call its routing order and reads only the context it needs (ADR-0099)', async () => {
+    const w = await world();
+    await w.brain.propose(w.tenantA, price(25));
+    const lucia = await w.agent();
+    const workOf = async (request: string) => {
+      const asked = await w.tasks.assign(w.tenantA, lucia.identity.id, { request });
+      const execution = must(asked.execution);
+      const node = must(execution.nodes.find((n) => n.id === 'work'));
+      return w.taskParts.work.agentWork(w.tenantA, execution, node);
+    };
+    // Work on the text it is given: the cheapest model that fits, and no company memory.
+    const classify = await workOf('Clasifica este mensaje: hola');
+    expect(classify).toMatchObject({
+      strategy: 'cost_optimized',
+      metadata: { harnessIntent: 'classification', harnessPolicy: 'harness_default@1' },
+    });
+    expect(JSON.stringify(classify?.messages)).not.toContain('Combo Familiar');
+    // Analysis about a price: the best model allowed, and the company memory.
+    const analyse = await workOf('Analiza el precio del Combo Familiar');
+    expect(analyse).toMatchObject({
+      strategy: 'quality_first',
+      metadata: { skills: expect.any(Number) },
+    });
+    expect(JSON.stringify(analyse?.messages)).toContain('Combo Familiar');
+    // About customers: the CRM's counts too, never its records (ADR-0102).
+    const customers = JSON.stringify(
+      (await workOf('¿Cuántos clientes y oportunidades abiertas tenemos?'))?.messages,
+    );
+    expect(customers).toContain('crm_context');
+    expect(customers).toContain('Contacts: 0 leads, 0 customers');
+    expect(customers).toContain('Opportunities: 0 open');
+    expect(JSON.stringify(classify?.messages)).not.toContain('crm_context');
+    // Never a model or a provider: the agent's model policy and the router still choose.
+    expect(analyse).not.toHaveProperty('quality');
+    expect(analyse).not.toHaveProperty('maxCredits');
+    // A task with a budget: its one call may spend at most that (ADR-0100).
+    const budgeted = await w.tasks.assign(w.tenantA, lucia.identity.id, {
+      request: 'Redacta un saludo',
+      maxCredits: 3,
+    });
+    const execution = must(budgeted.execution);
+    const node = must(execution.nodes.find((n) => n.id === 'work'));
+    expect((await w.taskParts.work.agentWork(w.tenantA, execution, node))?.maxCredits).toBe(3);
   });
 
   it('2. asking again with the same key is the same task: nothing new runs or is charged', async () => {
@@ -515,7 +597,20 @@ describe.each(STORES)('AE-2 agent tasks with storage in %s', (_storage, createSt
     const { task } = await w.tasks.assign(w.tenantA, lucia.identity.id, { request: 'Hola' });
     await w.drive();
     expect(w.providerCalls).toHaveLength(0);
-    expect((await w.tasks.get(w.tenantA, task.id)).execution?.status).toBe('failed');
+    const { execution } = await w.tasks.get(w.tenantA, task.id);
+    expect(execution?.status).toBe('failed');
+    // A person must add credits: the hand-off says so (ADR-0102).
+    expect(w.published.flatMap((p) => p.drafts.map((d) => [d.type, d.data]))).toEqual([
+      ['agent_task.finished', { specialistId: lucia.identity.id, outcome: 'failed' }],
+      [
+        'agent_execution.handoff',
+        {
+          specialistId: lucia.identity.id,
+          reason: 'authorization_required',
+          code: execution?.failure?.code,
+        },
+      ],
+    ]);
   });
 
   it('5. a paused agent takes no new task; another organization’s agent does not exist', async () => {

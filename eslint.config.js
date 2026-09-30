@@ -24,6 +24,7 @@ const SERVER_ONLY = [
       '@melonoffice/guardrails',
       '@melonoffice/ai-gateway',
       '@melonoffice/planning',
+      '@melonoffice/harness',
       '@melonoffice/workflows',
       '@melonoffice/credits',
       '@melonoffice/firestore',

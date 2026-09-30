@@ -6,6 +6,7 @@ import {
   AI_MODALITIES,
   AI_ROUTING_STRATEGIES,
   LATENCY_TIERS,
+  QUALITY_TIERS,
   SENSITIVITIES,
 } from './request.js';
 
@@ -34,6 +35,17 @@ export function checkModelPolicy(p: ModelPolicy): ModelPolicy {
   list(p.allowedProviders, (v) => typeof v === 'string' && PROVIDER.test(v), 'allowedProviders');
   list(p.allowedModels, (v) => typeof v === 'string' && MODEL.test(v), 'allowedModels');
   list(p.preferred, (v) => typeof v === 'string' && MODEL.test(v), 'preferred');
+  list(
+    p.preferredProviders,
+    (v) => typeof v === 'string' && PROVIDER.test(v),
+    'preferredProviders',
+  );
+  if (
+    p.minimumQuality !== undefined &&
+    !(QUALITY_TIERS as readonly string[]).includes(p.minimumQuality)
+  ) {
+    invalid('minimumQuality');
+  }
   list(
     p.allowedCapabilities,
     (v) => (AI_CAPABILITIES as readonly unknown[]).includes(v),

@@ -320,3 +320,53 @@ describe('provider health', () => {
     expect(health.unavailable().size).toBe(0);
   });
 });
+
+describe('preferred providers and a quality floor (ADR-0100)', () => {
+  it('evaluates a preferred provider first, then falls back to the others in strategy order', () => {
+    const p = policy({ preferredProviders: ['gem'] });
+    expect(order('cost_optimized', {}, p)).toEqual([
+      'gem/lite',
+      'gem/pro',
+      'deep/chat',
+      'deep/reasoner',
+    ]);
+    const decision = routeModel(registry, p, 'dev', route);
+    expect(decision).toMatchObject({ status: 'selected', reason: 'preferred' });
+  });
+
+  it('never brings back a preferred provider a rule left out', () => {
+    // `deep` takes at most internal data: a confidential call never reaches it.
+    const p = policy({ preferredProviders: ['deep'] });
+    expect(order(undefined, { sensitivity: 'confidential' }, p)).toEqual(['gem/pro', 'gem/lite']);
+    // Down: the next provider serves.
+    const down = routeModel(registry, p, 'dev', route, new Set(['deep']));
+    expect(down.status === 'selected' && down.candidates.map((c) => c.provider.id)).toEqual([
+      'gem',
+      'gem',
+    ]);
+    // Not supporting what the call needs (reasoning): only the model that does.
+    expect(order(undefined, { capability: 'reasoning' }, p)).toEqual(['deep/reasoner']);
+  });
+
+  it("applies the policy's quality floor, and the higher of it and the call's", () => {
+    const p = policy({ minimumQuality: 'standard' });
+    expect(order('cost_optimized', {}, p)).not.toContain('gem/lite');
+    expect(order('cost_optimized', { quality: 'high' }, p)).toEqual(['deep/reasoner', 'gem/pro']);
+    expect(
+      routeModel(registry, policy({ minimumQuality: 'high' }), 'dev', {
+        ...route,
+        sensitivity: 'confidential',
+        capability: 'reasoning',
+      }),
+    ).toEqual({ status: 'none', reason: 'sensitivity_not_allowed' });
+  });
+
+  it('refuses a policy with an unknown preferred provider or floor', () => {
+    expect(() => checkModelPolicy(policy({ preferredProviders: ['Bad Id'] }))).toThrow(
+      AIConfigError,
+    );
+    expect(() => checkModelPolicy(policy({ minimumQuality: 'best' as never }))).toThrow(
+      AIConfigError,
+    );
+  });
+});

@@ -188,6 +188,17 @@ export interface ModelPolicy {
   readonly backoffMs: number;
   /** Models to prefer, in order (`provider/model`). Otherwise the router's fixed order applies. */
   readonly preferred?: readonly string[];
+  /**
+   * Providers to evaluate first, in order (ADR-0100): after `preferred` models, before the routing
+   * strategy. Only an order: a preferred provider's model is still left out by every rule (data,
+   * environment, capability, quality, cost, availability), and the others are the fallback.
+   */
+  readonly preferredProviders?: readonly string[];
+  /**
+   * The lowest quality any call under this policy may use (ADR-0100). Absent: none. A call may
+   * ask for more; never for less.
+   */
+  readonly minimumQuality?: AIQualityTier;
   /** How the router orders the models that fit (ADR-0072). Absent: `balanced`. */
   readonly strategy?: AIRoutingStrategy;
 }

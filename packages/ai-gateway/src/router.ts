@@ -105,6 +105,10 @@ export function routeModel(
       (min, v) => Math.min(min ?? Infinity, rank(LATENCY_TIERS, v)),
       undefined,
     );
+  // The higher of what the call asks for and what the policy requires.
+  const qualityFloor = [request.quality, policy.minimumQuality]
+    .filter((v): v is AIQualityTier => v !== undefined)
+    .reduce<number | undefined>((max, v) => Math.max(max ?? -1, rank(QUALITY_TIERS, v)), undefined);
   const estimate = (r: ResolvedModel) =>
     costMicroUsd(r.model.pricing, {
       inputTokens: request.estimatedInputTokens,
@@ -166,9 +170,7 @@ export function routeModel(
     ],
     [
       'quality_not_met',
-      (r) =>
-        request.quality === undefined ||
-        rank(QUALITY_TIERS, r.model.quality) >= rank(QUALITY_TIERS, request.quality),
+      (r) => qualityFloor === undefined || rank(QUALITY_TIERS, r.model.quality) >= qualityFloor,
     ],
     [
       'latency_not_met',
@@ -198,6 +200,12 @@ export function routeModel(
     const i = preferred.indexOf(modelKey(r.provider.id, r.model.modelId));
     return i === -1 ? preferred.length : i;
   };
+  // Preferred providers next (ADR-0100): evaluated first, never required.
+  const providers = policy.preferredProviders ?? [];
+  const providerOrder = (r: ResolvedModel) => {
+    const i = providers.indexOf(r.provider.id);
+    return i === -1 ? providers.length : i;
+  };
   type Scored = RouteCandidate;
   const cost = (r: Scored) => r.estimatedCostMicroUsd ?? Infinity;
   const quality = (r: Scored) => -rank(QUALITY_TIERS, r.model.quality);
@@ -214,7 +222,7 @@ export function routeModel(
     latency_first: [latency, cost, quality],
     reliability_first: [healthy, priority, cost, quality],
   };
-  const byStrategy = [order, ...keys[strategy], priority];
+  const byStrategy = [order, providerOrder, ...keys[strategy], priority];
   const sorted = candidates
     .map((r) => Object.freeze({ ...r, estimatedCostMicroUsd: estimate(r) }))
     .sort((a, b) => {
@@ -231,7 +239,11 @@ export function routeModel(
   return Object.freeze({
     status: 'selected',
     candidates: Object.freeze(sorted),
-    reason: first !== undefined && order(first) < preferred.length ? 'preferred' : 'best_match',
+    reason:
+      first !== undefined &&
+      (order(first) < preferred.length || providerOrder(first) < providers.length)
+        ? 'preferred'
+        : 'best_match',
     strategy,
   });
 }

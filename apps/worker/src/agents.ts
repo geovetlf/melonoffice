@@ -1,4 +1,6 @@
 import {
+  AGENT_TASK_NODE,
+  parseAgentAnswer,
   createAgentTaskFactProposer,
   createAgentTaskVerifier,
   createAgentTaskWork,
@@ -11,10 +13,12 @@ import {
   taskOf,
   type AgentTaskRepository,
 } from '@melonoffice/agents';
-import { createCompanyBrain, type KnowledgeRepository } from '@melonoffice/brain';
+import { createCompanyBrain, knowledgeItemId, type KnowledgeRepository } from '@melonoffice/brain';
 import {
+  createCommercialInsights,
   createConversationService,
   createCustomerService,
+  createOpportunityService,
   followUpIdFor,
   localDateTime,
   type ConversationRepository,
@@ -22,7 +26,7 @@ import {
 } from '@melonoffice/conversations';
 import { createDecisionEngine } from '@melonoffice/decisions';
 import type { DepartmentRepository } from '@melonoffice/departments';
-import type { Execution, OrganizationId } from '@melonoffice/domain';
+import type { Execution, OrganizationId, UserId } from '@melonoffice/domain';
 import {
   createAgentOutputStore,
   type AgentOutputRepository,
@@ -38,6 +42,13 @@ import {
   createConversationHandoffExecutor,
   type IntegrationEngine,
 } from '@melonoffice/integrations';
+import type { EventBus, EventDraft } from '@melonoffice/events';
+import {
+  createCrmContextSource,
+  handoffForTask,
+  createHarnessAgentWork,
+  createHarnessContextSource,
+} from '@melonoffice/harness';
 import type { Logger } from '@melonoffice/observability';
 import { planStepOf, type PlanRepository } from '@melonoffice/planning';
 import { createAuthorizationService } from '@melonoffice/rbac';
@@ -49,7 +60,7 @@ import type {
   VerificationSource,
 } from '@melonoffice/runtime';
 import { createSkillCatalogue, type SpecialistRepository } from '@melonoffice/specialists';
-import { isResolvedTenant, type TenancyStore } from '@melonoffice/tenancy';
+import { isResolvedTenant, type TenancyStore, type TenantContext } from '@melonoffice/tenancy';
 import type { ToolExecutors } from '@melonoffice/tools';
 
 export interface ConversationAgentStores {
@@ -182,10 +193,15 @@ export interface AgentTaskParts {
 export function createAgentTaskParts(options: {
   readonly stores: AgentTaskStores;
   readonly proposals?: AgentTaskProposalStores;
+  /**
+   * Publishes `agent_task.finished` and, when the task now needs a person,
+   * `agent_execution.handoff` (ADR-0102). Absent: nothing is published.
+   */
+  readonly events?: Pick<EventBus, 'publishRuntime'>;
   readonly logger?: Logger;
   readonly now?: () => Date;
 }): AgentTaskParts {
-  const { stores, logger, now, proposals: records } = options;
+  const { stores, logger, now, proposals: records, events } = options;
   const clock = now ?? (() => new Date());
   const authorization = createAuthorizationService();
   const brain = createCompanyBrain({
@@ -197,7 +213,51 @@ export function createAgentTaskParts(options: {
   });
   const outputs = createAgentOutputStore(stores.outputs, now);
   const skills = createSkillCatalogue();
-  const context = createBrainContextSource({ brain });
+  const brainContext = createBrainContextSource({ brain });
+  // The customer records (ADR-0102): counts and totals from the C4 insights, read as the person
+  // the task runs for, only when the task is about customers. Needs the conversations' records.
+  const fact = async (
+    organizationId: OrganizationId,
+    domain: 'identity' | 'finance',
+    key: string,
+  ) => {
+    const item = await stores.knowledge.findItem(
+      organizationId,
+      knowledgeItemId(organizationId, domain, key),
+    );
+    return item?.status === 'active' && item.value.type === 'text' ? item.value.text : undefined;
+  };
+  const crm =
+    records === undefined
+      ? undefined
+      : createCrmContextSource({
+          insights: createCommercialInsights({
+            customers: createCustomerService({
+              repository: records.conversations,
+              organizations: stores.tenancy,
+              authorization,
+              ...(now === undefined ? {} : { now }),
+            }),
+            opportunities: createOpportunityService({
+              repository: records.conversations,
+              organizations: stores.tenancy,
+              authorization,
+              businessType: (organizationId) => fact(organizationId, 'identity', 'business_type'),
+              currency: (organizationId) => fact(organizationId, 'finance', 'currency'),
+              ...(now === undefined ? {} : { now }),
+            }),
+            conversations: records.conversations,
+            authorization,
+            timeZone: records.timeZone,
+            currency: (organizationId) => fact(organizationId, 'finance', 'currency'),
+            ...(now === undefined ? {} : { now }),
+          }),
+        });
+  // The Melon Agent Harness (ADR-0099): a task, or a step of a plan, reads only the context it
+  // needs.
+  const context = createHarnessContextSource({
+    sources: { company_brain: brainContext, ...(crm === undefined ? {} : { crm }) },
+  });
   // The Decision Engine (ADR-0065, ADR-0083): what this agent may propose, from its skills'
   // actions, for the person the task is for. Rules only: no model is asked.
   const decisions = createDecisionEngine({
@@ -239,6 +299,49 @@ export function createAgentTaskParts(options: {
           followUps: records.followUps,
         }),
   };
+  /**
+   * The task's end on the event bus (ADR-0102), as the runtime for the person it ran for. Keyed on
+   * the execution, so a repeated end hook stores each event once.
+   */
+  async function publishEnd(tenant: TenantContext, execution: Execution): Promise<void> {
+    const task = taskOf(execution);
+    if (events === undefined || task === undefined || execution.specialistId === undefined) {
+      return;
+    }
+    const specialistId = execution.specialistId;
+    const subject = { type: 'execution', id: execution.id };
+    const drafts: EventDraft[] = [
+      {
+        type: 'agent_task.finished',
+        subject,
+        data: { specialistId, outcome: execution.status },
+        idempotencyKey: `${execution.id}:finished`,
+      },
+    ];
+    const record =
+      execution.status === 'completed'
+        ? await outputs.find(tenant, task.taskId, AGENT_TASK_NODE)
+        : undefined;
+    const answer = record === undefined ? undefined : parseAgentAnswer(record.output);
+    const handoff = handoffForTask({
+      status: execution.status,
+      failure: execution.failure?.code ?? null,
+      missing: answer?.missing ?? [],
+    });
+    if (handoff !== null) {
+      drafts.push({
+        type: 'agent_execution.handoff',
+        subject,
+        data: { specialistId, reason: handoff.reason, code: handoff.code },
+        idempotencyKey: `${execution.id}:handoff`,
+      });
+    }
+    await events.publishRuntime(
+      execution.organizationId as OrganizationId,
+      execution.userId as UserId,
+      drafts,
+    );
+  }
   const facts = createAgentTaskFactProposer({
     outputs,
     specialists: stores.specialists,
@@ -247,14 +350,27 @@ export function createAgentTaskParts(options: {
     brain,
     onError: (code) => logger?.warn('agent_task.facts_not_proposed', { code }),
   });
-  return Object.freeze({
-    work: createAgentTaskWork({
+  // The Melon Agent Harness (ADR-0099): a task reads only the context it needs, and its model call
+  // carries the order to try models in for what it asks. The agent's prompt, its model policy and
+  // the AI Gateway's router are unchanged.
+  const work = createHarnessAgentWork(
+    createAgentTaskWork({
       tasks: stores.tasks,
       specialists: stores.specialists,
       skills,
       context,
       proposals,
     }),
+    {
+      async taskOf(tenant, execution) {
+        const facts = taskOf(execution);
+        if (facts === undefined || !isResolvedTenant(tenant)) return undefined;
+        return stores.tasks.find(tenant.organizationId as OrganizationId, facts.taskId);
+      },
+    },
+  );
+  return Object.freeze({
+    work,
     verifier: createAgentTaskVerifier({
       outputs,
       ...(records === undefined
@@ -283,6 +399,7 @@ export function createAgentTaskParts(options: {
     onEnded: {
       async ended(tenant, execution) {
         await facts.ended(tenant, execution);
+        if (events !== undefined) await publishEnd(tenant, execution);
       },
     },
     ...(stores.plans === undefined

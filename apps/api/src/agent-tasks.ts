@@ -1,3 +1,4 @@
+import { handoffForTask } from '@melonoffice/harness';
 import {
   AGENT_TASK_NODE,
   AGENT_TASK_SCHEDULE_NODE,
@@ -166,10 +167,17 @@ export function registerAgentTaskRoutes(
       request: task.request,
       requestedBy: task.requestedBy,
       createdAt: task.createdAt,
+      maxCredits: task.maxCredits ?? null,
       status: execution?.status ?? 'unknown',
       failure: execution?.failure?.code ?? null,
       completedAt: execution?.completedAt ?? null,
       answer,
+      // Whether the task now needs a person, and why (ADR-0101). Who and how is the screen's.
+      handoff: handoffForTask({
+        status: execution?.status ?? 'unknown',
+        failure: execution?.failure?.code ?? null,
+        missing: answer?.missing ?? [],
+      }),
     };
   }
 
@@ -280,3 +288,6 @@ async function answer(c: Context<AuthEnv>, run: () => Promise<Response>): Promis
     throw error;
   }
 }
+
+/** The same answers for a task started elsewhere on a person's request (the Harness, ADR-0099). */
+export const answerTaskRequest = answer;

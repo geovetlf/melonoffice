@@ -101,6 +101,11 @@ export interface AIUsageAttribution {
   readonly departmentId?: DepartmentId;
   readonly workflowId?: WorkflowId;
   readonly executionId?: ExecutionId;
+  /**
+   * The execution this one is a step of (ADR-0102): a plan's planning execution. With it, a
+   * multi-step task's usage is its planning call plus every step's.
+   */
+  readonly parentExecutionId?: ExecutionId;
   /** What the operation was for, e.g. `summarise` or `lead_qualification`. A code, not text. */
   readonly taskType?: string;
   /** The record it was about, e.g. a conversation. */

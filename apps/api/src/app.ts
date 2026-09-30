@@ -74,6 +74,13 @@ import {
   type ForecastScheduler,
 } from '@melonoffice/forecasting';
 import { createDecisionEngine, DECIDERS } from '@melonoffice/decisions';
+import {
+  createAgentHarness,
+  createPlanningHarnessPlanner,
+  HARNESS_RISK_POLICY,
+  createDecisionAgentRouter,
+  createHarnessToolDirectory,
+} from '@melonoffice/harness';
 import { createGia } from '@melonoffice/gia';
 import type { DeploymentEnvironment, OrganizationId } from '@melonoffice/domain';
 import { createToolGate } from '@melonoffice/guardrails';
@@ -108,6 +115,7 @@ import {
   createDelegation,
   createPlanCancellationCascade,
   createPlanConductor,
+  createPlanner,
   createPlanService,
   createPlanValidator,
   type PlanRepository,
@@ -156,6 +164,7 @@ import { registerHealth } from './health.js';
 import { registerPlanRoutes } from './plans.js';
 import { registerSpecialistRoutes, toolLookupOf } from './specialists.js';
 import { giaAgentsOf, registerAgentTaskRoutes } from './agent-tasks.js';
+import { registerHarnessRoutes } from './harness.js';
 import { registerDecisionRoutes } from './decisions.js';
 import { registerTenancyRoutes } from './tenancy.js';
 import { registerToolRoutes } from './tools.js';
@@ -961,10 +970,87 @@ export function createApp({
               },
             }),
       });
+      // The Melon Agent Harness (ADR-0099): a task in the person's words, routed to an agent by
+      // the Decision Engine and started as that agent's task, on the same services as above.
+      const agentDirectory = giaAgentsOf(structure);
+      registerHarnessRoutes(app, {
+        store: tenancy,
+        authorization,
+        audit,
+        harnessFor: (requestId) => {
+          const harnessExecutions = createExecutionService({
+            repository: taskExecutions,
+            organizations: tenancy,
+            assignments: specialists.assignments,
+            authorization,
+            audit,
+            ...(requestId === undefined ? {} : { requestId }),
+          });
+          // A multi-step task gets its plan from the existing planner (ADR-0101). Its plans wait
+          // for a person whatever their risk, and run through the plan routes once approved.
+          const harnessPlans =
+            plans === undefined
+              ? undefined
+              : createPlanService({
+                  repository: plans,
+                  executions: harnessExecutions,
+                  validator: createPlanValidator({
+                    specialists,
+                    departments: structure.departments,
+                    tools,
+                    authorization,
+                    environment: undefined,
+                    riskPolicy: HARNESS_RISK_POLICY,
+                  }),
+                  organizations: tenancy,
+                  authorization,
+                  audit,
+                  ...(requestId === undefined ? {} : { requestId }),
+                });
+          return createAgentHarness({
+            authorization,
+            router: createDecisionAgentRouter(decisions),
+            directory: agentDirectory,
+            tasks: createAgentTaskService({
+              tasks: agentTasks.repository,
+              specialists: structure.specialists,
+              executions: harnessExecutions,
+              authorization,
+              ...(agentTasks.runtime === undefined ? {} : { runtime: agentTasks.runtime }),
+              ...(requestId === undefined ? {} : { requestId }),
+            }),
+            ...(aiCredits === undefined ? {} : { credits: aiCredits }),
+            tools: createHarnessToolDirectory({
+              specialists: structure.specialists,
+              skills: createSkillCatalogue(),
+              registry: tools,
+              authorization,
+            }),
+            ...(harnessPlans === undefined || aiGateway === undefined
+              ? {}
+              : {
+                  planner: createPlanningHarnessPlanner({
+                    executions: harnessExecutions,
+                    specialists,
+                    plans: harnessPlans,
+                    planner: createPlanner({
+                      plans: harnessPlans,
+                      executions: harnessExecutions,
+                      specialists,
+                      departments: structure.departments,
+                      gateway: aiGateway,
+                      authorization,
+                    }),
+                  }),
+                }),
+          });
+        },
+      });
     } else if (tenancy !== undefined) {
       const unavailable = (c: Context<Env>) => c.json({ error: 'agent_tasks_not_configured' }, 503);
       app.all('/v1/organizations/:organizationId/specialists/:specialistId/tasks', unavailable);
       app.all('/v1/organizations/:organizationId/agent-tasks/*', unavailable);
+      app.all('/v1/organizations/:organizationId/harness/*', unavailable);
     }
     // Tools are listed, never run, over HTTP: only the tool gate runs them, on the server.
     if (tenancy !== undefined) {

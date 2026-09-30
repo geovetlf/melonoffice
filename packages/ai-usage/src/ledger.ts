@@ -84,6 +84,7 @@ export function checkUsageEvent(event: AIUsageEvent): void {
     a.departmentId,
     a.workflowId,
     a.executionId,
+    a.parentExecutionId,
     a.taskType,
   ]) {
     if (code !== undefined && !isUsageCode(code)) fail('attribution');

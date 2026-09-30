@@ -69,6 +69,12 @@ export const EVENT_CATALOGUE: readonly EventDefinition[] = Object.freeze([
     specialistId: { kind: 'id' },
     outcome: { kind: 'code' },
   }),
+  // A task the Harness or an agent ran now needs a person (ADR-0101, ADR-0102): why, as codes.
+  define('agent_execution.handoff', 'execution', 'harness', {
+    specialistId: { kind: 'id' },
+    reason: { kind: 'code' },
+    code: { kind: 'code', optional: true },
+  }),
   // A decision asked for approval (ADR-0065).
   define('decision.approval_required', 'decision', 'decisions', {
     decisionType: { kind: 'code' },

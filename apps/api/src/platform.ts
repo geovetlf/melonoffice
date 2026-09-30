@@ -133,6 +133,8 @@ export function registerPlatformRoutes(app: Hono<AuthEnv>, dependencies: Platfor
           maxCostMicroUsd: p.maxCostMicroUsd ?? null,
           maxLatency: p.maxLatency ?? null,
           preferred: p.preferred ?? null,
+          preferredProviders: p.preferredProviders ?? null,
+          minimumQuality: p.minimumQuality ?? null,
           strategy: p.strategy ?? null,
           fallback: p.fallback,
           maxAttempts: p.maxAttempts,

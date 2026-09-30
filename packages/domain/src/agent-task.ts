@@ -16,4 +16,9 @@ export interface AgentTask {
   readonly request: string;
   readonly requestedBy: UserId;
   readonly createdAt: IsoTimestamp;
+  /**
+   * The most credits the task may spend on AI, when the person set a budget (ADR-0100). Absent:
+   * no task budget; each call is still limited by the balance and its model policy.
+   */
+  readonly maxCredits?: number;
 }

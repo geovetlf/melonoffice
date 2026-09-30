@@ -33,6 +33,21 @@ export const AGENT_TASK_INPUT = 'agent_task';
 /** The one node of an agent task: the agent works on the request. */
 export const AGENT_TASK_NODE = 'work';
 export const MAX_TASK_REQUEST_LENGTH = 2000;
+/** The largest budget a task may be given, in credits (a bound on input, not a price). */
+export const MAX_TASK_CREDITS = 1_000_000;
+
+/** A task's budget as it is stored: a whole number of credits, at least 1 (ADR-0100). */
+export function checkTaskCredits(value: unknown): number {
+  if (
+    typeof value !== 'number' ||
+    !Number.isSafeInteger(value) ||
+    value < 1 ||
+    value > MAX_TASK_CREDITS
+  ) {
+    throw new AgentTaskError('invalid_task', 'maxCredits');
+  }
+  return value;
+}
 export const TASK_PAGE_SIZE = Object.freeze({ page: 20, max: 50 });
 
 // Control characters other than line breaks and tabs are never stored.
@@ -175,7 +190,7 @@ export interface TaskWithExecution {
 
 export interface AgentTaskService {
   /**
-   * Asks an agent to do a task: `{ request, idempotencyKey? }`. The same key for the same agent
+   * Asks an agent to do a task: `{ request, idempotencyKey?, maxCredits? }`. The same key for the same agent
    * is the same task: asking again returns it and starts nothing new.
    */
   assign(
@@ -261,11 +276,13 @@ export function createAgentTaskService(options: AgentTaskServiceOptions): AgentT
       if (tenant.actor !== 'user') throw new AgentTaskError('permission_denied');
       if (!isRecord(input)) throw new AgentTaskError('invalid_task', 'body');
       for (const key of Object.keys(input)) {
-        if (key !== 'request' && key !== 'idempotencyKey') {
+        if (key !== 'request' && key !== 'idempotencyKey' && key !== 'maxCredits') {
           throw new AgentTaskError('invalid_task', key);
         }
       }
       const request = checkTaskRequest(input.request);
+      const maxCredits =
+        input.maxCredits === undefined ? undefined : checkTaskCredits(input.maxCredits);
       const clientKey = input.idempotencyKey ?? newKey();
       if (typeof clientKey !== 'string' || !CLIENT_KEY.test(clientKey)) {
         throw new AgentTaskError('invalid_task', 'idempotencyKey');
@@ -275,7 +292,10 @@ export function createAgentTaskService(options: AgentTaskServiceOptions): AgentT
       const id = executionIdFor(organizationId, key);
 
       const stored = await tasks.find(organizationId, id);
-      if (stored !== undefined && stored.request !== request) {
+      if (
+        stored !== undefined &&
+        (stored.request !== request || stored.maxCredits !== maxCredits)
+      ) {
         throw new AgentTaskError('idempotency_conflict');
       }
       if (stored === undefined && !canTakeNewWork(agent.status)) {
@@ -352,6 +372,7 @@ export function createAgentTaskService(options: AgentTaskServiceOptions): AgentT
             request,
             requestedBy: tenant.userId,
             createdAt: now().toISOString() as IsoTimestamp,
+            ...(maxCredits === undefined ? {} : { maxCredits }),
           }),
         ));
       if (task.request !== request) throw new AgentTaskError('idempotency_conflict');
