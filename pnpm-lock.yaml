@@ -1098,6 +1098,15 @@ importers:
       '@melonoffice/domain':
         specifier: workspace:*
         version: link:../domain
+      '@melonoffice/execution':
+        specifier: workspace:*
+        version: link:../execution
+      '@melonoffice/guardrails':
+        specifier: workspace:*
+        version: link:../guardrails
+      '@melonoffice/planning':
+        specifier: workspace:*
+        version: link:../planning
       '@melonoffice/rbac':
         specifier: workspace:*
         version: link:../rbac
@@ -1129,9 +1138,6 @@ importers:
       '@melonoffice/departments':
         specifier: workspace:*
         version: link:../departments
-      '@melonoffice/execution':
-        specifier: workspace:*
-        version: link:../execution
 
   packages/i18n:
     dependencies:

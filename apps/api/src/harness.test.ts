@@ -86,7 +86,8 @@ describe.each(STORES)('the Harness with storage in %s', (_name, createStores) =>
       verdict: 'ready',
       intent: 'analysis',
       complexity: 'complex',
-      plan: 'single_step',
+      plan: { mode: 'single_step' },
+      handoff: null,
       context: ['company_brain', 'crm'],
       agent: { id, name: 'Lucía', department: 'sales' },
       model: { strategy: 'quality_first' },
@@ -113,6 +114,7 @@ describe.each(STORES)('the Harness with storage in %s', (_name, createStores) =>
     expect(read.body).toMatchObject({
       request: 'Analiza estas ventas y dime qué clientes debería contactar.',
       status: 'running',
+      handoff: null,
     });
   });
 
@@ -127,6 +129,23 @@ describe.each(STORES)('the Harness with storage in %s', (_name, createStores) =>
     expect(dry.status).toBe(200);
     expect(dry.body).toMatchObject({
       strategy: { verdict: 'ready', model: { strategy: 'cost_optimized' }, context: [] },
+      task: null,
+    });
+    expect(kicked).toEqual([]);
+  });
+
+  it('hands a person asking for a person to a person, and says why (ADR-0101)', async () => {
+    const { call, orgA, base, agent, kicked } = await setup();
+    await agent();
+    const handed = await call('token-alice', 'POST', `${base(orgA)}/harness/tasks`, {
+      request: 'Quiero hablar con una persona',
+    });
+    expect(handed.status).toBe(200);
+    expect(handed.body).toMatchObject({
+      strategy: {
+        verdict: 'handoff_to_human',
+        handoff: { type: 'HANDOFF_TO_HUMAN', reason: 'person_requested', code: null },
+      },
       task: null,
     });
     expect(kicked).toEqual([]);

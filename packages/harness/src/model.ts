@@ -1,3 +1,4 @@
+import type { HandoffToHuman } from './handoff.js';
 import type {
   AIQualityTier,
   AIRoutingStrategy,
@@ -115,8 +116,16 @@ export interface ExecutionStrategy {
   readonly version: 1;
   readonly context: HarnessExecutionContext;
   readonly classification: TaskClassification;
-  /** One agent task, or a task that needs a plan of several steps (run by the planner later). */
-  readonly plan: { readonly mode: 'single_step' | 'multi_step' };
+  /**
+   * One agent task, or a task that needs a plan of several steps. Once the planner made the plan
+   * (ADR-0101), its id, status and step count; the plan runs only when a person approves it.
+   */
+  readonly plan: {
+    readonly mode: 'single_step' | 'multi_step';
+    readonly id?: string;
+    readonly status?: string;
+    readonly steps?: number;
+  };
   /** The context sources the task needs, and only those. */
   readonly contextPlan: readonly HarnessContextSourceId[];
   readonly agent: HarnessAgent | null;
@@ -134,6 +143,8 @@ export interface ExecutionStrategy {
     readonly maxCredits: number | null;
   };
   readonly verdict: HarnessVerdict;
+  /** When the task goes to a person (`handoff_to_human`), why (ADR-0101). */
+  readonly handoff: HandoffToHuman | null;
   /** Why, as closed codes. */
   readonly reasons: readonly string[];
 }

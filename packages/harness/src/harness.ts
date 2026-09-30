@@ -15,7 +15,15 @@ import type {
 } from '@melonoffice/domain';
 import type { AuthorizationService } from '@melonoffice/rbac';
 import { isResolvedTenant, type TenantContext } from '@melonoffice/tenancy';
+import { handoffTo, type HandoffToHuman } from './handoff.js';
 import { classifyTask, departmentOf } from './intent.js';
+import {
+  checkHarnessLimits,
+  DEFAULT_HARNESS_LIMITS,
+  depthProblem,
+  planLimitProblem,
+  type HarnessLimits,
+} from './limits.js';
 import {
   HarnessError,
   type ExecutionStrategy,
@@ -32,6 +40,7 @@ import {
   needsPlan,
   type HarnessProfilePolicy,
 } from './profile.js';
+import type { HarnessPlanner } from './planning.js';
 import { harnessToolOf, type HarnessToolDirectory } from './tools.js';
 
 /**
@@ -86,6 +95,12 @@ export interface AgentHarnessOptions {
   /** Absent: no tools are listed. */
   readonly tools?: HarnessToolDirectory;
   readonly policy?: HarnessProfilePolicy;
+  /**
+   * How a multi-step task gets its plan (ADR-0101). Absent, or the person may not create plans:
+   * a multi-step task runs as one agent task, as in block 1.
+   */
+  readonly planner?: HarnessPlanner;
+  readonly limits?: HarnessLimits;
 }
 
 export interface HarnessStart {
@@ -161,8 +176,12 @@ const contextOf = (tenant: TenantContext): HarnessExecutionContext =>
   });
 
 export function createAgentHarness(options: AgentHarnessOptions): AgentHarness {
-  const { authorization, router, directory, tasks, credits, tools } = options;
+  const { authorization, router, directory, tasks, credits, tools, planner } = options;
   const policy = checkProfilePolicy(options.policy ?? DEFAULT_HARNESS_PROFILE_POLICY);
+  const limits = checkHarnessLimits(options.limits ?? DEFAULT_HARNESS_LIMITS);
+  /** Whether a multi-step task gets a plan: a planner, and a person who may create plans. */
+  const plans = (tenant: TenantContext) =>
+    planner !== undefined && authorization.authorize(tenant, 'plan.create').allowed;
 
   async function prepare(tenant: TenantContext, raw: HarnessTask): Promise<ExecutionStrategy> {
     if (!isResolvedTenant(tenant)) throw new HarnessError('unresolved_tenant');
@@ -173,17 +192,26 @@ export function createAgentHarness(options: AgentHarnessOptions): AgentHarness {
     const classification = classifyTask(task.request);
     const reasons: string[] = [];
     const plan = { mode: needsPlan(classification) ? 'multi_step' : 'single_step' } as const;
-    // Block 1 runs one agent task; the planner takes multi-step tasks in block 3.
-    if (plan.mode === 'multi_step') reasons.push('multi_step_runs_as_single_task');
+    if (plan.mode === 'multi_step') {
+      reasons.push(plans(tenant) ? 'multi_step_needs_plan' : 'multi_step_runs_as_single_task');
+    }
+    let handoff: HandoffToHuman | null = null;
     let agent: HarnessAgent | null = null;
     let candidates: readonly HarnessAgent[] = [];
     const maxCredits = task.maxCredits ?? null;
     let budget: ExecutionStrategy['budget'] = { status: 'unavailable', maxCredits };
 
     const decide = async (): Promise<HarnessVerdict> => {
+      // An agent's own work may not start another task: no chain of agents asking agents.
+      const deep = depthProblem(tenant);
+      if (deep !== undefined) {
+        reasons.push(deep);
+        return 'refused';
+      }
       // A person asked for a person: nothing is routed and no model is asked.
       if (classification.asksForPerson) {
         reasons.push('person_requested');
+        handoff = handoffTo('person_requested');
         return 'handoff_to_human';
       }
       // Credits before anything that may spend them (routing among several agents asks a model).
@@ -255,8 +283,62 @@ export function createAgentHarness(options: AgentHarnessOptions): AgentHarness {
       tools: Object.freeze(granted.map(harnessToolOf)),
       budget: Object.freeze(budget),
       verdict,
+      handoff: handoff as HandoffToHuman | null,
       reasons: Object.freeze(reasons),
     } satisfies ExecutionStrategy);
+  }
+
+  /** A multi-step task: the planner makes the plan, which then waits for a person (ADR-0101). */
+  async function startPlan(
+    tenant: TenantContext,
+    task: HarnessTask,
+    strategy: ExecutionStrategy,
+    agent: HarnessAgent,
+  ): Promise<HarnessStart> {
+    const outcome = await (planner as HarnessPlanner).plan(tenant, {
+      request: task.request,
+      agentId: agent.id as SpecialistId,
+      ...(task.idempotencyKey === undefined ? {} : { idempotencyKey: task.idempotencyKey }),
+    });
+    const settle = (
+      verdict: HarnessVerdict,
+      handoff: HandoffToHuman | null,
+      reasons: readonly string[],
+      plan: ExecutionStrategy['plan'],
+    ): HarnessStart =>
+      Object.freeze({
+        strategy: Object.freeze({
+          ...strategy,
+          plan: Object.freeze(plan),
+          verdict,
+          handoff,
+          reasons: Object.freeze([...strategy.reasons, ...reasons]),
+        }),
+      });
+    if (outcome.status === 'failed') {
+      return settle('handoff_to_human', handoffTo('plan_failed', outcome.reason), ['plan_failed'], {
+        mode: 'multi_step',
+      });
+    }
+    const planned = {
+      mode: 'multi_step' as const,
+      id: outcome.planId,
+      status: outcome.planStatus,
+      steps: outcome.steps.length,
+    };
+    const problem = planLimitProblem(outcome.steps, limits);
+    if (problem !== undefined) {
+      if (outcome.planStatus === 'approval_required') {
+        await (planner as HarnessPlanner).cancel(tenant, outcome.planId, problem);
+        planned.status = 'cancelled';
+      }
+      return settle('handoff_to_human', handoffTo('policy', problem), [problem], planned);
+    }
+    // Approved or rejected by a person already (a repeat of the same request): as it stands.
+    if (outcome.planStatus !== 'approval_required') {
+      return settle('ready', null, ['plan_decided'], planned);
+    }
+    return settle('needs_authorization', null, ['plan_awaits_approval'], planned);
   }
 
   return Object.freeze({
@@ -267,6 +349,9 @@ export function createAgentHarness(options: AgentHarnessOptions): AgentHarness {
         return Object.freeze({ strategy });
       }
       const task = checkHarnessTask(raw);
+      if (strategy.plan.mode === 'multi_step' && plans(tenant)) {
+        return startPlan(tenant, task, strategy, strategy.agent);
+      }
       const started = await tasks.assign(tenant, strategy.agent.id, {
         request: task.request,
         ...(task.idempotencyKey === undefined ? {} : { idempotencyKey: task.idempotencyKey }),

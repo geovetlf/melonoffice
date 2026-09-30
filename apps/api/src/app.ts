@@ -76,6 +76,8 @@ import {
 import { createDecisionEngine, DECIDERS } from '@melonoffice/decisions';
 import {
   createAgentHarness,
+  createPlanningHarnessPlanner,
+  HARNESS_RISK_POLICY,
   createDecisionAgentRouter,
   createHarnessToolDirectory,
 } from '@melonoffice/harness';
@@ -113,6 +115,7 @@ import {
   createDelegation,
   createPlanCancellationCascade,
   createPlanConductor,
+  createPlanner,
   createPlanService,
   createPlanValidator,
   type PlanRepository,
@@ -974,22 +977,44 @@ export function createApp({
         store: tenancy,
         authorization,
         audit,
-        harnessFor: (requestId) =>
-          createAgentHarness({
+        harnessFor: (requestId) => {
+          const harnessExecutions = createExecutionService({
+            repository: taskExecutions,
+            organizations: tenancy,
+            assignments: specialists.assignments,
+            authorization,
+            audit,
+            ...(requestId === undefined ? {} : { requestId }),
+          });
+          // A multi-step task gets its plan from the existing planner (ADR-0101). Its plans wait
+          // for a person whatever their risk, and run through the plan routes once approved.
+          const harnessPlans =
+            plans === undefined
+              ? undefined
+              : createPlanService({
+                  repository: plans,
+                  executions: harnessExecutions,
+                  validator: createPlanValidator({
+                    specialists,
+                    departments: structure.departments,
+                    tools,
+                    authorization,
+                    environment: undefined,
+                    riskPolicy: HARNESS_RISK_POLICY,
+                  }),
+                  organizations: tenancy,
+                  authorization,
+                  audit,
+                  ...(requestId === undefined ? {} : { requestId }),
+                });
+          return createAgentHarness({
             authorization,
             router: createDecisionAgentRouter(decisions),
             directory: agentDirectory,
             tasks: createAgentTaskService({
               tasks: agentTasks.repository,
               specialists: structure.specialists,
-              executions: createExecutionService({
-                repository: taskExecutions,
-                organizations: tenancy,
-                assignments: specialists.assignments,
-                authorization,
-                audit,
-                ...(requestId === undefined ? {} : { requestId }),
-              }),
+              executions: harnessExecutions,
               authorization,
               ...(agentTasks.runtime === undefined ? {} : { runtime: agentTasks.runtime }),
               ...(requestId === undefined ? {} : { requestId }),
@@ -1001,7 +1026,25 @@ export function createApp({
               registry: tools,
               authorization,
             }),
-          }),
+            ...(harnessPlans === undefined || aiGateway === undefined
+              ? {}
+              : {
+                  planner: createPlanningHarnessPlanner({
+                    executions: harnessExecutions,
+                    specialists,
+                    plans: harnessPlans,
+                    planner: createPlanner({
+                      plans: harnessPlans,
+                      executions: harnessExecutions,
+                      specialists,
+                      departments: structure.departments,
+                      gateway: aiGateway,
+                      authorization,
+                    }),
+                  }),
+                }),
+          });
+        },
       });
     } else if (tenancy !== undefined) {
       const unavailable = (c: Context<Env>) => c.json({ error: 'agent_tasks_not_configured' }, 503);

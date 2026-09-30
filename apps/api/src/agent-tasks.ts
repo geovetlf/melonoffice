@@ -1,3 +1,4 @@
+import { handoffForTask } from '@melonoffice/harness';
 import {
   AGENT_TASK_NODE,
   AGENT_TASK_SCHEDULE_NODE,
@@ -171,6 +172,12 @@ export function registerAgentTaskRoutes(
       failure: execution?.failure?.code ?? null,
       completedAt: execution?.completedAt ?? null,
       answer,
+      // Whether the task now needs a person, and why (ADR-0101). Who and how is the screen's.
+      handoff: handoffForTask({
+        status: execution?.status ?? 'unknown',
+        failure: execution?.failure?.code ?? null,
+        missing: answer?.missing ?? [],
+      }),
     };
   }
 

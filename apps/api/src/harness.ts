@@ -29,7 +29,8 @@ function strategyView(strategy: ExecutionStrategy) {
     intent: classification.intent,
     domains: classification.domains,
     complexity: classification.complexity,
-    plan: strategy.plan.mode,
+    plan: strategy.plan,
+    handoff: strategy.handoff,
     context: strategy.contextPlan,
     agent: strategy.agent,
     candidates: strategy.candidates,
@@ -88,7 +89,8 @@ export function registerHarnessRoutes(
                     status: started.execution?.status ?? 'unknown',
                   },
           },
-          started === undefined ? 200 : 202,
+          // Something was made: a task that started, or a plan that waits for the person.
+          started === undefined && strategy.plan.id === undefined ? 200 : 202,
         );
       }),
     ),

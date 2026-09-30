@@ -22,6 +22,12 @@ import type {
   UserId,
 } from '@melonoffice/domain';
 import { createExecutionService, InMemoryExecutionRepository } from '@melonoffice/execution';
+import {
+  createPlanner,
+  createPlanService,
+  createPlanValidator,
+  InMemoryPlanRepository,
+} from '@melonoffice/planning';
 import { createAuthorizationService, ROLES, type Permission } from '@melonoffice/rbac';
 import {
   createSkillCatalogue,
@@ -32,6 +38,7 @@ import {
 import {
   createOrganization,
   InMemoryTenancyStore,
+  resolveRuntimeTenant,
   resolveTenant,
   type TenantContext,
 } from '@melonoffice/tenancy';
@@ -48,8 +55,12 @@ import {
   createHarnessAgentWork,
   createHarnessContextSource,
   createHarnessToolDirectory,
+  createPlanningHarnessPlanner,
   DEFAULT_HARNESS_PROFILE_POLICY,
+  HARNESS_RISK_POLICY,
+  handoffForTask,
   isHarnessError,
+  planLimitProblem,
   modelProfileOf,
   withHarnessProfile,
   type HarnessCredits,
@@ -101,6 +112,8 @@ async function world(
     readonly without?: readonly Permission[];
     readonly balance?: number | null;
     readonly routingAnswer?: string;
+    /** The planning model's answer, from the plan owner's id. Absent: no planner (block 1). */
+    readonly planAnswer?: (agentId: string) => unknown;
   } = {},
 ) {
   let clock = new Date(T0);
@@ -210,9 +223,58 @@ async function world(
         : { status: 'present', balance };
     },
   };
+  // The planning engine as the API builds it for the Harness (ADR-0101): the real planner,
+  // validator and plan service; only the planning model is a stand-in.
+  const planRepository = new InMemoryPlanRepository(audit);
+  const plans = createPlanService({
+    repository: planRepository,
+    executions,
+    validator: createPlanValidator({
+      specialists,
+      departments,
+      tools: createToolRegistry(TOOL_CATALOGUE),
+      authorization,
+      environment: undefined,
+      riskPolicy: HARNESS_RISK_POLICY,
+    }),
+    organizations: tenancy,
+    authorization,
+    audit: createAuditService(audit, now),
+    now,
+  });
+  let planCalls = 0;
+  const planAnswer = options.planAnswer;
+  const planner =
+    planAnswer === undefined
+      ? undefined
+      : createPlanningHarnessPlanner({
+          executions,
+          specialists,
+          plans,
+          planner: createPlanner({
+            plans,
+            executions,
+            specialists,
+            departments,
+            authorization,
+            gateway: {
+              async generate(_tenant: TenantContext, request: { specialistId?: string }) {
+                planCalls += 1;
+                return {
+                  status: 'completed',
+                  provider: 'test',
+                  model: 'planner',
+                  versions: { model: '1', policy: { id: 'test', version: 1 } },
+                  output: { structured: planAnswer(request.specialistId ?? '') },
+                };
+              },
+            } as never,
+          }),
+        });
   const harness = createAgentHarness({
     authorization,
     router: createDecisionAgentRouter(decisions),
+    ...(planner === undefined ? {} : { planner }),
     directory,
     tasks: taskService,
     credits,
@@ -239,6 +301,10 @@ async function world(
     kicked,
     creditsAsked,
     modelCalls: () => modelCalls,
+    planCalls: () => planCalls,
+    plans,
+    executions,
+    tenancy,
     audit,
   };
 }
@@ -809,5 +875,154 @@ describe('Task budget (ADR-0100)', () => {
       { taskOf: async () => ({ request: 'Redacta un saludo' }) },
     ).agentWork(w.alice, { id: 'e1' } as Execution, node);
     expect(free).not.toHaveProperty('maxCredits');
+  });
+});
+
+describe('Multi-step plans, limits and hand-off (ADR-0101)', () => {
+  const COMPLEX = 'Prepara una campaña para recuperar clientes inactivos.';
+  const step = (id: string, agentId: string, label: string, dependsOn: string[] = []) => ({
+    id,
+    kind: 'specialist',
+    label,
+    dependsOn,
+    specialistId: agentId,
+    verification: { policy: 'checks', expectedOutput: 'report', requiredChecks: ['reviewed'] },
+  });
+  const plan = (steps: unknown[]) => ({ summary: 'Campaign', objective: 'Win back', steps });
+  const twoSteps = (agentId: string) =>
+    plan([
+      step('segment', agentId, 'Segment inactive customers'),
+      step('draft', agentId, 'Draft the win-back message', ['segment']),
+    ]);
+
+  it('asks the existing planner for a plan that waits for a person, and starts nothing', async () => {
+    const w = await world({ planAnswer: twoSteps });
+    await w.agent();
+    const { strategy, task } = await w.harness.start(w.alice, {
+      request: COMPLEX,
+      idempotencyKey: 'campaign-1',
+    });
+    expect(strategy).toMatchObject({
+      verdict: 'needs_authorization',
+      handoff: null,
+      plan: { mode: 'multi_step', status: 'approval_required', steps: 2 },
+    });
+    expect(strategy.reasons).toEqual(
+      expect.arrayContaining(['multi_step_needs_plan', 'plan_awaits_approval']),
+    );
+    expect(task).toBeUndefined();
+    expect(w.kicked).toEqual([]);
+    const stored = await w.plans.get(w.alice, strategy.plan.id ?? '');
+    expect(stored.status).toBe('approval_required');
+
+    // The same request again is the same plan: the planner is not asked twice.
+    const again = await w.harness.start(w.alice, {
+      request: COMPLEX,
+      idempotencyKey: 'campaign-1',
+    });
+    expect(again.strategy.plan.id).toBe(strategy.plan.id);
+    expect(w.planCalls()).toBe(1);
+    const other = await w.harness.start(w.alice, {
+      request: `${COMPLEX} Otra cosa.`,
+      idempotencyKey: 'campaign-1',
+    });
+    expect(other.strategy.handoff).toEqual({
+      type: 'HANDOFF_TO_HUMAN',
+      reason: 'plan_failed',
+      code: 'idempotency_conflict',
+    });
+  });
+
+  it('withdraws a plan that repeats itself or goes past the limits, and hands it to a person', async () => {
+    for (const [answer, code] of [
+      [
+        (id: string) =>
+          plan([
+            step('one', id, 'Draft the message'),
+            step('two', id, 'Draft  the MESSAGE', ['one']),
+          ]),
+        'loop_detected',
+      ],
+      [
+        (id: string) => plan(Array.from({ length: 9 }, (_, i) => step(`s${i}`, id, `Part ${i}`))),
+        'too_many_steps',
+      ],
+    ] as const) {
+      const w = await world({ planAnswer: answer });
+      await w.agent();
+      const { strategy, task } = await w.harness.start(w.alice, { request: COMPLEX });
+      expect(strategy).toMatchObject({
+        verdict: 'handoff_to_human',
+        handoff: { type: 'HANDOFF_TO_HUMAN', reason: 'policy', code },
+        plan: { mode: 'multi_step', status: 'cancelled' },
+      });
+      expect(task).toBeUndefined();
+      expect((await w.plans.get(w.alice, strategy.plan.id ?? '')).status).toBe('cancelled');
+      expect(w.kicked).toEqual([]);
+    }
+  });
+
+  it('hands a plan the pipeline refused to a person, and never runs it', async () => {
+    const w = await world({ planAnswer: () => ({ summary: 'x' }) });
+    await w.agent();
+    const { strategy, task } = await w.harness.start(w.alice, { request: COMPLEX });
+    expect(strategy.verdict).toBe('handoff_to_human');
+    expect(strategy.handoff?.reason).toBe('plan_failed');
+    expect(strategy.plan).toEqual({ mode: 'multi_step' });
+    expect(task).toBeUndefined();
+  });
+
+  it('runs a multi-step task as one task for a person who may not create plans', async () => {
+    const w = await world({ planAnswer: twoSteps, without: ['plan.create'] });
+    await w.agent();
+    const { strategy, task } = await w.harness.start(w.alice, { request: COMPLEX });
+    expect(strategy.reasons).toContain('multi_step_runs_as_single_task');
+    expect(task?.execution?.status).toBe('running');
+    expect(w.planCalls()).toBe(0);
+  });
+
+  it("refuses a task from an agent's own work: no chain of agents asking agents", async () => {
+    const w = await world({ planAnswer: twoSteps });
+    await w.agent();
+    const runtime = await resolveRuntimeTenant(ALICE, w.orgA, w.tenancy);
+    const { strategy, task } = await w.harness.start(runtime, { request: 'Redacta un saludo' });
+    expect(strategy).toMatchObject({ verdict: 'refused', reasons: ['depth_exceeded'] });
+    expect(task).toBeUndefined();
+    expect(w.creditsAsked).toEqual([]);
+  });
+
+  it('says why a plan may not run, from its steps alone', () => {
+    const s = (id: string, specialistId: string, label = id) => ({
+      id,
+      label,
+      dependsOn: [],
+      specialistId,
+    });
+    expect(planLimitProblem([s('a', 'x'), s('b', 'x')])).toBeUndefined();
+    expect(planLimitProblem([s('a', 'x', 'Café'), s('b', 'x', 'cafe')])).toBe('loop_detected');
+    expect(planLimitProblem([s('a', 'x', 'Café'), s('b', 'y', 'cafe')])).toBeUndefined();
+    expect(planLimitProblem(['a', 'b', 'c', 'd', 'e'].map((id) => s(id, id)))).toBe(
+      'too_many_agents',
+    );
+    expect(
+      planLimitProblem([s('a', 'x'), s('b', 'x')], { maxSteps: 1, maxAgents: 1, maxDepth: 1 }),
+    ).toBe('too_many_steps');
+  });
+
+  it('says when a finished or stopped task goes to a person, and why', () => {
+    const at = (status: string, failure: string | null = null, missing: string[] = []) =>
+      handoffForTask({ status, failure, missing });
+    expect(at('running')).toBeNull();
+    expect(at('completed')).toBeNull();
+    expect(at('cancelled')).toBeNull();
+    expect(at('failed', 'approval_rejected')).toBeNull();
+    expect(at('completed', null, ['price list'])).toMatchObject({ reason: 'missing_information' });
+    expect(at('waiting_approval')).toMatchObject({ reason: 'authorization_required' });
+    expect(at('failed', 'credit_limit_exceeded')).toEqual({
+      type: 'HANDOFF_TO_HUMAN',
+      reason: 'authorization_required',
+      code: 'credit_limit_exceeded',
+    });
+    expect(at('failed', 'provider_unavailable')).toMatchObject({ reason: 'repeated_error' });
   });
 });

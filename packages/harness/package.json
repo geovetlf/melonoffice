@@ -22,6 +22,9 @@
     "@melonoffice/agents": "workspace:*",
     "@melonoffice/decisions": "workspace:*",
     "@melonoffice/domain": "workspace:*",
+    "@melonoffice/execution": "workspace:*",
+    "@melonoffice/guardrails": "workspace:*",
+    "@melonoffice/planning": "workspace:*",
     "@melonoffice/rbac": "workspace:*",
     "@melonoffice/specialists": "workspace:*",
     "@melonoffice/tenancy": "workspace:*",
@@ -33,7 +36,6 @@
     "@melonoffice/auth": "workspace:*",
     "@melonoffice/config": "workspace:*",
     "@melonoffice/credits": "workspace:*",
-    "@melonoffice/departments": "workspace:*",
-    "@melonoffice/execution": "workspace:*"
+    "@melonoffice/departments": "workspace:*"
   }
 }
