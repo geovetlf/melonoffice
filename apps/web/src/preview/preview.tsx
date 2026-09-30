@@ -11,6 +11,7 @@ import { REFRESH_KEY } from '../identity/session.js';
 import { API, KEY, fakeBackend, memoryStore } from '../identity/testing.js';
 import { Root } from '../Root.js';
 import { applyReviewFont } from './fonts.js';
+import { previewFetch, previewRoutes } from './routes.js';
 import { SCENARIOS, type ScenarioName } from './scenarios.js';
 
 /**
@@ -18,12 +19,16 @@ import { SCENARIOS, type ScenarioName } from './scenarios.js';
  * the tests use (`identity/testing.ts`). It is served by `vite` at `/preview.html` only: the
  * production build has `index.html` as its one entry, so none of this ships.
  *
- * `?scenario=` picks the office's state (see `scenarios.ts`), `?route=` the page to open,
- * `?locale=` the language, `?brand=rrggbb` a white-label colour, applied as a host's brand is, and
- * `?font=` one of the typefaces under review (see `fonts.ts`).
+ * `?scenario=` picks the office's state (`empty`, `active` or `pages`, see `scenarios.ts`),
+ * `?route=` the page to open (its `#` encoded as `%23`, as in `/invite%23t=…`), `?locale=` the
+ * language, `?brand=rrggbb` a white-label colour, applied as a host's brand is, and `?font=` one of
+ * the typefaces under review (see `fonts.ts`). `?signedOut=1` opens with no session, for the public
+ * pages (`/login`, `/signup`, `/forgot-password`, `/invite`, `/join`), and `?noOrg=1` signs in a
+ * person who belongs to no organization (the page without an organization).
  */
 const params = new URLSearchParams(globalThis.location.search);
-const scenario: ScenarioName = params.get('scenario') === 'empty' ? 'empty' : 'active';
+const asked = params.get('scenario');
+const scenario: ScenarioName = asked === 'empty' || asked === 'pages' ? asked : 'active';
 const locale: Locale = params.get('locale') === 'en' ? 'en' : 'es';
 const route = params.get('route') ?? '/';
 const brandColor = params.get('brand');
@@ -33,11 +38,19 @@ const brand: PublicBrand | undefined =
     : { context: 'organization', productName: 'Acme Office', primaryColor: `#${brandColor}` };
 
 const backend = fakeBackend();
+const routes = previewRoutes();
 const store = memoryStore();
-backend.options.validRefresh.add('refresh-preview');
-store.setItem(REFRESH_KEY, 'refresh-preview');
-SCENARIOS[scenario](backend);
-const services = createServices({ apiUrl: API, identityApiKey: KEY }, backend.fetch, store);
+if (params.get('signedOut') !== '1') {
+  backend.options.validRefresh.add('refresh-preview');
+  store.setItem(REFRESH_KEY, 'refresh-preview');
+}
+SCENARIOS[scenario](backend, routes);
+if (params.get('noOrg') === '1') backend.options.organizations = [];
+const services = createServices(
+  { apiUrl: API, identityApiKey: KEY },
+  previewFetch(backend, routes),
+  store,
+);
 
 globalThis.history.replaceState(null, '', route);
 
