@@ -140,6 +140,54 @@ describe.each(STORES)('platform operations with storage in %s', (_name, createSt
       ]);
     });
 
+    it('a suspended or closed partner gains no customer, even from a request already made', async () => {
+      const { call, accounts, partnerA, tenantA, current } = await setup();
+      const rel = `/v1/organizations/${tenantA}/commercial-relationships`;
+      expect(
+        (
+          await call('carol', 'POST', `/v1/commercial/accounts/${partnerA.id}/customers`, {
+            organizationId: tenantA,
+            mode: 'reseller',
+            scopes: ['summary'],
+          })
+        ).status,
+      ).toBe(201);
+      const pending = async () =>
+        ((await call('alice', 'GET', rel)).body.relationships as { updatedAt: string }[])[0]
+          ?.updatedAt;
+      await call('alice', 'POST', `${accounts}/${partnerA.id}/status`, {
+        status: 'suspended',
+        expectedUpdatedAt: (await current()).updatedAt,
+      });
+      expect(
+        await call('alice', 'POST', `${rel}/${partnerA.id}/accept`, {
+          scopes: ['summary'],
+          expectedUpdatedAt: await pending(),
+        }),
+      ).toEqual({ status: 409, body: { error: 'commercial_account_inactive' } });
+      await call('alice', 'POST', `${accounts}/${partnerA.id}/status`, {
+        status: 'closed',
+        expectedUpdatedAt: (await current()).updatedAt,
+        confirmName: 'Partner A',
+      });
+      expect(
+        (
+          await call('alice', 'POST', `${rel}/${partnerA.id}/accept`, {
+            scopes: ['summary'],
+            expectedUpdatedAt: await pending(),
+          })
+        ).body.error,
+      ).toBe('commercial_account_inactive');
+      // The owner can still end the request.
+      expect(
+        (
+          await call('alice', 'POST', `${rel}/${partnerA.id}/end`, {
+            expectedUpdatedAt: await pending(),
+          })
+        ).status,
+      ).toBe(200);
+    });
+
     it('refuses a stale version, an unknown status and an unknown account, audited', async () => {
       const { call, accounts, partnerA, events } = await setup();
       const path = `${accounts}/${partnerA.id}/status`;

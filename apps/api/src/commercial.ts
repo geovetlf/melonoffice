@@ -859,6 +859,11 @@ export function registerCommercialRoutes(app: Hono<AuthEnv>, deps: CommercialDep
     `${base}/:accountId/accept`,
     ownerDecides(async (c, tenant, current, input) => {
       if (current.status !== 'pending') return c.json({ error: 'relationship_not_pending' }, 409);
+      // A suspended or closed partner gains no customer (ADR-0091): its request waits, or ends.
+      const account = await commercial.findAccount(current.commercialAccountId);
+      if (account?.status !== 'active') {
+        return c.json({ error: 'commercial_account_inactive' }, 409);
+      }
       let scopes;
       try {
         scopes = narrowed(current.scopes, input.scopes);
