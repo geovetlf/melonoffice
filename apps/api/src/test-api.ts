@@ -145,6 +145,9 @@ const IDENTITIES: Record<string, VerifiedIdentity> = {
   'token-dave': { subject: 'uid-dave', email: 'dave@example.com', emailVerified: true },
   'token-erin': { subject: 'uid-erin', email: 'erin@example.com', emailVerified: true },
   'token-frank': { subject: 'uid-frank', email: 'frank@example.com', emailVerified: true },
+  // Invited people (ADR-0089): Heidi has no organization yet; Ivan is a member, not an owner.
+  'token-heidi': { subject: 'uid-heidi', email: 'Heidi@Example.com', emailVerified: true },
+  'token-ivan': { subject: 'uid-ivan', email: 'ivan@example.com', emailVerified: true },
 };
 export const verifier: IdTokenVerifier = {
   async verify(token) {

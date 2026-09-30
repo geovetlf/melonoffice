@@ -71,6 +71,7 @@ export interface AuditTarget {
     | 'commercial_account'
     | 'commercial_membership'
     | 'customer_relationship'
+    | 'customer_invitation'
     | 'brand_config'
     | 'domain_binding';
   readonly id: string;

@@ -5,6 +5,7 @@ import { useEffect, useId, useState, type FormEvent, type ReactNode } from 'reac
 import { useAuth } from './AuthProvider.js';
 import type { IdentityErrorCode } from './identityPlatform.js';
 import { navigate } from './router.js';
+import { INVITE_PATH, pendingInvitationToken } from '../invitations/invitationToken.js';
 
 export interface LocaleProps {
   readonly locale: Locale;
@@ -67,13 +68,15 @@ export function Redirect({ to }: { readonly to: string }) {
   return null;
 }
 
-const SIGN_IN_ERRORS: Record<IdentityErrorCode, string> = {
+export const SIGN_IN_ERRORS: Record<IdentityErrorCode, string> = {
   invalid_credentials: 'auth.error.invalid_credentials',
   user_disabled: 'auth.error.user_disabled',
   too_many_attempts: 'auth.error.too_many_attempts',
   session_expired: 'auth.error.unavailable',
   network: 'auth.error.network',
   unavailable: 'auth.error.unavailable',
+  email_exists: 'auth.error.email_exists',
+  weak_password: 'auth.error.weak_password',
 };
 
 /**
@@ -89,7 +92,10 @@ export function LoginPage(locale: LocaleProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<IdentityErrorCode | undefined>();
 
-  if (state.status === 'signed_in') return <Redirect to="/" />;
+  // Someone following an invitation link goes back to it once signed in (ADR-0089).
+  if (state.status === 'signed_in') {
+    return <Redirect to={pendingInvitationToken() === undefined ? '/' : INVITE_PATH} />;
+  }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -231,7 +237,7 @@ const CREATE_ERRORS = new Set(['invalid_organization_name', 'organization_limit_
  * A new user's first step: name their organization. The API creates it with them as owner and
  * decides everything else (plan, departments, credits); this form sends only the name.
  */
-function CreateOrganization() {
+export function CreateOrganization() {
   const { createOrganization } = useAuth();
   const id = useId();
   const [name, setName] = useState('');

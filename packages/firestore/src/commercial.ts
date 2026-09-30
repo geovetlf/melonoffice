@@ -16,6 +16,9 @@ import type {
   CommercialMembershipStatus,
   CommissionConfig,
   CustomerAccessScope,
+  CustomerInvitation,
+  CustomerInvitationId,
+  CustomerInvitationStatus,
   CustomerMode,
   CustomerRelationship,
   CustomerRelationshipId,
@@ -31,7 +34,10 @@ import {
   CUSTOMER_ACCESS_SCOPES,
   CUSTOMER_MODES,
   customerRelationshipIdOf,
+  INVITATION_STATUSES,
   isCommercialAccountId,
+  isCustomerInvitationId,
+  isInvitationTokenHash,
   isOrganizationId,
   TenancyError,
   type CommercialRepository,
@@ -42,6 +48,7 @@ import { AUDIT_LOGS, toAuditDocument } from './audit.js';
 export const COMMERCIAL_ACCOUNTS = 'commercialAccounts';
 export const COMMERCIAL_MEMBERSHIPS = 'commercialMemberships';
 export const CUSTOMER_RELATIONSHIPS = 'customerRelationships';
+export const CUSTOMER_INVITATIONS = 'customerInvitations';
 
 /** `commercialAccounts/{accountId}` */
 interface AccountDocument {
@@ -74,6 +81,23 @@ interface RelationshipDocument {
   readonly scopes: readonly string[];
   readonly billing: string | null;
   readonly acceptedBy: string | null;
+  readonly createdAt: FirestoreTimestamp;
+  readonly updatedAt: FirestoreTimestamp;
+}
+
+/** `customerInvitations/{invitationId}` (ADR-0089). Only the link secret's hash is stored. */
+interface InvitationDocument {
+  readonly commercialAccountId: string;
+  readonly email: string;
+  readonly mode: string;
+  readonly scopes: readonly string[];
+  readonly billing: string | null;
+  readonly status: string;
+  readonly tokenHash: string;
+  readonly expiresAt: FirestoreTimestamp;
+  readonly createdBy: string;
+  readonly decidedBy: string | null;
+  readonly organizationId: string | null;
   readonly createdAt: FirestoreTimestamp;
   readonly updatedAt: FirestoreTimestamp;
 }
@@ -171,6 +195,56 @@ function toRelationship(id: string, d: RelationshipDocument): CustomerRelationsh
     updatedAt: iso(d.updatedAt),
   });
 }
+
+function toInvitation(id: string, d: InvitationDocument): CustomerInvitation {
+  if (
+    !isCustomerInvitationId(id) ||
+    !isCommercialAccountId(d.commercialAccountId) ||
+    typeof d.email !== 'string' ||
+    !(CUSTOMER_MODES as readonly string[]).includes(d.mode) ||
+    !(INVITATION_STATUSES as readonly string[]).includes(d.status) ||
+    !Array.isArray(d.scopes) ||
+    !d.scopes.every((s) => (CUSTOMER_ACCESS_SCOPES as readonly string[]).includes(s)) ||
+    (d.billing !== null && !BILLING.includes(d.billing)) ||
+    !isInvitationTokenHash(d.tokenHash) ||
+    typeof d.createdBy !== 'string' ||
+    (d.organizationId !== null && !isOrganizationId(d.organizationId))
+  ) {
+    throw new Error('invalid customer invitation record');
+  }
+  return Object.freeze({
+    id,
+    commercialAccountId: d.commercialAccountId,
+    email: d.email,
+    mode: d.mode as CustomerMode,
+    scopes: Object.freeze([...d.scopes] as CustomerAccessScope[]),
+    ...(d.billing === null ? {} : { billing: d.billing as BillingRelationship }),
+    status: d.status as CustomerInvitationStatus,
+    tokenHash: d.tokenHash,
+    expiresAt: iso(d.expiresAt),
+    createdBy: d.createdBy as UserId,
+    ...(d.decidedBy === null ? {} : { decidedBy: d.decidedBy as UserId }),
+    ...(d.organizationId === null ? {} : { organizationId: d.organizationId }),
+    createdAt: iso(d.createdAt),
+    updatedAt: iso(d.updatedAt),
+  });
+}
+
+const invitationDocument = (i: CustomerInvitation): InvitationDocument => ({
+  commercialAccountId: i.commercialAccountId,
+  email: i.email,
+  mode: i.mode,
+  scopes: [...i.scopes],
+  billing: i.billing ?? null,
+  status: i.status,
+  tokenHash: i.tokenHash,
+  expiresAt: at(i.expiresAt),
+  createdBy: i.createdBy,
+  decidedBy: i.decidedBy ?? null,
+  organizationId: i.organizationId ?? null,
+  createdAt: at(i.createdAt),
+  updatedAt: at(i.updatedAt),
+});
 
 const accountDocument = (a: CommercialAccount): AccountDocument => ({
   type: a.type,
@@ -358,6 +432,111 @@ export class FirestoreCommercialStore implements CommercialRepository {
         if (open.length >= limit) throw new TenancyError('commercial_limit_reached');
       }
       tx.set(ref, relationshipDocument(relationship));
+      this.#audit(tx, events);
+    });
+  }
+
+  async findInvitation(id: CustomerInvitationId) {
+    if (!isCustomerInvitationId(id)) return undefined;
+    const snapshot = await this.db.collection(CUSTOMER_INVITATIONS).doc(id).get();
+    return snapshot.exists
+      ? toInvitation(snapshot.id, snapshot.data() as InvitationDocument)
+      : undefined;
+  }
+
+  async findInvitationByTokenHash(tokenHash: string) {
+    if (!isInvitationTokenHash(tokenHash)) return undefined;
+    const snapshot = await this.db
+      .collection(CUSTOMER_INVITATIONS)
+      .where('tokenHash', '==', tokenHash)
+      .limit(1)
+      .get();
+    const [doc] = snapshot.docs;
+    return doc === undefined ? undefined : toInvitation(doc.id, doc.data() as InvitationDocument);
+  }
+
+  async invitationsOfAccount(accountId: CommercialAccountId) {
+    const snapshot = await this.db
+      .collection(CUSTOMER_INVITATIONS)
+      .where('commercialAccountId', '==', accountId)
+      .get();
+    return snapshot.docs.map((d) => toInvitation(d.id, d.data() as InvitationDocument));
+  }
+
+  async saveInvitation(
+    invitation: CustomerInvitation,
+    expected: CustomerInvitation | undefined,
+    events: readonly AuditEvent[],
+    limit?: number,
+  ) {
+    await this.db.runTransaction(async (tx) => {
+      const ref = this.db.collection(CUSTOMER_INVITATIONS).doc(invitation.id);
+      const snapshot = await tx.get(ref);
+      const current = snapshot.exists
+        ? toInvitation(snapshot.id, snapshot.data() as InvitationDocument)
+        : undefined;
+      if (current?.updatedAt !== expected?.updatedAt) throw new TenancyError('commercial_conflict');
+      if (limit !== undefined && invitation.status === 'pending' && current === undefined) {
+        const pending = await tx.get(
+          this.db
+            .collection(CUSTOMER_INVITATIONS)
+            .where('commercialAccountId', '==', invitation.commercialAccountId)
+            .where('status', '==', 'pending'),
+        );
+        if (pending.size >= limit) throw new TenancyError('commercial_limit_reached');
+      }
+      tx.set(ref, invitationDocument(invitation));
+      this.#audit(tx, events);
+    });
+  }
+
+  async acceptInvitation(
+    invitation: CustomerInvitation,
+    expected: CustomerInvitation,
+    relationship: CustomerRelationship,
+    expectedRelationship: CustomerRelationship | undefined,
+    events: readonly AuditEvent[],
+    limit?: number,
+  ) {
+    if (
+      relationship.id !==
+      customerRelationshipIdOf(relationship.commercialAccountId, relationship.organizationId)
+    ) {
+      throw new Error('relationship id does not match its account and organization');
+    }
+    await this.db.runTransaction(async (tx) => {
+      const invitationRef = this.db.collection(CUSTOMER_INVITATIONS).doc(invitation.id);
+      const relationshipRef = this.db.collection(CUSTOMER_RELATIONSHIPS).doc(relationship.id);
+      const [invitationSnapshot, relationshipSnapshot] = await Promise.all([
+        tx.get(invitationRef),
+        tx.get(relationshipRef),
+      ]);
+      const currentInvitation = invitationSnapshot.exists
+        ? toInvitation(invitationSnapshot.id, invitationSnapshot.data() as InvitationDocument)
+        : undefined;
+      const currentRelationship = relationshipSnapshot.exists
+        ? toRelationship(
+            relationshipSnapshot.id,
+            relationshipSnapshot.data() as RelationshipDocument,
+          )
+        : undefined;
+      if (
+        currentInvitation?.updatedAt !== expected.updatedAt ||
+        currentRelationship?.updatedAt !== expectedRelationship?.updatedAt
+      ) {
+        throw new TenancyError('commercial_conflict');
+      }
+      if (limit !== undefined) {
+        const all = await tx.get(
+          this.db
+            .collection(CUSTOMER_RELATIONSHIPS)
+            .where('commercialAccountId', '==', relationship.commercialAccountId),
+        );
+        const open = all.docs.filter((d) => (d.data() as RelationshipDocument).status !== 'ended');
+        if (open.length >= limit) throw new TenancyError('commercial_limit_reached');
+      }
+      tx.set(invitationRef, invitationDocument(invitation));
+      tx.set(relationshipRef, relationshipDocument(relationship));
       this.#audit(tx, events);
     });
   }
