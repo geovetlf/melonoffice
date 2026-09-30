@@ -142,6 +142,8 @@ describe.each(STORES)('invitations by email with storage in %s', (_name, createS
       { email: 'not-an-email', mode: 'reseller' },
       { email: 'x@example.com', mode: 'agency' },
       { email: 'x@example.com', mode: 'reseller', scopes: ['everything'] },
+      // Known, but nothing reads it yet (ADR-0096): not asked for.
+      { email: 'x@example.com', mode: 'reseller', scopes: ['summary', 'knowledge'] },
       { email: 'x@example.com', mode: 'reseller', billing: 'someone' },
     ]) {
       expect((await post('carol', partnerA, bad)).status).toBe(400);
@@ -222,16 +224,12 @@ describe.each(STORES)('invitations by email with storage in %s', (_name, createS
 
   it('an owner grants exactly the scopes they tick, none by default, for their own organization', async () => {
     const { call, invite, lookup, tenantA, tenantB, partnerA, stores } = await setup();
-    const { token, invitation } = await invite('alice@example.com', [
-      'summary',
-      'usage',
-      'knowledge',
-    ]);
+    const { token, invitation } = await invite('alice@example.com', ['summary', 'usage']);
     const seen = await lookup('alice', token);
     expect(seen).toMatchObject({
       person: 'invited',
       organization: { id: tenantA, canDecide: true },
-      invitation: { status: 'pending', scopes: ['summary', 'usage', 'knowledge'] },
+      invitation: { status: 'pending', scopes: ['summary', 'usage'] },
     });
     // More than was asked for is refused; the organization is never taken from the request.
     expect(

@@ -93,6 +93,27 @@ export function parseCommercialAccountName(value: unknown): string {
 }
 
 /**
+ * The scopes a partner may ask for now (ADR-0096): each one opens a read the API serves. The
+ * others stay known, so relationships that already hold them still read, but grant nothing, and
+ * no new invitation or request asks for them.
+ */
+export const GRANTABLE_CUSTOMER_SCOPES: readonly CustomerAccessScope[] = Object.freeze([
+  'summary',
+  'usage',
+  'billing',
+  'branding',
+]);
+
+/** Scopes asked for in a new invitation or request: only the grantable ones. */
+export function parseRequestedCustomerScopes(value: unknown): readonly CustomerAccessScope[] {
+  const scopes = parseCustomerScopes(value);
+  if (scopes.some((s) => !GRANTABLE_CUSTOMER_SCOPES.includes(s))) {
+    throw new TenancyError('invalid_customer_scopes');
+  }
+  return scopes;
+}
+
+/**
  * The scopes a relationship grants: known, without repeats, in catalogue order. An empty list is
  * valid and grants nothing beyond knowing the relationship exists.
  */

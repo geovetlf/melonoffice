@@ -26,16 +26,8 @@ import {
 
 type Load<T> = T | 'loading' | 'error';
 
-const SCOPES: readonly CustomerScope[] = [
-  'summary',
-  'usage',
-  'billing',
-  'branding',
-  'support',
-  'knowledge',
-  'conversations',
-];
-const SENSITIVE = new Set<CustomerScope>(['knowledge', 'conversations', 'support']);
+/** What a partner may ask for now (ADR-0096): each one opens a read the console shows. */
+const SCOPES: readonly CustomerScope[] = ['summary', 'usage', 'billing', 'branding'];
 /** The modes each kind of account uses (ADR-0086). */
 const MODES: Readonly<Record<ConsoleAccount['type'], readonly string[]>> = {
   partner: ['direct', 'reseller', 'white_label', 'oem', 'enterprise'],
@@ -706,12 +698,6 @@ function InviteForm({
               }}
             />{' '}
             <FormattedMessage id={`console.scope.${scope}`} />
-            {SENSITIVE.has(scope) ? (
-              <span className="documents__meta">
-                {' '}
-                <FormattedMessage id="console.scope.sensitive" />
-              </span>
-            ) : null}
           </label>
         ))}
       </fieldset>

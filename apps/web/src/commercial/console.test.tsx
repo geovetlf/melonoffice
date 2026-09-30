@@ -205,6 +205,9 @@ describe('the partner console (ADR-0090)', () => {
     if (form === null) throw new Error('no form');
     const boxes = within(form).getAllByRole('checkbox') as HTMLInputElement[];
     expect(boxes.every((b) => !b.checked)).toBe(true);
+    // Only what the console can read (ADR-0096); branding only for white label.
+    expect(boxes).toHaveLength(3);
+    expect(within(form).queryByText(/conversations|memory|Support/)).toBeNull();
     fireEvent.click(within(form).getByRole('checkbox', { name: /name, status and plan/ }));
     fireEvent.submit(form);
     const link = (await screen.findByLabelText('Invitation link')) as HTMLInputElement;

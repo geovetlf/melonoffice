@@ -21,6 +21,7 @@ import {
   newCustomerInvitationId,
   newInvitationToken,
   parseCustomerScopes,
+  parseRequestedCustomerScopes,
   parseInvitationEmail,
   resolveTenant,
   TenancyError,
@@ -169,7 +170,7 @@ export function registerInvitationRoutes(app: Hono<AuthEnv>, deps: InvitationDep
       }
       let scopes;
       try {
-        scopes = parseCustomerScopes(input.scopes ?? []);
+        scopes = parseRequestedCustomerScopes(input.scopes ?? []);
       } catch {
         return bad(c, 'scopes');
       }
