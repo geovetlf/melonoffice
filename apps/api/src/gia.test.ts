@@ -131,7 +131,7 @@ describe.each(STORES)('GIA chat with storage in %s (ADR-0052)', (_name, createSt
           }),
     });
     const aliceId = (await ctx.register('token-alice')) as UserId;
-    await ctx.register('token-bob');
+    const bobId = (await ctx.register('token-bob')) as UserId;
     const post = async (token: string, path: string, body: unknown) => {
       const response = await ctx.app.request(
         path,
@@ -157,7 +157,7 @@ describe.each(STORES)('GIA chat with storage in %s (ADR-0052)', (_name, createSt
     await credits.grant(tenantA, { amount: 10, referenceId: 'grant-1', reason: 'test_grant' });
     const ask = (token: string, org: string, body: Json) =>
       post(token, `/v1/organizations/${org}/gia/messages`, body);
-    return { ...ctx, stores, provider, orgA, orgB, tenantA, credits, ask, post };
+    return { ...ctx, stores, provider, orgA, orgB, tenantA, credits, ask, post, bobId };
   }
 
   const body = (message = '¿Qué pasó hoy?', requestKey = 'click-0001') => ({
@@ -219,6 +219,40 @@ describe.each(STORES)('GIA chat with storage in %s (ADR-0052)', (_name, createSt
     const events = (await t.stores.auditEvents()).filter((e) => e.organizationId === t.orgA);
     expect(JSON.stringify(events)).not.toContain('Qué pasó');
     expect(JSON.stringify(events)).not.toContain('mensaje de un cliente');
+  });
+
+  it("presents herself with the organization's own brand, and only that organization's (ADR-0095)", async () => {
+    const t = await setup();
+    const saved = await t.app.request(
+      `/v1/organizations/${t.orgA}/brand`,
+      t.as('token-alice', {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          config: { productName: 'Luna Office', assistantName: 'Luz' },
+          expectedUpdatedAt: null,
+        }),
+      }),
+    );
+    expect(saved.status).toBe(200);
+    await t.ask('token-alice', t.orgA, body());
+    const sent = JSON.stringify(t.provider.calls[0]);
+    expect(sent).toContain('assistant name: Luz');
+    expect(sent).toContain('app name: Luna Office');
+    expect(sent).not.toContain('MelonMotor');
+    // Another organization keeps MelonOffice's own names.
+    const tenantB = await resolveTenant(
+      { actor: 'user', userId: t.bobId, emailVerified: true },
+      t.orgB,
+      t.stores.tenancy,
+    );
+    await t.credits.grant(tenantB, { amount: 10, referenceId: 'grant-b', reason: 'test_grant' });
+    expect((await t.ask('token-bob', t.orgB, body())).status).toBe(200);
+    expect(t.provider.calls).toHaveLength(2);
+    const other = JSON.stringify(t.provider.calls.at(-1));
+    expect(other).not.toContain('<presentation>');
+    expect(other).not.toContain('Luna Office');
+    expect(other).toContain('powered by MelonMotor');
   });
 
   it('says so when the organization has no credits, and calls no model', async () => {

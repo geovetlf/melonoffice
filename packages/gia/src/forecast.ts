@@ -303,7 +303,7 @@ export function forecastBlock(context: GiaForecastContext, locale: GiaLocale): s
     case 'not_allowed':
       return `status: not_allowed. The person may NOT see this projection or its records.`;
     case 'unsupported':
-      return `status: unsupported. MelonOffice has no records of ${SUBJECT_WORDS[context.subject] ?? context.subject} yet, so nothing about them can be projected. No other metric stands in for them.`;
+      return `status: unsupported. The app has no records of ${SUBJECT_WORDS[context.subject] ?? context.subject} yet, so nothing about them can be projected. No other metric stands in for them.`;
     case 'unavailable': {
       const words =
         context.reason === 'horizon_out_of_range'
@@ -387,7 +387,7 @@ export function forecastBlock(context: GiaForecastContext, locale: GiaLocale): s
     isFallback
       ? '- made by: a simple estimate from recent averages (the forecasting model was not available); say so'
       : // Which model it was is the platform's to know, not the person's (only the audit names it).
-        "- made by: MelonOffice's forecasting model; never name the model",
+        "- made by: the app's forecasting model; never name the model",
     `- warnings: ${f.warnings.length === 0 ? 'none' : f.warnings.join(', ')}`,
   ].join('\n');
 }
@@ -402,7 +402,7 @@ export function forecastRules(locale: GiaLocale): readonly string[] {
     'If the warnings in <forecast> include short_history, mostly_zero or outliers_kept, say in plain words that the estimate is less reliable because of it.',
     'If <forecast> was made by a simple estimate, say it is a simple estimate from recent averages, not the forecasting model.',
     `If <forecast> says not_allowed, answer exactly "${NO_PERMISSION[locale]}" and nothing about it.`,
-    'If <forecast> says unsupported, say MelonOffice has no records of that yet, so it cannot be projected, and what they could register instead. Never answer with another metric.',
+    'If <forecast> says unsupported, say the app has no records of that yet, so it cannot be projected, and what they could register instead. Never answer with another metric.',
     'If <forecast> says insufficient_data, say which history is missing: name the metric and its unit (days, weeks or months), give the recorded and the needed amounts exactly as <forecast> states them, and say where that history comes from. Give no figure, and never say more is missing than <forecast> says.',
     'If <forecast> says invalid_data, say the history is recorded but has a problem that stops the projection, name the problem as <forecast> states it, and never say history is missing.',
     'If <forecast> says the projection is still being calculated, say so and that they can ask again in a moment. If it says unavailable, say projections are not available right now (credits_insufficient: not enough credits; busy: other projections are running; business_profile_missing or currency_missing: say exactly what <forecast> says is missing and where it is filled in; horizon_out_of_range: say how far they asked and the longest projection allowed, exactly as <forecast> states them, and that they can ask for that instead; frequency_not_supported: say this metric cannot be projected per that period).',
