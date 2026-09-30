@@ -2,7 +2,7 @@ import { FormattedMessage, useIntl } from '@melonoffice/i18n';
 import { Button } from '@melonoffice/ui';
 import { useEffect, useId, useState, type FormEvent, type ReactNode } from 'react';
 import { BrandForm } from '../brand/BrandForm.js';
-import { invitationLink } from '../invitations/invitationToken.js';
+import { invitationLink, joinLink } from '../invitations/invitationToken.js';
 import type { CustomerScope } from '../partners/partnersClient.js';
 import {
   ConsoleRequestError,
@@ -11,6 +11,7 @@ import {
   type ConsoleCustomer,
   type ConsoleInvitation,
   type ConsoleMember,
+  type ConsoleMemberInvitation,
   type CustomerBilling,
   type CustomerSummary,
   type CustomerUsage,
@@ -44,7 +45,6 @@ const ROLES: Readonly<Record<ConsoleAccount['type'], readonly string[]>> = {
   partner: ['partner.admin', 'partner.support'],
   agency: ['agency.admin', 'agency.manager'],
 };
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 /** The API's refusals this console explains in words; any other shows its code. */
 const EXPLAINED: Readonly<Record<string, string>> = {
@@ -199,7 +199,7 @@ function Account({
     <>
       <Customers account={account} client={client} admin={admin} now={now} />
       <Invitations account={account} client={client} admin={admin} origin={origin} />
-      <Members account={account} client={client} admin={admin} />
+      <Members account={account} client={client} admin={admin} origin={origin} />
       <section className="dept-office__section" aria-labelledby="console-brand">
         <h2 id="console-brand">
           <FormattedMessage id="console.brand.title" />
@@ -799,17 +799,24 @@ function Members({
   account,
   client,
   admin,
+  origin,
 }: {
   readonly account: ConsoleAccount;
   readonly client: ConsoleClient;
   readonly admin: boolean;
+  readonly origin: string;
 }) {
   const intl = useIntl();
   const id = useId();
   const [list, setList] = useLoad(() => client.members(account.id), [client, account.id]);
+  const [invited, setInvited] = useLoad(
+    () => (admin ? client.memberInvitations(account.id) : Promise.resolve([])),
+    [client, account.id, admin],
+  );
   const roles = ROLES[account.type];
-  const [userId, setUserId] = useState('');
+  const [email, setEmail] = useState('');
   const [role, setRole] = useState(roles[roles.length - 1] ?? '');
+  const [link, setLink] = useState<string>();
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState<Failure>();
 
@@ -827,6 +834,10 @@ function Members({
   const put = (m: ConsoleMember) =>
     setList((current) =>
       Array.isArray(current) ? [...current.filter((x) => x.userId !== m.userId), m] : [m],
+    );
+  const putInvitation = (i: ConsoleMemberInvitation) =>
+    setInvited((current) =>
+      Array.isArray(current) ? [i, ...current.filter((x) => x.id !== i.id)] : [i],
     );
 
   return (
@@ -876,23 +887,28 @@ function Members({
           onSubmit={(e) => {
             e.preventDefault();
             void run(async () => {
-              put(await client.addMember(account.id, userId.trim(), role));
-              setUserId('');
+              const sent = await client.inviteMember(account.id, { email: email.trim(), role });
+              putInvitation(sent.invitation);
+              setLink(joinLink(origin, sent.token));
+              setEmail('');
             });
           }}
         >
           <h3>
-            <FormattedMessage id="console.members.add" />
+            <FormattedMessage id="console.members.invite" />
           </h3>
-          <label htmlFor={`${id}-user`}>
-            <FormattedMessage id="console.members.userId" />
+          <p className="customers__meta">
+            <FormattedMessage id="console.members.inviteLead" />
+          </p>
+          <label htmlFor={`${id}-email`}>
+            <FormattedMessage id="console.members.email" />
           </label>
           <input
-            id={`${id}-user`}
-            value={userId}
-            onChange={(e) => setUserId(e.target.value)}
+            id={`${id}-email`}
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
             required
-            spellCheck={false}
           />
           <label htmlFor={`${id}-role`}>
             <FormattedMessage id="console.members.role" />
@@ -904,10 +920,43 @@ function Members({
               </option>
             ))}
           </select>
-          <Button type="submit" disabled={busy || !UUID.test(userId.trim())}>
-            <FormattedMessage id="console.members.save" />
+          <Button type="submit" disabled={busy || email.trim() === ''}>
+            <FormattedMessage id="console.members.send" />
           </Button>
         </form>
+      ) : null}
+      {link === undefined ? null : <OnceLink link={link} onDone={() => setLink(undefined)} />}
+      {admin && Array.isArray(invited) && invited.length > 0 ? (
+        <ul className="documents__list" aria-label="member invitations">
+          {invited.map((i) => (
+            <li key={i.id} className="documents__item" aria-label={i.email}>
+              <span className="documents__name">{i.email}</span>
+              <span className="documents__meta">
+                <FormattedMessage id={`console.role.${i.role}`} /> ·{' '}
+                <FormattedMessage id={`console.invitation.${i.status}`} />
+              </span>
+              {i.status === 'pending' ? (
+                <Button
+                  variant="secondary"
+                  disabled={busy}
+                  onClick={() => {
+                    if (
+                      !globalThis.confirm(
+                        intl.formatMessage({ id: 'console.members.withdrawConfirm' }),
+                      )
+                    )
+                      return;
+                    void run(async () =>
+                      putInvitation(await client.revokeMemberInvitation(account.id, i)),
+                    );
+                  }}
+                >
+                  <FormattedMessage id="console.invitation.revoke" />
+                </Button>
+              ) : null}
+            </li>
+          ))}
+        </ul>
       ) : null}
       <Failed failure={failed} />
     </section>

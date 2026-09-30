@@ -5,7 +5,12 @@ import { useEffect, useId, useState, type FormEvent, type ReactNode } from 'reac
 import { useAuth } from './AuthProvider.js';
 import type { IdentityErrorCode } from './identityPlatform.js';
 import { navigate } from './router.js';
-import { INVITE_PATH, pendingInvitationToken } from '../invitations/invitationToken.js';
+import {
+  INVITE_PATH,
+  JOIN,
+  JOIN_PATH,
+  pendingInvitationToken,
+} from '../invitations/invitationToken.js';
 
 export interface LocaleProps {
   readonly locale: Locale;
@@ -92,9 +97,15 @@ export function LoginPage(locale: LocaleProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<IdentityErrorCode | undefined>();
 
-  // Someone following an invitation link goes back to it once signed in (ADR-0089).
+  // Someone following an invitation link goes back to it once signed in (ADR-0089, ADR-0093).
   if (state.status === 'signed_in') {
-    return <Redirect to={pendingInvitationToken() === undefined ? '/' : INVITE_PATH} />;
+    const back =
+      pendingInvitationToken(undefined, JOIN) !== undefined
+        ? JOIN_PATH
+        : pendingInvitationToken() !== undefined
+          ? INVITE_PATH
+          : '/';
+    return <Redirect to={back} />;
   }
 
   async function submit(event: FormEvent) {

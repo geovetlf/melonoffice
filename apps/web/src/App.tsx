@@ -10,7 +10,8 @@ import {
 import { usePath } from './identity/router.js';
 import type { IdentityServices } from './identity/services.js';
 import { InvitePage } from './invitations/InvitePage.js';
-import { INVITE_PATH } from './invitations/invitationToken.js';
+import { JoinPage } from './invitations/JoinPage.js';
+import { INVITE_PATH, JOIN_PATH } from './invitations/invitationToken.js';
 import { AppShell } from './shell/AppShell.js';
 
 export interface AppProps extends LocaleProps {
@@ -20,7 +21,8 @@ export interface AppProps extends LocaleProps {
 
 /**
  * The web app (ADR-0036): `/login` is public, `/invite` walks an invited person in (ADR-0089),
- * and every other path is behind `ProtectedRoute`.
+ * `/join` walks someone invited to a partner or agency account in (ADR-0093), and every other
+ * path is behind `ProtectedRoute`.
  */
 export function App({ identity, ...locale }: AppProps) {
   if (identity === 'loading') {
@@ -42,6 +44,7 @@ function Pages(locale: LocaleProps) {
   const path = usePath();
   if (path === '/login') return <LoginPage {...locale} />;
   if (path === INVITE_PATH) return <InvitePage {...locale} />;
+  if (path === JOIN_PATH) return <JoinPage {...locale} />;
   return (
     <ProtectedRoute {...locale}>
       <AppShell {...locale} />

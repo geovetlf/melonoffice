@@ -555,3 +555,39 @@ export function setupApp(
     ).userId;
   return { app, lines, as, register, meta, agentOutputs, scheduled, kicked, files, ...stores };
 }
+
+type Call = (
+  who: string,
+  method: string,
+  path: string,
+  body?: unknown,
+) => Promise<{ status: number; body: Record<string, unknown> }>;
+
+/**
+ * Has an account admin invite `who` (by their test email) with `role`, and `who` accept it
+ * (ADR-0093): the only way a person joins a partner or agency account. Answers the acceptance.
+ */
+export async function joinAccount(
+  call: Call,
+  admin: string,
+  accountId: string,
+  who: string,
+  role: string,
+) {
+  const invited = await call(
+    admin,
+    'POST',
+    `/v1/commercial/accounts/${accountId}/member-invitations`,
+    {
+      email: `${who}@example.com`,
+      role,
+    },
+  );
+  if (invited.status !== 201) return invited;
+  const token = invited.body.token;
+  const looked = await call(who, 'POST', '/v1/member-invitations/lookup', { token });
+  return call(who, 'POST', '/v1/member-invitations/accept', {
+    token,
+    expectedUpdatedAt: (looked.body.invitation as { updatedAt?: string } | undefined)?.updatedAt,
+  });
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { setupApp, STORES, type Stores } from './test-api.js';
+import { joinAccount, setupApp, STORES, type Stores } from './test-api.js';
 
 /**
  * Brands and domains (ADR-0087). Cases 10 and 11 are the brief's security tests; they run against
@@ -60,10 +60,7 @@ describe.each(STORES)('brands and domains with storage in %s', (_name, createSto
     const acc = (id: string) => `/v1/commercial/accounts/${id}`;
     const members = await call('carol', 'GET', `${acc(partnerA)}/members`);
     expect(members.status).toBe(200);
-    await call('carol', 'POST', `${acc(partnerA)}/members`, {
-      userId: ids.frank,
-      role: 'partner.support',
-    });
+    await joinAccount(call, 'carol', partnerA, 'frank', 'partner.support');
     /** Invites a tenant and has its owner accept it with these scopes. */
     const relate = async (
       who: string,
