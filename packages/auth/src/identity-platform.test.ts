@@ -35,6 +35,13 @@ describe('Identity Platform ID token verification', () => {
     });
   });
 
+  it('accepts a Google sign-in (ADR-0105)', async () => {
+    const { sign, verifier } = await setup();
+    expect(
+      await verifier.verify(await sign({ firebase: { sign_in_provider: 'google.com' } })),
+    ).toEqual({ subject: 'uid-alice', email: 'alice@example.com', emailVerified: true });
+  });
+
   it('reports an unverified or missing email as such', async () => {
     const { sign, verifier } = await setup();
     const identity = await verifier.verify(
@@ -61,7 +68,8 @@ describe('Identity Platform ID token verification', () => {
     ['an iat in the future', { iat: nowSeconds + 600 }],
     ['an anonymous sign-in', { firebase: { sign_in_provider: 'anonymous' } }],
     ['a custom-token sign-in', { firebase: { sign_in_provider: 'custom' } }],
-    ['a Google sign-in, not enabled yet', { firebase: { sign_in_provider: 'google.com' } }],
+    ['a phone sign-in', { firebase: { sign_in_provider: 'phone' } }],
+    ['another identity provider', { firebase: { sign_in_provider: 'facebook.com' } }],
     ['no firebase claim', { firebase: undefined }],
     ['an Identity Platform tenant', { firebase: { sign_in_provider: 'password', tenant: 't1' } }],
   ])('rejects a token with %s', async (_name, claims) => {

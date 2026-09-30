@@ -60,6 +60,17 @@
   margin-top: var(--mo-space-4);
 }
 
+/* "or", between the password form and "Sign in with Google" (ADR-0105). */
+.login__or {
+  margin: var(--mo-space-4) 0 var(--mo-space-2);
+  text-align: center;
+  color: var(--mo-color-text-secondary);
+}
+
+.login__or + .mo-button {
+  width: 100%;
+}
+
 .notice {
   margin: 0 0 var(--mo-space-4);
   color: var(--mo-color-text-secondary);

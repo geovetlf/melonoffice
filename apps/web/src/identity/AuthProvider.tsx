@@ -11,6 +11,9 @@ import { ApiError } from './apiClient.js';
 import { IdentityError, type IdentityErrorCode } from './identityPlatform.js';
 import type { IdentityServices } from './services.js';
 
+/** Where Google sends the browser back to finish a sign-in (ADR-0105): the sign-in page. */
+export const GOOGLE_RETURN_PATH = '/login';
+
 /**
  * Who is signed in and in which organization (ADR-0036). Everything here comes from the API:
  * the user from `/v1/me`, the organization from `/v1/me/organizations` (only the caller's active
@@ -48,6 +51,13 @@ export interface Auth {
   signIn(email: string, password: string): Promise<SignInResult>;
   /** Creates an account, signs it in and asks for its verification email (ADR-0089). */
   signUp(email: string, password: string): Promise<SignInResult>;
+  /**
+   * Starts signing in with Google (ADR-0105): on success the browser is on its way to Google's
+   * page, which sends it back to `/login` to finish.
+   */
+  signInWithGoogle(): Promise<SignInResult>;
+  /** Finishes a Google sign-in from the URL Google sent the browser back to. */
+  finishGoogleSignIn(requestUri: string): Promise<SignInResult>;
   /** Asks again for the verification email. `false`: it could not be sent. */
   sendVerification(): Promise<boolean>;
   /** Takes a fresh token, so a just-verified email counts, and loads the profile again. */
@@ -194,6 +204,18 @@ export function AuthProvider({
       services,
       signIn: (email, password) => enter(() => session.signIn(email, password)),
       signUp: (email, password) => enter(() => session.signUp(email, password)),
+      async signInWithGoogle() {
+        try {
+          const authUri = await session.startProvider(
+            `${globalThis.location.origin}${GOOGLE_RETURN_PATH}`,
+          );
+          services.leave(authUri);
+          return { ok: true };
+        } catch (error) {
+          return { ok: false, code: error instanceof IdentityError ? error.code : 'unavailable' };
+        }
+      },
+      finishGoogleSignIn: (requestUri) => enter(() => session.finishProvider(requestUri)),
       async sendVerification() {
         try {
           await session.sendVerification();

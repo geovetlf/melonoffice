@@ -1,4 +1,12 @@
-import { REFRESH_URL, SIGN_IN_URL } from './identityPlatform.js';
+import {
+  CREATE_AUTH_URI_URL,
+  REFRESH_URL,
+  SIGN_IN_URL,
+  SIGN_IN_WITH_IDP_URL,
+} from './identityPlatform.js';
+
+/** Google's page the fake sends a Google sign-in to (ADR-0105). */
+export const GOOGLE_AUTH_URI = 'https://accounts.google.com/o/oauth2/auth?client_id=fake';
 import type { KeyValueStore } from './session.js';
 
 /**
@@ -25,6 +33,11 @@ export interface FakeBackend {
     validTokens: Set<string>;
     /** Refresh tokens Identity Platform still honours. */
     validRefresh: Set<string>;
+    /**
+     * Google sign-in (ADR-0105): `off` answers as Identity Platform does with the provider
+     * disabled; `linked` as it does for an email that signs in with a password already.
+     */
+    google?: 'on' | 'off' | 'linked';
     /** The API's answer to every `/v1/...` call, if forced. */
     apiStatus?: number;
     registered: boolean;
@@ -232,6 +245,22 @@ export function fakeBackend(): FakeBackend {
       if (email !== 'ana@example.com' || password !== 'correct-horse') {
         return json(400, { error: { code: 400, message: 'INVALID_LOGIN_CREDENTIALS' } });
       }
+      const { idToken, refreshToken } = issue();
+      return json(200, { idToken, refreshToken, expiresIn: String(options.idTokenSeconds) });
+    }
+    if (url === `${CREATE_AUTH_URI_URL}?key=${KEY}`) {
+      const { providerId } = JSON.parse(body ?? '{}') as Record<string, string>;
+      if (options.google === 'off' || providerId !== 'google.com') {
+        return json(400, { error: { code: 400, message: 'OPERATION_NOT_ALLOWED' } });
+      }
+      return json(200, { authUri: GOOGLE_AUTH_URI, sessionId: 'google-session' });
+    }
+    if (url === `${SIGN_IN_WITH_IDP_URL}?key=${KEY}`) {
+      const { sessionId, requestUri } = JSON.parse(body ?? '{}') as Record<string, string>;
+      if (sessionId !== 'google-session' || !requestUri?.includes('code=')) {
+        return json(400, { error: { code: 400, message: 'INVALID_IDP_RESPONSE' } });
+      }
+      if (options.google === 'linked') return json(200, { needConfirmation: true });
       const { idToken, refreshToken } = issue();
       return json(200, { idToken, refreshToken, expiresIn: String(options.idTokenSeconds) });
     }

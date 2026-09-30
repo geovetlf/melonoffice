@@ -1,7 +1,7 @@
 import { FormattedMessage, SUPPORTED_LOCALES, useIntl, type Locale } from '@melonoffice/i18n';
 import { Button } from '@melonoffice/ui';
 import { useBrand } from '../brand/brand.js';
-import { useEffect, useId, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { useAuth } from './AuthProvider.js';
 import type { IdentityErrorCode } from './identityPlatform.js';
 import { navigate } from './router.js';
@@ -82,20 +82,44 @@ export const SIGN_IN_ERRORS: Record<IdentityErrorCode, string> = {
   unavailable: 'auth.error.unavailable',
   email_exists: 'auth.error.email_exists',
   weak_password: 'auth.error.weak_password',
+  provider_disabled: 'auth.error.provider_disabled',
+  provider_cancelled: 'auth.error.provider_cancelled',
+  account_exists: 'auth.error.account_exists',
 };
+
+/** Whether this URL is Google sending the browser back after a sign-in (ADR-0105). */
+function isProviderReturn(search: string): boolean {
+  const params = new URLSearchParams(search);
+  return params.has('state') || params.has('code') || params.has('error');
+}
 
 /**
  * Email and password sign-in with Identity Platform. The password goes from this form to Google
  * and is dropped from memory after the attempt; MelonOffice never stores it.
  */
 export function LoginPage(locale: LocaleProps) {
-  const { state, signIn } = useAuth();
+  const { state, signIn, signInWithGoogle, finishGoogleSignIn, services } = useAuth();
   const intl = useIntl();
   const id = useId();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<IdentityErrorCode | undefined>();
+  // Coming back from Google: finish that sign-in once, then drop Google's answer from the URL.
+  const [finishing, setFinishing] = useState(
+    () => services.session.providerPending && isProviderReturn(globalThis.location.search),
+  );
+  const finishStarted = useRef(false);
+  useEffect(() => {
+    if (!finishing || finishStarted.current) return;
+    finishStarted.current = true;
+    const requestUri = globalThis.location.href;
+    globalThis.history.replaceState(null, '', globalThis.location.pathname);
+    void finishGoogleSignIn(requestUri).then((result) => {
+      setFinishing(false);
+      if (!result.ok) setError(result.code);
+    });
+  }, [finishing, finishGoogleSignIn]);
 
   // Someone following an invitation link goes back to it once signed in (ADR-0089, ADR-0093).
   if (state.status === 'signed_in') {
@@ -118,6 +142,20 @@ export function LoginPage(locale: LocaleProps) {
     setBusy(false);
     if (!result.ok) setError(result.code);
   }
+
+  async function google() {
+    if (busy) return;
+    setBusy(true);
+    setError(undefined);
+    const result = await signInWithGoogle();
+    // On success the browser is leaving for Google; the button stays busy until it does.
+    if (!result.ok) {
+      setBusy(false);
+      setError(result.code);
+    }
+  }
+
+  if (finishing) return <Loading />;
 
   return (
     <PublicFrame {...locale}>
@@ -161,6 +199,12 @@ export function LoginPage(locale: LocaleProps) {
           <FormattedMessage id={busy ? 'auth.signIn.busy' : 'auth.signIn.submit'} />
         </Button>
       </form>
+      <p className="login__or">
+        <FormattedMessage id="auth.signIn.or" />
+      </p>
+      <Button variant="secondary" disabled={busy} onClick={() => void google()}>
+        <FormattedMessage id="auth.signIn.google" />
+      </Button>
     </PublicFrame>
   );
 }

@@ -9,6 +9,8 @@ import { IdentityError, type IdentityClient, type IdentityTokens } from './ident
  */
 
 export const REFRESH_KEY = 'melonoffice.session';
+/** A Google sign-in under way (ADR-0105): its handle, kept only across the trip to Google. */
+export const PROVIDER_KEY = 'melonoffice.provider';
 /** Refresh this long before the ID token expires, so a request never races the expiry. */
 const MARGIN_MS = 60_000;
 
@@ -22,6 +24,15 @@ export interface Session {
   signUp(email: string, password: string): Promise<void>;
   /** Asks again for the verification email of the signed-in account. */
   sendVerification(): Promise<void>;
+  /**
+   * Starts signing in with Google (ADR-0105): keeps the handle for the return trip in this tab and
+   * returns Google's page to send the browser to.
+   */
+  startProvider(continueUri: string): Promise<string>;
+  /** Whether this tab is coming back from Google with a sign-in to finish. */
+  readonly providerPending: boolean;
+  /** Finishes it from the URL Google sent the browser back to. The handle is used once. */
+  finishProvider(requestUri: string): Promise<void>;
   /** An ID token valid for at least a minute, refreshed if needed. `undefined`: no session. */
   token(options?: { readonly force?: boolean }): Promise<string | undefined>;
   /** Ends the session here: tokens forgotten. */
@@ -82,6 +93,22 @@ export function createSession(
     }
   }
 
+  function read(key: string): string | undefined {
+    try {
+      return store?.getItem(key) ?? undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  function drop(key: string): void {
+    try {
+      store?.removeItem(key);
+    } catch {
+      // Nothing was stored.
+    }
+  }
+
   async function refresh(): Promise<string | undefined> {
     const held = refreshToken;
     if (held === undefined) return undefined;
@@ -116,6 +143,31 @@ export function createSession(
       const idToken = await session.token();
       if (idToken === undefined) throw new IdentityError('session_expired');
       await identity.sendVerification(idToken);
+    },
+    async startProvider(continueUri) {
+      const { authUri, sessionId } = await identity.startProvider(continueUri);
+      try {
+        store?.setItem(PROVIDER_KEY, sessionId);
+      } catch {
+        // Without storage the handle cannot survive the trip to Google.
+        throw new IdentityError('unavailable');
+      }
+      if (read(PROVIDER_KEY) !== sessionId) throw new IdentityError('unavailable');
+      return authUri;
+    },
+    get providerPending() {
+      return read(PROVIDER_KEY) !== undefined;
+    },
+    async finishProvider(requestUri) {
+      const sessionId = read(PROVIDER_KEY);
+      drop(PROVIDER_KEY);
+      if (sessionId === undefined) throw new IdentityError('provider_cancelled');
+      // Google reports a closed page or a refusal as `error=` on the way back.
+      if (new URL(requestUri).searchParams.has('error')) {
+        throw new IdentityError('provider_cancelled');
+      }
+      keep(await identity.finishProvider(requestUri, sessionId));
+      emit('signed_in');
     },
     async token({ force = false } = {}) {
       if (!force && current !== undefined && current.expiresAt - now() > MARGIN_MS) {
