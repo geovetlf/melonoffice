@@ -419,17 +419,16 @@ describe('the Home’s office (Home V4)', () => {
     expect(backend.apiCalls().some((call) => call.url.endsWith('/gia/messages'))).toBe(false);
   });
 
-  it('fits a computer screen in one view: the page is the window tall, only the sidebar scrolls', () => {
+  it('on a computer, gives the building the whole width and puts the day below it', () => {
     const css = readFileSync(`${import.meta.dirname}/../../home.css`, 'utf8');
-    const start = css.indexOf('@media (min-width: 64rem) and (min-height: 36rem)');
+    const start = css.indexOf('@media (min-width: 64rem) {');
     expect(start).toBeGreaterThan(-1);
-    const fit = css.slice(start, css.indexOf('/* A tablet', start));
-    expect(fit).toContain('height: 100dvh;');
-    expect(fit).toContain('container-type: size;');
-    // The building is sized from the height, never scaled or cut to fit.
-    expect(fit).toContain('var(--floors)');
-    expect(fit).not.toMatch(/overflow-y:\s*(auto|scroll)/);
-    expect(fit).not.toMatch(/transform:\s*scale|zoom:/);
+    const desk = css.slice(start, css.indexOf('/* A tablet', start));
+    // One column: the building, then GIA's box, then the day's context in four columns.
+    expect(desk).toContain('grid-template-columns: minmax(0, 1fr);');
+    expect(desk).toContain('grid-template-columns: repeat(4, minmax(0, 1fr));');
+    // The building is never scaled or cut to fit the window.
+    expect(desk).not.toMatch(/transform:\s*scale|zoom:|100dvh/);
   });
 
   it('keeps its motion small and switches it off when the person asks for less', () => {

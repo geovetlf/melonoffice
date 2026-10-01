@@ -1,5 +1,5 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
-import { useCallback, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import type { ApprovalsClient } from '../approvals/approvalsClient.js';
 import type { AutomationsClient } from '../automations/automationsClient.js';
 import type { FollowUpsClient } from '../followUps/followUpsClient.js';
@@ -14,20 +14,10 @@ import { CreditsUsage, RecentActivity, UpcomingMeetings } from './panels.js';
 import { attentionCount, TodayWork, useTodayWork } from './TodayWork.js';
 
 /**
- * How many entries the day's lists show. On a computer the whole Home fits the window (see
- * home.css), so a shorter window shows fewer, each list keeping its link to all of them.
+ * How many entries the day's lists show. The Home scrolls below its building (home.css), so every
+ * window shows the same three, each list keeping its link to all of them.
  */
-const FITS = '(min-width: 64rem) and (min-height: 36rem)';
-const entriesFor = (): number => {
-  if (typeof globalThis.matchMedia !== 'function' || !globalThis.matchMedia(FITS).matches) return 3;
-  const height = globalThis.innerHeight;
-  return height >= 1000 ? 3 : height >= 860 ? 2 : 1;
-};
-const onResize = (change: () => void) => {
-  globalThis.addEventListener('resize', change);
-  return () => globalThis.removeEventListener('resize', change);
-};
-const useEntriesShown = (): number => useSyncExternalStore(onResize, entriesFor, () => 3);
+const ENTRIES_SHOWN = 3;
 
 /** What the Home's office may do, by the person's permissions (see `AppShell`). */
 export interface HomeOfficeAccess extends AgentSheetAccess {
@@ -61,7 +51,7 @@ export function HomePage({
   const work = useAgentWork(office.tasks?.client, agents);
   const motor = useMotorFlows(office.automations);
   const today = useTodayWork(followUps, approvals);
-  const shown = useEntriesShown();
+  const shown = ENTRIES_SHOWN;
   // An agent's card, opened from the agent at their desk; focus goes back there when it closes.
   const [agent, setAgent] = useState<string>();
   const [motorOpen, setMotorOpen] = useState(false);

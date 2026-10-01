@@ -557,6 +557,14 @@ function DepartmentRoom({
             <span className={`b-room__dot b-room__dot--${lead ?? 'available'}`} />
             <span className="b-room__task">{current.request}</span>
           </>
+        ) : lead !== undefined && here.length === 1 && here[0] !== undefined ? (
+          // One agent: the room says who works there and how, not a count.
+          <>
+            <span className={`b-room__dot b-room__dot--${lead}`} />
+            <span className="b-room__task">
+              {here[0].displayName} · <FormattedMessage id={`office.agentState.${lead}`} />
+            </span>
+          </>
         ) : lead !== undefined ? (
           <AgentStatus state={lead} count={states.get(lead) ?? 0} />
         ) : (
@@ -999,9 +1007,11 @@ function GiaRoom({
           navigate(paths.gia());
         }}
       >
-        <span className="b-gia__stage" aria-hidden="true">
-          <span className="b-gia__core" />
-          <span className="b-gia__ring" />
+        <span className="b-gia__sphere" aria-hidden="true">
+          {/* The office's mind, not a face: a core of light with GIA's mark. */}
+          <span className="b-gia__core">
+            <Icon name="gia" size={40} />
+          </span>
         </span>
         {home ? (
           <GiaHere point={STAND.gia} aspect={CENTRE_ASPECT} view={viewAt(gia.activity, true)} />

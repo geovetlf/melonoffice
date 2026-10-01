@@ -31,7 +31,8 @@ import { SCENARIOS, type ScenarioName } from './scenarios.js';
  */
 const params = new URLSearchParams(globalThis.location.search);
 const asked = params.get('scenario');
-const scenario: ScenarioName = asked === 'empty' || asked === 'pages' ? asked : 'active';
+const scenario: ScenarioName =
+  asked === 'empty' || asked === 'one' || asked === 'pages' ? asked : 'active';
 const locale: Locale = params.get('locale') === 'en' ? 'en' : 'es';
 const route = params.get('route') ?? '/';
 const brandColor = params.get('brand');

@@ -1880,92 +1880,31 @@
  * sized from the height it is given so every room stays in view. Only the sidebar scrolls. Below
  * a laptop's height the page flows again, as on a tablet or phone.
  */
-@media (min-width: 64rem) and (min-height: 36rem) {
-  .app__body:has(.home4) {
-    height: 100vh;
-    height: 100dvh;
-  }
-
-  .app__main:has(> .home4) {
-    display: flex;
-    flex-direction: column;
-    max-width: none;
-    min-height: 0;
-    padding: var(--mo-space-4) var(--mo-space-6);
-  }
-
-  .home4 {
-    flex: 1;
-    grid-template-rows: auto minmax(0, 1fr);
-    gap: var(--mo-space-3);
-    min-height: 0;
-  }
-
+/*
+ * A computer (V5): the building is the page. It takes the content's whole width as one piece
+ * of architecture, GIA's command box sits under it, and the day's context is a quiet strip
+ * below, four columns wide, so nothing beside the building competes with it.
+ */
+@media (min-width: 64rem) {
   .home4__layout {
-    grid-template-rows: minmax(0, 1fr);
-    align-items: stretch;
-    min-height: 0;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--mo-space-6);
   }
 
   .home4__main {
-    grid-template-rows: minmax(0, 1fr) auto;
-    gap: var(--mo-space-3);
-    min-height: 0;
+    gap: var(--mo-space-6);
   }
 
-  /*
-   * When the window is wider than the rooms need, the building is centred in the height it has,
-   * so the spare space frames it evenly above and below instead of opening one gap.
-   */
-  .home4__office {
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    min-height: 0;
-    container-type: size;
-  }
-
-  /*
-   * The office's width follows from the height: a storey is a side room (1.8 : 1, 10 of 28.8
-   * columns) and its walkway (1 : 32.4 of the width), so the width is 4.469 storeys, plus the
-   * padding.
-   */
-  .home4__office .building__frame {
-    width: min(100%, calc((100cqh - 8px) / var(--floors) * 4.469 + 8px));
-    margin-inline: auto;
-  }
-
-  /* The picture's width follows from the height it is given, at its own shape. */
+  .home4__office .building__frame,
   .home4__office .stage__frame {
-    width: min(100%, 100cqh * var(--scene-aspect));
+    max-width: 92rem;
     margin-inline: auto;
   }
 
-  /* The day's context: quick panels, as many entries as the height allows (see `HomePage`). */
   .home4__side {
-    align-content: start;
-    gap: var(--mo-space-2);
-    min-height: 0;
-  }
-
-  .home4__side .panel {
-    padding: var(--mo-space-3) var(--mo-space-4);
-  }
-
-  .home4__side .panel__header {
-    margin-bottom: var(--mo-space-2);
-  }
-
-  .home4__side .period-picker {
-    margin-bottom: var(--mo-space-2);
-  }
-
-  .home4__side .period-picker__option {
-    min-height: 28px;
-  }
-
-  .home4__side .panel__list {
-    gap: var(--mo-space-2);
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    align-items: start;
+    gap: var(--mo-space-6);
   }
 
   .home4__side .task__title,
@@ -1975,45 +1914,11 @@
     white-space: nowrap;
   }
 
-  .home4__side .panel__link {
-    margin-top: var(--mo-space-1);
-    font-size: var(--mo-font-size-sm);
-    text-align: left;
-  }
-
-  .home4__side .panel__empty {
-    font-size: var(--mo-font-size-sm);
-  }
-
   .home4__side .credits {
     display: flex;
     flex-wrap: wrap;
     align-items: baseline;
     gap: 0 var(--mo-space-2);
-  }
-
-  .home4__side .credits__number {
-    font-size: var(--mo-font-size-xl);
-  }
-
-  .gia-command {
-    gap: var(--mo-space-2);
-  }
-
-  .gia-suggest__item {
-    min-height: 32px;
-  }
-
-  /* A narrower command box keeps its suggestions on one line. */
-  .gia-command {
-    container-type: inline-size;
-  }
-
-  @container (max-width: 48rem) {
-    .gia-suggest__item {
-      padding: 0 var(--mo-space-2);
-      font-size: var(--mo-font-size-xs);
-    }
   }
 }
 
@@ -2347,4 +2252,302 @@
   .gia-suggest__item {
     min-height: var(--mo-min-target-size);
   }
+}
+
+/*
+ * Home V5: one piece of architecture.
+ *
+ * The nine rooms are one building: a single frame with interior walls, not nine capsules. Each
+ * room is named on its own floor, in a caption over a soft shade, with the one line that says who
+ * works there; no pills, no counters, no chevrons. GIA is the office's core of light; MelonMotor
+ * is the infrastructure under her, quiet. Real agents stand out from the scenery around them.
+ */
+.building__frame {
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid var(--mo-color-border);
+  border-radius: 28px;
+  background: linear-gradient(
+    180deg,
+    var(--mo-color-surface),
+    color-mix(in srgb, var(--mo-color-surface-muted) 70%, var(--mo-color-surface))
+  );
+  box-shadow:
+    0 1px 0 color-mix(in srgb, var(--mo-color-surface) 80%, transparent) inset,
+    var(--mo-shadow-lg);
+}
+
+.b-room,
+.b-room--gia,
+.b-room--motor {
+  border-radius: 14px;
+  box-shadow: none;
+}
+
+/* The building's outer corners follow the frame. */
+.building__frame > .b-room[style*='--row: 1'][style*='--column: 1'] {
+  border-top-left-radius: 22px;
+}
+
+.building__frame > .b-room[style*='--row: 1'][style*='--column: 3'] {
+  border-top-right-radius: 22px;
+}
+
+.building__frame > .b-room[style*='--column: 1']:last-of-type,
+.building__frame > .b-room[style*='--row: 3'][style*='--column: 1'] {
+  border-bottom-left-radius: 22px;
+}
+
+.building__frame > .b-room[style*='--row: 3'][style*='--column: 3'] {
+  border-bottom-right-radius: 22px;
+}
+
+/* No lift: a room answers the pointer with its light, in place. */
+.b-room--department:hover,
+.b-room--department:focus-within,
+.b-room--gia:hover,
+.b-room--gia:focus-within,
+.b-room--motor:hover,
+.b-room--motor:focus-within {
+  transform: none;
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--mo-color-accent-expressive) 75%, transparent);
+}
+
+/* The floor's shade, where the room's caption sits: over the art, under everything on it. */
+.b-room::after {
+  z-index: 0;
+  background: linear-gradient(
+    0deg,
+    color-mix(in srgb, var(--mo-color-scene-screen-deep) 70%, transparent) 0%,
+    color-mix(in srgb, var(--mo-color-scene-screen-deep) 26%, transparent) 24%,
+    transparent 42%
+  );
+  box-shadow: none;
+}
+
+/* The caption: the room's name, then who works there. */
+.b-room__sign,
+.b-room__sign--centre {
+  top: auto;
+  bottom: calc(7% + 1.7em);
+  left: 6%;
+  gap: 0.45em;
+  max-width: 88%;
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  color: var(--mo-color-text-on-accent);
+  font-size: clamp(var(--mo-font-size-sm), 4.4cqw, 1.2rem);
+  letter-spacing: var(--mo-font-tracking-tight);
+  text-shadow: 0 1px 8px color-mix(in srgb, var(--mo-color-scene-screen-deep) 60%, transparent);
+  transform: none;
+}
+
+.b-room__icon {
+  width: auto;
+  height: auto;
+  background: none;
+  color: inherit;
+  opacity: 0.85;
+}
+
+.b-room__name {
+  font-weight: var(--mo-font-weight-semibold);
+}
+
+.b-room__count,
+.b-room__go {
+  display: none;
+}
+
+.b-room__status {
+  right: auto;
+  bottom: 7%;
+  left: 6%;
+  max-width: 88%;
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  color: color-mix(in srgb, var(--mo-color-text-on-accent) 88%, transparent);
+  font-size: clamp(var(--mo-font-size-xxs), 3.2cqw, 0.9rem);
+  font-weight: var(--mo-font-weight-regular);
+  text-shadow: 0 1px 6px color-mix(in srgb, var(--mo-color-scene-screen-deep) 60%, transparent);
+}
+
+.b-room__status .agent-status {
+  color: inherit;
+}
+
+/* A room with nobody yet reads as ready, not broken: its caption is quieter, the art at rest. */
+.b-room--department:not(
+    .b-room--working,
+    .b-room--available,
+    .b-room--waiting,
+    .b-room--attention,
+    .b-room--paused,
+    .b-room--processing
+  )
+  .b-room__status {
+  color: color-mix(in srgb, var(--mo-color-text-on-accent) 70%, transparent);
+}
+
+/* A real agent stands out from the scenery around it, in its state's light. */
+.b-desk:not(.b-desk--scenery) .b-desk__agent {
+  filter: drop-shadow(
+    0 0 0.5em color-mix(in srgb, var(--mo-color-accent-expressive) 80%, transparent)
+  );
+}
+
+.b-desk--working .b-desk__agent {
+  filter: drop-shadow(0 0 0.6em color-mix(in srgb, var(--mo-color-state-working) 85%, transparent));
+}
+
+/* GIA: the office's core of light, not a face. */
+.b-gia__sphere {
+  top: 40%;
+  width: 34%;
+  background: radial-gradient(
+    circle at 50% 42%,
+    color-mix(in srgb, var(--mo-color-accent-expressive) 55%, var(--mo-color-surface)) 0%,
+    var(--mo-color-accent-expressive) 42%,
+    var(--mo-color-accent) 100%
+  );
+  box-shadow:
+    0 0 0 6px color-mix(in srgb, var(--mo-color-accent-expressive) 18%, transparent),
+    0 0 0 14px color-mix(in srgb, var(--mo-color-accent-expressive) 9%, transparent),
+    0 0 48px 10px color-mix(in srgb, var(--mo-color-accent-expressive) 45%, transparent);
+}
+
+.b-gia__sphere::after {
+  inset: -30%;
+  border: 1px solid color-mix(in srgb, var(--mo-color-accent-expressive) 45%, transparent);
+  opacity: 1;
+}
+
+.b-gia__core {
+  display: grid;
+  place-items: center;
+  width: 46%;
+  aspect-ratio: 1;
+  color: var(--mo-color-text-on-accent);
+  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--mo-color-surface) 70%, transparent));
+}
+
+.b-gia__core .mo-icon,
+.b-gia__core svg {
+  width: 100%;
+  height: 100%;
+}
+
+.b-gia__chip {
+  bottom: 7%;
+  min-width: 0;
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  color: var(--mo-color-text-on-accent);
+  font-size: clamp(var(--mo-font-size-xs), 5cqw, 1.1rem);
+  text-shadow: 0 1px 8px color-mix(in srgb, var(--mo-color-scene-screen-deep) 60%, transparent);
+}
+
+.b-gia__role {
+  color: color-mix(in srgb, var(--mo-color-text-on-accent) 85%, transparent);
+  font-size: 0.82em;
+}
+
+/* MelonMotor: the infrastructure under GIA, named like any room, without a badge of its own. */
+.b-motor__mark {
+  top: 42%;
+  width: 12%;
+  padding: 2%;
+  border-radius: 24%;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--mo-color-surface) 40%, transparent);
+  opacity: 0.9;
+}
+
+.b-motor__text {
+  bottom: 7%;
+  min-width: 0;
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  color: var(--mo-color-text-on-accent);
+  text-shadow: 0 1px 8px color-mix(in srgb, var(--mo-color-scene-screen-deep) 60%, transparent);
+}
+
+.b-motor:hover .b-motor__text,
+.b-motor:focus-visible .b-motor__text,
+.b-motor[aria-expanded='true'] .b-motor__text {
+  box-shadow: none;
+}
+
+.b-motor__tagline {
+  max-width: none;
+  color: color-mix(in srgb, var(--mo-color-text-on-accent) 80%, transparent);
+  font-size: 0.82em;
+}
+
+/* The office's two facts beside the title: words with their light, no pills. */
+.home4__chip {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--mo-color-text-secondary);
+}
+
+.home4__chips {
+  gap: var(--mo-space-2) var(--mo-space-6);
+}
+
+/* The day's context: a quiet strip of columns under the building, no cards. */
+.home4__side .panel,
+.home4__side .panel--lead,
+.home4__side .panel--quiet {
+  padding: var(--mo-space-4) 0 0;
+  border: 0;
+  border-top: 1px solid var(--mo-color-border);
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+}
+
+.home4__side .panel--lead {
+  border-top-color: var(--mo-color-accent);
+}
+
+.home4__title {
+  font-size: clamp(1.75rem, 1.2rem + 1.4vw, 2.5rem);
+}
+
+/*
+ * A department's caption sits on its wall, above the desks, so no figure stands in front of it;
+ * the shade falls from the ceiling. GIA's and MelonMotor's stay on their floor.
+ */
+.b-room--department::after {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--mo-color-scene-screen-deep) 74%, transparent) 0%,
+    color-mix(in srgb, var(--mo-color-scene-screen-deep) 34%, transparent) 22%,
+    transparent 40%
+  );
+}
+
+.b-room--department .b-room__sign {
+  top: 6%;
+  bottom: auto;
+}
+
+.b-room--department .b-room__status {
+  top: calc(6% + 1.75em);
+  bottom: auto;
+}
+
+/* The wall's screen moves aside for the caption only where they would meet: never on its own. */
+.b-room--department .b-room__status .b-room__task {
+  max-width: 100%;
 }

@@ -1,9 +1,9 @@
-# ADR-0113: The Home is one office scene
+# ADR-0114: The Home is one office scene
 
 - Status: Accepted
 - Date: 2026-10-01
-- Builds on: [ADR-0047](0047-six-initial-departments.md), [ADR-0109](0109-home-rebuilt-on-the-toolkit.md), [ADR-0111](0111-accessibility-pass.md), [ADR-0112](0112-gia-a-person-in-the-office.md)
-- Replaces, on the Home: the 3×3 building of ADR-0109 and the walkable building of ADR-0112 §3 (`OfficeBuilding`, `officeWalk.ts` and `GiaInOffice.tsx` stay in the code, unused by the Home).
+- Builds on: [ADR-0047](0047-six-initial-departments.md), [ADR-0109](0109-home-rebuilt-on-the-toolkit.md), [ADR-0111](0111-accessibility-pass.md), [ADR-0113](0113-gia-a-person-in-the-office.md)
+- Replaces, on the Home: the 3×3 building of ADR-0109 and the walkable building of ADR-0113 §3 (`OfficeBuilding`, `officeWalk.ts` and `GiaInOffice.tsx` stay in the code, unused by the Home).
 
 ## Context
 

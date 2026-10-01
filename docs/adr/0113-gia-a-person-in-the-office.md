@@ -1,4 +1,4 @@
-# ADR-0112: GIA, a person in the office
+# ADR-0113: GIA, a person in the office
 
 - Status: Proposed
 - Date: 2026-10-01

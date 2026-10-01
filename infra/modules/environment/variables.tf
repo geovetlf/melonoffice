@@ -102,6 +102,12 @@ variable "document_storage" {
   default     = false
 }
 
+variable "operator_access" {
+  description = "Turn on operator access (ADR-0112): a service account that GitHub Actions jobs of this environment use, through Workload Identity Federation, to run operator migrations, export Firestore to a private backups bucket and read Cloud Run, Cloud Tasks and logs. Needs Firestore. Only dev."
+  type        = bool
+  default     = false
+}
+
 variable "whatsapp_channel" {
   description = "Turn on the WhatsApp channel (ADR-0033, ADR-0034): the api and worker read channel secrets from this project's Secret Manager. Needs the runtime. Only dev."
   type        = bool
