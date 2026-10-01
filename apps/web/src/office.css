@@ -2747,35 +2747,38 @@ a.sidebar__item:hover {
 }
 
 /* The platform AI view (ADR-0082): the platform administrator's only. */
-.platform__providers,
-.platform__policies {
+.platform__breakdowns {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 22rem), 1fr));
+  gap: var(--mo-space-4);
+}
+
+.platform__breakdown {
   display: grid;
   gap: var(--mo-space-2);
+  align-content: start;
+  min-width: 0;
+}
+
+.platform__note {
+  grid-column: 1 / -1;
   margin: 0;
-  padding: 0;
-  list-style: none;
 }
 
-.platform__provider,
-.platform__policies li {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--mo-space-1) var(--mo-space-2);
-  padding: var(--mo-space-2);
-  border: 1px solid var(--mo-color-border);
-  border-radius: 8px;
+/* A small action that fills a field (such as "use my id") sits under it at its start. */
+.platform__field-action {
+  justify-self: start;
 }
 
-.platform__name {
-  font-weight: 600;
-  overflow-wrap: anywhere;
+/* Fields side by side keep their own height when one carries such an action. */
+.platform .mo-form-section__fields {
+  align-items: start;
 }
 
-/* A wide table scrolls inside its own box, never the page. */
-.platform__scroll {
-  max-width: 100%;
-  overflow-x: auto;
+/* A record's forms and its answer take the record's whole width, under its facts and actions. */
+.platform .mo-list-item > .mo-form,
+.platform .mo-list-item > .mo-state {
+  flex-basis: 100%;
 }
 
 /* The bell: what waits on the person, each opening where it is done. */
@@ -2831,17 +2834,6 @@ a.sidebar__item:hover {
 
 .notifications__item:focus-visible {
   outline-offset: -2px;
-}
-
-.platform .ai-usage__breakdown {
-  min-width: 0;
-}
-
-/* Its wide tables scroll inside their boxes: nothing here may widen the page on a phone. */
-.platform,
-.platform .dept-office__section {
-  min-width: 0;
-  max-width: 100%;
 }
 
 /* An agent's skills, each with what it lets the agent do (ADR-0083). */

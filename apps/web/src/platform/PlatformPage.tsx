@@ -1,5 +1,5 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
-import { Badge } from '@melonoffice/ui';
+import { Badge, DataTable, PageHeader, PeriodPicker, StateMessage, Toolbar } from '@melonoffice/ui';
 import { useEffect, useState } from 'react';
 import { usd } from '../aiUsage/AIUsagePage.js';
 import { periodDays, type UsagePeriod } from '../aiUsage/aiUsageClient.js';
@@ -70,13 +70,11 @@ export function PlatformPage({
   const load: Load<PlatformUsage> = usage?.key === period ? usage.load : 'loading';
 
   return (
-    <article className="dept-office platform">
-      <h1 className="dept-office__title">
-        <FormattedMessage id="platform.title" />
-      </h1>
-      <p className="documents__lead">
-        <FormattedMessage id="platform.lead" />
-      </p>
+    <article className="mo-page platform">
+      <PageHeader
+        title={<FormattedMessage id="platform.title" />}
+        description={<FormattedMessage id="platform.lead" />}
+      />
 
       <CommercialAdmin
         client={client}
@@ -86,146 +84,150 @@ export function PlatformPage({
       {ai === 'loading' ? (
         <Loading />
       ) : ai === 'error' ? (
-        <p className="panel__empty" role="alert">
+        <StateMessage kind="error">
           <FormattedMessage id="platform.error" />
-        </p>
+        </StateMessage>
       ) : (
         <>
-          <section className="dept-office__section" aria-labelledby="platform-providers">
-            <h2 id="platform-providers">
+          <section className="mo-panel mo-page-section" aria-labelledby="platform-providers">
+            <h2 id="platform-providers" className="mo-section-title">
               <FormattedMessage id="platform.providers.title" />
             </h2>
-            <p className="customers__meta">
+            <p className="mo-lead">
               <FormattedMessage
                 id="platform.environment"
                 values={{ environment: ai.environment ?? '—' }}
               />
             </p>
             {ai.providers.length === 0 ? (
-              <p className="panel__empty">
+              <StateMessage kind="empty">
                 <FormattedMessage id="platform.providers.none" />
-              </p>
+              </StateMessage>
             ) : (
-              <ul className="platform__providers">
+              <ul className="mo-list">
                 {ai.providers.map((p) => (
-                  <li key={p.id} className="platform__provider" data-health={p.health}>
-                    <span className="platform__name">{p.name}</span>
-                    <Badge tone={HEALTH_TONE[p.health]}>
-                      <FormattedMessage id={`platform.health.${p.health}`} />
-                    </Badge>
-                    <span className="customers__meta">
-                      {p.id} · {p.environments.join(', ')} ·{' '}
-                      <FormattedMessage
-                        id="platform.sensitivity"
-                        values={{ level: p.maxSensitivity }}
-                      />
-                    </span>
+                  <li key={p.id} className="mo-list-item" data-health={p.health}>
+                    <div className="mo-list-item__main">
+                      <div className="mo-list-item__heading">
+                        <span className="mo-list-item__title">{p.name}</span>
+                        <Badge tone={HEALTH_TONE[p.health]}>
+                          <FormattedMessage id={`platform.health.${p.health}`} />
+                        </Badge>
+                      </div>
+                      <span className="mo-list-item__meta">
+                        {p.id} · {p.environments.join(', ')} ·{' '}
+                        <FormattedMessage
+                          id="platform.sensitivity"
+                          values={{ level: p.maxSensitivity }}
+                        />
+                      </span>
+                    </div>
                   </li>
                 ))}
               </ul>
             )}
-            <p className="customers__meta">
+            <p className="mo-hint">
               <FormattedMessage id="platform.health.note" />
             </p>
           </section>
 
-          <section className="dept-office__section" aria-labelledby="platform-models">
-            <h2 id="platform-models">
+          <section className="mo-panel mo-page-section" aria-labelledby="platform-models">
+            <h2 id="platform-models" className="mo-section-title">
               <FormattedMessage id="platform.models.title" />
             </h2>
             {ai.models.length === 0 ? (
-              <p className="panel__empty">
+              <StateMessage kind="empty">
                 <FormattedMessage id="platform.models.none" />
-              </p>
+              </StateMessage>
             ) : (
-              <div className="platform__scroll">
-                <table className="ai-usage__table">
-                  <thead>
-                    <tr>
-                      <th scope="col">
-                        <FormattedMessage id="platform.models.model" />
+              <DataTable label={intl.formatMessage({ id: 'platform.models.title' })}>
+                <thead>
+                  <tr>
+                    <th scope="col">
+                      <FormattedMessage id="platform.models.model" />
+                    </th>
+                    <th scope="col">
+                      <FormattedMessage id="platform.models.price" />
+                    </th>
+                    <th scope="col">
+                      <FormattedMessage id="platform.models.terms" />
+                    </th>
+                    <th scope="col">
+                      <FormattedMessage id="platform.models.environments" />
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {ai.models.map((m) => (
+                    <tr key={`${m.providerId}/${m.modelId}`}>
+                      <th scope="row">
+                        {m.displayName ?? m.modelId}
+                        <span className="mo-hint">
+                          {' '}
+                          {m.providerId}/{m.modelId}@{m.version}
+                        </span>
                       </th>
-                      <th scope="col">
-                        <FormattedMessage id="platform.models.price" />
-                      </th>
-                      <th scope="col">
-                        <FormattedMessage id="platform.models.terms" />
-                      </th>
-                      <th scope="col">
-                        <FormattedMessage id="platform.models.environments" />
-                      </th>
+                      <td>
+                        <Price intl={intl} pricing={m.pricing} />
+                      </td>
+                      <td>
+                        {m.terms === null ? (
+                          <FormattedMessage id="platform.models.noTerms" />
+                        ) : (
+                          <FormattedMessage
+                            id="platform.models.termsValue"
+                            values={{
+                              offering: m.terms.offering,
+                              production: m.terms.production,
+                            }}
+                          />
+                        )}
+                      </td>
+                      <td>{m.environments.join(', ')}</td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {ai.models.map((m) => (
-                      <tr key={`${m.providerId}/${m.modelId}`}>
-                        <th scope="row">
-                          {m.displayName ?? m.modelId}
-                          <span className="customers__meta">
-                            {' '}
-                            {m.providerId}/{m.modelId}@{m.version}
-                          </span>
-                        </th>
-                        <td>
-                          <Price intl={intl} pricing={m.pricing} />
-                        </td>
-                        <td>
-                          {m.terms === null ? (
-                            <FormattedMessage id="platform.models.noTerms" />
-                          ) : (
-                            <FormattedMessage
-                              id="platform.models.termsValue"
-                              values={{
-                                offering: m.terms.offering,
-                                production: m.terms.production,
-                              }}
-                            />
-                          )}
-                        </td>
-                        <td>{m.environments.join(', ')}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                  ))}
+                </tbody>
+              </DataTable>
             )}
           </section>
 
-          <section className="dept-office__section" aria-labelledby="platform-routing">
-            <h2 id="platform-routing">
+          <section className="mo-panel mo-page-section" aria-labelledby="platform-routing">
+            <h2 id="platform-routing" className="mo-section-title">
               <FormattedMessage id="platform.routing.title" />
             </h2>
-            <ul className="platform__policies">
+            <ul className="mo-list">
               {ai.policies.map((p) => (
-                <li key={`${p.id}@${p.version}`}>
-                  <span className="platform__name">
-                    {p.id} v{p.version}
-                  </span>
-                  <span className="customers__meta">
-                    {p.allowedModels === null ? (
-                      <FormattedMessage id="platform.routing.anyModel" />
-                    ) : (
-                      p.allowedModels.join(', ')
-                    )}
-                    {' · '}
-                    <FormattedMessage id={`platform.routing.fallback.${p.fallback}`} />
-                    {' · '}
-                    <FormattedMessage
-                      id="platform.routing.attempts"
-                      values={{ count: p.maxAttempts }}
-                    />
-                    {p.maxCostMicroUsd === null ? null : (
-                      <>
-                        {' · '}
-                        <FormattedMessage
-                          id="platform.routing.maxCost"
-                          values={{ cost: usd(intl, p.maxCostMicroUsd) }}
-                        />
-                      </>
-                    )}
-                    {' · '}
-                    {p.environments.join(', ')}
-                  </span>
+                <li key={`${p.id}@${p.version}`} className="mo-list-item">
+                  <div className="mo-list-item__main">
+                    <span className="mo-list-item__title">
+                      {p.id} v{p.version}
+                    </span>
+                    <span className="mo-list-item__meta">
+                      {p.allowedModels === null ? (
+                        <FormattedMessage id="platform.routing.anyModel" />
+                      ) : (
+                        p.allowedModels.join(', ')
+                      )}
+                      {' · '}
+                      <FormattedMessage id={`platform.routing.fallback.${p.fallback}`} />
+                      {' · '}
+                      <FormattedMessage
+                        id="platform.routing.attempts"
+                        values={{ count: p.maxAttempts }}
+                      />
+                      {p.maxCostMicroUsd === null ? null : (
+                        <>
+                          {' · '}
+                          <FormattedMessage
+                            id="platform.routing.maxCost"
+                            values={{ cost: usd(intl, p.maxCostMicroUsd) }}
+                          />
+                        </>
+                      )}
+                      {' · '}
+                      {p.environments.join(', ')}
+                    </span>
+                  </div>
                 </li>
               ))}
             </ul>
@@ -233,39 +235,31 @@ export function PlatformPage({
         </>
       )}
 
-      <section className="dept-office__section" aria-labelledby="platform-usage">
-        <h2 id="platform-usage">
+      <section className="mo-panel mo-page-section" aria-labelledby="platform-usage">
+        <h2 id="platform-usage" className="mo-section-title">
           <FormattedMessage id="platform.usage.title" />
         </h2>
-        <div
-          className="period-picker"
-          role="group"
-          aria-label={intl.formatMessage({ id: 'aiUsage.period' })}
-        >
-          {PERIODS.map((p) => (
-            <button
-              key={p}
-              type="button"
-              className="mo-chip period-picker__option"
-              aria-pressed={period === p}
-              onClick={() => setPeriod(p)}
-            >
-              <FormattedMessage id={`aiUsage.period.${p}`} />
-            </button>
-          ))}
-        </div>
+        <Toolbar>
+          <PeriodPicker
+            label={intl.formatMessage({ id: 'aiUsage.period' })}
+            options={PERIODS}
+            value={period}
+            onChange={setPeriod}
+            renderOption={(p) => <FormattedMessage id={`aiUsage.period.${p}`} />}
+          />
+        </Toolbar>
         {load === 'loading' ? (
           <Loading />
         ) : load === 'error' ? (
-          <p className="panel__empty" role="alert">
+          <StateMessage kind="error">
             <FormattedMessage id="platform.usage.error" />
-          </p>
+          </StateMessage>
         ) : (
           <>
-            <p className="ai-usage__range">
+            <p className="mo-hint">
               <FormattedMessage id="aiUsage.range" values={{ from: load.from, to: load.to }} />
             </p>
-            <dl className="ai-usage__totals">
+            <dl className="mo-stats">
               <Total labelId="aiUsage.internalCost" value={usd(intl, load.totals.costMicroUsd)} />
               <Total labelId="aiUsage.credits" value={intl.formatNumber(load.totals.credits)} />
               <Total
@@ -273,7 +267,7 @@ export function PlatformPage({
                 value={intl.formatNumber(load.totals.operations)}
               />
               {load.totals.unpricedOperations > 0 ? (
-                <p className="ai-usage__note">
+                <p className="mo-hint platform__note">
                   <FormattedMessage
                     id="aiUsage.unpriced"
                     values={{ count: load.totals.unpricedOperations }}
@@ -282,11 +276,11 @@ export function PlatformPage({
               ) : null}
             </dl>
             {load.totals.operations === 0 ? (
-              <p className="panel__empty">
+              <StateMessage kind="empty">
                 <FormattedMessage id="aiUsage.none" />
-              </p>
+              </StateMessage>
             ) : (
-              <div className="ai-usage__breakdowns">
+              <div className="platform__breakdowns">
                 <Breakdown
                   intl={intl}
                   titleId="platform.usage.byOrganization"
@@ -326,7 +320,7 @@ function Price({ intl, pricing }: { readonly intl: IntlShape; readonly pricing: 
 
 function Total({ labelId, value }: { readonly labelId: string; readonly value: string }) {
   return (
-    <div className="ai-usage__total">
+    <div className="mo-stat">
       <dt>
         <FormattedMessage id={labelId} />
       </dt>
@@ -350,50 +344,48 @@ function Breakdown({
   );
   const id = `platform-${titleId.replaceAll('.', '-')}`;
   return (
-    <section className="ai-usage__breakdown" aria-labelledby={id}>
-      <h3 id={id}>
+    <section className="platform__breakdown" aria-labelledby={id}>
+      <h3 id={id} className="mo-subsection-title">
         <FormattedMessage id={titleId} />
       </h3>
-      <div className="platform__scroll">
-        <table className="ai-usage__table">
-          <thead>
-            <tr>
-              <th scope="col">
-                <FormattedMessage id={titleId} />
-              </th>
-              <th scope="col">
-                <FormattedMessage id="aiUsage.operations" />
-              </th>
-              <th scope="col">
-                <FormattedMessage id="aiUsage.internalCost" />
-              </th>
-              <th scope="col">
-                <FormattedMessage id="aiUsage.credits" />
-              </th>
+      <DataTable label={intl.formatMessage({ id: titleId })}>
+        <thead>
+          <tr>
+            <th scope="col">
+              <FormattedMessage id={titleId} />
+            </th>
+            <th scope="col" className="mo-table__num">
+              <FormattedMessage id="aiUsage.operations" />
+            </th>
+            <th scope="col" className="mo-table__num">
+              <FormattedMessage id="aiUsage.internalCost" />
+            </th>
+            <th scope="col" className="mo-table__num">
+              <FormattedMessage id="aiUsage.credits" />
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.map(([key, bucket], index) => (
+            // Two organizations can share a name: the row is its place, the label its name.
+            <tr key={`${index}-${key}`}>
+              <th scope="row">{key}</th>
+              <td className="mo-table__num">{intl.formatNumber(bucket.operations)}</td>
+              <td className="mo-table__num">
+                {usd(intl, bucket.costMicroUsd)}
+                {bucket.unpricedOperations > 0 ? ' *' : ''}
+              </td>
+              <td className="mo-table__num">{intl.formatNumber(bucket.credits)}</td>
             </tr>
-          </thead>
-          <tbody>
-            {sorted.map(([key, bucket], index) => (
-              // Two organizations can share a name: the row is its place, the label its name.
-              <tr key={`${index}-${key}`}>
-                <th scope="row">{key}</th>
-                <td>{intl.formatNumber(bucket.operations)}</td>
-                <td>
-                  {usd(intl, bucket.costMicroUsd)}
-                  {bucket.unpricedOperations > 0 ? ' *' : ''}
-                </td>
-                <td>{intl.formatNumber(bucket.credits)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+          ))}
+        </tbody>
+      </DataTable>
     </section>
   );
 }
 
 const Loading = () => (
-  <p className="panel__empty" role="status">
+  <StateMessage kind="loading">
     <FormattedMessage id="aiUsage.loading" />
-  </p>
+  </StateMessage>
 );

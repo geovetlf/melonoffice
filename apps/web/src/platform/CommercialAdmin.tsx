@@ -1,5 +1,5 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
-import { Button } from '@melonoffice/ui';
+import { Button, FormSection, StateMessage } from '@melonoffice/ui';
 import { useEffect, useId, useState, type FormEvent } from 'react';
 import { CreditGrant } from './CreditGrant.js';
 import {
@@ -63,23 +63,23 @@ export function CommercialAdmin({
 
   return (
     <>
-      <section className="dept-office__section" aria-labelledby="platform-commercial">
-        <h2 id="platform-commercial">
+      <section className="mo-panel mo-page-section" aria-labelledby="platform-commercial">
+        <h2 id="platform-commercial" className="mo-section-title">
           <FormattedMessage id="platform.commercial.title" />
         </h2>
-        <p className="customers__meta">
+        <p className="mo-lead">
           <FormattedMessage id="platform.commercial.lead" />
         </p>
         {accounts === 'loading' ? null : accounts === 'error' ? (
-          <p className="panel__empty" role="alert">
+          <StateMessage kind="error">
             <FormattedMessage id="platform.commercial.error" />
-          </p>
+          </StateMessage>
         ) : accounts.length === 0 ? (
-          <p className="panel__empty">
+          <StateMessage kind="empty">
             <FormattedMessage id="platform.commercial.none" />
-          </p>
+          </StateMessage>
         ) : (
-          <ul className="documents__list" aria-label="accounts">
+          <ul className="mo-list" aria-label="accounts">
             {accounts.map((a) => (
               <AccountRow
                 key={a.id}
@@ -103,23 +103,23 @@ export function CommercialAdmin({
 
       <CreditGrant client={client} />
 
-      <section className="dept-office__section" aria-labelledby="platform-domains">
-        <h2 id="platform-domains">
+      <section className="mo-panel mo-page-section" aria-labelledby="platform-domains">
+        <h2 id="platform-domains" className="mo-section-title">
           <FormattedMessage id="platform.domains.title" />
         </h2>
-        <p className="customers__meta">
+        <p className="mo-lead">
           <FormattedMessage id="platform.domains.lead" />
         </p>
         {domains === 'loading' ? null : domains === 'error' ? (
-          <p className="panel__empty" role="alert">
+          <StateMessage kind="error">
             <FormattedMessage id="platform.domains.error" />
-          </p>
+          </StateMessage>
         ) : domains.length === 0 ? (
-          <p className="panel__empty">
+          <StateMessage kind="empty">
             <FormattedMessage id="platform.domains.none" />
-          </p>
+          </StateMessage>
         ) : (
-          <ul className="documents__list">
+          <ul className="mo-list">
             {domains.map((d) => (
               <DomainRow
                 key={d.hostname}
@@ -184,32 +184,35 @@ function AccountRow({
   const status = a.status as CommercialAccountStatus;
   const open = status !== 'closed';
   return (
-    <li className="documents__item" aria-label={a.name}>
-      <span className="documents__name">{a.name}</span>
-      <span className="documents__meta">
-        <FormattedMessage id={`partners.type.${a.type}`} /> ·{' '}
-        <FormattedMessage id={`platform.commercial.status.${status}`} /> ·{' '}
-        <FormattedMessage
-          id="platform.commercial.limits"
-          values={{ customers: a.limits?.customers ?? 0, members: a.limits?.members ?? 0 }}
-        />
-        {whiteLabel ? (
-          <>
-            {' · '}
-            <FormattedMessage
-              id="platform.commercial.resellerLimit"
-              values={{ resellers: a.limits?.resellers ?? 0 }}
-            />
-          </>
-        ) : null}
-      </span>
-      <code className="documents__meta">{a.id}</code>
+    <li className="mo-list-item" aria-label={a.name}>
+      <div className="mo-list-item__main">
+        <span className="mo-list-item__title">{a.name}</span>
+        <span className="mo-list-item__meta">
+          <FormattedMessage id={`partners.type.${a.type}`} /> ·{' '}
+          <FormattedMessage id={`platform.commercial.status.${status}`} /> ·{' '}
+          <FormattedMessage
+            id="platform.commercial.limits"
+            values={{ customers: a.limits?.customers ?? 0, members: a.limits?.members ?? 0 }}
+          />
+          {whiteLabel ? (
+            <>
+              {' · '}
+              <FormattedMessage
+                id="platform.commercial.resellerLimit"
+                values={{ resellers: a.limits?.resellers ?? 0 }}
+              />
+            </>
+          ) : null}
+        </span>
+        <code className="mo-list-item__meta">{a.id}</code>
+      </div>
       {open ? (
-        <div className="partners__actions">
+        <div className="mo-list-item__actions">
           {(ACCOUNT_NEXT[status] ?? []).map((next) => (
             <Button
               key={next}
               variant="secondary"
+              size="sm"
               disabled={busy}
               onClick={() => void run(() => client.setAccountStatus(a, next))}
             >
@@ -218,6 +221,7 @@ function AccountRow({
           ))}
           <Button
             variant="secondary"
+            size="sm"
             disabled={busy}
             onClick={() => {
               setEditing((x) => !x);
@@ -231,6 +235,7 @@ function AccountRow({
           </Button>
           <Button
             variant="secondary"
+            size="sm"
             disabled={busy}
             onClick={() => {
               setClosing((x) => !x);
@@ -244,7 +249,7 @@ function AccountRow({
       ) : null}
       {editing ? (
         <form
-          className="platform__form"
+          className="mo-form"
           onSubmit={(e) => {
             e.preventDefault();
             void run(() =>
@@ -256,78 +261,90 @@ function AccountRow({
             );
           }}
         >
-          <label htmlFor={`${id}-customers`}>
-            <FormattedMessage id="platform.commercial.customers" />
-          </label>
-          <input
-            id={`${id}-customers`}
-            type="number"
-            min={0}
-            value={customers}
-            onChange={(e) => setCustomers(e.target.value)}
-            required
-          />
-          <label htmlFor={`${id}-members`}>
-            <FormattedMessage id="platform.commercial.members" />
-          </label>
-          <input
-            id={`${id}-members`}
-            type="number"
-            min={1}
-            value={members}
-            onChange={(e) => setMembers(e.target.value)}
-            required
-          />
-          {whiteLabel ? (
-            <>
-              <label htmlFor={`${id}-resellers`}>
-                <FormattedMessage id="platform.commercial.resellers" />
+          <div className="mo-form-section__fields">
+            <div className="mo-field">
+              <label className="mo-label" htmlFor={`${id}-customers`}>
+                <FormattedMessage id="platform.commercial.customers" />
               </label>
               <input
-                id={`${id}-resellers`}
+                id={`${id}-customers`}
                 type="number"
                 min={0}
-                value={resellers}
-                onChange={(e) => setResellers(e.target.value)}
+                value={customers}
+                onChange={(e) => setCustomers(e.target.value)}
                 required
               />
-            </>
-          ) : null}
-          <Button type="submit" disabled={busy}>
-            <FormattedMessage id="platform.commercial.saveLimits" />
-          </Button>
+            </div>
+            <div className="mo-field">
+              <label className="mo-label" htmlFor={`${id}-members`}>
+                <FormattedMessage id="platform.commercial.members" />
+              </label>
+              <input
+                id={`${id}-members`}
+                type="number"
+                min={1}
+                value={members}
+                onChange={(e) => setMembers(e.target.value)}
+                required
+              />
+            </div>
+            {whiteLabel ? (
+              <div className="mo-field">
+                <label className="mo-label" htmlFor={`${id}-resellers`}>
+                  <FormattedMessage id="platform.commercial.resellers" />
+                </label>
+                <input
+                  id={`${id}-resellers`}
+                  type="number"
+                  min={0}
+                  value={resellers}
+                  onChange={(e) => setResellers(e.target.value)}
+                  required
+                />
+              </div>
+            ) : null}
+          </div>
+          <div className="mo-form__actions">
+            <Button type="submit" size="sm" disabled={busy}>
+              <FormattedMessage id="platform.commercial.saveLimits" />
+            </Button>
+          </div>
         </form>
       ) : null}
       {closing ? (
         <form
-          className="platform__form"
+          className="mo-form"
           onSubmit={(e) => {
             e.preventDefault();
             void run(() => client.setAccountStatus(a, 'closed', typed));
           }}
         >
-          <p className="customers__meta">
+          <p className="mo-hint">
             <FormattedMessage id="platform.commercial.closeWarning" />
           </p>
-          <label htmlFor={`${id}-confirm`}>
-            <FormattedMessage id="platform.commercial.closeConfirm" values={{ name: a.name }} />
-          </label>
-          <input
-            id={`${id}-confirm`}
-            value={typed}
-            onChange={(e) => setTyped(e.target.value)}
-            autoComplete="off"
-            spellCheck={false}
-          />
-          <Button type="submit" disabled={busy || typed !== a.name}>
-            <FormattedMessage id="platform.commercial.closeForGood" />
-          </Button>
+          <div className="mo-field">
+            <label className="mo-label" htmlFor={`${id}-confirm`}>
+              <FormattedMessage id="platform.commercial.closeConfirm" values={{ name: a.name }} />
+            </label>
+            <input
+              id={`${id}-confirm`}
+              value={typed}
+              onChange={(e) => setTyped(e.target.value)}
+              autoComplete="off"
+              spellCheck={false}
+            />
+          </div>
+          <div className="mo-form__actions">
+            <Button type="submit" variant="danger" size="sm" disabled={busy || typed !== a.name}>
+              <FormattedMessage id="platform.commercial.closeForGood" />
+            </Button>
+          </div>
         </form>
       ) : null}
       {failed === undefined ? null : (
-        <p className="panel__empty" role="alert">
+        <StateMessage kind="error" inline>
           <FormattedMessage id="platform.refused" values={{ reason: failed }} />
-        </p>
+        </StateMessage>
       )}
     </li>
   );
@@ -380,86 +397,107 @@ function NewAccount({
   };
 
   return (
-    <form className="platform__form" onSubmit={(e) => void submit(e)}>
-      <h3>
-        <FormattedMessage id="platform.commercial.new" />
-      </h3>
-      <label htmlFor={`${id}-type`}>
-        <FormattedMessage id="platform.commercial.type" />
-      </label>
-      <select
-        id={`${id}-type`}
-        value={type}
-        onChange={(e) => setType(e.target.value === 'white_label' ? 'white_label' : 'reseller')}
-      >
-        <option value="reseller">{intl.formatMessage({ id: 'partners.type.reseller' })}</option>
-        <option value="white_label">
-          {intl.formatMessage({ id: 'partners.type.white_label' })}
-        </option>
-      </select>
-      <label htmlFor={`${id}-name`}>
-        <FormattedMessage id="platform.commercial.name" />
-      </label>
-      <input id={`${id}-name`} value={name} onChange={(e) => setName(e.target.value)} required />
-      <label htmlFor={`${id}-admin`}>
-        <FormattedMessage id="platform.commercial.admin" />
-      </label>
-      <input
-        id={`${id}-admin`}
-        value={admin}
-        onChange={(e) => setAdmin(e.target.value)}
-        required
-        spellCheck={false}
-      />
-      {currentUserId === undefined ? null : (
-        <Button variant="secondary" onClick={() => setAdmin(currentUserId)}>
-          <FormattedMessage id="platform.commercial.useMine" />
-        </Button>
-      )}
-      <label htmlFor={`${id}-customers`}>
-        <FormattedMessage id="platform.commercial.customers" />
-      </label>
-      <input
-        id={`${id}-customers`}
-        type="number"
-        min={0}
-        value={customers}
-        onChange={(e) => setCustomers(e.target.value)}
-        required
-      />
-      <label htmlFor={`${id}-members`}>
-        <FormattedMessage id="platform.commercial.members" />
-      </label>
-      <input
-        id={`${id}-members`}
-        type="number"
-        min={1}
-        value={members}
-        onChange={(e) => setMembers(e.target.value)}
-        required
-      />
-      {type === 'white_label' ? (
-        <>
-          <label htmlFor={`${id}-resellers`}>
-            <FormattedMessage id="platform.commercial.resellers" />
+    <form className="mo-form" onSubmit={(e) => void submit(e)}>
+      <FormSection title={<FormattedMessage id="platform.commercial.new" />} titleAs="h3">
+        <div className="mo-field">
+          <label className="mo-label" htmlFor={`${id}-type`}>
+            <FormattedMessage id="platform.commercial.type" />
+          </label>
+          <select
+            id={`${id}-type`}
+            value={type}
+            onChange={(e) => setType(e.target.value === 'white_label' ? 'white_label' : 'reseller')}
+          >
+            <option value="reseller">{intl.formatMessage({ id: 'partners.type.reseller' })}</option>
+            <option value="white_label">
+              {intl.formatMessage({ id: 'partners.type.white_label' })}
+            </option>
+          </select>
+        </div>
+        <div className="mo-field">
+          <label className="mo-label" htmlFor={`${id}-name`}>
+            <FormattedMessage id="platform.commercial.name" />
           </label>
           <input
-            id={`${id}-resellers`}
-            type="number"
-            min={0}
-            value={resellers}
-            onChange={(e) => setResellers(e.target.value)}
+            id={`${id}-name`}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
             required
           />
-        </>
-      ) : null}
-      <Button type="submit" disabled={busy}>
-        <FormattedMessage id="platform.commercial.create" />
-      </Button>
+        </div>
+        <div className="mo-field">
+          <label className="mo-label" htmlFor={`${id}-admin`}>
+            <FormattedMessage id="platform.commercial.admin" />
+          </label>
+          <input
+            id={`${id}-admin`}
+            value={admin}
+            onChange={(e) => setAdmin(e.target.value)}
+            required
+            spellCheck={false}
+          />
+          {currentUserId === undefined ? null : (
+            <Button
+              variant="secondary"
+              size="sm"
+              className="platform__field-action"
+              onClick={() => setAdmin(currentUserId)}
+            >
+              <FormattedMessage id="platform.commercial.useMine" />
+            </Button>
+          )}
+        </div>
+        <div className="mo-field">
+          <label className="mo-label" htmlFor={`${id}-customers`}>
+            <FormattedMessage id="platform.commercial.customers" />
+          </label>
+          <input
+            id={`${id}-customers`}
+            type="number"
+            min={0}
+            value={customers}
+            onChange={(e) => setCustomers(e.target.value)}
+            required
+          />
+        </div>
+        <div className="mo-field">
+          <label className="mo-label" htmlFor={`${id}-members`}>
+            <FormattedMessage id="platform.commercial.members" />
+          </label>
+          <input
+            id={`${id}-members`}
+            type="number"
+            min={1}
+            value={members}
+            onChange={(e) => setMembers(e.target.value)}
+            required
+          />
+        </div>
+        {type === 'white_label' ? (
+          <div className="mo-field">
+            <label className="mo-label" htmlFor={`${id}-resellers`}>
+              <FormattedMessage id="platform.commercial.resellers" />
+            </label>
+            <input
+              id={`${id}-resellers`}
+              type="number"
+              min={0}
+              value={resellers}
+              onChange={(e) => setResellers(e.target.value)}
+              required
+            />
+          </div>
+        ) : null}
+      </FormSection>
+      <div className="mo-form__actions">
+        <Button type="submit" disabled={busy}>
+          <FormattedMessage id="platform.commercial.create" />
+        </Button>
+      </div>
       {failed === undefined ? null : (
-        <p className="panel__empty" role="alert">
+        <StateMessage kind="error">
           <FormattedMessage id="platform.refused" values={{ reason: failed }} />
-        </p>
+        </StateMessage>
       )}
     </form>
   );
@@ -490,17 +528,21 @@ function DomainRow({
   const targetId =
     d.target.type === 'organization' ? d.target.organizationId : d.target.commercialAccountId;
   return (
-    <li className="documents__item" aria-label={d.hostname}>
-      <span className="documents__name">{d.hostname}</span>
-      <span className="documents__meta">
-        <FormattedMessage id={`platform.domains.status.${d.status}`} /> ·{' '}
-        <FormattedMessage id={`platform.domains.target.${d.target.type}`} /> <code>{targetId}</code>
-      </span>
-      <div className="partners__actions">
+    <li className="mo-list-item" aria-label={d.hostname}>
+      <div className="mo-list-item__main">
+        <span className="mo-list-item__title">{d.hostname}</span>
+        <span className="mo-list-item__meta">
+          <FormattedMessage id={`platform.domains.status.${d.status}`} /> ·{' '}
+          <FormattedMessage id={`platform.domains.target.${d.target.type}`} />{' '}
+          <code>{targetId}</code>
+        </span>
+      </div>
+      <div className="mo-list-item__actions">
         {NEXT[d.status].map((status) => (
           <Button
             key={status}
             variant="secondary"
+            size="sm"
             disabled={busy}
             onClick={() => void move(status)}
           >
@@ -509,9 +551,9 @@ function DomainRow({
         ))}
       </div>
       {failed === undefined ? null : (
-        <p className="panel__empty" role="alert">
+        <StateMessage kind="error" inline>
           <FormattedMessage id="platform.refused" values={{ reason: failed }} />
-        </p>
+        </StateMessage>
       )}
     </li>
   );
@@ -557,72 +599,81 @@ function NewDomain({
   };
 
   return (
-    <form className="platform__form" onSubmit={(e) => void submit(e)}>
-      <h3>
-        <FormattedMessage id="platform.domains.new" />
-      </h3>
-      <label htmlFor={`${id}-host`}>
-        <FormattedMessage id="platform.domains.hostname" />
-      </label>
-      <input
-        id={`${id}-host`}
-        value={hostname}
-        onChange={(e) => setHostname(e.target.value)}
-        placeholder="app.example.com"
-        required
-        spellCheck={false}
-      />
-      <label htmlFor={`${id}-kind`}>
-        <FormattedMessage id="platform.domains.for" />
-      </label>
-      <select
-        id={`${id}-kind`}
-        value={kind}
-        onChange={(e) => {
-          setKind(e.target.value === 'commercial_account' ? 'commercial_account' : 'organization');
-          setTarget('');
-        }}
-      >
-        <option value="organization">
-          {intl.formatMessage({ id: 'platform.domains.target.organization' })}
-        </option>
-        <option value="commercial_account">
-          {intl.formatMessage({ id: 'platform.domains.target.commercial_account' })}
-        </option>
-      </select>
-      <label htmlFor={`${id}-target`}>
-        <FormattedMessage id={`platform.domains.target.${kind}`} />
-      </label>
-      {kind === 'organization' ? (
-        <input
-          id={`${id}-target`}
-          value={target}
-          onChange={(e) => setTarget(e.target.value)}
-          required
-          spellCheck={false}
-        />
-      ) : (
-        <select
-          id={`${id}-target`}
-          value={target}
-          onChange={(e) => setTarget(e.target.value)}
-          required
-        >
-          <option value="" />
-          {accounts.map((a) => (
-            <option key={a.id} value={a.id}>
-              {a.name}
+    <form className="mo-form" onSubmit={(e) => void submit(e)}>
+      <FormSection title={<FormattedMessage id="platform.domains.new" />} titleAs="h3">
+        <div className="mo-field">
+          <label className="mo-label" htmlFor={`${id}-host`}>
+            <FormattedMessage id="platform.domains.hostname" />
+          </label>
+          <input
+            id={`${id}-host`}
+            value={hostname}
+            onChange={(e) => setHostname(e.target.value)}
+            placeholder="app.example.com"
+            required
+            spellCheck={false}
+          />
+        </div>
+        <div className="mo-field">
+          <label className="mo-label" htmlFor={`${id}-kind`}>
+            <FormattedMessage id="platform.domains.for" />
+          </label>
+          <select
+            id={`${id}-kind`}
+            value={kind}
+            onChange={(e) => {
+              setKind(
+                e.target.value === 'commercial_account' ? 'commercial_account' : 'organization',
+              );
+              setTarget('');
+            }}
+          >
+            <option value="organization">
+              {intl.formatMessage({ id: 'platform.domains.target.organization' })}
             </option>
-          ))}
-        </select>
-      )}
-      <Button type="submit" disabled={busy}>
-        <FormattedMessage id="platform.domains.create" />
-      </Button>
+            <option value="commercial_account">
+              {intl.formatMessage({ id: 'platform.domains.target.commercial_account' })}
+            </option>
+          </select>
+        </div>
+        <div className="mo-field">
+          <label className="mo-label" htmlFor={`${id}-target`}>
+            <FormattedMessage id={`platform.domains.target.${kind}`} />
+          </label>
+          {kind === 'organization' ? (
+            <input
+              id={`${id}-target`}
+              value={target}
+              onChange={(e) => setTarget(e.target.value)}
+              required
+              spellCheck={false}
+            />
+          ) : (
+            <select
+              id={`${id}-target`}
+              value={target}
+              onChange={(e) => setTarget(e.target.value)}
+              required
+            >
+              <option value="" />
+              {accounts.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
+      </FormSection>
+      <div className="mo-form__actions">
+        <Button type="submit" disabled={busy}>
+          <FormattedMessage id="platform.domains.create" />
+        </Button>
+      </div>
       {failed === undefined ? null : (
-        <p className="panel__empty" role="alert">
+        <StateMessage kind="error">
           <FormattedMessage id="platform.refused" values={{ reason: failed }} />
-        </p>
+        </StateMessage>
       )}
     </form>
   );

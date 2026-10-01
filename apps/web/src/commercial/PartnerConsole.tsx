@@ -1,5 +1,5 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
-import { Button } from '@melonoffice/ui';
+import { Button, DataTable, FormSection, PageHeader, StateMessage, Toolbar } from '@melonoffice/ui';
 import { useEffect, useId, useState, type FormEvent, type ReactNode } from 'react';
 import { BrandForm } from '../brand/BrandForm.js';
 import { invitationLink, joinLink } from '../invitations/invitationToken.js';
@@ -91,9 +91,9 @@ export function failureOf(error: unknown): Failure {
 
 const Failed = ({ failure }: { readonly failure: Failure | undefined }) =>
   failure === undefined ? null : (
-    <p className="panel__empty" role="alert">
+    <StateMessage kind="error">
       <FormattedMessage id={failure.id} values={{ reason: failure.reason ?? '' }} />
-    </p>
+    </StateMessage>
   );
 
 /** The last 30 days, today included, as the API's `from` and `to` (UTC days). */
@@ -135,27 +135,25 @@ export function PartnerConsole({
   if (accounts === 'loading') return null;
   if (accounts === 'error') {
     return (
-      <p className="panel__empty" role="alert">
+      <StateMessage kind="error">
         <FormattedMessage id="console.error" />
-      </p>
+      </StateMessage>
     );
   }
   const account = accounts.find((a) => a.id === chosen) ?? accounts[0];
   return (
-    <article className="dept-office partner-console">
-      <h1 className="dept-office__title">
-        <FormattedMessage id="console.title" />
-      </h1>
+    <article className="mo-page partner-console">
+      <PageHeader title={<FormattedMessage id="console.title" />} />
       {account === undefined ? (
-        <p className="panel__empty">
+        <StateMessage kind="empty">
           <FormattedMessage id="console.none" />
-        </p>
+        </StateMessage>
       ) : (
         <>
           {accounts.length > 1 ? (
             <AccountPicker accounts={accounts} value={account.id} onChange={setChosen} />
           ) : null}
-          <p className="documents__lead">
+          <p className="mo-lead">
             <strong>{account.name}</strong> ·{' '}
             <FormattedMessage id={`partners.type.${account.type}`} /> ·{' '}
             <FormattedMessage id={`console.role.${account.role}`} />
@@ -178,8 +176,8 @@ function AccountPicker({
 }) {
   const id = useId();
   return (
-    <p>
-      <label htmlFor={id}>
+    <Toolbar>
+      <label className="mo-toolbar__label" htmlFor={id}>
         <FormattedMessage id="console.account" />
       </label>{' '}
       <select id={id} value={value} onChange={(e) => onChange(e.target.value)}>
@@ -189,7 +187,7 @@ function AccountPicker({
           </option>
         ))}
       </select>
-    </p>
+    </Toolbar>
   );
 }
 
@@ -214,11 +212,11 @@ function Account({
       ) : null}
       <Members account={account} client={client} admin={admin} origin={origin} />
       {hasBrand(account) ? (
-        <section className="dept-office__section" aria-labelledby="console-brand">
-          <h2 id="console-brand">
+        <section className="mo-panel mo-page-section" aria-labelledby="console-brand">
+          <h2 id="console-brand" className="mo-section-title">
             <FormattedMessage id="console.brand.title" />
           </h2>
-          <p className="customers__meta">
+          <p className="mo-lead">
             <FormattedMessage id={`console.brand.lead.${account.type}`} />
           </p>
           <BrandLevel
@@ -252,9 +250,9 @@ function BrandLevel({
   if (brand === 'loading') return null;
   if (brand === 'error') {
     return (
-      <p className="panel__empty" role="alert">
+      <StateMessage kind="error">
         <FormattedMessage id="console.error" />
-      </p>
+      </StateMessage>
     );
   }
   // Each save names the version last read or saved, so a stale one is refused.
@@ -287,45 +285,50 @@ function Customers({
   const [list] = useLoad(() => client.customers(account.id), [client, account.id]);
   const [open, setOpen] = useState<string>();
   return (
-    <section className="dept-office__section" aria-labelledby="console-customers">
-      <h2 id="console-customers">
+    <section className="mo-panel mo-page-section" aria-labelledby="console-customers">
+      <h2 id="console-customers" className="mo-section-title">
         <FormattedMessage id="console.customers.title" />
       </h2>
       {list === 'loading' ? null : list === 'error' ? (
-        <p className="panel__empty" role="alert">
+        <StateMessage kind="error">
           <FormattedMessage id="console.error" />
-        </p>
+        </StateMessage>
       ) : (
         <>
           {list.customers.length === 0 ? (
-            <p className="panel__empty">
+            <StateMessage kind="empty">
               <FormattedMessage id="console.customers.none" />
-            </p>
+            </StateMessage>
           ) : (
-            <ul className="documents__list">
+            <ul className="mo-list">
               {list.customers.map((c) => (
-                <li key={c.organizationId} className="documents__item">
-                  <span className="documents__name">
-                    {c.name ?? <FormattedMessage id="console.customers.unnamed" />}
-                  </span>
-                  <span className="documents__meta">
-                    <FormattedMessage id={`partners.mode.${c.mode}`} /> ·{' '}
-                    <FormattedMessage
-                      id="console.customers.scopes"
-                      values={{ count: c.scopes.length }}
-                    />
-                  </span>
-                  <Button
-                    variant="secondary"
-                    aria-expanded={open === c.organizationId}
-                    onClick={() =>
-                      setOpen(open === c.organizationId ? undefined : c.organizationId)
-                    }
-                  >
-                    <FormattedMessage
-                      id={open === c.organizationId ? 'console.close' : 'console.open'}
-                    />
-                  </Button>
+                <li key={c.organizationId} className="mo-list-item">
+                  <div className="mo-list-item__main">
+                    <span className="mo-list-item__title">
+                      {c.name ?? <FormattedMessage id="console.customers.unnamed" />}
+                    </span>
+                    <span className="mo-list-item__meta">
+                      <FormattedMessage id={`partners.mode.${c.mode}`} /> ·{' '}
+                      <FormattedMessage
+                        id="console.customers.scopes"
+                        values={{ count: c.scopes.length }}
+                      />
+                    </span>
+                  </div>
+                  <div className="mo-list-item__actions">
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      aria-expanded={open === c.organizationId}
+                      onClick={() =>
+                        setOpen(open === c.organizationId ? undefined : c.organizationId)
+                      }
+                    >
+                      <FormattedMessage
+                        id={open === c.organizationId ? 'console.close' : 'console.open'}
+                      />
+                    </Button>
+                  </div>
                   {open === c.organizationId ? (
                     <CustomerPanel
                       account={account}
@@ -340,7 +343,7 @@ function Customers({
             </ul>
           )}
           {list.pending.length > 0 ? (
-            <p className="customers__meta">
+            <p className="mo-hint">
               <FormattedMessage
                 id="console.customers.pending"
                 values={{ count: list.pending.length }}
@@ -377,7 +380,7 @@ function CustomerPanel({
     !(partnerAdmin && has('branding') && customer.mode === 'white_label');
   return (
     <div className="console__customer">
-      <p className="documents__meta">
+      <p className="mo-list-item__meta">
         <FormattedMessage id="console.customers.granted" />{' '}
         {customer.scopes.length === 0 ? (
           <FormattedMessage id="partners.noScopes" />
@@ -401,8 +404,8 @@ function CustomerPanel({
       ) : null}
       {admin && has('billing') ? <Billing load={() => client.billing(account.id, org)} /> : null}
       {partnerAdmin && has('branding') && customer.mode === 'white_label' ? (
-        <div>
-          <h3>
+        <div className="console__part">
+          <h3 className="mo-subsection-title">
             <FormattedMessage id="console.customer.brand" />
           </h3>
           <BrandLevel
@@ -414,9 +417,9 @@ function CustomerPanel({
         </div>
       ) : null}
       {nothing ? (
-        <p className="panel__empty">
+        <StateMessage kind="empty" inline>
           <FormattedMessage id="console.customer.nothing" />
-        </p>
+        </StateMessage>
       ) : null}
     </div>
   );
@@ -433,14 +436,14 @@ function Part<T>({
 }) {
   const [value] = useLoad(load, []);
   return (
-    <div>
-      <h3>
+    <div className="console__part">
+      <h3 className="mo-subsection-title">
         <FormattedMessage id={title} />
       </h3>
       {value === 'loading' ? null : value === 'error' ? (
-        <p className="panel__empty" role="alert">
+        <StateMessage kind="error">
           <FormattedMessage id="console.error" />
-        </p>
+        </StateMessage>
       ) : (
         children(value)
       )}
@@ -451,7 +454,7 @@ function Part<T>({
 const Summary = ({ load }: { readonly load: () => Promise<CustomerSummary> }) => (
   <Part load={load} title="console.customer.summary">
     {(s) => (
-      <p className="documents__meta">
+      <p className="mo-list-item__meta">
         {s.organization.name} · {s.organization.status} ·{' '}
         {s.plan ?? <FormattedMessage id="console.customer.noPlan" />}
       </p>
@@ -465,7 +468,7 @@ function Usage({ load }: { readonly load: () => Promise<CustomerUsage> }) {
     <Part load={load} title="console.customer.usage">
       {(u) => (
         <>
-          <p className="documents__meta">
+          <p className="mo-list-item__meta">
             <FormattedMessage
               id="console.customer.usageTotals"
               values={{
@@ -477,16 +480,16 @@ function Usage({ load }: { readonly load: () => Promise<CustomerUsage> }) {
             />
           </p>
           {Object.keys(u.byCapability).length === 0 ? null : (
-            <table className="console__table">
+            <DataTable label={intl.formatMessage({ id: 'console.customer.usage' })}>
               <thead>
                 <tr>
                   <th scope="col">
                     <FormattedMessage id="console.customer.capability" />
                   </th>
-                  <th scope="col">
+                  <th scope="col" className="mo-table__num">
                     <FormattedMessage id="console.customer.operations" />
                   </th>
-                  <th scope="col">
+                  <th scope="col" className="mo-table__num">
                     <FormattedMessage id="console.customer.credits" />
                   </th>
                 </tr>
@@ -494,13 +497,13 @@ function Usage({ load }: { readonly load: () => Promise<CustomerUsage> }) {
               <tbody>
                 {Object.entries(u.byCapability).map(([capability, b]) => (
                   <tr key={capability}>
-                    <td>{capability}</td>
-                    <td>{intl.formatNumber(b.operations)}</td>
-                    <td>{intl.formatNumber(b.credits)}</td>
+                    <th scope="row">{capability}</th>
+                    <td className="mo-table__num">{intl.formatNumber(b.operations)}</td>
+                    <td className="mo-table__num">{intl.formatNumber(b.credits)}</td>
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </DataTable>
           )}
         </>
       )}
@@ -511,7 +514,7 @@ function Usage({ load }: { readonly load: () => Promise<CustomerUsage> }) {
 const Billing = ({ load }: { readonly load: () => Promise<CustomerBilling> }) => (
   <Part load={load} title="console.customer.billing">
     {(b) => (
-      <p className="documents__meta">
+      <p className="mo-list-item__meta">
         {b.billedTo === null ? null : (
           <>
             <FormattedMessage id={`console.billedTo.${b.billedTo}`} /> ·{' '}
@@ -551,11 +554,11 @@ function Invitations({
       Array.isArray(current) ? current.map((x) => (x.id === i.id ? i : x)) : current,
     );
   return (
-    <section className="dept-office__section" aria-labelledby="console-invitations">
-      <h2 id="console-invitations">
+    <section className="mo-panel mo-page-section" aria-labelledby="console-invitations">
+      <h2 id="console-invitations" className="mo-section-title">
         <FormattedMessage id="console.invitations.title" />
       </h2>
-      <p className="customers__meta">
+      <p className="mo-lead">
         <FormattedMessage id="console.invitations.lead" />
       </p>
       {admin ? (
@@ -570,15 +573,15 @@ function Invitations({
       ) : null}
       {link === undefined ? null : <OnceLink link={link} onDone={() => setLink(undefined)} />}
       {list === 'loading' ? null : list === 'error' ? (
-        <p className="panel__empty" role="alert">
+        <StateMessage kind="error">
           <FormattedMessage id="console.error" />
-        </p>
+        </StateMessage>
       ) : list.length === 0 ? (
-        <p className="panel__empty">
+        <StateMessage kind="empty">
           <FormattedMessage id="console.invitations.none" />
-        </p>
+        </StateMessage>
       ) : (
-        <ul className="documents__list" aria-label="invitations">
+        <ul className="mo-list" aria-label="invitations">
           {list.map((i) => (
             <InvitationRow
               key={i.id}
@@ -599,40 +602,46 @@ function OnceLink({ link, onDone }: { readonly link: string; readonly onDone: ()
   const id = useId();
   const [copied, setCopied] = useState<boolean>();
   return (
-    <div className="notice" role="status">
-      <p>
-        <FormattedMessage id="console.invitations.once" />
-      </p>
-      <label htmlFor={id} className="visually-hidden">
-        <FormattedMessage id="console.invitations.link" />
-      </label>
-      <input id={id} readOnly value={link} onFocus={(e) => e.target.select()} />
-      <Button
-        onClick={() => {
-          const clipboard = globalThis.navigator?.clipboard;
-          if (clipboard === undefined) {
-            setCopied(false);
-            return;
-          }
-          clipboard.writeText(link).then(
-            () => setCopied(true),
-            () => setCopied(false),
-          );
-        }}
-      >
-        <FormattedMessage
-          id={copied === true ? 'console.invitations.copied' : 'console.invitations.copy'}
-        />
-      </Button>
-      {copied === false ? (
-        <p className="documents__meta">
-          <FormattedMessage id="console.invitations.copyFailed" />
-        </p>
-      ) : null}
-      <Button variant="secondary" onClick={onDone}>
-        <FormattedMessage id="console.invitations.done" />
-      </Button>
-    </div>
+    <StateMessage
+      kind="success"
+      action={
+        <div className="console__once">
+          <label htmlFor={id} className="visually-hidden">
+            <FormattedMessage id="console.invitations.link" />
+          </label>
+          <input id={id} readOnly value={link} onFocus={(e) => e.target.select()} />
+          <div className="mo-form__actions">
+            <Button
+              onClick={() => {
+                const clipboard = globalThis.navigator?.clipboard;
+                if (clipboard === undefined) {
+                  setCopied(false);
+                  return;
+                }
+                clipboard.writeText(link).then(
+                  () => setCopied(true),
+                  () => setCopied(false),
+                );
+              }}
+            >
+              <FormattedMessage
+                id={copied === true ? 'console.invitations.copied' : 'console.invitations.copy'}
+              />
+            </Button>
+            {copied === false ? (
+              <p className="mo-hint">
+                <FormattedMessage id="console.invitations.copyFailed" />
+              </p>
+            ) : null}
+            <Button variant="secondary" onClick={onDone}>
+              <FormattedMessage id="console.invitations.done" />
+            </Button>
+          </div>
+        </div>
+      }
+    >
+      <FormattedMessage id="console.invitations.once" />
+    </StateMessage>
   );
 }
 
@@ -676,36 +685,37 @@ function InviteForm({
   };
 
   return (
-    <form className="platform__form" onSubmit={(e) => void submit(e)}>
-      <h3>
-        <FormattedMessage id="console.invitations.new" />
-      </h3>
-      <label htmlFor={`${id}-email`}>
-        <FormattedMessage id="auth.email" />
-      </label>
-      <input
-        id={`${id}-email`}
-        type="email"
-        value={email}
-        onChange={(e) => setEmail(e.target.value)}
-        required
-      />
-      {modes.length > 1 ? (
-        <>
-          <label htmlFor={`${id}-mode`}>
-            <FormattedMessage id="console.invitations.mode" />
+    <form className="mo-form" onSubmit={(e) => void submit(e)}>
+      <FormSection title={<FormattedMessage id="console.invitations.new" />} titleAs="h3">
+        <div className="mo-field">
+          <label className="mo-label" htmlFor={`${id}-email`}>
+            <FormattedMessage id="auth.email" />
           </label>
-          <select id={`${id}-mode`} value={mode} onChange={(e) => setMode(e.target.value)}>
-            {modes.map((m) => (
-              <option key={m} value={m}>
-                {intl.formatMessage({ id: `partners.mode.${m}` })}
-              </option>
-            ))}
-          </select>
-        </>
-      ) : null}
+          <input
+            id={`${id}-email`}
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+          />
+        </div>
+        {modes.length > 1 ? (
+          <div className="mo-field">
+            <label className="mo-label" htmlFor={`${id}-mode`}>
+              <FormattedMessage id="console.invitations.mode" />
+            </label>
+            <select id={`${id}-mode`} value={mode} onChange={(e) => setMode(e.target.value)}>
+              {modes.map((m) => (
+                <option key={m} value={m}>
+                  {intl.formatMessage({ id: `partners.mode.${m}` })}
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : null}
+      </FormSection>
       <fieldset className="partners__scopes">
-        <legend>
+        <legend className="mo-label">
           <FormattedMessage id="console.invitations.asks" />
         </legend>
         {SCOPES.filter((scope) => scope !== 'branding' || mode === 'white_label').map((scope) => (
@@ -724,9 +734,11 @@ function InviteForm({
           </label>
         ))}
       </fieldset>
-      <Button type="submit" disabled={busy || email.trim() === ''}>
-        <FormattedMessage id="console.invitations.send" />
-      </Button>
+      <div className="mo-form__actions">
+        <Button type="submit" disabled={busy || email.trim() === ''}>
+          <FormattedMessage id="console.invitations.send" />
+        </Button>
+      </div>
       <Failed failure={failed} />
     </form>
   );
@@ -748,54 +760,62 @@ function InvitationRow({
   const [failed, setFailed] = useState<Failure>();
   const day = (iso: string) => intl.formatDate(new Date(iso), { dateStyle: 'medium' });
   return (
-    <li className="documents__item" aria-label={i.email}>
-      <span className="documents__name">{i.email}</span>
-      <span className="documents__meta">
-        <FormattedMessage id={`partners.mode.${i.mode}`} /> ·{' '}
-        <FormattedMessage id={`console.invitation.${i.status}`} /> ·{' '}
-        <FormattedMessage id="console.invitation.created" values={{ date: day(i.createdAt) }} />
-        {i.status === 'pending' || i.status === 'expired' ? (
-          <>
-            {' · '}
-            <FormattedMessage
-              id={
-                i.status === 'pending'
-                  ? 'console.invitation.expires'
-                  : 'console.invitation.expiredOn'
-              }
-              values={{ date: day(i.expiresAt) }}
-            />
-          </>
-        ) : null}
-      </span>
+    <li className="mo-list-item" aria-label={i.email}>
+      <div className="mo-list-item__main">
+        <span className="mo-list-item__title">{i.email}</span>
+        <span className="mo-list-item__meta">
+          <FormattedMessage id={`partners.mode.${i.mode}`} /> ·{' '}
+          <FormattedMessage id={`console.invitation.${i.status}`} /> ·{' '}
+          <FormattedMessage id="console.invitation.created" values={{ date: day(i.createdAt) }} />
+          {i.status === 'pending' || i.status === 'expired' ? (
+            <>
+              {' · '}
+              <FormattedMessage
+                id={
+                  i.status === 'pending'
+                    ? 'console.invitation.expires'
+                    : 'console.invitation.expiredOn'
+                }
+                values={{ date: day(i.expiresAt) }}
+              />
+            </>
+          ) : null}
+        </span>
+      </div>
       {canRevoke && i.status === 'pending' ? (
-        <Button
-          variant="secondary"
-          disabled={busy}
-          onClick={() => {
-            if (
-              !globalThis.confirm(
-                intl.formatMessage({ id: 'console.invitation.revokeConfirm' }, { email: i.email }),
-              )
-            ) {
-              return;
-            }
-            setBusy(true);
-            setFailed(undefined);
-            revoke().then(
-              (next) => {
-                onChange(next);
-                setBusy(false);
-              },
-              (error: unknown) => {
-                setFailed(failureOf(error));
-                setBusy(false);
-              },
-            );
-          }}
-        >
-          <FormattedMessage id="console.invitation.revoke" />
-        </Button>
+        <div className="mo-list-item__actions">
+          <Button
+            variant="danger"
+            size="sm"
+            disabled={busy}
+            onClick={() => {
+              if (
+                !globalThis.confirm(
+                  intl.formatMessage(
+                    { id: 'console.invitation.revokeConfirm' },
+                    { email: i.email },
+                  ),
+                )
+              ) {
+                return;
+              }
+              setBusy(true);
+              setFailed(undefined);
+              revoke().then(
+                (next) => {
+                  onChange(next);
+                  setBusy(false);
+                },
+                (error: unknown) => {
+                  setFailed(failureOf(error));
+                  setBusy(false);
+                },
+              );
+            }}
+          >
+            <FormattedMessage id="console.invitation.revoke" />
+          </Button>
+        </div>
       ) : null}
       <Failed failure={failed} />
     </li>
@@ -850,41 +870,46 @@ function Members({
     );
 
   return (
-    <section className="dept-office__section" aria-labelledby="console-members">
-      <h2 id="console-members">
+    <section className="mo-panel mo-page-section" aria-labelledby="console-members">
+      <h2 id="console-members" className="mo-section-title">
         <FormattedMessage id="console.members.title" />
       </h2>
       {list === 'loading' ? null : list === 'error' ? (
-        <p className="panel__empty" role="alert">
+        <StateMessage kind="error">
           <FormattedMessage id="console.error" />
-        </p>
+        </StateMessage>
       ) : (
-        <ul className="documents__list" aria-label="members">
+        <ul className="mo-list" aria-label="members">
           {list
             .filter((m) => m.status !== 'revoked')
             .map((m) => (
-              <li key={m.userId} className="documents__item">
-                <code className="documents__name">{m.userId}</code>
-                <span className="documents__meta">
-                  <FormattedMessage id={`console.role.${m.role}`} />
-                </span>
+              <li key={m.userId} className="mo-list-item">
+                <div className="mo-list-item__main">
+                  <code className="mo-list-item__title">{m.userId}</code>
+                  <span className="mo-list-item__meta">
+                    <FormattedMessage id={`console.role.${m.role}`} />
+                  </span>
+                </div>
                 {admin ? (
-                  <Button
-                    variant="secondary"
-                    disabled={busy}
-                    onClick={() => {
-                      if (
-                        !globalThis.confirm(intl.formatMessage({ id: 'console.members.confirm' }))
-                      )
-                        return;
-                      void run(async () => {
-                        await client.revokeMember(account.id, m.userId);
-                        put({ ...m, status: 'revoked' });
-                      });
-                    }}
-                  >
-                    <FormattedMessage id="console.members.remove" />
-                  </Button>
+                  <div className="mo-list-item__actions">
+                    <Button
+                      variant="danger"
+                      size="sm"
+                      disabled={busy}
+                      onClick={() => {
+                        if (
+                          !globalThis.confirm(intl.formatMessage({ id: 'console.members.confirm' }))
+                        )
+                          return;
+                        void run(async () => {
+                          await client.revokeMember(account.id, m.userId);
+                          put({ ...m, status: 'revoked' });
+                        });
+                      }}
+                    >
+                      <FormattedMessage id="console.members.remove" />
+                    </Button>
+                  </div>
                 ) : null}
               </li>
             ))}
@@ -892,7 +917,7 @@ function Members({
       )}
       {admin ? (
         <form
-          className="platform__form"
+          className="mo-form"
           onSubmit={(e) => {
             e.preventDefault();
             void run(async () => {
@@ -903,65 +928,76 @@ function Members({
             });
           }}
         >
-          <h3>
-            <FormattedMessage id="console.members.invite" />
-          </h3>
-          <p className="customers__meta">
-            <FormattedMessage id="console.members.inviteLead" />
-          </p>
-          <label htmlFor={`${id}-email`}>
-            <FormattedMessage id="console.members.email" />
-          </label>
-          <input
-            id={`${id}-email`}
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-          />
-          <label htmlFor={`${id}-role`}>
-            <FormattedMessage id="console.members.role" />
-          </label>
-          <select id={`${id}-role`} value={role} onChange={(e) => setRole(e.target.value)}>
-            {roles.map((r) => (
-              <option key={r} value={r}>
-                {intl.formatMessage({ id: `console.role.${r}` })}
-              </option>
-            ))}
-          </select>
-          <Button type="submit" disabled={busy || email.trim() === ''}>
-            <FormattedMessage id="console.members.send" />
-          </Button>
+          <FormSection
+            title={<FormattedMessage id="console.members.invite" />}
+            titleAs="h3"
+            description={<FormattedMessage id="console.members.inviteLead" />}
+          >
+            <div className="mo-field">
+              <label className="mo-label" htmlFor={`${id}-email`}>
+                <FormattedMessage id="console.members.email" />
+              </label>
+              <input
+                id={`${id}-email`}
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+              />
+            </div>
+            <div className="mo-field">
+              <label className="mo-label" htmlFor={`${id}-role`}>
+                <FormattedMessage id="console.members.role" />
+              </label>
+              <select id={`${id}-role`} value={role} onChange={(e) => setRole(e.target.value)}>
+                {roles.map((r) => (
+                  <option key={r} value={r}>
+                    {intl.formatMessage({ id: `console.role.${r}` })}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </FormSection>
+          <div className="mo-form__actions">
+            <Button type="submit" disabled={busy || email.trim() === ''}>
+              <FormattedMessage id="console.members.send" />
+            </Button>
+          </div>
         </form>
       ) : null}
       {link === undefined ? null : <OnceLink link={link} onDone={() => setLink(undefined)} />}
       {admin && Array.isArray(invited) && invited.length > 0 ? (
-        <ul className="documents__list" aria-label="member invitations">
+        <ul className="mo-list" aria-label="member invitations">
           {invited.map((i) => (
-            <li key={i.id} className="documents__item" aria-label={i.email}>
-              <span className="documents__name">{i.email}</span>
-              <span className="documents__meta">
-                <FormattedMessage id={`console.role.${i.role}`} /> ·{' '}
-                <FormattedMessage id={`console.invitation.${i.status}`} />
-              </span>
+            <li key={i.id} className="mo-list-item" aria-label={i.email}>
+              <div className="mo-list-item__main">
+                <span className="mo-list-item__title">{i.email}</span>
+                <span className="mo-list-item__meta">
+                  <FormattedMessage id={`console.role.${i.role}`} /> ·{' '}
+                  <FormattedMessage id={`console.invitation.${i.status}`} />
+                </span>
+              </div>
               {i.status === 'pending' ? (
-                <Button
-                  variant="secondary"
-                  disabled={busy}
-                  onClick={() => {
-                    if (
-                      !globalThis.confirm(
-                        intl.formatMessage({ id: 'console.members.withdrawConfirm' }),
+                <div className="mo-list-item__actions">
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    disabled={busy}
+                    onClick={() => {
+                      if (
+                        !globalThis.confirm(
+                          intl.formatMessage({ id: 'console.members.withdrawConfirm' }),
+                        )
                       )
-                    )
-                      return;
-                    void run(async () =>
-                      putInvitation(await client.revokeMemberInvitation(account.id, i)),
-                    );
-                  }}
-                >
-                  <FormattedMessage id="console.invitation.revoke" />
-                </Button>
+                        return;
+                      void run(async () =>
+                        putInvitation(await client.revokeMemberInvitation(account.id, i)),
+                      );
+                    }}
+                  >
+                    <FormattedMessage id="console.invitation.revoke" />
+                  </Button>
+                </div>
               ) : null}
             </li>
           ))}
@@ -1021,78 +1057,83 @@ function Resellers({
   const day = (iso: string) => intl.formatDate(new Date(iso), { dateStyle: 'medium' });
 
   return (
-    <section className="dept-office__section" aria-labelledby="console-resellers">
-      <h2 id="console-resellers">
+    <section className="mo-panel mo-page-section" aria-labelledby="console-resellers">
+      <h2 id="console-resellers" className="mo-section-title">
         <FormattedMessage id="console.resellers.title" />
       </h2>
       {list === 'loading' ? null : list === 'error' ? (
-        <p className="panel__empty" role="alert">
+        <StateMessage kind="error">
           <FormattedMessage id="console.error" />
-        </p>
+        </StateMessage>
       ) : (
         <>
-          <p className="customers__meta">
+          <p className="mo-hint">
             <FormattedMessage
               id={list.limit === null ? 'console.resellers.noLimit' : 'console.resellers.count'}
               values={{ count: list.resellers.length, limit: list.limit ?? 0 }}
             />
           </p>
           {list.resellers.length === 0 ? (
-            <p className="panel__empty">
+            <StateMessage kind="empty">
               <FormattedMessage id="console.resellers.none" />
-            </p>
+            </StateMessage>
           ) : (
-            <ul className="documents__list" aria-label="resellers">
+            <ul className="mo-list" aria-label="resellers">
               {list.resellers.map((r) => (
-                <li key={r.id} className="documents__item" aria-label={r.name}>
-                  <span className="documents__name">{r.name}</span>
-                  <span className="documents__meta">
-                    <FormattedMessage id={`console.resellers.status.${r.status}`} /> ·{' '}
-                    <FormattedMessage
-                      id="console.resellers.customers"
-                      values={{ count: r.customers }}
-                    />
-                    {r.pendingAdmins.map((p) => (
-                      <span key={p.email}>
-                        {' · '}
-                        <FormattedMessage
-                          id="console.resellers.pendingAdmin"
-                          values={{ email: p.email, date: day(p.expiresAt) }}
-                        />
-                      </span>
-                    ))}
-                  </span>
-                  {admin && r.status !== 'closed' ? (
-                    <Button
-                      variant="secondary"
-                      disabled={busy}
-                      onClick={() => {
-                        const next = r.status === 'active' ? 'suspended' : 'active';
-                        if (
-                          next === 'suspended' &&
-                          !globalThis.confirm(
-                            intl.formatMessage(
-                              { id: 'console.resellers.suspendConfirm' },
-                              { name: r.name },
-                            ),
-                          )
-                        ) {
-                          return;
-                        }
-                        void run(async () => {
-                          const saved = await client.setResellerStatus(account.id, r, next);
-                          put({ ...r, ...saved });
-                        });
-                      }}
-                    >
+                <li key={r.id} className="mo-list-item" aria-label={r.name}>
+                  <div className="mo-list-item__main">
+                    <span className="mo-list-item__title">{r.name}</span>
+                    <span className="mo-list-item__meta">
+                      <FormattedMessage id={`console.resellers.status.${r.status}`} /> ·{' '}
                       <FormattedMessage
-                        id={
-                          r.status === 'active'
-                            ? 'console.resellers.suspend'
-                            : 'console.resellers.reactivate'
-                        }
+                        id="console.resellers.customers"
+                        values={{ count: r.customers }}
                       />
-                    </Button>
+                      {r.pendingAdmins.map((p) => (
+                        <span key={p.email}>
+                          {' · '}
+                          <FormattedMessage
+                            id="console.resellers.pendingAdmin"
+                            values={{ email: p.email, date: day(p.expiresAt) }}
+                          />
+                        </span>
+                      ))}
+                    </span>
+                  </div>
+                  {admin && r.status !== 'closed' ? (
+                    <div className="mo-list-item__actions">
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        disabled={busy}
+                        onClick={() => {
+                          const next = r.status === 'active' ? 'suspended' : 'active';
+                          if (
+                            next === 'suspended' &&
+                            !globalThis.confirm(
+                              intl.formatMessage(
+                                { id: 'console.resellers.suspendConfirm' },
+                                { name: r.name },
+                              ),
+                            )
+                          ) {
+                            return;
+                          }
+                          void run(async () => {
+                            const saved = await client.setResellerStatus(account.id, r, next);
+                            put({ ...r, ...saved });
+                          });
+                        }}
+                      >
+                        <FormattedMessage
+                          id={
+                            r.status === 'active'
+                              ? 'console.resellers.suspend'
+                              : 'console.resellers.reactivate'
+                          }
+                        />
+                      </Button>
+                    </div>
                   ) : null}
                 </li>
               ))}
@@ -1102,7 +1143,7 @@ function Resellers({
       )}
       {admin && typeof list === 'object' && list.limit !== null ? (
         <form
-          className="platform__form"
+          className="mo-form"
           onSubmit={(e) => {
             e.preventDefault();
             void run(async () => {
@@ -1120,61 +1161,71 @@ function Resellers({
             });
           }}
         >
-          <h3>
-            <FormattedMessage id="console.resellers.new" />
-          </h3>
-          <p className="customers__meta">
-            <FormattedMessage id="console.resellers.newLead" />
-          </p>
-          <label htmlFor={`${id}-name`}>
-            <FormattedMessage id="console.resellers.name" />
-          </label>
-          <input
-            id={`${id}-name`}
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            required
-          />
-          <label htmlFor={`${id}-email`}>
-            <FormattedMessage id="console.resellers.adminEmail" />
-          </label>
-          <input
-            id={`${id}-email`}
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-          />
-          <label htmlFor={`${id}-customers`}>
-            <FormattedMessage id="console.resellers.maxCustomers" />
-          </label>
-          <input
-            id={`${id}-customers`}
-            type="number"
-            min={1}
-            max={account.limits?.customers}
-            value={customers}
-            onChange={(e) => setCustomers(e.target.value)}
-            required
-          />
-          <label htmlFor={`${id}-members`}>
-            <FormattedMessage id="console.resellers.maxMembers" />
-          </label>
-          <input
-            id={`${id}-members`}
-            type="number"
-            min={1}
-            max={account.limits?.members}
-            value={members}
-            onChange={(e) => setMembers(e.target.value)}
-            required
-          />
-          <Button
-            type="submit"
-            disabled={busy || name.trim() === '' || email.trim() === '' || !customers || !members}
+          <FormSection
+            title={<FormattedMessage id="console.resellers.new" />}
+            titleAs="h3"
+            description={<FormattedMessage id="console.resellers.newLead" />}
           >
-            <FormattedMessage id="console.resellers.create" />
-          </Button>
+            <div className="mo-field">
+              <label className="mo-label" htmlFor={`${id}-name`}>
+                <FormattedMessage id="console.resellers.name" />
+              </label>
+              <input
+                id={`${id}-name`}
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                required
+              />
+            </div>
+            <div className="mo-field">
+              <label className="mo-label" htmlFor={`${id}-email`}>
+                <FormattedMessage id="console.resellers.adminEmail" />
+              </label>
+              <input
+                id={`${id}-email`}
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+              />
+            </div>
+            <div className="mo-field">
+              <label className="mo-label" htmlFor={`${id}-customers`}>
+                <FormattedMessage id="console.resellers.maxCustomers" />
+              </label>
+              <input
+                id={`${id}-customers`}
+                type="number"
+                min={1}
+                max={account.limits?.customers}
+                value={customers}
+                onChange={(e) => setCustomers(e.target.value)}
+                required
+              />
+            </div>
+            <div className="mo-field">
+              <label className="mo-label" htmlFor={`${id}-members`}>
+                <FormattedMessage id="console.resellers.maxMembers" />
+              </label>
+              <input
+                id={`${id}-members`}
+                type="number"
+                min={1}
+                max={account.limits?.members}
+                value={members}
+                onChange={(e) => setMembers(e.target.value)}
+                required
+              />
+            </div>
+          </FormSection>
+          <div className="mo-form__actions">
+            <Button
+              type="submit"
+              disabled={busy || name.trim() === '' || email.trim() === '' || !customers || !members}
+            >
+              <FormattedMessage id="console.resellers.create" />
+            </Button>
+          </div>
         </form>
       ) : null}
       {link === undefined ? null : <OnceLink link={link} onDone={() => setLink(undefined)} />}

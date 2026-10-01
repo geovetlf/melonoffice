@@ -544,37 +544,45 @@
 
 /* The partner console and brand forms (ADR-0090). */
 .brand-form {
-  border: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--mo-space-4);
+  min-width: 0;
   margin: 0;
   padding: 0;
-  display: grid;
-  gap: 0.6rem;
+  border: 0;
 }
 
-.brand-form__field {
-  display: grid;
-  gap: 0.25rem;
-}
-
+/* An open customer takes its record's whole width, under its facts and its button. */
 .console__customer {
   flex-basis: 100%;
   display: grid;
-  gap: 0.75rem;
-  padding: 0.75rem 0 0.25rem;
+  gap: var(--mo-space-4);
+  min-width: 0;
+  padding-top: var(--mo-space-3);
+  border-top: 1px solid var(--mo-color-border);
 }
 
-.console__table {
-  border-collapse: collapse;
-  max-width: 100%;
+.console__part {
+  display: grid;
+  gap: var(--mo-space-2);
+  min-width: 0;
 }
 
-.console__table th,
-.console__table td {
-  text-align: left;
-  padding: 0.25rem 0.75rem 0.25rem 0;
+/* The link shown once: its field, then its buttons. */
+.console__once {
+  display: grid;
+  gap: var(--mo-space-2);
+  min-width: 0;
+  margin-top: var(--mo-space-2);
 }
 
-.console__table td:not(:first-child) {
-  text-align: right;
-  font-variant-numeric: tabular-nums;
+.console__once > input {
+  width: 100%;
+  min-width: 0;
+}
+
+/* A record's refusal takes its whole width, under its actions. */
+.partner-console .mo-list-item > .mo-state {
+  flex-basis: 100%;
 }
