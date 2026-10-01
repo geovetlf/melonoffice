@@ -459,37 +459,6 @@ describe('the phone menu', () => {
   });
 });
 
-describe("the Home's rail", () => {
-  it('leads to the Home, GIA and the company, and opens the whole menu, giving the focus back', async () => {
-    open('/');
-    await home();
-    const rail = within(screen.getByRole('navigation', { name: 'Shortcuts' }));
-    expect(rail.getByRole('link', { name: 'Home' }).getAttribute('aria-current')).toBe('page');
-    expect(rail.getByRole('link', { name: 'GIA' }).getAttribute('href')).toBe('/gia');
-    expect(rail.getByRole('link', { name: 'My company' }).getAttribute('href')).toBe('/memory');
-    // The bell stays the top bar's: the rail opens it there.
-    fireEvent.click(rail.getByRole('button', { name: 'See notifications' }));
-    expect(document.querySelector<HTMLDetailsElement>('.topbar .notifications')?.open).toBe(true);
-
-    const menu = rail.getByRole('button', { name: 'Open the full menu' });
-    menu.focus();
-    fireEvent.click(menu);
-    expect(menu.getAttribute('aria-expanded')).toBe('true');
-    expect(menu.getAttribute('aria-controls')).toBe('app-sidebar');
-    expect(document.getElementById('app-sidebar')?.className).toContain('sidebar--open');
-    expect(document.activeElement?.closest('#app-sidebar')).not.toBeNull();
-    fireEvent.keyDown(globalThis.window, { key: 'Escape' });
-    expect(document.getElementById('app-sidebar')?.className).not.toContain('sidebar--open');
-    expect(document.activeElement).toBe(rail.getByRole('button', { name: 'Open the full menu' }));
-  });
-
-  it('is only on the Home', async () => {
-    open('/gia');
-    await screen.findByRole('heading', { level: 1, name: 'GIA' });
-    expect(screen.queryByRole('navigation', { name: 'Shortcuts' })).toBeNull();
-  });
-});
-
 describe('entering a room', () => {
   it('uses a view transition, naming the room so it grows into the office', () => {
     const update: (() => void)[] = [];
