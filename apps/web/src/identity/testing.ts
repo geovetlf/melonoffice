@@ -280,7 +280,7 @@ export function fakeBackend(): FakeBackend {
     }
     if (url === `${SIGN_IN_WITH_IDP_URL}?key=${KEY}`) {
       const { sessionId, requestUri } = JSON.parse(body ?? '{}') as Record<string, string>;
-      if (sessionId !== 'google-session' || !requestUri?.includes('code=')) {
+      if (sessionId !== 'google-session' || !/[?#&](code|id_token)=/.test(requestUri ?? '')) {
         return json(400, { error: { code: 400, message: 'INVALID_IDP_RESPONSE' } });
       }
       if (options.google === 'linked') return json(200, { needConfirmation: true });

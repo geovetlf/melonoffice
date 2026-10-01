@@ -92,9 +92,12 @@ export const SIGN_UP_PATH = '/signup';
 export const FORGOT_PASSWORD_PATH = '/forgot-password';
 
 /** Whether this URL is Google sending the browser back after a sign-in (ADR-0105). */
-function isProviderReturn(search: string): boolean {
-  const params = new URLSearchParams(search);
-  return params.has('state') || params.has('code') || params.has('error');
+function isProviderReturn(location: { readonly search: string; readonly hash: string }): boolean {
+  // Google answers in the query or, for an ID token, in the fragment (`#id_token=…&state=…`).
+  return [location.search, location.hash.replace(/^#/, '')].some((part) => {
+    const params = new URLSearchParams(part);
+    return params.has('state') || params.has('code') || params.has('error');
+  });
 }
 
 /** Where a person who just signed in goes: back to the invitation they followed, or home. */
@@ -212,7 +215,7 @@ export function LoginPage(locale: LocaleProps) {
   const [error, setError] = useState<IdentityErrorCode | undefined>();
   // Coming back from Google: finish that sign-in once, then drop Google's answer from the URL.
   const [finishing, setFinishing] = useState(
-    () => services.session.providerPending && isProviderReturn(globalThis.location.search),
+    () => services.session.providerPending && isProviderReturn(globalThis.location),
   );
   const finishStarted = useRef(false);
   useEffect(() => {

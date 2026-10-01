@@ -216,6 +216,18 @@ describe('signing in with Google (ADR-0105)', () => {
     expect([...store.data.keys()]).toEqual([REFRESH_KEY]);
   });
 
+  it('finishes the sign-in when Google answers in the fragment, as with an ID token', async () => {
+    const { services, backend, store } = withGoogle('/login#id_token=t&state=s');
+    store.setItem(PROVIDER_KEY, 'google-session');
+    renderApp(services);
+    expect(await screen.findByRole('heading', HOME)).toBeTruthy();
+    expect(globalThis.location.hash).toBe('');
+    expect(JSON.parse(backend.calls[0]?.body ?? '{}')).toMatchObject({
+      requestUri: expect.stringContaining('#id_token=t&state=s'),
+    });
+    expect([...store.data.keys()]).toEqual([REFRESH_KEY]);
+  });
+
   it('says so when Google sign-in is not turned on here', async () => {
     const { services, backend, leave } = withGoogle('/login');
     backend.options.google = 'off';
