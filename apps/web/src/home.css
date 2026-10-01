@@ -76,6 +76,411 @@
   position: relative;
 }
 
+/*
+ * The office as one picture (`OfficeStage`, `officeScene.ts`): drawn whole at its own shape on a
+ * computer and a tablet, never stretched. The picture and every layer over it sit in one world
+ * (`.stage__world`) the size of the picture covering the frame; `useStageZoom` moves and scales
+ * the world as one, so the layers place things at points of the picture in percentages.
+ */
+.stage__frame {
+  position: relative;
+  overflow: hidden;
+  aspect-ratio: var(--scene-aspect);
+  border-radius: var(--mo-radius-xl);
+  background: var(--mo-color-surface-muted);
+  box-shadow: var(--mo-shadow-md);
+  /* A finger scrolls the page; sideways and pinching are the office's. */
+  touch-action: pan-y;
+  user-select: none;
+}
+
+.stage__frame[data-zoomed] {
+  touch-action: none;
+  cursor: grab;
+}
+
+.stage__frame[data-zoomed]:active {
+  cursor: grabbing;
+}
+
+.stage__world {
+  position: absolute;
+  top: 0;
+  left: 0;
+  container-type: size;
+  transform-origin: 0 0;
+}
+
+.stage__render {
+  display: block;
+  width: 100%;
+  height: 100%;
+  -webkit-user-drag: none;
+}
+
+/* A point of the picture: the places of GIA and the agents, for their future routes. */
+.stage__anchor {
+  position: absolute;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+/*
+ * The people: each one cut from the render, drawn at the desk of a real agent only. GIA, away
+ * from her desk, stands on the floor beside the agent her task is with, at a person's height.
+ */
+.stage__people {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.stage__person {
+  position: absolute;
+  display: block;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.stage__gia-away {
+  position: absolute;
+  transform: translateX(-50%);
+}
+
+.stage__gia-away .gia-figure {
+  display: block;
+  width: auto;
+  filter: drop-shadow(0 0.4cqw 0.5cqw rgb(0 0 0 / 0.35));
+}
+
+/*
+ * The glass wall's panels: the office's real figures, in the wall's own dark glass, over the
+ * render's made-up ones.
+ */
+.stage__wall {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.stage__panel {
+  position: absolute;
+  display: grid;
+  align-content: start;
+  gap: 0.5cqw;
+  padding: 0.9cqw 1cqw;
+  overflow: hidden;
+  border: 1px solid rgb(255 255 255 / 0.14);
+  border-radius: 0.7cqw;
+  background: linear-gradient(160deg, rgb(28 42 62), rgb(14 24 38));
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.08);
+  color: rgb(255 255 255 / 0.92);
+}
+
+.stage__panel--motor {
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  pointer-events: auto;
+  transition: box-shadow var(--mo-motion-duration-base) var(--mo-motion-ease-standard);
+}
+
+.stage__panel--motor:hover,
+.stage__panel--motor:focus-visible,
+.stage__panel--motor[aria-expanded='true'] {
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.08),
+    0 0 0 1px color-mix(in srgb, var(--mo-color-scene-circuit) 70%, transparent),
+    0 0 1.6cqw color-mix(in srgb, var(--mo-color-scene-circuit) 45%, transparent);
+}
+
+.app .stage__panel--motor:focus-visible {
+  outline: 3px solid var(--mo-color-focus-ring);
+  outline-offset: 2px;
+}
+
+.stage__panel-item {
+  display: block;
+}
+
+.stage__panel-title {
+  margin: 0;
+  font-size: 1.05cqw;
+  font-weight: var(--mo-font-weight-bold);
+  line-height: 1.2;
+}
+
+.stage__panel-list {
+  display: grid;
+  gap: 0.35cqw;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: rgb(255 255 255 / 0.78);
+  font-size: 0.85cqw;
+  line-height: 1.25;
+}
+
+.stage__panel-list li::before {
+  content: '';
+  display: inline-block;
+  width: 0.45cqw;
+  height: 0.45cqw;
+  margin-right: 0.5cqw;
+  border-radius: 50%;
+  background: var(--mo-color-scene-circuit);
+  vertical-align: 0.1cqw;
+}
+
+/*
+ * A desk's name plate, in the render's own dark glass over the render's plate: the real
+ * department's icon, name and agents.
+ */
+.stage__plates {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.stage__plate {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 0.8cqw;
+  padding: 0 1cqw;
+  border: 1px solid rgb(255 255 255 / 0.16);
+  border-radius: 0.9cqw;
+  background: linear-gradient(170deg, rgb(52 50 54), rgb(30 30 34));
+  box-shadow:
+    0 0.4cqw 1.2cqw rgb(0 0 0 / 0.28),
+    inset 0 1px 0 rgb(255 255 255 / 0.1);
+  color: #fff;
+}
+
+.stage__plate-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 2.6cqw;
+  height: 2.6cqw;
+  border-radius: 0.7cqw;
+  background: color-mix(in srgb, var(--mo-color-accent-expressive) 30%, transparent);
+  color: color-mix(in srgb, var(--mo-color-accent-expressive) 40%, #fff);
+}
+
+.stage__plate-icon svg {
+  width: 1.5cqw;
+  height: 1.5cqw;
+}
+
+.stage__plate-text {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+}
+
+.stage__plate-name {
+  overflow: hidden;
+  font-size: 1.15cqw;
+  font-weight: var(--mo-font-weight-bold);
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stage__plate-line {
+  overflow: hidden;
+  color: rgb(255 255 255 / 0.68);
+  font-size: 0.8cqw;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stage__plate-go {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 2.2cqw;
+  height: 2.2cqw;
+  border: 1px solid rgb(255 255 255 / 0.5);
+  border-radius: 50%;
+}
+
+.stage__plate-go svg {
+  width: 1.1cqw;
+  height: 1.1cqw;
+}
+
+/*
+ * The MelonOffice mark on the glass wall: a soft light over it rises and falls, slowly and
+ * barely (a breath every 6 s), and stays still with reduced motion.
+ */
+.stage__logo {
+  position: absolute;
+  background: radial-gradient(
+    closest-side at 50% 32%,
+    color-mix(in srgb, var(--mo-color-surface) 55%, var(--mo-color-accent-expressive)),
+    transparent
+  );
+  opacity: 0;
+  mix-blend-mode: soft-light;
+  pointer-events: none;
+  animation: stage-logo-breath 3s ease-in-out infinite alternate;
+}
+
+/*
+ * A desk as the way in: the whole desk and the person at it, shaped like the round desk, at least
+ * 44 px each way. Nothing is drawn until the pointer or the focus is on it; then a faint ring of
+ * light, like the desk's own, says it can be entered.
+ */
+/* The layer itself lets the glass wall's MelonMotor through: only its desks and agents are hit. */
+.stage__desks {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.stage__desk,
+.stage__agent {
+  pointer-events: auto;
+}
+
+.stage__desk {
+  position: absolute;
+  min-width: var(--mo-min-target-size);
+  min-height: var(--mo-min-target-size);
+  border-radius: 50%;
+  cursor: pointer;
+  transition:
+    box-shadow var(--mo-motion-duration-base) var(--mo-motion-ease-standard),
+    background-color var(--mo-motion-duration-base) var(--mo-motion-ease-standard);
+  -webkit-tap-highlight-color: transparent;
+  -webkit-user-drag: none;
+}
+
+.stage__frame[data-zoomed] .stage__desk {
+  cursor: pointer;
+}
+
+.stage__desk:hover,
+.stage__desk:focus-visible {
+  background-color: color-mix(in srgb, var(--mo-color-surface) 10%, transparent);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--mo-color-surface) 55%, transparent),
+    0 0 24px color-mix(in srgb, var(--mo-color-accent-expressive) 30%, transparent);
+}
+
+.stage__desk:active {
+  background-color: color-mix(in srgb, var(--mo-color-surface) 18%, transparent);
+}
+
+.app .stage__desk:focus-visible {
+  outline: 3px solid var(--mo-color-focus-ring);
+  outline-offset: 2px;
+}
+
+/*
+ * A real agent at their desk: the person is the way to their card. On pointer or focus a small
+ * glass tip says who they are and what they are doing.
+ */
+.stage__agent {
+  position: absolute;
+  min-width: var(--mo-min-target-size);
+  min-height: var(--mo-min-target-size);
+  padding: 0;
+  border: 0;
+  border-radius: 40%;
+  background: transparent;
+  cursor: pointer;
+  transition: box-shadow var(--mo-motion-duration-base) var(--mo-motion-ease-standard);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.stage__agent:hover,
+.stage__agent:focus-visible {
+  box-shadow: 0 0 1.4cqw color-mix(in srgb, var(--mo-color-surface) 55%, transparent);
+}
+
+.app .stage__agent:focus-visible {
+  outline: 3px solid var(--mo-color-focus-ring);
+  outline-offset: 2px;
+}
+
+.stage__tip {
+  position: absolute;
+  bottom: calc(100% + 0.4cqw);
+  left: 50%;
+  display: none;
+  gap: 0.1cqw;
+  padding: 0.4cqw 0.8cqw;
+  border: 1px solid rgb(255 255 255 / 0.18);
+  border-radius: 0.6cqw;
+  background: rgb(22 26 34 / 0.92);
+  color: #fff;
+  font-size: max(11px, 0.95cqw);
+  line-height: 1.25;
+  white-space: nowrap;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.stage__agent:hover .stage__tip,
+.stage__agent:focus-visible .stage__tip {
+  display: grid;
+}
+
+.stage__tip-name {
+  font-weight: var(--mo-font-weight-bold);
+}
+
+.stage__tip-state {
+  color: rgb(255 255 255 / 0.72);
+}
+
+/* Zoom from the keyboard or with a click: three small glass buttons over the ceiling. */
+.stage__zoom {
+  position: absolute;
+  top: var(--mo-space-3);
+  right: var(--mo-space-3);
+  display: flex;
+  gap: var(--mo-space-1);
+  padding: var(--mo-space-1);
+  border: 1px solid rgb(255 255 255 / 0.35);
+  border-radius: var(--mo-radius-pill);
+  background: rgb(255 255 255 / 0.22);
+  backdrop-filter: blur(10px);
+}
+
+.stage__zoom-button {
+  display: grid;
+  place-items: center;
+  min-width: var(--mo-min-target-size);
+  min-height: var(--mo-min-target-size);
+  padding: 0 var(--mo-space-2);
+  border: 0;
+  border-radius: var(--mo-radius-pill);
+  background: rgb(255 255 255 / 0.85);
+  color: var(--mo-color-text-primary);
+  font: inherit;
+  font-size: var(--mo-font-size-sm);
+  font-weight: var(--mo-font-weight-bold);
+  cursor: pointer;
+}
+
+.stage__zoom-button:disabled {
+  background: rgb(255 255 255 / 0.45);
+  color: var(--mo-color-text-secondary);
+  cursor: default;
+}
+
+@keyframes stage-logo-breath {
+  to {
+    opacity: 0.55;
+  }
+}
+
 .home4__side {
   display: grid;
   gap: var(--mo-space-3);
@@ -170,8 +575,10 @@
 }
 
 /*
- * The office: rooms three by three, the centre column narrower (10 : 7 : 10). Each room is a
- * diorama in a glass capsule; MelonMotor's lines run in the gaps between them.
+ * The office: one building, three rooms a storey, the centre column narrower (10 : 7 : 10). A
+ * walkway runs along the front of every storey and a lift shaft each side of the centre column
+ * (0.9), so a person can go from any room to any other (`officeWalk.ts`). MelonMotor's lines run
+ * along the shafts and walkways.
  */
 .building {
   position: relative;
@@ -189,9 +596,13 @@
 .building__frame {
   position: relative;
   display: grid;
-  grid-template-columns: 10fr 7fr 10fr;
-  gap: 12px;
+  grid-template-columns: 10fr 0.9fr 7fr 0.9fr 10fr;
   padding: 4px;
+  border-radius: var(--mo-radius-xl);
+  background: var(--mo-color-surface-muted);
+  box-shadow:
+    0 0 0 1px var(--mo-color-border),
+    var(--mo-shadow-md);
   isolation: isolate;
 }
 
@@ -199,12 +610,9 @@
   position: relative;
   overflow: hidden;
   container-type: inline-size;
-  border-radius: var(--mo-radius-xl);
+  border-radius: var(--mo-radius-sm);
   background: var(--mo-color-surface-muted);
-  box-shadow:
-    0 0 0 3px var(--mo-color-surface),
-    0 0 0 4px var(--mo-color-border),
-    var(--mo-shadow-md);
+  box-shadow: 0 0 0 1px var(--mo-color-border);
   transition:
     transform var(--mo-motion-duration-base) var(--mo-motion-ease-standard),
     box-shadow var(--mo-motion-duration-base) var(--mo-motion-ease-standard);
@@ -217,6 +625,76 @@
 .building__frame > .b-room {
   grid-row: var(--row);
   grid-column: var(--column);
+}
+
+/*
+ * A storey's walkway, in front of its rooms: a strip of floor 0.16 of a room's height (its
+ * shape follows: the office is 28.8 columns wide, a side room 10 of them at 1.8 : 1).
+ */
+.b-walkway {
+  grid-row: var(--row);
+  grid-column: 1 / -1;
+  aspect-ratio: 32.4;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      transparent 0 8%,
+      color-mix(in srgb, var(--mo-color-border) 30%, transparent) 8% calc(8% + 1px)
+    ),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--mo-color-surface) 55%, var(--mo-color-surface-muted)),
+      var(--mo-color-surface)
+    );
+  box-shadow:
+    inset 0 2px 3px -2px color-mix(in srgb, var(--mo-color-text-primary) 22%, transparent),
+    inset 0 -2px 0 color-mix(in srgb, var(--mo-color-border-strong) 30%, transparent);
+}
+
+/* A lift shaft, top to bottom of the building, with its cabin where it was last left. */
+.b-shaft {
+  position: relative;
+  grid-row: 1 / -1;
+  background:
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--mo-color-border-strong) 28%, transparent) 0 1px,
+      transparent 1px calc(100% - 1px),
+      color-mix(in srgb, var(--mo-color-border-strong) 28%, transparent) calc(100% - 1px)
+    ),
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--mo-color-text-primary) 9%, var(--mo-color-surface-muted)),
+      color-mix(in srgb, var(--mo-color-text-primary) 3%, var(--mo-color-surface-muted)) 50%,
+      color-mix(in srgb, var(--mo-color-text-primary) 9%, var(--mo-color-surface-muted))
+    );
+}
+
+.b-shaft--left {
+  grid-column: 2;
+}
+
+.b-shaft--right {
+  grid-column: 4;
+}
+
+/* The cabin stands on a storey's walkway line; the frame's padding is above the first storey. */
+.b-shaft__cabin {
+  position: absolute;
+  top: calc(var(--cabin-bottom) - var(--cabin-height) - 4px);
+  right: 2px;
+  left: 2px;
+  height: var(--cabin-height);
+  border: 1px solid color-mix(in srgb, var(--mo-color-border-strong) 45%, transparent);
+  border-radius: 3px;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--mo-color-surface) 92%, transparent),
+    color-mix(in srgb, var(--mo-color-scene-circuit-soft) 35%, var(--mo-color-surface))
+  );
+  box-shadow:
+    0 2px 6px color-mix(in srgb, var(--mo-color-text-primary) 18%, transparent),
+    inset 0 3px 0 color-mix(in srgb, var(--mo-color-scene-circuit) 45%, transparent);
 }
 
 .building__notice--inline {
@@ -262,16 +740,14 @@
   z-index: 2;
   transform: translateY(-2px);
   box-shadow:
-    0 0 0 3px var(--mo-color-surface),
-    0 0 0 4px color-mix(in srgb, var(--mo-color-scene-circuit) 55%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--mo-color-scene-circuit) 55%, transparent),
     var(--mo-shadow-lg);
 }
 
 /* GIA is the heart of the office: her room holds the expressive melon's light. */
 .b-room--gia {
   box-shadow:
-    0 0 0 3px var(--mo-color-surface),
-    0 0 0 4px color-mix(in srgb, var(--mo-color-accent-expressive) 45%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--mo-color-accent-expressive) 45%, transparent),
     0 0 32px color-mix(in srgb, var(--mo-color-accent-expressive) 28%, transparent),
     var(--mo-shadow-md);
 }
@@ -279,8 +755,7 @@
 /* MelonMotor is the infrastructure: the network's edge, and no glow of its own. */
 .b-room--motor {
   box-shadow:
-    0 0 0 3px var(--mo-color-surface),
-    0 0 0 4px color-mix(in srgb, var(--mo-color-scene-circuit) 40%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--mo-color-scene-circuit) 40%, transparent),
     var(--mo-shadow-md);
 }
 
@@ -295,8 +770,7 @@
 .b-room--gia:hover,
 .b-room--gia:focus-within {
   box-shadow:
-    0 0 0 3px var(--mo-color-surface),
-    0 0 0 5px color-mix(in srgb, var(--mo-color-accent-expressive) 60%, transparent),
+    0 0 0 2px color-mix(in srgb, var(--mo-color-accent-expressive) 60%, transparent),
     0 0 36px color-mix(in srgb, var(--mo-color-accent-expressive) 34%, transparent),
     var(--mo-shadow-lg);
 }
@@ -304,8 +778,7 @@
 .b-room--motor:hover,
 .b-room--motor:focus-within {
   box-shadow:
-    0 0 0 3px var(--mo-color-surface),
-    0 0 0 5px color-mix(in srgb, var(--mo-color-scene-circuit) 55%, transparent),
+    0 0 0 2px color-mix(in srgb, var(--mo-color-scene-circuit) 55%, transparent),
     var(--mo-shadow-lg);
 }
 
@@ -792,7 +1265,7 @@
   display: none;
 }
 
-/* GIA at the heart of the office: her face in a sphere of light, a beam down to MelonMotor. */
+/* GIA at the heart of the office: on her platform in the melon's light, a beam down to MelonMotor. */
 .b-room--gia::before {
   content: '';
   position: absolute;
@@ -815,6 +1288,7 @@
   position: absolute;
   inset: 0;
   z-index: 5;
+  container-type: size;
   color: var(--mo-color-text-primary);
   text-decoration: none;
 }
@@ -823,59 +1297,159 @@
   outline-offset: -4px;
 }
 
-.b-gia__sphere {
+/*
+ * Her stage is laid over the room's art, which covers the room: --art-h is the art's drawn
+ * height (806 × 640), so she stands on the platform's centre (73% down the art) at a person's
+ * height whatever the room's shape.
+ */
+.b-gia__stage {
+  --art-h: max(100cqh, 100cqw * 0.794);
+  --feet: calc(50cqh + var(--art-h) * 0.215);
+
   position: absolute;
-  top: 38%;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* The melon's light behind her: steady while she rests, fuller while she coordinates. */
+.b-gia__core {
+  position: absolute;
+  top: calc(var(--feet) - var(--art-h) * 0.25);
   left: 50%;
-  display: grid;
-  place-items: center;
-  width: 40%;
+  width: calc(var(--art-h) * 0.4);
   aspect-ratio: 1;
   border-radius: 50%;
-  background:
-    radial-gradient(
-      circle at 34% 28%,
-      color-mix(in srgb, var(--mo-color-surface) 85%, transparent),
-      transparent 32%
-    ),
-    radial-gradient(
-      circle at 50% 55%,
-      color-mix(in srgb, var(--mo-color-surface) 60%, transparent),
-      color-mix(in srgb, var(--mo-color-accent-expressive) 30%, transparent) 70%,
-      color-mix(in srgb, var(--mo-color-accent-expressive) 55%, transparent)
-    );
-  box-shadow:
-    0 0 0 2px color-mix(in srgb, var(--mo-color-surface) 85%, transparent),
-    0 0 26px 6px color-mix(in srgb, var(--mo-color-accent-expressive) 45%, transparent),
-    inset 0 0 22px color-mix(in srgb, var(--mo-color-accent-expressive) 45%, transparent);
+  background: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--mo-color-accent-expressive) 34%, transparent),
+    color-mix(in srgb, var(--mo-color-accent-expressive) 12%, transparent) 45%,
+    transparent 70%
+  );
+  opacity: 0.55;
   transform: translate(-50%, -50%);
-  transition: transform var(--mo-motion-duration-base) var(--mo-motion-ease-standard);
+  transition: opacity var(--mo-motion-duration-base) var(--mo-motion-ease-standard);
 }
 
-.b-gia__sphere::after {
+/* A ring of light on the platform around her feet, only while she coordinates. */
+.b-gia__ring {
+  position: absolute;
+  top: var(--feet);
+  left: 50%;
+  width: calc(var(--art-h) * 0.3);
+  height: calc(var(--art-h) * 0.075);
+  border: 1.5px solid color-mix(in srgb, var(--mo-color-accent-expressive) 60%, transparent);
+  border-radius: 50%;
+  box-shadow: 0 0 10px color-mix(in srgb, var(--mo-color-accent-expressive) 35%, transparent);
+  opacity: 0;
+  transform: translate(-50%, -50%);
+}
+
+/* While she is away, her platform waits: the light stays, quieter, and no ring. */
+.b-room--gia:not([data-gia-home]) .b-gia__core {
+  opacity: 0.3;
+}
+
+.b-room--gia[data-gia-home][data-gia-state='coordinating'] .b-gia__core {
+  opacity: 1;
+}
+
+.b-room--gia[data-gia-home][data-gia-state='coordinating'] .b-gia__ring {
+  opacity: 1;
+}
+
+.b-gia:hover .b-gia__core,
+.b-gia:focus-visible .b-gia__core {
+  opacity: 1;
+}
+
+/*
+ * GIA standing in a room (`GiaHere`): at a point of the room's picture, which covers the room,
+ * a person's height in it, a soft shadow at her feet. Over the desks, under the room's signs.
+ */
+.b-gia-here {
+  --art-w: max(100cqw, 100cqh * var(--aspect));
+  --art-h: calc(var(--art-w) / var(--aspect));
+  --gia-height: calc(var(--art-h) * var(--person));
+  --x: var(--gx);
+  --y: var(--gy);
+  --feet-x: calc(50cqw + (var(--x) - 0.5) * var(--art-w));
+  --feet-y: calc(50cqh + (var(--y) - 0.5) * var(--art-h));
+
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  container-type: size;
+  pointer-events: none;
+}
+
+.b-gia-here::after {
   content: '';
   position: absolute;
-  inset: -12%;
-  border: 2px solid color-mix(in srgb, var(--mo-color-accent-expressive) 70%, transparent);
+  top: var(--feet-y);
+  left: var(--feet-x);
+  width: calc(var(--gia-height) * 0.32);
+  height: calc(var(--gia-height) * 0.06);
   border-radius: 50%;
-  opacity: 0.6;
+  background: radial-gradient(
+    closest-side,
+    color-mix(in srgb, var(--mo-color-text-primary) 32%, transparent),
+    transparent
+  );
+  transform: translate(-50%, -50%);
 }
 
-.b-gia:hover .b-gia__sphere,
-.b-gia:focus-visible .b-gia__sphere {
-  transform: translate(-50%, -52%) scale(1.04);
+.b-gia-here__figure {
+  position: absolute;
+  top: var(--feet-y);
+  left: var(--feet-x);
+  z-index: 1;
+  width: auto;
+  user-select: none;
+  transform: translate(-50%, -100%);
 }
 
-.b-gia__avatar {
-  width: 86%;
-  height: 86%;
-  border-radius: 50%;
+/* GIA's own room: she stands in front of the light, under her name. */
+.b-gia .b-gia-here {
+  z-index: 1;
 }
 
+/*
+ * GIA on her way (`GiaWalker`): a point at her feet that follows the walkways and lifts, over the
+ * office. Her steps (a slight rise and fall) play only while she walks.
+ */
+.gia-walker {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 6;
+  pointer-events: none;
+}
+
+.gia-walker .gia-figure {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: auto;
+  user-select: none;
+  translate: -50% 0;
+}
+
+.gia-walker[data-moving] .gia-figure {
+  animation: gia-step 0.36s ease-in-out infinite alternate;
+}
+
+@keyframes gia-step {
+  to {
+    transform: translateY(-2.5%);
+  }
+}
+
+/* Her name sits over the door behind her, so nothing covers her or her platform. */
 .b-gia__chip {
   position: absolute;
-  bottom: 9%;
+  top: 5%;
   left: 50%;
+  z-index: 2;
   display: grid;
   justify-items: center;
   min-width: 58%;
@@ -1321,7 +1895,8 @@
     gap: var(--mo-space-6);
   }
 
-  .home4__office .building__frame {
+  .home4__office .building__frame,
+  .home4__office .stage__frame {
     max-width: 92rem;
     margin-inline: auto;
   }
@@ -1393,6 +1968,21 @@
     gap: 6px;
     padding: 6px;
     border-radius: 20px;
+    background: none;
+    box-shadow: none;
+  }
+
+  /* A phone shows the rooms as a list: no walkways or lifts, and GIA is simply where she is. */
+  .b-walkway,
+  .b-shaft {
+    display: none;
+  }
+
+  /* In a department's card (its picture cropped at the sides) she stands on the right, clear of
+   * its agents' faces and status. */
+  .b-room--side .b-gia-here {
+    --x: 0.72;
+    --y: 0.8;
   }
 
   .building__frame > .b-room {
@@ -1425,7 +2015,7 @@
 
   /*
    * A tablet in portrait: the full-width centre rooms would be as tall as a phone's screen. They
-   * widen instead, and GIA's sphere follows the height it is given.
+   * widen instead, and GIA keeps standing on her platform.
    */
   @media (min-width: 30rem) {
     .building__frame > .b-room--hq {
@@ -1438,11 +2028,6 @@
 
     .building__frame > .b-room--motor {
       aspect-ratio: 3 / 1;
-    }
-
-    .b-gia .b-gia__sphere {
-      width: auto;
-      height: 58%;
     }
 
     .building__frame > .b-room--side {
@@ -1556,10 +2141,6 @@
     font-size: var(--mo-font-size-xxs);
   }
 
-  .b-gia__sphere {
-    width: 26%;
-  }
-
   .motor-panel,
   .agent-sheet {
     position: fixed;
@@ -1606,6 +2187,8 @@
   .desk__light--working,
   .desk__light--attention,
   .b-gia__dot,
+  .gia-walker[data-moving] .gia-figure,
+  .stage__logo,
   .b-motor__mark,
   .wall-screen__bar::after,
   .wall-screen::after,
@@ -1620,6 +2203,10 @@
   .b-room__link,
   .b-desk__agent,
   .b-gia__chip,
+  .b-gia__core,
+  .stage__desk,
+  .stage__agent,
+  .stage__panel--motor,
   .b-motor {
     transition: none;
   }
@@ -1627,6 +2214,36 @@
   .b-room:hover .b-room__art,
   .b-room:focus-within .b-room__art {
     transform: none;
+  }
+}
+
+/*
+ * On a phone the whole picture would be too small to read: the frame is taller (16 : 10) and the
+ * picture covers it around GIA, every desk still in view and at least 44 px to touch; its far
+ * edges are a drag away, and pinching zooms. A tablet shows it whole. A phone's own framing of the
+ * office (`SCENE_ART.mobile`) will replace this crop.
+ */
+@media (max-width: 30rem) {
+  .stage__frame {
+    aspect-ratio: 16 / 10;
+    border-radius: var(--mo-radius-lg);
+  }
+
+  /* A plate keeps only its name, larger: the agents are counted on the desk's link. */
+  .stage__plate-line,
+  .stage__plate-go {
+    display: none;
+  }
+
+  .stage__plate-name {
+    font-size: 1.8cqw;
+  }
+}
+
+/* A phone's touch screen zooms with two fingers: the buttons would only cover the office. */
+@media (max-width: 30rem) and (pointer: coarse) {
+  .stage__zoom {
+    display: none;
   }
 }
 

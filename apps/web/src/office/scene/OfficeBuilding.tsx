@@ -1,6 +1,8 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
 import {
+  useCallback,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -49,6 +51,15 @@ import {
   type HomeSeat,
 } from './roomFloor.js';
 import { Workstation, type DeskOccupant } from './Workstation.js';
+import {
+  giaTarget,
+  useGiaEngagements,
+  type GiaActivity,
+  type GiaPlace,
+  type GiaTarget,
+} from '../../gia/presence.js';
+import { activityOf, GiaHere, GiaWalker, useGiaWalk, viewAt } from './GiaInOffice.js';
+import { CENTRE_ASPECT, SIDE_ASPECT, STAND, walkPlan, type PlanRoom } from './officeWalk.js';
 
 /**
  * The Home's office: the organization's rooms seen whole, three by three, with GIA at the heart
@@ -86,9 +97,55 @@ export function OfficeBuilding({
     departmentPriority(business),
   );
   const floors = buildingFloors(floor);
-  const context: RoomContext = { agents, work, onAgent };
   const frame = useRef<HTMLDivElement>(null);
   const cells = useCells(frame, `${departments.status}:${floors.length}`);
+  // GIA: where the records put her, and her walk there when that changes on screen.
+  const rooms = departmentRooms(floors, headquarters);
+  const roomOf = placeOn(rooms);
+  const engagements = useGiaEngagements();
+  const asked = giaTarget(engagements, agents, work);
+  // A department that has no room on the plan cannot hold her: she stays in her own room.
+  const target: GiaTarget =
+    roomOf(asked.place) === undefined
+      ? { ...asked, place: HOME, activity: asked.coordinating > 0 ? 'coordinating' : 'idle' }
+      : asked;
+  const plan = useMemo(() => walkPlan(cells.cells, cells.height), [cells]);
+  const { settled, walk, arrive } = useGiaWalk(target, plan, roomOf, prefersReducedMotion());
+  const [leg, setLeg] = useState(0);
+  const [lifts, setLifts] = useState<Readonly<Record<'left' | 'right', number>>>({
+    left: 1,
+    right: 1,
+  });
+  const cabins = useRef<Partial<Record<'left' | 'right', HTMLElement | null>>>({});
+  const lift = useCallback((shaft: 'left' | 'right') => cabins.current[shaft] ?? null, []);
+  const gia: GiaInBuilding = {
+    at: settled,
+    target,
+    activity: activityOf(target, walk, leg),
+    going: walk?.to,
+    agentName: (agentId) => agents.find((agent) => agent.id === agentId)?.displayName ?? '',
+    departmentName: (departmentId) => {
+      const department = readyList(departments).find((d) => d.id === departmentId);
+      return department === undefined ? '' : departmentName(intl, department);
+    },
+  };
+  const context: RoomContext = { agents, work, onAgent, gia };
+  const landed = () => {
+    // A lift stays on the storey where she left it.
+    if (walk !== null && plan !== undefined) {
+      const next = { ...lifts };
+      for (const step of walk.legs) {
+        if (step.kind !== 'lift' || step.shaft === undefined) continue;
+        const row = floors.findIndex(
+          (_, i) => Math.abs((plan.walkway(i)?.y ?? -1) - step.to.y) < 1,
+        );
+        if (row !== -1) next[step.shaft] = row;
+      }
+      setLifts(next);
+    }
+    setLeg(0);
+    arrive();
+  };
   // The department under the pointer or the focus: its circuit lights up.
   const [hot, setHot] = useState<string | null>(null);
   const heat = (target: EventTarget) =>
@@ -126,6 +183,7 @@ export function OfficeBuilding({
             ref={frame}
             className="building__frame"
             style={{ '--floors': floors.length } as CSSProperties}
+            data-gia-activity={gia.activity}
             aria-label={intl.formatMessage({ id: 'office.scene.rooms' })}
             role="group"
             onPointerOver={(event) => heat(event.target)}
@@ -144,6 +202,7 @@ export function OfficeBuilding({
                 onMotor={onMotor}
               />
             ))}
+            <Walkways floors={floors.length} plan={plan} lifts={lifts} cabins={cabins} />
             <Circuits
               floors={floors}
               headquarters={headquarters}
@@ -152,6 +211,15 @@ export function OfficeBuilding({
               motor={motor}
               hot={hot}
             />
+            {walk !== null && plan !== undefined ? (
+              <GiaWalker
+                walk={walk}
+                person={plan.person}
+                lift={lift}
+                onLeg={setLeg}
+                onArrive={landed}
+              />
+            ) : null}
           </div>
         </>
       )}
@@ -163,6 +231,85 @@ interface RoomContext {
   readonly agents: readonly SpecialistView[];
   readonly work: AgentWork;
   readonly onAgent: (agentId: string, from: HTMLElement) => void;
+  readonly gia: GiaInBuilding;
+}
+
+/** GIA in the office: where she stands (none while she walks), and what she does. */
+interface GiaInBuilding {
+  readonly at: GiaPlace | null;
+  readonly target: GiaTarget;
+  readonly activity: GiaActivity;
+  /** Where she is walking to. */
+  readonly going: GiaPlace | undefined;
+  readonly agentName: (agentId: string) => string;
+  readonly departmentName: (departmentId: string) => string;
+}
+
+const HOME: GiaPlace = { kind: 'home' };
+
+/** Where a place is on the plan: her own room is the centre of the second storey. */
+const placeOn =
+  (rooms: readonly { readonly id: string; readonly row: number; readonly column: number }[]) =>
+  (place: GiaPlace): PlanRoom | undefined =>
+    place.kind === 'home'
+      ? { row: 1, column: 1 }
+      : rooms.find((room) => room.id === place.departmentId);
+
+/** Whether GIA stands in this department's room now, and with which agent. */
+function giaWith(context: RoomContext, departmentId: string): string | undefined {
+  const at = context.gia.at;
+  return at?.kind === 'department' && at.departmentId === departmentId ? at.agentId : undefined;
+}
+
+/**
+ * The building's walkways and lifts (`officeWalk.ts`): a walkway along the front of every
+ * storey, and a lift shaft each side of the centre column, its cabin where GIA last left it.
+ * Only drawn when the rooms are laid out as a block.
+ */
+function Walkways({
+  floors,
+  plan,
+  lifts,
+  cabins,
+}: {
+  readonly floors: number;
+  readonly plan: ReturnType<typeof walkPlan>;
+  readonly lifts: Readonly<Record<'left' | 'right', number>>;
+  readonly cabins: RefObject<Partial<Record<'left' | 'right', HTMLElement | null>>>;
+}) {
+  return (
+    <>
+      {Array.from({ length: floors }, (_, i) => (
+        <span
+          key={i}
+          className="b-walkway"
+          style={{ '--row': i * 2 + 2 } as CSSProperties}
+          aria-hidden="true"
+        />
+      ))}
+      {(['left', 'right'] as const).map((side) => {
+        const stop = plan?.walkway(lifts[side]);
+        return (
+          <span key={side} className={`b-shaft b-shaft--${side}`} aria-hidden="true">
+            {plan === undefined || stop === undefined ? null : (
+              <span
+                ref={(element) => {
+                  cabins.current[side] = element;
+                }}
+                className="b-shaft__cabin"
+                style={
+                  {
+                    '--cabin-bottom': `${stop.y.toFixed(1)}px`,
+                    '--cabin-height': `${(plan.person * 1.18).toFixed(1)}px`,
+                  } as CSSProperties
+                }
+              />
+            )}
+          </span>
+        );
+      })}
+    </>
+  );
 }
 
 function FloorRooms({
@@ -182,8 +329,10 @@ function FloorRooms({
 }) {
   // The first floor is on screen at once; the ones below load as the person gets to them.
   const eager = index === 0;
+  // On the block, storeys take every other row (a walkway between them) and rooms every other
+  // column (a lift shaft between them).
   const place = (column: number): Place => ({
-    style: { '--row': index + 1, '--column': column } as CSSProperties,
+    style: { '--row': index * 2 + 1, '--column': column * 2 - 1 } as CSSProperties,
     slot: cellKey(index, column - 1),
   });
   const left = <SideRoomView room={floor.left} context={context} eager={eager} place={place(1)} />;
@@ -370,6 +519,14 @@ function DepartmentRoom({
   const seating = seatAgents(department, context.agents);
   const motif = ART[`./art/room-${look.motif}.webp`] === undefined ? 'generic' : look.motif;
   const seats = homeSeats(seating.workstations.length);
+  const withAgent = giaWith(context, department.id);
+  const giaHere =
+    withAgent === undefined
+      ? undefined
+      : intl.formatMessage(
+          { id: 'office.building.giaHere' },
+          { agent: context.gia.agentName(withAgent) },
+        );
   return (
     <div
       ref={box}
@@ -383,7 +540,9 @@ function DepartmentRoom({
       <a
         href={href}
         className="b-room__link"
-        aria-label={enterLabel(intl, department, context, states, current?.request)}
+        aria-label={[enterLabel(intl, department, context, states, current?.request), giaHere]
+          .filter(Boolean)
+          .join('. ')}
         onClick={(event) => {
           if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;
           event.preventDefault();
@@ -425,6 +584,13 @@ function DepartmentRoom({
         context={context}
         motif={motif}
       />
+      {withAgent === undefined ? null : (
+        <GiaHere
+          point={STAND.side}
+          aspect={SIDE_ASPECT}
+          view={viewAt(context.gia.activity, false)}
+        />
+      )}
       <Crew agents={here} context={context} name={name} />
     </div>
   );
@@ -733,6 +899,7 @@ function Headquarters({
       .map((workstation) => agentAt(workstation))
       .filter((id): id is string => id !== null)
       .slice(0, HQ_SEATS.length);
+    const withAgent = giaWith(context, department.id);
     room = (
       <>
         <a
@@ -763,6 +930,13 @@ function Headquarters({
           context={context}
           motif="map"
         />
+        {withAgent === undefined ? null : (
+          <GiaHere
+            point={STAND.board}
+            aspect={CENTRE_ASPECT}
+            view={viewAt(context.gia.activity, false)}
+          />
+        )}
         <Crew agents={here} context={context} name={name} />
       </>
     );
@@ -786,8 +960,9 @@ function Headquarters({
 }
 
 /**
- * GIA at the heart of the office: her face in a sphere of light over her platform, and the
- * whole room is the way to her workplace.
+ * GIA's room at the heart of the office: her platform with the melon's light behind it, and the
+ * whole room is the way to her workplace. She stands on the platform while she is home; when the
+ * records put her with an agent she is in that agent's room, and her platform waits for her.
  */
 function GiaRoom({
   context,
@@ -799,14 +974,34 @@ function GiaRoom({
   readonly place: Place;
 }) {
   const intl = useIntl();
-  const active = context.agents.filter((agent) => agent.status === 'active').length;
+  const { gia } = context;
+  const active = gia.target.coordinating;
+  const home = gia.at?.kind === 'home';
+  const away = gia.at?.kind === 'department' ? gia.at : undefined;
+  const going = gia.going?.kind === 'department' ? gia.going : undefined;
+  const label =
+    away === undefined
+      ? intl.formatMessage({ id: 'office.building.gia' }, { count: active })
+      : intl.formatMessage(
+          { id: 'office.building.giaWith' },
+          {
+            agent: gia.agentName(away.agentId),
+            department: gia.departmentName(away.departmentId),
+          },
+        );
   return (
-    <div className="b-room b-room--centre b-room--gia" style={place.style} data-slot={place.slot}>
+    <div
+      className="b-room b-room--centre b-room--gia"
+      style={place.style}
+      data-slot={place.slot}
+      data-gia-state={gia.activity}
+      data-gia-home={home ? '' : undefined}
+    >
       <RoomPicture name="gia" width={403} eager={eager} />
       <a
         href={paths.gia()}
         className="b-gia"
-        aria-label={intl.formatMessage({ id: 'office.building.gia' }, { count: active })}
+        aria-label={label}
         onClick={(event) => {
           event.preventDefault();
           navigate(paths.gia());
@@ -818,13 +1013,33 @@ function GiaRoom({
             <Icon name="gia" size={40} />
           </span>
         </span>
+        {home ? (
+          <GiaHere point={STAND.gia} aspect={CENTRE_ASPECT} view={viewAt(gia.activity, true)} />
+        ) : null}
         <span className="b-gia__chip" aria-hidden="true">
           <span className="b-gia__name">
             <FormattedMessage id="gia.name" />
             <span className="b-gia__dot" />
           </span>
           <span className="b-gia__role">
-            <FormattedMessage id="office.building.giaCoordinates" values={{ count: active }} />
+            {away !== undefined ? (
+              <FormattedMessage
+                id="office.building.giaAway"
+                values={{
+                  agent: gia.agentName(away.agentId),
+                  department: gia.departmentName(away.departmentId),
+                }}
+              />
+            ) : going !== undefined ? (
+              <FormattedMessage
+                id="office.building.giaGoing"
+                values={{ department: gia.departmentName(going.departmentId) }}
+              />
+            ) : gia.activity === 'returning' ? (
+              <FormattedMessage id="office.building.giaReturning" />
+            ) : (
+              <FormattedMessage id="office.building.giaCoordinates" values={{ count: active }} />
+            )}
           </span>
         </span>
       </a>

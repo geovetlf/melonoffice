@@ -5,8 +5,12 @@ import { App } from '../App.js';
 import { createServices } from '../identity/services.js';
 import { REFRESH_KEY } from '../identity/session.js';
 import { API, KEY, fakeBackend, memoryStore } from '../identity/testing.js';
+import { giaEngagements } from './presence.js';
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  giaEngagements.reset();
+});
 
 function open(configure?: (backend: ReturnType<typeof fakeBackend>) => void) {
   globalThis.history.replaceState(null, '', '/gia');
@@ -94,6 +98,10 @@ describe('GIA prepares a task for an agent (AE-3)', () => {
     expect(chat.getByRole('link', { name: "See Lucía's tasks" }).getAttribute('href')).toBe(
       '/office/sales/agent/spec_lucia',
     );
+    // GIA goes to Lucía while the task is in her hands (gia/presence.ts).
+    expect(giaEngagements.list()).toEqual([
+      expect.objectContaining({ agentId: 'spec_lucia', taskId: expect.any(String) }),
+    ]);
   });
 
   it('discarding sends nothing', async () => {
@@ -104,6 +112,7 @@ describe('GIA prepares a task for an agent (AE-3)', () => {
     const chat = await ask();
     fireEvent.click(await chat.findByRole('button', { name: 'Discard' }));
     expect(chat.getByText('Task discarded. Nothing was sent.')).toBeTruthy();
+    expect(giaEngagements.list()).toEqual([]);
     expect(taskPosts(backend)).toEqual([]);
   });
 

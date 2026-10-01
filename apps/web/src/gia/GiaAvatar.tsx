@@ -1,11 +1,10 @@
 import { useIntl } from '@melonoffice/i18n';
-import { useId } from 'react';
-import { GiaArtwork } from './artwork.js';
+import { GIA_FACE } from './character.js';
 
 /**
- * GIA's face wherever GIA appears (ADR-0050). The artwork is its own file; this frame gives it a
- * size, a name for screen readers (or none, when a visible name sits beside it) and the gentle
- * blink that only plays when the person has not asked for reduced motion.
+ * GIA's face wherever a small round avatar stands for her (ADR-0050): the face from her portrait
+ * (`character.tsx`), so she is the same person here as in the office and the chat. It has a name
+ * for screen readers, or none when a visible name sits beside it. It never moves.
  */
 export function GiaAvatar({
   size = 44,
@@ -18,19 +17,16 @@ export function GiaAvatar({
   readonly className?: string;
 }) {
   const intl = useIntl();
-  const idPrefix = `gia${useId().replaceAll(':', '')}`;
   return (
-    <svg
+    <img
       className={['gia-avatar', className].filter(Boolean).join(' ')}
-      viewBox="0 0 120 120"
+      src={GIA_FACE}
       width={size}
       height={size}
-      {...(decorative
-        ? { 'aria-hidden': true }
-        : { role: 'img', 'aria-label': intl.formatMessage({ id: 'gia.avatar.label' }) })}
-      focusable="false"
-    >
-      <GiaArtwork idPrefix={idPrefix} />
-    </svg>
+      alt={decorative ? '' : intl.formatMessage({ id: 'gia.avatar.label' })}
+      aria-hidden={decorative ? true : undefined}
+      decoding="async"
+      draggable={false}
+    />
   );
 }
