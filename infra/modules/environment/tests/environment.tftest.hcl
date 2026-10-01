@@ -1036,3 +1036,100 @@ run "nvidia_is_refused_outside_dev" {
 
   expect_failures = [var.nvidia_api_key_secret]
 }
+
+# Operator access (ADR-0112): GitHub Actions jobs of the environment's GitHub environment run
+# migrations, Firestore exports and read-only checks with their own identity, and nothing more.
+run "dev_gives_the_operator_its_access" {
+  command = apply
+
+  variables {
+    environment         = "dev"
+    deploy_apps         = true
+    deletion_protection = false
+    firestore_and_auth  = true
+    operator_access     = true
+  }
+
+  assert {
+    condition     = google_service_account.operator[0].account_id == "github-operator"
+    error_message = "The operator has its own identity."
+  }
+
+  assert {
+    condition     = endswith(google_service_account_iam_member.operator_federation[0].member, "/attribute.environment/dev") && google_service_account_iam_member.operator_federation[0].role == "roles/iam.workloadIdentityUser"
+    error_message = "Only jobs in the dev GitHub environment may act as the operator."
+  }
+
+  assert {
+    condition = toset(keys(google_project_iam_member.operator_roles)) == toset([
+      "roles/datastore.user",
+      "roles/datastore.importExportAdmin",
+      "roles/run.viewer",
+      "roles/cloudtasks.viewer",
+      "roles/logging.viewer",
+    ])
+    error_message = "The operator holds exactly its five roles."
+  }
+
+  assert {
+    condition = !anytrue([for r in keys(google_project_iam_member.operator_roles) :
+    can(regex("(owner|editor|admin$|Admin$|iam\\.|secretmanager|run\\.developer|run\\.admin|datastore\\.owner)", r)) && r != "roles/datastore.importExportAdmin"])
+    error_message = "The operator must not administer IAM, secrets, Cloud Run or Firestore itself."
+  }
+
+  assert {
+    condition     = google_storage_bucket.operator_backups[0].name == "test-project-operator-backups" && google_storage_bucket.operator_backups[0].uniform_bucket_level_access && google_storage_bucket.operator_backups[0].public_access_prevention == "enforced" && !google_storage_bucket.operator_backups[0].force_destroy
+    error_message = "The backups bucket is private, IAM only, and never emptied by Terraform."
+  }
+
+  assert {
+    condition     = one(google_storage_bucket.operator_backups[0].lifecycle_rule[0].condition).age == 30 && one(google_storage_bucket.operator_backups[0].lifecycle_rule[0].action).type == "Delete"
+    error_message = "Backups are kept 30 days."
+  }
+
+  assert {
+    condition     = google_storage_bucket_iam_member.firestore_backups_writer[0].member == "serviceAccount:service-123456789012@gcp-sa-firestore.iam.gserviceaccount.com" && google_storage_bucket_iam_member.firestore_backups_writer[0].bucket == google_storage_bucket.operator_backups[0].name
+    error_message = "Firestore's service agent writes exports into the backups bucket only."
+  }
+
+  assert {
+    condition     = google_storage_bucket_iam_member.operator_backups_admin[0].bucket == google_storage_bucket.operator_backups[0].name && contains(module.services.services, "storage.googleapis.com")
+    error_message = "The operator's storage access is on the backups bucket only, with the Storage API on."
+  }
+
+  assert {
+    condition     = output.operator_service_account == google_service_account.operator[0].email && output.operator_backups_bucket == "test-project-operator-backups"
+    error_message = "The operator's identity and bucket are outputs."
+  }
+}
+
+run "no_operator_access_by_default_or_without_firestore" {
+  command = plan
+
+  variables {
+    environment         = "dev"
+    deploy_apps         = true
+    deletion_protection = false
+    operator_access     = true
+  }
+
+  assert {
+    condition     = length(google_service_account.operator) == 0 && length(google_project_iam_member.operator_roles) == 0 && length(google_storage_bucket.operator_backups) == 0 && output.operator_service_account == null
+    error_message = "Without Firestore there is no operator."
+  }
+}
+
+run "staging_has_no_operator" {
+  command = plan
+
+  variables {
+    environment         = "staging"
+    github_environment  = "staging"
+    deletion_protection = true
+  }
+
+  assert {
+    condition     = length(google_service_account.operator) == 0 && length(google_storage_bucket.operator_backups) == 0
+    error_message = "Operator access is off unless turned on."
+  }
+}

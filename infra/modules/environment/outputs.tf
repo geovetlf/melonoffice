@@ -22,3 +22,13 @@ output "planner_service_account" {
   description = "Value for the GCP_PLANNER_SERVICE_ACCOUNT GitHub variable."
   value       = google_service_account.planner.email
 }
+
+output "operator_service_account" {
+  description = "Identity the Ops workflow uses (ADR-0112), or null when operator access is off."
+  value       = local.operator_access_enabled ? google_service_account.operator[0].email : null
+}
+
+output "operator_backups_bucket" {
+  description = "Bucket Firestore exports go to before an operator write (ADR-0112), or null."
+  value       = local.operator_access_enabled ? google_storage_bucket.operator_backups[0].name : null
+}
