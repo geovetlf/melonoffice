@@ -438,41 +438,6 @@ a.sidebar__item:hover {
   gap: var(--mo-space-6);
 }
 
-.home__stage {
-  position: relative;
-  display: grid;
-  grid-template-columns: 1fr auto;
-  align-items: start;
-  gap: var(--mo-space-4);
-  padding: var(--mo-space-8);
-  overflow: hidden;
-  border: 1px solid var(--mo-color-border);
-  border-radius: 28px;
-  isolation: isolate;
-  box-shadow: 0 30px 80px rgb(0 0 0 / 0.45);
-}
-
-.home__hero {
-  max-width: 30rem;
-}
-
-.home__greeting {
-  margin: 0;
-  color: var(--mo-color-text-secondary);
-}
-
-.home__title {
-  margin: var(--mo-space-1) 0 var(--mo-space-2);
-  font-size: clamp(1.75rem, 1.2rem + 1.8vw, 2.75rem);
-  line-height: 1.1;
-  letter-spacing: var(--mo-font-tracking-tight);
-}
-
-.home__subtitle {
-  margin: 0;
-  color: var(--mo-color-text-secondary);
-}
-
 .gia-card {
   display: flex;
   align-items: center;
@@ -728,12 +693,6 @@ a.sidebar__item:hover {
 }
 
 /* GIA's command bar and the quick actions. */
-.home__command {
-  display: grid;
-  justify-items: center;
-  gap: var(--mo-space-3);
-}
-
 .gia-bar {
   position: relative;
   display: flex;
@@ -847,13 +806,6 @@ a.sidebar__item:hover {
 
 .quick-action .mo-icon {
   color: var(--mo-color-accent);
-}
-
-/* Panels under the office. */
-.home__panels {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: var(--mo-space-4);
 }
 
 .panel {
@@ -1470,39 +1422,12 @@ a.sidebar__item:hover {
 
 /* Wide screens: the welcome and GIA sit in the sky, either side of headquarters. */
 @media (min-width: 75rem) {
-  .home__stage {
-    display: block;
-    padding-top: var(--mo-space-6);
-  }
-
-  .home__hero {
-    position: absolute;
-    top: var(--mo-space-8);
-    left: var(--mo-space-8);
-    max-width: calc(50% - 15.5rem);
-  }
-
-  .home__title {
-    font-size: clamp(1.6rem, 0.8rem + 1.2vw, 2.25rem);
-  }
-
-  .home__gia {
-    position: absolute;
-    top: var(--mo-space-8);
-    right: var(--mo-space-8);
-  }
-
   .office-scene__viewport {
     padding-top: 0;
   }
 }
 
 /* Laptop and tablet: the sidebar becomes a drawer, the office keeps its rooms. */
-@media (max-width: 80rem) {
-  .home__panels {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
 
 @media (max-width: 64rem) {
   .app {
@@ -1571,12 +1496,6 @@ a.sidebar__item:hover {
     display: none;
   }
 
-  .home__stage {
-    grid-template-columns: minmax(0, 1fr);
-    padding: var(--mo-space-6) var(--mo-space-4);
-    border-radius: 22px;
-  }
-
   .gia-card {
     min-width: 0;
   }
@@ -1623,10 +1542,6 @@ a.sidebar__item:hover {
     text-align: center;
     font-size: var(--mo-font-size-xs);
     color: var(--mo-color-text-secondary);
-  }
-
-  .home__panels {
-    grid-template-columns: minmax(0, 1fr);
   }
 
   .gia-bar__tool {
@@ -2056,12 +1971,6 @@ a.sidebar__item:hover {
   justify-self: start;
 }
 
-.customers__meta {
-  color: var(--mo-color-text-secondary);
-  font-size: var(--mo-font-size-sm);
-  overflow-wrap: anywhere;
-}
-
 /* Follow-ups (C5, ADR-0058): a group or a record's follow-ups, their heading above the list. */
 .follow-ups__group,
 /* The follow-up a link opened is marked clearly: the accent's edge and its soft tint. */
@@ -2459,6 +2368,13 @@ a.sidebar__item:hover {
 
 .gia-quick__box .gia-bar__input {
   width: 100%;
+}
+
+/* The quick ask's hint under its field. */
+.gia-quick__hint {
+  color: var(--mo-color-text-secondary);
+  font-size: var(--mo-font-size-sm);
+  overflow-wrap: anywhere;
 }
 
 /* The quick ask's field has no frame of its own to carry the ring: it draws its own. */
