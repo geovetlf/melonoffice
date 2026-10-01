@@ -1,6 +1,13 @@
 import type { AuditEvent, InMemoryAuditStore } from '@melonoffice/audit';
-import type { Execution, ExecutionId, OrganizationId } from '@melonoffice/domain';
+import type {
+  Execution,
+  ExecutionId,
+  ExecutionStatus,
+  OrganizationId,
+  SpecialistId,
+} from '@melonoffice/domain';
 import { ExecutionError } from './errors.js';
+import { EXECUTION_STATUSES, isTerminal } from './lifecycle.js';
 
 /** The new state of an execution and the audit events that record the change. */
 export interface ExecutionWrite {
@@ -30,6 +37,24 @@ export interface ExecutionRepository {
   ): Promise<Execution>;
 }
 
+/** The statuses of an execution that has not ended. */
+export const OPEN_STATUSES: readonly ExecutionStatus[] = Object.freeze(
+  EXECUTION_STATUSES.filter((s) => !isTerminal(s)),
+);
+
+/**
+ * The executions of one specialist that have not ended (AE-4, ADR-0115), so that pausing or
+ * disabling an agent reaches its work in progress. Ids only, at most `limit`, oldest id first;
+ * `more` says whether there are others. Another organization's are never returned.
+ */
+export interface OpenExecutionIndex {
+  openOfSpecialist(
+    organizationId: OrganizationId,
+    specialistId: SpecialistId,
+    limit: number,
+  ): Promise<{ readonly ids: readonly ExecutionId[]; readonly more: boolean }>;
+}
+
 /** Checks what `change` returned: the same execution, one revision ahead. */
 export function checkNextRevision(current: Execution, next: Execution): void {
   if (
@@ -42,7 +67,7 @@ export function checkNextRevision(current: Execution, next: Execution): void {
 }
 
 /** For tests and local runs only. */
-export class InMemoryExecutionRepository implements ExecutionRepository {
+export class InMemoryExecutionRepository implements ExecutionRepository, OpenExecutionIndex {
   readonly #executions = new Map<string, Execution>();
 
   constructor(private readonly audit?: InMemoryAuditStore) {}
@@ -80,6 +105,23 @@ export class InMemoryExecutionRepository implements ExecutionRepository {
     if (events.length === 0) return;
     if (this.audit === undefined) throw new Error('no audit store for execution events');
     this.audit.appendNow(events);
+  }
+
+  async openOfSpecialist(
+    organizationId: OrganizationId,
+    specialistId: SpecialistId,
+    limit: number,
+  ) {
+    const ids = [...this.#executions.values()]
+      .filter(
+        (e) =>
+          e.organizationId === organizationId &&
+          e.specialistId === specialistId &&
+          !isTerminal(e.status),
+      )
+      .map((e) => e.id)
+      .sort();
+    return { ids: Object.freeze(ids.slice(0, limit)), more: ids.length > limit };
   }
 
   /** Test hook: stores a record as given, the way corrupted or legacy data would look. */

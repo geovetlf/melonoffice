@@ -20,6 +20,37 @@ export interface AgentView extends SpecialistView {
   readonly version?: number;
   readonly role?: { readonly id: string; readonly version: number };
   readonly skills?: readonly { readonly id: string; readonly version: number }[];
+  /** Who last changed its status, when and why (AE-4). */
+  readonly lastStatusChange?: {
+    readonly from: SpecialistStatus;
+    readonly to: SpecialistStatus;
+    readonly at: string;
+    readonly by: string;
+    readonly reason: string | null;
+  } | null;
+}
+
+/** Something that stops an agent from being activated (AE-4), with what it names. */
+export interface ReadinessProblemView {
+  readonly kind: string;
+  readonly skill?: string;
+  readonly tool?: string;
+  readonly permission?: string;
+}
+
+/** What one page of agents asks for (AE-4). Empty values are left out. */
+export interface AgentPageQuery {
+  readonly limit?: number;
+  readonly cursor?: string;
+  readonly status?: SpecialistStatus;
+  readonly departmentId?: string;
+  readonly q?: string;
+  readonly skill?: string;
+}
+
+export interface AgentPageView {
+  readonly specialists: readonly AgentView[];
+  readonly nextCursor: string | null;
 }
 
 export interface AgentCapabilitiesView {
@@ -41,7 +72,7 @@ export interface AgentCapabilitiesView {
     readonly riskLevel: string | null;
     readonly approval: string | null;
   }[];
-  readonly problems: readonly { readonly kind: string }[];
+  readonly problems: readonly ReadinessProblemView[];
   /** A newer version of one of its skills, which a person may move it to (ADR-0084). */
   readonly upgrades?: readonly {
     readonly skillId: string;
@@ -64,6 +95,8 @@ export class AgentRequestError extends Error {
   constructor(
     readonly status: number,
     readonly code?: string,
+    /** What stops activation, for `specialist_not_ready` (AE-4). */
+    readonly problems: readonly ReadinessProblemView[] = [],
   ) {
     super(`agent request failed: ${status}${code === undefined ? '' : ` ${code}`}`);
   }
@@ -107,7 +140,14 @@ export interface AgentsClient {
     readonly displayName: string;
     readonly locale: 'es' | 'en';
   }): Promise<AgentView>;
-  setStatus(id: string, from: SpecialistStatus, to: SpecialistStatus): Promise<AgentView>;
+  setStatus(
+    id: string,
+    from: SpecialistStatus,
+    to: SpecialistStatus,
+    reason?: string,
+  ): Promise<AgentView>;
+  /** One page of the organization's agents (AE-4): never the whole list. */
+  page(query: AgentPageQuery): Promise<AgentPageView>;
   capabilities(id: string): Promise<AgentCapabilitiesView>;
   /** Needs `specialist.manage`: one skill to a newer version, as a new version of the agent. */
   upgradeSkill(
@@ -115,6 +155,9 @@ export interface AgentsClient {
     input: { readonly fromVersion: number; readonly skillId: string; readonly version: number },
   ): Promise<AgentView>;
 }
+
+/** How many agents one page shows. */
+export const AGENT_PAGE_LIMIT = 25;
 
 export function createAgentsClient(request: ReplyRequest, organizationId: string): AgentsClient {
   const base = `/v1/organizations/${encodeURIComponent(organizationId)}`;
@@ -125,6 +168,7 @@ export function createAgentsClient(request: ReplyRequest, organizationId: string
       throw new AgentRequestError(
         response.status,
         typeof body.error === 'string' ? body.error : undefined,
+        Array.isArray(body.problems) ? (body.problems as ReadinessProblemView[]) : [],
       );
     }
     return body as T;
@@ -146,8 +190,24 @@ export function createAgentsClient(request: ReplyRequest, organizationId: string
       return (await call<{ tools?: ToolView[] }>('/tools')).tools ?? [];
     },
     create: (input) => post<AgentView>('/specialists', input),
-    setStatus: (id, from, to) =>
-      post<AgentView>(`/specialists/${encodeURIComponent(id)}/status`, { from, to }),
+    setStatus: (id, from, to, reason) =>
+      post<AgentView>(`/specialists/${encodeURIComponent(id)}/status`, {
+        from,
+        to,
+        ...(reason === undefined || reason.trim() === '' ? {} : { reason: reason.trim() }),
+      }),
+    async page(query) {
+      const params = new URLSearchParams();
+      for (const [key, value] of Object.entries(query)) {
+        if (value !== undefined && value !== '') params.set(key, String(value));
+      }
+      // At least the page size, so the server always answers with one page.
+      if (!params.has('limit')) params.set('limit', String(AGENT_PAGE_LIMIT));
+      const body = await call<{ specialists?: AgentView[]; nextCursor?: string | null }>(
+        `/specialists?${params.toString()}`,
+      );
+      return { specialists: body.specialists ?? [], nextCursor: body.nextCursor ?? null };
+    },
     capabilities: (id) =>
       call<AgentCapabilitiesView>(`/specialists/${encodeURIComponent(id)}/capabilities`),
     upgradeSkill: (id, input) =>

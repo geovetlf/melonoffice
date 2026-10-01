@@ -63,6 +63,7 @@ import {
   createCrmContextSource,
   createDecisionAgentRouter,
   crmContextText,
+  agentStopOf,
   createHarnessAgentWork,
   createHarnessContextSource,
   createHarnessToolDirectory,
@@ -1083,6 +1084,94 @@ describe('Multi-step plans, limits and hand-off (ADR-0101)', () => {
       code: 'credit_limit_exceeded',
     });
     expect(at('failed', 'provider_unavailable')).toMatchObject({ reason: 'repeated_error' });
+    // Its agent was stopped (AE-4): a person's decision, said as such, not an error.
+    expect(at('failed', 'agent_paused')).toEqual({
+      type: 'HANDOFF_TO_HUMAN',
+      reason: 'policy',
+      code: 'agent_paused',
+    });
+    expect(at('failed', 'agent_disabled')).toMatchObject({ reason: 'policy' });
+  });
+});
+
+describe('An agent that is no longer active (AE-4, ADR-0115)', () => {
+  const node = { id: 'work' } as ExecutionNode;
+  const ORG = '44444444-4444-4444-8444-444444444444';
+  const AGENT = '33333333-3333-4333-8333-333333333333';
+  const execution = { id: 'e1', organizationId: ORG, specialistId: AGENT } as unknown as Execution;
+
+  it('names the stop for each status, and none for an active agent', () => {
+    expect(agentStopOf({ status: 'active' })).toBeUndefined();
+    expect(agentStopOf({ status: 'paused' })).toBe('agent_paused');
+    expect(agentStopOf({ status: 'disabled' })).toBe('agent_disabled');
+    expect(agentStopOf({ status: 'archived' })).toBe('agent_not_active');
+    expect(agentStopOf({ status: 'draft' })).toBe('agent_not_active');
+    expect(agentStopOf(undefined)).toBe('agent_not_active');
+  });
+
+  it('stops before any work is read: no model is asked and no credit is spent', async () => {
+    const w = await world();
+    let reads = 0;
+    let status: 'active' | 'paused' | 'disabled' = 'paused';
+    const asked: [string, string][] = [];
+    const shaped = createHarnessAgentWork(
+      {
+        agentWork: async () => {
+          reads += 1;
+          return { maxOutputTokens: 100, metadata: {} };
+        },
+      },
+      {
+        agents: {
+          find: async (organizationId, id) => {
+            asked.push([organizationId, id]);
+            return { status };
+          },
+        },
+      },
+    );
+    expect(await shaped.agentWork(w.alice, execution, node)).toEqual({ stop: 'agent_paused' });
+    status = 'disabled';
+    expect(await shaped.agentWork(w.alice, execution, node)).toEqual({ stop: 'agent_disabled' });
+    expect(reads).toBe(0);
+    // Read in the execution's own organization, for its own agent.
+    expect(asked).toEqual([
+      [ORG, AGENT],
+      [ORG, AGENT],
+    ]);
+    status = 'active';
+    expect(await shaped.agentWork(w.alice, execution, node)).not.toHaveProperty('stop');
+    expect(reads).toBe(1);
+  });
+
+  it('a missing agent (another organization, deleted) stops too; work without an agent is not checked', async () => {
+    const w = await world();
+    const shaped = createHarnessAgentWork(
+      { agentWork: async () => ({ maxOutputTokens: 100, metadata: {} }) },
+      { agents: { find: async () => undefined } },
+    );
+    expect(await shaped.agentWork(w.alice, execution, node)).toEqual({ stop: 'agent_not_active' });
+    expect(
+      await shaped.agentWork(w.alice, { id: 'e2', organizationId: ORG } as Execution, node),
+    ).not.toHaveProperty('stop');
+  });
+
+  it('the time limit still comes first', async () => {
+    const w = await world();
+    const old = {
+      ...execution,
+      startedAt: '2026-01-01T00:00:00.000Z',
+      nodes: [],
+    } as unknown as Execution;
+    const shaped = createHarnessAgentWork(
+      { agentWork: async () => ({ maxOutputTokens: 100, metadata: {} }) },
+      {
+        agents: { find: async () => ({ status: 'paused' }) },
+        now: () => new Date('2026-10-01T00:00:00Z'),
+      },
+    );
+    const result = await shaped.agentWork(w.alice, old, node);
+    expect(result).toHaveProperty('stop');
   });
 });
 

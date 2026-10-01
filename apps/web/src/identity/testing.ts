@@ -53,6 +53,8 @@ export interface FakeBackend {
       string,
       { id: string; name: string; type: string; status: string; purpose?: string }[]
     >;
+    /** What the API names as missing when activating an agent (AE-4.2), by agent id. */
+    activationProblems?: Record<string, Record<string, string>[]>;
     /** Each organization's credit balance, if it has a wallet. */
     credits: Record<string, number>;
     /** Each organization's conversations: only its members can read them. */
@@ -1247,8 +1249,20 @@ export function fakeBackend(): FakeBackend {
         (s) => s.id === agentStatus[1],
       );
       if (found === undefined) return json(404, { error: 'specialist_not_found' });
-      const { from, to } = JSON.parse(body ?? '{}') as { from?: string; to?: string };
+      const { from, to, reason } = JSON.parse(body ?? '{}') as {
+        from?: string;
+        to?: string;
+        reason?: string;
+      };
       if (from !== found.status) return json(409, { error: 'specialist_concurrency_conflict' });
+      if (to === 'disabled' && (reason ?? '').trim() === '') {
+        return json(400, { error: 'invalid_specialist', field: 'reason' });
+      }
+      const problems = options.activationProblems?.[found.id];
+      if (to === 'active' && problems !== undefined) {
+        return json(409, { error: 'specialist_not_ready', problems });
+      }
+      const was = found.status;
       found.status = to ?? found.status;
       return json(200, {
         id: found.id,
@@ -1256,6 +1270,13 @@ export function fakeBackend(): FakeBackend {
         displayName: found.name,
         status: found.status,
         purpose: found.purpose ?? null,
+        lastStatusChange: {
+          from: was,
+          to: found.status,
+          at: '2026-09-27T12:00:00Z',
+          by: 'user_alice',
+          reason: reason ?? null,
+        },
       });
     }
     const agentCapabilities = route?.match(/^specialists\/([^/]+)\/capabilities$/);
@@ -1310,19 +1331,30 @@ export function fakeBackend(): FakeBackend {
       });
     }
     if (route === 'specialists') {
-      return (
-        needs('specialist.read') ??
-        json(200, {
-          specialists: (options.specialists[organizationId] ?? []).map((s) => ({
-            id: s.id,
-            departmentId: `${organizationId}_${s.type}`,
-            displayName: s.name,
-            status: s.status,
-            purpose: s.purpose ?? null,
-            updatedAt: '2026-09-27T12:00:00Z',
-          })),
-        })
+      const denied = needs('specialist.read');
+      if (denied !== undefined) return denied;
+      const all = (options.specialists[organizationId] ?? []).map((s) => ({
+        id: s.id,
+        departmentId: `${organizationId}_${s.type}`,
+        displayName: s.name,
+        status: s.status,
+        purpose: s.purpose ?? null,
+        updatedAt: '2026-09-27T12:00:00Z',
+      }));
+      if (query === '') return json(200, { specialists: all });
+      // One page at a time (AE-4.3), filtered as the API does.
+      const q = new URLSearchParams(query);
+      const text = q.get('q')?.toLowerCase();
+      const status = q.get('status');
+      const departmentId = q.get('departmentId');
+      const found = all.filter(
+        (s) =>
+          (text === undefined || s.displayName.toLowerCase().includes(text)) &&
+          (status === null || s.status === status) &&
+          (departmentId === null || s.departmentId === departmentId),
       );
+      const { items, nextCursor } = pageOf(found, query);
+      return json(200, { specialists: items, nextCursor });
     }
     if (route === 'credits') {
       const balance = options.credits[organizationId];

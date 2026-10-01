@@ -1,30 +1,36 @@
 import { actorOf, buildAuditEvent, type AuditEvent } from '@melonoffice/audit';
 import {
+  acceptsAssignments,
   activeOrganizationOf,
   departmentIdOf,
   isDepartmentError,
   type DepartmentRepository,
 } from '@melonoffice/departments';
 import type {
+  DefinitionRef,
   IsoTimestamp,
   OrganizationId,
+  PolicyId,
   Specialist,
   SpecialistConfiguration,
+  SpecialistId,
   SpecialistStatus,
 } from '@melonoffice/domain';
-import type { AuthorizationService } from '@melonoffice/rbac';
+import { PERMISSIONS, type AuthorizationService, type Permission } from '@melonoffice/rbac';
 import { isResolvedTenant, type TenancyStore, type TenantContext } from '@melonoffice/tenancy';
 import type { ToolLookup } from './capabilities.js';
 import { SpecialistError } from './errors.js';
 import {
   applySpecialistStatus,
   checkConfiguration,
+  checkStatusReason,
   isSpecialistId,
   isVersionNumber,
   newSpecialist,
   reviseSpecialist,
   type SpecialistWrite,
 } from './model.js';
+import { agentReadiness } from './readiness.js';
 import type { SpecialistRepository } from './repository.js';
 import { grantsOf, skillAllowedIn, toolKey, type SkillCatalogue } from './skills.js';
 import { AGENT_LOCALES, findAgentTemplate, type AgentLocale } from './templates.js';
@@ -56,6 +62,30 @@ export interface SpecialistManagement {
   ): Promise<Specialist>;
 }
 
+/** Why an agent's work in progress was stopped (AE-4): the code its executions are cancelled with. */
+export type SpecialistStopReason = 'agent_paused' | 'agent_disabled' | 'agent_archived';
+
+export const STOP_REASON_OF: Readonly<Partial<Record<SpecialistStatus, SpecialistStopReason>>> =
+  Object.freeze({
+    paused: 'agent_paused',
+    disabled: 'agent_disabled',
+    archived: 'agent_archived',
+  });
+
+/**
+ * Stops the work an agent has in progress once it stops (AE-4, ADR-0115), the way a person's
+ * cancellation does (ADR-0029): cooperative, nothing is killed, a late result is discarded. It
+ * never throws: whatever it could not stop is still stopped at its next step, where the Harness
+ * finds the agent is no longer active and no model is asked.
+ */
+export interface SpecialistWorkStop {
+  stop(
+    tenant: TenantContext,
+    specialistId: SpecialistId,
+    reason: SpecialistStopReason,
+  ): Promise<{ readonly cancelled: number; readonly more: boolean }>;
+}
+
 export interface SpecialistManagementOptions {
   readonly repository: SpecialistRepository;
   readonly departments: DepartmentRepository;
@@ -63,6 +93,10 @@ export interface SpecialistManagementOptions {
   readonly authorization: Pick<AuthorizationService, 'authorize'>;
   readonly skills: SkillCatalogue;
   readonly tools: ToolLookup;
+  /** Whether the AI Gateway knows a model policy (activation readiness). Absent: not checked. */
+  readonly modelPolicyKnown?: (ref: DefinitionRef<PolicyId>) => boolean;
+  /** Stops the agent's work in progress when it is paused, disabled or archived (AE-4). */
+  readonly work?: SpecialistWorkStop;
   readonly now?: () => Date;
   readonly requestId?: string;
 }
@@ -81,6 +115,7 @@ export function createSpecialistManagement(
 ): SpecialistManagement {
   const { repository, departments, organizations, authorization, skills, tools, requestId } =
     options;
+  const { modelPolicyKnown, work } = options;
   const now = options.now ?? (() => new Date());
 
   async function managerOf(tenant: TenantContext): Promise<OrganizationId> {
@@ -105,6 +140,7 @@ export function createSpecialistManagement(
     action: 'specialist.created' | 'specialist.version_created' | 'specialist.status_changed',
     at: Date,
     transition?: { readonly from: SpecialistStatus; readonly to: SpecialistStatus },
+    reason?: string,
   ): AuditEvent =>
     buildAuditEvent(
       {
@@ -116,6 +152,7 @@ export function createSpecialistManagement(
         targetVersion: specialist.version,
         permission: 'specialist.manage',
         ...(transition === undefined ? {} : { transition }),
+        ...(reason === undefined ? {} : { reason }),
         ...(requestId === undefined ? {} : { requestId }),
         source: 'api',
       },
@@ -343,23 +380,64 @@ export function createSpecialistManagement(
       const organizationId = await managerOf(tenant);
       const person = userOf(tenant);
       if (!isRecord(input)) bad('body');
-      for (const key of Object.keys(input)) if (!['from', 'to'].includes(key)) bad(key);
-      return update(organizationId, id, (current, at) => {
+      for (const key of Object.keys(input)) {
+        if (!['from', 'to', 'reason'].includes(key)) bad(key);
+      }
+      const to = input.to as SpecialistStatus;
+      // Disabling is the strong stop: who, when and why are kept, so a reason is required.
+      if (to === 'disabled' && checkStatusReason(input.reason) === undefined) bad('reason');
+      // Activation readiness (AE-4): what the first task would find missing is refused now, with
+      // every problem named. Read before the write; the write checks the status did not move.
+      if (to === 'active') {
+        if (!isSpecialistId(id)) throw new SpecialistError('specialist_not_found');
+        const read = await repository.find(organizationId, id);
+        if (read === undefined) throw new SpecialistError('specialist_not_found');
+        const department = await departments.find(organizationId, read.configuration.departmentId);
+        const held = new Set<string>(
+          (Object.keys(PERMISSIONS) as Permission[]).filter(
+            (p) => authorization.authorize(tenant, p).allowed,
+          ),
+        );
+        const readiness = agentReadiness(read, {
+          skills,
+          tools,
+          held,
+          departmentActive: department !== undefined && acceptsAssignments(department),
+          ...(modelPolicyKnown === undefined ? {} : { modelPolicyKnown }),
+        });
+        if (!readiness.ready) {
+          throw new SpecialistError('specialist_not_ready', undefined, readiness.problems);
+        }
+      }
+      const updated = await update(organizationId, id, (current, at) => {
         const write = applySpecialistStatus(
           current,
-          { from: input.from as SpecialistStatus, to: input.to as SpecialistStatus },
+          { from: input.from as SpecialistStatus, to, reason: input.reason },
           at.toISOString() as IsoTimestamp,
+          person.userId,
         );
         return {
           ...write,
           events: [
-            event(person, write.specialist, 'specialist.status_changed', at, {
-              from: current.status,
-              to: write.specialist.status,
-            }),
+            event(
+              person,
+              write.specialist,
+              'specialist.status_changed',
+              at,
+              { from: current.status, to: write.specialist.status },
+              // The person's words stay on the specialist; the audit log never holds free text.
+              write.specialist.lastStatusChange?.reason === undefined ? undefined : 'reason_given',
+            ),
           ],
         };
       });
+      // Its work in progress stops with it (AE-4): after the status is stored, so nothing new
+      // can start in between, and never undoing the change if stopping fails.
+      const reason = STOP_REASON_OF[updated.status];
+      if (reason !== undefined && work !== undefined) {
+        await work.stop(tenant, updated.identity.id, reason);
+      }
+      return updated;
     },
   } satisfies SpecialistManagement);
 }

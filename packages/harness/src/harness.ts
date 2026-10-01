@@ -13,6 +13,7 @@ import type {
   ExecutionNode,
   OrganizationId,
   SpecialistId,
+  SpecialistStatus,
 } from '@melonoffice/domain';
 import type { AuthorizationService } from '@melonoffice/rbac';
 import { isResolvedTenant, type TenantContext } from '@melonoffice/tenancy';
@@ -518,9 +519,33 @@ export function withHarnessProfile<W extends ShapeableWork>(
   };
 }
 
-/** Work the Harness stopped at a limit (the runtime fails the execution with this code). */
+/**
+ * Why the Harness stops an agent that is no longer active (AE-4, ADR-0115): paused, disabled, or
+ * anything else (archived, draft, gone). The same codes its executions are cancelled with.
+ */
+export type HarnessAgentStopCode = 'agent_paused' | 'agent_disabled' | 'agent_not_active';
+
+/** Work the Harness stopped (the runtime fails the execution with this code, asking no model). */
 export interface HarnessStop {
-  readonly stop: HarnessLimitCode;
+  readonly stop: HarnessLimitCode | HarnessAgentStopCode;
+}
+
+/** Where the Harness reads an agent's status: the specialists repository. */
+export interface HarnessAgentStatus {
+  find(
+    organizationId: OrganizationId,
+    id: SpecialistId,
+  ): Promise<{ readonly status: SpecialistStatus } | undefined>;
+}
+
+/** The stop for an agent that may not work now, or none when it is active. */
+export function agentStopOf(
+  agent: { readonly status: SpecialistStatus } | undefined,
+): HarnessAgentStopCode | undefined {
+  if (agent?.status === 'active') return undefined;
+  if (agent?.status === 'paused') return 'agent_paused';
+  if (agent?.status === 'disabled') return 'agent_disabled';
+  return 'agent_not_active';
 }
 
 /**
@@ -558,6 +583,12 @@ export function createHarnessAgentWork<S extends AgentWorkSource>(
     readonly policy?: HarnessProfilePolicy;
     readonly limits?: HarnessLimits;
     readonly now?: () => Date;
+    /**
+     * The agents' status (AE-4): every step of an agent's execution first checks its agent is
+     * still active, so a paused or disabled agent asks no model and spends no credit, whatever
+     * cancellation missed. Absent: not checked here (the tool gate still refuses its tools).
+     */
+    readonly agents?: HarnessAgentStatus;
   },
 ): Omit<S, 'agentWork'> & {
   agentWork(
@@ -576,6 +607,13 @@ export function createHarnessAgentWork<S extends AgentWorkSource>(
       // waited on a person's approval is not its own (ADR-0103).
       if (workingTimeMs(execution, now()) > limits.maxDurationMs) {
         return Object.freeze({ stop: 'task_time_limit_reached' as const });
+      }
+      // Then the agent: only an active one works, checked at every step (AE-4).
+      if (options.agents !== undefined && execution.specialistId !== undefined) {
+        const stop = agentStopOf(
+          await options.agents.find(execution.organizationId, execution.specialistId),
+        );
+        if (stop !== undefined) return Object.freeze({ stop });
       }
       const work = (await inner.agentWork(tenant, execution, node)) as WorkOf<S> | undefined;
       if (work === undefined) return undefined;

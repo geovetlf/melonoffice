@@ -3,7 +3,7 @@ import type {
   Timestamp as FirestoreTimestamp,
   Transaction,
 } from '@google-cloud/firestore';
-import { Timestamp } from '@google-cloud/firestore';
+import { FieldPath, Timestamp } from '@google-cloud/firestore';
 import type {
   IsoTimestamp,
   OrganizationId,
@@ -19,6 +19,7 @@ import {
   isSpecialistId,
   isVersionNumber,
   SpecialistError,
+  type SpecialistPageRequest,
   type SpecialistRepository,
   type SpecialistWrite,
 } from '@melonoffice/specialists';
@@ -65,6 +66,14 @@ export interface SpecialistDocument {
   readonly createdAt: FirestoreTimestamp;
   readonly createdBy: string;
   readonly updatedAt: FirestoreTimestamp;
+  /** Absent until a person changes the status after AE-4 (ADR-0115). */
+  readonly lastStatusChange?: {
+    readonly from: string;
+    readonly to: string;
+    readonly at: FirestoreTimestamp;
+    readonly by: string;
+    readonly reason: string | null;
+  };
 }
 
 export interface SpecialistVersionDocument {
@@ -130,6 +139,17 @@ export function toSpecialistDocument(s: Specialist): SpecialistDocument {
     createdAt: ts(s.identity.createdAt),
     createdBy: s.identity.createdBy,
     updatedAt: ts(s.updatedAt),
+    ...(s.lastStatusChange === undefined
+      ? {}
+      : {
+          lastStatusChange: {
+            from: s.lastStatusChange.from,
+            to: s.lastStatusChange.to,
+            at: ts(s.lastStatusChange.at),
+            by: s.lastStatusChange.by,
+            reason: s.lastStatusChange.reason ?? null,
+          },
+        }),
   };
 }
 
@@ -160,6 +180,17 @@ export function toSpecialist(id: string, d: SpecialistDocument): Specialist {
     configuration: toConfiguration(d.configuration),
     revision: d.revision,
     updatedAt: iso(d.updatedAt),
+    ...(d.lastStatusChange === undefined
+      ? {}
+      : {
+          lastStatusChange: {
+            from: d.lastStatusChange.from,
+            to: d.lastStatusChange.to,
+            at: iso(d.lastStatusChange.at),
+            by: d.lastStatusChange.by,
+            ...(d.lastStatusChange.reason === null ? {} : { reason: d.lastStatusChange.reason }),
+          },
+        }),
   } as unknown as Specialist;
   try {
     return checkStoredSpecialist(specialist);
@@ -208,6 +239,26 @@ export class FirestoreSpecialistRepository implements SpecialistRepository {
     return snapshot.docs
       .map((doc) => toSpecialist(doc.id, doc.data() as SpecialistDocument))
       .sort((a, b) => (a.identity.id < b.identity.id ? -1 : 1));
+  }
+
+  /**
+   * One page in document-id order (AE-4, ADR-0115). Equality filters only, ordered by document
+   * id, so Firestore serves it from its automatic single-field indexes: no composite index.
+   */
+  async page(organizationId: OrganizationId, request: SpecialistPageRequest) {
+    if (!isOrganizationId(organizationId)) return { items: Object.freeze([]), hasMore: false };
+    let query = this.db.collection(SPECIALISTS).where('organizationId', '==', organizationId);
+    if (request.status !== undefined) query = query.where('status', '==', request.status);
+    if (request.departmentId !== undefined) {
+      query = query.where('configuration.departmentId', '==', request.departmentId);
+    }
+    query = query.orderBy(FieldPath.documentId());
+    if (request.after !== undefined) query = query.startAfter(request.after);
+    const snapshot = await query.limit(request.limit + 1).get();
+    const items = snapshot.docs
+      .slice(0, request.limit)
+      .map((doc) => toSpecialist(doc.id, doc.data() as SpecialistDocument));
+    return { items: Object.freeze(items), hasMore: snapshot.size > request.limit };
   }
 
   async findVersion(

@@ -41,6 +41,7 @@ import {
   InMemoryAgentOutputRepository,
   InMemoryExecutionRepository,
   type ExecutionRepository,
+  type OpenExecutionIndex,
 } from '@melonoffice/execution';
 import { InMemoryCreditStore, type CreditStore } from '@melonoffice/credits';
 import {
@@ -177,7 +178,7 @@ export interface Stores {
   readonly putBilling: (record: BillingAccount | Subscription) => Promise<void>;
   /** Removes an organization's billing account, as for one created before billing existed. */
   readonly removeBilling: (organizationId: OrganizationId) => Promise<void>;
-  readonly executions: ExecutionRepository;
+  readonly executions: ExecutionRepository & OpenExecutionIndex;
   readonly approvals: ApprovalRepository;
   readonly departments: DepartmentRepository;
   readonly specialists: SpecialistRepository;

@@ -458,6 +458,7 @@ describe.each(STORES)('AE-2 agent tasks with storage in %s', (_storage, createSt
       taskParts,
       published,
       outputs: createAgentOutputStore(stores.outputs),
+      management,
       setModel: (...next: (() => Promise<ProviderOutcome>)[]) => {
         modelAnswers = next;
       },
@@ -656,6 +657,24 @@ describe.each(STORES)('AE-2 agent tasks with storage in %s', (_storage, createSt
     const { task } = await w.tasks.assign(w.tenantB, bobs.identity.id, { request: 'Hola' });
     expect(await codeOf(w.tasks.get(w.tenantA, task.id))).toBe('task_not_found');
     expect(w.dispatched).toHaveLength(1);
+  });
+
+  it('5b. an agent paused after a task was asked never reaches the model or spends credits (AE-4, ADR-0115)', async () => {
+    const w = await world();
+    const lucia = await w.agent();
+    const { task } = await w.tasks.assign(w.tenantA, lucia.identity.id, { request: 'Hola' });
+    // Paused before the worker picks the task up: the Harness checks the agent first.
+    await w.management.setStatus(w.tenantA, lucia.identity.id, {
+      from: 'active',
+      to: 'paused',
+      reason: 'Revisión',
+    });
+    await w.drive();
+    expect(w.providerCalls).toHaveLength(0);
+    expect(w.charges.size).toBe(0);
+    const { execution } = await w.tasks.get(w.tenantA, task.id);
+    expect(execution?.status).toBe('failed');
+    expect(execution?.failure?.code).toBe('agent_paused');
   });
 
   it('6. with nothing recorded the agent is told so, and nothing is invented for it', async () => {
