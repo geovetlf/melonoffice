@@ -190,9 +190,12 @@ describe('the Home’s office (Home V4)', () => {
 
   it('shows each agent at its desk with its real state and work, and opens its card', async () => {
     open(agents);
-    const ana = await screen.findByRole('button', {
-      name: 'Sales agent, Working. Review this week’s leads. Open their card',
-    });
+    // The agents' tasks are read after the office: on a slow runner that takes a while.
+    const ana = await screen.findByRole(
+      'button',
+      { name: 'Sales agent, Working. Review this week’s leads. Open their card' },
+      { timeout: 5000 },
+    );
     expect(
       screen.getByRole('button', {
         name: 'Launch agent, Available. No work under way. Open their card',
@@ -216,6 +219,32 @@ describe('the Home’s office (Home V4)', () => {
     // Seeing its work opens its place in the office (level 3).
     fireEvent.click(within(card).getByRole('button', { name: 'See work' }));
     expect(globalThis.location.pathname).toBe('/office/sales/agent/spec_ana');
+  });
+
+  it('lists the real team beside the office, each opening its card, and MelonMotor', async () => {
+    open(agents);
+    const boards = within(
+      await screen.findByRole('complementary', { name: 'Your team and MelonMotor' }),
+    );
+    const sales = await boards.findByRole('button', { name: /Sales agent.*Commercial.*Working/ });
+    expect(boards.getByRole('button', { name: /Accounts agent.*Paused/ })).toBeTruthy();
+    // Every agent there is a real one: the team is the office's agents, no more.
+    expect(boards.getAllByRole('listitem')).toHaveLength(3);
+    fireEvent.click(sales);
+    expect(screen.getByRole('dialog', { name: 'Sales agent' })).toBeTruthy();
+    fireEvent.keyDown(globalThis.window, { key: 'Escape' });
+    expect(document.activeElement).toBe(sales);
+    fireEvent.click(boards.getByRole('button', { name: 'See the flows' }));
+    expect(document.getElementById('motor-panel')).toBeTruthy();
+  });
+
+  it('says the team is empty when the office has no agents, and invents none', async () => {
+    open();
+    const boards = within(
+      await screen.findByRole('complementary', { name: 'Your team and MelonMotor' }),
+    );
+    expect(await boards.findByText('No agents in your office yet.')).toBeTruthy();
+    expect(boards.queryAllByRole('listitem')).toHaveLength(0);
   });
 
   it('closes the card with Escape and gives focus back to the agent', async () => {

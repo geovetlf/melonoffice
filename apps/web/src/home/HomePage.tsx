@@ -10,6 +10,7 @@ import { useMotorFlows } from '../office/scene/motor.js';
 import { MotorPanel } from '../office/scene/MotorPanel.js';
 import { OfficeStage } from '../office/scene/OfficeStage.js';
 import { SCENE_ASPECT } from '../office/scene/officeScene.js';
+import { HomeBoards } from './boards.js';
 import { GiaCommandBar, QuickActions } from './gia.js';
 import { CreditsUsage, RecentActivity, UpcomingMeetings } from './panels.js';
 import { attentionCount, TodayWork, useTodayWork } from './TodayWork.js';
@@ -120,6 +121,15 @@ export function HomePage({
               />
             ) : null}
           </div>
+          <HomeBoards
+            work={work}
+            motor={motor}
+            onAgent={(id, from) => {
+              opener.current = from;
+              setAgent(id);
+            }}
+            onMotor={() => setMotorOpen(true)}
+          />
           <div className="home4__command">
             <GiaCommandBar suggestions more={<QuickActions />} />
           </div>

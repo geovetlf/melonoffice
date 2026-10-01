@@ -547,6 +547,11 @@
   justify-items: center;
 }
 
+/* The boards beside the office: only where a wide screen leaves room for them (below). */
+.home4__boards {
+  display: none;
+}
+
 .gia-command {
   display: grid;
   justify-items: center;
@@ -2908,8 +2913,8 @@
 @media (min-width: 64rem) and (min-height: 34rem) and (min-aspect-ratio: 1/1) {
   /*
    * The rows: the office no taller than its frame can be at the page's width (so a wide window
-   * gives it all the height there is, and a narrow one gives the height left to the strip), GIA's
-   * box, and the strip, never shorter than its two lines. The page's width is its main column's
+   * gives it all the height there is), GIA's box, and the strip, between its two lines and 10rem,
+   * so it never becomes a second page under the office. The page's width is its main column's
    * (`.app__main`, a container).
    */
   .app--scene .app__main {
@@ -2924,6 +2929,17 @@
     gap: var(--mo-space-2);
   }
 
+  /* The strip takes what the office leaves, up to 10rem, right under the command bar. */
+  .home4__side {
+    align-self: start;
+    height: min(100%, 10rem);
+  }
+
+  /* The command bar: one slim line, its send button the box's height with a mouse. */
+  .gia-command .gia-bar {
+    padding-block: 3px;
+  }
+
   /* A card shows as many of its latest entries as its height holds, never half of one. */
   .home4__side .panel {
     overflow: hidden;
@@ -2934,17 +2950,205 @@
     display: flex;
   }
 
+  /*
+   * The office's whole cell is the office: where the window is wider than the picture (it is
+   * never cropped or stretched on a computer), the space either side shows the same office,
+   * blurred and darkened, edge to edge, so there is no blank page around it. The office itself
+   * sits on it, sharp and whole.
+   */
+  .home4__office {
+    position: relative;
+    overflow: hidden;
+    border-radius: var(--mo-radius-xl);
+    background: var(--mo-color-scene-screen-deep);
+    isolation: isolate;
+  }
+
+  .home4__office::before {
+    content: '';
+    position: absolute;
+    inset: -40px;
+    z-index: -1;
+    background: url('./office/scene/art/office-empty.webp') center / cover no-repeat;
+    filter: blur(28px) brightness(0.55) saturate(1.15);
+    pointer-events: none;
+  }
+
+  .home4__office .stage__frame {
+    border-radius: 0;
+    box-shadow:
+      0 0 48px 8px rgb(0 0 0 / 0.35),
+      0 0 0 1px color-mix(in srgb, var(--mo-color-scene-circuit) 18%, transparent);
+  }
+
+  /*
+   * The office at the left, against the menu; to its right, where the window is wider than the
+   * office can be, the boards (the team, MelonMotor) over the office's own blurred backdrop. The
+   * first column is the office's real width, measured (`--stage-width`); the boards take the rest
+   * and step aside when it is too narrow for them.
+   */
+  .home4 {
+    grid-template-columns: var(--stage-width, 1fr) minmax(0, 1fr);
+    column-gap: 0;
+  }
+
+  .home4__header,
+  .home4__office,
+  .home4__command,
+  .home4__side {
+    grid-column: 1 / -1;
+  }
+
+  .home4__office .stage {
+    justify-items: start;
+  }
+
+  .home4__boards {
+    z-index: 1;
+    display: grid;
+    grid-row: 1;
+    grid-column: 2;
+    grid-template-rows: auto minmax(0, auto);
+    align-content: start;
+    gap: var(--mo-space-2);
+    min-width: 0;
+    min-height: 0;
+    /* Its margins shrink to nothing with its column, so a page with no room for it never widens. */
+    padding: var(--mo-space-3) min(var(--mo-space-3), 5%);
+    overflow: hidden;
+    container-type: inline-size;
+  }
+
+  .home4__boards .panel {
+    display: grid;
+    gap: var(--mo-space-2);
+    padding: var(--mo-space-3);
+    border: 1px solid color-mix(in srgb, var(--mo-color-surface) 40%, transparent);
+    border-radius: var(--mo-radius-lg);
+    background: color-mix(in srgb, var(--mo-color-surface) 88%, transparent);
+    box-shadow: var(--mo-shadow-md);
+    backdrop-filter: blur(14px) saturate(1.2);
+    font-size: var(--mo-font-size-sm);
+  }
+
+  .home4__boards .panel__header {
+    display: flex;
+    align-items: center;
+    gap: var(--mo-space-2);
+    margin: 0;
+  }
+
+  .home4__boards .panel__icon {
+    box-sizing: content-box;
+    padding: 5px;
+    border-radius: var(--mo-radius-sm);
+    background: var(--mo-color-accent-soft);
+    color: var(--mo-color-accent);
+  }
+
+  .home4__boards .panel__title {
+    font-size: var(--mo-font-size-sm);
+  }
+
+  .home4__boards .panel__empty,
+  .home4__boards .board__meta {
+    margin: 0;
+    color: var(--mo-color-text-secondary);
+    font-size: var(--mo-font-size-xs);
+  }
+
+  .home4__boards .panel__link {
+    justify-self: start;
+    padding: 0;
+    font-size: var(--mo-font-size-xs);
+  }
+
+  /* The team board takes the height left and its list scrolls on its own, never the page. */
+  .home4__boards .panel:last-child {
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    min-height: 0;
+  }
+
+  .board__list {
+    display: grid;
+    align-content: start;
+    gap: 2px;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+    overflow-y: auto;
+    list-style: none;
+    scrollbar-width: thin;
+  }
+
+  .board__agent {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--mo-space-2);
+    width: 100%;
+    min-height: 40px;
+    padding: 4px var(--mo-space-2);
+    border: 0;
+    border-radius: var(--mo-radius-md);
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .board__agent:hover {
+    background: var(--mo-color-hover);
+  }
+
+  .board__who {
+    display: grid;
+    min-width: 0;
+  }
+
+  .board__name,
+  .board__who .board__meta {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .board__name {
+    font-weight: var(--mo-font-weight-semibold);
+  }
+
+  .board__state {
+    padding: 2px 8px;
+    border-radius: var(--mo-radius-pill);
+    background: var(--mo-color-surface-muted);
+    color: var(--mo-color-text-secondary);
+    font-size: var(--mo-font-size-xxs);
+    font-weight: var(--mo-font-weight-semibold);
+    white-space: nowrap;
+  }
+
+  .board__state--working {
+    background: color-mix(in srgb, var(--mo-color-highlight) 18%, transparent);
+    color: var(--mo-color-text-primary);
+  }
+
+  .board__state--attention {
+    background: var(--mo-color-accent-soft);
+    color: var(--mo-color-accent);
+  }
+
   /* The caption: over the frame's top left corner, the ceiling, clear of the glass wall. */
   .home4__header,
   .home4__office {
     grid-row: 1;
-    grid-column: 1;
+    grid-column: 1 / -1;
   }
 
   .home4__header {
     z-index: 1;
     align-self: start;
-    justify-self: center;
+    justify-self: start;
     width: var(--stage-width, 100%);
     max-width: 100%;
     margin-top: var(--stage-top, 0);
@@ -3040,6 +3244,13 @@
   .home4__side .panel--lead > :not(.panel__header, .period-picker) {
     grid-row: auto;
     grid-column: 1 / -1;
+  }
+}
+
+/* Too little room beside the office for the boards: they step aside. */
+@container (max-width: 15rem) {
+  .home4__boards > * {
+    display: none;
   }
 }
 
