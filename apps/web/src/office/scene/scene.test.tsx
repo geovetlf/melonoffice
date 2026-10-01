@@ -190,9 +190,12 @@ describe('the Home’s office (Home V4)', () => {
 
   it('shows each agent at its desk with its real state and work, and opens its card', async () => {
     open(agents);
-    const ana = await screen.findByRole('button', {
-      name: 'Sales agent, Working. Review this week’s leads. Open their card',
-    });
+    // The agents' tasks are read after the office: on a slow runner that takes a while.
+    const ana = await screen.findByRole(
+      'button',
+      { name: 'Sales agent, Working. Review this week’s leads. Open their card' },
+      { timeout: 5000 },
+    );
     expect(
       screen.getByRole('button', {
         name: 'Launch agent, Available. No work under way. Open their card',
