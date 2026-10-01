@@ -113,7 +113,7 @@ export function ApprovalsPage({
             key={t}
             type="button"
             role="tab"
-            className="mo-chip customers__tab"
+            className="mo-chip"
             aria-selected={tab === t}
             onClick={() => setTab(t)}
           >

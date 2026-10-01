@@ -675,8 +675,11 @@
   overflow-wrap: anywhere;
 }
 
-/* The shell moves focus to the title on a new page; the page itself shows where it is. */
-.mo-page-header__title:focus:not(:focus-visible) {
+/*
+ * A page may move focus to its title when it opens (tabindex -1), so a screen reader starts
+ * there. The title is no control and nobody tabs to it: that focus draws no ring.
+ */
+.mo-page-header__title[tabindex='-1']:focus {
   outline: none;
 }
 
