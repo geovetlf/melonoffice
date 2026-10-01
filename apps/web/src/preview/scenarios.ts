@@ -6,7 +6,7 @@ import type { PreviewRoutes } from './routes.js';
  * The office states the preview shows. They are fixtures for design review, like the tests'
  * data: nothing here is served to a real organization.
  */
-export type ScenarioName = 'empty' | 'active' | 'pages';
+export type ScenarioName = 'empty' | 'one' | 'active' | 'pages';
 
 /** Everything an owner can see on the Home and its screens. */
 const OWNER_PERMISSIONS = [
@@ -67,6 +67,19 @@ export const SCENARIOS: Record<
   empty(backend) {
     backend.options.permissions.push(...OWNER_PERMISSIONS);
     backend.options.approvals = { org_1: [] };
+  },
+
+  /** An office just starting: one active agent in Comercial, working on one task. */
+  one(backend) {
+    backend.options.permissions.push(...OWNER_PERMISSIONS);
+    backend.options.credits = { org_1: 498 };
+    backend.options.approvals = { org_1: [] };
+    backend.options.specialists.org_1 = [
+      { id: 'spec_ana', name: 'Ana Ventas', type: 'sales', status: 'active', purpose: 'Leads' },
+    ];
+    backend.options.agentTasks = {
+      spec_ana: [task('t1', 'spec_ana', 'Revisar los leads de esta semana', 'running')],
+    };
   },
 
   /** An organization at work: agents in most rooms, some working, one waiting on a person. */
