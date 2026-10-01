@@ -26,7 +26,7 @@ function open(at: string, configure?: (backend: ReturnType<typeof fakeBackend>) 
 }
 
 describe("GIA's Workplace (ADR-0050)", () => {
-  it('is entered from the Home through GIA, with her face', async () => {
+  it('is entered from the Home through GIA, the office’s core', async () => {
     open('/');
     await screen.findByRole('heading', { level: 1 });
     // GIA sits at her desk in headquarters (Home V4).
@@ -35,7 +35,7 @@ describe("GIA's Workplace (ADR-0050)", () => {
       if (found === null) throw new Error('no GIA at her desk');
       return found;
     });
-    expect(card.querySelector('svg.gia-avatar')).toBeTruthy();
+    expect(card.querySelector('.b-gia__core')).toBeTruthy();
     fireEvent.click(card);
     const title = await screen.findByRole('heading', { level: 1, name: 'GIA' });
     expect(globalThis.location.pathname).toBe('/gia');
