@@ -1,4 +1,5 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
+import { StateMessage } from '@melonoffice/ui';
 import { navigate } from '../identity/router.js';
 import { formatMoney, stageName } from '../opportunities/OpportunitiesSection.js';
 import { paths } from '../shell/routes.js';
@@ -25,7 +26,7 @@ export const openOpportunities = (detail: CustomerDetail) =>
 function AppLink({ to, children }: { readonly to: string; readonly children: React.ReactNode }) {
   return (
     <a
-      className="customers__link"
+      className="mo-link"
       href={to}
       onClick={(event) => {
         event.preventDefault();
@@ -48,20 +49,20 @@ export function ContactConversations({
   const intl = useIntl();
   const list = detail.conversations;
   return (
-    <section aria-labelledby={`contact-conversations-${detail.id}`}>
-      <h4 id={`contact-conversations-${detail.id}`}>
+    <section className="crm-context" aria-labelledby={`contact-conversations-${detail.id}`}>
+      <h4 id={`contact-conversations-${detail.id}`} className="mo-subsection-title">
         <FormattedMessage id="contact.conversations" />
       </h4>
       {list === null || list === undefined ? (
-        <p className="panel__empty">
+        <p className="mo-hint">
           <FormattedMessage id="opportunities.conversations.hidden" />
         </p>
       ) : list.length === 0 ? (
-        <p className="panel__empty">
+        <StateMessage kind="empty" inline>
           <FormattedMessage id="opportunities.conversations.none" />
-        </p>
+        </StateMessage>
       ) : (
-        <ul className="customers__notes">
+        <ul className="crm-notes">
           {list.map((c) => {
             const text = (
               <>
@@ -97,20 +98,20 @@ export function ContactOpportunities({
   const list = detail.opportunities;
   if (list === undefined) return null;
   return (
-    <section aria-labelledby={`contact-opportunities-${detail.id}`}>
-      <h4 id={`contact-opportunities-${detail.id}`}>
+    <section className="crm-context" aria-labelledby={`contact-opportunities-${detail.id}`}>
+      <h4 id={`contact-opportunities-${detail.id}`} className="mo-subsection-title">
         <FormattedMessage id="contact.opportunities" />
       </h4>
       {list === null ? (
-        <p className="panel__empty">
+        <p className="mo-hint">
           <FormattedMessage id="contact.opportunities.hidden" />
         </p>
       ) : list.length === 0 ? (
-        <p className="panel__empty">
+        <StateMessage kind="empty" inline>
           <FormattedMessage id="contact.opportunities.none" />
-        </p>
+        </StateMessage>
       ) : (
-        <ul className="customers__notes contact-opportunities">
+        <ul className="crm-notes contact-opportunities">
           {list.map((o) => {
             const late = o.status === 'open' && o.nextAction !== null && o.nextAction.dueOn < today;
             return (
@@ -119,7 +120,7 @@ export function ContactOpportunities({
                   <strong>{o.title}</strong> · {stageOf(intl, o)}
                   {o.value === null ? null : <> · {formatMoney(intl, o.value)}</>}
                 </p>
-                <span className="customers__meta">
+                <span className="mo-hint">
                   <FormattedMessage id="customers.field.owner" />:{' '}
                   <FormattedMessage id={`customers.owner.${o.owner ?? 'none'}`} />
                   {o.status === 'open' ? (
@@ -146,7 +147,7 @@ export function ContactOpportunities({
                   ) : null}
                 </span>
                 {o.status === 'open' && o.nextAction !== null ? (
-                  <span className={`customers__next${late ? ' customers__next--late' : ''}`}>
+                  <span className={`crm-next${late ? ' crm-next--late' : ''}`}>
                     {late ? <FormattedMessage id="customers.next.overdue" /> : null}{' '}
                     <FormattedMessage id="customers.field.nextAction" />: {o.nextAction.text} ·{' '}
                     {o.nextAction.dueOn}
@@ -170,16 +171,16 @@ export function ContactHistory({ detail }: { readonly detail: CustomerDetail }) 
   if (list === undefined || list === null) return null;
   const titles = new Map((detail.opportunities ?? []).map((o) => [o.id, o.title]));
   return (
-    <section aria-labelledby={`contact-history-${detail.id}`}>
-      <h4 id={`contact-history-${detail.id}`}>
+    <section className="crm-context" aria-labelledby={`contact-history-${detail.id}`}>
+      <h4 id={`contact-history-${detail.id}`} className="mo-subsection-title">
         <FormattedMessage id="contact.history" />
       </h4>
       {list.length === 0 ? (
-        <p className="panel__empty">
+        <StateMessage kind="empty" inline>
           <FormattedMessage id="contact.history.none" />
-        </p>
+        </StateMessage>
       ) : (
-        <ul className="customers__notes">
+        <ul className="crm-notes">
           {list.map((h) => (
             <li key={h.id}>
               <p>
@@ -201,7 +202,7 @@ export function ContactHistory({ detail }: { readonly detail: CustomerDetail }) 
                   </>
                 )}
               </p>
-              <span className="customers__meta">
+              <span className="mo-hint">
                 <FormattedMessage id={`opportunities.actor.${h.actor}`} /> · {when(intl, h.at)}
               </span>
             </li>
@@ -229,8 +230,11 @@ export function CommercialSummary({
   const open = openOpportunities(detail);
   const next = commercial?.nextAction ?? null;
   return (
-    <section className="contact-summary" aria-labelledby={`contact-summary-${detail.id}`}>
-      <h3 id={`contact-summary-${detail.id}`}>
+    <section
+      className="crm-context contact-summary"
+      aria-labelledby={`contact-summary-${detail.id}`}
+    >
+      <h3 id={`contact-summary-${detail.id}`} className="mo-subsection-title">
         <FormattedMessage id="contact.summary" />
       </h3>
       <dl className="agent-facts">
@@ -263,7 +267,7 @@ export function CommercialSummary({
             <dt>
               <FormattedMessage id="customers.field.nextAction" />
             </dt>
-            <dd className={next.dueOn < today ? 'customers__next--late' : undefined}>
+            <dd className={next.dueOn < today ? 'crm-next--late' : undefined}>
               {next.dueOn < today ? (
                 <>
                   <FormattedMessage id="customers.next.overdue" />{' '}
@@ -276,11 +280,11 @@ export function CommercialSummary({
       </dl>
       {detail.opportunities === null || detail.opportunities === undefined ? null : open.length ===
         0 ? (
-        <p className="panel__empty">
+        <StateMessage kind="empty" inline>
           <FormattedMessage id="contact.opportunities.noneOpen" />
-        </p>
+        </StateMessage>
       ) : (
-        <ul className="customers__notes">
+        <ul className="crm-notes">
           {open.map((o) => (
             <li key={o.id}>
               <strong>{o.title}</strong> · {stageOf(intl, o)}

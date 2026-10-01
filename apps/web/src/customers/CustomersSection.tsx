@@ -1,5 +1,5 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
-import { Button } from '@melonoffice/ui';
+import { Badge, Button, StateMessage } from '@melonoffice/ui';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { RecordFollowUps } from '../followUps/FollowUps.js';
 import { LoadMore, usePagedRead } from '../lists/usePagedRead.js';
@@ -74,9 +74,9 @@ export function CustomersSection({
   const today = todayIn(timeZone);
   const counts = list.status === 'ready' ? list.value.counts : undefined;
   return (
-    <section className="dept-office__section customers" aria-labelledby="customers-title">
-      <div className="customers__header">
-        <h2 id="customers-title">
+    <section className="mo-panel mo-page-section customers" aria-labelledby="customers-title">
+      <div className="mo-page-section__header">
+        <h2 id="customers-title" className="mo-section-title">
           <FormattedMessage id="customers.title" />
         </h2>
         {canManage && !creating ? (
@@ -97,31 +97,31 @@ export function CustomersSection({
           }}
         />
       ) : null}
-      <div className="customers__tabs" role="tablist">
+      <div className="mo-chips" role="tablist">
         {STAGES.map((s) => (
           <button
             key={s}
             type="button"
             role="tab"
             aria-selected={s === stage}
-            className="mo-chip customers__tab"
+            className="mo-chip"
             onClick={() => setStage(s)}
           >
             <FormattedMessage id={`customers.stage.${s}.plural`} />
-            {counts === undefined ? null : <span className="customers__count">{counts[s]}</span>}
+            {counts === undefined ? null : <Badge>{counts[s]}</Badge>}
           </button>
         ))}
       </div>
       {list.status === 'loading' ? (
-        <p className="panel__empty" role="status">
+        <StateMessage kind="loading">
           <FormattedMessage id="customers.loading" />
-        </p>
+        </StateMessage>
       ) : list.status === 'error' ? (
-        <p className="gia-chat__error" role="alert">
+        <StateMessage kind="error">
           <FormattedMessage id="customers.error.load" />
-        </p>
+        </StateMessage>
       ) : list.value.items.length === 0 ? (
-        <p className="panel__empty">
+        <StateMessage kind="empty">
           <FormattedMessage
             id={
               STAGES.every((s) => list.value.counts[s] === 0)
@@ -129,25 +129,23 @@ export function CustomersSection({
                 : `customers.empty.${stage}`
             }
           />
-        </p>
+        </StateMessage>
       ) : (
-        <ul className="customers__list">
+        <ul className="mo-list">
           {list.value.items.map((c) => {
             const next = c.commercial?.nextAction ?? null;
             return (
               <li key={c.id}>
                 <button
                   type="button"
-                  className="customers__row"
+                  className="mo-list-item crm-record"
                   aria-current={c.id === selected ? 'true' : undefined}
                   onClick={() => setSelected(c.id === selected ? undefined : c.id)}
                 >
-                  <span className="customers__name">{c.displayName ?? c.phone ?? c.email}</span>
-                  <span className="customers__meta">{c.phone ?? c.email}</span>
+                  <span className="mo-list-item__title">{c.displayName ?? c.phone ?? c.email}</span>
+                  <span className="mo-list-item__meta">{c.phone ?? c.email}</span>
                   {next === null ? null : (
-                    <span
-                      className={`customers__next${next.dueOn < today ? ' customers__next--late' : ''}`}
-                    >
+                    <span className={`crm-next${next.dueOn < today ? ' crm-next--late' : ''}`}>
                       {next.dueOn < today ? <FormattedMessage id="customers.next.overdue" /> : null}{' '}
                       {next.text} · {next.dueOn}
                     </span>
@@ -216,57 +214,48 @@ function CreateCustomer({
   }
   return (
     <form
-      className="customers__form"
+      className="mo-card mo-form crm-form"
       onSubmit={submit}
       aria-label={intl.formatMessage({ id: 'customers.add' })}
     >
-      <label>
-        <FormattedMessage id="customers.field.name" />
-        <input
-          className="gia-chat__input"
-          value={name}
-          maxLength={100}
-          onChange={(e) => setName(e.target.value)}
-        />
+      <label className="mo-field">
+        <span className="mo-label">
+          <FormattedMessage id="customers.field.name" />
+        </span>
+        <input value={name} maxLength={100} onChange={(e) => setName(e.target.value)} />
       </label>
-      <label>
-        <FormattedMessage id="customers.field.phone" />
+      <label className="mo-field">
+        <span className="mo-label">
+          <FormattedMessage id="customers.field.phone" />
+        </span>
         <input
-          className="gia-chat__input"
           value={phone}
           inputMode="tel"
           placeholder="+51 987 654 321"
           onChange={(e) => setPhone(e.target.value)}
         />
       </label>
-      <label>
-        <FormattedMessage id="customers.field.email" />
-        <input
-          className="gia-chat__input"
-          value={email}
-          type="email"
-          onChange={(e) => setEmail(e.target.value)}
-        />
+      <label className="mo-field">
+        <span className="mo-label">
+          <FormattedMessage id="customers.field.email" />
+        </span>
+        <input value={email} type="email" onChange={(e) => setEmail(e.target.value)} />
       </label>
       {error === undefined ? null : (
-        <p className="gia-chat__error" role="alert">
+        <StateMessage kind="error" inline>
           <FormattedMessage id={error.key} />{' '}
           {error.existing === undefined ? null : (
-            <button
-              type="button"
-              className="customers__link"
-              onClick={() => onDone(error.existing)}
-            >
+            <button type="button" className="mo-link-button" onClick={() => onDone(error.existing)}>
               <FormattedMessage id="customers.openExisting" />
             </button>
           )}
-        </p>
+        </StateMessage>
       )}
-      <div className="customers__actions">
+      <div className="mo-form__actions">
         <Button type="submit" disabled={pending}>
           <FormattedMessage id="customers.save" />
         </Button>
-        <Button variant="secondary" onClick={() => onDone()}>
+        <Button variant="ghost" onClick={() => onDone()}>
           <FormattedMessage id="customers.cancel" />
         </Button>
       </div>
@@ -318,16 +307,16 @@ function CustomerCard({
 
   if (detail.status === 'loading') {
     return (
-      <p className="panel__empty" role="status">
+      <StateMessage kind="loading">
         <FormattedMessage id="customers.loading" />
-      </p>
+      </StateMessage>
     );
   }
   if (detail.status === 'error') {
     return (
-      <p className="gia-chat__error" role="alert">
+      <StateMessage kind="error">
         <FormattedMessage id="customers.error.load" />
-      </p>
+      </StateMessage>
     );
   }
   const c = detail.value;
@@ -370,8 +359,10 @@ function CustomerCard({
   const late = commercial?.nextAction != null && commercial.nextAction.dueOn < today;
   const label = (key: string) => intl.formatMessage({ id: key });
   return (
-    <article className="customers__card" aria-labelledby="customer-name">
-      <h3 id="customer-name">{c.displayName ?? c.phone ?? c.email}</h3>
+    <article className="mo-card crm-card" aria-labelledby="customer-name">
+      <h3 id="customer-name" className="mo-subsection-title">
+        {c.displayName ?? c.phone ?? c.email}
+      </h3>
       <dl className="agent-facts">
         {c.phone === null ? null : <Fact term="customers.field.phone" value={c.phone} />}
         {c.email === null ? null : <Fact term="customers.field.email" value={c.email} />}
@@ -384,11 +375,12 @@ function CustomerCard({
           value={label(`customers.owner.${commercial?.owner ?? 'none'}`)}
         />
       </dl>
-      <fieldset className="customers__edit" disabled={!canManage || pending}>
-        <label>
-          <FormattedMessage id="customers.field.stage" />
+      <fieldset className="mo-form crm-fieldset" disabled={!canManage || pending}>
+        <label className="mo-field">
+          <span className="mo-label">
+            <FormattedMessage id="customers.field.stage" />
+          </span>
           <select
-            className="gia-chat__input"
             value={commercial?.stage ?? ''}
             onChange={(e) => void change({ stage: e.target.value as CustomerStage })}
           >
@@ -402,10 +394,11 @@ function CustomerCard({
         </label>
         {commercial === null ? null : (
           <>
-            <label>
-              <FormattedMessage id="customers.field.consent" />
+            <label className="mo-field">
+              <span className="mo-label">
+                <FormattedMessage id="customers.field.consent" />
+              </span>
               <select
-                className="gia-chat__input"
                 value={commercial.consent}
                 onChange={(e) =>
                   void change({
@@ -420,50 +413,57 @@ function CustomerCard({
                 ))}
               </select>
             </label>
-            <div className="customers__actions">
+            <div className="mo-form__actions">
               {commercial.owner === 'you' ? (
-                <Button variant="secondary" onClick={() => void change({ ownerId: null })}>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => void change({ ownerId: null })}
+                >
                   <FormattedMessage id="customers.owner.release" />
                 </Button>
               ) : (
-                <Button variant="secondary" onClick={() => void change({ ownerId: currentUserId })}>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => void change({ ownerId: currentUserId })}
+                >
                   <FormattedMessage id="customers.owner.take" />
                 </Button>
               )}
             </div>
             {commercial.nextAction?.followUpId !== undefined ? (
               // The next action is the earliest open follow-up (ADR-0058): it moves with them.
-              <p className={`customers__next${late ? ' customers__next--late' : ''}`}>
+              <p className={`crm-next${late ? ' crm-next--late' : ''}`}>
                 {late ? <FormattedMessage id="customers.next.overdue" /> : null}{' '}
                 <FormattedMessage id="customers.field.nextAction" />: {commercial.nextAction.text} ·{' '}
                 {commercial.nextAction.dueOn}{' '}
-                <span className="customers__meta">
+                <span className="mo-hint">
                   <FormattedMessage id="followUps.nextActionFrom" />
                 </span>
               </p>
             ) : (
-              <div className="customers__next-edit">
-                <label>
-                  <FormattedMessage id="customers.field.nextAction" />
+              <div className="mo-form">
+                <label className="mo-field">
+                  <span className="mo-label">
+                    <FormattedMessage id="customers.field.nextAction" />
+                  </span>
                   <input
-                    className="gia-chat__input"
                     value={nextText}
                     maxLength={200}
                     onChange={(e) => setNextText(e.target.value)}
                   />
                 </label>
-                <label>
-                  <FormattedMessage id="customers.field.dueOn" />
-                  <input
-                    className="gia-chat__input"
-                    type="date"
-                    value={nextDue}
-                    onChange={(e) => setNextDue(e.target.value)}
-                  />
+                <label className="mo-field">
+                  <span className="mo-label">
+                    <FormattedMessage id="customers.field.dueOn" />
+                  </span>
+                  <input type="date" value={nextDue} onChange={(e) => setNextDue(e.target.value)} />
                 </label>
-                <div className="customers__actions">
+                <div className="mo-form__actions">
                   <Button
                     variant="secondary"
+                    size="sm"
                     disabled={nextText.trim() === '' || nextDue === ''}
                     onClick={() =>
                       void change({ nextAction: { text: nextText.trim(), dueOn: nextDue } })
@@ -472,13 +472,17 @@ function CustomerCard({
                     <FormattedMessage id="customers.next.save" />
                   </Button>
                   {commercial.nextAction === null ? null : (
-                    <Button variant="secondary" onClick={() => void change({ nextAction: null })}>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => void change({ nextAction: null })}
+                    >
                       <FormattedMessage id="customers.next.clear" />
                     </Button>
                   )}
                 </div>
                 {late ? (
-                  <p className="customers__next customers__next--late">
+                  <p className="crm-next crm-next--late">
                     <FormattedMessage id="customers.next.overdue" />
                   </p>
                 ) : null}
@@ -488,9 +492,9 @@ function CustomerCard({
         )}
       </fieldset>
       {error === undefined ? null : (
-        <p className="gia-chat__error" role="alert">
+        <StateMessage kind="error" inline>
           <FormattedMessage id={error} />
-        </p>
+        </StateMessage>
       )}
       <ContactConversations detail={c} />
       <ContactOpportunities detail={c} today={today} />
@@ -505,19 +509,19 @@ function CustomerCard({
           }}
         />
       )}
-      <h4>
+      <h4 className="mo-subsection-title">
         <FormattedMessage id="customers.notes" />
       </h4>
       {c.notes.length === 0 ? (
-        <p className="panel__empty">
+        <StateMessage kind="empty" inline>
           <FormattedMessage id="customers.notes.empty" />
-        </p>
+        </StateMessage>
       ) : (
-        <ul className="customers__notes">
+        <ul className="crm-notes">
           {c.notes.map((n) => (
             <li key={n.id}>
               <p>{n.text}</p>
-              <span className="customers__meta">
+              <span className="mo-hint">
                 <FormattedMessage id={`customers.owner.${n.author}`} /> ·{' '}
                 {intl.formatDate(n.createdAt, { dateStyle: 'short', timeStyle: 'short' } as never)}
               </span>
@@ -526,16 +530,15 @@ function CustomerCard({
         </ul>
       )}
       {canManage ? (
-        <form className="gia-chat__composer" onSubmit={addNote}>
+        <form className="crm-composer" onSubmit={addNote}>
           <textarea
-            className="gia-chat__input"
             value={note}
             maxLength={2000}
             rows={2}
             aria-label={label('customers.notes.add')}
             onChange={(e) => setNote(e.target.value)}
           />
-          <Button type="submit" disabled={pending || note.trim() === ''}>
+          <Button variant="secondary" type="submit" disabled={pending || note.trim() === ''}>
             <FormattedMessage id="customers.notes.add" />
           </Button>
         </form>

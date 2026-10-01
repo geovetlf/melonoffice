@@ -1,5 +1,5 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
-import { Button } from '@melonoffice/ui';
+import { Button, ListItem, StateMessage } from '@melonoffice/ui';
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { navigate } from '../identity/router.js';
 import { paths } from '../shell/routes.js';
@@ -67,7 +67,7 @@ export const statusKey = (task: AgentTaskView) => {
 function Link({ to, children }: { readonly to: string; readonly children: ReactNode }) {
   return (
     <a
-      className="panel__link"
+      className="mo-link"
       href={to}
       onClick={(event) => {
         event.preventDefault();
@@ -103,13 +103,13 @@ function ProposedFollowUp({
       role="group"
       aria-label={intl.formatMessage({ id: 'agentTasks.followUp.title' })}
     >
-      <p className="customers__meta">
+      <p className="mo-list-item__meta">
         <FormattedMessage id="agentTasks.followUp.title" />
       </p>
       <p>
         <strong>{followUp.title}</strong>
       </p>
-      <p className="customers__meta">
+      <p className="mo-list-item__meta">
         {type} ·{' '}
         {followUp.contactId === null ? (
           <FormattedMessage id="agentTasks.followUp.contactGone" />
@@ -118,22 +118,27 @@ function ProposedFollowUp({
         )}{' '}
         · {when}
       </p>
-      <p className="customers__meta agent-task__state">
+      <p className="mo-list-item__meta agent-task__state">
         <FormattedMessage id={`agentTasks.followUp.state.${followUp.state}`} />
       </p>
       {followUp.state === 'waiting_approval' && followUp.approvalId !== null ? (
         onDecide === undefined ? (
-          <p className="customers__meta">
+          <p className="mo-list-item__meta">
             <Link to={paths.approvals()}>
               <FormattedMessage id="agentTasks.followUp.review" />
             </Link>
           </p>
         ) : (
-          <div className="customers__actions">
-            <Button disabled={busy} onClick={() => onDecide('approve')}>
+          <div className="mo-form__actions">
+            <Button size="sm" disabled={busy} onClick={() => onDecide('approve')}>
               <FormattedMessage id="agentTasks.followUp.approve" />
             </Button>
-            <Button variant="secondary" disabled={busy} onClick={() => onDecide('reject')}>
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={busy}
+              onClick={() => onDecide('reject')}
+            >
               <FormattedMessage id="agentTasks.followUp.reject" />
             </Button>
           </div>
@@ -163,20 +168,31 @@ function TaskItem({
   const declined =
     followUp !== null && (followUp.state === 'rejected' || followUp.state === 'expired');
   return (
-    <li className={`agent-task agent-task--${isOpenTask(task) ? 'open' : task.status}`}>
-      <p className="agent-task__request">{task.request}</p>
-      <p className="customers__meta">
-        <span className="agent-task__status">
-          <FormattedMessage id={statusKey(task)} />
-        </span>{' '}
-        · {intl.formatDate(task.createdAt, { dateStyle: 'medium', timeStyle: 'short' })}
-      </p>
+    <ListItem
+      className={`agent-task agent-task--${isOpenTask(task) ? 'open' : task.status}`}
+      title={<span className="agent-task__request">{task.request}</span>}
+      meta={
+        <>
+          <span className="agent-task__status">
+            <FormattedMessage id={statusKey(task)} />
+          </span>{' '}
+          · {intl.formatDate(task.createdAt, { dateStyle: 'medium', timeStyle: 'short' })}
+        </>
+      }
+      actions={
+        onStop !== undefined && isOpenTask(task) ? (
+          <Button size="sm" variant="secondary" onClick={onStop}>
+            <FormattedMessage id="agentTasks.stop" />
+          </Button>
+        ) : null
+      }
+    >
       {task.answer === null ? null : (
         <div className="agent-task__answer">
           <p>{task.answer.answer}</p>
           {task.answer.missing.length === 0 ? null : (
             <>
-              <p className="customers__meta">
+              <p className="mo-list-item__meta">
                 <FormattedMessage id="agentTasks.missing" />
               </p>
               <ul>
@@ -190,7 +206,7 @@ function TaskItem({
             <ProposedFollowUp followUp={followUp} onDecide={onDecide} busy={busy} />
           )}
           {facts === 0 ? null : (
-            <p className="customers__meta">
+            <p className="mo-list-item__meta">
               <FormattedMessage id="agentTasks.facts" values={{ count: facts }} />{' '}
               <Link to={paths.memory()}>
                 <FormattedMessage id="agentTasks.facts.review" />
@@ -206,23 +222,16 @@ function TaskItem({
         </div>
       ) : null}
       {task.status === 'completed' && task.answer === null ? (
-        <p className="panel__empty">
+        <StateMessage kind="empty" inline>
           <FormattedMessage id="agentTasks.noAnswer" />
-        </p>
+        </StateMessage>
       ) : null}
       {task.status === 'failed' && !declined ? (
-        <p className="panel__empty">
+        <StateMessage kind="warning" inline>
           <FormattedMessage id="agentTasks.failed" />
-        </p>
+        </StateMessage>
       ) : null}
-      {onStop !== undefined && isOpenTask(task) ? (
-        <div className="customers__actions">
-          <Button variant="secondary" onClick={onStop}>
-            <FormattedMessage id="agentTasks.stop" />
-          </Button>
-        </div>
-      ) : null}
-    </li>
+    </ListItem>
   );
 }
 
@@ -376,16 +385,17 @@ export function AgentTasks({
   }
 
   return (
-    <section className="dept-office__section agent-tasks" aria-labelledby="agent-tasks-title">
-      <h2 id="agent-tasks-title">
+    <section className="mo-panel mo-page-section agent-tasks" aria-labelledby="agent-tasks-title">
+      <h2 id="agent-tasks-title" className="mo-section-title">
         <FormattedMessage id="agentTasks.title" />
       </h2>
       {!canAsk ? null : agentActive ? (
-        <form className="agent-tasks__form" onSubmit={submit}>
-          <label>
-            <FormattedMessage id="agentTasks.ask" values={{ name: agentName }} />
+        <form className="mo-form" onSubmit={submit}>
+          <label className="mo-field">
+            <span className="mo-label">
+              <FormattedMessage id="agentTasks.ask" values={{ name: agentName }} />
+            </span>
             <textarea
-              className="gia-chat__input"
               value={text}
               maxLength={MAX_REQUEST}
               rows={3}
@@ -396,39 +406,39 @@ export function AgentTasks({
               }}
             />
           </label>
-          <p className="customers__meta">
+          <p className="mo-hint">
             <FormattedMessage id="agentTasks.hint" />
           </p>
-          <div className="customers__actions">
+          <div className="mo-form__actions">
             <Button type="submit" disabled={pending || text.trim() === ''}>
               <FormattedMessage id={pending ? 'agentTasks.sending' : 'agentTasks.send'} />
             </Button>
           </div>
         </form>
       ) : (
-        <p className="panel__empty">
+        <p className="mo-hint">
           <FormattedMessage id="agentTasks.inactive" />
         </p>
       )}
       {error === undefined ? null : (
-        <p className="gia-chat__error" role="alert">
+        <StateMessage kind="error">
           <FormattedMessage id={error} />
-        </p>
+        </StateMessage>
       )}
       {state === 'loading' ? (
-        <p className="panel__empty" role="status">
+        <StateMessage kind="loading">
           <FormattedMessage id="agentTasks.loading" />
-        </p>
+        </StateMessage>
       ) : state === 'unavailable' ? (
-        <p className="panel__empty">
+        <StateMessage kind="warning">
           <FormattedMessage id="agentTasks.error.unavailable" />
-        </p>
+        </StateMessage>
       ) : tasks.length === 0 ? (
-        <p className="panel__empty">
+        <StateMessage kind="empty">
           <FormattedMessage id="agentTasks.none" />
-        </p>
+        </StateMessage>
       ) : (
-        <ul className="agent-tasks__list">
+        <ul className="mo-list">
           {tasks.map((task) => (
             <TaskItem
               key={task.id}
@@ -443,7 +453,7 @@ export function AgentTasks({
         </ul>
       )}
       {nextCursor === null ? null : (
-        <Button variant="secondary" onClick={loadMore}>
+        <Button variant="secondary" className="mo-page-section__more" onClick={loadMore}>
           <FormattedMessage id="agentTasks.more" />
         </Button>
       )}

@@ -1072,6 +1072,17 @@ a.sidebar__item:hover {
   outline: none;
 }
 
+/* The department's icon (or the agent's avatar) stays beside the title on a phone. */
+.dept-office > .mo-page-header {
+  flex-wrap: nowrap;
+  align-items: center;
+}
+
+/* The office moves focus to its title when it opens; the title itself shows no ring for it. */
+.dept-office .mo-page-header__title:focus {
+  outline: none;
+}
+
 .dept-office__summary {
   display: flex;
   flex-wrap: wrap;
@@ -2016,65 +2027,102 @@ a.sidebar__item:hover {
 }
 
 /* Customers and leads in the Comercial office (C1, ADR-0053). */
-.customers {
+/* A contact or an opportunity in a list: the whole card opens it, its facts stacked. */
+.crm-record {
   display: grid;
-  gap: var(--mo-space-3);
-  margin-bottom: var(--mo-space-4);
-}
-
-.customers__header {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--mo-space-2);
-  align-items: center;
-  justify-content: space-between;
-}
-
-.customers__header h2 {
-  margin: 0;
-}
-
-.customers__tabs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--mo-space-2);
-}
-
-.customers__count {
-  font-weight: var(--mo-font-weight-semibold);
-  font-variant-numeric: tabular-nums;
-}
-
-.customers__list,
-.customers__notes {
-  display: grid;
-  gap: var(--mo-space-2);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.customers__row {
-  display: grid;
+  justify-content: stretch;
   gap: var(--mo-space-1);
   width: 100%;
-  padding: var(--mo-space-3);
-  border: 1px solid var(--mo-color-border);
-  border-radius: 12px;
-  background: var(--mo-color-surface);
   color: var(--mo-color-text-primary);
   font: inherit;
   text-align: left;
   cursor: pointer;
 }
 
-.customers__row[aria-current='true'] {
+.crm-record:hover {
+  border-color: var(--mo-color-border-strong);
+}
+
+.crm-record[aria-current='true'] {
+  border-color: var(--mo-color-accent);
   box-shadow: inset 3px 0 0 var(--mo-color-accent);
 }
 
-.customers__name {
-  font-weight: 600;
+/* A record's notes, conversations and history: short entries, one under another. */
+.crm-notes {
+  display: grid;
+  gap: var(--mo-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
   overflow-wrap: anywhere;
+}
+
+.crm-notes > li {
+  display: grid;
+  gap: var(--mo-space-1);
+  min-width: 0;
+}
+
+.crm-notes p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.crm-next {
+  color: var(--mo-color-text-secondary);
+  font-size: var(--mo-font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+.crm-next--late {
+  color: var(--mo-color-danger);
+  font-weight: var(--mo-font-weight-semibold);
+}
+
+/* A contact's or an opportunity's card, and the forms that add one. */
+.crm-card,
+.crm-context {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--mo-space-3);
+  min-width: 0;
+}
+
+.crm-card {
+  overflow-wrap: anywhere;
+}
+
+.crm-context {
+  gap: var(--mo-space-2);
+}
+
+.crm-fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+/* A lost reason and its confirmation, side by side where there is room. */
+.crm-lost {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--mo-space-2);
+}
+
+.crm-lost > .mo-field {
+  flex: 1 1 12rem;
+}
+
+.crm-composer {
+  display: grid;
+  gap: var(--mo-space-2);
+}
+
+.crm-composer > .mo-button {
+  justify-self: start;
 }
 
 .customers__meta {
@@ -2083,69 +2131,34 @@ a.sidebar__item:hover {
   overflow-wrap: anywhere;
 }
 
-.customers__next {
-  color: var(--mo-color-text-secondary);
-  font-size: var(--mo-font-size-sm);
-}
-
-.customers__next--late {
-  color: var(--mo-color-focus-ring);
-  font-weight: 600;
-}
-
-.customers__form,
-.customers__edit,
-.customers__next-edit {
-  display: grid;
-  gap: var(--mo-space-2);
-  margin: 0;
-  padding: 0;
-  border: 0;
-}
-
-.customers__form label,
-.customers__edit label {
-  display: grid;
-  gap: var(--mo-space-1);
-  color: var(--mo-color-text-secondary);
-  font-size: var(--mo-font-size-sm);
-}
-
 .customers__actions {
   display: flex;
   flex-wrap: wrap;
   gap: var(--mo-space-2);
 }
 
-.customers__card {
+/* Follow-ups (C5, ADR-0058): a group or a record's follow-ups, their heading above the list. */
+.follow-ups__group,
+.follow-ups-record {
   display: grid;
+  gap: var(--mo-space-2);
+  min-width: 0;
+}
+
+.follow-ups-record > .mo-button {
+  justify-self: start;
+}
+
+.follow-ups__type {
+  color: var(--mo-color-text-secondary);
+  font-weight: var(--mo-font-weight-medium);
+}
+
+/* A date and a time side by side where there is room. */
+.follow-ups__when {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr));
   gap: var(--mo-space-3);
-  padding: var(--mo-space-4);
-  border: 1px solid var(--mo-color-border);
-  border-radius: 16px;
-  background: var(--mo-color-surface-glass);
-}
-
-.customers__card h3,
-.customers__card h4 {
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-
-.customers__notes p {
-  margin: 0;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.customers__link {
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--mo-color-focus-ring);
-  font: inherit;
-  text-decoration: underline;
-  cursor: pointer;
 }
 
 /* Opportunities and pipeline in the Comercial office (C2, ADR-0054). */
@@ -2164,8 +2177,12 @@ a.sidebar__item:hover {
   gap: var(--mo-space-2);
   padding: var(--mo-space-3);
   border: 1px solid var(--mo-color-border);
-  border-radius: 14px;
-  background: var(--mo-color-surface);
+  border-radius: var(--mo-radius-lg);
+  background: var(--mo-color-surface-subtle);
+}
+
+.pipeline-board__column .mo-list-item {
+  padding: var(--mo-space-3);
 }
 
 .pipeline-board__title {
@@ -2181,8 +2198,9 @@ a.sidebar__item:hover {
   align-items: center;
 }
 
-.stage-row .gia-chat__input {
+.stage-row > input {
   flex: 1 1 10rem;
+  min-width: 0;
 }
 
 .stage-row .stage-row__probability {
@@ -2377,38 +2395,7 @@ a.sidebar__item:hover {
 }
 
 /* Agent tasks (ADR-0063): what the owner asked an agent and its verified answer. */
-.agent-tasks {
-  margin-top: var(--mo-space-4);
-}
-
-.agent-tasks__form {
-  display: grid;
-  gap: var(--mo-space-2);
-  margin-bottom: var(--mo-space-3);
-}
-
-.agent-tasks__form label {
-  display: grid;
-  gap: var(--mo-space-1);
-}
-
-.agent-tasks__list {
-  display: grid;
-  gap: var(--mo-space-3);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.agent-task {
-  padding: var(--mo-space-3);
-  border: 1px solid var(--mo-color-border);
-  border-radius: 8px;
-}
-
 .agent-task__request {
-  margin: 0 0 var(--mo-space-1);
-  font-weight: 600;
   white-space: pre-wrap;
 }
 
@@ -2417,8 +2404,14 @@ a.sidebar__item:hover {
 }
 
 .agent-task__answer {
+  display: grid;
+  gap: var(--mo-space-2);
   margin-top: var(--mo-space-2);
   white-space: pre-wrap;
+}
+
+.agent-task__answer p {
+  margin: 0;
 }
 
 .agent-task--failed .agent-task__status {

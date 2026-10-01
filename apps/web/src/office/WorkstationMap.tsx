@@ -67,11 +67,11 @@ export function WorkstationMap({
         <SeatPanel id={panelId} workstation={openSeat} onClose={() => setOpen(null)} />
       )}
       {seating.unseated.length > 0 ? (
-        <section className="dept-office__section" aria-labelledby="unseated-agents">
-          <h2 id="unseated-agents">
+        <section className="mo-panel mo-page-section" aria-labelledby="unseated-agents">
+          <h2 id="unseated-agents" className="mo-section-title">
             <FormattedMessage id="office.seats.unseated" />
           </h2>
-          <p className="panel__empty">
+          <p className="mo-lead">
             <FormattedMessage id="office.seats.unseatedBody" />
           </p>
           <ul className="agent-list">
