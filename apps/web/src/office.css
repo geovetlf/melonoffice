@@ -400,6 +400,34 @@ a.sidebar__item:hover {
   padding: var(--mo-space-6);
 }
 
+/* Reached from the skip link; it is no control, so its focus draws no ring. */
+.app__main:focus {
+  outline: none;
+}
+
+/* The skip link: hidden until the keyboard reaches it, then over the top-left corner. */
+.skip-link {
+  position: fixed;
+  top: var(--mo-space-3);
+  left: var(--mo-space-3);
+  z-index: var(--mo-layer-dialog);
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--mo-control-height-md);
+  padding: 0 var(--mo-control-padding-md);
+  border-radius: var(--mo-radius-pill);
+  background: var(--mo-color-surface);
+  color: var(--mo-color-text-primary);
+  font-weight: var(--mo-font-weight-semibold);
+  text-decoration: none;
+  box-shadow: var(--mo-shadow-lg);
+  transform: translateY(calc(-100% - var(--mo-space-6)));
+}
+
+.skip-link:focus {
+  transform: none;
+}
+
 .app__scrim {
   display: none;
 }
@@ -743,6 +771,12 @@ a.sidebar__item:hover {
 
 .gia-bar:focus-within {
   border-color: var(--mo-color-accent);
+}
+
+/* The input draws no ring of its own: the whole box takes the focus ring, as every control does. */
+.gia-bar:has(.gia-bar__input:focus-visible) {
+  outline: var(--mo-state-focus-ring-width) solid var(--mo-color-focus-ring);
+  outline-offset: var(--mo-state-focus-ring-offset);
 }
 
 .gia-bar__tool,
@@ -1397,7 +1431,7 @@ a.sidebar__item:hover {
   color: var(--mo-color-text-secondary);
 }
 
-/* Life in the rooms: small, slow, and only when motion is welcome. */
+/* Motion in the department's room answers a person; the room itself is still (phase 6). */
 @media (prefers-reduced-motion: no-preference) {
   .seat__spot,
   .seat__card {
@@ -1405,21 +1439,6 @@ a.sidebar__item:hover {
       opacity 160ms ease,
       transform 160ms ease,
       box-shadow 160ms ease;
-  }
-
-  .room__screen {
-    animation: mo-glow 9s ease-in-out infinite alternate;
-  }
-
-  /* A seated figure barely breathes; ambient figures and agents alike, never typing or moving. */
-  .room__breath {
-    transform-box: fill-box;
-    transform-origin: 50% 100%;
-    animation: mo-breath 6s ease-in-out infinite;
-  }
-
-  .room__presence {
-    animation: mo-glow 7s ease-in-out infinite alternate;
   }
 
   ::view-transition-group(mo-room) {
@@ -1446,16 +1465,6 @@ a.sidebar__item:hover {
   .gia-card:hover,
   .agent-presence__link:hover {
     transform: none;
-  }
-}
-
-@keyframes mo-glow {
-  from {
-    opacity: 0.55;
-  }
-
-  to {
-    opacity: 1;
   }
 }
 
@@ -1672,17 +1681,6 @@ a.sidebar__item:hover {
     transform: none;
     box-shadow: none;
     pointer-events: auto;
-  }
-}
-
-@keyframes mo-breath {
-  0%,
-  100% {
-    transform: scaleY(1);
-  }
-
-  50% {
-    transform: scaleY(1.012);
   }
 }
 
@@ -1959,27 +1957,6 @@ a.sidebar__item:hover {
   outline-offset: 2px;
 }
 
-/* GIA blinks now and then, only when motion is welcome. */
-@media (prefers-reduced-motion: no-preference) {
-  .gia-art__eyes {
-    transform-box: fill-box;
-    transform-origin: center;
-    animation: gia-blink 6s infinite;
-  }
-}
-
-@keyframes gia-blink {
-  0%,
-  96%,
-  100% {
-    transform: scaleY(1);
-  }
-
-  98% {
-    transform: scaleY(0.1);
-  }
-}
-
 /* Customers and leads in the Comercial office (C1, ADR-0053). */
 /* A contact or an opportunity in a list: the whole card opens it, its facts stacked. */
 .crm-record {
@@ -2087,6 +2064,13 @@ a.sidebar__item:hover {
 
 /* Follow-ups (C5, ADR-0058): a group or a record's follow-ups, their heading above the list. */
 .follow-ups__group,
+/* The follow-up a link opened is marked clearly: the accent's edge and its soft tint. */
+.follow-ups__item[aria-current='true'] {
+  border-color: var(--mo-color-accent);
+  background: var(--mo-color-accent-soft);
+  box-shadow: inset 4px 0 0 var(--mo-color-accent);
+}
+
 .follow-ups-record {
   display: grid;
   gap: var(--mo-space-2);
@@ -2399,7 +2383,9 @@ a.sidebar__item:hover {
 
 /* A button that reads as a link, in the Home's panels and MelonMotor's panel. */
 .panel__link {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
   margin-top: var(--mo-space-2);
   padding: 0;
   border: 0;
@@ -2475,6 +2461,12 @@ a.sidebar__item:hover {
   width: 100%;
 }
 
+/* The quick ask's field has no frame of its own to carry the ring: it draws its own. */
+.gia-quick__box .gia-bar__input:focus-visible {
+  outline: var(--mo-state-focus-ring-width) solid var(--mo-color-focus-ring);
+  outline-offset: var(--mo-state-focus-ring-offset);
+}
+
 /* AI Command Center (block 9). */
 .command-center__grid {
   display: grid;
@@ -2533,7 +2525,6 @@ a.sidebar__item:hover {
 }
 
 .platform__note {
-  grid-column: 1 / -1;
   margin: 0;
 }
 
@@ -2640,4 +2631,28 @@ a.sidebar__item:hover {
 /* The Agents page's own action sits at the start of its column. */
 .agents__create {
   justify-self: start;
+}
+
+/*
+ * Touch targets (phase 6): on a tablet, a phone or any touch screen, the shell's and the Home's
+ * controls are 44 px tall. A desktop with a pointer keeps the density it was designed with.
+ */
+@media (max-width: 48rem), (pointer: coarse) {
+  .sidebar__item,
+  .notifications__item,
+  .gia-bar__input,
+  .panel__link {
+    min-height: var(--mo-min-target-size);
+  }
+
+  .user-menu > summary {
+    display: flex;
+    align-items: center;
+    min-height: var(--mo-min-target-size);
+  }
+
+  .task__body {
+    align-content: center;
+    min-height: var(--mo-min-target-size);
+  }
 }

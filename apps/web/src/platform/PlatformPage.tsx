@@ -266,15 +266,15 @@ export function PlatformPage({
                 labelId="aiUsage.operations"
                 value={intl.formatNumber(load.totals.operations)}
               />
-              {load.totals.unpricedOperations > 0 ? (
-                <p className="mo-hint platform__note">
-                  <FormattedMessage
-                    id="aiUsage.unpriced"
-                    values={{ count: load.totals.unpricedOperations }}
-                  />
-                </p>
-              ) : null}
             </dl>
+            {load.totals.unpricedOperations > 0 ? (
+              <p className="mo-hint platform__note">
+                <FormattedMessage
+                  id="aiUsage.unpriced"
+                  values={{ count: load.totals.unpricedOperations }}
+                />
+              </p>
+            ) : null}
             {load.totals.operations === 0 ? (
               <StateMessage kind="empty">
                 <FormattedMessage id="aiUsage.none" />

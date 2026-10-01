@@ -1025,17 +1025,14 @@
 }
 
 /*
- * On a tablet, a phone or any touch screen, the dense controls of a page grow to the 44 px target
- * size. The Home's panels keep theirs.
+ * On a tablet, a phone or any touch screen, dense controls grow to the 44 px target size; a
+ * desktop with a pointer keeps their density.
  */
 @media (max-width: 48rem), (pointer: coarse) {
-  .mo-page .mo-chip,
-  .mo-page .mo-button--sm {
+  .mo-chip,
+  .mo-button--sm,
+  .mo-segmented > button {
     min-height: var(--mo-control-height-md);
-  }
-
-  .mo-page .mo-segmented > button {
-    min-height: calc(var(--mo-control-height-md) - 6px);
   }
 
   .mo-page-header__actions {

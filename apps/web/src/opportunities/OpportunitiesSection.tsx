@@ -1,5 +1,5 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
-import { Badge, Button, StateMessage } from '@melonoffice/ui';
+import { Badge, Button, StateMessage, useScrollsSideways } from '@melonoffice/ui';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type { CustomersClient, CustomerView } from '../customers/customersClient.js';
 import { navigate } from '../identity/router.js';
@@ -92,6 +92,8 @@ export function OpportunitiesSection({
   // An opportunity or the pipeline opened from elsewhere (GIA's links, C4) starts in view.
   const [selected, setSelected] = useState<string | undefined>(() => openedWith('opportunity'));
   const section = useRef<HTMLElement>(null);
+  // The board scrolls sideways when its stages do not fit: the keyboard reaches it then.
+  const [board, boardScrolls] = useScrollsSideways<HTMLDivElement>();
   useEffect(() => {
     if (openedWith('opportunity') !== undefined || openedWith('view') === 'pipeline') {
       section.current?.scrollIntoView?.({ block: 'start' });
@@ -211,7 +213,15 @@ export function OpportunitiesSection({
           <FormattedMessage id={`opportunities.empty.${status}`} />
         </StateMessage>
       ) : status === 'open' ? (
-        <div className="pipeline-board">
+        <div
+          ref={board}
+          className="pipeline-board"
+          // A box that scrolls must be reachable from the keyboard (WCAG 2.1.1); it is only while it does.
+          // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
+          tabIndex={boardScrolls ? 0 : undefined}
+          role={boardScrolls ? 'group' : undefined}
+          aria-labelledby={boardScrolls ? 'opportunities-title' : undefined}
+        >
           {openStages.map((stage) => {
             const here = list.value.items.filter((o) => o.stageId === stage.id);
             const total = summary?.stages[stage.id];

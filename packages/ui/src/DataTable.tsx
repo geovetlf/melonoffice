@@ -1,9 +1,11 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { useId, type ReactNode } from 'react';
+import { useScrollsSideways } from './useScrollsSideways.js';
 
 /**
  * A table of figures. Where there is room it shows whole; where there is not, it scrolls sideways
  * inside its own box and never widens the page. While it scrolls, the box takes keyboard focus so
- * it can be scrolled without a pointer, and is a region named like the table. Mark number cells with `mo-table__num`.
+ * it can be scrolled without a pointer, and is a group named like the table: a group, not a
+ * region, so it never repeats the landmark of the section that holds it. Mark number cells with `mo-table__num`.
  */
 export function DataTable({
   caption,
@@ -18,19 +20,8 @@ export function DataTable({
   readonly children: ReactNode;
   readonly className?: string;
 }) {
-  const box = useRef<HTMLDivElement>(null);
+  const [box, scrolls] = useScrollsSideways<HTMLDivElement>();
   const captionId = useId();
-  const [scrolls, setScrolls] = useState(false);
-
-  useEffect(() => {
-    const element = box.current;
-    if (element === null || typeof ResizeObserver === 'undefined') return;
-    const measure = () => setScrolls(element.scrollWidth > element.clientWidth);
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
-    measure();
-    return () => observer.disconnect();
-  }, []);
 
   return (
     <div
@@ -39,7 +30,7 @@ export function DataTable({
       // A box that scrolls must be reachable from the keyboard (WCAG 2.1.1); it is only while it does.
       // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
       tabIndex={scrolls ? 0 : undefined}
-      role={scrolls ? 'region' : undefined}
+      role={scrolls ? 'group' : undefined}
       aria-label={scrolls && caption === undefined ? label : undefined}
       aria-labelledby={scrolls && caption !== undefined ? captionId : undefined}
     >
