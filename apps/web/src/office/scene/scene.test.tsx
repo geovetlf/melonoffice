@@ -170,9 +170,9 @@ describe('MelonMotor’s flows', () => {
 describe('the Home’s office (Home V4)', () => {
   const agents = (backend: ReturnType<typeof fakeBackend>) => {
     backend.options.specialists.org_1 = [
-      { id: 'spec_ana', name: 'Ana Ventas', type: 'sales', status: 'active', purpose: 'Leads' },
-      { id: 'spec_leo', name: 'Leo Campañas', type: 'marketing', status: 'active' },
-      { id: 'spec_eva', name: 'Eva Cuentas', type: 'finance', status: 'paused' },
+      { id: 'spec_ana', name: 'Sales agent', type: 'sales', status: 'active', purpose: 'Leads' },
+      { id: 'spec_leo', name: 'Launch agent', type: 'marketing', status: 'active' },
+      { id: 'spec_eva', name: 'Accounts agent', type: 'finance', status: 'paused' },
     ];
     backend.options.agentTasks.spec_ana = [
       {
@@ -191,16 +191,16 @@ describe('the Home’s office (Home V4)', () => {
   it('shows each agent at its desk with its real state and work, and opens its card', async () => {
     open(agents);
     const ana = await screen.findByRole('button', {
-      name: 'Ana Ventas, Working. Review this week’s leads. Open their card',
+      name: 'Sales agent, Working. Review this week’s leads. Open their card',
     });
     expect(
       screen.getByRole('button', {
-        name: 'Leo Campañas, Available. No work under way. Open their card',
+        name: 'Launch agent, Available. No work under way. Open their card',
       }),
     ).toBeTruthy();
     expect(
       screen.getByRole('button', {
-        name: 'Eva Cuentas, Paused. No work under way. Open their card',
+        name: 'Accounts agent, Paused. No work under way. Open their card',
       }),
     ).toBeTruthy();
     // The desk names its department and its real agents; what is under way is the agent's own,
@@ -209,7 +209,7 @@ describe('the Home’s office (Home V4)', () => {
     expect(screen.getByText('1 agent working')).toBeTruthy();
 
     fireEvent.click(ana);
-    const card = screen.getByRole('dialog', { name: 'Ana Ventas' });
+    const card = screen.getByRole('dialog', { name: 'Sales agent' });
     expect(within(card).getByText('Commercial · Leads')).toBeTruthy();
     expect(within(card).getByText('Review this week’s leads')).toBeTruthy();
     expect(within(card).getByRole('list', { name: 'Task progress' })).toBeTruthy();
@@ -221,12 +221,12 @@ describe('the Home’s office (Home V4)', () => {
   it('closes the card with Escape and gives focus back to the agent', async () => {
     open(agents);
     const leo = await screen.findByRole('button', {
-      name: 'Leo Campañas, Available. No work under way. Open their card',
+      name: 'Launch agent, Available. No work under way. Open their card',
     });
     fireEvent.click(leo);
-    expect(screen.getByRole('dialog', { name: 'Leo Campañas' })).toBeTruthy();
+    expect(screen.getByRole('dialog', { name: 'Launch agent' })).toBeTruthy();
     fireEvent.keyDown(globalThis.window, { key: 'Escape' });
-    expect(screen.queryByRole('dialog', { name: 'Leo Campañas' })).toBeNull();
+    expect(screen.queryByRole('dialog', { name: 'Launch agent' })).toBeNull();
     expect(document.activeElement).toBe(leo);
   });
 
@@ -237,10 +237,10 @@ describe('the Home’s office (Home V4)', () => {
     });
     fireEvent.click(
       await screen.findByRole('button', {
-        name: 'Leo Campañas, Available. No work under way. Open their card',
+        name: 'Launch agent, Available. No work under way. Open their card',
       }),
     );
-    const card = screen.getByRole('dialog', { name: 'Leo Campañas' });
+    const card = screen.getByRole('dialog', { name: 'Launch agent' });
     fireEvent.click(within(card).getByRole('button', { name: 'Give instructions' }));
     const box = await within(card).findByRole('textbox');
     fireEvent.change(box, { target: { value: 'Prepare the October campaign' } });
@@ -258,7 +258,7 @@ describe('the Home’s office (Home V4)', () => {
     open(agents);
     fireEvent.click(
       await screen.findByRole('button', {
-        name: 'Leo Campañas, Available. No work under way. Open their card',
+        name: 'Launch agent, Available. No work under way. Open their card',
       }),
     );
     expect(screen.queryByRole('button', { name: 'Give instructions' })).toBeNull();
@@ -291,7 +291,7 @@ describe('the Home’s office (Home V4)', () => {
     open(agents);
     expect(
       await screen.findByRole('link', {
-        name: 'GIA, online, is with Ana Ventas in Commercial. Open GIA',
+        name: 'GIA, online, is with Sales agent in Commercial. Open GIA',
       }),
     ).toBeTruthy();
     // Her chair waits; she stands at Comercial's desk, named on its link.
@@ -301,7 +301,7 @@ describe('the Home’s office (Home V4)', () => {
     ).toBeTruthy();
     expect(
       screen.getByRole('link', { name: /^Enter Commercial/ }).getAttribute('aria-label'),
-    ).toContain('GIA is here, with Ana Ventas');
+    ).toContain('GIA is here, with Sales agent');
     expect(document.querySelector('.stage__frame')?.getAttribute('data-gia-activity')).toBe(
       'working',
     );
@@ -314,6 +314,11 @@ describe('the Home’s office (Home V4)', () => {
     ).toBeTruthy();
     expect(document.querySelector('[data-person="gia"]')).toBeTruthy();
     expect(document.querySelector('.stage__gia-away')).toBeNull();
+    // At her desk she is her official figure, never an agent: no card, no agent mark.
+    expect(document.querySelector('.stage__gia-desk .gia-figure')?.getAttribute('data-view')).toBe(
+      'front',
+    );
+    expect(document.querySelector('[data-person="gia"][data-agent]')).toBeNull();
   });
 
   it('keeps GIA home when the task she brought is done, whatever the session recorded', async () => {
@@ -427,8 +432,25 @@ describe('the Home’s office (Home V4)', () => {
     // One column: the building, then GIA's box, then the day's context in four columns.
     expect(desk).toContain('grid-template-columns: minmax(0, 1fr);');
     expect(desk).toContain('grid-template-columns: repeat(4, minmax(0, 1fr));');
-    // The building is never scaled or cut to fit the window.
-    expect(desk).not.toMatch(/transform:\s*scale|zoom:|100dvh/);
+    // The building is never scaled to fit the window.
+    expect(desk).not.toMatch(/transform:\s*scale|zoom:/);
+  });
+
+  it('fits the whole Home in the window, sharing its height out rather than scaling anything', () => {
+    const home = readFileSync(`${import.meta.dirname}/../../home.css`, 'utf8');
+    const shell = readFileSync(`${import.meta.dirname}/../../office.css`, 'utf8');
+    const start = home.indexOf('@media (min-height: 34rem) {');
+    expect(start).toBeGreaterThan(-1);
+    const screenful = home.slice(start, home.indexOf('\n}\n', start));
+    // Heading, office, GIA's box, the day's strip: the office takes what the others leave.
+    expect(screenful).toContain('grid-template-rows: auto minmax(0, 1fr) auto auto;');
+    // The office's frame is the largest box of its shape that fits the space it is given.
+    expect(screenful).toContain('container-type: size;');
+    expect(screenful).toContain('width: min(100cqw, 100cqh * var(--frame-shape));');
+    expect(screenful).not.toMatch(/transform:\s*scale|zoom:/);
+    // The app is as tall as the window there; the page itself does not scroll.
+    const app = shell.slice(shell.indexOf('@media (min-height: 34rem) {'));
+    expect(app).toMatch(/\.app--scene \{\s*height: 100dvh;/);
   });
 
   it('keeps its motion small and switches it off when the person asks for less', () => {

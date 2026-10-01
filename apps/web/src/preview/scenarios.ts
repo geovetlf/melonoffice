@@ -75,7 +75,13 @@ export const SCENARIOS: Record<
     backend.options.credits = { org_1: 498 };
     backend.options.approvals = { org_1: [] };
     backend.options.specialists.org_1 = [
-      { id: 'spec_ana', name: 'Ana Ventas', type: 'sales', status: 'active', purpose: 'Leads' },
+      {
+        id: 'spec_ana',
+        name: 'Agente comercial',
+        type: 'sales',
+        status: 'active',
+        purpose: 'Leads',
+      },
     ];
     backend.options.agentTasks = {
       spec_ana: [task('t1', 'spec_ana', 'Revisar los leads de esta semana', 'running')],
@@ -87,12 +93,18 @@ export const SCENARIOS: Record<
     backend.options.permissions.push(...OWNER_PERMISSIONS);
     backend.options.credits = { org_1: 487 };
     backend.options.specialists.org_1 = [
-      { id: 'spec_ana', name: 'Ana Ventas', type: 'sales', status: 'active', purpose: 'Leads' },
-      { id: 'spec_leo', name: 'Leo Campañas', type: 'marketing', status: 'active' },
-      { id: 'spec_ops1', name: 'Olga Procesos', type: 'operations', status: 'active' },
-      { id: 'spec_ops2', name: 'Omar Pedidos', type: 'operations', status: 'active' },
-      { id: 'spec_eva', name: 'Eva Cuentas', type: 'finance', status: 'paused' },
-      { id: 'spec_ivo', name: 'Ivo Datos', type: 'research', status: 'active' },
+      {
+        id: 'spec_ana',
+        name: 'Agente comercial',
+        type: 'sales',
+        status: 'active',
+        purpose: 'Leads',
+      },
+      { id: 'spec_leo', name: 'Agente de lanzamientos', type: 'marketing', status: 'active' },
+      { id: 'spec_ops1', name: 'Agente de procesos', type: 'operations', status: 'active' },
+      { id: 'spec_ops2', name: 'Agente de pedidos', type: 'operations', status: 'active' },
+      { id: 'spec_eva', name: 'Agente de cuentas', type: 'finance', status: 'paused' },
+      { id: 'spec_ivo', name: 'Agente de datos', type: 'research', status: 'active' },
     ];
     backend.options.agentTasks = {
       spec_ana: [task('t1', 'spec_ana', 'Revisar los leads de esta semana', 'running')],

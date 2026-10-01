@@ -13,6 +13,7 @@ import { isCurrentTask, workStateOf, type AgentWork } from './agentWork.js';
 import type { MotorState } from './motor.js';
 import {
   DESKS,
+  GIA_AT_DESK,
   LOGO,
   MAX_ZOOM,
   SCENE,
@@ -48,9 +49,10 @@ export interface StageFigures {
  * pans as one (`useStageZoom`), each placed at points of the picture:
  *
  * 1. the office, empty: the architecture, the glass wall, the desks and their chairs;
- * 2. the people: at a desk, the person the render drew there only if its department has a real
- *    agent (active or paused), standing for its first one; GIA at her desk, or standing beside the
- *    desk of the agent her real task is with (`gia/presence.ts`): she is simply there, no walk;
+ * 2. the people: at each department's desk, the person the render drew there, a picture of the
+ *    office at work and no agent (a real agent is its own control, 6.); GIA, her official figure,
+ *    at her desk, or standing beside the desk of the agent her real task is with
+ *    (`gia/presence.ts`): she is simply there, no walk;
  * 3. the glass wall's figures: the office's real ones, and MelonMotor's flows, which open it;
  * 4. the light of the MelonOffice mark, rising and falling very slowly (not with reduced motion);
  * 5. the desks' name plates: the organization's real departments;
@@ -148,7 +150,11 @@ export function OfficeStage({
   });
 
   return (
-    <section className="stage" aria-labelledby="stage-title">
+    <section
+      className="stage"
+      aria-labelledby="stage-title"
+      style={{ '--scene-aspect': SCENE_ASPECT } as CSSProperties}
+    >
       <h2 id="stage-title" className="visually-hidden">
         <FormattedMessage id="office.scene.title" />
       </h2>
@@ -167,7 +173,6 @@ export function OfficeStage({
         className="stage__frame"
         data-zoomed={scale > 1 ? '' : undefined}
         data-gia-activity={gia.activity}
-        style={{ '--scene-aspect': SCENE_ASPECT } as CSSProperties}
       >
         <div ref={world} className="stage__world">
           {/* 1. The office, empty. */}
@@ -180,30 +185,37 @@ export function OfficeStage({
             decoding="async"
             draggable={false}
           />
-          {/* 2. The people: real agents only, and GIA where her work is. */}
+          {/*
+           * 2. The people. At each of the six desks, the person the render drew there: the
+           *    office at work, a picture only, with no name, state or card. A real agent of that
+           *    department is said by its own control over them (6.), never by the picture.
+           *    GIA, her official figure: at her desk, or beside the agent her real task is with.
+           */}
           <span className="stage__people" aria-hidden="true">
-            {desks.map((desk) =>
-              desk.lead === undefined ? null : (
+            {DESKS.map((key) =>
+              key === 'gia' ? null : (
                 <img
-                  key={desk.key}
+                  key={key}
                   className="stage__person"
-                  data-person={desk.key}
-                  src={art(`people/${desk.key}`)}
-                  style={boxStyle(desk.seat.figure)}
+                  data-person={key}
+                  data-agent={
+                    desks.find((desk) => desk.key === key)?.lead === undefined ? undefined : ''
+                  }
+                  src={art(`people/${key}`)}
+                  style={boxStyle(SEATS[key].figure)}
                   alt=""
                   draggable={false}
                 />
               ),
             )}
             {away === undefined ? (
-              <img
-                className="stage__person stage__person--gia"
-                data-person="gia"
-                src={art('people/gia')}
-                style={boxStyle(SEATS.gia.figure)}
-                alt=""
-                draggable={false}
-              />
+              <span className="stage__gia-desk" data-person="gia" style={giaDeskStyle}>
+                <GiaFigure
+                  view="front"
+                  height={`${((GIA_AT_DESK.height / (GIA_AT_DESK.cut - GIA_AT_DESK.top)) * 100).toFixed(2)}%`}
+                  eager
+                />
+              </span>
             ) : (
               <span
                 className="stage__gia-away"
@@ -477,6 +489,13 @@ const figureStyle = ([left, top, right, bottom]: SceneBox) =>
     width: `${(right - left) * 100}%`,
     height: `${(bottom - top) * 100}%`,
   }) as CSSProperties;
+
+/** GIA at her desk: the part of her above its top. */
+const giaDeskStyle = {
+  left: `${GIA_AT_DESK.x * 100}%`,
+  top: `${GIA_AT_DESK.top * 100}%`,
+  height: `${(GIA_AT_DESK.cut - GIA_AT_DESK.top) * 100}%`,
+} as CSSProperties;
 
 /** A person standing at a point of the floor, `height` of the picture tall. */
 const standStyle = ([x, y]: ScenePoint, height: number) =>

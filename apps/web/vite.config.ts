@@ -7,6 +7,12 @@ const SOURCE_CONDITION = '@melonoffice/source';
 
 export default defineConfig({
   plugins: [react()],
+  build: {
+    // Every asset is its own file, never a `data:` URI: the web server's Content-Security-Policy
+    // (`nginx.conf.template`, `default-src 'self'`) refuses those, and a small picture (GIA at her
+    // desk, an agent at theirs) would silently not be drawn.
+    assetsInlineLimit: 0,
+  },
   resolve: {
     conditions: [SOURCE_CONDITION, ...defaultClientConditions],
   },

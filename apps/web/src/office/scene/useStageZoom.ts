@@ -17,7 +17,7 @@ import { useLayoutEffect, useRef, useState } from 'react';
  */
 
 /** The Home fits the window here (home.css): the page does not scroll, the wheel can zoom. */
-const FITS = '(min-width: 64rem) and (min-height: 36rem)';
+const FITS = '(min-width: 64rem) and (min-height: 34rem)';
 /** How far a press may move and still be a click. */
 const SLOP = 6;
 /** How much a button press zooms. */

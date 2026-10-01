@@ -23,8 +23,8 @@ function open(at: string, configure?: (backend: ReturnType<typeof fakeBackend>) 
   backend.options.validRefresh.add('refresh-kept');
   store.setItem(REFRESH_KEY, 'refresh-kept');
   backend.options.specialists.org_1 = [
-    { id: 'spec_ana', name: 'Ana Ventas', type: 'sales', status: 'active' },
-    { id: 'spec_leo', name: 'Leo Pausado', type: 'sales', status: 'paused' },
+    { id: 'spec_ana', name: 'Sales agent', type: 'sales', status: 'active' },
+    { id: 'spec_leo', name: 'Paused agent', type: 'sales', status: 'paused' },
   ];
   backend.options.permissions.push('specialist.task');
   configure?.(backend);
@@ -54,7 +54,7 @@ describe('agent tasks in the app (ADR-0063)', () => {
     const backend = open('/office/sales/agent/spec_ana');
     const region = within(await screen.findByRole('region', { name: 'Tasks' }));
     expect(await region.findByText('No tasks yet.')).toBeTruthy();
-    fireEvent.change(region.getByRole('textbox', { name: 'Ask Ana Ventas for something' }), {
+    fireEvent.change(region.getByRole('textbox', { name: 'Ask Sales agent for something' }), {
       target: { value: '  Resume nuestras ventas  ' },
     });
     fireEvent.click(region.getByRole('button', { name: 'Ask' }));
@@ -142,7 +142,7 @@ describe('the tasks section (ADR-0063)', () => {
         <AgentTasks
           client={client}
           agentId="spec_ana"
-          agentName="Ana"
+          agentName="Sales agent"
           canAsk={extra.canAsk ?? true}
           agentActive
           refreshMs={5}
@@ -189,7 +189,7 @@ describe('the tasks section (ADR-0063)', () => {
       return task();
     });
     show(client);
-    const box = await screen.findByRole('textbox', { name: 'Ask Ana for something' });
+    const box = await screen.findByRole('textbox', { name: 'Ask Sales agent for something' });
     fireEvent.change(box, { target: { value: 'Hola' } });
     fireEvent.click(screen.getByRole('button', { name: 'Ask' }));
     expect(await screen.findByText('This agent cannot take new tasks right now.')).toBeTruthy();

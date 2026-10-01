@@ -1,5 +1,5 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import type { ApprovalsClient } from '../approvals/approvalsClient.js';
 import type { AutomationsClient } from '../automations/automationsClient.js';
 import type { FollowUpsClient } from '../followUps/followUpsClient.js';
@@ -56,6 +56,7 @@ export function HomePage({
   const [agent, setAgent] = useState<string>();
   const [motorOpen, setMotorOpen] = useState(false);
   const opener = useRef<HTMLElement | null>(null);
+  const page = useOfficeWidth();
   const closeAgent = useCallback(() => {
     setAgent(undefined);
     opener.current?.focus();
@@ -69,7 +70,7 @@ export function HomePage({
   const waiting = attentionCount(today);
 
   return (
-    <div className="home4">
+    <div ref={page} className="home4">
       <header className="home4__header">
         <div className="home4__heading">
           <h1 className="home4__title">
@@ -134,4 +135,27 @@ export function HomePage({
       )}
     </div>
   );
+}
+
+/**
+ * The office's frame is the largest of the picture's shape that fits the window (home.css): the
+ * Home lines its heading, GIA's box and the day's strip up with it by its real width, measured,
+ * never guessed (`--stage-width`).
+ */
+function useOfficeWidth() {
+  const page = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const root = page.current;
+    const frame = root?.querySelector<HTMLElement>('.stage__frame');
+    if (root === null || root === undefined || frame === null || frame === undefined) {
+      return undefined;
+    }
+    const measure = () => root.style.setProperty('--stage-width', `${frame.offsetWidth}px`);
+    measure();
+    if (typeof ResizeObserver !== 'function') return undefined;
+    const observer = new ResizeObserver(measure);
+    observer.observe(frame);
+    return () => observer.disconnect();
+  }, []);
+  return page;
 }
