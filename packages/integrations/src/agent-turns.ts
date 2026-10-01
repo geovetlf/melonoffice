@@ -36,6 +36,7 @@ import type {
   MessageId,
   OrganizationId,
   Specialist,
+  SpecialistConfiguration,
   SpecialistId,
   SpecialistVersion,
 } from '@melonoffice/domain';
@@ -174,6 +175,19 @@ async function staleness(
   }
   return { conversation };
 }
+
+/**
+ * An agent's conversation profile at its level of autonomy (AE-4.4, ADR-0116): an agent that only
+ * proposes never sends a reply by itself, whatever its profile says, so its replies wait on a
+ * person (`supervised`). The other levels leave the profile as it is.
+ */
+const profileAtLevel = (
+  configuration: Pick<SpecialistConfiguration, 'conversation' | 'autonomy'> | undefined,
+): ConversationAgentProfile | undefined => {
+  const profile = configuration?.conversation;
+  if (profile === undefined || configuration?.autonomy !== 'propose') return profile;
+  return Object.freeze({ ...profile, autonomy: 'supervised' as const });
+};
 
 /** The level a turn acts at now: the organization's and the agent's, whichever is stricter. */
 async function autonomyOf(
@@ -332,7 +346,7 @@ export function createAgentTurnTrigger(options: AgentTurnTriggerOptions): AgentT
       const fields = { organizationId, conversationId: conversation.id, agentId };
 
       const specialist = await specialists.find(organizationId, agentId);
-      const profile = specialist?.configuration.conversation;
+      const profile = profileAtLevel(specialist?.configuration);
       if (
         specialist === undefined ||
         specialist.status !== 'active' ||
@@ -498,7 +512,7 @@ export function createAgentTurnWork(options: AgentTurnWorkOptions): AgentTurnWor
       turn.specialistVersion,
     );
     const specialist = await specialists.find(organizationId, turn.specialistId);
-    const profile = version?.configuration.conversation;
+    const profile = profileAtLevel(version?.configuration);
     if (profile === undefined || specialist === undefined) return undefined;
     return { profile, name: specialist.identity.displayName };
   }
@@ -637,7 +651,7 @@ export function createAgentReplyCheck(options: AgentReplyCheckOptions): AgentRep
         turn.specialistId,
         turn.specialistVersion,
       );
-      const profile = version?.configuration.conversation;
+      const profile = profileAtLevel(version?.configuration);
       const level = await autonomyOf(
         conversations,
         context.organizationId,

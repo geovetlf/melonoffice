@@ -73,7 +73,25 @@ export interface SpecialistConfiguration {
    * still come from the fields above, and the organization's own level stays the outer limit.
    */
   readonly conversation?: ConversationAgentProfile;
+  /**
+   * How far the agent acts on its own (AE-4.4, ADR-0116). Absent: `controlled`, the default.
+   * A restriction only: it never grants a tool, a permission or a skill, sensitive actions always
+   * wait on a person, and the organization's own policy stays the outer limit.
+   */
+  readonly autonomy?: AgentAutonomy;
 }
+
+/**
+ * How far an agent acts on its own (AE-4.4, ADR-0116):
+ *
+ * - `propose`: it reads, analyses and prepares, and proposes every change; a person decides each;
+ * - `controlled` (the default): it makes low-risk changes inside MelonOffice by itself;
+ * - `within_policy`: it makes every change its permissions, skills, tools and the organization's
+ *   policy allow.
+ *
+ * At every level a sensitive action (ADR-0116 §2) waits on a person, and nothing denied is allowed.
+ */
+export type AgentAutonomy = 'propose' | 'controlled' | 'within_policy';
 
 /**
  * A specialist's profile as a conversational agent (CV-6B, ADR-0043). A restriction only: it

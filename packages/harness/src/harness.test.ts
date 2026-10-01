@@ -1624,12 +1624,15 @@ describe('Tool levels A/B/C (Geovet 2026-09-30)', () => {
       decision: 'allow',
       level: 'B',
       reason: 'automatic',
+      autonomy: 'controlled',
     });
     // Sending a message outside MelonOffice: level C, a person approves.
     expect(decide('message_send', 3)).toEqual({
       decision: 'approval_required',
       level: 'C',
       reason: 'sensitive_action',
+      autonomy: 'controlled',
+      sensitivity: 'external_communication',
     });
     // A tool whose own policy asks for approval stays with a person.
     expect(decide('follow_up_schedule', 2)).toMatchObject({ decision: 'approval_required' });
@@ -1652,6 +1655,7 @@ describe('Tool levels A/B/C (Geovet 2026-09-30)', () => {
       decision: 'approval_required',
       level: 'B',
       reason: 'organization_policy',
+      autonomy: 'controlled',
     });
   });
 });

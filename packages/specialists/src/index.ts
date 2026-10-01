@@ -10,3 +10,5 @@ export * from './capabilities.js';
 export * from './management.js';
 export * from './readiness.js';
 export * from './listing.js';
+export * from './action-policy.js';
+export * from './agent-policy.js';

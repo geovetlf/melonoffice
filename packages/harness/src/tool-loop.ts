@@ -6,22 +6,32 @@ import {
   type AIToolDefinition,
 } from '@melonoffice/ai-gateway';
 import type {
+  AgentAutonomy,
   AgentToolCallRecord,
   Execution,
   ExecutionNode,
   ExecutionRef,
   SpecialistId,
+  SpecialistStatus,
   ToolVersion,
 } from '@melonoffice/domain';
 import type { AgentOutputStore, NodeInput, VerificationInput } from '@melonoffice/execution';
-import type { TenantContext } from '@melonoffice/tenancy';
+import {
+  autonomyOf,
+  defaultOrganizationAgentPolicy,
+  type AgentPolicySource,
+  type SpecialistRepository,
+} from '@melonoffice/specialists';
+import { isResolvedTenant, type TenantContext } from '@melonoffice/tenancy';
 import { digestOf, isModelInvocable, MODEL_TOOL_CALL_INPUT } from '@melonoffice/tools';
+import { evaluateAgentAction } from './evaluation.js';
 import { checkHarnessLimits, DEFAULT_HARNESS_LIMITS, type HarnessLimits } from './limits.js';
 import {
   authorizeToolUse,
   DEFAULT_HARNESS_TOOL_POLICY,
   type HarnessToolDirectory,
   type HarnessToolPolicy,
+  type ToolUseRules,
 } from './tools.js';
 
 /**
@@ -49,7 +59,16 @@ export type HarnessToolStopCode =
   | 'tool_not_granted'
   | 'tool_denied'
   | 'loop_detected'
-  | 'tool_use_unsupported';
+  | 'tool_use_unsupported'
+  // An action's evaluation refused it (AE-4.4, ADR-0116): the check that failed, as a code.
+  | 'agent_not_found'
+  | 'agent_paused'
+  | 'agent_disabled'
+  | 'agent_not_active'
+  | 'tenant_mismatch'
+  | 'department_not_active'
+  | 'permission_not_held'
+  | 'execution_not_running';
 
 type Stop = { readonly stop: HarnessToolStopCode };
 const stop = (code: HarnessToolStopCode): Stop => Object.freeze({ stop: code });
@@ -131,15 +150,59 @@ export function workingTimeMs(execution: Execution, now: Date): number {
  */
 export interface HarnessToolOffer {
   tools(tenant: TenantContext, execution: Execution): Promise<readonly ToolVersion[]>;
+  /**
+   * What an action's evaluation reads about the execution's agent (AE-4.4, ADR-0116): the agent as
+   * stored now, its version's level of autonomy and its organization's rules. Absent: the offer
+   * cannot read them, and the loop decides as before (the gate still checks each call).
+   */
+  facts?(tenant: TenantContext, execution: Execution): Promise<HarnessAgentFacts>;
+}
+
+/** The agent behind an execution, as an action's evaluation reads it (AE-4.4). */
+export interface HarnessAgentFacts {
+  /** The agent now. Absent: not found in this organization. */
+  readonly agent?: { readonly organizationId: string; readonly status: SpecialistStatus };
+  /** The level of the exact version the execution runs. */
+  readonly autonomy: AgentAutonomy;
+  readonly rules: ToolUseRules;
 }
 
 export function createHarnessToolOffer(options: {
   readonly directory: HarnessToolDirectory;
   /** The providers this server has an executor for. */
   readonly executors: readonly string[];
+  /** Where the agent and its version are read, for each action's evaluation (AE-4.4). */
+  readonly specialists?: Pick<SpecialistRepository, 'find' | 'findVersion'>;
+  /** The organization's rules for its agents (AE-4.4). Absent: MelonOffice's defaults. */
+  readonly policies?: AgentPolicySource;
 }): HarnessToolOffer {
   const executors = new Set(options.executors);
+  const { specialists, policies } = options;
+  const facts =
+    specialists === undefined
+      ? undefined
+      : async (_tenant: TenantContext, execution: Execution): Promise<HarnessAgentFacts> => {
+          const { organizationId, specialistId, specialistVersion } = execution;
+          const id = specialistId as SpecialistId | undefined;
+          const [agent, version, rules] = await Promise.all([
+            id === undefined ? undefined : specialists.find(organizationId, id),
+            id === undefined || specialistVersion === undefined
+              ? undefined
+              : specialists.findVersion(organizationId, id, specialistVersion),
+            policies === undefined
+              ? defaultOrganizationAgentPolicy(organizationId)
+              : policies.forOrganization(organizationId),
+          ]);
+          return Object.freeze({
+            ...(agent === undefined
+              ? {}
+              : { agent: { organizationId: agent.organizationId, status: agent.status } }),
+            autonomy: autonomyOf(version?.configuration ?? {}),
+            rules,
+          });
+        };
   return Object.freeze({
+    ...(facts === undefined ? {} : { facts }),
     async tools(tenant: TenantContext, execution: Execution) {
       const { specialistId, specialistVersion } = execution;
       if (specialistId === undefined || specialistVersion === undefined) return [];
@@ -406,6 +469,11 @@ export function createHarnessToolLoop(options: HarnessToolLoopOptions): HarnessT
       // One more turn would pass the task's steps: it stops, and says so.
       if (turns.length + 1 > limits.maxSteps) return stop('step_limit_reached');
       const offered = await offer.tools(tenant, execution);
+      // What each action's evaluation reads about the agent, once for all its calls (AE-4.4).
+      const agentFacts = await offer.facts?.(tenant, execution);
+      const tenantOrganizationId = isResolvedTenant(tenant)
+        ? (tenant.organizationId as string)
+        : undefined;
       // Every call already asked for in this work: the same call is never run twice.
       const seen = new Set<string>();
       for (const turn of turns.slice(0, index)) {
@@ -428,7 +496,25 @@ export function createHarnessToolLoop(options: HarnessToolLoopOptions): HarnessT
           toolCallsUsed: used,
           maxToolCalls: limits.maxToolCalls,
           policy,
+          ...(agentFacts === undefined
+            ? {}
+            : { autonomy: agentFacts.autonomy, rules: agentFacts.rules }),
         });
+        if (agentFacts !== undefined) {
+          // Every check before the action, in order; the first that fails stops the task (AE-4.4).
+          const evaluation = evaluateAgentAction({
+            tenantOrganizationId,
+            execution,
+            ...(agentFacts.agent === undefined ? {} : { agent: agentFacts.agent }),
+            // The offer holds only tools the skills grant and whose permissions the person holds.
+            toolGranted: true,
+            permissionsHeld: true,
+            decision,
+          });
+          if (evaluation.outcome === 'refused') {
+            return stop(evaluation.code as HarnessToolStopCode);
+          }
+        }
         if (decision.decision === 'deny') {
           return stop(decision.reason === 'not_granted' ? 'tool_not_granted' : decision.reason);
         }

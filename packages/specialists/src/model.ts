@@ -1,6 +1,7 @@
 import type { AuditEvent } from '@melonoffice/audit';
 import { acceptsAssignments, organizationOfDepartmentId } from '@melonoffice/departments';
 import type {
+  AgentAutonomy,
   ConversationAgentProfile,
   DefinitionRef,
   Department,
@@ -164,6 +165,29 @@ function checkConversationProfile(value: unknown): ConversationAgentProfile {
   });
 }
 
+/** An agent's levels of autonomy (AE-4.4, ADR-0116), from the most to the least careful. */
+export const AGENT_WORK_AUTONOMY = ['propose', 'controlled', 'within_policy'] as const;
+/** The level of an agent that names none: the default for every agent. */
+export const DEFAULT_AGENT_AUTONOMY: AgentAutonomy = 'controlled';
+
+export const isAgentAutonomy = (value: unknown): value is AgentAutonomy =>
+  typeof value === 'string' && (AGENT_WORK_AUTONOMY as readonly string[]).includes(value);
+
+/** The level an agent's configuration acts at: its own, or the default when it names none. */
+export const autonomyOf = (
+  configuration: Pick<SpecialistConfiguration, 'autonomy'>,
+): AgentAutonomy => configuration.autonomy ?? DEFAULT_AGENT_AUTONOMY;
+
+/**
+ * The furthest an agent's conversation replies may go at its level (AE-4.4): an agent that only
+ * proposes never sends a reply by itself, whatever its conversation profile says; the other levels
+ * leave the profile and the organization's level to decide (ADR-0043).
+ */
+export const conversationCeilingOf = (
+  configuration: Pick<SpecialistConfiguration, 'autonomy'>,
+): ConversationAgentProfile['autonomy'] =>
+  autonomyOf(configuration) === 'propose' ? 'supervised' : 'autonomous';
+
 /**
  * Checks a configuration and returns a frozen copy with only its known fields. Its department
  * must belong to `organizationId`, and every permission must exist in the RBAC catalogue.
@@ -203,6 +227,9 @@ export function checkConfiguration(
     ...(value.conversation === undefined
       ? {}
       : { conversation: checkConversationProfile(value.conversation) }),
+    ...(value.autonomy === undefined
+      ? {}
+      : { autonomy: isAgentAutonomy(value.autonomy) ? value.autonomy : invalid('autonomy') }),
   });
 }
 

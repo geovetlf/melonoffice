@@ -16,8 +16,18 @@ export interface AgentTemplateView {
   readonly skills: readonly { readonly id: string; readonly version: number }[];
 }
 
+/** How far an agent acts on its own (AE-4.4, ADR-0116). */
+export type AgentAutonomyLevel = 'propose' | 'controlled' | 'within_policy';
+
+export const AGENT_AUTONOMY_LEVELS: readonly AgentAutonomyLevel[] = [
+  'propose',
+  'controlled',
+  'within_policy',
+];
+
 export interface AgentView extends SpecialistView {
   readonly version?: number;
+  readonly autonomy?: AgentAutonomyLevel;
   readonly role?: { readonly id: string; readonly version: number };
   readonly skills?: readonly { readonly id: string; readonly version: number }[];
   /** Who last changed its status, when and why (AE-4). */
@@ -46,6 +56,7 @@ export interface AgentPageQuery {
   readonly departmentId?: string;
   readonly q?: string;
   readonly skill?: string;
+  readonly autonomy?: AgentAutonomyLevel;
 }
 
 export interface AgentPageView {
@@ -55,6 +66,8 @@ export interface AgentPageView {
 
 export interface AgentCapabilitiesView {
   readonly version: number;
+  /** How far it acts on its own (AE-4.4). Absent from an older server: the default. */
+  readonly autonomy?: AgentAutonomyLevel;
   readonly ready: boolean;
   /** Each skill at the exact version the agent has, and what that version grants (ADR-0069). */
   readonly skills: readonly {
@@ -154,6 +167,11 @@ export interface AgentsClient {
     id: string,
     input: { readonly fromVersion: number; readonly skillId: string; readonly version: number },
   ): Promise<AgentView>;
+  /** Needs `specialist.manage`: how far it acts on its own, as a new version (AE-4.4). */
+  setAutonomy(
+    id: string,
+    input: { readonly fromVersion: number; readonly autonomy: AgentAutonomyLevel },
+  ): Promise<AgentView>;
 }
 
 /** How many agents one page shows. */
@@ -212,5 +230,7 @@ export function createAgentsClient(request: ReplyRequest, organizationId: string
       call<AgentCapabilitiesView>(`/specialists/${encodeURIComponent(id)}/capabilities`),
     upgradeSkill: (id, input) =>
       post<AgentView>(`/specialists/${encodeURIComponent(id)}/skills/upgrade`, input),
+    setAutonomy: (id, input) =>
+      post<AgentView>(`/specialists/${encodeURIComponent(id)}/autonomy`, input),
   };
 }

@@ -36,6 +36,7 @@ import {
   FirestoreConnectionRateLimiter,
   FirestoreRequestRateLimiter,
   FirestoreConversationRepository,
+  FirestoreAgentPolicyRepository,
   FirestoreBusinessProfileRepository,
   FirestoreKnowledgeRepository,
   FirestoreDepartmentRepository,
@@ -161,6 +162,8 @@ function services(projectId: string) {
     approvals,
     structure,
     businessProfiles: new FirestoreBusinessProfileRepository(firestore),
+    // Organizations' rules for their agents (AE-4.4): one document per organization, by id.
+    agentPolicies: new FirestoreAgentPolicyRepository(firestore),
     knowledge: new FirestoreKnowledgeRepository(firestore),
     // Uploaded documents (ADR-0078): records in Firestore, bytes in the documents bucket, reached
     // with the service's own identity. Without the bucket, uploads and downloads are refused.

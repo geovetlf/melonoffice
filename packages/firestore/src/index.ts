@@ -26,3 +26,4 @@ export * from './tenancy.js';
 export * from './users.js';
 export * from './workflows.js';
 export * from './ai-usage.js';
+export * from './agent-policies.js';

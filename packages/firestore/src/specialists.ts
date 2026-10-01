@@ -53,6 +53,8 @@ interface ConfigurationDocument {
     readonly autonomy: string;
     readonly maxRepliesPerConversation: number;
   };
+  /** Absent: the default level (AE-4.4, ADR-0116); stored only once a person chooses one. */
+  readonly autonomy?: string;
 }
 
 export interface SpecialistDocument {
@@ -115,6 +117,7 @@ function toConfigurationDocument(c: SpecialistConfiguration): ConfigurationDocum
             maxRepliesPerConversation: c.conversation.maxRepliesPerConversation,
           },
         }),
+    ...(c.autonomy === undefined ? {} : { autonomy: c.autonomy }),
   };
 }
 

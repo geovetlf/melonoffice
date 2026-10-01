@@ -331,6 +331,18 @@ export const AUDIT_ACTIONS = {
       "A person changed an agent's status (ADR-0062, ADR-0115); `transition` is from → to, `reason` is `reason_given` when they gave one (the words stay on the agent).",
     results: ['success'],
   },
+  'specialist.autonomy_changed': {
+    category: 'specialist',
+    description:
+      'A person changed how far an agent acts on its own (AE-4.4, ADR-0116) as a new immutable version (`targetVersion`); `transition` is the level before → after (propose, controlled, within_policy).',
+    results: ['success'],
+  },
+  'agent_policy.changed': {
+    category: 'specialist',
+    description:
+      "A person changed the organization's rules for its agents (AE-4.4, ADR-0116) as revision `targetVersion`; `transition` is the furthest level of autonomy before → after. The lists of codes stay on the policy.",
+    results: ['success'],
+  },
   'billing.subscription_created': {
     category: 'billing',
     description:

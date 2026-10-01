@@ -42,6 +42,7 @@ import {
   FirestoreAgentTaskRepository,
   FirestoreApprovalRepository,
   FirestoreAuditStore,
+  FirestoreAgentPolicyRepository,
   FirestoreBusinessProfileRepository,
   FirestoreChannelConnectionRepository,
   FirestoreChannelTemplateRepository,
@@ -78,6 +79,7 @@ import {
 } from '@melonoffice/forecasting';
 import { createLogger } from '@melonoffice/observability';
 import { createAuthorizationService } from '@melonoffice/rbac';
+import { createAgentPolicySource } from '@melonoffice/specialists';
 import { createToolRegistry, TOOL_CATALOGUE } from '@melonoffice/tools';
 import { createAgentTaskParts, createConversationAgentParts, routeAgentWork } from './agents.js';
 import { createPlanConditions } from './conditions.js';
@@ -217,6 +219,8 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
     tools: {
       registry: createToolRegistry(TOOL_CATALOGUE),
       executors: Object.keys(agents.executors),
+      // The organization's rules for its agents (AE-4.4): what else it counts as sensitive.
+      policies: createAgentPolicySource(new FirestoreAgentPolicyRepository(firestore)),
     },
     logger: logger.child({ component: 'agent-tasks' }),
   });

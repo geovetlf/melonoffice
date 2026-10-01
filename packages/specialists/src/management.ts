@@ -22,8 +22,10 @@ import type { ToolLookup } from './capabilities.js';
 import { SpecialistError } from './errors.js';
 import {
   applySpecialistStatus,
+  autonomyOf,
   checkConfiguration,
   checkStatusReason,
+  isAgentAutonomy,
   isSpecialistId,
   isVersionNumber,
   newSpecialist,
@@ -56,6 +58,16 @@ export interface SpecialistManagement {
    * version grants: nothing is upgraded by itself.
    */
   upgradeSkill(
+    tenant: TenantContext,
+    id: string,
+    input: Record<string, unknown>,
+  ): Promise<Specialist>;
+  /**
+   * Changes how far the agent acts on its own, as a new version of the agent:
+   * `{ fromVersion, autonomy }` (AE-4.4, ADR-0116). It grants nothing: the agent's skills, tools
+   * and permissions stay exactly as they are, and sensitive actions still wait on a person.
+   */
+  setAutonomy(
     tenant: TenantContext,
     id: string,
     input: Record<string, unknown>,
@@ -137,9 +149,13 @@ export function createSpecialistManagement(
   const event = (
     tenant: TenantContext & { readonly userId: Specialist['identity']['createdBy'] },
     specialist: Specialist,
-    action: 'specialist.created' | 'specialist.version_created' | 'specialist.status_changed',
+    action:
+      | 'specialist.created'
+      | 'specialist.version_created'
+      | 'specialist.status_changed'
+      | 'specialist.autonomy_changed',
     at: Date,
-    transition?: { readonly from: SpecialistStatus; readonly to: SpecialistStatus },
+    transition?: { readonly from: string; readonly to: string },
     reason?: string,
   ): AuditEvent =>
     buildAuditEvent(
@@ -303,11 +319,19 @@ export function createSpecialistManagement(
         if (!same(configuration.conversation, current.configuration.conversation)) {
           bad('conversation');
         }
+        // Autonomy changes only through `setAutonomy`, its own audited step; omitted, it is kept.
+        const autonomy = current.configuration.autonomy;
+        if (configuration.autonomy !== undefined && configuration.autonomy !== autonomy) {
+          bad('autonomy');
+        }
         const write = reviseSpecialist(
           current,
           {
             fromVersion: input.fromVersion as number,
-            configuration,
+            configuration:
+              autonomy === undefined
+                ? configuration
+                : Object.freeze({ ...configuration, autonomy }),
             department,
           },
           person.userId,
@@ -372,6 +396,46 @@ export function createSpecialistManagement(
         return {
           ...write,
           events: [event(person, write.specialist, 'specialist.version_created', at)],
+        };
+      });
+    },
+
+    async setAutonomy(tenant, id, input) {
+      const organizationId = await managerOf(tenant);
+      const person = userOf(tenant);
+      if (!isRecord(input)) bad('body');
+      for (const key of Object.keys(input)) {
+        if (!['fromVersion', 'autonomy'].includes(key)) bad(key);
+      }
+      if (!isVersionNumber(input.fromVersion)) bad('fromVersion');
+      if (!isAgentAutonomy(input.autonomy)) return bad('autonomy');
+      const level = input.autonomy;
+      if (!isSpecialistId(id)) throw new SpecialistError('specialist_not_found');
+      const read = await repository.find(organizationId, id);
+      if (read === undefined) throw new SpecialistError('specialist_not_found');
+      const department = await departmentOf(organizationId, read.configuration);
+      return update(organizationId, id, (current, at) => {
+        const before = autonomyOf(current.configuration);
+        // Nothing to change is a mistake, not a new version.
+        if (before === level) bad('autonomy');
+        const write = reviseSpecialist(
+          current,
+          {
+            fromVersion: input.fromVersion as number,
+            configuration: Object.freeze({ ...current.configuration, autonomy: level }),
+            department,
+          },
+          person.userId,
+          at.toISOString() as IsoTimestamp,
+        );
+        return {
+          ...write,
+          events: [
+            event(person, write.specialist, 'specialist.autonomy_changed', at, {
+              from: before,
+              to: level,
+            }),
+          ],
         };
       });
     },

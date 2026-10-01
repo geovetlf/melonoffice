@@ -80,7 +80,12 @@ import type {
 import { createLogger } from '@melonoffice/observability';
 import type { EntitlementService } from '@melonoffice/entitlements';
 import type { AuthorizationService } from '@melonoffice/rbac';
-import { InMemorySpecialistRepository, type SpecialistRepository } from '@melonoffice/specialists';
+import {
+  InMemoryAgentPolicyRepository,
+  InMemorySpecialistRepository,
+  type AgentPolicyRepository,
+  type SpecialistRepository,
+} from '@melonoffice/specialists';
 import {
   InMemoryCommercialStore,
   InMemoryTenancyStore,
@@ -106,6 +111,7 @@ import {
   FirestoreApprovalRepository,
   FirestoreSpecialistRepository,
   FirestoreDepartmentMigrationStore,
+  FirestoreAgentPolicyRepository,
   FirestoreBusinessProfileRepository,
   FirestoreKnowledgeRepository,
   SPECIALISTS,
@@ -186,6 +192,8 @@ export interface Stores {
   readonly putStructure: (record: Department | Specialist | SpecialistVersion) => Promise<void>;
   /** Business profiles (ADR-0048). */
   readonly businessProfiles: BusinessProfileRepository;
+  /** Organizations' rules for their agents (AE-4.4). */
+  readonly agentPolicies: AgentPolicyRepository;
   /** The audit trail's read side (ADR-0049). */
   readonly auditReader: AuditReader & AuditHistoryReader;
   readonly knowledge: KnowledgeRepository;
@@ -269,6 +277,7 @@ function memoryStores(): Stores {
     departments,
     specialists,
     businessProfiles: new InMemoryBusinessProfileRepository(breakable),
+    agentPolicies: new InMemoryAgentPolicyRepository(breakable),
     auditReader: events,
     knowledge: new InMemoryKnowledgeRepository(breakable),
     agentTasks: new InMemoryAgentTaskRepository(),
@@ -335,6 +344,7 @@ function firestoreStores(): Stores {
     departments: new FirestoreDepartmentRepository(db),
     specialists: new FirestoreSpecialistRepository(db),
     businessProfiles: new FirestoreBusinessProfileRepository(db),
+    agentPolicies: new FirestoreAgentPolicyRepository(db),
     auditReader: new FirestoreAuditStore(db),
     knowledge: new FirestoreKnowledgeRepository(db),
     agentTasks: new FirestoreAgentTaskRepository(db),
@@ -509,6 +519,7 @@ export function setupApp(
     executions: stores.executions,
     structure: { departments: stores.departments, specialists: stores.specialists },
     businessProfiles: stores.businessProfiles,
+    agentPolicies: stores.agentPolicies,
     activity: stores.auditReader,
     knowledge: stores.knowledge,
     approvals: stores.approvals,

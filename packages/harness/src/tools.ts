@@ -1,7 +1,12 @@
-import type { OrganizationId, SpecialistId, ToolVersion } from '@melonoffice/domain';
+import type { AgentAutonomy, OrganizationId, SpecialistId, ToolVersion } from '@melonoffice/domain';
 import type { AuthorizationService } from '@melonoffice/rbac';
 import {
+  DEFAULT_AGENT_AUTONOMY,
   grantsOf,
+  sensitivityOf,
+  stricterAgentAutonomy,
+  type SensitiveActionKind,
+  type SensitivityRules,
   isSpecialistId,
   toolKey,
   type SkillCatalogue,
@@ -104,32 +109,48 @@ export const DEFAULT_HARNESS_TOOL_POLICY: HarnessToolPolicy = Object.freeze({
 });
 
 export type ToolUseDecision =
-  | { readonly decision: 'allow'; readonly level: ToolLevel; readonly reason: 'automatic' }
+  | {
+      readonly decision: 'allow';
+      readonly level: ToolLevel;
+      readonly reason: 'automatic';
+      readonly autonomy: AgentAutonomy;
+    }
   | {
       readonly decision: 'approval_required';
       readonly level: ToolLevel;
-      readonly reason: 'sensitive_action' | 'tool_policy' | 'organization_policy';
+      readonly reason:
+        'sensitive_action' | 'tool_policy' | 'organization_policy' | 'agent_autonomy';
+      readonly autonomy: AgentAutonomy;
+      /** Why the action is sensitive, when that is the reason (ADR-0116 §2). */
+      readonly sensitivity?: SensitiveActionKind;
     }
   | {
       readonly decision: 'deny';
       readonly level: ToolLevel;
       readonly reason: 'not_granted' | 'tool_call_limit_reached' | 'tool_denied';
+      readonly autonomy: AgentAutonomy;
     };
 
+/** An organization's rules as the decision reads them: its sensitive codes and its maximum level. */
+export type ToolUseRules = SensitivityRules & { readonly maxAutonomy: AgentAutonomy };
+
 /**
- * Whether an agent may use a tool now (Geovet, 2026-09-30): the agent asks, the Harness decides,
- * never the agent. In order:
+ * Whether an agent may use a tool now (Geovet, 2026-09-30; AE-4.4, ADR-0116): the agent asks, the
+ * Harness decides, never the agent and never the model. In order:
  *
  * 1. the tool must be one the agent's skills grant and every permission of which the person holds
  *    (`granted`, from `HarnessToolDirectory`): otherwise denied;
  * 2. the task's tool budget: at its limit, denied;
  * 3. a tool whose own policy denies it, or whose risk is critical: denied;
- * 4. level `C`: a person approves;
+ * 4. a sensitive action (level `C`, or one the sensitive-action policy names, MelonOffice's or the
+ *    organization's): a person approves, at every level of autonomy;
  * 5. a tool whose own policy asks for approval: a person approves;
- * 6. a level the organization runs without a person: allowed; otherwise a person approves.
+ * 6. the agent's level of autonomy, never above the organization's maximum: `propose` proposes
+ *    every change (a person approves it), `controlled` makes only low-risk changes by itself, and
+ *    `within_policy` makes every change the organization's automatic levels allow. A read (`A`)
+ *    runs at every level.
  *
- * It decides; it never runs the tool. An allowed use still goes through the Tool Gate (ADR-0026),
- * which checks the call itself, and an approval is still a person's, bound to the exact call.
+ * Nothing here grants anything: a level of autonomy only ever adds a person's approval.
  */
 export function authorizeToolUse(input: {
   readonly tool: ToolVersion;
@@ -137,26 +158,49 @@ export function authorizeToolUse(input: {
   readonly toolCallsUsed: number;
   readonly maxToolCalls: number;
   readonly policy?: HarnessToolPolicy;
+  /** The agent's own level (its version's). Absent: the default, `controlled`. */
+  readonly autonomy?: AgentAutonomy;
+  /** The organization's rules. Absent: MelonOffice's defaults. */
+  readonly rules?: ToolUseRules;
 }): ToolUseDecision {
-  const { tool, granted, toolCallsUsed, maxToolCalls } = input;
+  const { tool, granted, toolCallsUsed, maxToolCalls, rules } = input;
   const level = toolLevelOf(tool);
-  if (!granted) return Object.freeze({ decision: 'deny', level, reason: 'not_granted' });
+  const autonomy = stricterAgentAutonomy(
+    input.autonomy ?? DEFAULT_AGENT_AUTONOMY,
+    rules?.maxAutonomy ?? 'within_policy',
+  );
+  const decide = <D extends Omit<ToolUseDecision, 'level' | 'autonomy'>>(d: D) =>
+    Object.freeze({ ...d, level, autonomy }) as ToolUseDecision;
+  if (!granted) return decide({ decision: 'deny', reason: 'not_granted' });
   if (toolCallsUsed >= maxToolCalls) {
-    return Object.freeze({ decision: 'deny', level, reason: 'tool_call_limit_reached' });
+    return decide({ decision: 'deny', reason: 'tool_call_limit_reached' });
   }
   if (tool.approvalPolicy === 'denied' || tool.riskLevel === 'critical') {
-    return Object.freeze({ decision: 'deny', level, reason: 'tool_denied' });
+    return decide({ decision: 'deny', reason: 'tool_denied' });
   }
-  if (level === 'C') {
-    return Object.freeze({ decision: 'approval_required', level, reason: 'sensitive_action' });
+  const sensitivity = sensitivityOf(tool, rules);
+  if (level === 'C' || sensitivity !== undefined) {
+    return decide({
+      decision: 'approval_required',
+      reason: 'sensitive_action',
+      ...(sensitivity === undefined ? {} : { sensitivity }),
+    });
   }
   if (tool.approvalPolicy === 'approval_required') {
-    return Object.freeze({ decision: 'approval_required', level, reason: 'tool_policy' });
+    return decide({ decision: 'approval_required', reason: 'tool_policy' });
+  }
+  if (level === 'B') {
+    if (autonomy === 'propose') {
+      return decide({ decision: 'approval_required', reason: 'agent_autonomy' });
+    }
+    if (autonomy === 'controlled' && tool.riskLevel !== 'low') {
+      return decide({ decision: 'approval_required', reason: 'agent_autonomy' });
+    }
   }
   const automatic = (input.policy ?? DEFAULT_HARNESS_TOOL_POLICY).automatic;
-  return automatic.includes(level)
-    ? Object.freeze({ decision: 'allow', level, reason: 'automatic' })
-    : Object.freeze({ decision: 'approval_required', level, reason: 'organization_policy' });
+  return automatic.includes(level as 'A' | 'B')
+    ? decide({ decision: 'allow', reason: 'automatic' })
+    : decide({ decision: 'approval_required', reason: 'organization_policy' });
 }
 
 export const harnessToolOf = (version: ToolVersion): HarnessTool =>

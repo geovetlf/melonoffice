@@ -110,7 +110,9 @@ import {
 import {
   createSkillCatalogue,
   createSpecialistManagement,
+  createAgentPolicyService,
   createSpecialistService,
+  type AgentPolicyRepository,
   type SpecialistRepository,
 } from '@melonoffice/specialists';
 import {
@@ -216,6 +218,11 @@ export interface AppOptions {
   readonly activity?: AuditReader & AuditHistoryReader;
   /** Business profiles (ADR-0048). Absent: the profile route answers 503 (fails closed). */
   readonly businessProfiles?: BusinessProfileRepository;
+  /**
+   * Organizations' rules for their agents (AE-4.4, ADR-0116). Absent: the policy routes are not
+   * served, and every organization has MelonOffice's defaults.
+   */
+  readonly agentPolicies?: AgentPolicyRepository;
   /** Company Brain (ADR-0051). Absent: the brain routes answer 503 (fails closed). */
   readonly knowledge?: KnowledgeRepository;
   /**
@@ -397,6 +404,7 @@ export function createApp({
   executions,
   structure,
   businessProfiles,
+  agentPolicies,
   knowledge,
   documents,
   activity,
@@ -900,6 +908,15 @@ export function createApp({
         specialists,
         skills,
         tools,
+        ...(agentPolicies === undefined
+          ? {}
+          : {
+              agentPolicies: createAgentPolicyService({
+                repository: agentPolicies,
+                organizations: tenancy,
+                authorization,
+              }),
+            }),
         // Agent management (ADR-0062): owner only, a person directly, audited with each change.
         management: createSpecialistManagement({
           repository: structure.specialists,

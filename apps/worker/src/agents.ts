@@ -67,7 +67,11 @@ import type {
   NodeWorkSource,
   VerificationSource,
 } from '@melonoffice/runtime';
-import { createSkillCatalogue, type SpecialistRepository } from '@melonoffice/specialists';
+import {
+  createSkillCatalogue,
+  type AgentPolicySource,
+  type SpecialistRepository,
+} from '@melonoffice/specialists';
 import { isResolvedTenant, type TenancyStore, type TenantContext } from '@melonoffice/tenancy';
 import type { ToolExecutors, ToolRegistry } from '@melonoffice/tools';
 
@@ -227,6 +231,11 @@ export function createAgentTaskParts(options: {
     readonly executors: readonly string[];
     /** The Harness's limits. Absent: its defaults (ADR-0100); tests set smaller ones. */
     readonly limits?: HarnessLimits;
+    /**
+     * Organizations' rules for their agents (AE-4.4, ADR-0116), read before each action. Absent:
+     * MelonOffice's defaults for every organization.
+     */
+    readonly policies?: AgentPolicySource;
   };
   readonly logger?: Logger;
   readonly now?: () => Date;
@@ -412,6 +421,10 @@ export function createAgentTaskParts(options: {
               authorization,
             }),
             executors: [...options.tools.executors, ...Object.keys(taskExecutors)],
+            // Each action is evaluated against the agent as stored now, its version's level of
+            // autonomy and its organization's rules (AE-4.4).
+            specialists: stores.specialists,
+            ...(options.tools.policies === undefined ? {} : { policies: options.tools.policies }),
           }),
           outputs,
           describe: (tool) =>
