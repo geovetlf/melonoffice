@@ -1,8 +1,9 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
-import { useEffect, useRef, useState } from 'react';
+import { PageHeader, PeriodPicker, StateMessage } from '@melonoffice/ui';
+import { useEffect, useState } from 'react';
 import {
+  ACTIVITY_PERIODS,
   ActivityList,
-  PeriodPicker,
   useActivity,
   type ActivityState,
 } from '../activity/ActivityFeed.js';
@@ -35,38 +36,40 @@ export function giaOnly(state: ActivityState): ActivityState {
 }
 
 export function GiaWorkplace() {
-  const heading = useRef<HTMLHeadingElement>(null);
-  useEffect(() => heading.current?.focus(), []);
+  const intl = useIntl();
+  // Keyboard users land on the page's title: the PageHeader's h1, found by its id.
+  useEffect(() => {
+    const title = document.getElementById('gia-workplace-title');
+    if (title === null) return;
+    title.tabIndex = -1;
+    title.focus();
+  }, []);
   const [period, setPeriod] = useState<ActivityPeriod>('week');
   const activity = useActivity(period);
   const chat = useGiaChat();
   return (
-    <article className="dept-office gia-workplace">
+    <article className="mo-page gia-workplace">
       <OfficeBreadcrumb trail={[{ label: <FormattedMessage id="gia.name" /> }]} />
-      <header className="dept-office__header gia-workplace__header">
-        <GiaAvatar size={72} decorative />
-        <div>
-          <h1 ref={heading} tabIndex={-1} className="dept-office__title">
-            <FormattedMessage id="gia.name" />
-          </h1>
-          <p className="dept-office__summary">
-            <FormattedMessage id="gia.role" />
-          </p>
-        </div>
-      </header>
+      <PageHeader
+        className="gia-workplace__header"
+        titleId="gia-workplace-title"
+        leading={<GiaAvatar size={72} decorative />}
+        title={<FormattedMessage id="gia.name" />}
+        description={<FormattedMessage id="gia.role" />}
+      />
 
       <GiaDesk />
 
-      <section className="dept-office__section gia-workplace__chat" aria-labelledby="gia-chat">
-        <h2 id="gia-chat">
+      <section className="mo-panel mo-page-section" aria-labelledby="gia-chat">
+        <h2 id="gia-chat" className="mo-section-title">
           <FormattedMessage id="gia.chat.title" />
         </h2>
         <GiaConversation />
       </section>
 
-      <div className="dept-office__grid">
-        <section className="dept-office__section" aria-labelledby="gia-state">
-          <h2 id="gia-state">
+      <div className="gia-workplace__grid">
+        <section className="mo-panel mo-page-section" aria-labelledby="gia-state">
+          <h2 id="gia-state" className="mo-section-title">
             <FormattedMessage id="gia.workplace.state.title" />
           </h2>
           <p className={`gia-state${chat.available ? ' gia-state--ready' : ''}`}>
@@ -75,23 +78,23 @@ export function GiaWorkplace() {
               id={chat.available ? 'gia.workplace.state.ready' : 'gia.chat.unavailable'}
             />
           </p>
-          <p className="panel__empty">
+          <p className="mo-hint">
             <FormattedMessage id="gia.workplace.state.source" />
           </p>
         </section>
 
-        <section className="dept-office__section" aria-labelledby="gia-capabilities">
-          <h2 id="gia-capabilities">
+        <section className="mo-panel mo-page-section" aria-labelledby="gia-capabilities">
+          <h2 id="gia-capabilities" className="mo-section-title">
             <FormattedMessage id="gia.workplace.capabilities.title" />
           </h2>
-          <ul className="coming">
+          <ul className="mo-list">
             {GIA_CAPABILITIES.map((capability) => (
-              <li key={capability} className="coming__item">
+              <li key={capability} className="mo-list-item gia-workplace__capability">
                 <FormattedMessage id={`gia.capability.${capability}`} />
               </li>
             ))}
           </ul>
-          <h3 className="gia-workplace__subtitle">
+          <h3 className="mo-subsection-title">
             <FormattedMessage id="gia.workplace.limits.title" />
           </h3>
           <ul className="gia-limits">
@@ -101,30 +104,37 @@ export function GiaWorkplace() {
               </li>
             ))}
           </ul>
-          <p className="panel__empty">
+          <p className="mo-hint">
             <FormattedMessage id="gia.limit.proposals" />
           </p>
         </section>
       </div>
 
-      <div className="dept-office__grid">
-        <section className="dept-office__section" aria-labelledby="gia-history">
-          <h2 id="gia-history">
+      <div className="gia-workplace__grid">
+        <section className="mo-panel mo-page-section" aria-labelledby="gia-history">
+          <h2 id="gia-history" className="mo-section-title">
             <FormattedMessage id="gia.workplace.history.title" />
           </h2>
           {activity.status === 'hidden' ? null : (
-            <PeriodPicker period={period} onChange={setPeriod} labelId="activity.period.label" />
+            <PeriodPicker
+              label={intl.formatMessage({ id: 'activity.period.label' })}
+              options={ACTIVITY_PERIODS}
+              value={period}
+              onChange={setPeriod}
+              renderOption={(p) => <FormattedMessage id={`activity.period.${p}`} />}
+              className="gia-workplace__period"
+            />
           )}
           <GiaHistory state={giaOnly(activity)} />
         </section>
 
-        <section className="dept-office__section" aria-labelledby="gia-actions">
-          <h2 id="gia-actions">
+        <section className="mo-panel mo-page-section" aria-labelledby="gia-actions">
+          <h2 id="gia-actions" className="mo-section-title">
             <FormattedMessage id="gia.workplace.actions.title" />
           </h2>
-          <p className="panel__empty">
+          <StateMessage kind="empty">
             <FormattedMessage id="gia.workplace.actions.body" />
-          </p>
+          </StateMessage>
         </section>
       </div>
     </article>
@@ -135,9 +145,9 @@ export function GiaWorkplace() {
 function GiaHistory({ state }: { readonly state: ActivityState }) {
   if (state.status === 'ready' && state.page.items.length === 0) {
     return (
-      <p className="panel__empty">
+      <StateMessage kind="empty">
         <FormattedMessage id="gia.workplace.history.empty" />
-      </p>
+      </StateMessage>
     );
   }
   return <ActivityList state={state} />;

@@ -1732,7 +1732,7 @@ a.sidebar__item:hover {
   margin: 0;
   padding: var(--mo-space-4);
   border: 1px solid var(--mo-color-border);
-  border-radius: 20px;
+  border-radius: var(--mo-radius-xl);
   background: linear-gradient(
     180deg,
     color-mix(in srgb, var(--mo-color-highlight) 10%, transparent),
@@ -1782,9 +1782,39 @@ a.sidebar__item:hover {
   background: var(--mo-color-highlight);
 }
 
-.gia-workplace__subtitle {
-  margin: var(--mo-space-4) 0 var(--mo-space-2);
+/* The Workplace's panels in pairs where there is room, one column on a tablet or a phone. */
+.gia-workplace__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  align-items: start;
+  gap: var(--mo-space-6);
+}
+
+.gia-workplace__grid > * {
+  min-width: 0;
+}
+
+/* The page moves focus to its title on arrival, as before; that focus draws no ring. */
+.gia-workplace .mo-page-header__title:focus {
+  outline: none;
+}
+
+@media (max-width: 64rem) {
+  .gia-workplace__grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--mo-space-4);
+  }
+}
+
+.gia-workplace__capability {
   font-size: var(--mo-font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+.gia-workplace__period {
+  justify-self: start;
+  max-width: 100%;
+  overflow-x: auto;
 }
 
 .gia-limits {
@@ -1802,10 +1832,6 @@ a.sidebar__item:hover {
 }
 
 /* GIA's chat (ADR-0052). */
-.gia-workplace__chat {
-  margin-bottom: var(--mo-space-4);
-}
-
 .gia-chat {
   display: grid;
   gap: var(--mo-space-3);
@@ -2403,47 +2429,70 @@ a.sidebar__item:hover {
 .automations__list {
   display: grid;
   gap: var(--mo-space-2);
-  margin: var(--mo-space-3) 0 0;
+  margin: 0;
   padding: 0;
   list-style: none;
 }
 
-.automations__item {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--mo-space-2);
-}
-
 .automations__name {
-  font-weight: 600;
+  font-weight: var(--mo-font-weight-semibold);
   overflow-wrap: anywhere;
 }
 
+.automations__meta {
+  margin: 0;
+  color: var(--mo-color-text-secondary);
+  font-size: var(--mo-font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+/* A plan in the list opens under it: a record's hairline and radius, as a button. */
 .automations__row {
   width: 100%;
-  padding: var(--mo-space-2) var(--mo-space-3);
+  min-height: var(--mo-control-height-md);
+  padding: var(--mo-space-2) var(--mo-space-4);
   border: 1px solid var(--mo-color-border);
-  border-radius: 12px;
-  background: transparent;
+  border-radius: var(--mo-radius-lg);
+  background: var(--mo-color-surface);
   color: inherit;
   font: inherit;
+  font-size: var(--mo-font-size-sm);
   text-align: left;
+  overflow-wrap: anywhere;
   cursor: pointer;
 }
 
+.automations__row:hover {
+  border-color: var(--mo-color-border-strong);
+}
+
 .automations__row[aria-expanded='true'] {
-  border-color: currentColor;
+  border-color: var(--mo-color-accent);
+  background: var(--mo-color-accent-soft);
 }
 
 .automations__plan {
-  margin-top: var(--mo-space-3);
+  display: grid;
+  gap: var(--mo-space-2);
+  min-width: 0;
+}
+
+.automations__plan > * {
+  margin: 0;
+}
+
+.automations__objective {
+  overflow-wrap: anywhere;
+}
+
+.automations__hint {
+  flex-basis: 100%;
 }
 
 .automations__steps {
   display: grid;
   gap: var(--mo-space-2);
-  margin: var(--mo-space-2) 0;
+  margin: 0;
   padding-left: var(--mo-space-4);
 }
 
@@ -2454,13 +2503,10 @@ a.sidebar__item:hover {
 }
 
 .automations__detail {
+  display: grid;
   flex-basis: 100%;
-}
-
-/* WhatsApp templates in Connections (block 7). */
-.connection-card__templates {
-  flex-basis: 100%;
-  margin-top: var(--mo-space-3);
+  gap: var(--mo-space-2);
+  min-width: 0;
 }
 
 /* Skills and tools catalogue (block 6). */
@@ -2475,14 +2521,17 @@ a.sidebar__item:hover {
 .workflow-editor__steps {
   display: grid;
   gap: var(--mo-space-3);
-  margin: var(--mo-space-3) 0;
+  margin: 0;
   padding-left: var(--mo-space-4);
 }
 
 .workflow-editor__step {
+  display: grid;
+  gap: var(--mo-space-3);
+  min-width: 0;
   padding: var(--mo-space-3);
   border: 1px solid var(--mo-color-border);
-  border-radius: 12px;
+  border-radius: var(--mo-radius-lg);
 }
 
 .workflow-editor__step select {
@@ -2493,7 +2542,7 @@ a.sidebar__item:hover {
   display: flex;
   align-items: center;
   gap: var(--mo-space-2);
-  margin-top: var(--mo-space-3);
+  min-height: var(--mo-min-target-size);
 }
 
 /* Documents (DOC-3). */

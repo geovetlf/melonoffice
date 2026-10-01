@@ -1,5 +1,5 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
-import { Button } from '@melonoffice/ui';
+import { Badge, Button, PageHeader, StateMessage, Toolbar } from '@melonoffice/ui';
 import { useEffect, useId, useState } from 'react';
 import {
   InboxError,
@@ -17,6 +17,7 @@ import {
 } from './inboxClient.js';
 import { CommercialSummary } from '../customers/ContactContext.js';
 import type { CustomerDetail } from '../customers/customersClient.js';
+import { Icon } from '../office/icons.js';
 import { openedWith } from '../shell/routes.js';
 import { AssistPanel } from './AssistPanel.js';
 import { ReplyComposer } from './ReplyComposer.js';
@@ -243,23 +244,27 @@ export function ConversationsCenter({
 
   const conversation = detail?.conversation;
   return (
-    <section className="inbox" aria-labelledby={`${searchId}-title`}>
-      <h1 id={`${searchId}-title`}>
-        <FormattedMessage id="conversations.center.title" />
-      </h1>
-      <div className="inbox__tools">
-        <label htmlFor={searchId}>
+    <section className="mo-page inbox" aria-labelledby={`${searchId}-title`}>
+      <PageHeader
+        titleId={`${searchId}-title`}
+        title={<FormattedMessage id="conversations.center.title" />}
+      />
+      <Toolbar>
+        <label className="mo-toolbar__label" htmlFor={searchId}>
           <FormattedMessage id="conversations.search.label" />
         </label>
-        <input
-          id={searchId}
-          type="search"
-          value={search}
-          maxLength={100}
-          placeholder={intl.formatMessage({ id: 'conversations.search.placeholder' })}
-          onChange={(event) => setSearch(event.target.value)}
-        />
-        <label htmlFor={sortId}>
+        <div className="mo-search">
+          <Icon name="search" size={18} className="mo-search__icon" />
+          <input
+            id={searchId}
+            type="search"
+            value={search}
+            maxLength={100}
+            placeholder={intl.formatMessage({ id: 'conversations.search.placeholder' })}
+            onChange={(event) => setSearch(event.target.value)}
+          />
+        </div>
+        <label className="mo-toolbar__label" htmlFor={sortId}>
           <FormattedMessage id="conversations.sort.label" />
         </label>
         <select
@@ -273,8 +278,8 @@ export function ConversationsCenter({
             </option>
           ))}
         </select>
-      </div>
-      <div className="inbox__tabs" role="tablist">
+      </Toolbar>
+      <div className="mo-chips inbox__tabs" role="tablist">
         {TABS.map((option) => (
           <button
             key={option}
@@ -289,26 +294,34 @@ export function ConversationsCenter({
         ))}
       </div>
       {error === undefined ? null : (
-        <div role="alert" className="inbox__error">
-          <p>
-            <FormattedMessage id={`conversations.error.${error}`} />
-          </p>
-          <Button
-            variant="secondary"
-            onClick={() => {
-              setError(undefined);
-              setVersion((v) => v + 1);
-            }}
-          >
-            <FormattedMessage id="conversations.retry" />
-          </Button>
-        </div>
+        <StateMessage
+          kind="error"
+          action={
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                setError(undefined);
+                setVersion((v) => v + 1);
+              }}
+            >
+              <FormattedMessage id="conversations.retry" />
+            </Button>
+          }
+        >
+          <FormattedMessage id={`conversations.error.${error}`} />
+        </StateMessage>
       )}
       <div className="inbox__panes">
-        <ul className="inbox__list" aria-label={intl.formatMessage({ id: 'conversations.list' })}>
+        <ul
+          className="mo-list inbox__list"
+          aria-label={intl.formatMessage({ id: 'conversations.list' })}
+        >
           {rows.length === 0 ? (
-            <li role={loading ? 'status' : undefined}>
-              <FormattedMessage id={loading ? 'conversations.loading' : 'conversations.empty'} />
+            <li>
+              <StateMessage kind={loading ? 'loading' : 'empty'}>
+                <FormattedMessage id={loading ? 'conversations.loading' : 'conversations.empty'} />
+              </StateMessage>
             </li>
           ) : null}
           {rows.map((row) => (
@@ -322,7 +335,7 @@ export function ConversationsCenter({
                   setSelected(row.id);
                 }}
               >
-                <strong>{who(row)}</strong>
+                <strong className="inbox__who">{who(row)}</strong>
                 <span>
                   <FormattedMessage id={`conversations.channel.${row.channel}`} />
                   {' · '}
@@ -336,11 +349,11 @@ export function ConversationsCenter({
                 </span>
                 <span>{row.lastMessage?.preview ?? ''}</span>
                 <span>{when(row.lastMessageAt)}</span>
-                <span>
+                <span className="inbox__tags">
                   {row.tags.map((tag) => (
-                    <span key={tag} className="inbox__tag">
+                    <Badge key={tag} outline>
                       {tag}
-                    </span>
+                    </Badge>
                   ))}
                 </span>
                 <span>
@@ -365,12 +378,17 @@ export function ConversationsCenter({
         </ul>
         <div className="inbox__detail">
           {detail === undefined || conversation === undefined ? (
-            <p>
+            <p className="mo-lead inbox__select">
               <FormattedMessage id="conversations.select" />
             </p>
           ) : (
-            <article aria-label={who({ ...conversation, contact: detail.contact })}>
-              <h2>{who({ ...conversation, contact: detail.contact })}</h2>
+            <article
+              className="mo-panel inbox__conversation"
+              aria-label={who({ ...conversation, contact: detail.contact })}
+            >
+              <h2 className="mo-section-title">
+                {who({ ...conversation, contact: detail.contact })}
+              </h2>
               <dl className="inbox__contact">
                 <dt>
                   <FormattedMessage id="conversations.contact.channel" />
@@ -449,12 +467,16 @@ export function ConversationsCenter({
                 {canManage &&
                 (controlOf(conversation).aiState === 'active' ||
                   controlOf(conversation).aiState === 'escalated') ? (
-                  <Button onClick={() => void act((id) => client.takeOver(id))}>
+                  <Button size="sm" onClick={() => void act((id) => client.takeOver(id))}>
                     <FormattedMessage id="conversations.control.takeOver" />
                   </Button>
                 ) : null}
                 {canManage && controlOf(conversation).aiState === 'paused' ? (
-                  <Button variant="secondary" onClick={() => void act((id) => client.handBack(id))}>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => void act((id) => client.handBack(id))}
+                  >
                     <FormattedMessage id="conversations.control.handBack" />
                   </Button>
                 ) : null}
@@ -468,6 +490,7 @@ export function ConversationsCenter({
                     </span>
                     {MOVES[conversation.status].map((to) => (
                       <Button
+                        size="sm"
                         key={to}
                         variant="secondary"
                         onClick={() => void act((id) => client.setStatus(id, to))}
@@ -475,7 +498,7 @@ export function ConversationsCenter({
                         <FormattedMessage id={`conversations.move.${to}`} />
                       </Button>
                     ))}
-                    <label>
+                    <label className="inbox__field">
                       <FormattedMessage id="conversations.priority.label" />
                       <select
                         value={conversation.priority}
@@ -507,6 +530,7 @@ export function ConversationsCenter({
                     </span>
                     {conversation.assigneeId === currentUserId ? null : (
                       <Button
+                        size="sm"
                         variant="secondary"
                         onClick={() =>
                           void act((id) => client.assign(id, { assigneeId: currentUserId }))
@@ -517,13 +541,14 @@ export function ConversationsCenter({
                     )}
                     {conversation.assigneeId === null ? null : (
                       <Button
+                        size="sm"
                         variant="secondary"
                         onClick={() => void act((id) => client.assign(id, { assigneeId: null }))}
                       >
                         <FormattedMessage id="conversations.assign.clear" />
                       </Button>
                     )}
-                    <label>
+                    <label className="inbox__field">
                       <FormattedMessage id="conversations.department.label" />
                       <select
                         value={conversation.departmentId ?? ''}
@@ -551,6 +576,7 @@ export function ConversationsCenter({
                     </span>
                     {conversation.tags.map((tag) => (
                       <Button
+                        size="sm"
                         key={tag}
                         variant="secondary"
                         aria-label={`${intl.formatMessage({ id: 'conversations.tags.remove' })}: ${tag}`}
@@ -560,6 +586,7 @@ export function ConversationsCenter({
                       </Button>
                     ))}
                     <form
+                      className="inbox__tag-form"
                       onSubmit={(event) => {
                         event.preventDefault();
                         const tag = newTag.trim().toLowerCase();
@@ -577,7 +604,7 @@ export function ConversationsCenter({
                         maxLength={32}
                         onChange={(event) => setNewTag(event.target.value)}
                       />
-                      <Button type="submit" variant="secondary">
+                      <Button size="sm" type="submit" variant="secondary">
                         <FormattedMessage id="conversations.tags.add" />
                       </Button>
                     </form>
@@ -649,10 +676,18 @@ export function ConversationsCenter({
                           aria-label={intl.formatMessage({ id: 'conversations.approval.pending' })}
                         >
                           <FormattedMessage id="conversations.approval.pending" />{' '}
-                          <Button variant="primary" onClick={() => void decide('approve')()}>
+                          <Button
+                            size="sm"
+                            variant="primary"
+                            onClick={() => void decide('approve')()}
+                          >
                             <FormattedMessage id="conversations.approval.approve" />
                           </Button>{' '}
-                          <Button variant="secondary" onClick={() => void decide('reject')()}>
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => void decide('reject')()}
+                          >
                             <FormattedMessage id="conversations.approval.reject" />
                           </Button>
                         </div>
@@ -735,9 +770,9 @@ function CommercialPanel({
   if (load.status === 'loading') return null;
   if (load.status === 'error') {
     return (
-      <p className="panel__empty">
+      <StateMessage kind="empty" inline>
         <FormattedMessage id="contact.summary.unavailable" />
-      </p>
+      </StateMessage>
     );
   }
   return <CommercialSummary detail={load.value} today={today} />;
