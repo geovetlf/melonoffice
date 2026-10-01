@@ -2650,13 +2650,13 @@ a.sidebar__item:hover {
     flex-direction: column;
     min-height: 0;
     max-width: none;
-    padding: var(--mo-space-2) 1.25rem var(--mo-space-3);
+    padding: var(--mo-space-1) 1.25rem var(--mo-space-3);
   }
 
   .app--scene .topbar {
     position: relative;
     gap: var(--mo-space-3);
-    padding: 6px 1.25rem;
+    padding: var(--mo-space-1) 1.25rem;
     border-bottom: 0;
     background: none;
     backdrop-filter: none;

@@ -2860,21 +2860,21 @@
   }
 }
 
-/* A computer: the office no wider than 92rem, the heading and the strip at its width. */
+/*
+ * A computer (Home V7): the office is the screen. Its frame takes all the height the command box
+ * and the strip leave (never wider than 92rem), and the heading is a glass caption on the frame's
+ * ceiling, in the same cell, not a row of its own. GIA's box and the day's strip run the whole
+ * width of the page, so nothing shrinks the page into a narrow column.
+ */
 @media (min-width: 64rem) and (min-height: 34rem) {
   .home4__office .stage__frame {
     width: min(100cqw, 100cqh * var(--frame-shape), 92rem);
     height: min(100cqh, 100cqw / var(--frame-shape), 92rem / var(--frame-shape));
   }
 
-  /*
-   * The heading, GIA's box and the strip line up with the office: as wide as its frame really is
-   * (`--stage-width`, measured by the Home), never narrower than 48rem nor wider than the page.
-   */
-  .home4__header,
   .home4__command,
   .home4__side {
-    width: min(100%, max(var(--stage-width, 92rem), 48rem));
+    width: min(100%, 92rem);
     margin-inline: auto;
   }
 
@@ -2883,12 +2883,125 @@
   }
 }
 
+@media (min-width: 64rem) and (min-height: 34rem) and (min-aspect-ratio: 1/1) {
+  .home4 {
+    grid-template-rows: minmax(0, 1fr) auto auto;
+    gap: var(--mo-space-2);
+  }
+
+  /* The caption: over the frame's top left corner, the ceiling, clear of the glass wall. */
+  .home4__header,
+  .home4__office {
+    grid-row: 1;
+    grid-column: 1;
+  }
+
+  .home4__header {
+    z-index: 1;
+    align-self: start;
+    justify-self: center;
+    width: var(--stage-width, 100%);
+    max-width: 100%;
+    margin-top: var(--stage-top, 0);
+    padding: var(--mo-space-3) var(--mo-space-4);
+    pointer-events: none;
+  }
+
+  /* No wider than the ceiling left of the glass wall (`WALL_PANELS`): 27% of the frame. */
+  .home4__heading {
+    display: inline-grid;
+    gap: 2px;
+    max-width: calc(var(--stage-width, 100%) * 0.27 - var(--mo-space-4));
+    padding: var(--mo-space-2) var(--mo-space-3);
+    border: 1px solid color-mix(in srgb, var(--mo-color-scene-circuit) 30%, transparent);
+    border-radius: var(--mo-radius-lg);
+    background: color-mix(in srgb, var(--mo-color-scene-screen-deep) 62%, transparent);
+    box-shadow: var(--mo-shadow-md);
+    color: var(--mo-color-text-on-accent);
+    backdrop-filter: blur(12px) saturate(1.2);
+  }
+
+  .home4__title {
+    font-size: var(--mo-font-size-lg);
+  }
+
+  .home4__context {
+    color: color-mix(in srgb, var(--mo-color-text-on-accent) 78%, transparent);
+    font-size: var(--mo-font-size-xs);
+  }
+
+  /*
+   * The day's strip, two lines a card: its title with its way in (or the activity's period) on
+   * the first, its one figure or latest entry on the second.
+   */
+  .home4__side .panel,
+  .home4__side .panel--lead,
+  .home4__side .panel--quiet {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-content: start;
+    gap: 4px var(--mo-space-2);
+    padding: var(--mo-space-2) var(--mo-space-3);
+  }
+
+  .home4__side .panel > * {
+    grid-column: 1 / -1;
+  }
+
+  .home4__side .panel > .panel__header {
+    grid-row: 1;
+    grid-column: 1;
+  }
+
+  .home4__side .panel > .period-picker,
+  .home4__side .panel > .panel__link {
+    grid-row: 1;
+    grid-column: 2;
+    align-self: center;
+    margin: 0;
+  }
+
+  .home4__side .panel--lead > .panel__link {
+    grid-row: 2;
+  }
+
+  .home4__side .panel--lead > :not(.panel__header, .period-picker, .panel__link) {
+    grid-column: 1;
+  }
+
+  .home4__side .task__meta {
+    display: none;
+  }
+}
+
+/* A narrow card: the activity's period under its title, its latest entry under that. */
+@container (max-width: 20rem) {
+  .home4__side .panel > .period-picker {
+    grid-row: 2;
+    grid-column: 1 / -1;
+  }
+
+  .home4__side .panel--lead > .panel__link {
+    grid-row: 3;
+  }
+}
+
+@media (min-width: 64rem) and (min-height: 34rem) and (min-aspect-ratio: 1/1) {
+  .home4__side .credits {
+    gap: 0 var(--mo-space-2);
+  }
+
+  .home4__side .credits__number {
+    font-size: var(--mo-font-size-xl);
+  }
+}
+
 /*
  * A tablet: the frame takes the office's row whole and is narrower than the picture, which pans
  * (the side desks show at its edges, and the keyboard brings them in), so the office is never a
  * thin strip between empty bands. GIA stays in the middle.
  */
-@media (min-width: 48rem) and (max-width: 63.99rem) and (min-height: 34rem) and (max-aspect-ratio: 4/5) {
+@media (min-width: 48rem) and (min-height: 34rem) and (max-aspect-ratio: 4/5) {
   /*
    * A tablet held upright: the office as wide as the screen and a little cropped at its sides,
    * deliberately, to 1.75 : 1 (every person at every desk still shows, and the edge of each outer
@@ -2934,7 +3047,8 @@
 }
 
 /* A tablet held upright: the suggestions under the box, the strip two by two. */
-@media (max-width: 63.99rem) and (min-height: 34rem) and (orientation: portrait) {
+@media (max-width: 63.99rem) and (min-height: 34rem) and (orientation: portrait),
+  (min-width: 48rem) and (min-height: 34rem) and (max-aspect-ratio: 4/5) {
   .gia-command {
     flex-direction: column;
     align-items: stretch;
