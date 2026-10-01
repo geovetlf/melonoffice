@@ -7,6 +7,14 @@ test('the public page renders and switches between English and Spanish', async (
     if (message.type() === 'error') problems.push(message.text());
   });
 
+  // The page asks the API for this host's brand (ADR-0087) as it loads: wait for that answer, so a
+  // refused cross-origin call is reported here instead of arriving after the test ends.
+  const isBrand = (request: { url(): string }) => request.url().includes('/v1/public/brand');
+  const settled = { predicate: isBrand, timeout: 15_000 };
+  const brand = Promise.race([
+    page.waitForEvent('requestfinished', settled).catch(() => undefined),
+    page.waitForEvent('requestfailed', settled).catch(() => undefined),
+  ]);
   await page.goto('/');
 
   // React rendered the app into #root.
@@ -23,6 +31,7 @@ test('the public page renders and switches between English and Spanish', async (
     'true',
   );
 
+  await brand;
   expect(problems).toEqual([]);
 });
 
