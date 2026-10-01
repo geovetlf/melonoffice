@@ -146,11 +146,20 @@ jobs:
               --image "${registry}/${app}:${IMAGE_TAG}" --quiet
           done
 
+      # Sign-in and the API's CORS (WEB_ORIGINS) accept only the web app's project-number URL
+      # (https://web-<project number>.<region>.run.app), not the older hashed one in status.url;
+      # the web check and the browser smoke test use it whenever Cloud Run lists it.
       - name: Read service URLs
         id: urls
         run: |
           for app in web api worker; do
-            url="$(gcloud run services describe "$app" --project "$PROJECT_ID" --region "$REGION" --format='value(status.url)')"
+            service="$(gcloud run services describe "$app" --project "$PROJECT_ID" --region "$REGION" --format=json)"
+            url="$(echo "$service" | jq -r '.status.url')"
+            if [ "$app" = web ]; then
+              numbered="$(echo "$service" | jq -r --arg region "$REGION" \
+                '.metadata.annotations["run.googleapis.com/urls"] // "[]" | fromjson | map(select(test("^https://web-[0-9]+\\." + $region + "\\.run\\.app$"))) | first // empty')"
+              url="${numbered:-$url}"
+            fi
             echo "${app}=${url}" >> "$GITHUB_OUTPUT"
             echo "${app}: ${url}"
           done
