@@ -250,7 +250,7 @@
 .mo-button[aria-pressed='true']:hover:not(:disabled) {
   border-color: var(--mo-color-accent);
   background: var(--mo-color-accent-soft);
-  color: var(--mo-color-accent);
+  color: var(--mo-color-accent-strong);
   box-shadow: none;
 }
 
@@ -295,7 +295,7 @@
 .mo-chip[aria-current='true'] {
   border-color: var(--mo-color-accent);
   background: var(--mo-color-accent-soft);
-  color: var(--mo-color-accent);
+  color: var(--mo-color-accent-strong);
 }
 
 .mo-chip:disabled {
@@ -394,7 +394,7 @@
 
 .mo-badge--accent {
   background: var(--mo-color-accent-soft);
-  color: var(--mo-color-accent);
+  color: var(--mo-color-accent-strong);
 }
 
 .mo-badge--success {

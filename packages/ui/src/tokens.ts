@@ -62,6 +62,12 @@ export const color = {
   accent: palette.melon700,
   accentHover: 'color-mix(in srgb, var(--mo-color-accent) 84%, #000000)',
   accentSoft: 'color-mix(in srgb, var(--mo-color-accent) 12%, transparent)',
+  /**
+   * The accent as text on its soft tint: a selected chip, segment or tab, the current page in the
+   * sidebar, an accent badge. The plain accent reads at 4.3:1 there; this keeps 4.5:1 for any
+   * white-label colour that passes on white (tested).
+   */
+  accentStrong: 'color-mix(in srgb, var(--mo-color-accent) 80%, #000000)',
   accentExpressive: palette.melon400,
   highlight: palette.amber400,
   focusRing: palette.melon700,

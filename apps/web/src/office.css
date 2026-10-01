@@ -114,7 +114,7 @@ a.sidebar__item:hover {
 
 .sidebar__item[aria-current='page'] {
   background: var(--mo-color-accent-soft);
-  color: var(--mo-color-accent);
+  color: var(--mo-color-accent-strong);
   box-shadow: inset 3px 0 0 var(--mo-color-accent);
 }
 

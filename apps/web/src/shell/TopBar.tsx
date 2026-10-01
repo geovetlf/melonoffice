@@ -198,7 +198,8 @@ export function GlobalSearch() {
         }}
         placeholder={intl.formatMessage({ id: 'search.placeholder' })}
         aria-label={intl.formatMessage({ id: 'search.placeholder' })}
-        aria-controls={listId}
+        // It controls the results only while they are shown; a reference to nothing is invalid.
+        aria-controls={query.trim() === '' ? undefined : listId}
         autoComplete="off"
       />
       {query.trim() === '' ? null : (
