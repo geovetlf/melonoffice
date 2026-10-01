@@ -1,5 +1,5 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
-import { Button } from '@melonoffice/ui';
+import { Button, StateMessage } from '@melonoffice/ui';
 import { useEffect, useState, type FormEvent } from 'react';
 import {
   ConnectionsError,
@@ -96,19 +96,19 @@ export function TemplatesPanel({
 
   const titleId = `templates-${connectionId}`;
   return (
-    <section className="connection-card__templates" aria-labelledby={titleId}>
-      <h3 id={titleId}>
+    <section className="mo-page-section connections-page__wide" aria-labelledby={titleId}>
+      <h2 id={titleId} className="mo-subsection-title">
         <FormattedMessage id="connections.templates.title" />
-      </h3>
-      <p className="customers__meta">
+      </h2>
+      <p className="mo-lead">
         <FormattedMessage id="connections.templates.intro" />
       </p>
       {templates === undefined ? (
-        <p className="notice" role="status">
+        <StateMessage kind="loading" inline>
           <FormattedMessage id="connections.loading" />
-        </p>
+        </StateMessage>
       ) : templates === 'error' ? (
-        <p className="notice" role="alert">
+        <StateMessage kind="error">
           <FormattedMessage
             id={
               notConfigured
@@ -116,22 +116,22 @@ export function TemplatesPanel({
                 : 'connections.templates.error.generic'
             }
           />
-        </p>
+        </StateMessage>
       ) : (
         <>
           {templates.length === 0 ? (
-            <p className="notice">
+            <StateMessage kind="empty" inline>
               <FormattedMessage id="connections.templates.none" />
-            </p>
+            </StateMessage>
           ) : (
-            <ul className="documents__list">
+            <ul className="mo-list">
               {templates.map((t) => (
-                <li key={t.id} className="approval-card">
-                  <div className="documents__main">
-                    <strong>
+                <li key={t.id} className="mo-list-item">
+                  <div className="mo-list-item__main">
+                    <span className="mo-list-item__title">
                       {t.name} · {t.language}
-                    </strong>
-                    <span className="documents__meta">
+                    </span>
+                    <span className="mo-list-item__meta">
                       <FormattedMessage id={`connections.templates.status.${t.status}`} />
                       {t.category === null ? null : ` · ${t.category}`}
                       {t.statusReason === null
@@ -148,7 +148,7 @@ export function TemplatesPanel({
                           }`}
                     </span>
                     {t.spec === null ? null : (
-                      <span className="documents__meta">
+                      <span className="mo-list-item__meta">
                         <FormattedMessage
                           id="connections.templates.needs"
                           values={{
@@ -166,8 +166,9 @@ export function TemplatesPanel({
                     )}
                   </div>
                   {canUpdate ? (
-                    <div className="customers__actions">
+                    <div className="mo-list-item__actions">
                       <Button
+                        size="sm"
                         variant="secondary"
                         disabled={busy !== undefined}
                         onClick={() =>
@@ -178,6 +179,7 @@ export function TemplatesPanel({
                       </Button>
                       {t.status === 'disabled' ? null : (
                         <Button
+                          size="sm"
                           variant="secondary"
                           disabled={busy !== undefined}
                           onClick={() =>
@@ -196,9 +198,9 @@ export function TemplatesPanel({
             </ul>
           )}
           {canUpdate ? (
-            <form className="connections__form" onSubmit={(e) => void register(e)}>
-              <label className="documents__picker">
-                <span>
+            <form className="mo-form" onSubmit={(e) => void register(e)}>
+              <label className="mo-field">
+                <span className="mo-label">
                   <FormattedMessage id="connections.templates.name" />
                 </span>
                 <input
@@ -210,8 +212,8 @@ export function TemplatesPanel({
                   spellCheck={false}
                 />
               </label>
-              <label className="documents__picker">
-                <span>
+              <label className="mo-field">
+                <span className="mo-label">
                   <FormattedMessage id="connections.templates.language" />
                 </span>
                 <input
@@ -222,7 +224,7 @@ export function TemplatesPanel({
                   spellCheck={false}
                 />
               </label>
-              <div className="customers__actions">
+              <div className="mo-form__actions">
                 <Button type="submit" disabled={name.trim() === '' || busy !== undefined}>
                   <FormattedMessage
                     id={
@@ -238,9 +240,9 @@ export function TemplatesPanel({
         </>
       )}
       {error === undefined ? null : (
-        <p className="notice notice--danger" role="alert">
+        <StateMessage kind="error">
           <FormattedMessage id={error} />
-        </p>
+        </StateMessage>
       )}
     </section>
   );

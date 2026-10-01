@@ -1,5 +1,5 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
-import { Button } from '@melonoffice/ui';
+import { Badge, Button, StateMessage } from '@melonoffice/ui';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { navigate } from '../identity/router.js';
 import { LoadMore, usePagedRead, type PagedRead } from '../lists/usePagedRead.js';
@@ -99,102 +99,121 @@ function FollowUpItem({
   }
   return (
     <li
-      className={`follow-ups__item follow-ups__item--${item.when}${highlighted ? ' follow-ups__item--open' : ''}`}
+      className={`mo-list-item follow-ups__item follow-ups__item--${item.when}${highlighted ? ' follow-ups__item--open' : ''}`}
       aria-label={item.title}
       aria-current={highlighted ? 'true' : undefined}
     >
-      <p>
-        <strong>{item.title}</strong> · <FormattedMessage id={`followUps.type.${item.type}`} />
-      </p>
-      <span className="customers__meta">
-        {item.date} {item.time} · <FormattedMessage id={`followUps.status.${item.status}`} />
-        {open && item.when === 'overdue' ? (
-          <>
-            {' · '}
-            <FormattedMessage id="followUps.when.overdue" />
-          </>
-        ) : null}
-        {item.contactName === undefined || item.contactName === null ? null : (
-          <>
-            {' · '}
-            <a
-              className="customers__link"
-              href={paths.customer(item.contactId)}
-              onClick={(event) => {
-                event.preventDefault();
-                navigate(paths.customer(item.contactId));
-              }}
-            >
-              {item.contactName}
-            </a>
-          </>
-        )}
-        {item.assignee === null ? null : (
-          <>
-            {' · '}
-            <FormattedMessage id={`followUps.assignee.${item.assignee}`} />
-          </>
-        )}
-        {item.source === 'gia' || item.source === 'agent' ? (
-          <>
-            {' · '}
-            <FormattedMessage id={`followUps.source.${item.source}`} />
-          </>
-        ) : null}
-      </span>
-      {item.status === 'failed' ? (
-        <p className="customers__next customers__next--late">
-          <FormattedMessage id="followUps.failed" />
+      <div className="mo-list-item__main">
+        <p className="mo-list-item__title">
+          {item.title}{' '}
+          <span className="follow-ups__type">
+            · <FormattedMessage id={`followUps.type.${item.type}`} />
+          </span>
         </p>
-      ) : null}
-      {canManage ? (
-        <div className="customers__actions">
-          {open ? (
+        <p className="mo-list-item__meta">
+          {item.date} {item.time} · <FormattedMessage id={`followUps.status.${item.status}`} />
+          {open && item.when === 'overdue' ? (
             <>
-              <Button
-                variant="secondary"
-                disabled={pending}
-                onClick={() => void act(() => client.complete(item.id, item.revision))}
-              >
-                <FormattedMessage id="followUps.complete" />
-              </Button>
-              <Button variant="secondary" disabled={pending} onClick={() => setMoving(!moving)}>
-                <FormattedMessage id="followUps.reschedule" />
-              </Button>
-              <Button
-                variant="secondary"
-                disabled={pending}
-                onClick={() => void act(() => client.cancel(item.id, item.revision))}
-              >
-                <FormattedMessage id="followUps.cancel" />
-              </Button>
+              {' · '}
+              <FormattedMessage id="followUps.when.overdue" />
             </>
-          ) : (
-            <Button variant="secondary" disabled={pending} onClick={() => setMoving(!moving)}>
-              <FormattedMessage id="followUps.reopen" />
-            </Button>
+          ) : null}
+          {item.contactName === undefined || item.contactName === null ? null : (
+            <>
+              {' · '}
+              <a
+                className="mo-link"
+                href={paths.customer(item.contactId)}
+                onClick={(event) => {
+                  event.preventDefault();
+                  navigate(paths.customer(item.contactId));
+                }}
+              >
+                {item.contactName}
+              </a>
+            </>
           )}
-        </div>
-      ) : null}
-      {moving ? (
-        <form
-          className="customers__next-edit"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void act(() => client.reschedule(item.id, { revision: item.revision, date, time }));
-          }}
-        >
-          <DateTimeFields date={date} time={time} onDate={setDate} onTime={setTime} />
-          <Button type="submit" disabled={pending || date === '' || time === ''}>
-            <FormattedMessage id="followUps.saveTime" />
-          </Button>
-        </form>
-      ) : null}
-      {error === undefined ? null : (
-        <p className="gia-chat__error" role="alert">
-          <FormattedMessage id={error} />
+          {item.assignee === null ? null : (
+            <>
+              {' · '}
+              <FormattedMessage id={`followUps.assignee.${item.assignee}`} />
+            </>
+          )}
+          {item.source === 'gia' || item.source === 'agent' ? (
+            <>
+              {' · '}
+              <FormattedMessage id={`followUps.source.${item.source}`} />
+            </>
+          ) : null}
         </p>
-      )}
+        {item.status === 'failed' ? (
+          <StateMessage kind="warning" inline>
+            <FormattedMessage id="followUps.failed" />
+          </StateMessage>
+        ) : null}
+        {canManage ? (
+          <div className="mo-list-item__actions">
+            {open ? (
+              <>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={pending}
+                  onClick={() => void act(() => client.complete(item.id, item.revision))}
+                >
+                  <FormattedMessage id="followUps.complete" />
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={pending}
+                  onClick={() => setMoving(!moving)}
+                >
+                  <FormattedMessage id="followUps.reschedule" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={pending}
+                  onClick={() => void act(() => client.cancel(item.id, item.revision))}
+                >
+                  <FormattedMessage id="followUps.cancel" />
+                </Button>
+              </>
+            ) : (
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={pending}
+                onClick={() => setMoving(!moving)}
+              >
+                <FormattedMessage id="followUps.reopen" />
+              </Button>
+            )}
+          </div>
+        ) : null}
+        {moving ? (
+          <form
+            className="mo-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void act(() => client.reschedule(item.id, { revision: item.revision, date, time }));
+            }}
+          >
+            <DateTimeFields date={date} time={time} onDate={setDate} onTime={setTime} />
+            <div className="mo-form__actions">
+              <Button size="sm" type="submit" disabled={pending || date === '' || time === ''}>
+                <FormattedMessage id="followUps.saveTime" />
+              </Button>
+            </div>
+          </form>
+        ) : null}
+        {error === undefined ? null : (
+          <StateMessage kind="error" inline>
+            <FormattedMessage id={error} />
+          </StateMessage>
+        )}
+      </div>
     </li>
   );
 }
@@ -211,28 +230,20 @@ function DateTimeFields({
   readonly onTime: (value: string) => void;
 }) {
   return (
-    <>
-      <label>
-        <FormattedMessage id="followUps.field.date" />
-        <input
-          className="gia-chat__input"
-          type="date"
-          required
-          value={date}
-          onChange={(e) => onDate(e.target.value)}
-        />
+    <div className="follow-ups__when">
+      <label className="mo-field">
+        <span className="mo-label">
+          <FormattedMessage id="followUps.field.date" />
+        </span>
+        <input type="date" required value={date} onChange={(e) => onDate(e.target.value)} />
       </label>
-      <label>
-        <FormattedMessage id="followUps.field.time" />
-        <input
-          className="gia-chat__input"
-          type="time"
-          required
-          value={time}
-          onChange={(e) => onTime(e.target.value)}
-        />
+      <label className="mo-field">
+        <span className="mo-label">
+          <FormattedMessage id="followUps.field.time" />
+        </span>
+        <input type="time" required value={time} onChange={(e) => onTime(e.target.value)} />
       </label>
-    </>
+    </div>
   );
 }
 
@@ -293,14 +304,12 @@ export function FollowUpForm({
     }
   }
   return (
-    <form className="customers__next-edit follow-ups__form" onSubmit={submit}>
-      <label>
-        <FormattedMessage id="followUps.field.type" />
-        <select
-          className="gia-chat__input"
-          value={type}
-          onChange={(e) => setType(e.target.value as FollowUpType)}
-        >
+    <form className="mo-form follow-ups__form" onSubmit={submit}>
+      <label className="mo-field">
+        <span className="mo-label">
+          <FormattedMessage id="followUps.field.type" />
+        </span>
+        <select value={type} onChange={(e) => setType(e.target.value as FollowUpType)}>
           {FOLLOW_UP_TYPES.map((t) => (
             <option key={t} value={t}>
               {intl.formatMessage({ id: `followUps.type.${t}` })}
@@ -308,37 +317,33 @@ export function FollowUpForm({
           ))}
         </select>
       </label>
-      <label>
-        <FormattedMessage id="followUps.field.title" />
-        <input
-          className="gia-chat__input"
-          value={title}
-          maxLength={120}
-          required
-          onChange={(e) => setTitle(e.target.value)}
-        />
+      <label className="mo-field">
+        <span className="mo-label">
+          <FormattedMessage id="followUps.field.title" />
+        </span>
+        <input value={title} maxLength={120} required onChange={(e) => setTitle(e.target.value)} />
       </label>
       <DateTimeFields date={date} time={time} onDate={setDate} onTime={setTime} />
       {time === '' ? (
-        <p className="customers__meta">
+        <p className="mo-hint">
           <FormattedMessage id="followUps.askTime" />
         </p>
       ) : null}
-      <div className="customers__actions">
+      <div className="mo-form__actions">
         <Button
           type="submit"
           disabled={pending || title.trim() === '' || date === '' || time === ''}
         >
           <FormattedMessage id={source === 'gia' ? 'followUps.confirm' : 'followUps.schedule'} />
         </Button>
-        <Button variant="secondary" disabled={pending} onClick={() => onDone(undefined)}>
+        <Button variant="ghost" disabled={pending} onClick={() => onDone(undefined)}>
           <FormattedMessage id="followUps.discard" />
         </Button>
       </div>
       {error === undefined ? null : (
-        <p className="gia-chat__error" role="alert">
+        <StateMessage kind="error" inline>
           <FormattedMessage id={error} />
-        </p>
+        </StateMessage>
       )}
     </form>
   );
@@ -372,24 +377,27 @@ export function RecordFollowUps({
   };
   const heading = opportunityId === undefined ? 'followUps.contact' : 'followUps.opportunity';
   return (
-    <section aria-labelledby={`follow-ups-${opportunityId ?? contactId}`}>
-      <h4 id={`follow-ups-${opportunityId ?? contactId}`}>
+    <section
+      className="follow-ups-record"
+      aria-labelledby={`follow-ups-${opportunityId ?? contactId}`}
+    >
+      <h4 id={`follow-ups-${opportunityId ?? contactId}`} className="mo-subsection-title">
         <FormattedMessage id={heading} />
       </h4>
       {list.status === 'loading' ? (
-        <p className="panel__empty" role="status">
+        <StateMessage kind="loading" inline>
           <FormattedMessage id="followUps.loading" />
-        </p>
+        </StateMessage>
       ) : list.status === 'error' ? (
-        <p className="panel__empty">
+        <StateMessage kind="warning" inline>
           <FormattedMessage id="followUps.error.load" />
-        </p>
+        </StateMessage>
       ) : list.value.items.length === 0 ? (
-        <p className="panel__empty">
+        <StateMessage kind="empty" inline>
           <FormattedMessage id="followUps.none" />
-        </p>
+        </StateMessage>
       ) : (
-        <ul className="customers__notes follow-ups">
+        <ul className="mo-list follow-ups">
           {(opportunityId === undefined ? list.value.items : list.value.items.slice(0, 1)).map(
             (item) => (
               <FollowUpItem
@@ -416,7 +424,7 @@ export function RecordFollowUps({
             }}
           />
         ) : (
-          <Button variant="secondary" onClick={() => setAdding(true)}>
+          <Button variant="secondary" size="sm" onClick={() => setAdding(true)}>
             <FormattedMessage id="followUps.add" />
           </Button>
         )
@@ -451,19 +459,22 @@ export function FollowUpsSection({
     'later',
   ];
   return (
-    <section className="dept-office__section follow-ups-section" aria-labelledby="follow-ups-title">
-      <div className="customers__header">
-        <h2 id="follow-ups-title">
+    <section
+      className="mo-panel mo-page-section follow-ups-section"
+      aria-labelledby="follow-ups-title"
+    >
+      <div className="mo-page-section__header">
+        <h2 id="follow-ups-title" className="mo-section-title">
           <FormattedMessage id="followUps.title" />
         </h2>
-        <div className="customers__tabs" role="tablist">
+        <div className="mo-chips" role="tablist">
           {[false, true].map((value) => (
             <button
               key={String(value)}
               type="button"
               role="tab"
               aria-selected={mine === value}
-              className="mo-chip customers__tab"
+              className="mo-chip"
               onClick={() => setMine(value)}
             >
               <FormattedMessage id={value ? 'followUps.mine' : 'followUps.all'} />
@@ -472,17 +483,17 @@ export function FollowUpsSection({
         </div>
       </div>
       {list.status === 'loading' ? (
-        <p className="panel__empty" role="status">
+        <StateMessage kind="loading">
           <FormattedMessage id="followUps.loading" />
-        </p>
+        </StateMessage>
       ) : list.status === 'error' ? (
-        <p className="gia-chat__error" role="alert">
+        <StateMessage kind="error">
           <FormattedMessage id="followUps.error.load" />
-        </p>
+        </StateMessage>
       ) : list.value.items.length === 0 ? (
-        <p className="panel__empty">
+        <StateMessage kind="empty">
           <FormattedMessage id="followUps.empty" />
-        </p>
+        </StateMessage>
       ) : (
         groups.map((when) => {
           const items = list.value.items.filter((i) => i.when === when);
@@ -494,12 +505,11 @@ export function FollowUpsSection({
               ? Math.max(0, counts.open - counts.overdue - counts.today - counts.upcoming)
               : counts[when];
           return (
-            <div key={when}>
-              <h3>
-                <FormattedMessage id={`followUps.group.${when}`} />{' '}
-                <span className="customers__count">{all}</span>
+            <div key={when} className="follow-ups__group">
+              <h3 className="mo-subsection-title">
+                <FormattedMessage id={`followUps.group.${when}`} /> <Badge>{all}</Badge>
               </h3>
-              <ul className="customers__notes follow-ups">
+              <ul className="mo-list follow-ups">
                 {items.map((item) => (
                   <FollowUpItem
                     key={item.id}

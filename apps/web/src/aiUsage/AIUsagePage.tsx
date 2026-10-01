@@ -1,3 +1,4 @@
+import { DataTable, PageHeader, PeriodPicker, StateMessage, Toolbar } from '@melonoffice/ui';
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
 import { useEffect, useState } from 'react';
 import { readyList, useOfficeData } from '../office/OfficeData.js';
@@ -97,45 +98,35 @@ export function AIUsagePage({
   const load: Load<UsageSummary> = summary?.key === period ? summary.load : { status: 'loading' };
 
   return (
-    <article className="dept-office ai-usage">
-      <h1 className="dept-office__title">
-        <FormattedMessage id="aiUsage.title" />
-      </h1>
-      <p className="ai-usage__lead">
-        <FormattedMessage id="aiUsage.lead" />
-      </p>
-      <div
-        className="period-picker"
-        role="group"
-        aria-label={intl.formatMessage({ id: 'aiUsage.period' })}
-      >
-        {PERIODS.map((p) => (
-          <button
-            key={p}
-            type="button"
-            className="mo-chip period-picker__option"
-            aria-pressed={period === p}
-            onClick={() => {
-              setPeriod(p);
-              setFilter(undefined);
-            }}
-          >
-            <FormattedMessage id={`aiUsage.period.${p}`} />
-          </button>
-        ))}
-      </div>
+    <article className="mo-page ai-usage">
+      <PageHeader
+        title={<FormattedMessage id="aiUsage.title" />}
+        description={<FormattedMessage id="aiUsage.lead" />}
+      />
+      <Toolbar>
+        <PeriodPicker
+          label={intl.formatMessage({ id: 'aiUsage.period' })}
+          options={PERIODS}
+          value={period}
+          onChange={(p) => {
+            setPeriod(p);
+            setFilter(undefined);
+          }}
+          renderOption={(p) => <FormattedMessage id={`aiUsage.period.${p}`} />}
+        />
+      </Toolbar>
 
       {load.status === 'loading' ? (
-        <p className="panel__empty" role="status">
+        <StateMessage kind="loading">
           <FormattedMessage id="aiUsage.loading" />
-        </p>
+        </StateMessage>
       ) : load.status === 'error' ? (
-        <p className="panel__empty" role="alert">
+        <StateMessage kind="error">
           <FormattedMessage id="aiUsage.error" />
-        </p>
+        </StateMessage>
       ) : (
-        <>
-          <p className="ai-usage__range">
+        <div className="mo-panel mo-page-section">
+          <p className="mo-hint">
             <FormattedMessage
               id="aiUsage.range"
               values={{ from: load.value.from, to: load.value.to }}
@@ -143,9 +134,9 @@ export function AIUsagePage({
           </p>
           <Totals intl={intl} totals={load.value.totals} />
           {load.value.totals.operations === 0 ? (
-            <p className="panel__empty">
+            <StateMessage kind="empty">
               <FormattedMessage id="aiUsage.none" />
-            </p>
+            </StateMessage>
           ) : (
             <div className="ai-usage__breakdowns">
               {USAGE_DIMENSIONS.map((dimension) => (
@@ -167,15 +158,15 @@ export function AIUsagePage({
               ))}
             </div>
           )}
-        </>
+        </div>
       )}
 
-      <section className="dept-office__section" aria-labelledby="ai-usage-events">
-        <h2 id="ai-usage-events">
+      <section className="mo-panel mo-page-section" aria-labelledby="ai-usage-events">
+        <h2 id="ai-usage-events" className="mo-section-title">
           <FormattedMessage id="aiUsage.events.title" />
         </h2>
         {filter === undefined ? null : (
-          <p className="ai-usage__filter" role="status">
+          <p className="mo-toolbar" role="status">
             <FormattedMessage
               id="aiUsage.events.filtered"
               values={{
@@ -201,7 +192,7 @@ export function AIUsagePage({
         {nextCursor !== null && events.status === 'ready' ? (
           <button
             type="button"
-            className="mo-button mo-button--secondary"
+            className="mo-button mo-button--secondary mo-page-section__more"
             onClick={() => void more()}
           >
             <FormattedMessage id="aiUsage.events.more" />
@@ -215,14 +206,14 @@ export function AIUsagePage({
 /** Credits charged and how many operations they paid for. */
 function Totals({ intl, totals }: { readonly intl: IntlShape; readonly totals: UsageBucket }) {
   return (
-    <dl className="ai-usage__totals">
-      <div className="ai-usage__total">
+    <dl className="mo-stats">
+      <div className="mo-stat">
         <dt>
           <FormattedMessage id="aiUsage.credits" />
         </dt>
         <dd>{intl.formatNumber(totals.credits)}</dd>
       </div>
-      <div className="ai-usage__total">
+      <div className="mo-stat">
         <dt>
           <FormattedMessage id="aiUsage.operations" />
         </dt>
@@ -254,19 +245,19 @@ function Breakdown({
   const titleId = `ai-usage-by-${dimension}`;
   return (
     <section className="ai-usage__breakdown" aria-labelledby={titleId}>
-      <h2 id={titleId}>
+      <h2 id={titleId} className="mo-subsection-title">
         <FormattedMessage id={`aiUsage.by.${dimension}`} />
       </h2>
-      <table className="ai-usage__table">
+      <DataTable label={intl.formatMessage({ id: `aiUsage.by.${dimension}` })}>
         <thead>
           <tr>
             <th scope="col">
               <FormattedMessage id={`aiUsage.by.${dimension}`} />
             </th>
-            <th scope="col">
+            <th scope="col" className="mo-table__num">
               <FormattedMessage id="aiUsage.operations" />
             </th>
-            <th scope="col">
+            <th scope="col" className="mo-table__num">
               <FormattedMessage id="aiUsage.credits" />
             </th>
           </tr>
@@ -277,19 +268,19 @@ function Breakdown({
               <th scope="row">
                 <button
                   type="button"
-                  className="ai-usage__row"
+                  className="mo-link-button"
                   aria-pressed={selected === key}
                   onClick={() => onSelect(key)}
                 >
                   {name(key)}
                 </button>
               </th>
-              <td>{intl.formatNumber(bucket.operations)}</td>
-              <td>{intl.formatNumber(bucket.credits)}</td>
+              <td className="mo-table__num">{intl.formatNumber(bucket.operations)}</td>
+              <td className="mo-table__num">{intl.formatNumber(bucket.credits)}</td>
             </tr>
           ))}
         </tbody>
-      </table>
+      </DataTable>
     </section>
   );
 }
@@ -307,16 +298,16 @@ function Events({
 }) {
   if (load.status === 'loading') {
     return (
-      <p className="panel__empty" role="status">
+      <StateMessage kind="loading">
         <FormattedMessage id="aiUsage.loading" />
-      </p>
+      </StateMessage>
     );
   }
   if (load.status === 'error') {
     return (
-      <p className="panel__empty" role="alert">
+      <StateMessage kind="error">
         <FormattedMessage id="aiUsage.events.error" />
-      </p>
+      </StateMessage>
     );
   }
   const shown =
@@ -325,18 +316,18 @@ function Events({
       : load.value.filter((e) => eventKey(e, filter.dimension) === filter.key);
   if (shown.length === 0) {
     return (
-      <p className="panel__empty">
+      <StateMessage kind="empty">
         <FormattedMessage id="aiUsage.events.none" />
-      </p>
+      </StateMessage>
     );
   }
   return (
-    <ul className="ai-usage__events">
+    <ul className="mo-list">
       {shown.map((e) => {
         return (
-          <li key={e.id} className="ai-usage__event">
-            <span className="ai-usage__event-main">{name('capability', e.capability)}</span>
-            <span className="documents__meta">
+          <li key={e.id} className="mo-list-item">
+            <span className="mo-list-item__title">{name('capability', e.capability)}</span>
+            <span className="mo-list-item__meta">
               {intl.formatDate(new Date(e.occurredAt), {
                 dateStyle: 'medium',
                 timeStyle: 'short',
@@ -348,7 +339,7 @@ function Events({
                 ? ''
                 : ` · ${name('department', e.attribution.departmentId)}`}
             </span>
-            <span className="documents__meta">
+            <span className="mo-list-item__meta">
               <FormattedMessage id="aiUsage.credits" />: {intl.formatNumber(e.credits)}
               {e.outcome === 'failed' ? (
                 <>

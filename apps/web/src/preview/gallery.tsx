@@ -7,8 +7,14 @@ import {
   Avatar,
   Badge,
   Button,
+  DataTable,
+  FormSection,
+  ListItem,
+  PageHeader,
+  PeriodPicker,
   StateMessage,
   StatusDot,
+  Toolbar,
   type AgentState,
   type BadgeTone,
 } from '@melonoffice/ui';
@@ -17,7 +23,7 @@ import { createRoot } from 'react-dom/client';
 import { Icon } from '../office/icons.js';
 
 /**
- * Every component of packages/ui in every state it has (phase 3 of the Home redesign), for
+ * Every component of packages/ui in every state it has (phases 3 and 5 of the redesign), for
  * review and screenshots. Served by `vite` at `/components.html` only; the build ships none of it.
  * States a pointer causes (hover, pressed, focus) are captured by `scripts/capture-components.mjs`.
  */
@@ -49,6 +55,20 @@ function Section({ id, title, children }: { id: string; title: string; children:
       </header>
       {children}
     </section>
+  );
+}
+
+function PeriodDemo() {
+  const [period, setPeriod] = useState<'today' | 'week' | 'month'>('week');
+  const names = { today: 'Hoy', week: 'Esta semana', month: 'Este mes' } as const;
+  return (
+    <PeriodPicker
+      label="Periodo"
+      options={['today', 'week', 'month'] as const}
+      value={period}
+      onChange={setPeriod}
+      renderOption={(p) => names[p]}
+    />
   );
 }
 
@@ -319,6 +339,102 @@ function Gallery() {
               </div>
             </div>
           </aside>
+        </div>
+      </Section>
+
+      <Section id="pages" title="Páginas: cabecera, filtros, tabla, lista y formulario">
+        <div className="mo-page">
+          <PageHeader
+            eyebrow="Configuración"
+            title="Documentos"
+            description="Los archivos de tu organización que GIA y tus agentes pueden consultar."
+            actions={
+              <>
+                <Button variant="secondary">Exportar</Button>
+                <Button>Subir documento</Button>
+              </>
+            }
+          />
+          <Toolbar label="Filtros">
+            <label className="mo-search">
+              <Icon name="search" size={18} className="mo-search__icon" />
+              <input type="search" aria-label="Buscar documentos" placeholder="Buscar" />
+            </label>
+            <div className="mo-chips">
+              <button type="button" className="mo-chip" aria-pressed="true">
+                Todos
+              </button>
+              <button type="button" className="mo-chip" aria-pressed="false">
+                Pendientes
+              </button>
+              <button type="button" className="mo-chip" aria-pressed="false">
+                Listos
+              </button>
+            </div>
+            <PeriodDemo />
+          </Toolbar>
+          <ul className="mo-list">
+            <ListItem
+              title="menu-otoño.docx"
+              titleAs="h3"
+              meta="4 KB · subido hace 2 horas"
+              badges={<Badge tone="success">Listo</Badge>}
+              actions={
+                <Button variant="ghost" size="sm">
+                  Ver
+                </Button>
+              }
+            />
+            <ListItem
+              title="tarifas-2026.pdf"
+              titleAs="h3"
+              meta="120 KB · subido ayer"
+              badges={<Badge tone="warning">Procesando</Badge>}
+            />
+          </ul>
+          <DataTable label="Créditos por departamento">
+            <thead>
+              <tr>
+                <th scope="col">Departamento</th>
+                <th scope="col" className="mo-table__num">
+                  Operaciones
+                </th>
+                <th scope="col" className="mo-table__num">
+                  Créditos
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Comercial</td>
+                <td className="mo-table__num">42</td>
+                <td className="mo-table__num">18</td>
+              </tr>
+              <tr>
+                <td>Marketing</td>
+                <td className="mo-table__num">17</td>
+                <td className="mo-table__num">9</td>
+              </tr>
+            </tbody>
+          </DataTable>
+          <form className="mo-form" onSubmit={(event) => event.preventDefault()}>
+            <FormSection title="Tu negocio" description="Lo que GIA sabe de tu empresa.">
+              <label className="mo-field">
+                <span className="mo-label">Nombre del negocio</span>
+                <input defaultValue="Acme" />
+              </label>
+              <label className="mo-field">
+                <span className="mo-label">Sector</span>
+                <select defaultValue="food">
+                  <option value="food">Restauración</option>
+                </select>
+              </label>
+            </FormSection>
+            <div className="mo-form__actions">
+              <Button type="submit">Guardar</Button>
+              <Button variant="ghost">Cancelar</Button>
+            </div>
+          </form>
         </div>
       </Section>
 

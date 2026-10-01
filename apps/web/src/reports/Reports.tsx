@@ -1,4 +1,5 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
+import { PageHeader, PeriodPicker, StateMessage } from '@melonoffice/ui';
 import { useEffect, useState } from 'react';
 import { navigate } from '../identity/router.js';
 import { paths } from '../shell/routes.js';
@@ -81,43 +82,39 @@ export function ReportsSection({
       : [];
   if (department !== undefined && metrics.status === 'ready' && shown.length === 0) return null;
   return (
-    <section className="dept-office__section reports" aria-labelledby={titleId}>
-      <header className="reports__header">
-        <h2 id={titleId}>
+    <section className="mo-panel mo-page-section reports" aria-labelledby={titleId}>
+      <header className="mo-page-section__header">
+        <h2 id={titleId} className="mo-section-title">
           <FormattedMessage id="reports.title" />
         </h2>
-        <div className="period-picker" role="group" aria-labelledby={`${titleId}-per`}>
-          <span id={`${titleId}-per`} className="reports__per">
+        <div className="mo-toolbar">
+          <span id={`${titleId}-per`} className="mo-toolbar__label">
             <FormattedMessage id="reports.per" />
           </span>
-          {FREQUENCIES.map((f) => (
-            <button
-              key={f}
-              type="button"
-              className="mo-chip period-picker__option"
-              aria-pressed={f === frequency}
-              onClick={() => setFrequency(f)}
-            >
-              <FormattedMessage id={`reports.frequency.${f}`} />
-            </button>
-          ))}
+          <PeriodPicker
+            labelledBy={`${titleId}-per`}
+            options={FREQUENCIES}
+            value={frequency}
+            onChange={setFrequency}
+            renderOption={(f) => <FormattedMessage id={`reports.frequency.${f}`} />}
+          />
         </div>
       </header>
-      <p className="panel__empty">
+      <p className="mo-hint">
         <FormattedMessage id="reports.recordedOnly" />
       </p>
       {metrics.status === 'loading' ? (
-        <p className="panel__empty" role="status">
+        <StateMessage kind="loading">
           <FormattedMessage id="reports.loading" />
-        </p>
+        </StateMessage>
       ) : metrics.status === 'error' ? (
-        <p className="panel__empty" role="alert">
+        <StateMessage kind="error">
           <FormattedMessage id="reports.error.generic" />
-        </p>
+        </StateMessage>
       ) : shown.length === 0 ? (
-        <p className="panel__empty">
+        <StateMessage kind="empty">
           <FormattedMessage id="reports.none" />
-        </p>
+        </StateMessage>
       ) : (
         <ul className="reports__list">
           {shown.map((metric) => (
@@ -147,14 +144,14 @@ function MetricCard({
   );
   const titleId = `metric-${metric.id.replace('.', '-')}-${frequency}`;
   return (
-    <article className="report-card" aria-labelledby={titleId}>
+    <article className="mo-card report-card" aria-labelledby={titleId}>
       <h3 id={titleId} className="report-card__title">
         <FormattedMessage id={`reports.metric.${metric.id}`} />
       </h3>
       {history.status === 'loading' ? (
-        <p className="panel__empty" role="status">
+        <StateMessage kind="loading" inline>
           <FormattedMessage id="reports.loading" />
-        </p>
+        </StateMessage>
       ) : history.status === 'error' ? (
         <MetricError error={history.error} />
       ) : (
@@ -175,16 +172,16 @@ function MetricError({ error }: { readonly error: unknown }) {
       : undefined;
   if (missing === undefined) {
     return (
-      <p className="panel__empty" role="alert">
+      <StateMessage kind="error">
         <FormattedMessage id="reports.error.generic" />
-      </p>
+      </StateMessage>
     );
   }
   return (
-    <p className="panel__empty">
+    <StateMessage kind="warning">
       <FormattedMessage id={`reports.error.${missing}`} />{' '}
       <a
-        className="reports__go"
+        className="mo-link"
         href={paths.memory()}
         onClick={(event) => {
           event.preventDefault();
@@ -193,7 +190,7 @@ function MetricError({ error }: { readonly error: unknown }) {
       >
         <FormattedMessage id="reports.openMemory" />
       </a>
-    </p>
+    </StateMessage>
   );
 }
 
@@ -321,10 +318,8 @@ function Bars({
 /** Reports, the tool (ADR-0060): every metric the person may read. */
 export function ReportsPage({ client }: { readonly client: ReportsClient }) {
   return (
-    <article className="dept-office reports-page">
-      <h1 className="dept-office__title">
-        <FormattedMessage id="nav.reports" />
-      </h1>
+    <article className="mo-page reports-page">
+      <PageHeader title={<FormattedMessage id="nav.reports" />} />
       <ReportsSection client={client} />
     </article>
   );

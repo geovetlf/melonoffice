@@ -1,5 +1,5 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
-import { Button } from '@melonoffice/ui';
+import { Button, StateMessage } from '@melonoffice/ui';
 import { useEffect, useState, type FormEvent } from 'react';
 import type { AgentTemplateView } from '../agents/agentsClient.js';
 import { readyList, useOfficeData } from '../office/OfficeData.js';
@@ -171,27 +171,27 @@ export function WorkflowEditor({
   const titleId = 'workflow-editor-title';
   return (
     <form
-      className="dept-office__section workflow-editor"
+      className="mo-panel mo-page-section workflow-editor"
       aria-labelledby={titleId}
       onSubmit={(e) => void submit(e)}
     >
-      <h2 id={titleId}>
+      <h2 id={titleId} className="mo-section-title">
         <FormattedMessage
           id={editing === undefined ? 'automations.editor.new' : 'automations.editor.version'}
         />
       </h2>
       {choices === undefined ? (
-        <p className="panel__empty" role="status">
+        <StateMessage kind="loading" inline>
           <FormattedMessage id="automations.loading" />
-        </p>
+        </StateMessage>
       ) : choices === 'error' ? (
-        <p className="panel__empty" role="alert">
+        <StateMessage kind="error">
           <FormattedMessage id="automations.editor.rolesError" />
-        </p>
+        </StateMessage>
       ) : (
         <>
-          <label className="documents__picker">
-            <span>
+          <label className="mo-field">
+            <span className="mo-label">
               <FormattedMessage id="automations.editor.name" />
             </span>
             <input
@@ -201,14 +201,14 @@ export function WorkflowEditor({
               required
             />
           </label>
-          <p className="customers__meta">
+          <p className="mo-hint">
             <FormattedMessage id="automations.editor.hint" />
           </p>
           <ol className="workflow-editor__steps">
             {steps.map((step, i) => (
               <li key={i} className="workflow-editor__step">
-                <label className="documents__picker">
-                  <span>
+                <label className="mo-field">
+                  <span className="mo-label">
                     <FormattedMessage id="automations.editor.stepLabel" values={{ n: i + 1 }} />
                   </span>
                   <input
@@ -218,8 +218,8 @@ export function WorkflowEditor({
                     required
                   />
                 </label>
-                <label className="documents__picker">
-                  <span>
+                <label className="mo-field">
+                  <span className="mo-label">
                     <FormattedMessage id="automations.editor.who" />
                   </span>
                   <select
@@ -249,10 +249,12 @@ export function WorkflowEditor({
                   />
                   <FormattedMessage id="automations.editor.approval" />
                 </label>
-                <div className="customers__actions">
+                <div className="mo-form__actions">
                   <Button
                     type="button"
                     variant="secondary"
+                    size="sm"
+                    iconOnly
                     disabled={i === 0}
                     onClick={() => move(i, -1)}
                     aria-label={intl.formatMessage({ id: 'automations.editor.up' }, { n: i + 1 })}
@@ -262,6 +264,8 @@ export function WorkflowEditor({
                   <Button
                     type="button"
                     variant="secondary"
+                    size="sm"
+                    iconOnly
                     disabled={i === steps.length - 1}
                     onClick={() => move(i, 1)}
                     aria-label={intl.formatMessage({ id: 'automations.editor.down' }, { n: i + 1 })}
@@ -270,7 +274,8 @@ export function WorkflowEditor({
                   </Button>
                   <Button
                     type="button"
-                    variant="secondary"
+                    variant="danger"
+                    size="sm"
                     disabled={steps.length === 1}
                     onClick={() => setSteps(steps.filter((_, j) => j !== i))}
                   >
@@ -280,7 +285,7 @@ export function WorkflowEditor({
               </li>
             ))}
           </ol>
-          <div className="customers__actions">
+          <div className="mo-form__actions">
             <Button
               type="button"
               variant="secondary"
@@ -296,11 +301,11 @@ export function WorkflowEditor({
             </Button>
           </div>
           {error === undefined ? null : (
-            <p className="gia-chat__error" role="alert">
+            <StateMessage kind="error">
               <FormattedMessage id={error} />
-            </p>
+            </StateMessage>
           )}
-          <div className="customers__actions">
+          <div className="mo-form__actions">
             <Button type="submit" disabled={!complete || sending}>
               <FormattedMessage
                 id={
@@ -312,7 +317,7 @@ export function WorkflowEditor({
                 }
               />
             </Button>
-            <Button type="button" variant="secondary" onClick={onCancel} disabled={sending}>
+            <Button type="button" variant="ghost" onClick={onCancel} disabled={sending}>
               <FormattedMessage id="agents.create.cancel" />
             </Button>
           </div>

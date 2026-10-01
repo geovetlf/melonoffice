@@ -1,5 +1,5 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
-import { Button } from '@melonoffice/ui';
+import { Button, StateMessage } from '@melonoffice/ui';
 import { useId, useState, type FormEvent } from 'react';
 import {
   errorOf,
@@ -138,38 +138,42 @@ export function CreditGrant({ client }: { readonly client: PlatformClient }) {
       : pending?.organizationId;
 
   return (
-    <section className="dept-office__section" aria-labelledby={`${id}-title`}>
-      <h2 id={`${id}-title`}>
+    <section className="mo-panel mo-page-section" aria-labelledby={`${id}-title`}>
+      <h2 id={`${id}-title`} className="mo-section-title">
         <FormattedMessage id="platform.credits.title" />
       </h2>
-      <p className="customers__meta">
+      <p className="mo-lead">
         <FormattedMessage id="platform.credits.lead" />
       </p>
 
       {pending === undefined ? (
         <>
-          <form className="platform__form" onSubmit={(e) => void find(e)}>
-            <label htmlFor={`${id}-org`}>
-              <FormattedMessage id="platform.credits.organization" />
-            </label>
-            <input
-              id={`${id}-org`}
-              value={organizationId}
-              onChange={(e) => {
-                setOrganizationId(e.target.value);
-                setFound(undefined);
-              }}
-              required
-              spellCheck={false}
-            />
-            <Button type="submit" variant="secondary" disabled={busy}>
-              <FormattedMessage id="platform.credits.find" />
-            </Button>
+          <form className="mo-form" onSubmit={(e) => void find(e)}>
+            <div className="mo-field">
+              <label className="mo-label" htmlFor={`${id}-org`}>
+                <FormattedMessage id="platform.credits.organization" />
+              </label>
+              <input
+                id={`${id}-org`}
+                value={organizationId}
+                onChange={(e) => {
+                  setOrganizationId(e.target.value);
+                  setFound(undefined);
+                }}
+                required
+                spellCheck={false}
+              />
+            </div>
+            <div className="mo-form__actions">
+              <Button type="submit" variant="secondary" disabled={busy}>
+                <FormattedMessage id="platform.credits.find" />
+              </Button>
+            </div>
           </form>
 
           {found === undefined ? null : (
-            <form className="platform__form" onSubmit={review}>
-              <p className="documents__meta" aria-label="organization">
+            <form className="mo-form" onSubmit={review}>
+              <p className="mo-lead" aria-label="organization">
                 <strong>{found.organization.name}</strong> ·{' '}
                 <FormattedMessage id={`platform.credits.org.${found.organization.status}`} /> ·{' '}
                 {found.credits === null ? (
@@ -183,44 +187,52 @@ export function CreditGrant({ client }: { readonly client: PlatformClient }) {
               </p>
               {found.organization.status === 'active' && found.credits !== null ? (
                 <>
-                  <label htmlFor={`${id}-amount`}>
-                    <FormattedMessage id="platform.credits.amount" />
-                  </label>
-                  <input
-                    id={`${id}-amount`}
-                    type="number"
-                    min={1}
-                    step={1}
-                    value={amount}
-                    onChange={(e) => setAmount(e.target.value)}
-                    required
-                  />
-                  <label htmlFor={`${id}-reason`}>
-                    <FormattedMessage id="platform.credits.reason" />
-                  </label>
-                  <select
-                    id={`${id}-reason`}
-                    value={reason}
-                    onChange={(e) => setReason(e.target.value as GrantReason)}
-                  >
-                    {GRANT_REASONS.map((r) => (
-                      <option key={r} value={r}>
-                        {intl.formatMessage({ id: `platform.credits.reason.${r}` })}
-                      </option>
-                    ))}
-                  </select>
-                  <Button type="submit" disabled={busy}>
-                    <FormattedMessage id="platform.credits.review" />
-                  </Button>
+                  <div className="mo-form-section__fields">
+                    <div className="mo-field">
+                      <label className="mo-label" htmlFor={`${id}-amount`}>
+                        <FormattedMessage id="platform.credits.amount" />
+                      </label>
+                      <input
+                        id={`${id}-amount`}
+                        type="number"
+                        min={1}
+                        step={1}
+                        value={amount}
+                        onChange={(e) => setAmount(e.target.value)}
+                        required
+                      />
+                    </div>
+                    <div className="mo-field">
+                      <label className="mo-label" htmlFor={`${id}-reason`}>
+                        <FormattedMessage id="platform.credits.reason" />
+                      </label>
+                      <select
+                        id={`${id}-reason`}
+                        value={reason}
+                        onChange={(e) => setReason(e.target.value as GrantReason)}
+                      >
+                        {GRANT_REASONS.map((r) => (
+                          <option key={r} value={r}>
+                            {intl.formatMessage({ id: `platform.credits.reason.${r}` })}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                  <div className="mo-form__actions">
+                    <Button type="submit" disabled={busy}>
+                      <FormattedMessage id="platform.credits.review" />
+                    </Button>
+                  </div>
                 </>
               ) : null}
             </form>
           )}
         </>
       ) : (
-        <div className="platform__form" role="group" aria-label="confirm grant">
+        <div className="mo-form" role="group" aria-label="confirm grant">
           {pending === restored ? (
-            <p className="customers__meta">
+            <p className="mo-hint">
               <FormattedMessage id="platform.credits.restored" />
             </p>
           ) : null}
@@ -234,11 +246,11 @@ export function CreditGrant({ client }: { readonly client: PlatformClient }) {
               }}
             />
           </p>
-          <div className="partners__actions">
+          <div className="mo-form__actions">
             <Button disabled={busy} onClick={() => void confirm()}>
               <FormattedMessage id="platform.credits.confirm" />
             </Button>
-            <Button variant="secondary" disabled={busy} onClick={drop}>
+            <Button variant="ghost" disabled={busy} onClick={drop}>
               <FormattedMessage id="platform.credits.cancel" />
             </Button>
           </div>
@@ -246,17 +258,17 @@ export function CreditGrant({ client }: { readonly client: PlatformClient }) {
       )}
 
       {done === undefined ? null : (
-        <p className="customers__meta" role="status">
+        <StateMessage kind="success">
           <FormattedMessage
             id={done.replayed ? 'platform.credits.replayed' : 'platform.credits.done'}
             values={{ amount: done.grant.amount, balance: done.balance }}
           />
-        </p>
+        </StateMessage>
       )}
       {failed === undefined ? null : (
-        <p className="panel__empty" role="alert">
+        <StateMessage kind="error">
           <FormattedMessage id="platform.refused" values={{ reason: failed }} />
-        </p>
+        </StateMessage>
       )}
     </section>
   );

@@ -1,5 +1,5 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
-import { Button } from '@melonoffice/ui';
+import { Button, StateMessage } from '@melonoffice/ui';
 import { useCallback, useEffect, useState } from 'react';
 import type { AgentCapabilitiesView, AgentsClient } from './agentsClient.js';
 
@@ -83,21 +83,21 @@ export function AgentCapabilities({
       .filter((part) => part !== null)
       .join(' · ');
   return (
-    <section className="dept-office__section" aria-labelledby="agent-capabilities">
-      <h2 id="agent-capabilities">
+    <section className="mo-panel mo-page-section" aria-labelledby="agent-capabilities">
+      <h2 id="agent-capabilities" className="mo-section-title">
         <FormattedMessage id="agents.capabilities.title" />
       </h2>
       {found === undefined ? (
-        <p className="panel__empty" role="status">
+        <StateMessage kind="loading">
           <FormattedMessage id="agents.loading" />
-        </p>
+        </StateMessage>
       ) : found === 'error' ? (
-        <p className="panel__empty" role="alert">
+        <StateMessage kind="error">
           <FormattedMessage id="agents.capabilities.error" />
-        </p>
+        </StateMessage>
       ) : (
         <>
-          <p className="documents__meta">
+          <p className="mo-hint">
             <FormattedMessage
               id="agents.capabilities.version"
               values={{ version: found.version }}
@@ -117,17 +117,17 @@ export function AgentCapabilities({
             </ul>
           )}
           {notice === undefined ? null : (
-            <p className="panel__empty" role={notice === 'error' ? 'alert' : 'status'}>
+            <StateMessage kind={notice === 'error' ? 'error' : 'success'}>
               <FormattedMessage id={`agents.upgrade.${notice}`} />
-            </p>
+            </StateMessage>
           )}
-          <h3 id="agent-capabilities-skills">
+          <h3 id="agent-capabilities-skills" className="mo-subsection-title">
             <FormattedMessage id="agents.capabilities.skills" />
           </h3>
           {found.skills.length === 0 ? (
-            <p className="panel__empty">
+            <StateMessage kind="empty">
               <FormattedMessage id="agents.capabilities.noSkills" />
-            </p>
+            </StateMessage>
           ) : (
             <ul className="agent-skills" aria-labelledby="agent-capabilities-skills">
               {found.skills.map((s) => {
@@ -137,7 +137,7 @@ export function AgentCapabilities({
                 return (
                   <li key={`${s.id}@${s.version}`} className="agent-skills__item">
                     <strong>{message(`agents.skill.${s.id}.name`, s.id)}</strong>{' '}
-                    <span className="documents__meta">
+                    <span className="mo-hint">
                       <FormattedMessage
                         id="agents.capabilities.skillVersion"
                         values={{ version: s.version }}
@@ -157,6 +157,7 @@ export function AgentCapabilities({
                         {canManage ? (
                           <Button
                             variant="secondary"
+                            size="sm"
                             disabled={upgrading !== undefined}
                             onClick={() => void upgrade(found, s.id, newer.to)}
                           >
@@ -212,9 +213,9 @@ export function AgentCapabilities({
             </ul>
           )}
           {found.tools.length === 0 ? (
-            <p className="panel__empty">
+            <StateMessage kind="empty">
               <FormattedMessage id="agents.capabilities.noTools" />
-            </p>
+            </StateMessage>
           ) : null}
         </>
       )}

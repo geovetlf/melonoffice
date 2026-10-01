@@ -61,10 +61,10 @@ export function ReplyComposer({
         void send();
       }}
     >
-      <label htmlFor={id}>
+      <label className="mo-label" htmlFor={id}>
         <FormattedMessage id="conversation.reply.label" />
       </label>
-      <p className="reply__who">
+      <p className="mo-hint reply__who">
         <FormattedMessage id="conversation.reply.byPerson" />
       </p>
       <textarea
@@ -78,12 +78,14 @@ export function ReplyComposer({
           if (state.kind === 'refused') setKey(newKey());
         }}
       />
-      <Button type="submit" disabled={sending || empty}>
-        {intl.formatMessage({
-          id: sending ? 'conversation.reply.sending' : 'conversation.reply.send',
-        })}
-      </Button>
-      <p role="status" aria-live="polite">
+      <div className="mo-form__actions">
+        <Button type="submit" disabled={sending || empty}>
+          {intl.formatMessage({
+            id: sending ? 'conversation.reply.sending' : 'conversation.reply.send',
+          })}
+        </Button>
+      </div>
+      <p className="mo-hint reply__status" role="status" aria-live="polite">
         {state.kind === 'sent' ? <FormattedMessage id="conversation.reply.sent" /> : null}
         {state.kind === 'unknown' ? <FormattedMessage id="conversation.reply.unknown" /> : null}
         {state.kind === 'refused' ? (

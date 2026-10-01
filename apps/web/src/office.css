@@ -1047,12 +1047,6 @@ a.sidebar__item:hover {
   text-decoration: none;
 }
 
-.dept-office__header {
-  display: flex;
-  align-items: center;
-  gap: var(--mo-space-4);
-}
-
 .dept-office__icon {
   display: grid;
   place-items: center;
@@ -1063,22 +1057,10 @@ a.sidebar__item:hover {
   color: var(--zone-hue);
 }
 
-.dept-office__title {
-  margin: 0;
-  font-size: clamp(1.5rem, 1.1rem + 1.4vw, 2.25rem);
-}
-
-.dept-office__title:focus {
-  outline: none;
-}
-
-.dept-office__summary {
-  display: flex;
-  flex-wrap: wrap;
+/* The department's icon (or the agent's avatar) stays beside the title on a phone. */
+.dept-office > .mo-page-header {
+  flex-wrap: nowrap;
   align-items: center;
-  gap: var(--mo-space-2);
-  margin: var(--mo-space-1) 0 0;
-  color: var(--mo-color-text-secondary);
 }
 
 .dept-office__room {
@@ -1104,18 +1086,6 @@ a.sidebar__item:hover {
   display: grid;
   grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
   gap: var(--mo-space-4);
-}
-
-.dept-office__section {
-  padding: var(--mo-space-6);
-  border: 1px solid var(--mo-color-border);
-  border-radius: 20px;
-  background: var(--mo-color-surface);
-}
-
-.dept-office__section h2 {
-  margin: 0 0 var(--mo-space-3);
-  font-size: var(--mo-font-size-lg);
 }
 
 .agent-list {
@@ -1732,7 +1702,7 @@ a.sidebar__item:hover {
   margin: 0;
   padding: var(--mo-space-4);
   border: 1px solid var(--mo-color-border);
-  border-radius: 20px;
+  border-radius: var(--mo-radius-xl);
   background: linear-gradient(
     180deg,
     color-mix(in srgb, var(--mo-color-highlight) 10%, transparent),
@@ -1782,9 +1752,34 @@ a.sidebar__item:hover {
   background: var(--mo-color-highlight);
 }
 
-.gia-workplace__subtitle {
-  margin: var(--mo-space-4) 0 var(--mo-space-2);
+/* The Workplace's panels in pairs where there is room, one column on a tablet or a phone. */
+.gia-workplace__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  align-items: start;
+  gap: var(--mo-space-6);
+}
+
+.gia-workplace__grid > * {
+  min-width: 0;
+}
+
+@media (max-width: 64rem) {
+  .gia-workplace__grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--mo-space-4);
+  }
+}
+
+.gia-workplace__capability {
   font-size: var(--mo-font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+.gia-workplace__period {
+  justify-self: start;
+  max-width: 100%;
+  overflow-x: auto;
 }
 
 .gia-limits {
@@ -1802,10 +1797,6 @@ a.sidebar__item:hover {
 }
 
 /* GIA's chat (ADR-0052). */
-.gia-workplace__chat {
-  margin-bottom: var(--mo-space-4);
-}
-
 .gia-chat {
   display: grid;
   gap: var(--mo-space-3);
@@ -1990,65 +1981,102 @@ a.sidebar__item:hover {
 }
 
 /* Customers and leads in the Comercial office (C1, ADR-0053). */
-.customers {
+/* A contact or an opportunity in a list: the whole card opens it, its facts stacked. */
+.crm-record {
   display: grid;
-  gap: var(--mo-space-3);
-  margin-bottom: var(--mo-space-4);
-}
-
-.customers__header {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--mo-space-2);
-  align-items: center;
-  justify-content: space-between;
-}
-
-.customers__header h2 {
-  margin: 0;
-}
-
-.customers__tabs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--mo-space-2);
-}
-
-.customers__count {
-  font-weight: var(--mo-font-weight-semibold);
-  font-variant-numeric: tabular-nums;
-}
-
-.customers__list,
-.customers__notes {
-  display: grid;
-  gap: var(--mo-space-2);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.customers__row {
-  display: grid;
+  justify-content: stretch;
   gap: var(--mo-space-1);
   width: 100%;
-  padding: var(--mo-space-3);
-  border: 1px solid var(--mo-color-border);
-  border-radius: 12px;
-  background: var(--mo-color-surface);
   color: var(--mo-color-text-primary);
   font: inherit;
   text-align: left;
   cursor: pointer;
 }
 
-.customers__row[aria-current='true'] {
+.crm-record:hover {
+  border-color: var(--mo-color-border-strong);
+}
+
+.crm-record[aria-current='true'] {
+  border-color: var(--mo-color-accent);
   box-shadow: inset 3px 0 0 var(--mo-color-accent);
 }
 
-.customers__name {
-  font-weight: 600;
+/* A record's notes, conversations and history: short entries, one under another. */
+.crm-notes {
+  display: grid;
+  gap: var(--mo-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
   overflow-wrap: anywhere;
+}
+
+.crm-notes > li {
+  display: grid;
+  gap: var(--mo-space-1);
+  min-width: 0;
+}
+
+.crm-notes p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.crm-next {
+  color: var(--mo-color-text-secondary);
+  font-size: var(--mo-font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+.crm-next--late {
+  color: var(--mo-color-danger);
+  font-weight: var(--mo-font-weight-semibold);
+}
+
+/* A contact's or an opportunity's card, and the forms that add one. */
+.crm-card,
+.crm-context {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--mo-space-3);
+  min-width: 0;
+}
+
+.crm-card {
+  overflow-wrap: anywhere;
+}
+
+.crm-context {
+  gap: var(--mo-space-2);
+}
+
+.crm-fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+/* A lost reason and its confirmation, side by side where there is room. */
+.crm-lost {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--mo-space-2);
+}
+
+.crm-lost > .mo-field {
+  flex: 1 1 12rem;
+}
+
+.crm-composer {
+  display: grid;
+  gap: var(--mo-space-2);
+}
+
+.crm-composer > .mo-button {
+  justify-self: start;
 }
 
 .customers__meta {
@@ -2057,69 +2085,28 @@ a.sidebar__item:hover {
   overflow-wrap: anywhere;
 }
 
-.customers__next {
-  color: var(--mo-color-text-secondary);
-  font-size: var(--mo-font-size-sm);
-}
-
-.customers__next--late {
-  color: var(--mo-color-focus-ring);
-  font-weight: 600;
-}
-
-.customers__form,
-.customers__edit,
-.customers__next-edit {
+/* Follow-ups (C5, ADR-0058): a group or a record's follow-ups, their heading above the list. */
+.follow-ups__group,
+.follow-ups-record {
   display: grid;
   gap: var(--mo-space-2);
-  margin: 0;
-  padding: 0;
-  border: 0;
+  min-width: 0;
 }
 
-.customers__form label,
-.customers__edit label {
-  display: grid;
-  gap: var(--mo-space-1);
+.follow-ups-record > .mo-button {
+  justify-self: start;
+}
+
+.follow-ups__type {
   color: var(--mo-color-text-secondary);
-  font-size: var(--mo-font-size-sm);
+  font-weight: var(--mo-font-weight-medium);
 }
 
-.customers__actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--mo-space-2);
-}
-
-.customers__card {
+/* A date and a time side by side where there is room. */
+.follow-ups__when {
   display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr));
   gap: var(--mo-space-3);
-  padding: var(--mo-space-4);
-  border: 1px solid var(--mo-color-border);
-  border-radius: 16px;
-  background: var(--mo-color-surface-glass);
-}
-
-.customers__card h3,
-.customers__card h4 {
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-
-.customers__notes p {
-  margin: 0;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.customers__link {
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--mo-color-focus-ring);
-  font: inherit;
-  text-decoration: underline;
-  cursor: pointer;
 }
 
 /* Opportunities and pipeline in the Comercial office (C2, ADR-0054). */
@@ -2138,8 +2125,12 @@ a.sidebar__item:hover {
   gap: var(--mo-space-2);
   padding: var(--mo-space-3);
   border: 1px solid var(--mo-color-border);
-  border-radius: 14px;
-  background: var(--mo-color-surface);
+  border-radius: var(--mo-radius-lg);
+  background: var(--mo-color-surface-subtle);
+}
+
+.pipeline-board__column .mo-list-item {
+  padding: var(--mo-space-3);
 }
 
 .pipeline-board__title {
@@ -2155,8 +2146,9 @@ a.sidebar__item:hover {
   align-items: center;
 }
 
-.stage-row .gia-chat__input {
+.stage-row > input {
   flex: 1 1 10rem;
+  min-width: 0;
 }
 
 .stage-row .stage-row__probability {
@@ -2164,44 +2156,7 @@ a.sidebar__item:hover {
 }
 
 /* The company's memory (ADR-0056): one column that reads the same on a phone and a desk. */
-.memory {
-  display: flex;
-  flex-direction: column;
-  gap: var(--mo-space-6);
-  max-width: 60rem;
-}
-
-.memory .connections__header {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--mo-space-3);
-  align-items: flex-start;
-  justify-content: space-between;
-}
-
-.memory__domains {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--mo-space-2);
-  margin-bottom: var(--mo-space-3);
-}
-
-.memory__list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--mo-space-3);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
 .memory__item {
-  display: flex;
-  flex-direction: column;
-  gap: var(--mo-space-1);
-  padding: var(--mo-space-3);
-  border: 1px solid var(--mo-color-border);
-  border-radius: var(--mo-radius-md);
   overflow-wrap: anywhere;
 }
 
@@ -2209,65 +2164,19 @@ a.sidebar__item:hover {
   margin: 0;
 }
 
-.memory__item--question {
-  flex-direction: row;
-  flex-wrap: wrap;
-  gap: var(--mo-space-2);
-  align-items: center;
-  justify-content: space-between;
-}
-
-.memory__name {
-  font-weight: 600;
-}
-
-.memory__domain,
-.memory__origin {
+.memory__domain {
   color: var(--mo-color-text-secondary);
-  font-size: var(--mo-font-size-xs);
-  font-weight: normal;
+  font-size: var(--mo-font-size-sm);
+  font-weight: var(--mo-font-weight-regular);
 }
 
 .memory__badge {
   margin-right: var(--mo-space-1);
 }
 
-.memory__actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--mo-space-2);
-  margin-top: var(--mo-space-2);
-}
-
-.memory__edit,
-.memory__add {
-  display: flex;
-  flex-direction: column;
-  gap: var(--mo-space-2);
-}
-
 .memory__versions {
   margin: var(--mo-space-2) 0 0;
   padding-left: var(--mo-space-6);
-  color: var(--mo-color-text-secondary);
-  font-size: var(--mo-font-size-xs);
-}
-
-/* Reports (ADR-0060): what was recorded per metric; never a projection. */
-.reports__header {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--mo-space-2);
-}
-
-.reports__header .period-picker {
-  align-items: center;
-  margin-bottom: 0;
-}
-
-.reports__per {
   color: var(--mo-color-text-secondary);
   font-size: var(--mo-font-size-xs);
 }
@@ -2281,13 +2190,11 @@ a.sidebar__item:hover {
   list-style: none;
 }
 
+/* A metric's card: its frame is mo-card; this lays out what it holds. */
 .report-card {
   display: grid;
   gap: var(--mo-space-1);
   height: 100%;
-  padding: var(--mo-space-4);
-  border: 1px solid var(--mo-color-border);
-  border-radius: 16px;
 }
 
 .report-card__title {
@@ -2330,10 +2237,6 @@ a.sidebar__item:hover {
   fill: var(--mo-color-border);
 }
 
-.reports__go {
-  color: var(--mo-color-focus-ring);
-}
-
 /* "Load more" under a Comercial list (ADR-0061): full width on a phone, beside the list's end
    on a wide screen. */
 .list-more {
@@ -2351,38 +2254,7 @@ a.sidebar__item:hover {
 }
 
 /* Agent tasks (ADR-0063): what the owner asked an agent and its verified answer. */
-.agent-tasks {
-  margin-top: var(--mo-space-4);
-}
-
-.agent-tasks__form {
-  display: grid;
-  gap: var(--mo-space-2);
-  margin-bottom: var(--mo-space-3);
-}
-
-.agent-tasks__form label {
-  display: grid;
-  gap: var(--mo-space-1);
-}
-
-.agent-tasks__list {
-  display: grid;
-  gap: var(--mo-space-3);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.agent-task {
-  padding: var(--mo-space-3);
-  border: 1px solid var(--mo-color-border);
-  border-radius: 8px;
-}
-
 .agent-task__request {
-  margin: 0 0 var(--mo-space-1);
-  font-weight: 600;
   white-space: pre-wrap;
 }
 
@@ -2391,8 +2263,14 @@ a.sidebar__item:hover {
 }
 
 .agent-task__answer {
+  display: grid;
+  gap: var(--mo-space-2);
   margin-top: var(--mo-space-2);
   white-space: pre-wrap;
+}
+
+.agent-task__answer p {
+  margin: 0;
 }
 
 .agent-task--failed .agent-task__status {
@@ -2403,47 +2281,70 @@ a.sidebar__item:hover {
 .automations__list {
   display: grid;
   gap: var(--mo-space-2);
-  margin: var(--mo-space-3) 0 0;
+  margin: 0;
   padding: 0;
   list-style: none;
 }
 
-.automations__item {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--mo-space-2);
-}
-
 .automations__name {
-  font-weight: 600;
+  font-weight: var(--mo-font-weight-semibold);
   overflow-wrap: anywhere;
 }
 
+.automations__meta {
+  margin: 0;
+  color: var(--mo-color-text-secondary);
+  font-size: var(--mo-font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+/* A plan in the list opens under it: a record's hairline and radius, as a button. */
 .automations__row {
   width: 100%;
-  padding: var(--mo-space-2) var(--mo-space-3);
+  min-height: var(--mo-control-height-md);
+  padding: var(--mo-space-2) var(--mo-space-4);
   border: 1px solid var(--mo-color-border);
-  border-radius: 12px;
-  background: transparent;
+  border-radius: var(--mo-radius-lg);
+  background: var(--mo-color-surface);
   color: inherit;
   font: inherit;
+  font-size: var(--mo-font-size-sm);
   text-align: left;
+  overflow-wrap: anywhere;
   cursor: pointer;
 }
 
+.automations__row:hover {
+  border-color: var(--mo-color-border-strong);
+}
+
 .automations__row[aria-expanded='true'] {
-  border-color: currentColor;
+  border-color: var(--mo-color-accent);
+  background: var(--mo-color-accent-soft);
 }
 
 .automations__plan {
-  margin-top: var(--mo-space-3);
+  display: grid;
+  gap: var(--mo-space-2);
+  min-width: 0;
+}
+
+.automations__plan > * {
+  margin: 0;
+}
+
+.automations__objective {
+  overflow-wrap: anywhere;
+}
+
+.automations__hint {
+  flex-basis: 100%;
 }
 
 .automations__steps {
   display: grid;
   gap: var(--mo-space-2);
-  margin: var(--mo-space-2) 0;
+  margin: 0;
   padding-left: var(--mo-space-4);
 }
 
@@ -2454,13 +2355,10 @@ a.sidebar__item:hover {
 }
 
 .automations__detail {
+  display: grid;
   flex-basis: 100%;
-}
-
-/* WhatsApp templates in Connections (block 7). */
-.connection-card__templates {
-  flex-basis: 100%;
-  margin-top: var(--mo-space-3);
+  gap: var(--mo-space-2);
+  min-width: 0;
 }
 
 /* Skills and tools catalogue (block 6). */
@@ -2475,14 +2373,17 @@ a.sidebar__item:hover {
 .workflow-editor__steps {
   display: grid;
   gap: var(--mo-space-3);
-  margin: var(--mo-space-3) 0;
+  margin: 0;
   padding-left: var(--mo-space-4);
 }
 
 .workflow-editor__step {
+  display: grid;
+  gap: var(--mo-space-3);
+  min-width: 0;
   padding: var(--mo-space-3);
   border: 1px solid var(--mo-color-border);
-  border-radius: 12px;
+  border-radius: var(--mo-radius-lg);
 }
 
 .workflow-editor__step select {
@@ -2493,60 +2394,10 @@ a.sidebar__item:hover {
   display: flex;
   align-items: center;
   gap: var(--mo-space-2);
-  margin-top: var(--mo-space-3);
+  min-height: var(--mo-min-target-size);
 }
 
-/* Documents (DOC-3). */
-.documents__lead,
-.documents__hint {
-  margin: var(--mo-space-2) 0 0;
-}
-
-.documents__picker {
-  display: grid;
-  gap: var(--mo-space-2);
-  margin-top: var(--mo-space-3);
-}
-
-.documents__picker input {
-  max-width: 100%;
-}
-
-.documents__list {
-  display: grid;
-  gap: var(--mo-space-2);
-  margin: var(--mo-space-3) 0;
-  padding: 0;
-  list-style: none;
-}
-
-.documents__item {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--mo-space-2);
-  padding: var(--mo-space-3);
-  border: 1px solid var(--mo-color-border);
-  border-radius: 12px;
-}
-
-.documents__main {
-  display: grid;
-  gap: var(--mo-space-1);
-  min-width: 0;
-}
-
-.documents__name {
-  font-weight: 600;
-  overflow-wrap: anywhere;
-}
-
-.documents__meta {
-  font-size: var(--mo-font-size-sm);
-}
-
-/* AI usage and credits (ADR-0074, ADR-0081). */
+/* A button that reads as a link, in the Home's panels and MelonMotor's panel. */
 .panel__link {
   display: inline-block;
   margin-top: var(--mo-space-2);
@@ -2576,41 +2427,6 @@ a.sidebar__item:hover {
   text-decoration: underline;
 }
 
-.ai-usage__lead,
-.ai-usage__range,
-.ai-usage__filter {
-  margin: var(--mo-space-2) 0;
-}
-
-.ai-usage__totals {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 12rem), 1fr));
-  gap: var(--mo-space-3);
-  margin: var(--mo-space-3) 0;
-}
-
-.ai-usage__total {
-  padding: var(--mo-space-3);
-  border: 1px solid var(--mo-color-border);
-  border-radius: 12px;
-}
-
-.ai-usage__total dt {
-  font-size: var(--mo-font-size-sm);
-}
-
-.ai-usage__total dd {
-  margin: var(--mo-space-1) 0 0;
-  font-size: var(--mo-font-size-xl);
-  font-weight: 700;
-}
-
-.ai-usage__note {
-  grid-column: 1 / -1;
-  margin: 0;
-  font-size: var(--mo-font-size-sm);
-}
-
 .ai-usage__breakdowns {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(100%, 20rem), 1fr));
@@ -2619,72 +2435,6 @@ a.sidebar__item:hover {
 
 .ai-usage__breakdown {
   overflow-x: auto;
-}
-
-.ai-usage__table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: var(--mo-font-size-sm);
-}
-
-.ai-usage__table th,
-.ai-usage__table td {
-  padding: var(--mo-space-1) var(--mo-space-2);
-  text-align: right;
-  border-bottom: 1px solid var(--mo-color-border);
-}
-
-.ai-usage__table th:first-child {
-  text-align: left;
-}
-
-.ai-usage__row {
-  padding: 0;
-  border: 0;
-  background: none;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  text-decoration: underline;
-  cursor: pointer;
-  overflow-wrap: anywhere;
-}
-
-.ai-usage__row[aria-pressed='true'] {
-  font-weight: 700;
-}
-
-.ai-usage__events {
-  display: grid;
-  gap: var(--mo-space-2);
-  margin: var(--mo-space-3) 0;
-  padding: 0;
-  list-style: none;
-}
-
-.ai-usage__event {
-  display: grid;
-  gap: var(--mo-space-1);
-  padding: var(--mo-space-3);
-  border: 1px solid var(--mo-color-border);
-  border-radius: 12px;
-}
-
-.ai-usage__event-main {
-  font-weight: 600;
-  overflow-wrap: anywhere;
-}
-
-/* The approval center (ADR-0026). */
-.approval-card {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--mo-space-2);
-  padding: var(--mo-space-3);
-  border: 1px solid var(--mo-color-border);
-  border-radius: 12px;
 }
 
 /* Ctrl+K: ask GIA from anywhere (block 8). */
@@ -2728,26 +2478,33 @@ a.sidebar__item:hover {
 /* AI Command Center (block 9). */
 .command-center__grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+  gap: var(--mo-space-4);
+}
+
+/* Figures on a card sit side by side, unboxed and smaller than a page's own totals. */
+.command-center__card .mo-stats {
+  grid-template-columns: repeat(auto-fit, minmax(5rem, 1fr));
   gap: var(--mo-space-3);
 }
 
-.command-center__figures {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--mo-space-4);
-  margin: var(--mo-space-2) 0;
+.command-center__card .mo-stat {
+  padding: 0;
+  border: 0;
+  background: none;
 }
 
-.command-center__figure dt {
+.command-center__card .mo-stat > dt {
   font-size: var(--mo-font-size-xs);
-  opacity: 0.8;
 }
 
-.command-center__figure dd {
-  margin: 0;
+.command-center__card .mo-stat > dd {
   font-size: var(--mo-font-size-lg);
-  font-weight: 700;
+}
+
+/* The card's way to where the work is done sits at its foot. */
+.command-center__card > .mo-link-button:last-child {
+  align-self: end;
 }
 
 .command-center__big {
@@ -2762,35 +2519,38 @@ a.sidebar__item:hover {
 }
 
 /* The platform AI view (ADR-0082): the platform administrator's only. */
-.platform__providers,
-.platform__policies {
+.platform__breakdowns {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 22rem), 1fr));
+  gap: var(--mo-space-4);
+}
+
+.platform__breakdown {
   display: grid;
   gap: var(--mo-space-2);
+  align-content: start;
+  min-width: 0;
+}
+
+.platform__note {
+  grid-column: 1 / -1;
   margin: 0;
-  padding: 0;
-  list-style: none;
 }
 
-.platform__provider,
-.platform__policies li {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--mo-space-1) var(--mo-space-2);
-  padding: var(--mo-space-2);
-  border: 1px solid var(--mo-color-border);
-  border-radius: 8px;
+/* A small action that fills a field (such as "use my id") sits under it at its start. */
+.platform__field-action {
+  justify-self: start;
 }
 
-.platform__name {
-  font-weight: 600;
-  overflow-wrap: anywhere;
+/* Fields side by side keep their own height when one carries such an action. */
+.platform .mo-form-section__fields {
+  align-items: start;
 }
 
-/* A wide table scrolls inside its own box, never the page. */
-.platform__scroll {
-  max-width: 100%;
-  overflow-x: auto;
+/* A record's forms and its answer take the record's whole width, under its facts and actions. */
+.platform .mo-list-item > .mo-form,
+.platform .mo-list-item > .mo-state {
+  flex-basis: 100%;
 }
 
 /* The bell: what waits on the person, each opening where it is done. */
@@ -2846,17 +2606,6 @@ a.sidebar__item:hover {
 
 .notifications__item:focus-visible {
   outline-offset: -2px;
-}
-
-.platform .ai-usage__breakdown {
-  min-width: 0;
-}
-
-/* Its wide tables scroll inside their boxes: nothing here may widen the page on a phone. */
-.platform,
-.platform .dept-office__section {
-  min-width: 0;
-  max-width: 100%;
 }
 
 /* An agent's skills, each with what it lets the agent do (ADR-0083). */

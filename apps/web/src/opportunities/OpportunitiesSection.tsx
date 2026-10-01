@@ -1,5 +1,5 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
-import { Button } from '@melonoffice/ui';
+import { Badge, Button, StateMessage } from '@melonoffice/ui';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type { CustomersClient, CustomerView } from '../customers/customersClient.js';
 import { navigate } from '../identity/router.js';
@@ -22,6 +22,7 @@ import {
   type StageInput,
   type StageView,
 } from './opportunitiesClient.js';
+import { errorMessage } from '../shell/errors.js';
 
 type IntlShape = ReturnType<typeof useIntl>;
 
@@ -59,9 +60,7 @@ export const stageName = (intl: IntlShape, stage: Pick<StageView, 'name' | 'name
   stage.name ?? (stage.nameKey === null ? stage.id : intl.formatMessage({ id: stage.nameKey }));
 
 const errorKey = (error: unknown): string =>
-  error instanceof OpportunityRequestError && error.code !== undefined
-    ? `opportunities.error.${error.code}`
-    : 'opportunities.error.generic';
+  errorMessage(error, OpportunityRequestError, 'opportunities');
 
 /**
  * Opportunities and pipeline (C2, ADR-0054), in the Comercial office: the organization's own
@@ -113,14 +112,14 @@ export function OpportunitiesSection({
   return (
     <section
       ref={section}
-      className="dept-office__section customers"
+      className="mo-panel mo-page-section opportunities"
       aria-labelledby="opportunities-title"
     >
-      <div className="customers__header">
-        <h2 id="opportunities-title">
+      <div className="mo-page-section__header">
+        <h2 id="opportunities-title" className="mo-section-title">
           <FormattedMessage id="opportunities.title" />
         </h2>
-        <div className="customers__actions">
+        <div className="mo-form__actions">
           {canManage && ready !== undefined && customers !== undefined ? (
             <Button
               variant="secondary"
@@ -140,7 +139,7 @@ export function OpportunitiesSection({
         </div>
       </div>
       {summary === undefined ? null : (
-        <p className="customers__meta">
+        <p className="mo-lead">
           <FormattedMessage
             id="opportunities.summary.open"
             values={{ count: summary.open.count }}
@@ -155,7 +154,7 @@ export function OpportunitiesSection({
         </p>
       )}
       {ready !== undefined && !ready.stored ? (
-        <p className="panel__empty">
+        <p className="mo-hint">
           <FormattedMessage id="opportunities.stages.proposed" />
         </p>
       ) : null}
@@ -185,14 +184,14 @@ export function OpportunitiesSection({
           }}
         />
       ) : null}
-      <div className="customers__tabs" role="tablist">
+      <div className="mo-chips" role="tablist">
         {(['open', 'won', 'lost'] as const).map((s) => (
           <button
             key={s}
             type="button"
             role="tab"
             aria-selected={s === status}
-            className="mo-chip customers__tab"
+            className="mo-chip"
             onClick={() => setStatus(s)}
           >
             <FormattedMessage id={`opportunities.status.${s}`} />
@@ -200,17 +199,17 @@ export function OpportunitiesSection({
         ))}
       </div>
       {pipeline.status === 'error' || list.status === 'error' ? (
-        <p className="gia-chat__error" role="alert">
+        <StateMessage kind="error">
           <FormattedMessage id="opportunities.error.load" />
-        </p>
+        </StateMessage>
       ) : ready === undefined || list.status === 'loading' ? (
-        <p className="panel__empty" role="status">
+        <StateMessage kind="loading">
           <FormattedMessage id="opportunities.loading" />
-        </p>
+        </StateMessage>
       ) : list.value.items.length === 0 ? (
-        <p className="panel__empty">
+        <StateMessage kind="empty">
           <FormattedMessage id={`opportunities.empty.${status}`} />
-        </p>
+        </StateMessage>
       ) : status === 'open' ? (
         <div className="pipeline-board">
           {openStages.map((stage) => {
@@ -225,10 +224,10 @@ export function OpportunitiesSection({
                 <h3 className="pipeline-board__title">
                   {stageName(intl, stage)}{' '}
                   {/* How many are at the stage in all, not only on the pages loaded. */}
-                  <span className="customers__count">{total?.count ?? 0}</span>
+                  <Badge>{total?.count ?? 0}</Badge>
                 </h3>
                 {summary?.currency != null && total !== undefined ? (
-                  <p className="customers__meta">
+                  <p className="mo-hint">
                     {formatMoney(intl, {
                       amountMinor: total.valueMinor,
                       currency: summary.currency,
@@ -289,25 +288,25 @@ function OpportunityRows({
   const intl = useIntl();
   const rows = list.items.filter((o) => ids.includes(o.id));
   return (
-    <ul className="customers__list">
+    <ul className="mo-list">
       {rows.map((o) => {
         const late = o.nextAction !== null && o.nextAction.dueOn < today;
         return (
           <li key={o.id}>
             <button
               type="button"
-              className="customers__row"
+              className="mo-list-item crm-record"
               aria-current={o.id === selected ? 'true' : undefined}
               onClick={() => onSelect(o.id === selected ? undefined : o.id)}
             >
-              <span className="customers__name">{o.title}</span>
-              <span className="customers__meta">
+              <span className="mo-list-item__title">{o.title}</span>
+              <span className="mo-list-item__meta">
                 {o.contactName ?? ''}
                 {o.value === null ? '' : ` · ${formatMoney(intl, o.value)}`}
                 {o.status === 'open' ? ` · ${o.probability}%` : ''}
               </span>
               {o.nextAction === null ? null : (
-                <span className={`customers__next${late ? ' customers__next--late' : ''}`}>
+                <span className={`crm-next${late ? ' crm-next--late' : ''}`}>
                   {late ? <FormattedMessage id="customers.next.overdue" /> : null}{' '}
                   {o.nextAction.text} · {o.nextAction.dueOn}
                 </span>
@@ -382,19 +381,21 @@ function CreateOpportunity({
   const label = (key: string) => intl.formatMessage({ id: key });
   const people: readonly CustomerView[] = contacts.status === 'ready' ? contacts.value : [];
   return (
-    <form className="customers__form" onSubmit={submit} aria-label={label('opportunities.add')}>
+    <form
+      className="mo-card mo-form crm-form"
+      onSubmit={submit}
+      aria-label={label('opportunities.add')}
+    >
       {contacts.status === 'ready' && people.length === 0 ? (
-        <p className="panel__empty">
+        <StateMessage kind="empty" inline>
           <FormattedMessage id="opportunities.noContacts" />
-        </p>
+        </StateMessage>
       ) : null}
-      <label>
-        <FormattedMessage id="opportunities.field.contact" />
-        <select
-          className="gia-chat__input"
-          value={contactId}
-          onChange={(e) => setContactId(e.target.value)}
-        >
+      <label className="mo-field">
+        <span className="mo-label">
+          <FormattedMessage id="opportunities.field.contact" />
+        </span>
+        <select value={contactId} onChange={(e) => setContactId(e.target.value)}>
           <option value="">{label('opportunities.field.contact.choose')}</option>
           {people.map((c) => (
             <option key={c.id} value={c.id}>
@@ -403,31 +404,23 @@ function CreateOpportunity({
           ))}
         </select>
       </label>
-      <label>
-        <FormattedMessage id="opportunities.field.title" />
-        <input
-          className="gia-chat__input"
-          value={title}
-          maxLength={120}
-          onChange={(e) => setTitle(e.target.value)}
-        />
+      <label className="mo-field">
+        <span className="mo-label">
+          <FormattedMessage id="opportunities.field.title" />
+        </span>
+        <input value={title} maxLength={120} onChange={(e) => setTitle(e.target.value)} />
       </label>
-      <label>
-        <FormattedMessage id="opportunities.field.value" values={{ currency: currency ?? '' }} />
-        <input
-          className="gia-chat__input"
-          value={amount}
-          inputMode="decimal"
-          onChange={(e) => setAmount(e.target.value)}
-        />
+      <label className="mo-field">
+        <span className="mo-label">
+          <FormattedMessage id="opportunities.field.value" values={{ currency: currency ?? '' }} />
+        </span>
+        <input value={amount} inputMode="decimal" onChange={(e) => setAmount(e.target.value)} />
       </label>
-      <label>
-        <FormattedMessage id="opportunities.field.stage" />
-        <select
-          className="gia-chat__input"
-          value={stageId}
-          onChange={(e) => setStageId(e.target.value)}
-        >
+      <label className="mo-field">
+        <span className="mo-label">
+          <FormattedMessage id="opportunities.field.stage" />
+        </span>
+        <select value={stageId} onChange={(e) => setStageId(e.target.value)}>
           {stages.map((s) => (
             <option key={s.id} value={s.id}>
               {stageName(intl, s)}
@@ -435,25 +428,22 @@ function CreateOpportunity({
           ))}
         </select>
       </label>
-      <label>
-        <FormattedMessage id="opportunities.field.expectedClose" />
-        <input
-          className="gia-chat__input"
-          type="date"
-          value={closeOn}
-          onChange={(e) => setCloseOn(e.target.value)}
-        />
+      <label className="mo-field">
+        <span className="mo-label">
+          <FormattedMessage id="opportunities.field.expectedClose" />
+        </span>
+        <input type="date" value={closeOn} onChange={(e) => setCloseOn(e.target.value)} />
       </label>
       {error === undefined ? null : (
-        <p className="gia-chat__error" role="alert">
+        <StateMessage kind="error" inline>
           <FormattedMessage id={error} />
-        </p>
+        </StateMessage>
       )}
-      <div className="customers__actions">
+      <div className="mo-form__actions">
         <Button type="submit" disabled={pending}>
           <FormattedMessage id="customers.save" />
         </Button>
-        <Button variant="secondary" onClick={() => onDone()}>
+        <Button variant="ghost" onClick={() => onDone()}>
           <FormattedMessage id="customers.cancel" />
         </Button>
       </div>
@@ -489,16 +479,16 @@ function OpportunityCard({
 
   if (detail.status === 'loading') {
     return (
-      <p className="panel__empty" role="status">
+      <StateMessage kind="loading">
         <FormattedMessage id="opportunities.loading" />
-      </p>
+      </StateMessage>
     );
   }
   if (detail.status === 'error') {
     return (
-      <p className="gia-chat__error" role="alert">
+      <StateMessage kind="error">
         <FormattedMessage id="opportunities.error.load" />
-      </p>
+      </StateMessage>
     );
   }
   const o: OpportunityDetail = detail.value;
@@ -547,8 +537,10 @@ function OpportunityCard({
 
   const lateNext = o.nextAction !== null && o.nextAction.dueOn < today;
   return (
-    <article className="customers__card" aria-labelledby="opportunity-name">
-      <h3 id="opportunity-name">{o.title}</h3>
+    <article className="mo-card crm-card" aria-labelledby="opportunity-name">
+      <h3 id="opportunity-name" className="mo-subsection-title">
+        {o.title}
+      </h3>
       <dl className="agent-facts">
         <Fact term="opportunities.field.contact" value={o.contact.displayName ?? '—'} />
         <Fact
@@ -576,15 +568,16 @@ function OpportunityCard({
         )}
       </dl>
       {lateNext ? (
-        <p className="customers__next customers__next--late">
+        <p className="crm-next crm-next--late">
           <FormattedMessage id="customers.next.overdue" />: {o.nextAction?.text}
         </p>
       ) : null}
-      <fieldset className="customers__edit" disabled={!canManage || pending}>
-        <label>
-          <FormattedMessage id="opportunities.move" />
+      <fieldset className="mo-form crm-fieldset" disabled={!canManage || pending}>
+        <label className="mo-field">
+          <span className="mo-label">
+            <FormattedMessage id="opportunities.move" />
+          </span>
           <select
-            className="gia-chat__input"
             value={o.stageId}
             onChange={(e) => {
               const target = pipeline.stages.find((s) => s.id === e.target.value);
@@ -604,11 +597,12 @@ function OpportunityCard({
           </select>
         </label>
         {draft.moveToLost === undefined ? null : (
-          <div className="customers__actions">
-            <label>
-              <FormattedMessage id="opportunities.field.lostReason" />
+          <div className="crm-lost">
+            <label className="mo-field">
+              <span className="mo-label">
+                <FormattedMessage id="opportunities.field.lostReason" />
+              </span>
               <select
-                className="gia-chat__input"
                 value={lostReason}
                 onChange={(e) => setLostReason(e.target.value as LostReason)}
               >
@@ -622,6 +616,7 @@ function OpportunityCard({
             </label>
             <Button
               variant="secondary"
+              size="sm"
               disabled={lostReason === ''}
               onClick={() =>
                 lostReason === ''
@@ -635,34 +630,44 @@ function OpportunityCard({
         )}
         {open ? (
           <>
-            <div className="customers__actions">
+            <div className="mo-form__actions">
               {o.owner === 'you' ? (
-                <Button variant="secondary" onClick={() => void change({ ownerId: null })}>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => void change({ ownerId: null })}
+                >
                   <FormattedMessage id="customers.owner.release" />
                 </Button>
               ) : (
-                <Button variant="secondary" onClick={() => void change({ ownerId: currentUserId })}>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => void change({ ownerId: currentUserId })}
+                >
                   <FormattedMessage id="customers.owner.take" />
                 </Button>
               )}
             </div>
-            <label>
-              <FormattedMessage
-                id="opportunities.field.value"
-                values={{ currency: currency ?? '' }}
-              />
+            <label className="mo-field">
+              <span className="mo-label">
+                <FormattedMessage
+                  id="opportunities.field.value"
+                  values={{ currency: currency ?? '' }}
+                />
+              </span>
               <input
-                className="gia-chat__input"
                 inputMode="decimal"
                 value={field('amount', '')}
                 placeholder={o.value === null ? '' : formatMoney(intl, o.value)}
                 onChange={(e) => setField('amount', e.target.value)}
               />
             </label>
-            <label>
-              <FormattedMessage id="opportunities.field.probability" />
+            <label className="mo-field">
+              <span className="mo-label">
+                <FormattedMessage id="opportunities.field.probability" />
+              </span>
               <input
-                className="gia-chat__input"
                 type="number"
                 min={0}
                 max={100}
@@ -671,19 +676,21 @@ function OpportunityCard({
                 onChange={(e) => setField('probability', e.target.value)}
               />
             </label>
-            <label>
-              <FormattedMessage id="opportunities.field.expectedClose" />
+            <label className="mo-field">
+              <span className="mo-label">
+                <FormattedMessage id="opportunities.field.expectedClose" />
+              </span>
               <input
-                className="gia-chat__input"
                 type="date"
                 value={field('closeOn', o.expectedCloseOn ?? '')}
                 onChange={(e) => setField('closeOn', e.target.value)}
               />
             </label>
-            <label>
-              <FormattedMessage id="customers.field.nextAction" />
+            <label className="mo-field">
+              <span className="mo-label">
+                <FormattedMessage id="customers.field.nextAction" />
+              </span>
               <input
-                className="gia-chat__input"
                 maxLength={200}
                 // The earliest open follow-up's (ADR-0058): it changes only through them.
                 disabled={o.nextAction?.followUpId !== undefined}
@@ -691,18 +698,19 @@ function OpportunityCard({
                 onChange={(e) => setField('nextText', e.target.value)}
               />
             </label>
-            <label>
-              <FormattedMessage id="customers.field.dueOn" />
+            <label className="mo-field">
+              <span className="mo-label">
+                <FormattedMessage id="customers.field.dueOn" />
+              </span>
               <input
-                className="gia-chat__input"
                 type="date"
                 disabled={o.nextAction?.followUpId !== undefined}
                 value={field('nextDue', o.nextAction?.dueOn ?? '')}
                 onChange={(e) => setField('nextDue', e.target.value)}
               />
             </label>
-            <div className="customers__actions">
-              <Button onClick={saveDetails}>
+            <div className="mo-form__actions">
+              <Button size="sm" onClick={saveDetails}>
                 <FormattedMessage id="customers.save" />
               </Button>
             </div>
@@ -710,9 +718,9 @@ function OpportunityCard({
         ) : null}
       </fieldset>
       {error === undefined ? null : (
-        <p className="gia-chat__error" role="alert">
+        <StateMessage kind="error" inline>
           <FormattedMessage id={error} />
-        </p>
+        </StateMessage>
       )}
       {followUps === undefined ? null : (
         <RecordFollowUps
@@ -723,23 +731,23 @@ function OpportunityCard({
           onChanged={onChanged}
         />
       )}
-      <h4>
+      <h4 className="mo-subsection-title">
         <FormattedMessage id="opportunities.conversations" />
       </h4>
       {o.conversations === null ? (
-        <p className="panel__empty">
+        <p className="mo-hint">
           <FormattedMessage id="opportunities.conversations.hidden" />
         </p>
       ) : o.conversations.length === 0 ? (
-        <p className="panel__empty">
+        <StateMessage kind="empty" inline>
           <FormattedMessage id="opportunities.conversations.none" />
-        </p>
+        </StateMessage>
       ) : (
-        <ul className="customers__notes">
+        <ul className="crm-notes">
           {o.conversations.map((c) => (
             <li key={c.id}>
               <a
-                className="customers__link"
+                className="mo-link"
                 href={paths.conversation(c.id)}
                 onClick={(event) => {
                   event.preventDefault();
@@ -756,10 +764,10 @@ function OpportunityCard({
           ))}
         </ul>
       )}
-      <h4>
+      <h4 className="mo-subsection-title">
         <FormattedMessage id="opportunities.history" />
       </h4>
-      <ul className="customers__notes">
+      <ul className="crm-notes">
         {o.history.map((h) => (
           <li key={h.id}>
             <p>
@@ -772,7 +780,7 @@ function OpportunityCard({
                 </>
               )}
             </p>
-            <span className="customers__meta">
+            <span className="mo-hint">
               <FormattedMessage id={`opportunities.actor.${h.actor}`} /> ·{' '}
               {intl.formatDate(h.at, { dateStyle: 'short', timeStyle: 'short' } as never)}
             </span>
@@ -842,18 +850,17 @@ function StageEditor({
   const label = (key: string) => intl.formatMessage({ id: key });
   return (
     <form
-      className="customers__form"
+      className="mo-card mo-form crm-form"
       onSubmit={save}
       aria-label={label('opportunities.stages.edit')}
     >
-      <p className="panel__empty">
+      <p className="mo-hint">
         <FormattedMessage id="opportunities.stages.help" />
       </p>
-      <ol className="customers__list">
+      <ol className="mo-list">
         {rows.map((row, index) => (
           <li key={row.key} className="stage-row">
             <input
-              className="gia-chat__input"
               aria-label={label('opportunities.stages.name')}
               value={row.name}
               maxLength={40}
@@ -864,7 +871,7 @@ function StageEditor({
               }
             />
             <input
-              className="gia-chat__input stage-row__probability"
+              className="stage-row__probability"
               aria-label={label('opportunities.field.probability')}
               type="number"
               min={0}
@@ -880,6 +887,8 @@ function StageEditor({
               variant="secondary"
               disabled={index === 0}
               onClick={() => move(index, -1)}
+              size="sm"
+              iconOnly
               aria-label={label('opportunities.stages.up')}
             >
               ↑
@@ -888,6 +897,8 @@ function StageEditor({
               variant="secondary"
               disabled={index === rows.length - 1}
               onClick={() => move(index, 1)}
+              size="sm"
+              iconOnly
               aria-label={label('opportunities.stages.down')}
             >
               ↓
@@ -896,6 +907,8 @@ function StageEditor({
               variant="secondary"
               disabled={rows.length === 1}
               onClick={() => setRows((r) => r.filter((x) => x.key !== row.key))}
+              size="sm"
+              iconOnly
               aria-label={label('opportunities.stages.remove')}
             >
               ✕
@@ -903,9 +916,10 @@ function StageEditor({
           </li>
         ))}
       </ol>
-      <div className="customers__actions">
+      <div className="mo-form__actions">
         <Button
           variant="secondary"
+          size="sm"
           disabled={rows.length >= 12}
           onClick={() =>
             setRows((r) => [
@@ -918,15 +932,15 @@ function StageEditor({
         </Button>
       </div>
       {error === undefined ? null : (
-        <p className="gia-chat__error" role="alert">
+        <StateMessage kind="error" inline>
           <FormattedMessage id={error} />
-        </p>
+        </StateMessage>
       )}
-      <div className="customers__actions">
+      <div className="mo-form__actions">
         <Button type="submit" disabled={pending}>
           <FormattedMessage id="customers.save" />
         </Button>
-        <Button variant="secondary" onClick={() => onDone(false)}>
+        <Button variant="ghost" onClick={() => onDone(false)}>
           <FormattedMessage id="customers.cancel" />
         </Button>
       </div>

@@ -1,5 +1,6 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
-import { useEffect, useRef, type CSSProperties, type ReactNode } from 'react';
+import { Badge, PageHeader, StateMessage } from '@melonoffice/ui';
+import { useEffect, type CSSProperties, type ReactNode } from 'react';
 import { navigate } from '../identity/router.js';
 import { paths } from '../shell/routes.js';
 import { AgentAvatar, AgentStatus } from './agents.js';
@@ -13,6 +14,20 @@ import { agentRole, WorkstationMap } from './WorkstationMap.js';
 import { agentAt, presenceOf, seatAgents } from './workstations.js';
 import { AgentCapabilities } from '../agents/AgentCapabilities.js';
 import type { AgentsClient } from '../agents/agentsClient.js';
+
+/**
+ * Moves focus to the page's title once it shows, so a reader starts at the room it entered. The
+ * title is the PageHeader's `h1`, found by its id.
+ */
+function useFocusTitle(titleId: string, key: string | undefined) {
+  useEffect(() => {
+    if (key === undefined) return;
+    const title = document.getElementById(titleId);
+    if (title === null) return;
+    title.tabIndex = -1;
+    title.focus();
+  }, [titleId, key]);
+}
 
 /**
  * A department's office (ADR-0040, level 2): the room from the Home, entered. Its workstations
@@ -40,14 +55,13 @@ export function DepartmentOffice({
   const intl = useIntl();
   const { departments, specialists } = useOfficeData();
   const department = findBySlug(readyList(departments), slug);
-  const heading = useRef<HTMLHeadingElement>(null);
-  useEffect(() => heading.current?.focus(), [department?.id]);
+  useFocusTitle('dept-office-title', department?.id);
 
   if (departments.status === 'loading') {
     return (
-      <p className="page-notice" role="status">
+      <StateMessage kind="loading">
         <FormattedMessage id="office.scene.loading" />
-      </p>
+      </StateMessage>
     );
   }
   if (department === undefined) return <NotFound />;
@@ -58,43 +72,50 @@ export function DepartmentOffice({
   const here = agentsOf(department, agents);
   const seating = seatAgents(department, agents);
   return (
-    <article className="dept-office" style={{ '--zone-hue': look.hue } as CSSProperties}>
+    <article className="mo-page dept-office" style={{ '--zone-hue': look.hue } as CSSProperties}>
       <OfficeBreadcrumb trail={[{ label: departmentName(intl, department) }]} />
-      <header className="dept-office__header">
-        <span className="dept-office__icon" aria-hidden="true">
-          <Icon name={look.icon} size={26} />
-        </span>
-        <div>
-          <h1 ref={heading} tabIndex={-1} className="dept-office__title">
-            {name}
-          </h1>
-          <p className="dept-office__summary">
+      <PageHeader
+        titleId="dept-office-title"
+        title={name}
+        leading={
+          <span className="dept-office__icon" aria-hidden="true">
+            <Icon name={look.icon} size={26} />
+          </span>
+        }
+        meta={
+          <>
             {agentsSummary(intl, here)} · {seatsSummary(intl, seating)}
-          </p>
-        </div>
-      </header>
+          </>
+        }
+      />
       <WorkstationMap department={department} slug={slug} seating={seating} specialists={agents} />
       {department.typeId === 'sales' ? followUps : null}
       {department.typeId === 'sales' ? opportunities : null}
       {department.typeId === 'sales' ? customers : null}
       {department.typeId === null ? null : reports?.(department.typeId)}
       <div className="dept-office__grid">
-        <section className="dept-office__section" aria-labelledby="dept-agents">
-          <h2 id="dept-agents">
+        <section className="mo-panel mo-page-section" aria-labelledby="dept-agents">
+          <h2 id="dept-agents" className="mo-section-title">
             <FormattedMessage id="office.department.agents" />
           </h2>
-          <p className="panel__empty">
-            <FormattedMessage
-              id={
-                specialists.status === 'hidden'
-                  ? 'office.department.agentsHidden'
-                  : here.active + here.paused === 0 && seating.occupied === 0
-                    ? 'office.department.noAgents'
+          {specialists.status !== 'hidden' &&
+          here.active + here.paused === 0 &&
+          seating.occupied === 0 ? (
+            <StateMessage kind="empty">
+              <FormattedMessage id="office.department.noAgents" />
+            </StateMessage>
+          ) : (
+            <p className="mo-lead">
+              <FormattedMessage
+                id={
+                  specialists.status === 'hidden'
+                    ? 'office.department.agentsHidden'
                     : 'office.department.atSeats'
-              }
-            />
-          </p>
-          <p className="panel__empty">
+                }
+              />
+            </p>
+          )}
+          <p className="mo-hint">
             <FormattedMessage id="office.seats.provisional" />
           </p>
         </section>
@@ -141,13 +162,12 @@ export function AgentPlace({
   const department = findBySlug(readyList(departments), slug);
   const everyone = readyList(specialists);
   const agent = everyone.find((s) => s.id === agentId && s.departmentId === department?.id);
-  const heading = useRef<HTMLHeadingElement>(null);
-  useEffect(() => heading.current?.focus(), [agent?.id]);
+  useFocusTitle('agent-profile-title', agent?.id);
   if (departments.status === 'loading' || specialists.status === 'loading') {
     return (
-      <p className="page-notice" role="status">
+      <StateMessage kind="loading">
         <FormattedMessage id="office.scene.loading" />
-      </p>
+      </StateMessage>
     );
   }
   if (department === undefined || agent === undefined || agent.status === 'archived') {
@@ -182,7 +202,7 @@ export function AgentPlace({
   ] as const;
   return (
     <article
-      className="dept-office agent-profile"
+      className="mo-page dept-office agent-profile"
       style={{ '--zone-hue': lookOf(department).hue } as CSSProperties}
     >
       <OfficeBreadcrumb
@@ -191,18 +211,15 @@ export function AgentPlace({
           { label: agent.displayName },
         ]}
       />
-      <header className="dept-office__header">
-        <AgentAvatar name={agent.displayName} size={64} />
-        <div>
-          <h1 ref={heading} tabIndex={-1} className="dept-office__title">
-            {agent.displayName}
-          </h1>
-          <p className="dept-office__summary">{role ?? departmentName(intl, department, 'name')}</p>
-        </div>
-      </header>
+      <PageHeader
+        titleId="agent-profile-title"
+        title={agent.displayName}
+        leading={<AgentAvatar name={agent.displayName} size={64} />}
+        meta={role ?? departmentName(intl, department, 'name')}
+      />
       <div className="dept-office__grid">
-        <section className="dept-office__section" aria-labelledby="agent-facts">
-          <h2 id="agent-facts">
+        <section className="mo-panel mo-page-section" aria-labelledby="agent-facts">
+          <h2 id="agent-facts" className="mo-section-title">
             <FormattedMessage id="office.profile.title" />
           </h2>
           <dl className="agent-facts">
@@ -215,15 +232,15 @@ export function AgentPlace({
               </div>
             ))}
           </dl>
-          <p className="panel__empty">
+          <p className="mo-hint">
             <FormattedMessage id="office.profile.stateSource" />
           </p>
         </section>
         {agents === undefined ? null : (
           <AgentCapabilities client={agents} agentId={agent.id} canManage={canManageAgents} />
         )}
-        <section className="dept-office__section" aria-labelledby="agent-work">
-          <h2 id="agent-work">
+        <section className="mo-panel mo-page-section" aria-labelledby="agent-work">
+          <h2 id="agent-work" className="mo-section-title">
             <FormattedMessage id="office.profile.work" />
           </h2>
           <dl className="agent-facts">
@@ -262,15 +279,13 @@ export function AgentPlace({
 
 export function NotFound() {
   return (
-    <div className="page-notice">
-      <h1>
-        <FormattedMessage id="office.notFound.title" />
-      </h1>
-      <p>
-        <FormattedMessage id="office.notFound.body" />
-      </p>
+    <article className="mo-page">
+      <PageHeader
+        title={<FormattedMessage id="office.notFound.title" />}
+        description={<FormattedMessage id="office.notFound.body" />}
+      />
       <BackToOffice />
-    </div>
+    </article>
   );
 }
 
@@ -334,20 +349,20 @@ function ComingAreas({
 }) {
   const id = `coming-${titleId.replaceAll('.', '-')}`;
   return (
-    <section className="dept-office__section" aria-labelledby={id}>
-      <h2 id={id}>
+    <section className="mo-panel mo-page-section" aria-labelledby={id}>
+      <h2 id={id} className="mo-section-title">
         <FormattedMessage id={titleId} />
       </h2>
-      <p className="panel__empty">
+      <p className="mo-hint">
         <FormattedMessage id="office.coming.body" />
       </p>
       <ul className="coming">
         {areas.map((area) => (
           <li key={area} className="coming__item">
             <FormattedMessage id={`office.area.${area}`} />
-            <span className="mo-badge mo-badge--outline coming__soon">
+            <Badge outline className="coming__soon">
               <FormattedMessage id="common.soon" />
-            </span>
+            </Badge>
           </li>
         ))}
       </ul>

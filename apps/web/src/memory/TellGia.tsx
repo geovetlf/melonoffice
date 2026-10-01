@@ -1,7 +1,8 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
-import { Button } from '@melonoffice/ui';
+import { Button, StateMessage } from '@melonoffice/ui';
 import { useState, type FormEvent } from 'react';
 import { MemoryRequestError, type MemoryClient } from './memoryClient.js';
+import { errorMessage } from '../shell/errors.js';
 
 /**
  * Teaching the company's memory (ADR-0051): a person tells GIA something about the business and
@@ -35,10 +36,7 @@ export function TellGia({
   const [outcome, setOutcome] = useState<Outcome>();
 
   const failed = (error: unknown): Outcome => {
-    const id =
-      error instanceof MemoryRequestError && error.code !== undefined
-        ? `memory.error.${error.code}`
-        : 'memory.error.generic';
+    const id = errorMessage(error, MemoryRequestError, 'memory');
     return {
       kind: 'message',
       id: Object.hasOwn(intl.messages, id) ? id : 'memory.error.generic',
@@ -91,14 +89,14 @@ export function TellGia({
   }
 
   return (
-    <section className="connections__card" aria-labelledby="memory-tell-title">
-      <h2 id="memory-tell-title">
+    <section className="mo-panel mo-page-section memory__tell" aria-labelledby="memory-tell-title">
+      <h2 id="memory-tell-title" className="mo-section-title">
         <FormattedMessage id="memory.tell.title" />
       </h2>
       {canCapture ? (
-        <form onSubmit={(e) => void capture(e)} className="memory__tell">
-          <label className="documents__picker">
-            <span>
+        <form onSubmit={(e) => void capture(e)} className="mo-form">
+          <label className="mo-field">
+            <span className="mo-label">
               <FormattedMessage id="memory.tell.label" />
             </span>
             <textarea
@@ -108,10 +106,10 @@ export function TellGia({
               rows={4}
             />
           </label>
-          <p className="customers__meta">
+          <p className="mo-hint">
             <FormattedMessage id="memory.tell.hint" />
           </p>
-          <div className="customers__actions">
+          <div className="mo-form__actions">
             <Button type="submit" disabled={text.trim() === '' || busy !== undefined}>
               <FormattedMessage
                 id={busy === 'capture' ? 'memory.tell.reading' : 'memory.tell.submit'}
@@ -121,27 +119,28 @@ export function TellGia({
         </form>
       ) : null}
       {canSync ? (
-        <div className="customers__actions">
+        <div className="mo-form__actions">
           <Button variant="secondary" disabled={busy !== undefined} onClick={() => void sync()}>
             <FormattedMessage id={busy === 'sync' ? 'memory.sync.running' : 'memory.sync.submit'} />
           </Button>
-          <span className="customers__meta">
+          <span className="mo-hint">
             <FormattedMessage id="memory.sync.hint" />
           </span>
         </div>
       ) : null}
       {outcome === undefined ? null : outcome.kind === 'captured' ? (
-        <p className="panel__empty" role="status">
+        <StateMessage kind="success">
           <FormattedMessage id="memory.tell.found" values={{ count: outcome.found }} />
-        </p>
+        </StateMessage>
       ) : outcome.kind === 'synced' ? (
-        <p className="panel__empty" role="status">
+        <StateMessage kind="success">
           <FormattedMessage id="memory.sync.done" values={{ count: outcome.changed }} />
-        </p>
+        </StateMessage>
       ) : (
-        <p className={outcome.alert ? 'gia-chat__error' : 'panel__empty'} role="alert">
+        // Every message here was announced as an alert, whatever its look.
+        <StateMessage kind="error">
           <FormattedMessage id={outcome.id} />
-        </p>
+        </StateMessage>
       )}
     </section>
   );

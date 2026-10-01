@@ -1,5 +1,5 @@
 import { FormattedMessage, SUPPORTED_LOCALES, useIntl, type Locale } from '@melonoffice/i18n';
-import { Button } from '@melonoffice/ui';
+import { Button, PageHeader, StateMessage } from '@melonoffice/ui';
 import { useBrand } from '../brand/brand.js';
 import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { useAuth } from './AuthProvider.js';
@@ -49,12 +49,11 @@ export function PublicFrame({
   const brand = useBrand();
   return (
     <main className="public">
-      <header className="public__header">
-        <h1>{brand?.productName ?? <FormattedMessage id="app.name" />}</h1>
-        <p className="public__tagline">
-          <FormattedMessage id="app.tagline" />
-        </p>
-      </header>
+      <PageHeader
+        className="public__header"
+        title={brand?.productName ?? <FormattedMessage id="app.name" />}
+        description={<FormattedMessage id="app.tagline" />}
+      />
       <section className="public__card">{children}</section>
       <LanguageSwitcher {...locale} />
     </main>
@@ -63,9 +62,9 @@ export function PublicFrame({
 
 export function Loading() {
   return (
-    <p role="status" className="notice">
+    <StateMessage kind="loading">
       <FormattedMessage id="auth.loading" />
-    </p>
+    </StateMessage>
   );
 }
 
@@ -110,7 +109,7 @@ function homeAfterSignIn(): string {
 function AppLink({ to, children }: { readonly to: string; readonly children: ReactNode }) {
   return (
     <a
-      className="auth-link"
+      className="mo-link"
       href={to}
       onClick={(event) => {
         event.preventDefault();
@@ -195,9 +194,7 @@ function ErrorNotice({ error }: { readonly error: IdentityErrorCode | undefined 
   const intl = useIntl();
   if (error === undefined) return null;
   return (
-    <p role="alert" className="notice notice--danger">
-      {intl.formatMessage({ id: SIGN_IN_ERRORS[error] })}
-    </p>
+    <StateMessage kind="error">{intl.formatMessage({ id: SIGN_IN_ERRORS[error] })}</StateMessage>
   );
 }
 
@@ -250,45 +247,51 @@ export function LoginPage(locale: LocaleProps) {
         <FormattedMessage id="auth.signIn.title" />
       </h2>
       {state.status === 'signed_out' && state.expired && error === undefined && (
-        <p role="status" className="notice notice--warning">
+        <StateMessage kind="warning">
           <FormattedMessage id="auth.expired" />
-        </p>
+        </StateMessage>
       )}
       <ErrorNotice error={error} />
-      <form className="login" onSubmit={(event) => void submit(event)} noValidate>
-        <label htmlFor={`${id}-email`}>
-          <FormattedMessage id="auth.email" />
-        </label>
-        <input
-          id={`${id}-email`}
-          type="email"
-          autoComplete="username"
-          inputMode="email"
-          placeholder={intl.formatMessage({ id: 'auth.email.placeholder' })}
-          required
-          value={email}
-          onChange={(event) => setEmail(event.target.value)}
-        />
-        <label htmlFor={`${id}-password`}>
-          <FormattedMessage id="auth.password" />
-        </label>
-        <input
-          id={`${id}-password`}
-          type="password"
-          autoComplete="current-password"
-          placeholder="••••••••••"
-          required
-          value={password}
-          onChange={(event) => setPassword(event.target.value)}
-        />
-        <p className="login__forgot">
-          <AppLink to={FORGOT_PASSWORD_PATH}>
-            <FormattedMessage id="auth.forgot.link" />
-          </AppLink>
-        </p>
-        <Button type="submit" disabled={busy || email.trim() === '' || password === ''}>
-          <FormattedMessage id={busy ? 'auth.signIn.busy' : 'auth.signIn.submit'} />
-        </Button>
+      <form className="mo-form login" onSubmit={(event) => void submit(event)} noValidate>
+        <div className="mo-field">
+          <label className="mo-label" htmlFor={`${id}-email`}>
+            <FormattedMessage id="auth.email" />
+          </label>
+          <input
+            id={`${id}-email`}
+            type="email"
+            autoComplete="username"
+            inputMode="email"
+            placeholder={intl.formatMessage({ id: 'auth.email.placeholder' })}
+            required
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+          />
+        </div>
+        <div className="mo-field">
+          <label className="mo-label" htmlFor={`${id}-password`}>
+            <FormattedMessage id="auth.password" />
+          </label>
+          <input
+            id={`${id}-password`}
+            type="password"
+            autoComplete="current-password"
+            placeholder="••••••••••"
+            required
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+          />
+          <p className="mo-hint login__forgot">
+            <AppLink to={FORGOT_PASSWORD_PATH}>
+              <FormattedMessage id="auth.forgot.link" />
+            </AppLink>
+          </p>
+        </div>
+        <div className="mo-form__actions">
+          <Button type="submit" disabled={busy || email.trim() === '' || password === ''}>
+            <FormattedMessage id={busy ? 'auth.signIn.busy' : 'auth.signIn.submit'} />
+          </Button>
+        </div>
       </form>
       <ContinueWithGoogle busy={busy} onStart={() => setError(undefined)} onError={setError} />
       <p className="auth-switch">
@@ -337,62 +340,70 @@ export function SignUpPage(locale: LocaleProps) {
 
   return (
     <PublicFrame {...locale}>
-      <h2>
+      <h2 className="mo-section-title">
         <FormattedMessage id="auth.signUp.title" />
       </h2>
       <ErrorNotice error={error} />
       {mismatch && (
-        <p role="alert" className="notice notice--danger">
+        <StateMessage kind="error">
           <FormattedMessage id="auth.signUp.mismatch" />
-        </p>
+        </StateMessage>
       )}
-      <form className="login" onSubmit={(event) => void submit(event)} noValidate>
-        <label htmlFor={`${id}-email`}>
-          <FormattedMessage id="auth.email" />
-        </label>
-        <input
-          id={`${id}-email`}
-          type="email"
-          autoComplete="username"
-          inputMode="email"
-          placeholder={intl.formatMessage({ id: 'auth.email.placeholder' })}
-          required
-          value={email}
-          onChange={(event) => setEmail(event.target.value)}
-        />
-        <label htmlFor={`${id}-password`}>
-          <FormattedMessage id="auth.signUp.password" />
-        </label>
-        <input
-          id={`${id}-password`}
-          type="password"
-          autoComplete="new-password"
-          required
-          minLength={6}
-          aria-describedby={`${id}-hint`}
-          value={password}
-          onChange={(event) => setPassword(event.target.value)}
-        />
-        <p id={`${id}-hint`} className="login__hint">
-          <FormattedMessage id="auth.signUp.hint" />
-        </p>
-        <label htmlFor={`${id}-confirm`}>
-          <FormattedMessage id="auth.signUp.confirm" />
-        </label>
-        <input
-          id={`${id}-confirm`}
-          type="password"
-          autoComplete="new-password"
-          required
-          value={confirm}
-          onChange={(event) => setConfirm(event.target.value)}
-        />
-        <Button
-          type="submit"
-          disabled={busy || email.trim() === '' || password === '' || confirm === ''}
-        >
-          <FormattedMessage id={busy ? 'auth.signUp.busy' : 'auth.signUp.submit'} />
-        </Button>
+      <form className="mo-form login" onSubmit={(event) => void submit(event)} noValidate>
+        <div className="mo-field">
+          <label className="mo-label" htmlFor={`${id}-email`}>
+            <FormattedMessage id="auth.email" />
+          </label>
+          <input
+            id={`${id}-email`}
+            type="email"
+            autoComplete="username"
+            inputMode="email"
+            placeholder={intl.formatMessage({ id: 'auth.email.placeholder' })}
+            required
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+          />
+        </div>
+        <div className="mo-field">
+          <label className="mo-label" htmlFor={`${id}-password`}>
+            <FormattedMessage id="auth.signUp.password" />
+          </label>
+          <input
+            id={`${id}-password`}
+            type="password"
+            autoComplete="new-password"
+            required
+            minLength={6}
+            aria-describedby={`${id}-hint`}
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+          />
+          <p id={`${id}-hint`} className="mo-hint">
+            <FormattedMessage id="auth.signUp.hint" />
+          </p>
+        </div>
+        <div className="mo-field">
+          <label className="mo-label" htmlFor={`${id}-confirm`}>
+            <FormattedMessage id="auth.signUp.confirm" />
+          </label>
+          <input
+            id={`${id}-confirm`}
+            type="password"
+            autoComplete="new-password"
+            required
+            value={confirm}
+            onChange={(event) => setConfirm(event.target.value)}
+          />
+        </div>
+        <div className="mo-form__actions">
+          <Button
+            type="submit"
+            disabled={busy || email.trim() === '' || password === '' || confirm === ''}
+          >
+            <FormattedMessage id={busy ? 'auth.signUp.busy' : 'auth.signUp.submit'} />
+          </Button>
+        </div>
       </form>
       <ContinueWithGoogle busy={busy} onStart={() => setError(undefined)} onError={setError} />
       <p className="auth-switch">
@@ -432,38 +443,42 @@ export function ForgotPasswordPage(locale: LocaleProps) {
 
   return (
     <PublicFrame {...locale}>
-      <h2>
+      <h2 className="mo-section-title">
         <FormattedMessage id="auth.forgot.title" />
       </h2>
       {sentTo === undefined ? (
         <>
-          <p className="notice">
+          <p className="mo-hint">
             <FormattedMessage id="auth.forgot.body" />
           </p>
           <ErrorNotice error={error} />
-          <form className="login" onSubmit={(event) => void submit(event)} noValidate>
-            <label htmlFor={`${id}-email`}>
-              <FormattedMessage id="auth.email" />
-            </label>
-            <input
-              id={`${id}-email`}
-              type="email"
-              autoComplete="username"
-              inputMode="email"
-              placeholder={intl.formatMessage({ id: 'auth.email.placeholder' })}
-              required
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-            />
-            <Button type="submit" disabled={busy || !email.trim().includes('@')}>
-              <FormattedMessage id={busy ? 'auth.forgot.busy' : 'auth.forgot.submit'} />
-            </Button>
+          <form className="mo-form login" onSubmit={(event) => void submit(event)} noValidate>
+            <div className="mo-field">
+              <label className="mo-label" htmlFor={`${id}-email`}>
+                <FormattedMessage id="auth.email" />
+              </label>
+              <input
+                id={`${id}-email`}
+                type="email"
+                autoComplete="username"
+                inputMode="email"
+                placeholder={intl.formatMessage({ id: 'auth.email.placeholder' })}
+                required
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+              />
+            </div>
+            <div className="mo-form__actions">
+              <Button type="submit" disabled={busy || !email.trim().includes('@')}>
+                <FormattedMessage id={busy ? 'auth.forgot.busy' : 'auth.forgot.submit'} />
+              </Button>
+            </div>
           </form>
         </>
       ) : (
-        <p role="status" className="notice notice--success">
+        <StateMessage kind="success">
           <FormattedMessage id="auth.forgot.sent" values={{ email: sentTo }} />
-        </p>
+        </StateMessage>
       )}
       <p className="auth-switch">
         <AppLink to="/login">
@@ -478,7 +493,7 @@ export function ForgotPasswordPage(locale: LocaleProps) {
 export function NotConfigured(locale: LocaleProps) {
   return (
     <PublicFrame {...locale}>
-      <p className="notice">
+      <p className="mo-hint">
         <FormattedMessage id="auth.notConfigured" />
       </p>
     </PublicFrame>
@@ -487,13 +502,19 @@ export function NotConfigured(locale: LocaleProps) {
 
 export function AccessDenied() {
   return (
-    <section className="notice notice--danger" role="alert">
-      <h2>
-        <FormattedMessage id="auth.denied.title" />
-      </h2>
-      <p>
-        <FormattedMessage id="auth.denied.body" />
-      </p>
+    // A StateMessage's error, drawn by hand so its title stays the section's heading.
+    <section className="mo-state mo-state--error" role="alert">
+      <span className="mo-state__icon" aria-hidden="true">
+        !
+      </span>
+      <div className="mo-state__body">
+        <h2 className="mo-state__title">
+          <FormattedMessage id="auth.denied.title" />
+        </h2>
+        <p className="mo-state__text">
+          <FormattedMessage id="auth.denied.body" />
+        </p>
+      </div>
     </section>
   );
 }
@@ -534,9 +555,9 @@ export function ProtectedRoute({
     case 'unavailable':
       return (
         <PublicFrame {...locale}>
-          <p role="alert" className="notice notice--danger">
+          <StateMessage kind="error">
             <FormattedMessage id="auth.unavailable" />
-          </p>
+          </StateMessage>
           <Button onClick={retry}>
             <FormattedMessage id="auth.retry" />
           </Button>
@@ -583,33 +604,39 @@ export function CreateOrganization() {
 
   return (
     <>
-      <h2>
+      <h2 className="mo-section-title">
         <FormattedMessage id="organization.create.title" />
       </h2>
-      <p className="notice">
+      <p className="mo-hint">
         <FormattedMessage id="auth.noOrganization" />
       </p>
       {error === undefined ? null : (
-        <p role="alert" className="notice notice--danger">
+        <StateMessage kind="error">
           <FormattedMessage id={`organization.create.error.${error}`} />
-        </p>
+        </StateMessage>
       )}
-      <form className="login" onSubmit={(event) => void submit(event)} noValidate>
-        <label htmlFor={`${id}-name`}>
-          <FormattedMessage id="organization.create.name" />
-        </label>
-        <input
-          id={`${id}-name`}
-          type="text"
-          autoComplete="organization"
-          maxLength={100}
-          required
-          value={name}
-          onChange={(event) => setName(event.target.value)}
-        />
-        <Button type="submit" disabled={busy || name.trim() === ''}>
-          <FormattedMessage id={busy ? 'organization.create.busy' : 'organization.create.submit'} />
-        </Button>
+      <form className="mo-form login" onSubmit={(event) => void submit(event)} noValidate>
+        <div className="mo-field">
+          <label className="mo-label" htmlFor={`${id}-name`}>
+            <FormattedMessage id="organization.create.name" />
+          </label>
+          <input
+            id={`${id}-name`}
+            type="text"
+            autoComplete="organization"
+            maxLength={100}
+            required
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+          />
+        </div>
+        <div className="mo-form__actions">
+          <Button type="submit" disabled={busy || name.trim() === ''}>
+            <FormattedMessage
+              id={busy ? 'organization.create.busy' : 'organization.create.submit'}
+            />
+          </Button>
+        </div>
       </form>
     </>
   );

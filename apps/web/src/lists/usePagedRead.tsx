@@ -1,5 +1,5 @@
 import { FormattedMessage } from '@melonoffice/i18n';
-import { Button } from '@melonoffice/ui';
+import { Button, StateMessage } from '@melonoffice/ui';
 import { useEffect, useState } from 'react';
 import type { Load } from '../shell/useRead.js';
 
@@ -97,9 +97,9 @@ export function LoadMore<P extends PageShape<unknown>>({ read }: { readonly read
   return (
     <div className="list-more">
       {read.moreFailed ? (
-        <p className="panel__empty" role="alert">
+        <StateMessage kind="error">
           <FormattedMessage id="lists.moreFailed" />
-        </p>
+        </StateMessage>
       ) : null}
       <Button variant="secondary" disabled={read.loadingMore} onClick={read.more}>
         <FormattedMessage id={read.loadingMore ? 'lists.loadingMore' : 'lists.more'} />

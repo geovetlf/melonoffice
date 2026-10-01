@@ -1,5 +1,5 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
-import { Button } from '@melonoffice/ui';
+import { Badge, Button, PageHeader, StateMessage } from '@melonoffice/ui';
 import { useEffect, useState, type FormEvent } from 'react';
 import { navigate } from '../identity/router.js';
 import { readyList, useOfficeData, useSpecialistSaved } from '../office/OfficeData.js';
@@ -13,6 +13,7 @@ import {
   type AgentTemplateView,
   type AgentsClient,
 } from './agentsClient.js';
+import { errorCode } from '../shell/errors.js';
 
 /**
  * Agents (ADR-0025, ADR-0062): every agent of the organization by status, creating one from a
@@ -34,10 +35,7 @@ const ERRORS: ReadonlySet<string> = new Set([
   'specialist_concurrency_conflict',
 ]);
 
-const codeOf = (error: unknown) => {
-  const code = error instanceof AgentRequestError ? (error.code ?? 'generic') : 'generic';
-  return ERRORS.has(code) ? code : 'generic';
-};
+const codeOf = (error: unknown) => errorCode(error, AgentRequestError, ERRORS);
 
 export function AgentsPage({
   client,
@@ -86,53 +84,51 @@ export function AgentsPage({
   };
 
   return (
-    <article className="dept-office agents-page">
-      <h1 className="dept-office__title">
-        <FormattedMessage id="agents.title" />
-      </h1>
-      <p className="documents__lead">
-        <FormattedMessage id="agents.lead" />
-      </p>
-      {canManage ? (
-        creating ? (
-          <CreateAgent
-            client={client}
-            onCancel={() => setCreating(false)}
-            onCreated={(agent) => {
-              saved(agent);
-              setCreating(false);
-              setNotice({ code: 'created', name: agent.displayName });
-            }}
-          />
-        ) : (
-          <Button className="agents__create" onClick={() => setCreating(true)}>
-            <FormattedMessage id="agents.create" />
-          </Button>
-        )
+    <article className="mo-page agents-page">
+      <PageHeader
+        title={<FormattedMessage id="agents.title" />}
+        description={<FormattedMessage id="agents.lead" />}
+        actions={
+          canManage && !creating ? (
+            <Button className="agents__create" onClick={() => setCreating(true)}>
+              <FormattedMessage id="agents.create" />
+            </Button>
+          ) : null
+        }
+      />
+      {canManage && creating ? (
+        <CreateAgent
+          client={client}
+          onCancel={() => setCreating(false)}
+          onCreated={(agent) => {
+            saved(agent);
+            setCreating(false);
+            setNotice({ code: 'created', name: agent.displayName });
+          }}
+        />
       ) : null}
       {notice === undefined ? null : (
-        <p
-          className="panel__empty"
-          role={notice.code === 'created' || notice.code.startsWith('moved.') ? 'status' : 'alert'}
+        <StateMessage
+          kind={notice.code === 'created' || notice.code.startsWith('moved.') ? 'success' : 'error'}
         >
           <FormattedMessage
             id={`agents.notice.${notice.code}`}
             values={{ name: notice.name ?? '' }}
           />
-        </p>
+        </StateMessage>
       )}
       {specialists.status === 'loading' ? (
-        <p className="panel__empty" role="status">
+        <StateMessage kind="loading">
           <FormattedMessage id="agents.loading" />
-        </p>
+        </StateMessage>
       ) : specialists.status !== 'ready' ? (
-        <p className="panel__empty" role="alert">
+        <StateMessage kind="error">
           <FormattedMessage id="agents.error" />
-        </p>
+        </StateMessage>
       ) : agents.length === 0 ? (
-        <p className="panel__empty">
+        <StateMessage kind="empty">
           <FormattedMessage id="agents.none" />
-        </p>
+        </StateMessage>
       ) : (
         STATUSES.map((status) => {
           const inStatus = agents
@@ -141,26 +137,25 @@ export function AgentsPage({
           if (inStatus.length === 0) return null;
           const titleId = `agents-${status}`;
           return (
-            <section key={status} className="dept-office__section" aria-labelledby={titleId}>
-              <h2 id={titleId}>
-                <FormattedMessage id={`agents.status.${status}`} />{' '}
-                <span className="customers__count">{inStatus.length}</span>
+            <section key={status} className="mo-panel mo-page-section" aria-labelledby={titleId}>
+              <h2 id={titleId} className="mo-section-title">
+                <FormattedMessage id={`agents.status.${status}`} /> <Badge>{inStatus.length}</Badge>
               </h2>
-              <ul className="documents__list">
+              <ul className="mo-list">
                 {inStatus.map((agent) => {
                   const department = depts.find((d) => d.id === agent.departmentId);
                   return (
-                    <li key={agent.id} className="approval-card">
-                      <div className="documents__main">
+                    <li key={agent.id} className="mo-list-item">
+                      <div className="mo-list-item__main">
                         <button
                           type="button"
-                          className="ai-usage__row documents__name"
+                          className="mo-link-button mo-list-item__title"
                           onClick={() => open(agent)}
                           disabled={department === undefined || agent.status === 'archived'}
                         >
                           {agent.displayName}
                         </button>
-                        <span className="documents__meta">
+                        <span className="mo-list-item__meta">
                           {department === undefined
                             ? agent.departmentId
                             : departmentName(intl, department, 'name')}
@@ -168,7 +163,7 @@ export function AgentsPage({
                         </span>
                       </div>
                       {canManage && TRANSITIONS[agent.status].length > 0 ? (
-                        <div className="customers__actions">
+                        <div className="mo-list-item__actions">
                           {TRANSITIONS[agent.status].map((to) => (
                             <button
                               key={to}
@@ -243,22 +238,22 @@ function CreateAgent({
   };
 
   return (
-    <form className="dept-office__section agents__create" onSubmit={(e) => void submit(e)}>
-      <h2>
+    <form className="mo-panel mo-page-section" onSubmit={(e) => void submit(e)}>
+      <h2 className="mo-section-title">
         <FormattedMessage id="agents.create.title" />
       </h2>
       {templates === undefined ? (
-        <p className="panel__empty" role="status">
+        <StateMessage kind="loading" inline>
           <FormattedMessage id="agents.loading" />
-        </p>
+        </StateMessage>
       ) : templates === 'error' ? (
-        <p className="panel__empty" role="alert">
+        <StateMessage kind="error">
           <FormattedMessage id="agents.create.templatesError" />
-        </p>
+        </StateMessage>
       ) : (
         <>
-          <label className="documents__picker">
-            <span>
+          <label className="mo-field">
+            <span className="mo-label">
               <FormattedMessage id="agents.create.template" />
             </span>
             <select value={templateId} onChange={(e) => setTemplateId(e.target.value)} required>
@@ -273,7 +268,7 @@ function CreateAgent({
             </select>
           </label>
           {chosen === undefined ? null : (
-            <div className="documents__hint">
+            <div className="mo-hint agents__template">
               <p>
                 <FormattedMessage
                   id="agents.create.department"
@@ -299,14 +294,14 @@ function CreateAgent({
               </p>
             </div>
           )}
-          <label className="documents__picker">
-            <span>
+          <label className="mo-field">
+            <span className="mo-label">
               <FormattedMessage id="agents.create.name" />
             </span>
             <input value={name} onChange={(e) => setName(e.target.value)} maxLength={80} required />
           </label>
-          <label className="documents__picker">
-            <span>
+          <label className="mo-field">
+            <span className="mo-label">
               <FormattedMessage id="agents.create.locale" />
             </span>
             <select
@@ -317,15 +312,15 @@ function CreateAgent({
               <option value="en">English</option>
             </select>
           </label>
-          <p className="documents__hint">
+          <p className="mo-hint">
             <FormattedMessage id="agents.create.draft" />
           </p>
           {error === undefined ? null : (
-            <p className="panel__empty" role="alert">
+            <StateMessage kind="error">
               <FormattedMessage id={`agents.notice.${error}`} values={{ name: '' }} />
-            </p>
+            </StateMessage>
           )}
-          <div className="customers__actions">
+          <div className="mo-form__actions">
             <button
               type="submit"
               className="mo-button mo-button--primary"

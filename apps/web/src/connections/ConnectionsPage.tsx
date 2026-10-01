@@ -1,5 +1,5 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
-import { Button } from '@melonoffice/ui';
+import { Badge, Button, PageHeader, StateMessage, type BadgeTone } from '@melonoffice/ui';
 import { useEffect, useState, type FormEvent } from 'react';
 import {
   ConnectionsError,
@@ -45,14 +45,14 @@ export const permissionsOf = (can: (permission: string) => boolean): ConnectionP
   delete: can('channel.delete'),
 });
 
-const TONE: Record<ConnectionStatus, 'ok' | 'warn' | 'bad' | 'off'> = {
-  created: 'warn',
-  connecting: 'warn',
-  connected: 'ok',
-  paused: 'warn',
-  error: 'bad',
-  disconnected: 'off',
-  revoked: 'off',
+const TONE: Record<ConnectionStatus, BadgeTone> = {
+  created: 'warning',
+  connecting: 'warning',
+  connected: 'success',
+  paused: 'warning',
+  error: 'danger',
+  disconnected: 'neutral',
+  revoked: 'neutral',
 };
 
 /** Enough of a phone number to recognise it, not to read it out: `+51 9••••45`. */
@@ -129,28 +129,23 @@ export function ConnectionsPage({
   const known = (providers ?? []).filter((p) => ACCOUNT_FIELDS[p.provider] !== undefined);
 
   return (
-    <section className="connections" aria-labelledby="connections-title">
-      <header className="connections__header">
-        <div>
-          <p className="connections__eyebrow">
-            <FormattedMessage id="nav.settings" />
-          </p>
-          <h1 id="connections-title">
-            <FormattedMessage id="connections.title" />
-          </h1>
-          <p className="notice">
-            <FormattedMessage id="connections.intro" />
-          </p>
-        </div>
-        {permissions.create && known.length > 0 && creating === undefined ? (
-          <Button onClick={() => setCreating(known[0]?.provider)}>
-            <FormattedMessage id="connections.add" />
-          </Button>
-        ) : null}
-      </header>
+    <section className="mo-page connections-page" aria-labelledby="connections-title">
+      <PageHeader
+        titleId="connections-title"
+        title={<FormattedMessage id="connections.title" />}
+        eyebrow={<FormattedMessage id="nav.settings" />}
+        description={<FormattedMessage id="connections.intro" />}
+        actions={
+          permissions.create && known.length > 0 && creating === undefined ? (
+            <Button onClick={() => setCreating(known[0]?.provider)}>
+              <FormattedMessage id="connections.add" />
+            </Button>
+          ) : null
+        }
+      />
 
       {error === undefined ? null : (
-        <p className="notice notice--danger" role="alert">
+        <StateMessage kind="error">
           <FormattedMessage
             id={
               intl.messages[`connections.error.${error.code}`] === undefined
@@ -159,7 +154,7 @@ export function ConnectionsPage({
             }
           />
           {error.field === undefined ? null : ` (${error.field})`}
-        </p>
+        </StateMessage>
       )}
 
       {creating === undefined ? null : (
@@ -185,31 +180,35 @@ export function ConnectionsPage({
 
       {connections === undefined || providers === undefined ? (
         error === undefined ? (
-          <p className="notice">
+          <StateMessage kind="loading">
             <FormattedMessage id="connections.loading" />
-          </p>
+          </StateMessage>
         ) : null
       ) : (
-        <ul className="connections__list">
+        <ul className="mo-list">
           {known.length === 0 && connections.length === 0 ? (
-            <li className="notice">
-              <FormattedMessage id="connections.noProviders" />
+            <li>
+              <StateMessage kind="empty">
+                <FormattedMessage id="connections.noProviders" />
+              </StateMessage>
             </li>
           ) : null}
           {connections.map((c) => (
-            <li key={c.id} className="connection-card" data-status={c.status}>
-              <div className="connection-card__main">
+            <li key={c.id} className="mo-list-item connections-page__item" data-status={c.status}>
+              <div className="mo-list-item__main">
                 <ProviderName provider={c.provider} />
-                <p className="connection-card__name">{c.displayName}</p>
-                <p className="connection-card__account">
+                <p className="connections-page__name">{c.displayName}</p>
+                <p className="mo-list-item__meta">
                   {maskPhone(c.account.displayPhoneNumber) ?? (
                     <FormattedMessage id="connections.noPhone" />
                   )}
                 </p>
-                <p className={`connection-card__status connection-card__status--${TONE[c.status]}`}>
-                  <FormattedMessage id={`connections.status.${c.status}`} />
+                <p className="mo-list-item__meta">
+                  <Badge tone={TONE[c.status]}>
+                    <FormattedMessage id={`connections.status.${c.status}`} />
+                  </Badge>
                   {c.status === 'error' && c.statusReason !== null ? (
-                    <span className="connection-card__reason">
+                    <span>
                       {' · '}
                       {intl.messages[`connections.reason.${c.statusReason}`] === undefined ? (
                         c.statusReason
@@ -230,12 +229,13 @@ export function ConnectionsPage({
                   }}
                 />
               ) : null}
-              <div className="connection-card__actions">
-                <Button variant="secondary" onClick={() => void showSetup(c.id)}>
+              <div className="mo-list-item__actions">
+                <Button variant="secondary" size="sm" onClick={() => void showSetup(c.id)}>
                   <FormattedMessage id="connections.action.setup" />
                 </Button>
                 {c.channel === 'whatsapp' ? (
                   <Button
+                    size="sm"
                     variant="secondary"
                     aria-expanded={templatesFor === c.id}
                     onClick={() => setTemplatesFor(templatesFor === c.id ? undefined : c.id)}
@@ -245,6 +245,7 @@ export function ConnectionsPage({
                 ) : null}
                 {permissions.update && c.status !== 'connected' && c.status !== 'connecting' ? (
                   <Button
+                    size="sm"
                     disabled={busy !== undefined}
                     onClick={() => void act(c.id, 'connect', () => client.connect(c.id))}
                   >
@@ -253,6 +254,7 @@ export function ConnectionsPage({
                 ) : null}
                 {permissions.update && c.status === 'connected' ? (
                   <Button
+                    size="sm"
                     variant="secondary"
                     disabled={busy !== undefined}
                     onClick={() => void act(c.id, 'pause', () => client.pause(c.id))}
@@ -261,12 +263,13 @@ export function ConnectionsPage({
                   </Button>
                 ) : null}
                 {permissions.update && renaming !== c.id ? (
-                  <Button variant="secondary" onClick={() => setRenaming(c.id)}>
+                  <Button size="sm" variant="secondary" onClick={() => setRenaming(c.id)}>
                     <FormattedMessage id="connections.action.rename" />
                   </Button>
                 ) : null}
                 {permissions.disconnect && c.status !== 'disconnected' ? (
                   <Button
+                    size="sm"
                     variant="secondary"
                     disabled={busy !== undefined}
                     onClick={() => void act(c.id, 'disconnect', () => client.disconnect(c.id))}
@@ -275,17 +278,19 @@ export function ConnectionsPage({
                   </Button>
                 ) : null}
                 {permissions.delete && confirmDelete !== c.id ? (
-                  <Button variant="secondary" onClick={() => setConfirmDelete(c.id)}>
+                  <Button size="sm" variant="secondary" onClick={() => setConfirmDelete(c.id)}>
                     <FormattedMessage id="connections.action.delete" />
                   </Button>
                 ) : null}
               </div>
               {permissions.delete && confirmDelete === c.id ? (
-                <div className="connection-card__confirm" role="group">
+                <div className="connections-page__wide connections-page__confirm" role="group">
                   <p>
                     <FormattedMessage id="connections.confirmDelete" />
                   </p>
                   <Button
+                    size="sm"
+                    variant="danger"
                     disabled={busy !== undefined}
                     onClick={async () => {
                       await act(c.id, 'delete', () => client.remove(c.id));
@@ -294,7 +299,7 @@ export function ConnectionsPage({
                   >
                     <FormattedMessage id="connections.action.confirmDelete" />
                   </Button>
-                  <Button variant="secondary" onClick={() => setConfirmDelete(undefined)}>
+                  <Button size="sm" variant="ghost" onClick={() => setConfirmDelete(undefined)}>
                     <FormattedMessage id="common.cancel" />
                   </Button>
                 </div>
@@ -313,16 +318,22 @@ export function ConnectionsPage({
           {known
             .filter((p) => !connections.some((c) => c.provider === p.provider))
             .map((p) => (
-              <li key={p.provider} className="connection-card" data-status="none">
-                <div className="connection-card__main">
+              <li
+                key={p.provider}
+                className="mo-list-item connections-page__item"
+                data-status="none"
+              >
+                <div className="mo-list-item__main">
                   <ProviderName provider={p.provider} />
-                  <p className="connection-card__status connection-card__status--off">
-                    <FormattedMessage id="connections.status.none" />
+                  <p className="mo-list-item__meta">
+                    <Badge>
+                      <FormattedMessage id="connections.status.none" />
+                    </Badge>
                   </p>
                 </div>
                 {permissions.create && creating === undefined ? (
-                  <div className="connection-card__actions">
-                    <Button onClick={() => setCreating(p.provider)}>
+                  <div className="mo-list-item__actions">
+                    <Button size="sm" onClick={() => setCreating(p.provider)}>
                       <FormattedMessage id="connections.action.configure" />
                     </Button>
                   </div>
@@ -339,12 +350,12 @@ function ProviderName({ provider }: { readonly provider: string }) {
   const intl = useIntl();
   const known = intl.messages[`connections.provider.${provider}.name`] !== undefined;
   return (
-    <p className="connection-card__provider">
+    <p className="mo-list-item__title connections-page__provider">
       <strong>
         {known ? <FormattedMessage id={`connections.provider.${provider}.name`} /> : provider}
       </strong>
       {known ? (
-        <span className="connection-card__source">
+        <span className="mo-list-item__meta">
           <FormattedMessage id={`connections.provider.${provider}.source`} />
         </span>
       ) : null}
@@ -393,13 +404,15 @@ function CreateForm({
   }
   return (
     <form
-      className="connection-form"
+      className="mo-panel mo-form"
       onSubmit={(e) => void submit(e)}
       aria-label={intl.formatMessage({ id: 'connections.add' })}
     >
       {providers.length > 1 ? (
-        <label>
-          <FormattedMessage id="connections.field.provider" />
+        <label className="mo-field">
+          <span className="mo-label">
+            <FormattedMessage id="connections.field.provider" />
+          </span>
           <select value={provider} onChange={(e) => onProvider(e.target.value)}>
             {providers.map((p) => (
               <option key={p.provider} value={p.provider}>
@@ -413,30 +426,34 @@ function CreateForm({
       ) : (
         <ProviderName provider={provider} />
       )}
-      <label>
-        <FormattedMessage id="connections.field.displayName" />
+      <label className="mo-field">
+        <span className="mo-label">
+          <FormattedMessage id="connections.field.displayName" />
+        </span>
         <input name="displayName" required maxLength={80} autoComplete="off" />
       </label>
       {fields.map((field) => (
-        <label key={field.name}>
-          <FormattedMessage id={`connections.field.${field.name}`} />
-          {field.required ? null : (
-            <span className="connection-form__optional">
-              {' '}
-              <FormattedMessage id="connections.optional" />
-            </span>
-          )}
+        <label key={field.name} className="mo-field">
+          <span className="mo-label">
+            <FormattedMessage id={`connections.field.${field.name}`} />
+            {field.required ? null : (
+              <span className="mo-hint">
+                {' '}
+                <FormattedMessage id="connections.optional" />
+              </span>
+            )}
+          </span>
           <input name={field.name} required={field.required} autoComplete="off" />
         </label>
       ))}
-      <p className="notice">
+      <p className="mo-hint">
         <FormattedMessage id="connections.noSecretsHere" />
       </p>
-      <div className="connection-card__actions">
+      <div className="mo-form__actions">
         <Button type="submit" disabled={sending}>
           <FormattedMessage id="connections.create" />
         </Button>
-        <Button variant="secondary" onClick={onCancel}>
+        <Button variant="ghost" onClick={onCancel}>
           <FormattedMessage id="common.cancel" />
         </Button>
       </div>
@@ -456,14 +473,16 @@ function RenameForm({
   const [name, setName] = useState(current);
   return (
     <form
-      className="connection-form connection-form--inline"
+      className="mo-form connections-page__wide"
       onSubmit={(e) => {
         e.preventDefault();
         void onSave(name.trim());
       }}
     >
-      <label>
-        <FormattedMessage id="connections.field.displayName" />
+      <label className="mo-field">
+        <span className="mo-label">
+          <FormattedMessage id="connections.field.displayName" />
+        </span>
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
@@ -472,11 +491,11 @@ function RenameForm({
           autoComplete="off"
         />
       </label>
-      <div className="connection-card__actions">
-        <Button type="submit">
+      <div className="mo-form__actions">
+        <Button type="submit" size="sm">
           <FormattedMessage id="connections.save" />
         </Button>
-        <Button variant="secondary" onClick={onCancel}>
+        <Button size="sm" variant="ghost" onClick={onCancel}>
           <FormattedMessage id="common.cancel" />
         </Button>
       </div>
@@ -493,8 +512,8 @@ function SetupPanel({
   readonly apiUrl: string;
 }) {
   return (
-    <div className="connection-setup">
-      <h2>
+    <div className="connection-setup connections-page__wide">
+      <h2 className="mo-subsection-title">
         <FormattedMessage id="connections.setup.title" />
       </h2>
       <ol>

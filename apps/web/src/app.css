@@ -8,19 +8,16 @@
   max-width: 72rem;
 }
 
-.public__header h1 {
-  margin: 0;
-  font-size: var(--mo-font-size-xxl);
+/* The public pages' one h1 is the product's name: PageHeader's title, in the brand's colour. */
+.public__header .mo-page-header__title {
   color: var(--mo-color-accent);
 }
 
-.public__tagline {
-  margin-top: var(--mo-space-1);
-  font-size: var(--mo-font-size-lg);
-  color: var(--mo-color-text-secondary);
-}
-
+/* The card holds one column, evenly spaced: title, states, form, the way to the other page. */
 .public__card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--mo-space-4);
   margin-top: var(--mo-space-6);
   padding: var(--mo-space-6);
   background: var(--mo-color-surface);
@@ -28,9 +25,14 @@
   border-radius: var(--mo-radius-lg);
 }
 
-.public__card h2 {
-  margin: 0 0 var(--mo-space-4);
-  font-size: var(--mo-font-size-xl);
+.public__card > * {
+  min-width: 0;
+  margin-block: 0;
+}
+
+/* A button on its own (sign out, retry) keeps its size; the card's forms fill the width. */
+.public__card > .mo-button {
+  justify-self: start;
 }
 
 .languages {
@@ -41,26 +43,10 @@
   margin-top: var(--mo-space-6);
 }
 
-.login {
-  display: grid;
-  gap: var(--mo-space-2);
-}
-
-.login .mo-button {
-  margin-top: var(--mo-space-4);
-}
-
 /* Sign-in, sign-up and password reset (ADR-0105): one short column, the same on every screen. */
 .login__forgot {
   margin: 0;
   text-align: right;
-  font-size: var(--mo-font-size-sm);
-}
-
-.login__hint {
-  margin: 0;
-  font-size: var(--mo-font-size-sm);
-  color: var(--mo-color-text-secondary);
 }
 
 .login .mo-button,
@@ -69,23 +55,12 @@
   min-height: var(--mo-min-target-size);
 }
 
-.auth-link {
-  color: var(--mo-color-accent);
-  font-weight: 600;
-  text-decoration: none;
-}
-
-.auth-link:hover,
-.auth-link:focus-visible {
-  text-decoration: underline;
-}
-
 /* "── or ──" between the email form and Google. */
 .auth-or {
   display: flex;
   align-items: center;
   gap: var(--mo-space-3);
-  margin: var(--mo-space-4) 0;
+  margin: 0;
   font-size: var(--mo-font-size-sm);
   color: var(--mo-color-text-secondary);
 }
@@ -111,7 +86,7 @@
 }
 
 .auth-switch {
-  margin: var(--mo-space-4) 0 0;
+  margin: 0;
   text-align: center;
   color: var(--mo-color-text-secondary);
 }
@@ -126,97 +101,140 @@
   }
 }
 
-.notice {
-  margin: 0 0 var(--mo-space-4);
-  color: var(--mo-color-text-secondary);
-}
-
-.notice--warning {
-  color: var(--mo-color-warning);
-}
-
-.notice--danger {
-  color: var(--mo-color-danger);
-}
-
-.notice--success {
-  color: var(--mo-color-success);
-}
-
 /* Conversations Center (CV-3): a list beside the open conversation; stacked on a phone. */
-.inbox {
-  padding: var(--mo-space-4);
-}
-
-.inbox__tools,
-.inbox__tabs,
-.inbox__actions {
+.inbox__actions,
+.inbox__tag-form,
+.inbox__field {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--mo-space-2);
-  margin-bottom: var(--mo-space-3);
+  min-width: 0;
+}
+
+.inbox__field {
+  font-size: var(--mo-font-size-sm);
+}
+
+.inbox__field > select,
+.inbox__tag-form > input {
+  max-width: 100%;
 }
 
 .inbox__panes {
   display: grid;
-  grid-template-columns: minmax(16rem, 1fr) 2fr;
+  grid-template-columns: minmax(min(100%, 16rem), 1fr) minmax(0, 2fr);
+  align-items: start;
   gap: var(--mo-space-4);
+}
+
+.inbox__panes > * {
+  min-width: 0;
 }
 
 @media (max-width: 48rem) {
   .inbox__panes {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
-.inbox__list,
 .inbox__messages {
   list-style: none;
   margin: 0;
   padding: 0;
 }
 
+/* A conversation in the list: a record's card (hairline, radius), as the button that opens it. */
 .inbox__row {
   display: grid;
   gap: var(--mo-space-1);
   width: 100%;
   min-height: var(--mo-min-target-size);
-  padding: var(--mo-space-3);
+  padding: var(--mo-space-3) var(--mo-space-4);
   border: 1px solid var(--mo-color-border);
-  border-radius: var(--mo-radius-md);
+  border-radius: var(--mo-radius-lg);
   background: var(--mo-color-surface);
-  color: var(--mo-color-text-primary);
+  box-shadow: var(--mo-shadow-sm);
+  color: var(--mo-color-text-secondary);
   font: inherit;
+  font-size: var(--mo-font-size-sm);
   text-align: left;
+  overflow-wrap: anywhere;
   cursor: pointer;
 }
 
-.inbox__row[aria-current='true'] {
-  background: var(--mo-color-surface-muted);
+.inbox__row:hover {
+  border-color: var(--mo-color-border-strong);
 }
 
-.inbox__tag {
-  margin-right: var(--mo-space-1);
-  padding: 0 var(--mo-space-2);
-  border-radius: var(--mo-radius-pill);
-  background: var(--mo-color-surface-subtle);
-  font-size: var(--mo-font-size-xs);
+.inbox__row[aria-current='true'] {
+  border-color: var(--mo-color-accent);
+  background: var(--mo-color-accent-soft);
+}
+
+.inbox__who {
+  color: var(--mo-color-text-primary);
+  font-size: var(--mo-font-size-md);
+  font-weight: var(--mo-font-weight-semibold);
+}
+
+.inbox__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--mo-space-1);
+}
+
+.inbox__tags:empty {
+  display: none;
+}
+
+.inbox__select {
+  padding: var(--mo-space-6);
+  border: 1px dashed var(--mo-color-border);
+  border-radius: var(--mo-radius-xl);
+}
+
+/* The open conversation: its parts evenly spaced in one panel. */
+.inbox__conversation {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--mo-space-4);
+}
+
+.inbox__conversation > * {
+  min-width: 0;
+  margin-block: 0;
 }
 
 .inbox__contact {
   display: grid;
-  grid-template-columns: max-content 1fr;
+  grid-template-columns: max-content minmax(0, 1fr);
   gap: var(--mo-space-1) var(--mo-space-3);
   color: var(--mo-color-text-secondary);
+  font-size: var(--mo-font-size-sm);
+}
+
+.inbox__contact dd {
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .inbox__messages li {
   max-width: 80%;
   margin-bottom: var(--mo-space-2);
   padding: var(--mo-space-2) var(--mo-space-3);
-  border-radius: var(--mo-radius-md);
+  border-radius: var(--mo-radius-lg);
   background: var(--mo-color-surface-muted);
+  overflow-wrap: anywhere;
+}
+
+.inbox__messages li > span {
+  color: var(--mo-color-text-secondary);
+  font-size: var(--mo-font-size-xs);
+}
+
+.inbox__messages li > p {
+  margin: var(--mo-space-1) 0 0;
 }
 
 .inbox__message--outbound {
@@ -224,33 +242,54 @@
   background: var(--mo-color-surface-subtle);
 }
 
-.inbox__error {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--mo-space-3);
-  color: var(--mo-color-danger);
-}
-
 .inbox__readonly {
   color: var(--mo-color-text-secondary);
 }
 
+.reply {
+  display: grid;
+  gap: var(--mo-space-2);
+  min-width: 0;
+}
+
+.reply textarea {
+  width: 100%;
+  min-height: 6rem;
+}
+
+.reply__who,
+.reply__status {
+  margin: 0;
+}
+
 /* Assisted AI on a conversation (CV-4): clearly marked, never mistaken for a sent message. */
 .assist {
-  margin-block: 1rem;
-  padding: 0.75rem;
-  border: 1px dashed currentColor;
-  border-radius: 0.5rem;
+  display: grid;
+  gap: var(--mo-space-3);
+  min-width: 0;
+  padding: var(--mo-space-4);
+  border: 1px dashed var(--mo-color-border-strong);
+  border-radius: var(--mo-radius-lg);
 }
 .assist__buttons,
 .assist__actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
+  gap: var(--mo-space-2);
+}
+.assist__result {
+  display: grid;
+  gap: var(--mo-space-2);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.assist__result > .mo-button {
+  justify-self: start;
 }
 .assist__badge {
-  font-size: 0.85em;
+  margin: 0;
+  color: var(--mo-color-text-secondary);
+  font-size: var(--mo-font-size-sm);
   font-style: italic;
 }
 .assist textarea {
@@ -264,127 +303,54 @@
   padding: var(--mo-space-4);
 }
 
-.connections__header {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--mo-space-3);
-  margin-bottom: var(--mo-space-4);
-}
-
-.connections__header h1 {
-  margin: 0 0 var(--mo-space-2);
-  font-size: var(--mo-font-size-xl);
-}
-
-.connections__eyebrow {
-  margin: 0;
-  font-size: var(--mo-font-size-xs);
-  font-weight: var(--mo-font-weight-semibold);
-  color: var(--mo-color-text-secondary);
-}
-
-.connections__list {
-  display: grid;
-  gap: var(--mo-space-3);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.connection-card {
-  display: grid;
-  gap: var(--mo-space-3);
-  padding: var(--mo-space-4);
-  background: var(--mo-color-surface);
-  border: 1px solid var(--mo-color-border);
-  border-radius: var(--mo-radius-lg);
-}
-
-.connection-card__main p {
-  margin: 0 0 var(--mo-space-1);
-}
-
-.connection-card__provider {
+/* A connection's record: the provider and its source on one line; what opens under it (renaming,
+   the setup, the templates, the confirmation) takes the card's whole width. */
+.connections-page__provider {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
   gap: var(--mo-space-2);
 }
 
-.connection-card__source,
-.connection-card__account,
-.connection-form__optional {
-  font-size: var(--mo-font-size-sm);
-  color: var(--mo-color-text-secondary);
+.connections-page__name {
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 
-.connection-card__status {
-  font-weight: 600;
+.connections-page__wide {
+  flex-basis: 100%;
+  min-width: 0;
 }
 
-.connection-card__status--ok {
-  color: var(--mo-color-success);
+/* Renaming opens on its own row; its field keeps a form's width. */
+.connections-page__item > .mo-form {
+  max-width: none;
 }
 
-.connection-card__status--warn {
-  color: var(--mo-color-warning);
+.connections-page__item > .mo-form > .mo-field {
+  max-width: 32rem;
 }
 
-.connection-card__status--bad {
-  color: var(--mo-color-danger);
+.connections-page__item .mo-list-item {
+  box-shadow: none;
 }
 
-.connection-card__status--off {
-  color: var(--mo-color-text-secondary);
-}
-
-.connection-card__reason {
-  font-weight: 400;
-}
-
-.connection-card__actions {
+.connections-page__confirm {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: var(--mo-space-2);
 }
 
-.connection-card__confirm p {
-  margin: 0 0 var(--mo-space-2);
-}
-
-.connection-form {
-  display: grid;
-  gap: var(--mo-space-3);
-  max-width: 32rem;
-  margin-bottom: var(--mo-space-4);
-  padding: var(--mo-space-4);
-  background: var(--mo-color-surface);
-  border: 1px solid var(--mo-color-border);
-  border-radius: var(--mo-radius-lg);
-}
-
-.connection-form--inline {
+.connections-page__confirm p {
+  flex-basis: 100%;
   margin: 0;
-  padding: 0;
-  border: 0;
-}
-
-.connection-form label {
-  display: grid;
-  gap: var(--mo-space-1);
 }
 
 .connection-setup {
   padding: var(--mo-space-3);
   background: var(--mo-color-surface-subtle);
   border-radius: var(--mo-radius-md);
-}
-
-.connection-setup h2 {
-  margin: 0 0 var(--mo-space-2);
-  font-size: var(--mo-font-size-lg);
 }
 
 .connection-setup ol {
@@ -415,24 +381,7 @@
   margin-top: var(--mo-space-1);
 }
 
-@media (min-width: 48rem) {
-  .connection-card {
-    grid-template-columns: 1fr auto;
-    align-items: start;
-  }
-
-  .connection-card__actions {
-    justify-content: flex-end;
-  }
-
-  .connection-card > .connection-form,
-  .connection-card__confirm,
-  .connection-setup {
-    grid-column: 1 / -1;
-  }
-}
-
-/* The business profile (ADR-0048): the connection form's fields, in one column. */
+/* The business profile (ADR-0048): its fields in one column. */
 .business-form {
   display: grid;
   gap: var(--mo-space-3);
@@ -466,7 +415,7 @@
   padding: 0;
 }
 
-.connection-form .business-form__check {
+.business-form__check {
   display: flex;
   align-items: center;
   gap: var(--mo-space-2);
@@ -492,52 +441,52 @@
   gap: 0.4rem;
 }
 
-.partners__actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-}
-
-.platform__form {
-  display: grid;
-  gap: 0.4rem;
-  max-width: 28rem;
-  margin-top: 1rem;
+/* A long scope wraps beside its box; the box keeps its size. */
+.partners__scope > input {
+  flex: none;
 }
 
 /* The partner console and brand forms (ADR-0090). */
 .brand-form {
-  border: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--mo-space-4);
+  min-width: 0;
   margin: 0;
   padding: 0;
-  display: grid;
-  gap: 0.6rem;
+  border: 0;
 }
 
-.brand-form__field {
-  display: grid;
-  gap: 0.25rem;
-}
-
+/* An open customer takes its record's whole width, under its facts and its button. */
 .console__customer {
   flex-basis: 100%;
   display: grid;
-  gap: 0.75rem;
-  padding: 0.75rem 0 0.25rem;
+  gap: var(--mo-space-4);
+  min-width: 0;
+  padding-top: var(--mo-space-3);
+  border-top: 1px solid var(--mo-color-border);
 }
 
-.console__table {
-  border-collapse: collapse;
-  max-width: 100%;
+.console__part {
+  display: grid;
+  gap: var(--mo-space-2);
+  min-width: 0;
 }
 
-.console__table th,
-.console__table td {
-  text-align: left;
-  padding: 0.25rem 0.75rem 0.25rem 0;
+/* The link shown once: its field, then its buttons. */
+.console__once {
+  display: grid;
+  gap: var(--mo-space-2);
+  min-width: 0;
+  margin-top: var(--mo-space-2);
 }
 
-.console__table td:not(:first-child) {
-  text-align: right;
-  font-variant-numeric: tabular-nums;
+.console__once > input {
+  width: 100%;
+  min-width: 0;
+}
+
+/* A record's refusal takes its whole width, under its actions. */
+.partner-console .mo-list-item > .mo-state {
+  flex-basis: 100%;
 }

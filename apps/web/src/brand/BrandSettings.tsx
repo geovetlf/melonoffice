@@ -1,4 +1,5 @@
 import { FormattedMessage } from '@melonoffice/i18n';
+import { PageHeader, StateMessage } from '@melonoffice/ui';
 import { useEffect, useState } from 'react';
 import type { OwnBrand } from '../commercial/consoleClient.js';
 import { BrandForm } from './BrandForm.js';
@@ -31,28 +32,28 @@ export function BrandSettings({
   }, [client]);
 
   return (
-    <article className="dept-office">
-      <h1 className="dept-office__title">
-        <FormattedMessage id="brand.title" />
-      </h1>
-      <p className="documents__lead">
-        <FormattedMessage id="brand.lead" />
-      </p>
+    <article className="mo-page brand-page">
+      <PageHeader
+        title={<FormattedMessage id="brand.title" />}
+        description={<FormattedMessage id="brand.lead" />}
+      />
       {brand === 'loading' ? null : brand === 'error' ? (
-        <p className="panel__empty" role="alert">
+        <StateMessage kind="error">
           <FormattedMessage id="console.error" />
-        </p>
+        </StateMessage>
       ) : (
-        <BrandForm
-          brand={brand}
-          canEdit={canEdit}
-          onSave={async (config) => {
-            const saved = await client.save(config, brand.updatedAt);
-            setBrand(saved);
-            onSaved();
-            return saved;
-          }}
-        />
+        <div className="mo-panel">
+          <BrandForm
+            brand={brand}
+            canEdit={canEdit}
+            onSave={async (config) => {
+              const saved = await client.save(config, brand.updatedAt);
+              setBrand(saved);
+              onSaved();
+              return saved;
+            }}
+          />
+        </div>
       )}
     </article>
   );

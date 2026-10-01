@@ -1,5 +1,5 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
-import { Button } from '@melonoffice/ui';
+import { Button, PageHeader, StateMessage } from '@melonoffice/ui';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AgentTemplateView } from '../agents/agentsClient.js';
 import { ExecutionRequestError } from '../executions/executionsClient.js';
@@ -193,22 +193,20 @@ export function AutomationsPage({
   }
 
   return (
-    <div className="automations">
-      <h1>
-        <FormattedMessage id="nav.automations" />
-      </h1>
-      <p className="panel__empty">
-        <FormattedMessage id="automations.intro" />
-      </p>
+    <div className="mo-page automations-page">
+      <PageHeader
+        title={<FormattedMessage id="nav.automations" />}
+        description={<FormattedMessage id="automations.intro" />}
+      />
       {error === undefined ? null : (
-        <p className="gia-chat__error" role="alert">
+        <StateMessage kind="error">
           <FormattedMessage id={error} />
-        </p>
+        </StateMessage>
       )}
       {notice === undefined ? null : (
-        <p className="panel__empty" role="status">
+        <StateMessage kind="success">
           <FormattedMessage id={notice} />
-        </p>
+        </StateMessage>
       )}
       {editing === undefined || templates === undefined ? null : (
         <WorkflowEditor
@@ -228,46 +226,49 @@ export function AutomationsPage({
         />
       )}
       {refused === undefined ? null : (
-        <p className="gia-chat__error" role="alert">
+        <StateMessage kind="error">
           <FormattedMessage id="automations.refused" values={{ reason: refused }} />
-        </p>
+        </StateMessage>
       )}
       {permissions.readWorkflows ? (
-        <section className="dept-office__section" aria-labelledby="automations-workflows">
-          <h2 id="automations-workflows">
-            <FormattedMessage id="automations.workflows" />
-          </h2>
-          {canWrite && editing === undefined ? (
-            <div className="customers__actions">
+        <section className="mo-panel mo-page-section" aria-labelledby="automations-workflows">
+          <div className="mo-page-section__header">
+            <h2 id="automations-workflows" className="mo-section-title">
+              <FormattedMessage id="automations.workflows" />
+            </h2>
+            {canWrite && editing === undefined ? (
               <Button onClick={() => setEditing({ mode: 'create' })}>
                 <FormattedMessage id="automations.editor.open" />
               </Button>
-            </div>
-          ) : null}
+            ) : null}
+          </div>
           {workflows.status === 'loading' ? (
-            <p className="panel__empty" role="status">
+            <StateMessage kind="loading">
               <FormattedMessage id="automations.loading" />
-            </p>
+            </StateMessage>
           ) : workflows.status === 'error' ? (
-            <p className="panel__empty">
+            <StateMessage kind="error">
               <FormattedMessage id="automations.error.generic" />
-            </p>
+            </StateMessage>
           ) : workflows.value.length === 0 ? (
-            <p className="panel__empty">
+            <StateMessage kind="empty">
               <FormattedMessage id="automations.noWorkflows" />
-            </p>
+            </StateMessage>
           ) : (
-            <ul className="automations__list">
+            <ul className="mo-list">
               {workflows.value.map((w) => (
-                <li key={w.id} className="automations__item">
-                  <span className="automations__name">{w.name}</span>
-                  <span className="customers__meta">
-                    <FormattedMessage id={`automations.workflowStatus.${w.status}`} />
-                    {' · '}
-                    <FormattedMessage id="automations.version" values={{ version: w.version }} />
-                  </span>
-                  <div className="customers__actions">
+                <li key={w.id} className="mo-list-item">
+                  <div className="mo-list-item__main">
+                    <span className="mo-list-item__title">{w.name}</span>
+                    <span className="mo-list-item__meta">
+                      <FormattedMessage id={`automations.workflowStatus.${w.status}`} />
+                      {' · '}
+                      <FormattedMessage id="automations.version" values={{ version: w.version }} />
+                    </span>
+                  </div>
+                  <div className="mo-list-item__actions">
                     <Button
+                      size="sm"
                       variant="secondary"
                       aria-expanded={openWorkflow === w.id}
                       onClick={() => setOpenWorkflow(openWorkflow === w.id ? undefined : w.id)}
@@ -276,6 +277,7 @@ export function AutomationsPage({
                     </Button>
                     {w.status === 'active' && permissions.planWorkflows ? (
                       <Button
+                        size="sm"
                         variant="secondary"
                         disabled={pending !== undefined}
                         onClick={() => void plan(w)}
@@ -289,6 +291,7 @@ export function AutomationsPage({
                       ? WORKFLOW_TRANSITIONS[w.status].map((to) => (
                           <Button
                             key={to}
+                            size="sm"
                             variant="secondary"
                             disabled={pending !== undefined}
                             onClick={() => void move(w, to)}
@@ -323,22 +326,22 @@ export function AutomationsPage({
         </section>
       ) : null}
       {permissions.readPlans ? (
-        <section className="dept-office__section" aria-labelledby="automations-plans">
-          <h2 id="automations-plans">
+        <section className="mo-panel mo-page-section" aria-labelledby="automations-plans">
+          <h2 id="automations-plans" className="mo-section-title">
             <FormattedMessage id="automations.plans" />
           </h2>
           {plans.status === 'loading' ? (
-            <p className="panel__empty" role="status">
+            <StateMessage kind="loading">
               <FormattedMessage id="automations.loading" />
-            </p>
+            </StateMessage>
           ) : plans.status === 'error' ? (
-            <p className="panel__empty">
+            <StateMessage kind="error">
               <FormattedMessage id="automations.error.generic" />
-            </p>
+            </StateMessage>
           ) : plans.value.length === 0 ? (
-            <p className="panel__empty">
+            <StateMessage kind="empty">
               <FormattedMessage id="automations.noPlans" />
-            </p>
+            </StateMessage>
           ) : (
             <ul className="automations__list">
               {plans.value.map((p) => (
@@ -394,16 +397,16 @@ function WorkflowSteps({
 
   if (detail.status === 'loading') {
     return (
-      <p className="panel__empty" role="status">
+      <StateMessage kind="loading" inline className="automations__detail">
         <FormattedMessage id="automations.loading" />
-      </p>
+      </StateMessage>
     );
   }
   if (detail.status === 'error') {
     return (
-      <p className="panel__empty" role="alert">
+      <StateMessage kind="error" className="automations__detail">
         <FormattedMessage id="automations.error.generic" />
-      </p>
+      </StateMessage>
     );
   }
   const current = detail.value.current;
@@ -414,7 +417,7 @@ function WorkflowSteps({
         {current.steps.map((step) => (
           <li key={step.id}>
             <span className="automations__name">{step.label}</span>
-            <span className="customers__meta">
+            <span className="automations__meta">
               {' · '}
               {step.assignee === null ? (
                 <FormattedMessage id={`automations.stepKind.${stepKindOf(step.kind)}`} />
@@ -435,12 +438,12 @@ function WorkflowSteps({
         ))}
       </ol>
       {onVersion === undefined ? null : drafts === undefined ? (
-        <p className="customers__meta">
+        <p className="mo-hint">
           <FormattedMessage id="automations.editor.notEditable" />
         </p>
       ) : (
-        <div className="customers__actions">
-          <Button variant="secondary" onClick={() => onVersion(drafts, detail.value)}>
+        <div className="mo-list-item__actions">
+          <Button size="sm" variant="secondary" onClick={() => onVersion(drafts, detail.value)}>
             <FormattedMessage id="automations.editor.edit" />
           </Button>
         </div>
@@ -568,27 +571,27 @@ function PlanCard({
 
   if (plan.status === 'loading') {
     return (
-      <p className="panel__empty" role="status">
+      <StateMessage kind="loading" inline>
         <FormattedMessage id="automations.loading" />
-      </p>
+      </StateMessage>
     );
   }
   if (plan.status === 'error') {
     return (
-      <p className="panel__empty" role="alert">
+      <StateMessage kind="error">
         <FormattedMessage id="automations.error.generic" />
-      </p>
+      </StateMessage>
     );
   }
   const detail = plan.value;
   const progress = new Map(steps.map((s) => [s.stepId, s]));
   return (
-    <article className="report-card automations__plan" aria-labelledby="automations-plan-title">
-      <h3 id="automations-plan-title" className="report-card__title">
+    <article className="mo-card automations__plan" aria-labelledby="automations-plan-title">
+      <h3 id="automations-plan-title" className="mo-subsection-title">
         {detail.current.request.summary}
       </h3>
-      <p>{detail.current.request.objective}</p>
-      <p className="customers__meta">
+      <p className="automations__objective">{detail.current.request.objective}</p>
+      <p className="automations__meta">
         <FormattedMessage id={`automations.planStatus.${detail.status}`} />
         {' · '}
         <FormattedMessage
@@ -606,7 +609,7 @@ function PlanCard({
             <li key={step.id}>
               <span className="automations__name">{step.label}</span>
               {done === undefined ? null : (
-                <span className="customers__meta">
+                <span className="automations__meta">
                   {' · '}
                   <FormattedMessage id={`automations.stepStatus.${stepStatusOf(done.status)}`} />
                 </span>
@@ -615,7 +618,7 @@ function PlanCard({
                 <p className="automations__answer">{done.answer}</p>
               )}
               {done === undefined || done.missing.length === 0 ? null : (
-                <p className="customers__meta">
+                <p className="automations__meta">
                   <FormattedMessage
                     id="automations.missing"
                     values={{ missing: done.missing.join(', ') }}
@@ -627,13 +630,13 @@ function PlanCard({
         })}
       </ol>
       {error === undefined ? null : (
-        <p className="gia-chat__error" role="alert">
+        <StateMessage kind="error">
           <FormattedMessage id={error} />
-        </p>
+        </StateMessage>
       )}
       {detail.status === 'approval_required' && canDecide ? (
-        <div className="customers__actions">
-          <p className="customers__meta">
+        <div className="mo-form__actions">
+          <p className="mo-hint automations__hint">
             <FormattedMessage id="automations.approveHint" />
           </p>
           <Button disabled={pending} onClick={() => void decide('approve', detail)}>
@@ -649,12 +652,12 @@ function PlanCard({
         </div>
       ) : null}
       {isRunningPlan(detail) ? (
-        <div className="customers__actions">
+        <div className="mo-form__actions">
           <Button variant="secondary" onClick={read}>
             <FormattedMessage id="automations.refresh" />
           </Button>
           {stop === undefined ? null : (
-            <Button variant="secondary" disabled={pending} onClick={() => void stopPlan()}>
+            <Button variant="danger" disabled={pending} onClick={() => void stopPlan()}>
               <FormattedMessage id="automations.stop" />
             </Button>
           )}

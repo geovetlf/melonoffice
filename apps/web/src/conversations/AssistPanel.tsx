@@ -1,5 +1,5 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
-import { Button } from '@melonoffice/ui';
+import { Button, StateMessage } from '@melonoffice/ui';
 import { useId, useState } from 'react';
 import { InboxError, type AssistOperation, type AssistResult } from './inboxClient.js';
 
@@ -188,6 +188,7 @@ export function AssistPanel({
             <div className="assist__actions">
               {onUseReply === undefined ? null : (
                 <Button
+                  size="sm"
                   disabled={draft.trim() === ''}
                   onClick={() => {
                     onUseReply(draft);
@@ -197,7 +198,7 @@ export function AssistPanel({
                   <FormattedMessage id="conversations.assist.useReply" />
                 </Button>
               )}
-              <Button variant="secondary" onClick={() => void ask('reply', newKey())}>
+              <Button size="sm" variant="secondary" onClick={() => void ask('reply', newKey())}>
                 <FormattedMessage id="conversations.assist.regenerate" />
               </Button>
             </div>
@@ -208,13 +209,14 @@ export function AssistPanel({
 
   return (
     <section className="assist" aria-labelledby={`${id}-title`}>
-      <h3 id={`${id}-title`}>
+      <h3 id={`${id}-title`} className="mo-subsection-title">
         <FormattedMessage id="conversations.assist.title" />
       </h3>
       <div className="assist__buttons">
         {OPERATIONS.map((operation) => (
           <Button
             key={operation}
+            size="sm"
             variant="secondary"
             disabled={busy}
             onClick={() => void ask(operation, newKey())}
@@ -225,33 +227,36 @@ export function AssistPanel({
       </div>
       <div aria-live="polite">
         {state.kind === 'busy' ? (
-          <p role="status">
+          <StateMessage kind="loading" inline>
             <FormattedMessage id="conversations.assist.busy" />
-          </p>
+          </StateMessage>
         ) : null}
         {state.kind === 'failed' ? (
-          <div role="alert" className="notice notice--danger">
-            <p>
-              <FormattedMessage id={`conversations.assist.error.${state.code}`} />
-            </p>
-            {state.code === 'ai_unavailable' ||
-            state.code === 'ai_timeout' ||
-            state.code === 'ai_invalid_output' ||
-            state.code === 'generic' ? (
-              // An answer that could not be read was still a call: trying again is a new request.
-              <Button
-                variant="secondary"
-                onClick={() =>
-                  void ask(
-                    state.operation,
-                    state.code === 'ai_invalid_output' ? newKey() : state.key,
-                  )
-                }
-              >
-                <FormattedMessage id="conversations.retry" />
-              </Button>
-            ) : null}
-          </div>
+          <StateMessage
+            kind="error"
+            action={
+              state.code === 'ai_unavailable' ||
+              state.code === 'ai_timeout' ||
+              state.code === 'ai_invalid_output' ||
+              state.code === 'generic' ? (
+                // An answer that could not be read was still a call: trying again is a new request.
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() =>
+                    void ask(
+                      state.operation,
+                      state.code === 'ai_invalid_output' ? newKey() : state.key,
+                    )
+                  }
+                >
+                  <FormattedMessage id="conversations.retry" />
+                </Button>
+              ) : undefined
+            }
+          >
+            <FormattedMessage id={`conversations.assist.error.${state.code}`} />
+          </StateMessage>
         ) : null}
         {state.kind === 'done' ? (
           <article className="assist__result">
@@ -259,7 +264,7 @@ export function AssistPanel({
               <FormattedMessage id="conversations.assist.generated" />
             </p>
             {show(state.result)}
-            <Button variant="secondary" onClick={() => setState({ kind: 'idle' })}>
+            <Button size="sm" variant="ghost" onClick={() => setState({ kind: 'idle' })}>
               <FormattedMessage id="conversations.assist.discard" />
             </Button>
           </article>

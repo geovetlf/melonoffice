@@ -1,10 +1,12 @@
 import type { FakeBackend } from '../identity/testing.js';
+import { seedPages } from './pageFixtures.js';
+import type { PreviewRoutes } from './routes.js';
 
 /**
  * The office states the preview shows. They are fixtures for design review, like the tests'
  * data: nothing here is served to a real organization.
  */
-export type ScenarioName = 'empty' | 'active';
+export type ScenarioName = 'empty' | 'active' | 'pages';
 
 /** Everything an owner can see on the Home and its screens. */
 const OWNER_PERMISSIONS = [
@@ -57,7 +59,10 @@ const task = (id: string, specialistId: string, request: string, status: string)
   answer: null,
 });
 
-export const SCENARIOS: Record<ScenarioName, (backend: FakeBackend) => void> = {
+export const SCENARIOS: Record<
+  ScenarioName,
+  (backend: FakeBackend, routes: PreviewRoutes) => void
+> = {
   /** A new organization: the catalogue's departments, no agents, nothing recorded yet. */
   empty(backend) {
     backend.options.permissions.push(...OWNER_PERMISSIONS);
@@ -119,5 +124,16 @@ export const SCENARIOS: Record<ScenarioName, (backend: FakeBackend) => void> = {
       result: 'success',
       actor: 'you',
     }));
+  },
+
+  /**
+   * The `active` office, plus data for every secondary page (see `pageFixtures.ts`): the
+   * Comercial office's contacts, pipeline and follow-ups, the memory, documents, reports, AI
+   * usage, automations, conversations, connections, partners, brand, the partner console and the
+   * platform console, and the invitation links a signed-in person opens.
+   */
+  pages(backend, routes) {
+    SCENARIOS.active(backend, routes);
+    seedPages(backend, routes);
   },
 };

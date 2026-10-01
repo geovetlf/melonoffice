@@ -1,3 +1,4 @@
+import { PageHeader, StateMessage } from '@melonoffice/ui';
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { navigate } from '../identity/router.js';
@@ -10,6 +11,7 @@ import {
   type DocumentsClient,
   type DocumentView,
 } from './documentsClient.js';
+import { errorCode } from '../shell/errors.js';
 
 /**
  * Documents (DOC-3): upload a file to the organization and see whether Company Brain read its
@@ -108,8 +110,7 @@ export function DocumentsPage({
       setUpload({ status: 'done', document });
       await load();
     } catch (error) {
-      const code = error instanceof DocumentRequestError ? (error.code ?? 'generic') : 'generic';
-      setUpload({ status: 'failed', code: UPLOAD_ERRORS.has(code) ? code : 'generic' });
+      setUpload({ status: 'failed', code: errorCode(error, DocumentRequestError, UPLOAD_ERRORS) });
     } finally {
       if (input.current !== null) input.current.value = '';
     }
@@ -130,21 +131,22 @@ export function DocumentsPage({
   }
 
   return (
-    <article className="dept-office documents-page">
-      <h1 className="dept-office__title">
-        <FormattedMessage id="nav.documents" />
-      </h1>
-      <p className="documents__lead">
-        <FormattedMessage id="documents.lead" />
-      </p>
+    <article className="mo-page documents-page">
+      <PageHeader
+        title={<FormattedMessage id="nav.documents" />}
+        description={<FormattedMessage id="documents.lead" />}
+      />
 
       {canUpload ? (
-        <section className="dept-office__section documents__upload" aria-labelledby="doc-upload">
-          <h2 id="doc-upload">
+        <section
+          className="mo-panel mo-page-section documents__upload"
+          aria-labelledby="doc-upload"
+        >
+          <h2 id="doc-upload" className="mo-section-title">
             <FormattedMessage id="documents.upload.title" />
           </h2>
-          <label className="documents__picker">
-            <span>
+          <label className="mo-field">
+            <span className="mo-label">
               <FormattedMessage id="documents.upload.choose" />
             </span>
             <input
@@ -158,60 +160,60 @@ export function DocumentsPage({
               }}
             />
           </label>
-          <p className="documents__hint">
+          <p className="mo-hint">
             <FormattedMessage id="documents.upload.hint" />
           </p>
           {upload.status === 'sending' ? (
-            <p className="panel__empty" role="status">
+            <StateMessage kind="loading">
               <FormattedMessage id="documents.upload.sending" values={{ name: upload.name }} />
-            </p>
+            </StateMessage>
           ) : upload.status === 'done' ? (
-            <p className="panel__empty" role="status">
+            <StateMessage kind="success">
               <FormattedMessage
                 id="documents.upload.done"
                 values={{ name: upload.document.name }}
               />{' '}
               <Reading document={upload.document} />
               {canReadMemory && upload.document.status === 'ingested' ? <ToMemory /> : null}
-            </p>
+            </StateMessage>
           ) : upload.status === 'failed' ? (
-            <p className="panel__empty" role="alert">
+            <StateMessage kind="error">
               <FormattedMessage id={`documents.error.${upload.code}`} />
-            </p>
+            </StateMessage>
           ) : null}
         </section>
       ) : null}
 
-      <section className="dept-office__section" aria-labelledby="doc-list">
-        <h2 id="doc-list">
+      <section className="mo-panel mo-page-section" aria-labelledby="doc-list">
+        <h2 id="doc-list" className="mo-section-title">
           <FormattedMessage id="documents.list.title" />
         </h2>
         {loadFailed ? (
-          <p className="panel__empty" role="alert">
+          <StateMessage kind="error">
             <FormattedMessage id="documents.error.load" />
-          </p>
+          </StateMessage>
         ) : null}
         {documents === undefined ? (
           loadFailed ? null : (
-            <p className="panel__empty" role="status">
+            <StateMessage kind="loading">
               <FormattedMessage id="documents.loading" />
-            </p>
+            </StateMessage>
           )
         ) : documents.length === 0 ? (
-          <p className="panel__empty">
+          <StateMessage kind="empty">
             <FormattedMessage id="documents.none" />
-          </p>
+          </StateMessage>
         ) : (
-          <ul className="documents__list">
+          <ul className="mo-list">
             {documents.map((d) => (
-              <li key={d.id} className="documents__item">
-                <div className="documents__main">
-                  <span className="documents__name">{d.name}</span>
-                  <span className="documents__meta">
+              <li key={d.id} className="mo-list-item">
+                <div className="mo-list-item__main">
+                  <span className="mo-list-item__title">{d.name}</span>
+                  <span className="mo-list-item__meta">
                     {intl.formatNumber(Math.max(1, Math.round(d.sizeBytes / 1024)))} KB ·{' '}
                     {intl.formatDate(new Date(d.createdAt), { dateStyle: 'medium' })}
                   </span>
-                  <span className="documents__meta">
+                  <span className="mo-list-item__meta">
                     <Reading document={d} />
                     {canReadMemory && d.status === 'ingested' ? <ToMemory /> : null}
                   </span>
@@ -231,7 +233,7 @@ export function DocumentsPage({
         {nextCursor !== null ? (
           <button
             type="button"
-            className="mo-button mo-button--secondary"
+            className="mo-button mo-button--secondary mo-page-section__more"
             onClick={() => void load(nextCursor)}
           >
             <FormattedMessage id="documents.more" />
@@ -247,7 +249,7 @@ function ToMemory() {
   return (
     <>
       {' '}
-      <button type="button" className="panel__link" onClick={() => navigate(paths.memory())}>
+      <button type="button" className="mo-link-button" onClick={() => navigate(paths.memory())}>
         <FormattedMessage id="documents.review" />
       </button>
     </>

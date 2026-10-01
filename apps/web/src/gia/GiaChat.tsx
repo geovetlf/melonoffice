@@ -1,5 +1,5 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
-import { Button } from '@melonoffice/ui';
+import { Button, StateMessage } from '@melonoffice/ui';
 import {
   createContext,
   useCallback,
@@ -184,9 +184,9 @@ export function GiaConversation() {
   const { log, behind, toEnd, onScroll } = useFollowLatest(chat.entries, chat.pending);
   if (!chat.available) {
     return (
-      <p className="panel__empty">
+      <StateMessage kind="empty">
         <FormattedMessage id="gia.chat.unavailable" />
-      </p>
+      </StateMessage>
     );
   }
   const submit = (event: FormEvent) => {
@@ -199,8 +199,10 @@ export function GiaConversation() {
     <div className="gia-chat">
       <ol className="gia-chat__log" aria-live="polite" ref={log} onScroll={onScroll}>
         {chat.entries.length === 0 ? (
-          <li className="panel__empty">
-            <FormattedMessage id="gia.chat.empty" />
+          <li>
+            <StateMessage kind="empty">
+              <FormattedMessage id="gia.chat.empty" />
+            </StateMessage>
           </li>
         ) : null}
         {chat.entries.map((entry) => (
@@ -585,7 +587,7 @@ function AgentTaskProposal({ answer }: { readonly answer: GiaAnswerView }) {
           <FormattedMessage id={error} />
         </p>
       )}
-      <div className="customers__actions">
+      <div className="mo-form__actions">
         <Button type="submit" disabled={state === 'sending' || text.trim() === ''}>
           <FormattedMessage
             id={state === 'sending' ? 'gia.chat.agentTask.sending' : 'gia.chat.agentTask.confirm'}

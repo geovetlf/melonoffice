@@ -1,5 +1,5 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
-import { Button } from '@melonoffice/ui';
+import { Button, StateMessage } from '@melonoffice/ui';
 import { useEffect, useId, useMemo, useState, type FormEvent } from 'react';
 import { useAuth } from '../identity/AuthProvider.js';
 import type { IdentityErrorCode } from '../identity/identityPlatform.js';
@@ -37,7 +37,7 @@ export function InvitePage(locale: LocaleProps) {
   let content;
   if (token === undefined) {
     content = (
-      <p className="notice">
+      <p className="mo-hint">
         <FormattedMessage id="invite.missing" />
       </p>
     );
@@ -47,16 +47,16 @@ export function InvitePage(locale: LocaleProps) {
     content = <CreateAccount />;
   } else if (state.status !== 'signed_in') {
     content = (
-      <p role="alert" className="notice notice--danger">
+      <StateMessage kind="error">
         <FormattedMessage id="auth.unavailable" />
-      </p>
+      </StateMessage>
     );
   } else if (!state.me.emailVerified) {
     content = <VerifyEmail email={state.me.email} />;
   } else if (state.workspace === undefined) {
     content = (
       <>
-        <p className="notice">
+        <p className="mo-hint">
           <FormattedMessage id="invite.createCompany" />
         </p>
         <CreateOrganization />
@@ -67,7 +67,7 @@ export function InvitePage(locale: LocaleProps) {
   }
   return (
     <PublicFrame {...locale}>
-      <h2>
+      <h2 className="mo-section-title">
         <FormattedMessage id="invite.title" />
       </h2>
       {content}
@@ -104,41 +104,47 @@ export function CreateAccount() {
       <Button variant="secondary" onClick={() => navigate('/login')}>
         <FormattedMessage id="invite.signIn" />
       </Button>
-      <h3>
+      <h3 className="mo-subsection-title">
         <FormattedMessage id="invite.signUp.title" />
       </h3>
       {error !== undefined && (
-        <p role="alert" className="notice notice--danger">
+        <StateMessage kind="error">
           {intl.formatMessage({ id: SIGN_IN_ERRORS[error] })}
-        </p>
+        </StateMessage>
       )}
-      <form className="login" onSubmit={(event) => void submit(event)} noValidate>
-        <label htmlFor={`${id}-email`}>
-          <FormattedMessage id="auth.email" />
-        </label>
-        <input
-          id={`${id}-email`}
-          type="email"
-          autoComplete="username"
-          required
-          value={email}
-          onChange={(event) => setEmail(event.target.value)}
-        />
-        <label htmlFor={`${id}-password`}>
-          <FormattedMessage id="auth.password" />
-        </label>
-        <input
-          id={`${id}-password`}
-          type="password"
-          autoComplete="new-password"
-          required
-          minLength={6}
-          value={password}
-          onChange={(event) => setPassword(event.target.value)}
-        />
-        <Button type="submit" disabled={busy || email.trim() === '' || password === ''}>
-          <FormattedMessage id={busy ? 'auth.signIn.busy' : 'invite.signUp.submit'} />
-        </Button>
+      <form className="mo-form login" onSubmit={(event) => void submit(event)} noValidate>
+        <div className="mo-field">
+          <label className="mo-label" htmlFor={`${id}-email`}>
+            <FormattedMessage id="auth.email" />
+          </label>
+          <input
+            id={`${id}-email`}
+            type="email"
+            autoComplete="username"
+            required
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+          />
+        </div>
+        <div className="mo-field">
+          <label className="mo-label" htmlFor={`${id}-password`}>
+            <FormattedMessage id="auth.password" />
+          </label>
+          <input
+            id={`${id}-password`}
+            type="password"
+            autoComplete="new-password"
+            required
+            minLength={6}
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+          />
+        </div>
+        <div className="mo-form__actions">
+          <Button type="submit" disabled={busy || email.trim() === '' || password === ''}>
+            <FormattedMessage id={busy ? 'auth.signIn.busy' : 'invite.signUp.submit'} />
+          </Button>
+        </div>
       </form>
     </>
   );
@@ -150,7 +156,7 @@ export function VerifyEmail({ email }: { readonly email: string | null }) {
   const [sent, setSent] = useState<boolean>();
   return (
     <>
-      <p className="notice">
+      <p className="mo-hint">
         <FormattedMessage id="invite.verify" values={{ email: email ?? '' }} />
       </p>
       <Button onClick={() => void refreshIdentity()}>
@@ -160,9 +166,9 @@ export function VerifyEmail({ email }: { readonly email: string | null }) {
         <FormattedMessage id="invite.verify.resend" />
       </Button>
       {sent === undefined ? null : (
-        <p role="status" className="notice">
+        <StateMessage kind={sent ? 'success' : 'warning'}>
           <FormattedMessage id={sent ? 'invite.verify.sent' : 'invite.verify.failed'} />
-        </p>
+        </StateMessage>
       )}
       <Button variant="secondary" onClick={signOut}>
         <FormattedMessage id="auth.signOut" />
@@ -218,9 +224,9 @@ export function InvitationDecision({
   if (outcome !== undefined) {
     return (
       <>
-        <p role="status" className="notice">
+        <StateMessage kind="success">
           <FormattedMessage id={`invite.outcome.${outcome}`} />
-        </p>
+        </StateMessage>
         <Button onClick={() => navigate(outcome === 'active' ? '/settings/partners' : '/')}>
           <FormattedMessage id="invite.continue" />
         </Button>
@@ -230,18 +236,18 @@ export function InvitationDecision({
   if (load === 'loading') return <Loading />;
   if (load === 'missing' || load === 'error') {
     return (
-      <p role="alert" className="notice notice--danger">
+      <StateMessage kind="error">
         <FormattedMessage id={load === 'missing' ? 'invite.missing' : 'invite.error'} />
-      </p>
+      </StateMessage>
     );
   }
   const { invitation, person, organization } = load;
   if (person !== 'invited') {
     return (
       <>
-        <p role="alert" className="notice notice--danger">
+        <StateMessage kind="error">
           <FormattedMessage id={`invite.person.${person}`} />
-        </p>
+        </StateMessage>
         <Button variant="secondary" onClick={onSignOut}>
           <FormattedMessage id="auth.signOut" />
         </Button>
@@ -250,16 +256,16 @@ export function InvitationDecision({
   }
   if (invitation.status !== 'pending') {
     return (
-      <p role="alert" className="notice">
+      <StateMessage kind="error">
         <FormattedMessage id={`invite.status.${invitation.status}`} />
-      </p>
+      </StateMessage>
     );
   }
   if (organization === null || organization === 'ambiguous') {
     return (
-      <p role="alert" className="notice notice--danger">
+      <StateMessage kind="error">
         <FormattedMessage id="invite.noOrganization" />
-      </p>
+      </StateMessage>
     );
   }
 
@@ -301,11 +307,11 @@ export function InvitationDecision({
       </p>
       {organization.canDecide ? (
         <fieldset className="partners__scopes" disabled={busy}>
-          <legend>
+          <legend className="mo-label">
             <FormattedMessage id="invite.choose" />
           </legend>
           {invitation.scopes.length === 0 ? (
-            <p className="documents__meta">
+            <p className="mo-hint">
               <FormattedMessage id="partners.noScopes" />
             </p>
           ) : (
@@ -323,7 +329,7 @@ export function InvitationDecision({
                 />{' '}
                 <FormattedMessage id={`partners.scope.${scope}`} />
                 {SENSITIVE.has(scope) ? (
-                  <span className="documents__meta">
+                  <span className="mo-hint">
                     {' '}
                     <FormattedMessage id="partners.sensitive" />
                   </span>
@@ -333,11 +339,11 @@ export function InvitationDecision({
           )}
         </fieldset>
       ) : (
-        <p className="notice">
+        <p className="mo-hint">
           <FormattedMessage id="invite.forOwner" />
         </p>
       )}
-      <div className="partners__actions">
+      <div className="mo-form__actions">
         <Button
           disabled={busy}
           onClick={() =>
@@ -364,9 +370,9 @@ export function InvitationDecision({
         </Button>
       </div>
       {failed === undefined ? null : (
-        <p className="notice notice--danger" role="alert">
+        <StateMessage kind="error">
           <FormattedMessage id={failed} />
-        </p>
+        </StateMessage>
       )}
     </>
   );
