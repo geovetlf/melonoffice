@@ -1083,7 +1083,7 @@ run "dev_gives_the_operator_its_access" {
   }
 
   assert {
-    condition     = google_storage_bucket.operator_backups[0].lifecycle_rule[0].condition[0].age == 30 && google_storage_bucket.operator_backups[0].lifecycle_rule[0].action[0].type == "Delete"
+    condition     = one(google_storage_bucket.operator_backups[0].lifecycle_rule[0].condition).age == 30 && one(google_storage_bucket.operator_backups[0].lifecycle_rule[0].action).type == "Delete"
     error_message = "Backups are kept 30 days."
   }
 
