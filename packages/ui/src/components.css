@@ -1115,6 +1115,19 @@
   font-weight: var(--mo-font-weight-bold);
 }
 
+.mo-state--empty .mo-state__icon::before {
+  content: '–';
+}
+
+.mo-state--error .mo-state__icon::before,
+.mo-state--warning .mo-state__icon::before {
+  content: '!';
+}
+
+.mo-state--success .mo-state__icon::before {
+  content: '✓';
+}
+
 .mo-state--inline .mo-state__icon {
   width: 1.25rem;
   height: 1.25rem;

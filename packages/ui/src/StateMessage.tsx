@@ -3,16 +3,10 @@ import { Spinner } from './Spinner.js';
 
 export type StateKind = 'loading' | 'empty' | 'error' | 'success' | 'warning';
 
-const MARK: Record<Exclude<StateKind, 'loading'>, string> = {
-  empty: '–',
-  error: '!',
-  success: '✓',
-  warning: '!',
-};
-
 /**
  * What a list or a panel says instead of its content: it is loading, has nothing yet, failed, or
- * finished. An error is announced at once (`alert`); every other state politely (`status`).
+ * finished. An error is announced at once (`alert`); every other state politely (`status`). Its
+ * mark is drawn by the stylesheet, so the message's text is only its words.
  */
 export function StateMessage({
   kind,
@@ -42,7 +36,7 @@ export function StateMessage({
   return (
     <div className={classes} role={kind === 'error' ? 'alert' : 'status'}>
       <span className="mo-state__icon" aria-hidden="true">
-        {kind === 'loading' ? <Spinner /> : MARK[kind]}
+        {kind === 'loading' ? <Spinner /> : null}
       </span>
       <div className="mo-state__body">
         {title === undefined ? null : <p className="mo-state__title">{title}</p>}

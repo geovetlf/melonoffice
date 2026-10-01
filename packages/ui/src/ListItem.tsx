@@ -14,6 +14,7 @@ export function ListItem({
   as: Item = 'li',
   className,
   id,
+  'aria-label': label,
 }: {
   readonly title: ReactNode;
   /** The title's element, such as `h3` where the list sits under an `h2`. */
@@ -25,10 +26,13 @@ export function ListItem({
   readonly as?: ElementType;
   readonly className?: string;
   readonly id?: string;
+  /** A name for the record when its title alone does not say which it is. */
+  readonly 'aria-label'?: string;
 }) {
   return (
     <Item
       id={id}
+      aria-label={label}
       className={className === undefined ? 'mo-list-item' : `mo-list-item ${className}`}
     >
       <div className="mo-list-item__main">
