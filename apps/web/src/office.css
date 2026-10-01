@@ -2694,7 +2694,7 @@ a.sidebar__item:hover {
  */
 @media (min-width: 64rem) and (min-aspect-ratio: 1/1) {
   .app--scene {
-    --home-sidebar: clamp(13rem, 15vw, 15.5rem);
+    --home-sidebar: clamp(12.5rem, 13vw, 14rem);
 
     grid-template-columns: var(--home-sidebar) minmax(0, 1fr);
   }
@@ -2702,6 +2702,12 @@ a.sidebar__item:hover {
   .app--scene .topbar__menu,
   .app--scene .app__scrim {
     display: none;
+  }
+
+  /* Beside the menu the page keeps narrow margins: the width is the office's. */
+  .app--scene .app__main,
+  .app--scene .topbar {
+    padding-inline: var(--mo-space-3);
   }
 
   .app--scene .sidebar {
