@@ -80,6 +80,39 @@ describe('DataTable', () => {
     expect(table.parentElement?.className).toBe('mo-table-scroll');
     // Nothing overflows here, so the box is no extra tab stop.
     expect(table.parentElement?.hasAttribute('tabindex')).toBe(false);
+    // And it is never a landmark of its own.
+    expect(screen.queryByRole('region')).toBeNull();
+  });
+
+  it('while it scrolls, is a named group the keyboard reaches, never a landmark', () => {
+    const observers: (() => void)[] = [];
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(callback: () => void) {
+          observers.push(callback);
+        }
+        observe() {}
+        disconnect() {}
+      },
+    );
+    const width = vi.spyOn(HTMLElement.prototype, 'scrollWidth', 'get').mockReturnValue(800);
+    const client = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(300);
+    render(
+      <DataTable label="By model">
+        <tbody>
+          <tr>
+            <td>gemini</td>
+          </tr>
+        </tbody>
+      </DataTable>,
+    );
+    const box = screen.getByRole('group', { name: 'By model' });
+    expect(box.getAttribute('tabindex')).toBe('0');
+    expect(screen.queryByRole('region')).toBeNull();
+    width.mockRestore();
+    client.mockRestore();
+    vi.unstubAllGlobals();
   });
 
   it('shows a caption instead of a hidden name', () => {

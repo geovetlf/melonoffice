@@ -37,3 +37,18 @@ describe('the search box', () => {
     expect(search.hasAttribute('aria-controls')).toBe(false);
   });
 });
+
+describe('the skip link', () => {
+  it('is the first stop and moves focus to the main content', async () => {
+    open();
+    const skip = await screen.findByRole('link', { name: 'Skip to content' });
+    const focusable = document.querySelectorAll(
+      'a[href], button, input, select, textarea, summary',
+    );
+    expect(focusable[0]).toBe(skip);
+    fireEvent.click(skip);
+    const main = screen.getByRole('main');
+    expect(main.id).toBe('main');
+    expect(document.activeElement).toBe(main);
+  });
+});

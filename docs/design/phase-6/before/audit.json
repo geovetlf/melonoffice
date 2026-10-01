@@ -1,0 +1,5537 @@
+{
+  "home-active@1440": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": [".search__input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      },
+      {
+        "id": "color-contrast",
+        "impact": "serious",
+        "targets": [
+          "a[href=\"/\"] > .sidebar__label",
+          ".mo-chip.period-picker__option[type=\"button\"]:nth-child(1)"
+        ],
+        "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.31 (foreground color: #c0451d, background color: #f7e9e4, font size: 12.0pt (16px), font weight: normal). Expected contrast ratio of 4.5:1"
+      }
+    ],
+    "small": [
+      "button.panel__link 136×21 \"Ver toda la actividad\"",
+      "button.panel__link 227×21 \"Ver los 2 seguimientos pendien\"",
+      "a.panel__link 156×21 \"Ver uso de IA y créditos\""
+    ],
+    "scrollWidth": 1440,
+    "clientWidth": 1440,
+    "h1": 1,
+    "overflow": false,
+    "animations": [
+      "wall-screen-refresh",
+      "wall-screen-work",
+      "desk-typing",
+      "desk-light",
+      "gia-blink"
+    ],
+    "skip": {
+      "isSkip": false,
+      "onScreen": true,
+      "landed": false
+    },
+    "keyboard": [
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      }
+    ],
+    "animationsReduced": [],
+    "errors": []
+  },
+  "home-active@1024": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": [".search__input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      },
+      {
+        "id": "color-contrast",
+        "impact": "serious",
+        "targets": [".mo-chip.period-picker__option[type=\"button\"]:nth-child(1)"],
+        "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.31 (foreground color: #c0451d, background color: #f7e9e4, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+      }
+    ],
+    "small": [
+      "button.panel__link 136×21 \"Ver toda la actividad\"",
+      "button.panel__link 227×21 \"Ver los 2 seguimientos pendien\"",
+      "a.panel__link 156×21 \"Ver uso de IA y créditos\""
+    ],
+    "scrollWidth": 1024,
+    "clientWidth": 1024,
+    "h1": 1,
+    "overflow": false,
+    "animations": [
+      "wall-screen-refresh",
+      "wall-screen-work",
+      "desk-typing",
+      "desk-light",
+      "gia-blink"
+    ],
+    "skip": {
+      "isSkip": false,
+      "onScreen": true,
+      "landed": false
+    },
+    "keyboard": [
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      }
+    ],
+    "animationsReduced": [],
+    "errors": []
+  },
+  "home-active@768": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": [".search__input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      },
+      {
+        "id": "color-contrast",
+        "impact": "serious",
+        "targets": [".mo-chip.period-picker__option[type=\"button\"]:nth-child(1)"],
+        "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.31 (foreground color: #c0451d, background color: #f7e9e4, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+      }
+    ],
+    "small": [
+      "summary. 54×36 \"Tu cuenta\"",
+      "input.gia-bar__input 502×40 \"¿Qué necesitas que haga por tu\"",
+      "button.gia-suggest__item 148×36 \"Revisa mis ventas\"",
+      "button.gia-suggest__item 159×36 \"Prepara un informe\"",
+      "button.gia-suggest__item 156×36 \"Crea una campaña\"",
+      "button.gia-suggest__item 190×36 \"Analiza este documento\"",
+      "button.gia-suggest__item 143×36 \"Más acciones\"",
+      "button.mo-chip 48×32 \"Hoy\"",
+      "button.mo-chip 98×32 \"Esta semana\"",
+      "button.mo-chip 77×32 \"Este mes\"",
+      "button.panel__link 155×24 \"Ver toda la actividad\"",
+      "button.task__body 145×39 \"1 aprobación te esperaCentro d\"",
+      "button.task__body 169×39 \"Llamar a Juan PérezJuan Pérez \"",
+      "button.task__body 167×39 \"Enviar propuesta a NordicJuan \"",
+      "a.panel__link 178×24 \"Ver uso de IA y créditos\""
+    ],
+    "scrollWidth": 768,
+    "clientWidth": 768,
+    "h1": 1,
+    "overflow": false,
+    "animations": ["room-data", "gia-blink"],
+    "skip": {
+      "isSkip": false,
+      "onScreen": true,
+      "landed": false
+    },
+    "keyboard": [
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      }
+    ],
+    "animationsReduced": [],
+    "errors": []
+  },
+  "home-active@390": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": [".search__input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      },
+      {
+        "id": "color-contrast",
+        "impact": "serious",
+        "targets": [".mo-chip.period-picker__option[type=\"button\"]:nth-child(1)"],
+        "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.31 (foreground color: #c0451d, background color: #f7e9e4, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+      }
+    ],
+    "small": [
+      "summary. 54×36 \"Tu cuenta\"",
+      "input.gia-bar__input 244×40 \"¿Qué necesitas que haga por tu\"",
+      "button.gia-suggest__item 148×36 \"Revisa mis ventas\"",
+      "button.gia-suggest__item 159×36 \"Prepara un informe\"",
+      "button.gia-suggest__item 156×36 \"Crea una campaña\"",
+      "button.gia-suggest__item 190×36 \"Analiza este documento\"",
+      "button.gia-suggest__item 143×36 \"Más acciones\"",
+      "button.mo-chip 48×32 \"Hoy\"",
+      "button.mo-chip 98×32 \"Esta semana\"",
+      "button.mo-chip 77×32 \"Este mes\"",
+      "button.panel__link 155×24 \"Ver toda la actividad\"",
+      "button.task__body 145×39 \"1 aprobación te esperaCentro d\"",
+      "button.task__body 169×39 \"Llamar a Juan PérezJuan Pérez \"",
+      "button.task__body 167×39 \"Enviar propuesta a NordicJuan \"",
+      "a.panel__link 178×24 \"Ver uso de IA y créditos\""
+    ],
+    "scrollWidth": 390,
+    "clientWidth": 390,
+    "h1": 1,
+    "overflow": false,
+    "animations": ["room-data", "gia-blink"],
+    "skip": {
+      "isSkip": false,
+      "onScreen": true,
+      "landed": false
+    },
+    "keyboard": [
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      }
+    ],
+    "animationsReduced": [],
+    "errors": []
+  },
+  "home-empty@1440": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": [".search__input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      },
+      {
+        "id": "color-contrast",
+        "impact": "serious",
+        "targets": [
+          "a[href=\"/\"] > .sidebar__label",
+          ".mo-chip.period-picker__option[type=\"button\"]:nth-child(1)"
+        ],
+        "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.31 (foreground color: #c0451d, background color: #f7e9e4, font size: 12.0pt (16px), font weight: normal). Expected contrast ratio of 4.5:1"
+      }
+    ],
+    "small": ["a.panel__link 156×21 \"Ver uso de IA y créditos\""],
+    "scrollWidth": 1440,
+    "clientWidth": 1440,
+    "h1": 1,
+    "overflow": false,
+    "animations": ["gia-blink"],
+    "skip": {
+      "isSkip": false,
+      "onScreen": true,
+      "landed": false
+    },
+    "keyboard": [
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      }
+    ],
+    "animationsReduced": [],
+    "errors": []
+  },
+  "home-empty@1024": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": [".search__input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      },
+      {
+        "id": "color-contrast",
+        "impact": "serious",
+        "targets": [".mo-chip.period-picker__option[type=\"button\"]:nth-child(1)"],
+        "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.31 (foreground color: #c0451d, background color: #f7e9e4, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+      }
+    ],
+    "small": ["a.panel__link 156×21 \"Ver uso de IA y créditos\""],
+    "scrollWidth": 1024,
+    "clientWidth": 1024,
+    "h1": 1,
+    "overflow": false,
+    "animations": ["gia-blink"],
+    "skip": {
+      "isSkip": false,
+      "onScreen": true,
+      "landed": false
+    },
+    "keyboard": [
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      }
+    ],
+    "animationsReduced": [],
+    "errors": []
+  },
+  "home-empty@768": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": [".search__input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      },
+      {
+        "id": "color-contrast",
+        "impact": "serious",
+        "targets": [".mo-chip.period-picker__option[type=\"button\"]:nth-child(1)"],
+        "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.31 (foreground color: #c0451d, background color: #f7e9e4, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+      }
+    ],
+    "small": [
+      "summary. 54×36 \"Tu cuenta\"",
+      "input.gia-bar__input 502×40 \"¿Qué necesitas que haga por tu\"",
+      "button.gia-suggest__item 148×36 \"Revisa mis ventas\"",
+      "button.gia-suggest__item 159×36 \"Prepara un informe\"",
+      "button.gia-suggest__item 156×36 \"Crea una campaña\"",
+      "button.gia-suggest__item 190×36 \"Analiza este documento\"",
+      "button.gia-suggest__item 143×36 \"Más acciones\"",
+      "button.mo-chip 48×32 \"Hoy\"",
+      "button.mo-chip 98×32 \"Esta semana\"",
+      "button.mo-chip 77×32 \"Este mes\"",
+      "a.panel__link 178×24 \"Ver uso de IA y créditos\""
+    ],
+    "scrollWidth": 768,
+    "clientWidth": 768,
+    "h1": 1,
+    "overflow": false,
+    "animations": ["gia-blink"],
+    "skip": {
+      "isSkip": false,
+      "onScreen": true,
+      "landed": false
+    },
+    "keyboard": [
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      }
+    ],
+    "animationsReduced": [],
+    "errors": []
+  },
+  "home-empty@390": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": [".search__input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      },
+      {
+        "id": "color-contrast",
+        "impact": "serious",
+        "targets": [".mo-chip.period-picker__option[type=\"button\"]:nth-child(1)"],
+        "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.31 (foreground color: #c0451d, background color: #f7e9e4, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+      }
+    ],
+    "small": [
+      "summary. 54×36 \"Tu cuenta\"",
+      "input.gia-bar__input 244×40 \"¿Qué necesitas que haga por tu\"",
+      "button.gia-suggest__item 148×36 \"Revisa mis ventas\"",
+      "button.gia-suggest__item 159×36 \"Prepara un informe\"",
+      "button.gia-suggest__item 156×36 \"Crea una campaña\"",
+      "button.gia-suggest__item 190×36 \"Analiza este documento\"",
+      "button.gia-suggest__item 143×36 \"Más acciones\"",
+      "button.mo-chip 48×32 \"Hoy\"",
+      "button.mo-chip 98×32 \"Esta semana\"",
+      "button.mo-chip 77×32 \"Este mes\"",
+      "a.panel__link 178×24 \"Ver uso de IA y créditos\""
+    ],
+    "scrollWidth": 390,
+    "clientWidth": 390,
+    "h1": 1,
+    "overflow": false,
+    "animations": ["gia-blink"],
+    "skip": {
+      "isSkip": false,
+      "onScreen": true,
+      "landed": false
+    },
+    "keyboard": [
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "English",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      },
+      {
+        "name": "Español",
+        "ring": true,
+        "visible": true,
+        "skip": false,
+        "hidden": false
+      }
+    ],
+    "animationsReduced": [],
+    "errors": []
+  },
+  "agents@1440": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": ["input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      },
+      {
+        "id": "color-contrast",
+        "impact": "serious",
+        "targets": ["a[href$=\"agents\"] > .sidebar__label"],
+        "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.31 (foreground color: #c0451d, background color: #f7e9e4, font size: 12.0pt (16px), font weight: normal). Expected contrast ratio of 4.5:1"
+      }
+    ],
+    "small": [
+      "button.mo-link-button 775×19 \"Ana Ventas\"",
+      "button.mo-link-button 775×19 \"Ivo Datos\"",
+      "button.mo-link-button 775×19 \"Leo Campañas\"",
+      "button.mo-link-button 775×19 \"Olga Procesos\"",
+      "button.mo-link-button 775×19 \"Omar Pedidos\"",
+      "button.mo-link-button 773×19 \"Eva Cuentas\""
+    ],
+    "scrollWidth": 1440,
+    "clientWidth": 1440,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "agents@1024": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": ["input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      }
+    ],
+    "small": [
+      "button.mo-link-button 639×19 \"Ana Ventas\"",
+      "button.mo-link-button 639×19 \"Ivo Datos\"",
+      "button.mo-link-button 639×19 \"Leo Campañas\"",
+      "button.mo-link-button 639×19 \"Olga Procesos\"",
+      "button.mo-link-button 639×19 \"Omar Pedidos\"",
+      "button.mo-link-button 637×19 \"Eva Cuentas\""
+    ],
+    "scrollWidth": 1024,
+    "clientWidth": 1024,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "agents@768": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": ["input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      }
+    ],
+    "small": [
+      "summary. 54×36 \"Tu cuenta\"",
+      "button.mo-link-button 383×19 \"Ana Ventas\"",
+      "button.mo-link-button 383×19 \"Ivo Datos\"",
+      "button.mo-link-button 383×19 \"Leo Campañas\"",
+      "button.mo-link-button 383×19 \"Olga Procesos\"",
+      "button.mo-link-button 383×19 \"Omar Pedidos\"",
+      "button.mo-link-button 381×19 \"Eva Cuentas\""
+    ],
+    "scrollWidth": 768,
+    "clientWidth": 768,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "agents@390": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": ["input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      }
+    ],
+    "small": [
+      "summary. 54×36 \"Tu cuenta\"",
+      "button.mo-link-button 282×19 \"Ana Ventas\"",
+      "button.mo-link-button 282×19 \"Ivo Datos\"",
+      "button.mo-link-button 282×19 \"Leo Campañas\"",
+      "button.mo-link-button 282×19 \"Olga Procesos\"",
+      "button.mo-link-button 282×19 \"Omar Pedidos\"",
+      "button.mo-link-button 282×19 \"Eva Cuentas\""
+    ],
+    "scrollWidth": 390,
+    "clientWidth": 390,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "approvals@1440": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": ["input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      },
+      {
+        "id": "color-contrast",
+        "impact": "serious",
+        "targets": [
+          "a[href$=\"approvals\"] > .sidebar__label",
+          ".mo-chip[role=\"tab\"]:nth-child(1)"
+        ],
+        "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.31 (foreground color: #c0451d, background color: #f7e9e4, font size: 12.0pt (16px), font weight: normal). Expected contrast ratio of 4.5:1"
+      }
+    ],
+    "small": [],
+    "scrollWidth": 1440,
+    "clientWidth": 1440,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "approvals@1024": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": ["input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      },
+      {
+        "id": "color-contrast",
+        "impact": "serious",
+        "targets": [".mo-chip[role=\"tab\"]:nth-child(1)"],
+        "summary": "Fix any of the following:\n  Element has insufficient color contrast of 3.97 (foreground color: #c0451d, background color: #ede0de, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1"
+      }
+    ],
+    "small": [],
+    "scrollWidth": 1024,
+    "clientWidth": 1024,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "approvals@768": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": ["input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      },
+      {
+        "id": "color-contrast",
+        "impact": "serious",
+        "targets": [".mo-chip[role=\"tab\"]:nth-child(1)"],
+        "summary": "Fix any of the following:\n  Element has insufficient color contrast of 3.97 (foreground color: #c0451d, background color: #ede0de, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1"
+      }
+    ],
+    "small": ["summary. 54×36 \"Tu cuenta\""],
+    "scrollWidth": 768,
+    "clientWidth": 768,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "approvals@390": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": ["input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      },
+      {
+        "id": "color-contrast",
+        "impact": "serious",
+        "targets": [".mo-chip[role=\"tab\"]:nth-child(1)"],
+        "summary": "Fix any of the following:\n  Element has insufficient color contrast of 3.97 (foreground color: #c0451d, background color: #ede0de, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1"
+      }
+    ],
+    "small": ["summary. 54×36 \"Tu cuenta\""],
+    "scrollWidth": 390,
+    "clientWidth": 390,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "documents@1440": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": [".search__input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      },
+      {
+        "id": "color-contrast",
+        "impact": "serious",
+        "targets": ["a[href$=\"documents\"] > .sidebar__label"],
+        "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.31 (foreground color: #c0451d, background color: #f7e9e4, font size: 12.0pt (16px), font weight: normal). Expected contrast ratio of 4.5:1"
+      }
+    ],
+    "small": [
+      "button.mo-link-button 179×21 \"Revisar lo que aprendió GIA\"",
+      "button.mo-link-button 179×21 \"Revisar lo que aprendió GIA\"",
+      "button.mo-link-button 179×21 \"Revisar lo que aprendió GIA\"",
+      "button.mo-link-button 179×21 \"Revisar lo que aprendió GIA\""
+    ],
+    "scrollWidth": 1440,
+    "clientWidth": 1440,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "documents@1024": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": [".search__input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      }
+    ],
+    "small": [
+      "button.mo-link-button 179×21 \"Revisar lo que aprendió GIA\"",
+      "button.mo-link-button 179×21 \"Revisar lo que aprendió GIA\"",
+      "button.mo-link-button 179×21 \"Revisar lo que aprendió GIA\"",
+      "button.mo-link-button 179×21 \"Revisar lo que aprendió GIA\""
+    ],
+    "scrollWidth": 1024,
+    "clientWidth": 1024,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "documents@768": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": [".search__input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      }
+    ],
+    "small": [
+      "summary. 54×36 \"Tu cuenta\"",
+      "button.mo-link-button 179×21 \"Revisar lo que aprendió GIA\"",
+      "button.mo-link-button 179×21 \"Revisar lo que aprendió GIA\"",
+      "button.mo-link-button 179×21 \"Revisar lo que aprendió GIA\"",
+      "button.mo-link-button 179×21 \"Revisar lo que aprendió GIA\""
+    ],
+    "scrollWidth": 768,
+    "clientWidth": 768,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "documents@390": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": [".search__input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      }
+    ],
+    "small": [
+      "summary. 54×36 \"Tu cuenta\"",
+      "button.mo-link-button 179×21 \"Revisar lo que aprendió GIA\"",
+      "button.mo-link-button 179×21 \"Revisar lo que aprendió GIA\"",
+      "button.mo-link-button 179×21 \"Revisar lo que aprendió GIA\"",
+      "button.mo-link-button 179×21 \"Revisar lo que aprendió GIA\""
+    ],
+    "scrollWidth": 390,
+    "clientWidth": 390,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "reports@1440": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": ["input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      },
+      {
+        "id": "color-contrast",
+        "impact": "serious",
+        "targets": ["a[href$=\"reports\"] > .sidebar__label"],
+        "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.31 (foreground color: #c0451d, background color: #f7e9e4, font size: 12.0pt (16px), font weight: normal). Expected contrast ratio of 4.5:1"
+      }
+    ],
+    "small": [],
+    "scrollWidth": 1440,
+    "clientWidth": 1440,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "reports@1024": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": ["input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      }
+    ],
+    "small": [],
+    "scrollWidth": 1024,
+    "clientWidth": 1024,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "reports@768": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": ["input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      }
+    ],
+    "small": [
+      "summary. 54×36 \"Tu cuenta\"",
+      "button. 41×38 \"día\"",
+      "button. 68×38 \"semana\"",
+      "button. 48×38 \"mes\""
+    ],
+    "scrollWidth": 768,
+    "clientWidth": 768,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "reports@390": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": ["input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      }
+    ],
+    "small": [
+      "summary. 54×36 \"Tu cuenta\"",
+      "button. 41×38 \"día\"",
+      "button. 68×38 \"semana\"",
+      "button. 48×38 \"mes\""
+    ],
+    "scrollWidth": 390,
+    "clientWidth": 390,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "ai-usage@1440": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": ["input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      },
+      {
+        "id": "color-contrast",
+        "impact": "serious",
+        "targets": ["a[href$=\"ai-usage\"] > .sidebar__label"],
+        "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.31 (foreground color: #c0451d, background color: #f7e9e4, font size: 12.0pt (16px), font weight: normal). Expected contrast ratio of 4.5:1"
+      },
+      {
+        "id": "landmark-unique",
+        "impact": "moderate",
+        "targets": [
+          "section[aria-labelledby=\"ai-usage-by-capability\"]",
+          "section[aria-labelledby=\"ai-usage-by-department\"]"
+        ],
+        "summary": "Fix any of the following:\n  The landmark must have a unique aria-label, aria-labelledby, or title to make landmarks distinguishable"
+      }
+    ],
+    "small": [
+      "button.mo-link-button 31×21 \"OCR\"",
+      "button.mo-link-button 85×21 \"Embeddings\"",
+      "button.mo-link-button 69×21 \"Comercial\"",
+      "button.mo-link-button 68×21 \"Marketing\"",
+      "button.mo-link-button 85×21 \"Operaciones\"",
+      "button.mo-link-button 77×21 \"Ana Ventas\"",
+      "button.mo-link-button 34×21 \"reply\"",
+      "button.mo-link-button 64×21 \"summary\"",
+      "button.mo-link-button 69×21 \"extraction\""
+    ],
+    "scrollWidth": 1440,
+    "clientWidth": 1440,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "ai-usage@1024": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": ["input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      }
+    ],
+    "small": [
+      "button.mo-link-button 118×21 \"IA de texto (LLM)\"",
+      "button.mo-link-button 31×21 \"OCR\"",
+      "button.mo-link-button 122×21 \"IA de documentos\"",
+      "button.mo-link-button 85×21 \"Embeddings\"",
+      "button.mo-link-button 69×21 \"Comercial\"",
+      "button.mo-link-button 68×21 \"Marketing\"",
+      "button.mo-link-button 85×21 \"Operaciones\"",
+      "button.mo-link-button 77×21 \"Ana Ventas\"",
+      "button.mo-link-button 99×21 \"Leo Campañas\"",
+      "button.mo-link-button 97×21 \"Olga Procesos\"",
+      "button.mo-link-button 34×21 \"reply\"",
+      "button.mo-link-button 64×21 \"summary\"",
+      "button.mo-link-button 69×21 \"extraction\""
+    ],
+    "scrollWidth": 1024,
+    "clientWidth": 1024,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "ai-usage@768": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": ["input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      },
+      {
+        "id": "landmark-unique",
+        "impact": "moderate",
+        "targets": [
+          "section[aria-labelledby=\"ai-usage-by-capability\"]",
+          "section[aria-labelledby=\"ai-usage-by-department\"]",
+          "section[aria-labelledby=\"ai-usage-by-agent\"]",
+          "section[aria-labelledby=\"ai-usage-by-task_type\"]"
+        ],
+        "summary": "Fix any of the following:\n  The landmark must have a unique aria-label, aria-labelledby, or title to make landmarks distinguishable"
+      }
+    ],
+    "small": [
+      "summary. 54×36 \"Tu cuenta\"",
+      "button. 46×38 \"Hoy\"",
+      "button. 103×38 \"Últimos 7 días\"",
+      "button. 75×38 \"Este mes\"",
+      "button.mo-link-button 85×42 \"IA de texto (LLM)\"",
+      "button.mo-link-button 31×21 \"OCR\"",
+      "button.mo-link-button 85×42 \"IA de documentos\"",
+      "button.mo-link-button 85×21 \"Embeddings\"",
+      "button.mo-link-button 69×21 \"Comercial\"",
+      "button.mo-link-button 68×21 \"Marketing\"",
+      "button.mo-link-button 85×21 \"Operaciones\"",
+      "button.mo-link-button 71×42 \"Ana Ventas\"",
+      "button.mo-link-button 71×42 \"Leo Campañas\"",
+      "button.mo-link-button 71×42 \"Olga Procesos\"",
+      "button.mo-link-button 34×21 \"reply\"",
+      "button.mo-link-button 64×21 \"summary\"",
+      "button.mo-link-button 69×21 \"extraction\""
+    ],
+    "scrollWidth": 768,
+    "clientWidth": 768,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "ai-usage@390": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": ["input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      },
+      {
+        "id": "landmark-unique",
+        "impact": "moderate",
+        "targets": [
+          "section[aria-labelledby=\"ai-usage-by-capability\"]",
+          "section[aria-labelledby=\"ai-usage-by-department\"]",
+          "section[aria-labelledby=\"ai-usage-by-agent\"]",
+          "section[aria-labelledby=\"ai-usage-by-task_type\"]"
+        ],
+        "summary": "Fix any of the following:\n  The landmark must have a unique aria-label, aria-labelledby, or title to make landmarks distinguishable"
+      }
+    ],
+    "small": [
+      "summary. 54×36 \"Tu cuenta\"",
+      "button. 46×38 \"Hoy\"",
+      "button. 103×38 \"Últimos 7 días\"",
+      "button. 75×38 \"Este mes\"",
+      "button.mo-link-button 85×42 \"IA de texto (LLM)\"",
+      "button.mo-link-button 31×21 \"OCR\"",
+      "button.mo-link-button 85×42 \"IA de documentos\"",
+      "button.mo-link-button 85×21 \"Embeddings\"",
+      "button.mo-link-button 69×21 \"Comercial\"",
+      "button.mo-link-button 68×21 \"Marketing\"",
+      "button.mo-link-button 85×21 \"Operaciones\"",
+      "button.mo-link-button 71×42 \"Ana Ventas\"",
+      "button.mo-link-button 71×42 \"Leo Campañas\"",
+      "button.mo-link-button 71×42 \"Olga Procesos\"",
+      "button.mo-link-button 34×21 \"reply\"",
+      "button.mo-link-button 64×21 \"summary\"",
+      "button.mo-link-button 69×21 \"extraction\""
+    ],
+    "scrollWidth": 390,
+    "clientWidth": 390,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "command-center@1440": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": ["input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      },
+      {
+        "id": "color-contrast",
+        "impact": "serious",
+        "targets": ["a[href$=\"command-center\"] > .sidebar__label"],
+        "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.31 (foreground color: #c0451d, background color: #f7e9e4, font size: 12.0pt (16px), font weight: normal). Expected contrast ratio of 4.5:1"
+      }
+    ],
+    "small": [],
+    "scrollWidth": 1440,
+    "clientWidth": 1440,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "command-center@1024": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": ["input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      }
+    ],
+    "small": [],
+    "scrollWidth": 1024,
+    "clientWidth": 1024,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "command-center@768": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": ["input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      }
+    ],
+    "small": [
+      "summary. 54×36 \"Tu cuenta\"",
+      "button.mo-link-button 186×24 \"Abrir uso de IA y créditos\"",
+      "button.mo-link-button 233×24 \"Abrir el centro de aprobacione\"",
+      "button.mo-link-button 135×24 \"Gestionar agentes\"",
+      "button.mo-link-button 171×24 \"Abrir automatizaciones\""
+    ],
+    "scrollWidth": 768,
+    "clientWidth": 768,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "command-center@390": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": ["input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      }
+    ],
+    "small": [
+      "summary. 54×36 \"Tu cuenta\"",
+      "button.mo-link-button 186×24 \"Abrir uso de IA y créditos\"",
+      "button.mo-link-button 233×24 \"Abrir el centro de aprobacione\"",
+      "button.mo-link-button 135×24 \"Gestionar agentes\"",
+      "button.mo-link-button 171×24 \"Abrir automatizaciones\""
+    ],
+    "scrollWidth": 390,
+    "clientWidth": 390,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "conversation-open@1440": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": [".search__input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      },
+      {
+        "id": "color-contrast",
+        "impact": "serious",
+        "targets": [
+          "a[href$=\"conversations\"] > .sidebar__label",
+          ".mo-chip[role=\"tab\"][type=\"button\"]:nth-child(1)"
+        ],
+        "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.31 (foreground color: #c0451d, background color: #f7e9e4, font size: 12.0pt (16px), font weight: normal). Expected contrast ratio of 4.5:1"
+      }
+    ],
+    "small": [],
+    "scrollWidth": 1440,
+    "clientWidth": 1440,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "conversation-open@1024": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": [".search__input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      },
+      {
+        "id": "color-contrast",
+        "impact": "serious",
+        "targets": [".mo-chip[role=\"tab\"][type=\"button\"]:nth-child(1)"],
+        "summary": "Fix any of the following:\n  Element has insufficient color contrast of 3.97 (foreground color: #c0451d, background color: #ede0de, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1"
+      }
+    ],
+    "small": [],
+    "scrollWidth": 1024,
+    "clientWidth": 1024,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "conversation-open@768": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": [".search__input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      },
+      {
+        "id": "color-contrast",
+        "impact": "serious",
+        "targets": [".mo-chip[role=\"tab\"][type=\"button\"]:nth-child(1)"],
+        "summary": "Fix any of the following:\n  Element has insufficient color contrast of 3.97 (foreground color: #c0451d, background color: #ede0de, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1"
+      }
+    ],
+    "small": [
+      "summary. 54×36 \"Tu cuenta\"",
+      "a.mo-link 670×24 \"Abrir la ficha completa en Com\""
+    ],
+    "scrollWidth": 768,
+    "clientWidth": 768,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "conversation-open@390": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": [".search__input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      },
+      {
+        "id": "color-contrast",
+        "impact": "serious",
+        "targets": [".mo-chip[role=\"tab\"][type=\"button\"]:nth-child(1)"],
+        "summary": "Fix any of the following:\n  Element has insufficient color contrast of 3.97 (foreground color: #c0451d, background color: #ede0de, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1"
+      }
+    ],
+    "small": [
+      "summary. 54×36 \"Tu cuenta\"",
+      "a.mo-link 308×24 \"Abrir la ficha completa en Com\""
+    ],
+    "scrollWidth": 390,
+    "clientWidth": 390,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "automations@1440": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": ["input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      },
+      {
+        "id": "color-contrast",
+        "impact": "serious",
+        "targets": ["a[href$=\"automations\"] > .sidebar__label"],
+        "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.31 (foreground color: #c0451d, background color: #f7e9e4, font size: 12.0pt (16px), font weight: normal). Expected contrast ratio of 4.5:1"
+      }
+    ],
+    "small": [],
+    "scrollWidth": 1440,
+    "clientWidth": 1440,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "automations@1024": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": ["input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      }
+    ],
+    "small": [],
+    "scrollWidth": 1024,
+    "clientWidth": 1024,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "automations@768": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": ["input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      }
+    ],
+    "small": ["summary. 54×36 \"Tu cuenta\""],
+    "scrollWidth": 768,
+    "clientWidth": 768,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "automations@390": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": ["input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      }
+    ],
+    "small": ["summary. 54×36 \"Tu cuenta\""],
+    "scrollWidth": 390,
+    "clientWidth": 390,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "connections@1440": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": ["input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      },
+      {
+        "id": "color-contrast",
+        "impact": "serious",
+        "targets": ["a[href$=\"connections\"] > .sidebar__label"],
+        "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.31 (foreground color: #c0451d, background color: #f7e9e4, font size: 12.0pt (16px), font weight: normal). Expected contrast ratio of 4.5:1"
+      }
+    ],
+    "small": [],
+    "scrollWidth": 1440,
+    "clientWidth": 1440,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "connections@1024": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": ["input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      }
+    ],
+    "small": [],
+    "scrollWidth": 1024,
+    "clientWidth": 1024,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "connections@768": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": ["input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      }
+    ],
+    "small": ["summary. 54×36 \"Tu cuenta\""],
+    "scrollWidth": 768,
+    "clientWidth": 768,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "connections@390": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": ["input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      }
+    ],
+    "small": ["summary. 54×36 \"Tu cuenta\""],
+    "scrollWidth": 390,
+    "clientWidth": 390,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "gia@1440": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": ["input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      },
+      {
+        "id": "color-contrast",
+        "impact": "serious",
+        "targets": ["a[href$=\"gia\"] > .sidebar__label"],
+        "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.31 (foreground color: #c0451d, background color: #f7e9e4, font size: 12.0pt (16px), font weight: normal). Expected contrast ratio of 4.5:1"
+      }
+    ],
+    "small": [],
+    "scrollWidth": 1440,
+    "clientWidth": 1440,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "gia@1024": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": ["input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      }
+    ],
+    "small": [],
+    "scrollWidth": 1024,
+    "clientWidth": 1024,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "gia@768": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": ["input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      }
+    ],
+    "small": [
+      "summary. 54×36 \"Tu cuenta\"",
+      "a.back-link 66×32 \"Oficina\"",
+      "button. 46×38 \"Hoy\"",
+      "button. 96×38 \"Esta semana\"",
+      "button. 75×38 \"Este mes\""
+    ],
+    "scrollWidth": 768,
+    "clientWidth": 768,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "gia@390": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": ["input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      }
+    ],
+    "small": [
+      "summary. 54×36 \"Tu cuenta\"",
+      "a.back-link 66×32 \"Oficina\"",
+      "button. 46×38 \"Hoy\"",
+      "button. 96×38 \"Esta semana\"",
+      "button. 75×38 \"Este mes\""
+    ],
+    "scrollWidth": 390,
+    "clientWidth": 390,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "office-sales@1440": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": ["input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      },
+      {
+        "id": "color-contrast",
+        "impact": "serious",
+        "targets": [
+          "a[href$=\"sales\"] > .sidebar__label",
+          ".mo-page-section__header > .mo-chips[role=\"tablist\"] > .mo-chip[role=\"tab\"]:nth-child(1)",
+          ".opportunities > .mo-chips[role=\"tablist\"] > .mo-chip[role=\"tab\"]:nth-child(1)",
+          ".customers > .mo-chips[role=\"tablist\"] > .mo-chip[role=\"tab\"]:nth-child(1)"
+        ],
+        "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.31 (foreground color: #c0451d, background color: #f7e9e4, font size: 12.0pt (16px), font weight: normal). Expected contrast ratio of 4.5:1"
+      }
+    ],
+    "small": [],
+    "scrollWidth": 1440,
+    "clientWidth": 1440,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "office-sales@1024": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": ["input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      },
+      {
+        "id": "color-contrast",
+        "impact": "serious",
+        "targets": [
+          ".mo-page-section__header > .mo-chips[role=\"tablist\"] > .mo-chip[role=\"tab\"]:nth-child(1)",
+          ".opportunities > .mo-chips[role=\"tablist\"] > .mo-chip[role=\"tab\"]:nth-child(1)",
+          ".customers > .mo-chips[role=\"tablist\"] > .mo-chip[role=\"tab\"]:nth-child(1)"
+        ],
+        "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.31 (foreground color: #c0451d, background color: #f7e9e4, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1"
+      }
+    ],
+    "small": [],
+    "scrollWidth": 1024,
+    "clientWidth": 1024,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "office-sales@768": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": ["input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      },
+      {
+        "id": "color-contrast",
+        "impact": "serious",
+        "targets": [
+          ".mo-page-section__header > .mo-chips[role=\"tablist\"] > .mo-chip[role=\"tab\"]:nth-child(1)",
+          ".opportunities > .mo-chips[role=\"tablist\"] > .mo-chip[role=\"tab\"]:nth-child(1)",
+          ".customers > .mo-chips[role=\"tablist\"] > .mo-chip[role=\"tab\"]:nth-child(1)"
+        ],
+        "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.31 (foreground color: #c0451d, background color: #f7e9e4, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1"
+      }
+    ],
+    "small": [
+      "summary. 54×36 \"Tu cuenta\"",
+      "a.back-link 66×32 \"Oficina\"",
+      "button. 41×38 \"día\"",
+      "button. 68×38 \"semana\"",
+      "button. 48×38 \"mes\""
+    ],
+    "scrollWidth": 768,
+    "clientWidth": 768,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "office-sales@390": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": ["input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      },
+      {
+        "id": "color-contrast",
+        "impact": "serious",
+        "targets": [
+          ".mo-page-section__header > .mo-chips[role=\"tablist\"] > .mo-chip[role=\"tab\"]:nth-child(1)",
+          ".opportunities > .mo-chips[role=\"tablist\"] > .mo-chip[role=\"tab\"]:nth-child(1)",
+          ".customers > .mo-chips[role=\"tablist\"] > .mo-chip[role=\"tab\"]:nth-child(1)"
+        ],
+        "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.31 (foreground color: #c0451d, background color: #f7e9e4, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1"
+      }
+    ],
+    "small": [
+      "summary. 54×36 \"Tu cuenta\"",
+      "a.back-link 66×32 \"Oficina\"",
+      "button. 41×38 \"día\"",
+      "button. 68×38 \"semana\"",
+      "button. 48×38 \"mes\""
+    ],
+    "scrollWidth": 390,
+    "clientWidth": 390,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "office-sales-pipeline@1440": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": ["input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      },
+      {
+        "id": "color-contrast",
+        "impact": "serious",
+        "targets": [
+          "a[href$=\"sales\"] > .sidebar__label",
+          ".mo-page-section__header > .mo-chips[role=\"tablist\"] > .mo-chip[role=\"tab\"]:nth-child(1)",
+          ".opportunities > .mo-chips[role=\"tablist\"] > .mo-chip[role=\"tab\"]:nth-child(1)",
+          ".customers > .mo-chips[role=\"tablist\"] > .mo-chip[role=\"tab\"]:nth-child(1)"
+        ],
+        "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.31 (foreground color: #c0451d, background color: #f7e9e4, font size: 12.0pt (16px), font weight: normal). Expected contrast ratio of 4.5:1"
+      }
+    ],
+    "small": [],
+    "scrollWidth": 1440,
+    "clientWidth": 1440,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "office-sales-pipeline@1024": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": ["input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      },
+      {
+        "id": "color-contrast",
+        "impact": "serious",
+        "targets": [
+          ".mo-page-section__header > .mo-chips[role=\"tablist\"] > .mo-chip[role=\"tab\"]:nth-child(1)",
+          ".opportunities > .mo-chips[role=\"tablist\"] > .mo-chip[role=\"tab\"]:nth-child(1)",
+          ".customers > .mo-chips[role=\"tablist\"] > .mo-chip[role=\"tab\"]:nth-child(1)"
+        ],
+        "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.31 (foreground color: #c0451d, background color: #f7e9e4, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1"
+      }
+    ],
+    "small": [],
+    "scrollWidth": 1024,
+    "clientWidth": 1024,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "office-sales-pipeline@768": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": ["input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      },
+      {
+        "id": "color-contrast",
+        "impact": "serious",
+        "targets": [
+          ".mo-page-section__header > .mo-chips[role=\"tablist\"] > .mo-chip[role=\"tab\"]:nth-child(1)",
+          ".opportunities > .mo-chips[role=\"tablist\"] > .mo-chip[role=\"tab\"]:nth-child(1)",
+          ".customers > .mo-chips[role=\"tablist\"] > .mo-chip[role=\"tab\"]:nth-child(1)"
+        ],
+        "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.31 (foreground color: #c0451d, background color: #f7e9e4, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1"
+      }
+    ],
+    "small": [
+      "summary. 54×36 \"Tu cuenta\"",
+      "a.back-link 66×32 \"Oficina\"",
+      "button. 41×38 \"día\"",
+      "button. 68×38 \"semana\"",
+      "button. 48×38 \"mes\""
+    ],
+    "scrollWidth": 768,
+    "clientWidth": 768,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "office-sales-pipeline@390": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": ["input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      },
+      {
+        "id": "color-contrast",
+        "impact": "serious",
+        "targets": [
+          ".mo-page-section__header > .mo-chips[role=\"tablist\"] > .mo-chip[role=\"tab\"]:nth-child(1)",
+          ".opportunities > .mo-chips[role=\"tablist\"] > .mo-chip[role=\"tab\"]:nth-child(1)",
+          ".customers > .mo-chips[role=\"tablist\"] > .mo-chip[role=\"tab\"]:nth-child(1)"
+        ],
+        "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.31 (foreground color: #c0451d, background color: #f7e9e4, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1"
+      }
+    ],
+    "small": [
+      "summary. 54×36 \"Tu cuenta\"",
+      "a.back-link 66×32 \"Oficina\"",
+      "button. 41×38 \"día\"",
+      "button. 68×38 \"semana\"",
+      "button. 48×38 \"mes\""
+    ],
+    "scrollWidth": 390,
+    "clientWidth": 390,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "office-sales-follow-ups@1440": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": ["input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      },
+      {
+        "id": "color-contrast",
+        "impact": "serious",
+        "targets": [
+          "a[href$=\"sales\"] > .sidebar__label",
+          ".mo-page-section__header > .mo-chips[role=\"tablist\"] > .mo-chip[role=\"tab\"]:nth-child(1)",
+          ".opportunities > .mo-chips[role=\"tablist\"] > .mo-chip[role=\"tab\"]:nth-child(1)",
+          ".customers > .mo-chips[role=\"tablist\"] > .mo-chip[role=\"tab\"]:nth-child(1)"
+        ],
+        "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.31 (foreground color: #c0451d, background color: #f7e9e4, font size: 12.0pt (16px), font weight: normal). Expected contrast ratio of 4.5:1"
+      }
+    ],
+    "small": [],
+    "scrollWidth": 1440,
+    "clientWidth": 1440,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "office-sales-follow-ups@1024": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": ["input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      },
+      {
+        "id": "color-contrast",
+        "impact": "serious",
+        "targets": [
+          ".mo-page-section__header > .mo-chips[role=\"tablist\"] > .mo-chip[role=\"tab\"]:nth-child(1)",
+          ".opportunities > .mo-chips[role=\"tablist\"] > .mo-chip[role=\"tab\"]:nth-child(1)",
+          ".customers > .mo-chips[role=\"tablist\"] > .mo-chip[role=\"tab\"]:nth-child(1)"
+        ],
+        "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.31 (foreground color: #c0451d, background color: #f7e9e4, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1"
+      }
+    ],
+    "small": [],
+    "scrollWidth": 1024,
+    "clientWidth": 1024,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "office-sales-follow-ups@768": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": ["input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      },
+      {
+        "id": "color-contrast",
+        "impact": "serious",
+        "targets": [
+          ".mo-page-section__header > .mo-chips[role=\"tablist\"] > .mo-chip[role=\"tab\"]:nth-child(1)",
+          ".opportunities > .mo-chips[role=\"tablist\"] > .mo-chip[role=\"tab\"]:nth-child(1)",
+          ".customers > .mo-chips[role=\"tablist\"] > .mo-chip[role=\"tab\"]:nth-child(1)"
+        ],
+        "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.31 (foreground color: #c0451d, background color: #f7e9e4, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1"
+      }
+    ],
+    "small": [
+      "summary. 54×36 \"Tu cuenta\"",
+      "a.back-link 66×32 \"Oficina\"",
+      "button. 41×38 \"día\"",
+      "button. 68×38 \"semana\"",
+      "button. 48×38 \"mes\""
+    ],
+    "scrollWidth": 768,
+    "clientWidth": 768,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "office-sales-follow-ups@390": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": ["input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      },
+      {
+        "id": "color-contrast",
+        "impact": "serious",
+        "targets": [
+          ".mo-page-section__header > .mo-chips[role=\"tablist\"] > .mo-chip[role=\"tab\"]:nth-child(1)",
+          ".opportunities > .mo-chips[role=\"tablist\"] > .mo-chip[role=\"tab\"]:nth-child(1)",
+          ".customers > .mo-chips[role=\"tablist\"] > .mo-chip[role=\"tab\"]:nth-child(1)"
+        ],
+        "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.31 (foreground color: #c0451d, background color: #f7e9e4, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1"
+      }
+    ],
+    "small": [
+      "summary. 54×36 \"Tu cuenta\"",
+      "a.back-link 66×32 \"Oficina\"",
+      "button. 41×38 \"día\"",
+      "button. 68×38 \"semana\"",
+      "button. 48×38 \"mes\""
+    ],
+    "scrollWidth": 390,
+    "clientWidth": 390,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "office-sales-contact@1440": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": [".search__input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      },
+      {
+        "id": "color-contrast",
+        "impact": "serious",
+        "targets": [
+          "a[href$=\"sales\"] > .sidebar__label",
+          ".mo-page-section__header > .mo-chips[role=\"tablist\"] > .mo-chip[role=\"tab\"][type=\"button\"]:nth-child(1)",
+          ".opportunities > .mo-chips[role=\"tablist\"] > .mo-chip[role=\"tab\"][type=\"button\"]:nth-child(1)",
+          ".customers > .mo-chips[role=\"tablist\"] > .mo-chip[role=\"tab\"][type=\"button\"]:nth-child(1)"
+        ],
+        "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.31 (foreground color: #c0451d, background color: #f7e9e4, font size: 12.0pt (16px), font weight: normal). Expected contrast ratio of 4.5:1"
+      },
+      {
+        "id": "landmark-unique",
+        "impact": "moderate",
+        "targets": [".opportunities"],
+        "summary": "Fix any of the following:\n  The landmark must have a unique aria-label, aria-labelledby, or title to make landmarks distinguishable"
+      }
+    ],
+    "small": [],
+    "scrollWidth": 1440,
+    "clientWidth": 1440,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "office-sales-contact@1024": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": [".search__input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      },
+      {
+        "id": "color-contrast",
+        "impact": "serious",
+        "targets": [
+          ".mo-page-section__header > .mo-chips[role=\"tablist\"] > .mo-chip[role=\"tab\"][type=\"button\"]:nth-child(1)",
+          ".opportunities > .mo-chips[role=\"tablist\"] > .mo-chip[role=\"tab\"][type=\"button\"]:nth-child(1)",
+          ".customers > .mo-chips[role=\"tablist\"] > .mo-chip[role=\"tab\"][type=\"button\"]:nth-child(1)"
+        ],
+        "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.31 (foreground color: #c0451d, background color: #f7e9e4, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1"
+      },
+      {
+        "id": "landmark-unique",
+        "impact": "moderate",
+        "targets": [".opportunities"],
+        "summary": "Fix any of the following:\n  The landmark must have a unique aria-label, aria-labelledby, or title to make landmarks distinguishable"
+      }
+    ],
+    "small": [],
+    "scrollWidth": 1024,
+    "clientWidth": 1024,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "office-sales-contact@768": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": [".search__input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      },
+      {
+        "id": "color-contrast",
+        "impact": "serious",
+        "targets": [
+          ".mo-page-section__header > .mo-chips[role=\"tablist\"] > .mo-chip[role=\"tab\"][type=\"button\"]:nth-child(1)",
+          ".opportunities > .mo-chips[role=\"tablist\"] > .mo-chip[role=\"tab\"][type=\"button\"]:nth-child(1)",
+          ".customers > .mo-chips[role=\"tablist\"] > .mo-chip[role=\"tab\"][type=\"button\"]:nth-child(1)"
+        ],
+        "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.31 (foreground color: #c0451d, background color: #f7e9e4, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1"
+      },
+      {
+        "id": "landmark-unique",
+        "impact": "moderate",
+        "targets": [".opportunities"],
+        "summary": "Fix any of the following:\n  The landmark must have a unique aria-label, aria-labelledby, or title to make landmarks distinguishable"
+      }
+    ],
+    "small": [
+      "summary. 54×36 \"Tu cuenta\"",
+      "a.back-link 66×32 \"Oficina\"",
+      "a.mo-link 636×24 \"WhatsApp · Abierta · 1/10/26, \"",
+      "a.mo-link 636×24 \"WhatsApp · Cerrada · 11/09/26,\"",
+      "button. 41×38 \"día\"",
+      "button. 68×38 \"semana\"",
+      "button. 48×38 \"mes\""
+    ],
+    "scrollWidth": 768,
+    "clientWidth": 768,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "office-sales-contact@390": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": [".search__input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      },
+      {
+        "id": "color-contrast",
+        "impact": "serious",
+        "targets": [
+          ".mo-page-section__header > .mo-chips[role=\"tablist\"] > .mo-chip[role=\"tab\"][type=\"button\"]:nth-child(1)",
+          ".opportunities > .mo-chips[role=\"tablist\"] > .mo-chip[role=\"tab\"][type=\"button\"]:nth-child(1)",
+          ".customers > .mo-chips[role=\"tablist\"] > .mo-chip[role=\"tab\"][type=\"button\"]:nth-child(1)"
+        ],
+        "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.31 (foreground color: #c0451d, background color: #f7e9e4, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1"
+      },
+      {
+        "id": "landmark-unique",
+        "impact": "moderate",
+        "targets": [".opportunities"],
+        "summary": "Fix any of the following:\n  The landmark must have a unique aria-label, aria-labelledby, or title to make landmarks distinguishable"
+      }
+    ],
+    "small": [
+      "summary. 54×36 \"Tu cuenta\"",
+      "a.back-link 66×32 \"Oficina\"",
+      "button. 41×38 \"día\"",
+      "button. 68×38 \"semana\"",
+      "button. 48×38 \"mes\""
+    ],
+    "scrollWidth": 390,
+    "clientWidth": 390,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "memory@1440": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": [".search__input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      },
+      {
+        "id": "color-contrast",
+        "impact": "serious",
+        "targets": [
+          "a[href$=\"memory\"] > .sidebar__label",
+          ".mo-chip[role=\"tab\"][type=\"button\"]:nth-child(1)"
+        ],
+        "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.31 (foreground color: #c0451d, background color: #f7e9e4, font size: 12.0pt (16px), font weight: normal). Expected contrast ratio of 4.5:1"
+      }
+    ],
+    "small": [],
+    "scrollWidth": 1440,
+    "clientWidth": 1440,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "memory@1024": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": [".search__input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      },
+      {
+        "id": "color-contrast",
+        "impact": "serious",
+        "targets": [".mo-chip[role=\"tab\"][type=\"button\"]:nth-child(1)"],
+        "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.31 (foreground color: #c0451d, background color: #f7e9e4, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1"
+      }
+    ],
+    "small": [],
+    "scrollWidth": 1024,
+    "clientWidth": 1024,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "memory@768": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": [".search__input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      },
+      {
+        "id": "color-contrast",
+        "impact": "serious",
+        "targets": [".mo-chip[role=\"tab\"][type=\"button\"]:nth-child(1)"],
+        "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.31 (foreground color: #c0451d, background color: #f7e9e4, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1"
+      }
+    ],
+    "small": ["summary. 54×36 \"Tu cuenta\""],
+    "scrollWidth": 768,
+    "clientWidth": 768,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "memory@390": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": [".search__input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      },
+      {
+        "id": "color-contrast",
+        "impact": "serious",
+        "targets": [".mo-chip[role=\"tab\"][type=\"button\"]:nth-child(1)"],
+        "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.31 (foreground color: #c0451d, background color: #f7e9e4, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1"
+      }
+    ],
+    "small": ["summary. 54×36 \"Tu cuenta\""],
+    "scrollWidth": 390,
+    "clientWidth": 390,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "brand@1440": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": [".search__input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      },
+      {
+        "id": "color-contrast",
+        "impact": "serious",
+        "targets": ["a[href$=\"brand\"] > .sidebar__label"],
+        "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.31 (foreground color: #c0451d, background color: #f7e9e4, font size: 12.0pt (16px), font weight: normal). Expected contrast ratio of 4.5:1"
+      }
+    ],
+    "small": [],
+    "scrollWidth": 1440,
+    "clientWidth": 1440,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "brand@1024": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": [".search__input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      }
+    ],
+    "small": [],
+    "scrollWidth": 1024,
+    "clientWidth": 1024,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "brand@768": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": [".search__input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      }
+    ],
+    "small": ["summary. 54×36 \"Tu cuenta\""],
+    "scrollWidth": 768,
+    "clientWidth": 768,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "brand@390": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": [".search__input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      }
+    ],
+    "small": ["summary. 54×36 \"Tu cuenta\""],
+    "scrollWidth": 390,
+    "clientWidth": 390,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "partners@1440": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": [".search__input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      },
+      {
+        "id": "color-contrast",
+        "impact": "serious",
+        "targets": ["a[href$=\"partners\"] > .sidebar__label"],
+        "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.31 (foreground color: #c0451d, background color: #f7e9e4, font size: 12.0pt (16px), font weight: normal). Expected contrast ratio of 4.5:1"
+      }
+    ],
+    "small": [],
+    "scrollWidth": 1440,
+    "clientWidth": 1440,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "partners@1024": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": [".search__input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      }
+    ],
+    "small": [],
+    "scrollWidth": 1024,
+    "clientWidth": 1024,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "partners@768": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": [".search__input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      }
+    ],
+    "small": ["summary. 54×36 \"Tu cuenta\""],
+    "scrollWidth": 768,
+    "clientWidth": 768,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "partners@390": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": [".search__input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      }
+    ],
+    "small": ["summary. 54×36 \"Tu cuenta\""],
+    "scrollWidth": 390,
+    "clientWidth": 390,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "platform@1440": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": [".search__input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      },
+      {
+        "id": "color-contrast",
+        "impact": "serious",
+        "targets": ["a[href$=\"platform\"] > .sidebar__label"],
+        "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.31 (foreground color: #c0451d, background color: #f7e9e4, font size: 12.0pt (16px), font weight: normal). Expected contrast ratio of 4.5:1"
+      }
+    ],
+    "small": [],
+    "scrollWidth": 1440,
+    "clientWidth": 1440,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "platform@1024": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": [".search__input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      },
+      {
+        "id": "landmark-unique",
+        "impact": "moderate",
+        "targets": [
+          ".platform__breakdown:nth-child(1)",
+          "section[aria-labelledby=\"platform-aiUsage-by-provider\"]",
+          "section[aria-labelledby=\"platform-aiUsage-by-model\"]"
+        ],
+        "summary": "Fix any of the following:\n  The landmark must have a unique aria-label, aria-labelledby, or title to make landmarks distinguishable"
+      }
+    ],
+    "small": [],
+    "scrollWidth": 1024,
+    "clientWidth": 1024,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "platform@768": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": [".search__input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      }
+    ],
+    "small": [
+      "summary. 54×36 \"Tu cuenta\"",
+      "button. 46×38 \"Hoy\"",
+      "button. 103×38 \"Últimos 7 días\"",
+      "button. 75×38 \"Este mes\""
+    ],
+    "scrollWidth": 768,
+    "clientWidth": 768,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "platform@390": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": [".search__input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      },
+      {
+        "id": "landmark-unique",
+        "impact": "moderate",
+        "targets": [
+          "section[aria-labelledby=\"platform-models\"]",
+          ".platform__breakdown:nth-child(1)",
+          "section[aria-labelledby=\"platform-aiUsage-by-provider\"]",
+          "section[aria-labelledby=\"platform-aiUsage-by-model\"]"
+        ],
+        "summary": "Fix any of the following:\n  The landmark must have a unique aria-label, aria-labelledby, or title to make landmarks distinguishable"
+      }
+    ],
+    "small": [
+      "summary. 54×36 \"Tu cuenta\"",
+      "button. 46×38 \"Hoy\"",
+      "button. 103×38 \"Últimos 7 días\"",
+      "button. 75×38 \"Este mes\""
+    ],
+    "scrollWidth": 390,
+    "clientWidth": 390,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "partner-console@1440": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": [".search__input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      },
+      {
+        "id": "color-contrast",
+        "impact": "serious",
+        "targets": ["a[href$=\"partner\"] > .sidebar__label"],
+        "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.31 (foreground color: #c0451d, background color: #f7e9e4, font size: 12.0pt (16px), font weight: normal). Expected contrast ratio of 4.5:1"
+      }
+    ],
+    "small": [],
+    "scrollWidth": 1440,
+    "clientWidth": 1440,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "partner-console@1024": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": [".search__input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      }
+    ],
+    "small": [],
+    "scrollWidth": 1024,
+    "clientWidth": 1024,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "partner-console@768": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": [".search__input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      }
+    ],
+    "small": ["summary. 54×36 \"Tu cuenta\""],
+    "scrollWidth": 768,
+    "clientWidth": 768,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "partner-console@390": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": [".search__input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      }
+    ],
+    "small": ["summary. 54×36 \"Tu cuenta\""],
+    "scrollWidth": 390,
+    "clientWidth": 390,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "invite-decision@1440": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": ["input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      }
+    ],
+    "small": [],
+    "scrollWidth": 1440,
+    "clientWidth": 1440,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "invite-decision@1024": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": ["input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      }
+    ],
+    "small": [],
+    "scrollWidth": 1024,
+    "clientWidth": 1024,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "invite-decision@768": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": ["input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      }
+    ],
+    "small": ["summary. 54×36 \"Tu cuenta\"", "a.back-link 720×32 \"Oficina\""],
+    "scrollWidth": 768,
+    "clientWidth": 768,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "invite-decision@390": {
+    "axe": [
+      {
+        "id": "aria-valid-attr-value",
+        "impact": "critical",
+        "targets": ["input"],
+        "summary": "Fix all of the following:\n  Invalid ARIA attribute value: aria-controls=\"_r_2_\""
+      }
+    ],
+    "small": ["summary. 54×36 \"Tu cuenta\"", "a.back-link 358×32 \"Oficina\""],
+    "scrollWidth": 390,
+    "clientWidth": 390,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "login@1440": {
+    "axe": [],
+    "small": [],
+    "scrollWidth": 1440,
+    "clientWidth": 1440,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "login@1024": {
+    "axe": [],
+    "small": [],
+    "scrollWidth": 1024,
+    "clientWidth": 1024,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "login@768": {
+    "axe": [],
+    "small": ["button. 65×26 \"English\"", "button. 68×26 \"Español\""],
+    "scrollWidth": 768,
+    "clientWidth": 768,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "login@390": {
+    "axe": [],
+    "small": ["button. 65×26 \"English\"", "button. 68×26 \"Español\""],
+    "scrollWidth": 390,
+    "clientWidth": 390,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "invite@1440": {
+    "axe": [],
+    "small": [],
+    "scrollWidth": 1440,
+    "clientWidth": 1440,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "invite@1024": {
+    "axe": [],
+    "small": [],
+    "scrollWidth": 1024,
+    "clientWidth": 1024,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "invite@768": {
+    "axe": [],
+    "small": ["button. 65×26 \"English\"", "button. 68×26 \"Español\""],
+    "scrollWidth": 768,
+    "clientWidth": 768,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  },
+  "invite@390": {
+    "axe": [],
+    "small": ["button. 65×26 \"English\"", "button. 68×26 \"Español\""],
+    "scrollWidth": 390,
+    "clientWidth": 390,
+    "h1": 1,
+    "overflow": false,
+    "errors": []
+  }
+}
