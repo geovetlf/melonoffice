@@ -143,6 +143,19 @@
   -webkit-user-drag: none;
 }
 
+/* GIA at her desk: from the waist up, the desk's top in front of her. */
+.stage__gia-desk {
+  position: absolute;
+  overflow: hidden;
+  transform: translateX(-50%);
+}
+
+.stage__gia-desk .gia-figure {
+  display: block;
+  width: auto;
+  filter: drop-shadow(0 0.3cqw 0.4cqw rgb(0 0 0 / 0.3));
+}
+
 .stage__gia-away {
   position: absolute;
   transform: translateX(-50%);
@@ -171,11 +184,30 @@
   gap: 0.5cqw;
   padding: 0.9cqw 1cqw;
   overflow: hidden;
-  border: 1px solid rgb(255 255 255 / 0.14);
+  /*
+   * A screen of the glass wall: lit from within in the wall's blue, its light lines faint, its
+   * edge glowing. Opaque at its core, so the render's own made-up figures never show through.
+   */
+  border: 1px solid color-mix(in srgb, var(--mo-color-scene-circuit) 38%, transparent);
   border-radius: 0.7cqw;
-  background: linear-gradient(160deg, rgb(28 42 62), rgb(14 24 38));
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.08);
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--mo-color-scene-circuit) 16%, transparent),
+      transparent 42%
+    ),
+    repeating-linear-gradient(180deg, rgb(255 255 255 / 0.025) 0 1px, transparent 1px 0.35cqw),
+    linear-gradient(160deg, rgb(26 50 80), rgb(12 26 46));
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--mo-color-scene-circuit-soft) 45%, transparent),
+    inset 0 0 1.4cqw color-mix(in srgb, var(--mo-color-scene-circuit) 14%, transparent),
+    0 0 1.2cqw color-mix(in srgb, var(--mo-color-scene-circuit) 22%, transparent);
   color: rgb(255 255 255 / 0.92);
+}
+
+.stage__panel-title {
+  color: var(--mo-color-scene-circuit-soft);
+  text-shadow: 0 0 0.8cqw color-mix(in srgb, var(--mo-color-scene-circuit) 45%, transparent);
 }
 
 .stage__panel--motor {
@@ -190,7 +222,8 @@
 .stage__panel--motor:focus-visible,
 .stage__panel--motor[aria-expanded='true'] {
   box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 0.08),
+    inset 0 1px 0 color-mix(in srgb, var(--mo-color-scene-circuit-soft) 45%, transparent),
+    inset 0 0 1.4cqw color-mix(in srgb, var(--mo-color-scene-circuit) 14%, transparent),
     0 0 0 1px color-mix(in srgb, var(--mo-color-scene-circuit) 70%, transparent),
     0 0 1.6cqw color-mix(in srgb, var(--mo-color-scene-circuit) 45%, transparent);
 }
@@ -2550,4 +2583,448 @@
 /* The wall's screen moves aside for the caption only where they would meet: never on its own. */
 .b-room--department .b-room__status .b-room__task {
   max-width: 100%;
+}
+
+/*
+ * Home V6: the whole Home on one screen. The page is as tall as the window (office.css) and is
+ * shared out in four rows: a one-line heading, the office (all that is left), GIA's command box
+ * and the day's strip. The office is sized from the space it is given, never scaled: its frame
+ * is the largest box of the picture's shape that fits there (on a computer the whole office
+ * shows, on a tablet and a phone the frame may be less wide than the picture, which pans). The
+ * page itself never scrolls; a phone held sideways, too short for it, flows as before.
+ */
+@media (min-height: 34rem) {
+  .home4 {
+    flex: 1;
+    grid-template-rows: auto minmax(0, 1fr) auto auto;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+    min-height: 0;
+  }
+
+  .home4__layout,
+  .home4__main {
+    display: contents;
+  }
+
+  .home4__header {
+    flex-wrap: nowrap;
+    min-width: 0;
+  }
+
+  .home4__heading {
+    display: flex;
+    align-items: baseline;
+    gap: var(--mo-space-3);
+    min-width: 0;
+  }
+
+  .home4__title {
+    flex: none;
+    font-size: var(--mo-font-size-xl);
+  }
+
+  .home4__context {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* The office takes what is left: the frame is the largest of its shape that fits. */
+  .home4__office {
+    min-height: 0;
+  }
+
+  .home4__office .stage {
+    --frame-shape: var(--scene-aspect);
+
+    display: grid;
+    place-items: center;
+    height: 100%;
+    container-type: size;
+  }
+
+  .home4__office .stage__frame {
+    width: min(100cqw, 100cqh * var(--frame-shape));
+    height: min(100cqh, 100cqw / var(--frame-shape));
+    aspect-ratio: auto;
+    max-width: none;
+    margin: 0;
+  }
+
+  .home4__office .stage > .building__notice {
+    position: absolute;
+    top: var(--mo-space-3);
+    left: 50%;
+    z-index: 1;
+    padding: var(--mo-space-2) var(--mo-space-4);
+    transform: translateX(-50%);
+  }
+
+  /* GIA's command box: one line, the suggestions beside it; more shortcuts open over the office. */
+  .home4__command {
+    display: block;
+    min-width: 0;
+  }
+
+  .gia-command {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: var(--mo-space-3);
+    width: min(100%, 72rem);
+    margin-inline: auto;
+  }
+
+  .gia-command .gia-bar {
+    flex: 1 1 0;
+    min-width: min(100%, 30rem);
+    padding-block: 4px;
+  }
+
+  .gia-command .gia-bar__send {
+    width: 44px;
+    height: 44px;
+  }
+
+  .gia-suggest {
+    flex: 0 1 auto;
+    flex-wrap: nowrap;
+    max-width: 52%;
+    justify-content: flex-start;
+    min-width: 0;
+    overflow-x: auto;
+    padding: 4px 2px;
+    scrollbar-width: none;
+  }
+
+  .gia-suggest > li {
+    flex: none;
+  }
+
+  /* More suggestions past the edge: they fade out there, and scroll. */
+  .gia-suggest:not(:hover, :focus-within) {
+    mask-image: linear-gradient(90deg, #000 calc(100% - 3rem), transparent);
+  }
+
+  .gia-suggest__item {
+    white-space: nowrap;
+  }
+
+  .gia-command .quick-actions {
+    position: absolute;
+    right: 0;
+    bottom: calc(100% + var(--mo-space-2));
+    z-index: var(--mo-layer-popover);
+    justify-content: flex-end;
+    max-width: min(100%, 40rem);
+    padding: var(--mo-space-3);
+    border: 1px solid color-mix(in srgb, var(--mo-color-surface) 70%, transparent);
+    border-radius: var(--mo-radius-xl);
+    background: color-mix(in srgb, var(--mo-color-surface) 86%, transparent);
+    box-shadow: var(--mo-shadow-lg);
+    backdrop-filter: blur(18px) saturate(1.2);
+  }
+
+  /* The day's strip: four short columns, each its title, its one figure or line, and its way in. */
+  .home4__side {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    align-items: stretch;
+    gap: var(--mo-space-3);
+  }
+
+  .home4__side .panel,
+  .home4__side .panel--lead,
+  .home4__side .panel--quiet {
+    display: flex;
+    flex-direction: column;
+    gap: var(--mo-space-1);
+    min-width: 0;
+    padding: var(--mo-space-2) var(--mo-space-3);
+    border: 1px solid color-mix(in srgb, var(--mo-color-border) 70%, transparent);
+    border-radius: var(--mo-radius-lg);
+    background: color-mix(in srgb, var(--mo-color-surface) 70%, transparent);
+    box-shadow: var(--mo-shadow-sm);
+    font-size: var(--mo-font-size-sm);
+  }
+
+  .home4__side .panel--lead {
+    border-top-color: var(--mo-color-border);
+    box-shadow:
+      inset 0 2px 0 var(--mo-color-accent),
+      var(--mo-shadow-sm);
+  }
+
+  .home4__side .panel__header {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: var(--mo-space-2);
+    min-width: 0;
+    margin: 0;
+  }
+
+  .home4__side .panel__title {
+    overflow: hidden;
+    font-size: var(--mo-font-size-sm);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* The activity's period sits on its title's line. */
+  .home4__side .panel--lead {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-content: start;
+    column-gap: var(--mo-space-2);
+  }
+
+  .home4__side .panel--lead > :not(.panel__header, .period-picker) {
+    grid-column: 1 / -1;
+  }
+
+  .home4__side .panel {
+    container-type: inline-size;
+  }
+
+  .home4__side .period-picker {
+    grid-row: 1;
+    grid-column: 2;
+    flex-wrap: nowrap;
+    gap: 2px;
+    margin: 0;
+  }
+
+  /* The strip says what is there; the longer explanations are on the pages it leads to. */
+  .home4__side .panel__hint {
+    display: none;
+  }
+
+  .home4__side .panel__empty {
+    margin: 0;
+    overflow: hidden;
+    font-size: var(--mo-font-size-xs);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .home4__side .panel__link {
+    min-height: 0;
+    margin-top: auto;
+    padding: 0;
+    font-size: var(--mo-font-size-xs);
+  }
+
+  .home4__side ol,
+  .home4__side ul {
+    margin: 0;
+  }
+
+  .home4__side li:nth-child(n + 2) {
+    display: none;
+  }
+
+  .home4__side .task__title,
+  .home4__side .activity .task__title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .home4__side .credits {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0 var(--mo-space-2);
+  }
+
+  .home4__side .credits__week {
+    display: none;
+  }
+}
+
+/* A narrow column: the period under the activity's title. */
+@container (max-width: 20rem) {
+  .home4__side .period-picker {
+    grid-row: 2;
+    grid-column: 1 / -1;
+  }
+}
+
+/* With a mouse, the strip's period is as dense as its line; a finger keeps the 44 px target. */
+@media (min-height: 34rem) and (pointer: fine) {
+  .home4__side .period-picker__option {
+    min-height: 24px;
+    padding: 0 var(--mo-space-2);
+    font-size: var(--mo-font-size-xs);
+  }
+}
+
+/* A computer: the office no wider than 92rem, the heading and the strip at its width. */
+@media (min-width: 64rem) and (min-height: 34rem) {
+  .home4__office .stage__frame {
+    width: min(100cqw, 100cqh * var(--frame-shape), 92rem);
+    height: min(100cqh, 100cqw / var(--frame-shape), 92rem / var(--frame-shape));
+  }
+
+  /*
+   * The heading, GIA's box and the strip line up with the office: as wide as its frame really is
+   * (`--stage-width`, measured by the Home), never narrower than 48rem nor wider than the page.
+   */
+  .home4__header,
+  .home4__command,
+  .home4__side {
+    width: min(100%, max(var(--stage-width, 92rem), 48rem));
+    margin-inline: auto;
+  }
+
+  .gia-command {
+    width: 100%;
+  }
+}
+
+/*
+ * A tablet: the frame takes the office's row whole and is narrower than the picture, which pans
+ * (the side desks show at its edges, and the keyboard brings them in), so the office is never a
+ * thin strip between empty bands. GIA stays in the middle.
+ */
+@media (min-width: 48rem) and (max-width: 63.99rem) and (min-height: 34rem) and (max-aspect-ratio: 4/5) {
+  /*
+   * A tablet held upright: the office as wide as the screen and a little cropped at its sides,
+   * deliberately, to 1.75 : 1 (every person at every desk still shows, and the edge of each outer
+   * plate; a drag or the keyboard brings them in whole). The day's strip, two by two, takes the
+   * height left, so nothing is a band of nothing.
+   */
+  .home4 {
+    grid-template-rows: auto auto auto minmax(0, 1fr);
+  }
+
+  .home4__office .stage {
+    --frame-shape: 1.75;
+
+    height: auto;
+    container-type: inline-size;
+  }
+
+  .home4__office .stage__frame {
+    width: 100cqw;
+    height: auto;
+    aspect-ratio: var(--frame-shape);
+  }
+
+  .home4__side {
+    grid-auto-rows: minmax(0, 1fr);
+  }
+
+  /* Each card shows as many of its latest three entries as its height holds, never half of one. */
+  .home4__side .panel {
+    overflow: hidden;
+    container-type: size;
+  }
+
+  .home4__side li:nth-child(-n + 3) {
+    display: flex;
+  }
+}
+
+@container (max-height: 14rem) {
+  .home4__side li:nth-child(n + 3) {
+    display: none;
+  }
+}
+
+/* A tablet held upright: the suggestions under the box, the strip two by two. */
+@media (max-width: 63.99rem) and (min-height: 34rem) and (orientation: portrait) {
+  .gia-command {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--mo-space-2);
+  }
+
+  .gia-command .gia-bar {
+    flex: none;
+    min-width: 0;
+  }
+
+  .gia-suggest {
+    max-width: none;
+  }
+
+  .home4__side {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* A phone: the suggestions under the box, the strip two by two, the office between. */
+@media (max-width: 47.99rem) and (min-height: 34rem) {
+  /*
+   * The office fills its row, framed around GIA as the phone's picture is (`officeScene.ts`):
+   * the side desks show at its edges and come in with a swipe, a pinch or the keyboard.
+   */
+  .home4__office .stage {
+    --frame-shape: 0.85;
+  }
+
+  .home4__office .stage__frame {
+    width: 100cqw;
+  }
+
+  .home4__heading {
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .gia-command {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--mo-space-2);
+  }
+
+  .gia-command .gia-bar {
+    flex: none;
+    min-width: 0;
+  }
+
+  .gia-suggest {
+    max-width: none;
+  }
+
+  /* The day's strip: its four cards side by side, swiped through, each as on a computer. */
+  .home4__side {
+    grid-template-columns: none;
+    grid-auto-columns: minmax(15rem, 78%);
+    grid-auto-flow: column;
+    gap: var(--mo-space-2);
+    margin-inline: calc(-1 * 1.25rem);
+    padding-inline: 1.25rem;
+    overflow-x: auto;
+    scroll-padding-inline: 1.25rem;
+    scroll-snap-type: x mandatory;
+    scrollbar-width: none;
+  }
+
+  .home4__side .panel {
+    scroll-snap-align: start;
+  }
+
+  .home4__title {
+    font-size: var(--mo-font-size-lg);
+  }
+
+  /* The zoom on the floor between the front desks, clear of the glass wall and MelonMotor. */
+  .home4__office .stage__zoom {
+    top: auto;
+    right: 50%;
+    bottom: var(--mo-space-2);
+    transform: translateX(50%);
+  }
+
+  .home4__side .period-picker {
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .home4__side .period-picker__option {
+    flex: none;
+  }
 }

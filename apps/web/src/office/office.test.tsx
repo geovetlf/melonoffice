@@ -25,6 +25,17 @@ beforeEach(() => globalThis.history.replaceState(null, '', '/'));
 
 const path = () => globalThis.location.pathname;
 
+/** The people of the Home's office: one at each of the six desks, then GIA at hers. */
+const SCENE_PEOPLE = [
+  'comercial',
+  'marketing',
+  'operaciones',
+  'investigacion',
+  'finanzas',
+  'direccion',
+  'gia',
+];
+
 /** A signed-in session (resumed after a reload), opened at `at`. */
 function open(
   at = '/',
@@ -49,7 +60,8 @@ function open(
 /** The office's departments on the Home, once read: the desks that lead into them. */
 const rooms = async () => {
   const office = within(await screen.findByLabelText("Your office's departments"));
-  await office.findAllByRole('link');
+  // GIA's desk is there at once; the departments' desks once they are read.
+  await waitFor(() => expect(office.getAllByRole('link').length).toBeGreaterThan(1));
   return office;
 };
 /** The Home is on screen: its office picture, and the departments in the menu once read. */
@@ -262,9 +274,9 @@ describe('the Home (ADR-0040)', () => {
   it('shows real agents only: counts, states and their places, from their records', async () => {
     open('/', (backend) => {
       backend.options.specialists.org_1 = [
-        { id: 'spec_ana', name: 'Ana Campañas', type: 'marketing', status: 'active' },
-        { id: 'spec_leo', name: 'Leo Contenidos', type: 'marketing', status: 'active' },
-        { id: 'spec_eva', name: 'Eva Cuentas', type: 'finance', status: 'paused' },
+        { id: 'spec_ana', name: 'Campaigns agent', type: 'marketing', status: 'active' },
+        { id: 'spec_leo', name: 'Content agent', type: 'marketing', status: 'active' },
+        { id: 'spec_eva', name: 'Accounts agent', type: 'finance', status: 'paused' },
         { id: 'spec_old', name: 'Old Draft', type: 'finance', status: 'draft' },
       ];
     });
@@ -275,21 +287,27 @@ describe('the Home (ADR-0040)', () => {
     expect(office.getByRole('link', { name: 'Enter Marketing. 2 active agents' })).toBeTruthy();
     // The draft agent is not counted, and is nobody at a desk.
     expect(office.getByRole('link', { name: 'Enter Finance. 1 paused agent' })).toBeTruthy();
-    // A person is drawn only at the desk of a department with real agents (and GIA at hers).
+    // Every desk has its person, a picture of the office at work; GIA is at hers. Only the desks
+    // of departments with real agents stand for one.
     await waitFor(() =>
       expect(
-        [...document.querySelectorAll<HTMLElement>('[data-person]')].map((p) => p.dataset.person),
-      ).toEqual(['marketing', 'finanzas', 'gia']),
+        [...document.querySelectorAll<HTMLElement>('[data-person][data-agent]')].map(
+          (p) => p.dataset.person,
+        ),
+      ).toEqual(['marketing', 'finanzas']),
     );
+    expect(
+      [...document.querySelectorAll<HTMLElement>('[data-person]')].map((p) => p.dataset.person),
+    ).toEqual(SCENE_PEOPLE);
     // Each one is a real agent, who opens their card: Marketing's first, Finanzas' paused one.
     expect(
       office.getByRole('button', {
-        name: 'Ana Campañas, Available. No work under way. Open their card',
+        name: 'Campaigns agent, Available. No work under way. Open their card',
       }),
     ).toBeTruthy();
     expect(
       office.getByRole('button', {
-        name: 'Eva Cuentas, Paused. No work under way. Open their card',
+        name: 'Accounts agent, Paused. No work under way. Open their card',
       }),
     ).toBeTruthy();
     expect(office.queryByRole('button', { name: /^Old Draft/ })).toBeNull();
@@ -297,18 +315,18 @@ describe('the Home (ADR-0040)', () => {
 
     fireEvent.click(office.getByRole('link', { name: /^Enter Marketing/ }));
     const agent = await screen.findByRole('link', {
-      name: 'Ana Campañas. Available. Workstation 1',
+      name: 'Campaigns agent. Available. Workstation 1',
     });
     expect(agent.getAttribute('href')).toBe('/office/marketing/agent/spec_ana');
-    expect(screen.queryByText('Eva Cuentas')).toBeNull();
+    expect(screen.queryByText('Accounts agent')).toBeNull();
     fireEvent.click(agent);
-    expect(await screen.findByRole('heading', { level: 1, name: 'Ana Campañas' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { level: 1, name: 'Campaigns agent' })).toBeTruthy();
     expect(screen.getByText("Coming to this agent's workspace")).toBeTruthy();
     // An agent is only found in its own department.
     cleanup();
     open('/office/finance/agent/spec_ana', (backend) => {
       backend.options.specialists.org_1 = [
-        { id: 'spec_ana', name: 'Ana', type: 'marketing', status: 'active' },
+        { id: 'spec_ana', name: 'Campaigns agent', type: 'marketing', status: 'active' },
       ];
     });
     expect(await screen.findByRole('heading', { name: 'This place does not exist' })).toBeTruthy();
@@ -438,6 +456,37 @@ describe('the phone menu', () => {
     );
     expect(await screen.findByRole('heading', { level: 1, name: 'Research' })).toBeTruthy();
     expect(document.getElementById('app-sidebar')?.className).not.toContain('sidebar--open');
+  });
+});
+
+describe("the Home's rail", () => {
+  it('leads to the Home, GIA and the company, and opens the whole menu, giving the focus back', async () => {
+    open('/');
+    await home();
+    const rail = within(screen.getByRole('navigation', { name: 'Shortcuts' }));
+    expect(rail.getByRole('link', { name: 'Home' }).getAttribute('aria-current')).toBe('page');
+    expect(rail.getByRole('link', { name: 'GIA' }).getAttribute('href')).toBe('/gia');
+    expect(rail.getByRole('link', { name: 'My company' }).getAttribute('href')).toBe('/memory');
+    // The bell stays the top bar's: the rail opens it there.
+    fireEvent.click(rail.getByRole('button', { name: 'See notifications' }));
+    expect(document.querySelector<HTMLDetailsElement>('.topbar .notifications')?.open).toBe(true);
+
+    const menu = rail.getByRole('button', { name: 'Open the full menu' });
+    menu.focus();
+    fireEvent.click(menu);
+    expect(menu.getAttribute('aria-expanded')).toBe('true');
+    expect(menu.getAttribute('aria-controls')).toBe('app-sidebar');
+    expect(document.getElementById('app-sidebar')?.className).toContain('sidebar--open');
+    expect(document.activeElement?.closest('#app-sidebar')).not.toBeNull();
+    fireEvent.keyDown(globalThis.window, { key: 'Escape' });
+    expect(document.getElementById('app-sidebar')?.className).not.toContain('sidebar--open');
+    expect(document.activeElement).toBe(rail.getByRole('button', { name: 'Open the full menu' }));
+  });
+
+  it('is only on the Home', async () => {
+    open('/gia');
+    await screen.findByRole('heading', { level: 1, name: 'GIA' });
+    expect(screen.queryByRole('navigation', { name: 'Shortcuts' })).toBeNull();
   });
 });
 
@@ -575,14 +624,20 @@ describe('ambient figures (ADR-0042)', () => {
   });
 
   it('never sit at the Home’s desks, and stay decoration in a department’s office', async () => {
-    // The Home's office draws a person at a desk only for a real agent: with none, the desks are
-    // empty and GIA is alone at hers.
+    // With no agents, the Home's office still shows a person at each desk, and GIA at hers: a
+    // picture of the office at work. None is an agent: no name, no card, nothing counted.
     open('/');
-    await rooms();
+    const office = await rooms();
     expect(
       [...document.querySelectorAll<HTMLElement>('[data-person]')].map((p) => p.dataset.person),
-    ).toEqual(['gia']);
+    ).toEqual(SCENE_PEOPLE);
+    expect(document.querySelectorAll('[data-person][data-agent]')).toHaveLength(0);
     expect(document.querySelectorAll('.stage__agent')).toHaveLength(0);
+    expect(office.queryByRole('button', { name: /Open their card/ })).toBeNull();
+    expect(document.querySelector('.topbar__agents')?.textContent).toBe('No active agents');
+    for (const person of document.querySelectorAll('[data-person]')) {
+      expect(person.closest('[aria-hidden="true"]')).not.toBeNull();
+    }
     const onHome = layoutOf(department('marketing')).ambient.length;
     cleanup();
 
@@ -631,20 +686,25 @@ describe('ambient figures (ADR-0042)', () => {
     const office = await rooms();
     expect(office.getByRole('link', { name: 'Enter Marketing. No agents yet' })).toBeTruthy();
     await waitFor(() => expect(plate()).toBe('No agents yet'));
-    expect(document.querySelector('[data-person="marketing"]')).toBeNull();
+    expect(document.querySelector('[data-person="marketing"][data-agent]')).toBeNull();
     cleanup();
 
     open('/', (backend) => {
       backend.options.specialists.org_1 = [
-        { id: 'spec_ana', name: 'Ana Campañas', type: 'marketing', status: 'active' },
+        { id: 'spec_ana', name: 'Campaigns agent', type: 'marketing', status: 'active' },
       ];
     });
     await waitFor(() => expect(plate()).toBe('1 active agent'));
     expect(screen.getByRole('link', { name: 'Enter Marketing. 1 active agent' })).toBeTruthy();
-    // One real agent, one person, at Marketing's desk only.
-    expect(
-      [...document.querySelectorAll<HTMLElement>('[data-person]')].map((p) => p.dataset.person),
-    ).toEqual(['marketing', 'gia']);
+    // One real agent: Marketing's person stands for them, and only theirs opens a card.
+    await waitFor(() =>
+      expect(
+        [...document.querySelectorAll<HTMLElement>('[data-person][data-agent]')].map(
+          (p) => p.dataset.person,
+        ),
+      ).toEqual(['marketing']),
+    );
+    expect(document.querySelectorAll('.stage__agent')).toHaveLength(1);
   });
 
   it('carry no presence, state or focus of their own', async () => {
@@ -662,17 +722,17 @@ describe('ambient figures (ADR-0042)', () => {
   it('are replaced in the office by a real agent, which stays a link to its profile', async () => {
     open('/office/marketing', (backend) => {
       backend.options.specialists.org_1 = [
-        { id: 'spec_ana', name: 'Ana Campañas', type: 'marketing', status: 'active' },
+        { id: 'spec_ana', name: 'Campaigns agent', type: 'marketing', status: 'active' },
       ];
     });
     const link = await screen.findByRole('link', {
-      name: 'Ana Campañas. Available. Workstation 1',
+      name: 'Campaigns agent. Available. Workstation 1',
     });
     expect(link.closest('.seat')?.classList.contains('seat--ambient')).toBe(false);
     expect(document.querySelectorAll('.dept-office__room .room__worker--agent')).toHaveLength(1);
     expect(document.querySelectorAll('.dept-office__room .room__worker--ambient')).toHaveLength(2);
     fireEvent.click(link);
-    await screen.findByRole('heading', { level: 1, name: 'Ana Campañas' });
+    await screen.findByRole('heading', { level: 1, name: 'Campaigns agent' });
     expect(path()).toBe('/office/marketing/agent/spec_ana');
   });
 });
@@ -682,12 +742,12 @@ describe('a department’s workstations (ADR-0041)', () => {
     backend.options.specialists.org_1 = [
       {
         id: 'spec_ana',
-        name: 'Ana Campañas',
+        name: 'Campaigns agent',
         type: 'marketing',
         status: 'active',
         purpose: 'Content lead',
       },
-      { id: 'spec_leo', name: 'Leo Contenidos', type: 'marketing', status: 'paused' },
+      { id: 'spec_leo', name: 'Content agent', type: 'marketing', status: 'paused' },
     ];
     backend.options.specialists.org_other = [
       { id: 'spec_zed', name: 'Zed Otro', type: 'marketing', status: 'active' },
@@ -700,10 +760,10 @@ describe('a department’s workstations (ADR-0041)', () => {
     expect(seats.getAllByRole('listitem')).toHaveLength(6);
     expect(
       await seats.findByRole('link', {
-        name: 'Ana Campañas. Content lead. Available. Workstation 1',
+        name: 'Campaigns agent. Content lead. Available. Workstation 1',
       }),
     ).toBeTruthy();
-    expect(seats.getByRole('link', { name: 'Leo Contenidos. Paused. Workstation 2' })).toBeTruthy();
+    expect(seats.getByRole('link', { name: 'Content agent. Paused. Workstation 2' })).toBeTruthy();
     expect(
       seats.getAllByRole('button', { name: /^Workstation \d\. Available workstation$/ }),
     ).toHaveLength(4);
@@ -742,10 +802,10 @@ describe('a department’s workstations (ADR-0041)', () => {
     const backend = open('/office/marketing', team);
     fireEvent.click(
       await screen.findByRole('link', {
-        name: 'Ana Campañas. Content lead. Available. Workstation 1',
+        name: 'Campaigns agent. Content lead. Available. Workstation 1',
       }),
     );
-    const title = await screen.findByRole('heading', { level: 1, name: 'Ana Campañas' });
+    const title = await screen.findByRole('heading', { level: 1, name: 'Campaigns agent' });
     expect(path()).toBe('/office/marketing/agent/spec_ana');
     await waitFor(() => expect(document.activeElement).toBe(title));
     const profile = within(screen.getByRole('region', { name: 'Profile' }));

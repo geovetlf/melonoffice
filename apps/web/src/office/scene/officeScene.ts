@@ -139,6 +139,14 @@ export const SEATS: Readonly<Record<SeatKey, SceneSeat>> = {
 };
 
 /**
+ * GIA at her own desk: her official figure (`gia/character.tsx`), not the person the render drew
+ * there, standing behind it at the chair and seen from the waist up, the desk's top in front of
+ * her. Where she is drawn: her centre across, the top of her head, where the desk's top hides
+ * her, and her standing height there, all fractions of the picture.
+ */
+export const GIA_AT_DESK = { x: 0.4926, top: 0.305, cut: 0.461, height: 0.27 } as const;
+
+/**
  * The desks in the order the eye reads them, row by row, left to right, which is the order a
  * keyboard reaches them: GIA's in the middle of the second row.
  */

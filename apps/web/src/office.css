@@ -2624,3 +2624,198 @@ a.sidebar__item:hover {
     min-height: var(--mo-min-target-size);
   }
 }
+
+/*
+ * The Home on one screen (Home V6): the app is as tall as the window and the page does not
+ * scroll; the Home shares that height out (home.css). The top bar is compact, its search a glass
+ * capsule in the middle. Below the window's height for it (a phone held sideways), the page
+ * flows again.
+ */
+.rail {
+  display: none;
+}
+
+@media (min-height: 34rem) {
+  .app--scene {
+    height: 100dvh;
+    min-height: 0;
+  }
+
+  .app--scene .app__body {
+    min-height: 0;
+  }
+
+  .app--scene .app__main {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    max-width: none;
+    padding: var(--mo-space-2) 1.25rem var(--mo-space-3);
+  }
+
+  .app--scene .topbar {
+    position: relative;
+    gap: var(--mo-space-3);
+    padding: 6px 1.25rem;
+    border-bottom: 0;
+    background: none;
+    backdrop-filter: none;
+  }
+
+  .app--scene .search {
+    flex: 0 1 30rem;
+    margin-inline: auto;
+  }
+
+  .app--scene .search__input {
+    min-height: 40px;
+    border-color: color-mix(in srgb, var(--mo-color-surface) 70%, transparent);
+    border-radius: var(--mo-radius-pill);
+    background: color-mix(in srgb, var(--mo-color-surface) 62%, transparent);
+    box-shadow:
+      var(--mo-shadow-sm),
+      inset 0 1px 0 color-mix(in srgb, var(--mo-color-surface) 90%, transparent);
+    backdrop-filter: blur(14px) saturate(1.2);
+  }
+
+  .app--scene .topbar__end {
+    margin-left: 0;
+  }
+
+  .app--scene .topbar__credits,
+  .app--scene .topbar__agents {
+    min-height: 36px;
+    padding: 0 var(--mo-space-3);
+  }
+}
+
+/*
+ * A computer: the rail, 72 pixels at the left, takes the place of the burger. Its menu button
+ * opens the glass menu beside it, from the window's top, over the office (it pushes nothing);
+ * the rail stays uncovered, so the same button closes it.
+ */
+@media (min-width: 64rem) {
+  .app--scene {
+    --rail-width: 4.5rem;
+
+    grid-template-columns: var(--rail-width) minmax(0, 1fr);
+  }
+
+  .app--scene .topbar__menu {
+    display: none;
+  }
+
+  .rail {
+    position: sticky;
+    top: 0;
+    z-index: var(--mo-layer-sticky);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--mo-space-4);
+    height: 100dvh;
+    min-height: 0;
+    padding: var(--mo-space-3) 0 var(--mo-space-4);
+    border-right: 1px solid color-mix(in srgb, var(--mo-color-border) 60%, transparent);
+    background: color-mix(in srgb, var(--mo-color-surface) 58%, transparent);
+    backdrop-filter: blur(16px) saturate(1.2);
+  }
+
+  .rail__mark {
+    width: 40px;
+    height: 40px;
+    margin-bottom: var(--mo-space-2);
+  }
+
+  .rail__list {
+    display: grid;
+    gap: var(--mo-space-2);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .rail__item {
+    position: relative;
+    display: inline-grid;
+    place-items: center;
+    width: var(--mo-min-target-size);
+    height: var(--mo-min-target-size);
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: 14px;
+    background: transparent;
+    color: var(--mo-color-text-secondary);
+    cursor: pointer;
+  }
+
+  .rail__item:hover {
+    border-color: color-mix(in srgb, var(--mo-color-border) 80%, transparent);
+    background: color-mix(in srgb, var(--mo-color-surface) 80%, transparent);
+    color: var(--mo-color-text-primary);
+  }
+
+  .rail__item[aria-current='page'] {
+    border-color: color-mix(in srgb, var(--mo-color-accent) 30%, transparent);
+    background: var(--mo-color-accent-soft);
+    color: var(--mo-color-accent);
+  }
+
+  .rail__menu {
+    margin-top: auto;
+    border-color: color-mix(in srgb, var(--mo-color-border) 70%, transparent);
+    background: color-mix(in srgb, var(--mo-color-surface) 70%, transparent);
+    color: var(--mo-color-text-primary);
+  }
+
+  .rail__menu[aria-expanded='true'] {
+    border-color: color-mix(in srgb, var(--mo-color-accent) 40%, transparent);
+    color: var(--mo-color-accent);
+  }
+
+  /* The item's name, beside it while the pointer or the keyboard is on it. */
+  .rail__tip {
+    position: absolute;
+    top: 50%;
+    left: calc(100% + 10px);
+    z-index: var(--mo-layer-popover);
+    padding: 0.3rem 0.6rem;
+    border-radius: var(--mo-radius-sm);
+    background: var(--mo-color-text-primary);
+    color: var(--mo-color-background);
+    font-size: var(--mo-font-size-xs);
+    font-weight: var(--mo-font-weight-medium);
+    white-space: nowrap;
+    opacity: 0;
+    transform: translate(-4px, -50%);
+    transition:
+      opacity var(--mo-motion-duration-fast) var(--mo-motion-ease-standard),
+      transform var(--mo-motion-duration-fast) var(--mo-motion-ease-standard);
+    pointer-events: none;
+  }
+
+  .rail__item:hover .rail__tip,
+  .rail__item:focus-visible .rail__tip {
+    opacity: 1;
+    transform: translate(0, -50%);
+  }
+
+  .rail__menu[aria-expanded='true'] .rail__tip {
+    opacity: 0;
+  }
+
+  .app--scene .sidebar {
+    top: var(--mo-space-3);
+    left: calc(var(--rail-width) + var(--mo-space-2));
+  }
+
+  .app--scene .app__scrim {
+    inset: 0 0 0 var(--rail-width);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rail__tip {
+    transition: none;
+  }
+}

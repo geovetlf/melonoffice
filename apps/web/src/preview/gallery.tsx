@@ -236,9 +236,9 @@ function Gallery() {
           ))}
         </Row>
         <Row label="Avatares">
-          <Avatar name="Ana Ventas" size="sm" />
-          <Avatar name="Leo Campañas" />
-          <Avatar name="Olga Procesos" size="lg" />
+          <Avatar name="Agente comercial" size="sm" />
+          <Avatar name="Agente de lanzamientos" />
+          <Avatar name="Agente de procesos" size="lg" />
         </Row>
         <Row label="Créditos">
           <div className="gallery__credits">
@@ -305,7 +305,7 @@ function Gallery() {
         <div className="gallery__stage">
           <div className="mo-overlay gallery__dialog" role="dialog" aria-labelledby="dlg">
             <h3 id="dlg" className="mo-panel__title">
-              ¿Pausar a Ana Ventas?
+              ¿Pausar a Agente comercial?
             </h3>
             <p className="mo-hint">Termina la tarea en curso y no recibe trabajo nuevo.</p>
             <div className="gallery__items gallery__end">
@@ -315,10 +315,10 @@ function Gallery() {
           </div>
           <aside className="mo-overlay gallery__sheet" aria-labelledby="sheet">
             <header className="mo-sheet__header">
-              <Avatar name="Ana Ventas" />
+              <Avatar name="Agente comercial" />
               <div className="gallery__who">
                 <h3 id="sheet" className="mo-panel__title">
-                  Ana Ventas
+                  Agente comercial
                 </h3>
                 <span className="mo-hint">Comercial · Leads</span>
               </div>
@@ -459,7 +459,7 @@ function Gallery() {
             Las tareas se detendrán cuando se acaben.
           </StateMessage>
           <StateMessage kind="success" title="Aprobado">
-            Leo Campañas enviará la campaña de octubre.
+            Agente de lanzamientos enviará la campaña de octubre.
           </StateMessage>
           <StateMessage kind="empty" inline>
             Aún no hay actividad hoy.
