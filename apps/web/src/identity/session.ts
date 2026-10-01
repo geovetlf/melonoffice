@@ -165,8 +165,13 @@ export function createSession(
       const sessionId = read(PROVIDER_KEY);
       drop(PROVIDER_KEY);
       if (sessionId === undefined) throw new IdentityError('provider_cancelled');
-      // Google reports a closed page or a refusal as `error=` on the way back.
-      if (new URL(requestUri).searchParams.has('error')) {
+      // Google reports a closed page or a refusal as `error=` on the way back, in the query or
+      // in the fragment.
+      const back = new URL(requestUri);
+      if (
+        back.searchParams.has('error') ||
+        new URLSearchParams(back.hash.replace(/^#/, '')).has('error')
+      ) {
         throw new IdentityError('provider_cancelled');
       }
       keep(await identity.finishProvider(requestUri, sessionId));

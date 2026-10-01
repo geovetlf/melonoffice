@@ -65,7 +65,7 @@ describe('Google sign-in (ADR-0105)', () => {
   it('treats a refusal on Google, or a return with no sign-in under way, as not completed', async () => {
     const { session } = setup();
     await session.startProvider(BACK);
-    await expect(session.finishProvider(`${BACK}?error=access_denied&state=s`)).rejects.toEqual(
+    await expect(session.finishProvider(`${BACK}#error=access_denied&state=s`)).rejects.toEqual(
       new IdentityError('provider_cancelled'),
     );
     expect(session.present).toBe(false);
