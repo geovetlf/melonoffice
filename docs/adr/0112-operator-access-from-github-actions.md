@@ -18,7 +18,8 @@ Operator tasks have run from Geovet's Cloud Shell, with Geovet pasting commands:
    - `roles/run.viewer`, `roles/cloudtasks.viewer`, `roles/logging.viewer`: the read-only checks.
    - It cannot change IAM, deploy, delete the database, or read secrets.
 3. **Backups.** A private bucket `{project}-operator-backups`: IAM only, public access prevented, never emptied by Terraform, objects deleted after 30 days. Firestore's own service agent writes the export into it. A restore is a person's decision (`gcloud firestore import`), never automatic.
-4. **The `Ops (dev)` workflow** (`workflow_dispatch`), with three tasks:
+4. **The `Ops (dev)` workflow** (`workflow_dispatch`), with four tasks:
+   - `check` (the default; infrastructure only, no document read or written): signs in through Workload Identity, exercises each read role, checks the backups bucket settings and that the operator and the Firestore agent hold their roles on it, and confirms the operator cannot read the project IAM policy.
    - `status` (read only): Cloud Run readiness and revisions, the jobs queue, error counts in the last hour, and a dry run of each operator migration.
    - `backup`: a Firestore export.
    - `migrate`: an export first, then each operator migration with `MIGRATION_APPLY=yes`, then a second dry run that must report every organization `unchanged`. A `skipped` organization fails the run for a person to look at.
