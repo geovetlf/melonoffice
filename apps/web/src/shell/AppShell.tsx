@@ -58,7 +58,6 @@ import { DocumentsPage } from '../documents/DocumentsPage.js';
 import { createDocumentsClient } from '../documents/documentsClient.js';
 import { createMemoryClient } from '../memory/memoryClient.js';
 import { OfficeDataProvider, useOfficeData } from '../office/OfficeData.js';
-import { HomeRail } from './HomeRail.js';
 import { parseRoute } from './routes.js';
 import { Sidebar } from './Sidebar.js';
 import { TopBar } from './TopBar.js';
@@ -143,8 +142,7 @@ export function AppShell(locale: LocaleProps) {
       if (event.key === 'Escape') setMenuOpen(false);
     };
     globalThis.addEventListener('keydown', close);
-    // The open menu takes the keyboard's focus; closing gives it back to the button that opened
-    // it (the top bar's burger, or the Home's rail on a computer).
+    // The open menu takes the keyboard's focus; closing gives it back to the button that opened it.
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     document.querySelector<HTMLElement>('#app-sidebar a[href]')?.focus();
     return () => {
@@ -580,14 +578,6 @@ export function AppShell(locale: LocaleProps) {
                     className="app__scrim"
                     aria-hidden="true"
                     onClick={() => setMenuOpen(false)}
-                  />
-                ) : null}
-                {route.kind === 'home' ? (
-                  <HomeRail
-                    route={route}
-                    canReadMemory={canReadBusiness || canReadKnowledge}
-                    menuOpen={menuOpen}
-                    onMenu={() => setMenuOpen((open) => !open)}
                   />
                 ) : null}
                 <div className="app__body">

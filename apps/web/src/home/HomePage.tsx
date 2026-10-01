@@ -1,5 +1,5 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
-import { useCallback, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import type { ApprovalsClient } from '../approvals/approvalsClient.js';
 import type { AutomationsClient } from '../automations/automationsClient.js';
 import type { FollowUpsClient } from '../followUps/followUpsClient.js';
@@ -9,6 +9,7 @@ import { useAgentWork, workStateOf } from '../office/scene/agentWork.js';
 import { useMotorFlows } from '../office/scene/motor.js';
 import { MotorPanel } from '../office/scene/MotorPanel.js';
 import { OfficeStage } from '../office/scene/OfficeStage.js';
+import { SCENE_ASPECT } from '../office/scene/officeScene.js';
 import { GiaCommandBar, QuickActions } from './gia.js';
 import { CreditsUsage, RecentActivity, UpcomingMeetings } from './panels.js';
 import { attentionCount, TodayWork, useTodayWork } from './TodayWork.js';
@@ -70,7 +71,7 @@ export function HomePage({
   const waiting = attentionCount(today);
 
   return (
-    <div ref={page} className="home4">
+    <div ref={page} className="home4" style={{ '--stage-aspect': SCENE_ASPECT } as CSSProperties}>
       <header className="home4__header">
         <div className="home4__heading">
           <h1 className="home4__title">
