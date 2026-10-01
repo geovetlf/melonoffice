@@ -1,5 +1,4 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
-import { StatusDot } from '@melonoffice/ui';
 import { useCallback, useRef, useState, useSyncExternalStore } from 'react';
 import type { ApprovalsClient } from '../approvals/approvalsClient.js';
 import type { AutomationsClient } from '../automations/automationsClient.js';
@@ -9,7 +8,7 @@ import { AgentSheet, type AgentSheetAccess } from '../office/scene/AgentSheet.js
 import { useAgentWork, workStateOf } from '../office/scene/agentWork.js';
 import { useMotorFlows } from '../office/scene/motor.js';
 import { MotorPanel } from '../office/scene/MotorPanel.js';
-import { OfficeBuilding } from '../office/scene/OfficeBuilding.js';
+import { OfficeStage } from '../office/scene/OfficeStage.js';
 import { GiaCommandBar, QuickActions } from './gia.js';
 import { CreditsUsage, RecentActivity, UpcomingMeetings } from './panels.js';
 import { attentionCount, TodayWork, useTodayWork } from './TodayWork.js';
@@ -37,10 +36,11 @@ export interface HomeOfficeAccess extends AgentSheetAccess {
 }
 
 /**
- * The Home (ADR-0040, Home V4): the organization's office is the page. The building fills the
- * centre, with GIA in headquarters and MelonMotor in the atrium; the day's context sits beside it
- * (activity, what waits on the person, meetings, credits) and GIA's command box below. Everything
- * it shows is read from the office's data, the agents' tasks and the panels' own sources.
+ * The Home (ADR-0040, Home V5): the organization's office is the page. The office is one picture
+ * (`OfficeStage`): GIA's desk in the centre, six desks around it and the glass wall behind; the
+ * day's context sits beside it (activity, what waits on the person, meetings, credits) and GIA's
+ * command box below. Everything written on the page is read from the office's data, the agents'
+ * tasks and the panels' own sources.
  */
 export function HomePage({
   canReadAIUsage = false,
@@ -61,22 +61,22 @@ export function HomePage({
   const work = useAgentWork(office.tasks?.client, agents);
   const motor = useMotorFlows(office.automations);
   const today = useTodayWork(followUps, approvals);
+  const shown = useEntriesShown();
+  // An agent's card, opened from the agent at their desk; focus goes back there when it closes.
   const [agent, setAgent] = useState<string>();
   const [motorOpen, setMotorOpen] = useState(false);
   const opener = useRef<HTMLElement | null>(null);
-  const shown = useEntriesShown();
+  const closeAgent = useCallback(() => {
+    setAgent(undefined);
+    opener.current?.focus();
+  }, []);
+  const closeMotor = useCallback(() => setMotorOpen(false), []);
 
   const activeAgents = agents.filter((s) => s.status === 'active');
   const active = activeAgents.length;
   const activeDepartments = new Set(activeAgents.map((s) => s.departmentId)).size;
   const working = agents.filter((s) => workStateOf(s, work.get(s.id)) === 'working').length;
   const waiting = attentionCount(today);
-
-  const closeAgent = useCallback(() => {
-    setAgent(undefined);
-    opener.current?.focus();
-  }, []);
-  const closeMotor = useCallback(() => setMotorOpen(false), []);
 
   return (
     <div className="home4">
@@ -98,25 +98,18 @@ export function HomePage({
             </p>
           ) : null}
         </div>
-        <ul className="home4__chips" aria-label={intl.formatMessage({ id: 'home.chips.label' })}>
-          {specialists.status === 'ready' ? (
-            <li className="home4__chip">
-              <StatusDot state={working > 0 ? 'working' : 'offline'} />
-              <FormattedMessage id="home.chips.working" values={{ count: working }} />
-            </li>
-          ) : null}
-          {waiting === undefined ? null : (
-            <li className="home4__chip">
-              <StatusDot state={waiting > 0 ? 'attention' : 'available'} />
-              <FormattedMessage id="home.chips.attention" values={{ count: waiting }} />
-            </li>
-          )}
-        </ul>
       </header>
       <div className="home4__layout">
         <div className="home4__main">
           <div className="home4__office">
-            <OfficeBuilding
+            {/* The office's figures are on its glass wall, not in pills over the page. */}
+            <OfficeStage
+              figures={{
+                active,
+                working,
+                attention: waiting,
+                agentsKnown: specialists.status === 'ready',
+              }}
               work={work}
               motor={motor}
               motorOpen={motorOpen}

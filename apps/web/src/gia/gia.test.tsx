@@ -1,5 +1,5 @@
 import { I18nProvider } from '@melonoffice/i18n';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../App.js';
 import { createServices } from '../identity/services.js';
@@ -26,16 +26,13 @@ function open(at: string, configure?: (backend: ReturnType<typeof fakeBackend>) 
 }
 
 describe("GIA's Workplace (ADR-0050)", () => {
-  it('is entered from the Home through GIA, standing on her platform', async () => {
+  it('is entered from the Home through GIA, at her desk in the centre of the office', async () => {
     open('/');
     await screen.findByRole('heading', { level: 1 });
-    // GIA sits at her desk in headquarters (Home V4).
-    const card = await waitFor(() => {
-      const found = document.querySelector<HTMLAnchorElement>('a.b-gia');
-      if (found === null) throw new Error('no GIA at her desk');
-      return found;
-    });
-    expect(card.querySelector('img.gia-figure')).toBeTruthy();
+    // GIA sits at the central desk of the office (Home V5); the desk is the way to her.
+    const card = await screen.findByRole('link', { name: /^GIA, online/ });
+    expect(card.getAttribute('href')).toBe('/gia');
+    expect(document.querySelector('[data-person="gia"]')).toBeTruthy();
     fireEvent.click(card);
     const title = await screen.findByRole('heading', { level: 1, name: 'GIA' });
     expect(globalThis.location.pathname).toBe('/gia');

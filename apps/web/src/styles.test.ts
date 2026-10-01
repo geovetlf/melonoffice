@@ -50,6 +50,9 @@ describe('motion in the stylesheets', () => {
     'room-data',
     // GIA's steps, only while she really walks somewhere (`GiaInOffice.tsx`).
     'gia-step',
+    // The MelonOffice mark's slow breath on the office's glass wall, asked for by the owner
+    // (`OfficeStage.tsx`); it stops with reduced motion like every loop.
+    'stage-logo-breath',
   ];
   const ANSWERS = ['sheet-in', 'sheet-up'];
   const sheets = ['app.css', 'office.css', 'home.css'].map((name) => ({

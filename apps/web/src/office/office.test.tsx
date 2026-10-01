@@ -46,7 +46,19 @@ function open(
   return backend;
 }
 
-const rooms = async () => within(await screen.findByLabelText("Your office's departments"));
+/** The office's departments on the Home, once read: the desks that lead into them. */
+const rooms = async () => {
+  const office = within(await screen.findByLabelText("Your office's departments"));
+  await office.findAllByRole('link');
+  return office;
+};
+/** The Home is on screen: its office picture, and the departments in the menu once read. */
+const home = async () => {
+  await screen.findByRole('img', { name: /^The office:/ });
+  await within(screen.getByRole('navigation', { name: 'Office' })).findByRole('link', {
+    name: 'Research',
+  });
+};
 const back = () =>
   act(() => {
     globalThis.history.back();
@@ -125,32 +137,29 @@ describe('the departments of the office', () => {
 });
 
 describe('the Home (ADR-0040)', () => {
-  it('shows the six departments as rooms (ADR-0047): Board on top, Finance on its own, no Design', async () => {
+  it('shows the six real departments at the office’s desks (ADR-0047): Board, Finance, no Design', async () => {
     open('/');
     expect(
       await screen.findByRole('heading', { level: 1, name: 'Your office is ready to work' }),
     ).toBeTruthy();
     const office = await rooms();
-    const links = await office.findAllByRole('link');
-    // Consejo first, then the rows of the reference: Comercial and Operaciones, GIA between
-    // Marketing and Finanzas, then Investigación.
-    expect(links.map((link) => link.getAttribute('href'))).toEqual([
-      '/office/leadership',
-      '/office/sales',
-      '/office/operations',
-      '/gia',
-      '/office/marketing',
-      '/office/finance',
-      '/office/research',
-    ]);
-    expect(
-      office.getByRole('link', {
-        name: 'Enter Board. No agents yet. 0 of 4 workstations taken',
-      }),
-    ).toBeTruthy();
-    expect(
-      office.getByRole('link', { name: 'Enter Finance. No agents yet. 0 of 4 workstations taken' }),
-    ).toBeTruthy();
+    // Six desks for the six departments of the catalogue, GIA's in the middle; Design & Video is
+    // part of Marketing, so no desk leads to it.
+    const links = office.getAllByRole('link').map((link) => link.getAttribute('href'));
+    expect([...links].sort()).toEqual(
+      [
+        '/gia',
+        '/office/finance',
+        '/office/leadership',
+        '/office/marketing',
+        '/office/research',
+        '/office/operations',
+        '/office/sales',
+      ].sort(),
+    );
+    expect(links).not.toContain('/office/design-video');
+    expect(office.getByRole('link', { name: 'Enter Board. No agents yet' })).toBeTruthy();
+    expect(office.getByRole('link', { name: 'Enter Finance. No agents yet' })).toBeTruthy();
     // The sidebar lists the same rooms apart from the tools, in the order the building reads.
     const officeNav = screen.getByRole('navigation', { name: 'Office' });
     expect(
@@ -175,6 +184,33 @@ describe('the Home (ADR-0040)', () => {
         .getAllByRole('link')
         .map((link) => link.getAttribute('href')),
     ).toEqual(['/conversations', '/command-center', '/agents']);
+  });
+
+  it('makes the seven desks of the office the way into GIA and the six real departments, as the menu does', async () => {
+    open('/');
+    const office = await rooms();
+    const desks = office.getAllByRole('link');
+    // Row by row, left to right: GIA's desk in the middle. The render's "Diseño" desk is
+    // Investigación (Design & Video was retired into Marketing, ADR-0047) and its "Dirección"
+    // desk is the board.
+    expect(desks.map((desk) => desk.getAttribute('href'))).toEqual([
+      '/office/sales',
+      '/office/marketing',
+      '/office/operations',
+      '/gia',
+      '/office/research',
+      '/office/finance',
+      '/office/leadership',
+    ]);
+    const menu = within(screen.getByRole('navigation', { name: 'Office' }));
+    for (const desk of desks) {
+      const name = /^Enter ([^.]+)\./.exec(desk.getAttribute('aria-label') ?? '')?.[1];
+      if (name === undefined) continue;
+      expect(menu.getByRole('link', { name }).getAttribute('href')).toBe(desk.getAttribute('href'));
+    }
+    expect(menu.getByRole('link', { name: 'GIA' }).getAttribute('href')).toBe('/gia');
+    expect(office.getByRole('link', { name: 'Enter Finance. No agents yet' })).toBeTruthy();
+    expect(office.getByRole('link', { name: /^GIA, online/ })).toBeTruthy();
   });
 
   it('enters a department’s office on click, and comes back by the breadcrumb or the browser', async () => {
@@ -236,17 +272,27 @@ describe('the Home (ADR-0040)', () => {
       await screen.findByRole('heading', { level: 1, name: 'Your office is already working' }),
     ).toBeTruthy();
     const office = await rooms();
+    expect(office.getByRole('link', { name: 'Enter Marketing. 2 active agents' })).toBeTruthy();
+    // The draft agent is not counted, and is nobody at a desk.
+    expect(office.getByRole('link', { name: 'Enter Finance. 1 paused agent' })).toBeTruthy();
+    // A person is drawn only at the desk of a department with real agents (and GIA at hers).
+    await waitFor(() =>
+      expect(
+        [...document.querySelectorAll<HTMLElement>('[data-person]')].map((p) => p.dataset.person),
+      ).toEqual(['marketing', 'finanzas', 'gia']),
+    );
+    // Each one is a real agent, who opens their card: Marketing's first, Finanzas' paused one.
     expect(
-      office.getByRole('link', {
-        name: 'Enter Marketing. 2 active agents. 2 of 6 workstations taken',
+      office.getByRole('button', {
+        name: 'Ana Campañas, Available. No work under way. Open their card',
       }),
     ).toBeTruthy();
-    // The draft agent has a workstation too: it is part of the team, offline.
     expect(
-      office.getByRole('link', {
-        name: 'Enter Finance. 1 paused agent. 2 of 4 workstations taken',
+      office.getByRole('button', {
+        name: 'Eva Cuentas, Paused. No work under way. Open their card',
       }),
     ).toBeTruthy();
+    expect(office.queryByRole('button', { name: /^Old Draft/ })).toBeNull();
     expect(document.querySelector('.topbar__agents')?.textContent).toBe('2 active agents');
 
     fireEvent.click(office.getByRole('link', { name: /^Enter Marketing/ }));
@@ -293,7 +339,7 @@ describe('the Home (ADR-0040)', () => {
     const backend = open('/', (b) => {
       b.options.permissions = ['organization.read', 'department.read'];
     });
-    await rooms();
+    await home();
     expect(screen.queryByRole('region', { name: 'Credit use' })).toBeNull();
     const reads = backend.apiCalls().map((call) => call.url);
     expect(reads.some((url) => /specialists|credits|billing|activity/.test(url))).toBe(false);
@@ -301,7 +347,7 @@ describe('the Home (ADR-0040)', () => {
 
   it('sends the bar to GIA and continues the chat in her Workplace (ADR-0052)', async () => {
     const backend = open('/');
-    await rooms();
+    await home();
     fireEvent.change(
       screen.getByRole('textbox', { name: 'What do you need me to do for your business?' }),
       {
@@ -323,7 +369,7 @@ describe('the Home (ADR-0040)', () => {
     const backend = open('/', (b) => {
       b.options.permissions = b.options.permissions.filter((p) => p !== 'gia.ask');
     });
-    await rooms();
+    await home();
     const before = backend.apiCalls().length;
     fireEvent.change(
       screen.getByRole('textbox', { name: 'What do you need me to do for your business?' }),
@@ -338,7 +384,7 @@ describe('the Home (ADR-0040)', () => {
 
   it('searches the office and goes where the person chose', async () => {
     open('/');
-    await rooms();
+    await home();
     const search = screen.getByRole('searchbox', {
       name: 'Search departments, agents and screens…',
     });
@@ -362,9 +408,9 @@ describe('the Home (ADR-0040)', () => {
   it('shows no hard-coded text on the Home: every word comes from the catalog', async () => {
     open('/', undefined, true);
     await screen.findAllByRole('link');
-    await waitFor(() => expect(document.querySelectorAll('.b-room--department').length).toBe(6));
-    const home = document.querySelector('.home4');
-    const texts = [...(home?.querySelectorAll('h1, h2, p, label, button, .b-room__name') ?? [])]
+    await screen.findByRole('img', { name: /^\[/ });
+    const page = document.querySelector('.home4');
+    const texts = [...(page?.querySelectorAll('h1, h2, p, label, button') ?? [])]
       .map((element) => element.textContent?.trim() ?? '')
       .filter((text) => text !== '' && !/^[\d.,]+$/.test(text));
     expect(texts.length).toBeGreaterThan(10);
@@ -375,7 +421,7 @@ describe('the Home (ADR-0040)', () => {
 describe('the phone menu', () => {
   it('opens the sidebar as a drawer and closes it with Escape or by going somewhere', async () => {
     open('/');
-    await rooms();
+    await home();
     const menu = screen.getByRole('button', { name: 'Open menu' });
     fireEvent.click(menu);
     expect(menu.getAttribute('aria-expanded')).toBe('true');
@@ -528,17 +574,16 @@ describe('ambient figures (ADR-0042)', () => {
     expect(kinds(seating)).toEqual(['ambient', 'ambient', 'free', 'ambient', 'free', 'free']);
   });
 
-  it('are drawn only as decoration, the same on the Home and in the office', async () => {
+  it('never sit at the Home’s desks, and stay decoration in a department’s office', async () => {
+    // The Home's office draws a person at a desk only for a real agent: with none, the desks are
+    // empty and GIA is alone at hers.
     open('/');
-    await waitFor(() => expect(document.querySelectorAll('.b-room--department').length).toBe(6));
-    const marketingZone = [...document.querySelectorAll('.b-room--department')].find((zone) =>
-      zone.querySelector('a[href="/office/marketing"]'),
-    );
-    const onHome = marketingZone?.querySelectorAll('.desk--ambient').length;
-    expect(onHome).toBe(layoutOf(department('marketing')).ambient.length);
-    for (const figure of document.querySelectorAll('.desk--ambient')) {
-      expect(figure.closest('[aria-hidden="true"]')).not.toBeNull();
-    }
+    await rooms();
+    expect(
+      [...document.querySelectorAll<HTMLElement>('[data-person]')].map((p) => p.dataset.person),
+    ).toEqual(['gia']);
+    expect(document.querySelectorAll('.stage__agent')).toHaveLength(0);
+    const onHome = layoutOf(department('marketing')).ambient.length;
     cleanup();
 
     open('/office/marketing');
@@ -579,17 +624,14 @@ describe('ambient figures (ADR-0042)', () => {
     expect(block('(max-width: 40rem)')).toContain('.seat');
   });
 
-  it('count for nothing: the seat counters and the agent counts stay real', async () => {
-    const zoneOf = (slug: string) =>
-      [...document.querySelectorAll('.b-room--department')].find((zone) =>
-        zone.querySelector(`a[href="/office/${slug}"]`),
-      );
-    const label = (slug: string) =>
-      zoneOf(slug)?.querySelector(`a[href="/office/${slug}"]`)?.getAttribute('aria-label');
+  it('count for nothing: the desks’ plates and the agent counts stay real', async () => {
+    const plate = () =>
+      document.querySelector('[data-plate="marketing"] .stage__plate-line')?.textContent;
     open('/');
-    await waitFor(() => expect(document.querySelectorAll('.b-room--department').length).toBe(6));
-    expect(label('marketing')).toBe('Enter Marketing. No agents yet. 0 of 6 workstations taken');
-    expect(zoneOf('marketing')?.querySelector('.b-room__count')?.textContent).toBe('No agents');
+    const office = await rooms();
+    expect(office.getByRole('link', { name: 'Enter Marketing. No agents yet' })).toBeTruthy();
+    await waitFor(() => expect(plate()).toBe('No agents yet'));
+    expect(document.querySelector('[data-person="marketing"]')).toBeNull();
     cleanup();
 
     open('/', (backend) => {
@@ -597,12 +639,12 @@ describe('ambient figures (ADR-0042)', () => {
         { id: 'spec_ana', name: 'Ana Campañas', type: 'marketing', status: 'active' },
       ];
     });
-    await waitFor(() =>
-      expect(label('marketing')).toBe('Enter Marketing. 1 active agent. 1 of 6 workstations taken'),
-    );
-    expect(zoneOf('marketing')?.querySelector('.b-room__count')?.textContent).toBe('1 agent');
-    // Two figures still decorate the room; neither is counted.
-    expect(zoneOf('marketing')?.querySelectorAll('.desk--ambient')).toHaveLength(2);
+    await waitFor(() => expect(plate()).toBe('1 active agent'));
+    expect(screen.getByRole('link', { name: 'Enter Marketing. 1 active agent' })).toBeTruthy();
+    // One real agent, one person, at Marketing's desk only.
+    expect(
+      [...document.querySelectorAll<HTMLElement>('[data-person]')].map((p) => p.dataset.person),
+    ).toEqual(['marketing', 'gia']);
   });
 
   it('carry no presence, state or focus of their own', async () => {

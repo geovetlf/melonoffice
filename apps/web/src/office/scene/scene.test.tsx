@@ -203,12 +203,9 @@ describe('the Home’s office (Home V4)', () => {
         name: 'Eva Cuentas, Paused. No work under way. Open their card',
       }),
     ).toBeTruthy();
-    // The room says what is under way, in the words it was asked.
-    expect(
-      screen.getByRole('link', {
-        name: 'Enter Commercial. 1 active agent. 1 of 5 workstations taken. 1 working. Under way: Review this week’s leads',
-      }),
-    ).toBeTruthy();
+    // The desk names its department and its real agents; what is under way is the agent's own,
+    // and the glass wall counts the agents at work.
+    expect(screen.getByRole('link', { name: 'Enter Commercial. 1 active agent' })).toBeTruthy();
     expect(screen.getByText('1 agent working')).toBeTruthy();
 
     fireEvent.click(ana);
@@ -289,32 +286,34 @@ describe('the Home’s office (Home V4)', () => {
   });
 
   it('puts GIA with the agent she brought work to while it is under way, then back home', async () => {
-    // Sent ten minutes ago: only the task's real state puts her there.
+    // Sent ten minutes ago: only the task's real state puts her there. She is simply there: no walk.
     giaEngagements.record({ taskId: 'task-1', agentId: 'spec_ana', at: Date.now() - 600_000 });
     open(agents);
-    const gia = await screen.findByRole('link', {
-      name: 'GIA, online, is with Ana Ventas in Commercial. Open GIA',
-    });
-    // Her platform waits; she stands in Comercial, named on its link.
-    expect(gia.querySelector('.gia-figure')).toBeNull();
-    const sales = document.querySelector<HTMLElement>('[data-room="org_1_sales"]');
-    expect(sales?.querySelector('.b-gia-here .gia-figure')).toBeTruthy();
-    if (sales === null) throw new Error('no Comercial room');
-    expect(within(sales).getByRole('link').getAttribute('aria-label')).toContain(
-      'GIA is here, with Ana Ventas',
-    );
-    expect(document.querySelector('.building__frame')?.getAttribute('data-gia-activity')).toBe(
+    expect(
+      await screen.findByRole('link', {
+        name: 'GIA, online, is with Ana Ventas in Commercial. Open GIA',
+      }),
+    ).toBeTruthy();
+    // Her chair waits; she stands at Comercial's desk, named on its link.
+    expect(document.querySelector('[data-person="gia"]')).toBeNull();
+    expect(
+      document.querySelector('.stage__gia-away[data-gia-at="comercial"] .gia-figure'),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole('link', { name: /^Enter Commercial/ }).getAttribute('aria-label'),
+    ).toContain('GIA is here, with Ana Ventas');
+    expect(document.querySelector('.stage__frame')?.getAttribute('data-gia-activity')).toBe(
       'working',
     );
-    // The work is no longer hers to follow: she is home, coordinating.
+    // The work is no longer hers to follow: she is back at her desk, coordinating.
     act(() => giaEngagements.forget('task-1'));
     expect(
       await screen.findByRole('link', {
         name: 'GIA, online, coordinating 2 active agents. Open GIA',
       }),
     ).toBeTruthy();
-    expect(document.querySelector('.b-room--gia .gia-figure')).toBeTruthy();
-    expect(sales?.querySelector('.b-gia-here')).toBeNull();
+    expect(document.querySelector('[data-person="gia"]')).toBeTruthy();
+    expect(document.querySelector('.stage__gia-away')).toBeNull();
   });
 
   it('keeps GIA home when the task she brought is done, whatever the session recorded', async () => {
@@ -325,7 +324,8 @@ describe('the Home’s office (Home V4)', () => {
         name: 'GIA, online, coordinating 2 active agents. Open GIA',
       }),
     ).toBeTruthy();
-    expect(document.querySelector('[data-room] .b-gia-here')).toBeNull();
+    expect(document.querySelector('.stage__gia-away')).toBeNull();
+    expect(document.querySelector('[data-person="gia"]')).toBeTruthy();
   });
 
   it('shows MelonMotor’s real flows: work under way and plans handing work between departments', async () => {

@@ -142,7 +142,14 @@ export function AppShell(locale: LocaleProps) {
       if (event.key === 'Escape') setMenuOpen(false);
     };
     globalThis.addEventListener('keydown', close);
-    return () => globalThis.removeEventListener('keydown', close);
+    // The open menu takes the keyboard's focus; closing gives it back to the menu button.
+    document.querySelector<HTMLElement>('#app-sidebar a[href]')?.focus();
+    return () => {
+      globalThis.removeEventListener('keydown', close);
+      if (document.getElementById('app-sidebar')?.contains(document.activeElement)) {
+        document.querySelector<HTMLElement>('.topbar__menu')?.focus();
+      }
+    };
   }, [menuOpen]);
   const workspace = state.status === 'signed_in' ? state.workspace : undefined;
   const organizationId = workspace?.organization.id;
@@ -523,7 +530,8 @@ export function AppShell(locale: LocaleProps) {
               {...(canManageFollowUps ? { followUps: clients.followUps } : {})}
               {...(canAskAgents ? { agentTasks: clients.agentTasks } : {})}
             >
-              <div className="app">
+              {/* The Home is the office's picture, edge to edge: its menu is the drawer at any width. */}
+              <div className={route.kind === 'home' ? 'app app--scene' : 'app'}>
                 {/* The first stop of the keyboard: past the menus, to what the page is about. */}
                 <a
                   className="skip-link"
