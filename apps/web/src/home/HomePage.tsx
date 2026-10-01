@@ -139,22 +139,35 @@ export function HomePage({
 
 /**
  * The office's frame is the largest of the picture's shape that fits the window (home.css): the
- * Home lines its heading, GIA's box and the day's strip up with it by its real width, measured,
- * never guessed (`--stage-width`).
+ * Home sets its heading on the frame and lines the page up with it by where the frame really is,
+ * measured, never guessed (`--stage-width`, `--stage-top`).
  */
 function useOfficeWidth() {
   const page = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const root = page.current;
     const frame = root?.querySelector<HTMLElement>('.stage__frame');
-    if (root === null || root === undefined || frame === null || frame === undefined) {
+    const office = frame?.closest<HTMLElement>('.home4__office');
+    if (
+      root === null ||
+      root === undefined ||
+      frame === null ||
+      frame === undefined ||
+      office === null ||
+      office === undefined
+    ) {
       return undefined;
     }
-    const measure = () => root.style.setProperty('--stage-width', `${frame.offsetWidth}px`);
+    const measure = () => {
+      root.style.setProperty('--stage-width', `${frame.offsetWidth}px`);
+      const top = frame.getBoundingClientRect().top - office.getBoundingClientRect().top;
+      root.style.setProperty('--stage-top', `${Math.max(0, Math.round(top))}px`);
+    };
     measure();
     if (typeof ResizeObserver !== 'function') return undefined;
     const observer = new ResizeObserver(measure);
     observer.observe(frame);
+    observer.observe(office);
     return () => observer.disconnect();
   }, []);
   return page;
