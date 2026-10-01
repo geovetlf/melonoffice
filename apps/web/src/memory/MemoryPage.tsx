@@ -1,5 +1,5 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
-import { Badge, Button, type BadgeTone } from '@melonoffice/ui';
+import { Badge, Button, PageHeader, StateMessage, type BadgeTone } from '@melonoffice/ui';
 import { useCallback, useState, type FormEvent, type ReactNode } from 'react';
 import { formatMoney, minorDigits, toMinor } from '../opportunities/OpportunitiesSection.js';
 import { useRead } from '../shell/useRead.js';
@@ -93,22 +93,19 @@ export function MemoryPage({
   const [adding, setAdding] = useState<{ domain: KnowledgeDomain; key?: string } | undefined>();
 
   return (
-    <div className="memory">
-      <header className="connections__header">
-        <div>
-          <h1 id="memory-title">
-            <FormattedMessage id="memory.title" />
-          </h1>
-          <p>
-            <FormattedMessage id="memory.intro" />
-          </p>
-        </div>
-        {readsKnowledge && canPropose && adding === undefined ? (
-          <Button onClick={() => setAdding({ domain: 'business_model' })}>
-            <FormattedMessage id="memory.add" />
-          </Button>
-        ) : null}
-      </header>
+    <article className="mo-page memory">
+      <PageHeader
+        titleId="memory-title"
+        title={<FormattedMessage id="memory.title" />}
+        description={<FormattedMessage id="memory.intro" />}
+        actions={
+          readsKnowledge && canPropose && adding === undefined ? (
+            <Button onClick={() => setAdding({ domain: 'business_model' })}>
+              <FormattedMessage id="memory.add" />
+            </Button>
+          ) : null
+        }
+      />
       {adding === undefined ? null : (
         <AddKnowledge
           key={`${adding.domain}.${adding.key ?? ''}`}
@@ -148,7 +145,7 @@ export function MemoryPage({
           onChanged={reload}
         />
       ) : null}
-    </div>
+    </article>
   );
 }
 
@@ -188,71 +185,87 @@ function Review({
   const open = conflicts.status === 'ready' ? conflicts.value : [];
   if (toConfirm.length === 0 && questions.length === 0 && open.length === 0) return null;
   return (
-    <section className="connections memory__review" aria-labelledby="memory-review">
-      <h2 id="memory-review">
+    <section className="mo-panel mo-page-section memory__review" aria-labelledby="memory-review">
+      <h2 id="memory-review" className="mo-section-title">
         <FormattedMessage id="memory.review" />
       </h2>
       {error === undefined ? null : (
-        <p className="notice notice--danger" role="alert">
+        <StateMessage kind="error">
           <FormattedMessage id={error} />
-        </p>
+        </StateMessage>
       )}
       {open.length === 0 ? null : (
-        <ul className="memory__list">
+        <ul className="mo-list">
           {open.map((c) => (
-            <li key={c.id} className="memory__item" aria-label={factName(intl, c)}>
-              <p className="memory__name">{factName(intl, c)}</p>
-              <p>
-                <FormattedMessage id="memory.conflict.current" />{' '}
-                <strong>{formatValue(intl, c.current.value)}</strong> (
-                <FormattedMessage id={`memory.recorder.${c.current.recordedBy}`} />)
-              </p>
-              <p>
-                <FormattedMessage id="memory.conflict.candidate" />{' '}
-                <strong>{formatValue(intl, c.candidate.value)}</strong> (
-                <FormattedMessage id={`memory.recorder.${c.candidate.recordedBy}`} />)
-              </p>
-              {canManage ? (
-                <div className="memory__actions">
-                  <Button
-                    variant="secondary"
-                    onClick={() => void act(() => client.resolve(c.id, 'kept_current'))}
-                  >
-                    <FormattedMessage id="memory.conflict.keep" />
-                  </Button>
-                  <Button onClick={() => void act(() => client.resolve(c.id, 'took_candidate'))}>
-                    <FormattedMessage id="memory.conflict.take" />
-                  </Button>
-                </div>
-              ) : null}
+            <li key={c.id} className="mo-list-item memory__item" aria-label={factName(intl, c)}>
+              <div className="mo-list-item__main">
+                <p className="mo-list-item__title">{factName(intl, c)}</p>
+                <p>
+                  <FormattedMessage id="memory.conflict.current" />{' '}
+                  <strong>{formatValue(intl, c.current.value)}</strong> (
+                  <FormattedMessage id={`memory.recorder.${c.current.recordedBy}`} />)
+                </p>
+                <p>
+                  <FormattedMessage id="memory.conflict.candidate" />{' '}
+                  <strong>{formatValue(intl, c.candidate.value)}</strong> (
+                  <FormattedMessage id={`memory.recorder.${c.candidate.recordedBy}`} />)
+                </p>
+                {canManage ? (
+                  <div className="mo-list-item__actions">
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => void act(() => client.resolve(c.id, 'kept_current'))}
+                    >
+                      <FormattedMessage id="memory.conflict.keep" />
+                    </Button>
+                    <Button
+                      size="sm"
+                      onClick={() => void act(() => client.resolve(c.id, 'took_candidate'))}
+                    >
+                      <FormattedMessage id="memory.conflict.take" />
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
             </li>
           ))}
         </ul>
       )}
       {toConfirm.length === 0 ? null : (
         <>
-          <h3>
+          <h3 className="mo-subsection-title">
             <FormattedMessage id="memory.toConfirm" />
           </h3>
-          <ul className="memory__list">
+          <ul className="mo-list">
             {toConfirm.map((item) => (
-              <li key={item.id} className="memory__item" aria-label={factName(intl, item)}>
-                <p className="memory__name">{factName(intl, item)}</p>
-                <p>{formatValue(intl, item.value)}</p>
-                <Origin item={item} />
-                {canManage ? (
-                  <div className="memory__actions">
-                    <Button onClick={() => void act(() => client.confirm(item.id, item.revision))}>
-                      <FormattedMessage id="memory.confirm" />
-                    </Button>
-                    <Button
-                      variant="secondary"
-                      onClick={() => void act(() => client.archive(item.id, item.revision))}
-                    >
-                      <FormattedMessage id="memory.discard" />
-                    </Button>
-                  </div>
-                ) : null}
+              <li
+                key={item.id}
+                className="mo-list-item memory__item"
+                aria-label={factName(intl, item)}
+              >
+                <div className="mo-list-item__main">
+                  <p className="mo-list-item__title">{factName(intl, item)}</p>
+                  <p>{formatValue(intl, item.value)}</p>
+                  <Origin item={item} />
+                  {canManage ? (
+                    <div className="mo-list-item__actions">
+                      <Button
+                        size="sm"
+                        onClick={() => void act(() => client.confirm(item.id, item.revision))}
+                      >
+                        <FormattedMessage id="memory.confirm" />
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => void act(() => client.archive(item.id, item.revision))}
+                      >
+                        <FormattedMessage id="memory.discard" />
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
               </li>
             ))}
           </ul>
@@ -260,19 +273,21 @@ function Review({
       )}
       {questions.length === 0 ? null : (
         <>
-          <h3>
+          <h3 className="mo-subsection-title">
             <FormattedMessage id="memory.questions" />
           </h3>
-          <ul className="memory__list">
+          <ul className="mo-list">
             {questions.map((q) => (
-              <li key={q.id} className="memory__item memory__item--question">
-                <span>
+              <li key={q.id} className="mo-list-item memory__item">
+                <span className="mo-list-item__main">
                   <FormattedMessage id={`memory.question.${q.id}`} />
                 </span>
                 {canPropose ? (
-                  <Button variant="secondary" onClick={() => onAnswer(q.domain, q.key)}>
-                    <FormattedMessage id="memory.answer" />
-                  </Button>
+                  <span className="mo-list-item__actions">
+                    <Button variant="secondary" size="sm" onClick={() => onAnswer(q.domain, q.key)}>
+                      <FormattedMessage id="memory.answer" />
+                    </Button>
+                  </span>
                 ) : null}
               </li>
             ))}
@@ -296,7 +311,7 @@ const VERIFICATION_TONE: Record<Verification, BadgeTone> = {
 function Origin({ item }: { readonly item: KnowledgeItem }) {
   const intl = useIntl();
   return (
-    <p className="memory__origin">
+    <p className="mo-list-item__meta">
       <Badge tone={VERIFICATION_TONE[item.verification]} className="memory__badge">
         <FormattedMessage id={`memory.verification.${item.verification}`} />
       </Badge>
@@ -350,19 +365,19 @@ function Knowledge({
       : read;
   const counts = summary.status === 'ready' ? summary.value.byDomain : {};
   return (
-    <section className="connections" aria-labelledby="memory-knowledge">
-      <h2 id="memory-knowledge">
+    <section className="mo-panel mo-page-section" aria-labelledby="memory-knowledge">
+      <h2 id="memory-knowledge" className="mo-section-title">
         <FormattedMessage id="memory.knowledge" />
       </h2>
       <div
-        className="memory__domains"
+        className="mo-chips"
         role="tablist"
         aria-label={intl.formatMessage({ id: 'memory.domains' })}
       >
         <button
           type="button"
           role="tab"
-          className="mo-chip customers__tab"
+          className="mo-chip"
           aria-selected={view === 'all'}
           onClick={() => setView('all')}
         >
@@ -373,18 +388,18 @@ function Knowledge({
             key={d}
             type="button"
             role="tab"
-            className="mo-chip customers__tab"
+            className="mo-chip"
             aria-selected={view === d}
             onClick={() => setView(d)}
           >
             <FormattedMessage id={`memory.domain.${d}`} />
-            {counts[d] === undefined ? null : <span className="customers__count">{counts[d]}</span>}
+            {counts[d] === undefined ? null : <Badge>{counts[d]}</Badge>}
           </button>
         ))}
         <button
           type="button"
           role="tab"
-          className="mo-chip customers__tab"
+          className="mo-chip"
           aria-selected={recent}
           onClick={() => setView('recent')}
         >
@@ -392,7 +407,7 @@ function Knowledge({
         </button>
       </div>
       {recent ? (
-        <p className="panel__empty">
+        <p className="mo-hint">
           <FormattedMessage id="memory.recent.help" />
         </p>
       ) : (
@@ -406,19 +421,19 @@ function Knowledge({
         </label>
       )}
       {items.status === 'loading' ? (
-        <p className="panel__empty" role="status">
+        <StateMessage kind="loading">
           <FormattedMessage id="memory.loading" />
-        </p>
+        </StateMessage>
       ) : items.status === 'error' ? (
-        <p className="notice notice--danger" role="alert">
+        <StateMessage kind="error">
           <FormattedMessage id="memory.error.load" />
-        </p>
+        </StateMessage>
       ) : items.value.length === 0 ? (
-        <p className="panel__empty">
+        <StateMessage kind="empty">
           <FormattedMessage id={domain === undefined ? 'memory.empty' : 'memory.empty.domain'} />
-        </p>
+        </StateMessage>
       ) : (
-        <ul className="memory__list">
+        <ul className="mo-list">
           {items.value.map((item) => (
             <FactRow
               key={`${item.id}:${item.revision}`}
@@ -473,86 +488,101 @@ function FactRow({
   }
   const name = factName(intl, item);
   return (
-    <li className="memory__item" aria-label={name}>
-      <p className="memory__name">
-        {name}
-        {showDomain ? (
-          <span className="memory__domain">
-            {' · '}
-            <FormattedMessage id={`memory.domain.${item.domain}`} />
-          </span>
-        ) : null}
-      </p>
-      {editing && item.value !== undefined ? (
-        <ValueEditor
-          value={item.value}
-          pending={pending}
-          onCancel={() => setEditing(false)}
-          onSave={(value) =>
-            void act(() =>
-              client.propose({
-                domain: item.domain,
-                key: item.key,
-                ...(item.subject === null ? {} : { subject: item.subject }),
-                ...(item.label === null ? {} : { label: item.label }),
-                value,
-              }),
-            )
-          }
-        />
-      ) : (
-        <p className="memory__value">{formatValue(intl, item.value)}</p>
-      )}
-      <Origin item={item} />
-      {elsewhere === undefined ? null : (
-        <p className="panel__empty">
-          <FormattedMessage id={`memory.elsewhere.${elsewhere}`} />
+    <li className="mo-list-item memory__item" aria-label={name}>
+      <div className="mo-list-item__main">
+        <p className="mo-list-item__title">
+          {name}
+          {showDomain ? (
+            <span className="memory__domain">
+              {' · '}
+              <FormattedMessage id={`memory.domain.${item.domain}`} />
+            </span>
+          ) : null}
         </p>
-      )}
-      {error === undefined ? null : (
-        <p className="notice notice--danger" role="alert">
-          <FormattedMessage id={error} />
-        </p>
-      )}
-      {editing ? null : (
-        <div className="memory__actions">
-          {canPropose && elsewhere === undefined && item.value !== undefined ? (
-            <Button variant="secondary" disabled={pending} onClick={() => setEditing(true)}>
-              <FormattedMessage id="memory.edit" />
+        {editing && item.value !== undefined ? (
+          <ValueEditor
+            value={item.value}
+            pending={pending}
+            onCancel={() => setEditing(false)}
+            onSave={(value) =>
+              void act(() =>
+                client.propose({
+                  domain: item.domain,
+                  key: item.key,
+                  ...(item.subject === null ? {} : { subject: item.subject }),
+                  ...(item.label === null ? {} : { label: item.label }),
+                  value,
+                }),
+              )
+            }
+          />
+        ) : (
+          <p className="memory__value">{formatValue(intl, item.value)}</p>
+        )}
+        <Origin item={item} />
+        {elsewhere === undefined ? null : (
+          <p className="mo-hint">
+            <FormattedMessage id={`memory.elsewhere.${elsewhere}`} />
+          </p>
+        )}
+        {error === undefined ? null : (
+          <StateMessage kind="error" inline>
+            <FormattedMessage id={error} />
+          </StateMessage>
+        )}
+        {editing ? null : (
+          <div className="mo-list-item__actions">
+            {canPropose && elsewhere === undefined && item.value !== undefined ? (
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={pending}
+                onClick={() => setEditing(true)}
+              >
+                <FormattedMessage id="memory.edit" />
+              </Button>
+            ) : null}
+            {canManage &&
+            active &&
+            item.verification !== 'confirmed' &&
+            item.value !== undefined ? (
+              <Button
+                size="sm"
+                disabled={pending}
+                onClick={() => void act(() => client.confirm(item.id, item.revision))}
+              >
+                <FormattedMessage id="memory.confirm" />
+              </Button>
+            ) : null}
+            {canManage && active && elsewhere === undefined ? (
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={pending}
+                onClick={() => void act(() => client.invalidate(item.id, item.revision))}
+              >
+                <FormattedMessage id="memory.outdated" />
+              </Button>
+            ) : null}
+            {canManage && item.status !== 'archived' && elsewhere === undefined ? (
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={pending}
+                onClick={() => void act(() => client.archive(item.id, item.revision))}
+              >
+                <FormattedMessage id="memory.archive" />
+              </Button>
+            ) : null}
+            <Button variant="ghost" size="sm" onClick={() => setShowVersions((v) => !v)}>
+              <FormattedMessage
+                id={showVersions ? 'memory.versions.hide' : 'memory.versions.show'}
+              />
             </Button>
-          ) : null}
-          {canManage && active && item.verification !== 'confirmed' && item.value !== undefined ? (
-            <Button
-              disabled={pending}
-              onClick={() => void act(() => client.confirm(item.id, item.revision))}
-            >
-              <FormattedMessage id="memory.confirm" />
-            </Button>
-          ) : null}
-          {canManage && active && elsewhere === undefined ? (
-            <Button
-              variant="secondary"
-              disabled={pending}
-              onClick={() => void act(() => client.invalidate(item.id, item.revision))}
-            >
-              <FormattedMessage id="memory.outdated" />
-            </Button>
-          ) : null}
-          {canManage && item.status !== 'archived' && elsewhere === undefined ? (
-            <Button
-              variant="secondary"
-              disabled={pending}
-              onClick={() => void act(() => client.archive(item.id, item.revision))}
-            >
-              <FormattedMessage id="memory.archive" />
-            </Button>
-          ) : null}
-          <Button variant="secondary" onClick={() => setShowVersions((v) => !v)}>
-            <FormattedMessage id={showVersions ? 'memory.versions.hide' : 'memory.versions.show'} />
-          </Button>
-        </div>
-      )}
-      {showVersions ? <Versions client={client} itemId={item.id} /> : null}
+          </div>
+        )}
+        {showVersions ? <Versions client={client} itemId={item.id} /> : null}
+      </div>
     </li>
   );
 }
@@ -562,16 +592,16 @@ function Versions({ client, itemId }: { readonly client: MemoryClient; readonly 
   const versions = useRead<readonly KnowledgeVersion[]>(itemId, () => client.versions(itemId));
   if (versions.status === 'loading') {
     return (
-      <p className="panel__empty" role="status">
+      <StateMessage kind="loading" inline>
         <FormattedMessage id="memory.loading" />
-      </p>
+      </StateMessage>
     );
   }
   if (versions.status === 'error') {
     return (
-      <p className="notice notice--danger" role="alert">
+      <StateMessage kind="error" inline>
         <FormattedMessage id="memory.error.load" />
-      </p>
+      </StateMessage>
     );
   }
   return (
@@ -651,7 +681,7 @@ function ValueEditor({
   const label = intl.formatMessage({ id: 'memory.field.value' });
   return (
     <form
-      className="memory__edit"
+      className="mo-form memory__edit"
       onSubmit={(event: FormEvent) => {
         event.preventDefault();
         if (parsed !== undefined) onSave(parsed);
@@ -659,7 +689,6 @@ function ValueEditor({
     >
       {value.type === 'text' || value.type === 'list' ? (
         <textarea
-          className="gia-chat__input"
           aria-label={label}
           rows={value.type === 'list' ? 4 : 2}
           maxLength={1000}
@@ -667,18 +696,12 @@ function ValueEditor({
           onChange={(e) => setText(e.target.value)}
         />
       ) : value.type === 'boolean' ? (
-        <select
-          className="gia-chat__input"
-          aria-label={label}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-        >
+        <select aria-label={label} value={text} onChange={(e) => setText(e.target.value)}>
           <option value="true">{intl.formatMessage({ id: 'memory.value.yes' })}</option>
           <option value="false">{intl.formatMessage({ id: 'memory.value.no' })}</option>
         </select>
       ) : (
         <input
-          className="gia-chat__input"
           aria-label={value.type === 'money' ? `${label} (${value.currency})` : label}
           type={value.type === 'date' ? 'date' : 'text'}
           inputMode={value.type === 'date' ? undefined : 'decimal'}
@@ -687,15 +710,15 @@ function ValueEditor({
         />
       )}
       {value.type === 'list' ? (
-        <p className="panel__empty">
+        <p className="mo-hint">
           <FormattedMessage id="memory.field.listHelp" />
         </p>
       ) : null}
-      <div className="memory__actions">
-        <Button type="submit" disabled={pending || parsed === undefined}>
+      <div className="mo-form__actions">
+        <Button type="submit" size="sm" disabled={pending || parsed === undefined}>
           <FormattedMessage id="memory.save" />
         </Button>
-        <Button variant="secondary" onClick={onCancel}>
+        <Button variant="ghost" size="sm" onClick={onCancel}>
           <FormattedMessage id="memory.cancel" />
         </Button>
       </div>
@@ -780,8 +803,8 @@ function AddKnowledge({
 
   const title = intl.formatMessage({ id: 'memory.add' });
   return (
-    <form className="connection-form memory__add" onSubmit={submit} aria-label={title}>
-      <h2>{title}</h2>
+    <form className="mo-panel mo-form memory__add" onSubmit={submit} aria-label={title}>
+      <h2 className="mo-section-title">{title}</h2>
       {answering ? null : (
         <fieldset className="business-form__channels">
           <legend>
@@ -801,13 +824,11 @@ function AddKnowledge({
         </fieldset>
       )}
       {kind === 'fact' && !answering ? (
-        <label>
-          <FormattedMessage id="memory.field.domain" />
-          <select
-            className="gia-chat__input"
-            value={domain}
-            onChange={(e) => setDomain(e.target.value as KnowledgeDomain)}
-          >
+        <label className="mo-field">
+          <span className="mo-label">
+            <FormattedMessage id="memory.field.domain" />
+          </span>
+          <select value={domain} onChange={(e) => setDomain(e.target.value as KnowledgeDomain)}>
             {KNOWLEDGE_DOMAINS.map((d) => (
               <option key={d} value={d}>
                 {intl.formatMessage({ id: `memory.domain.${d}` })}
@@ -817,16 +838,17 @@ function AddKnowledge({
         </label>
       ) : null}
       {answering ? (
-        <p className="memory__name">
+        <p className="mo-subsection-title">
           {factName(intl, { domain, key: start.key as string, label: null })}
         </p>
       ) : (
-        <label>
-          <FormattedMessage
-            id={kind === 'document' ? 'memory.field.documentName' : 'memory.field.label'}
-          />
+        <label className="mo-field">
+          <span className="mo-label">
+            <FormattedMessage
+              id={kind === 'document' ? 'memory.field.documentName' : 'memory.field.label'}
+            />
+          </span>
           <input
-            className="gia-chat__input"
             value={label}
             maxLength={kind === 'document' ? 200 : 100}
             placeholder={
@@ -836,12 +858,13 @@ function AddKnowledge({
           />
         </label>
       )}
-      <label>
-        <FormattedMessage
-          id={kind === 'document' ? 'memory.field.documentText' : 'memory.field.value'}
-        />
+      <label className="mo-field">
+        <span className="mo-label">
+          <FormattedMessage
+            id={kind === 'document' ? 'memory.field.documentText' : 'memory.field.value'}
+          />
+        </span>
         <textarea
-          className="gia-chat__input"
           rows={kind === 'document' ? 8 : 3}
           maxLength={kind === 'document' ? 60000 : 1000}
           value={text}
@@ -854,27 +877,30 @@ function AddKnowledge({
           <FormattedMessage id="memory.field.asList" />
         </label>
       ) : (
-        <p className="panel__empty">
+        <p className="mo-hint">
           <FormattedMessage id="memory.document.help" />
         </p>
       )}
       {error === undefined ? null : (
-        <p className="notice notice--danger" role="alert">
+        <StateMessage kind="error" inline>
           <FormattedMessage id={error} />
-        </p>
+        </StateMessage>
       )}
       {notice === undefined ? null : (
-        <p className="notice" role="status">
+        <StateMessage kind="warning" inline>
           <FormattedMessage id={notice} />
-        </p>
+        </StateMessage>
       )}
-      <div className="memory__actions">
+      <div className="mo-form__actions">
         {notice === undefined ? (
           <Button type="submit" disabled={pending}>
             <FormattedMessage id="memory.save" />
           </Button>
         ) : null}
-        <Button variant="secondary" onClick={() => onDone(notice !== undefined)}>
+        <Button
+          variant={notice === undefined ? 'ghost' : 'secondary'}
+          onClick={() => onDone(notice !== undefined)}
+        >
           <FormattedMessage id={notice === undefined ? 'memory.cancel' : 'memory.close'} />
         </Button>
       </div>

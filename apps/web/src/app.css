@@ -504,7 +504,7 @@
   padding: 0;
 }
 
-.connection-form .business-form__check {
+.business-form__check {
   display: flex;
   align-items: center;
   gap: var(--mo-space-2);
@@ -530,10 +530,9 @@
   gap: 0.4rem;
 }
 
-.partners__actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
+/* A long scope wraps beside its box; the box keeps its size. */
+.partners__scope > input {
+  flex: none;
 }
 
 .platform__form {

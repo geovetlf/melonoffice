@@ -1,5 +1,5 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
-import { Button } from '@melonoffice/ui';
+import { Button, StateMessage } from '@melonoffice/ui';
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useBusinessSaved, useOfficeData } from '../office/OfficeData.js';
 import {
@@ -164,31 +164,33 @@ export function BusinessPage({
 
   // A section of the company's memory (ADR-0056), under the page's own title.
   const header = (
-    <header className="connections__header">
-      <div>
-        <h2 id="business-title">
-          <FormattedMessage id="business.title" />
-        </h2>
-        <p>
-          <FormattedMessage id="business.intro" />
-        </p>
-      </div>
-    </header>
+    <>
+      <h2 id="business-title" className="mo-section-title">
+        <FormattedMessage id="business.title" />
+      </h2>
+      <p className="mo-lead">
+        <FormattedMessage id="business.intro" />
+      </p>
+    </>
   );
 
   if (business.status === 'unavailable' || business.status === 'hidden') {
     return (
-      <section className="connections" aria-labelledby="business-title">
+      <section className="mo-panel mo-page-section business" aria-labelledby="business-title">
         {header}
-        <p className="notice notice--danger" role="alert">
+        <StateMessage kind="error">
           <FormattedMessage id="business.unavailable" />
-        </p>
+        </StateMessage>
       </section>
     );
   }
   if (business.status === 'loading' || form === undefined || types === undefined) {
     return (
-      <section className="connections" aria-labelledby="business-title" aria-busy="true">
+      <section
+        className="mo-panel mo-page-section business"
+        aria-labelledby="business-title"
+        aria-busy="true"
+      >
         {header}
       </section>
     );
@@ -233,7 +235,7 @@ export function BusinessPage({
   }
 
   const optional = (
-    <span className="connection-form__optional">
+    <span className="mo-hint">
       {' '}
       <FormattedMessage id="business.optional" />
     </span>
@@ -242,25 +244,25 @@ export function BusinessPage({
     intl.messages[type.nameKey] === undefined ? type.id : intl.formatMessage({ id: type.nameKey });
 
   return (
-    <section className="connections" aria-labelledby="business-title">
+    <section className="mo-panel mo-page-section business" aria-labelledby="business-title">
       {header}
       {canEdit ? null : (
-        <p className="notice">
+        <p className="mo-hint">
           <FormattedMessage id="business.readOnly" />
         </p>
       )}
-      <form
-        className="connection-form"
-        onSubmit={(e) => void submit(e)}
-        aria-labelledby="business-title"
-      >
+      <form className="mo-form" onSubmit={(e) => void submit(e)} aria-labelledby="business-title">
         <fieldset disabled={!canEdit || outcome.kind === 'saving'} className="business-form">
-          <label>
-            <FormattedMessage id="business.field.name" />
+          <label className="mo-field">
+            <span className="mo-label">
+              <FormattedMessage id="business.field.name" />
+            </span>
             <input name="name" value={organizationName} readOnly />
           </label>
-          <label>
-            <FormattedMessage id="business.field.businessType" />
+          <label className="mo-field">
+            <span className="mo-label">
+              <FormattedMessage id="business.field.businessType" />
+            </span>
             <select
               name="businessType"
               required
@@ -277,8 +279,10 @@ export function BusinessPage({
               ))}
             </select>
           </label>
-          <label>
-            <FormattedMessage id="business.field.country" />
+          <label className="mo-field">
+            <span className="mo-label">
+              <FormattedMessage id="business.field.country" />
+            </span>
             <select
               name="country"
               required
@@ -301,8 +305,10 @@ export function BusinessPage({
               ))}
             </select>
           </label>
-          <label>
-            <FormattedMessage id="business.field.currency" />
+          <label className="mo-field">
+            <span className="mo-label">
+              <FormattedMessage id="business.field.currency" />
+            </span>
             <select
               name="currency"
               required
@@ -319,8 +325,10 @@ export function BusinessPage({
               ))}
             </select>
           </label>
-          <label>
-            <FormattedMessage id="business.field.city" />
+          <label className="mo-field">
+            <span className="mo-label">
+              <FormattedMessage id="business.field.city" />
+            </span>
             <input
               name="city"
               required
@@ -329,8 +337,10 @@ export function BusinessPage({
               onChange={(e) => set('city', e.target.value)}
             />
           </label>
-          <label>
-            <FormattedMessage id="business.field.timeZone" />
+          <label className="mo-field">
+            <span className="mo-label">
+              <FormattedMessage id="business.field.timeZone" />
+            </span>
             <select
               name="timeZone"
               required
@@ -350,9 +360,11 @@ export function BusinessPage({
               ))}
             </select>
           </label>
-          <label>
-            <FormattedMessage id="business.field.employees" />
-            {optional}
+          <label className="mo-field">
+            <span className="mo-label">
+              <FormattedMessage id="business.field.employees" />
+              {optional}
+            </span>
             <select
               name="employees"
               value={form.employees}
@@ -385,9 +397,11 @@ export function BusinessPage({
             ))}
           </fieldset>
           {(['offering', 'needs', 'notes'] as const).map((key) => (
-            <label key={key}>
-              <FormattedMessage id={`business.field.${key}`} />
-              {optional}
+            <label className="mo-field" key={key}>
+              <span className="mo-label">
+                <FormattedMessage id={`business.field.${key}`} />
+                {optional}
+              </span>
               <textarea
                 name={key}
                 maxLength={500}
@@ -399,17 +413,15 @@ export function BusinessPage({
           ))}
         </fieldset>
         {outcome.kind === 'error' ? (
-          <p className="notice notice--danger" role="alert">
-            {outcome.message}
-          </p>
+          <StateMessage kind="error">{outcome.message}</StateMessage>
         ) : null}
         {outcome.kind === 'saved' ? (
-          <p className="notice" role="status">
+          <StateMessage kind="success">
             <FormattedMessage id="business.saved" />
-          </p>
+          </StateMessage>
         ) : null}
         {canEdit ? (
-          <div className="connection-card__actions">
+          <div className="mo-form__actions">
             <Button type="submit" disabled={outcome.kind === 'saving'}>
               <FormattedMessage
                 id={outcome.kind === 'saving' ? 'business.saving' : 'business.save'}

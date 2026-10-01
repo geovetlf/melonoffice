@@ -2208,44 +2208,7 @@ a.sidebar__item:hover {
 }
 
 /* The company's memory (ADR-0056): one column that reads the same on a phone and a desk. */
-.memory {
-  display: flex;
-  flex-direction: column;
-  gap: var(--mo-space-6);
-  max-width: 60rem;
-}
-
-.memory .connections__header {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--mo-space-3);
-  align-items: flex-start;
-  justify-content: space-between;
-}
-
-.memory__domains {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--mo-space-2);
-  margin-bottom: var(--mo-space-3);
-}
-
-.memory__list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--mo-space-3);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
 .memory__item {
-  display: flex;
-  flex-direction: column;
-  gap: var(--mo-space-1);
-  padding: var(--mo-space-3);
-  border: 1px solid var(--mo-color-border);
-  border-radius: var(--mo-radius-md);
   overflow-wrap: anywhere;
 }
 
@@ -2253,41 +2216,14 @@ a.sidebar__item:hover {
   margin: 0;
 }
 
-.memory__item--question {
-  flex-direction: row;
-  flex-wrap: wrap;
-  gap: var(--mo-space-2);
-  align-items: center;
-  justify-content: space-between;
-}
-
-.memory__name {
-  font-weight: 600;
-}
-
-.memory__domain,
-.memory__origin {
+.memory__domain {
   color: var(--mo-color-text-secondary);
-  font-size: var(--mo-font-size-xs);
-  font-weight: normal;
+  font-size: var(--mo-font-size-sm);
+  font-weight: var(--mo-font-weight-regular);
 }
 
 .memory__badge {
   margin-right: var(--mo-space-1);
-}
-
-.memory__actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--mo-space-2);
-  margin-top: var(--mo-space-2);
-}
-
-.memory__edit,
-.memory__add {
-  display: flex;
-  flex-direction: column;
-  gap: var(--mo-space-2);
 }
 
 .memory__versions {

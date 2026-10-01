@@ -1,5 +1,5 @@
 import { FormattedMessage } from '@melonoffice/i18n';
-import { Button, contrastRatio } from '@melonoffice/ui';
+import { Button, StateMessage, contrastRatio } from '@melonoffice/ui';
 import { useId, useState, type FormEvent } from 'react';
 import type { OwnBrand } from '../commercial/consoleClient.js';
 
@@ -67,11 +67,11 @@ export function BrandForm({
   };
 
   return (
-    <form className="platform__form" onSubmit={(e) => void submit(e)}>
+    <form className="mo-form" onSubmit={(e) => void submit(e)}>
       <fieldset disabled={!canEdit || busy} className="brand-form">
         {FIELDS.map((field) => (
-          <div key={field} className="brand-form__field">
-            <label htmlFor={`${id}-${field}`}>
+          <div key={field} className="mo-field">
+            <label className="mo-label" htmlFor={`${id}-${field}`}>
               <FormattedMessage id={`brand.field.${field}`} />
             </label>
             <input
@@ -85,24 +85,26 @@ export function BrandForm({
           </div>
         ))}
         {unreadable ? (
-          <p className="documents__meta" role="status">
+          <StateMessage kind="warning" inline>
             <FormattedMessage id="brand.unreadable" />
-          </p>
+          </StateMessage>
         ) : null}
       </fieldset>
       {canEdit ? (
-        <Button type="submit" disabled={busy}>
-          <FormattedMessage id="brand.save" />
-        </Button>
+        <div className="mo-form__actions">
+          <Button type="submit" disabled={busy}>
+            <FormattedMessage id="brand.save" />
+          </Button>
+        </div>
       ) : null}
       {outcome === undefined ? null : outcome.ok ? (
-        <p role="status" className="notice">
+        <StateMessage kind="success" inline>
           <FormattedMessage id="brand.saved" />
-        </p>
+        </StateMessage>
       ) : (
-        <p role="alert" className="panel__empty">
+        <StateMessage kind="error" inline>
           <FormattedMessage id="brand.refused" values={{ reason: outcome.reason ?? '' }} />
-        </p>
+        </StateMessage>
       )}
     </form>
   );

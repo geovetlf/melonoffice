@@ -1,5 +1,5 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
-import { Button } from '@melonoffice/ui';
+import { Badge, Button, ListItem, PageHeader, StateMessage } from '@melonoffice/ui';
 import { useEffect, useState } from 'react';
 import {
   PartnersRequestError,
@@ -50,27 +50,25 @@ export function PartnersPage({
   const ended = Array.isArray(load) ? load.filter((r) => r.status === 'ended') : [];
 
   return (
-    <article className="dept-office partners-page">
-      <h1 className="dept-office__title">
-        <FormattedMessage id="partners.title" />
-      </h1>
-      <p className="documents__lead">
-        <FormattedMessage id="partners.lead" />
-      </p>
+    <article className="mo-page partners-page">
+      <PageHeader
+        title={<FormattedMessage id="partners.title" />}
+        description={<FormattedMessage id="partners.lead" />}
+      />
       {load === 'loading' ? (
-        <p className="panel__empty" role="status">
+        <StateMessage kind="loading">
           <FormattedMessage id="partners.loading" />
-        </p>
+        </StateMessage>
       ) : load === 'error' ? (
-        <p className="panel__empty" role="alert">
+        <StateMessage kind="error">
           <FormattedMessage id="partners.error" />
-        </p>
+        </StateMessage>
       ) : open.length === 0 ? (
-        <p className="panel__empty">
+        <StateMessage kind="empty">
           <FormattedMessage id="partners.none" />
-        </p>
+        </StateMessage>
       ) : (
-        <ul className="documents__list">
+        <ul className="mo-list">
           {open.map((r) => (
             <RelationshipCard
               key={r.commercialAccountId}
@@ -83,15 +81,13 @@ export function PartnersPage({
         </ul>
       )}
       {ended.length > 0 ? (
-        <section className="dept-office__section" aria-labelledby="partners-ended">
-          <h2 id="partners-ended">
+        <section className="mo-panel mo-page-section" aria-labelledby="partners-ended">
+          <h2 id="partners-ended" className="mo-section-title">
             <FormattedMessage id="partners.ended" />
           </h2>
-          <ul className="documents__list">
+          <ul className="mo-list">
             {ended.map((r) => (
-              <li key={r.commercialAccountId} className="documents__item">
-                <span className="documents__name">{nameOf(r)}</span>
-              </li>
+              <ListItem key={r.commercialAccountId} title={nameOf(r)} titleAs="span" />
             ))}
           </ul>
         </section>
@@ -144,88 +140,96 @@ function RelationshipCard({
   const titleId = `partner-${r.commercialAccountId}`;
 
   return (
-    <li className="documents__item partners__item" aria-labelledby={titleId}>
-      <div className="documents__main">
-        <span id={titleId} className="documents__name">
+    <li className="mo-list-item partners__item" aria-labelledby={titleId}>
+      <div className="mo-list-item__main">
+        <span id={titleId} className="mo-list-item__title">
           {nameOf(r)}
         </span>
-        <span className="documents__meta">
+        <span className="mo-list-item__meta">
           {r.account === null ? null : <FormattedMessage id={`partners.type.${r.account.type}`} />}{' '}
           · <FormattedMessage id={`partners.mode.${r.mode}`} /> ·{' '}
           <FormattedMessage id={`partners.status.${r.status}`} />
         </span>
-      </div>
-      <fieldset className="partners__scopes" disabled={!canManage || busy}>
-        <legend>
-          <FormattedMessage id={pending ? 'partners.asks' : 'partners.grants'} />
-        </legend>
-        {r.scopes.length === 0 ? (
-          <p className="documents__meta">
-            <FormattedMessage id="partners.noScopes" />
-          </p>
-        ) : (
-          r.scopes.map((scope) => (
-            <label key={scope} className="partners__scope">
-              <input
-                type="checkbox"
-                checked={chosen.has(scope)}
-                onChange={(event) => {
-                  const next = new Set(chosen);
-                  if (event.target.checked) next.add(scope);
-                  else next.delete(scope);
-                  setChosen(next);
-                }}
-              />{' '}
-              <FormattedMessage id={`partners.scope.${scope}`} />
-              {SENSITIVE.has(scope) ? (
-                <span className="documents__meta">
-                  {' '}
-                  <FormattedMessage id="partners.sensitive" />
-                </span>
-              ) : null}
-            </label>
-          ))
-        )}
-      </fieldset>
-      {canManage ? (
-        <div className="partners__actions">
-          {pending ? (
-            <Button disabled={busy} onClick={() => void act(() => client.accept(r, selected))}>
-              <FormattedMessage id="partners.accept" />
-            </Button>
-          ) : r.scopes.length > 0 ? (
+        <fieldset className="partners__scopes" disabled={!canManage || busy}>
+          <legend>
+            <FormattedMessage id={pending ? 'partners.asks' : 'partners.grants'} />
+          </legend>
+          {r.scopes.length === 0 ? (
+            <p className="mo-hint">
+              <FormattedMessage id="partners.noScopes" />
+            </p>
+          ) : (
+            r.scopes.map((scope) => (
+              <label key={scope} className="partners__scope">
+                <input
+                  type="checkbox"
+                  checked={chosen.has(scope)}
+                  onChange={(event) => {
+                    const next = new Set(chosen);
+                    if (event.target.checked) next.add(scope);
+                    else next.delete(scope);
+                    setChosen(next);
+                  }}
+                />{' '}
+                <FormattedMessage id={`partners.scope.${scope}`} />
+                {SENSITIVE.has(scope) ? (
+                  <>
+                    {' '}
+                    <Badge tone="warning">
+                      <FormattedMessage id="partners.sensitive" />
+                    </Badge>
+                  </>
+                ) : null}
+              </label>
+            ))
+          )}
+        </fieldset>
+        {canManage ? (
+          <div className="mo-list-item__actions">
+            {pending ? (
+              <Button
+                size="sm"
+                disabled={busy}
+                onClick={() => void act(() => client.accept(r, selected))}
+              >
+                <FormattedMessage id="partners.accept" />
+              </Button>
+            ) : r.scopes.length > 0 ? (
+              <Button
+                size="sm"
+                disabled={busy || unchanged}
+                onClick={() => void act(() => client.setScopes(r, selected))}
+              >
+                <FormattedMessage id="partners.save" />
+              </Button>
+            ) : null}
             <Button
-              disabled={busy || unchanged}
-              onClick={() => void act(() => client.setScopes(r, selected))}
+              variant="danger"
+              size="sm"
+              disabled={busy}
+              onClick={() => {
+                if (
+                  globalThis.confirm(
+                    intl.formatMessage(
+                      { id: pending ? 'partners.rejectConfirm' : 'partners.endConfirm' },
+                      { name: nameOf(r) },
+                    ),
+                  )
+                ) {
+                  void act(() => client.end(r));
+                }
+              }}
             >
-              <FormattedMessage id="partners.save" />
+              <FormattedMessage id={pending ? 'partners.reject' : 'partners.end'} />
             </Button>
-          ) : null}
-          <Button
-            variant="secondary"
-            disabled={busy}
-            onClick={() => {
-              if (
-                globalThis.confirm(
-                  intl.formatMessage(
-                    { id: pending ? 'partners.rejectConfirm' : 'partners.endConfirm' },
-                    { name: nameOf(r) },
-                  ),
-                )
-              ) {
-                void act(() => client.end(r));
-              }
-            }}
-          >
-            <FormattedMessage id={pending ? 'partners.reject' : 'partners.end'} />
-          </Button>
-        </div>
-      ) : null}
-      {failed === undefined ? null : (
-        <p className="panel__empty" role="alert">
-          <FormattedMessage id={failed} />
-        </p>
-      )}
+          </div>
+        ) : null}
+        {failed === undefined ? null : (
+          <StateMessage kind="error" inline>
+            <FormattedMessage id={failed} />
+          </StateMessage>
+        )}
+      </div>
     </li>
   );
 }
