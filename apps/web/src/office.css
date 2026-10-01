@@ -2554,6 +2554,7 @@ a.sidebar__item:hover {
  * controls are 44 px tall. A desktop with a pointer keeps the density it was designed with.
  */
 @media (max-width: 48rem), (pointer: coarse) {
+  .back-link,
   .sidebar__item,
   .notifications__item,
   .gia-bar__input,
