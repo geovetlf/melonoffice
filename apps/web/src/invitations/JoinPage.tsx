@@ -1,5 +1,5 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
-import { Button } from '@melonoffice/ui';
+import { Button, StateMessage } from '@melonoffice/ui';
 import { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../identity/AuthProvider.js';
 import { Loading, PublicFrame, type LocaleProps } from '../identity/pages.js';
@@ -26,7 +26,7 @@ export function JoinPage(locale: LocaleProps) {
   let content;
   if (token === undefined) {
     content = (
-      <p className="notice">
+      <p className="mo-hint">
         <FormattedMessage id="invite.missing" />
       </p>
     );
@@ -36,9 +36,9 @@ export function JoinPage(locale: LocaleProps) {
     content = <CreateAccount />;
   } else if (state.status !== 'signed_in') {
     content = (
-      <p role="alert" className="notice notice--danger">
+      <StateMessage kind="error">
         <FormattedMessage id="auth.unavailable" />
-      </p>
+      </StateMessage>
     );
   } else if (!state.me.emailVerified) {
     content = <VerifyEmail email={state.me.email} />;
@@ -47,7 +47,7 @@ export function JoinPage(locale: LocaleProps) {
   }
   return (
     <PublicFrame {...locale}>
-      <h2>
+      <h2 className="mo-section-title">
         <FormattedMessage id="join.title" />
       </h2>
       {content}
@@ -99,9 +99,9 @@ export function JoinDecision({
   if (outcome !== undefined) {
     return (
       <>
-        <p role="status" className="notice">
+        <StateMessage kind="success">
           <FormattedMessage id={`join.outcome.${outcome}`} />
-        </p>
+        </StateMessage>
         <Button onClick={() => navigate(outcome === 'joined' ? '/partner' : '/')}>
           <FormattedMessage id="invite.continue" />
         </Button>
@@ -111,18 +111,18 @@ export function JoinDecision({
   if (load === 'loading') return <Loading />;
   if (load === 'missing' || load === 'error') {
     return (
-      <p role="alert" className="notice notice--danger">
+      <StateMessage kind="error">
         <FormattedMessage id={load === 'missing' ? 'invite.missing' : 'invite.error'} />
-      </p>
+      </StateMessage>
     );
   }
   const { invitation, person } = load;
   if (person !== 'invited') {
     return (
       <>
-        <p role="alert" className="notice notice--danger">
+        <StateMessage kind="error">
           <FormattedMessage id={`invite.person.${person}`} />
-        </p>
+        </StateMessage>
         <Button variant="secondary" onClick={onSignOut}>
           <FormattedMessage id="auth.signOut" />
         </Button>
@@ -131,9 +131,9 @@ export function JoinDecision({
   }
   if (invitation.status !== 'pending') {
     return (
-      <p role="alert" className="notice">
+      <StateMessage kind="error">
         <FormattedMessage id={`invite.status.${invitation.status}`} />
-      </p>
+      </StateMessage>
     );
   }
 
@@ -172,7 +172,7 @@ export function JoinDecision({
           }}
         />
       </p>
-      <div className="partners__actions">
+      <div className="mo-form__actions">
         <Button
           disabled={busy}
           onClick={() =>
@@ -200,9 +200,9 @@ export function JoinDecision({
         </Button>
       </div>
       {failed === undefined ? null : (
-        <p className="notice notice--danger" role="alert">
+        <StateMessage kind="error">
           <FormattedMessage id={failed} />
-        </p>
+        </StateMessage>
       )}
     </>
   );

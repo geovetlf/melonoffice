@@ -1,5 +1,5 @@
 import { FormattedMessage } from '@melonoffice/i18n';
-import { Button } from '@melonoffice/ui';
+import { Button, StateMessage } from '@melonoffice/ui';
 import { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../identity/AuthProvider.js';
 import { CreateOrganization, Loading, PublicFrame, type LocaleProps } from '../identity/pages.js';
@@ -56,7 +56,7 @@ export function WithoutOrganization({
         <div className="light-surface">
           <PartnerConsole client={consoleClient} origin={globalThis.location.origin} />
         </div>
-        <div className="partners__actions">
+        <div className="mo-form__actions">
           <Button variant="secondary" onClick={() => navigate('/')}>
             <FormattedMessage id="console.noCompany.create" />
           </Button>
@@ -68,12 +68,16 @@ export function WithoutOrganization({
   return (
     <PublicFrame {...locale}>
       {accounts > 0 ? (
-        <p className="notice" role="status">
-          <FormattedMessage id="console.noCompany.lead" />{' '}
-          <Button onClick={() => navigate(paths.partnerConsole())}>
-            <FormattedMessage id="console.noCompany.open" />
-          </Button>
-        </p>
+        <StateMessage
+          kind="success"
+          action={
+            <Button onClick={() => navigate(paths.partnerConsole())}>
+              <FormattedMessage id="console.noCompany.open" />
+            </Button>
+          }
+        >
+          <FormattedMessage id="console.noCompany.lead" />
+        </StateMessage>
       ) : null}
       <CreateOrganization />
       {signOut}

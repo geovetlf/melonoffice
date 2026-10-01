@@ -8,19 +8,16 @@
   max-width: 72rem;
 }
 
-.public__header h1 {
-  margin: 0;
-  font-size: var(--mo-font-size-xxl);
+/* The public pages' one h1 is the product's name: PageHeader's title, in the brand's colour. */
+.public__header .mo-page-header__title {
   color: var(--mo-color-accent);
 }
 
-.public__tagline {
-  margin-top: var(--mo-space-1);
-  font-size: var(--mo-font-size-lg);
-  color: var(--mo-color-text-secondary);
-}
-
+/* The card holds one column, evenly spaced: title, states, form, the way to the other page. */
 .public__card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--mo-space-4);
   margin-top: var(--mo-space-6);
   padding: var(--mo-space-6);
   background: var(--mo-color-surface);
@@ -28,9 +25,14 @@
   border-radius: var(--mo-radius-lg);
 }
 
-.public__card h2 {
-  margin: 0 0 var(--mo-space-4);
-  font-size: var(--mo-font-size-xl);
+.public__card > * {
+  min-width: 0;
+  margin-block: 0;
+}
+
+/* A button on its own (sign out, retry) keeps its size; the card's forms fill the width. */
+.public__card > .mo-button {
+  justify-self: start;
 }
 
 .languages {
@@ -41,26 +43,10 @@
   margin-top: var(--mo-space-6);
 }
 
-.login {
-  display: grid;
-  gap: var(--mo-space-2);
-}
-
-.login .mo-button {
-  margin-top: var(--mo-space-4);
-}
-
 /* Sign-in, sign-up and password reset (ADR-0105): one short column, the same on every screen. */
 .login__forgot {
   margin: 0;
   text-align: right;
-  font-size: var(--mo-font-size-sm);
-}
-
-.login__hint {
-  margin: 0;
-  font-size: var(--mo-font-size-sm);
-  color: var(--mo-color-text-secondary);
 }
 
 .login .mo-button,
@@ -69,23 +55,12 @@
   min-height: var(--mo-min-target-size);
 }
 
-.auth-link {
-  color: var(--mo-color-accent);
-  font-weight: 600;
-  text-decoration: none;
-}
-
-.auth-link:hover,
-.auth-link:focus-visible {
-  text-decoration: underline;
-}
-
 /* "── or ──" between the email form and Google. */
 .auth-or {
   display: flex;
   align-items: center;
   gap: var(--mo-space-3);
-  margin: var(--mo-space-4) 0;
+  margin: 0;
   font-size: var(--mo-font-size-sm);
   color: var(--mo-color-text-secondary);
 }
@@ -111,7 +86,7 @@
 }
 
 .auth-switch {
-  margin: var(--mo-space-4) 0 0;
+  margin: 0;
   text-align: center;
   color: var(--mo-color-text-secondary);
 }
