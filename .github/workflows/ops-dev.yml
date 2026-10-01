@@ -1,0 +1,164 @@
+name: Ops (dev)
+
+# Operator tasks on dev (ADR-0112), run by hand from the Actions tab or the API, instead of a
+# person's Cloud Shell. The job uses the `github-operator` identity through Workload Identity
+# Federation (no key), in the "dev" GitHub environment (main only).
+#
+#   status   read only: Cloud Run revisions, the jobs queue, error counts in the logs, and a dry
+#            run of every operator migration.
+#   backup   a Firestore export to the private backups bucket.
+#   migrate  a backup first, then the operator migrations with MIGRATION_APPLY=yes, then a dry run
+#            of each again, which must report nothing left to change.
+#
+# The repository is public, and so are these logs: the job prints counts, statuses and short
+# hashes of organization ids only, never a document, a name, an email or a user id.
+
+on:
+  workflow_dispatch:
+    inputs:
+      task:
+        description: What to run
+        type: choice
+        options: [status, backup, migrate]
+        default: status
+      approver_organization_id:
+        description: Organization whose creator approves the migrations (needed by status and migrate)
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ops-dev
+  cancel-in-progress: false
+
+jobs:
+  ops:
+    name: Ops (${{ inputs.task }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: dev
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      TASK: ${{ inputs.task }}
+      REGION: ${{ vars.GCP_REGION }}
+      PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Check configuration
+        id: config
+        env:
+          GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          APPROVER_ORGANIZATION_ID: ${{ inputs.approver_organization_id }}
+        run: |
+          provider="$(printf '%s' "$GCP_WORKLOAD_IDENTITY_PROVIDER" | tr -d '[:space:]')"
+          project="$(printf '%s' "$PROJECT_ID" | tr -d '[:space:]')"
+          [ -n "$provider" ] && [ -n "$project" ] || { echo "::error::dev environment variables are missing"; exit 1; }
+          echo "provider=${provider}" >> "$GITHUB_OUTPUT"
+          echo "project=${project}" >> "$GITHUB_OUTPUT"
+          echo "operator=github-operator@${project}.iam.gserviceaccount.com" >> "$GITHUB_OUTPUT"
+          echo "bucket=${project}-operator-backups" >> "$GITHUB_OUTPUT"
+          org="$(printf '%s' "$APPROVER_ORGANIZATION_ID" | tr -d '[:space:]')"
+          if [ -n "$org" ]; then
+            echo "::add-mask::${org}"
+            [[ "$org" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || { echo "::error::approver_organization_id is not an id"; exit 1; }
+          elif [ "$TASK" != backup ]; then
+            echo "::error::approver_organization_id is required for ${TASK}"; exit 1
+          fi
+          echo "approver_org=${org}" >> "$GITHUB_OUTPUT"
+
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ steps.config.outputs.provider }}
+          service_account: ${{ steps.config.outputs.operator }}
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+
+      - name: Cloud Run, jobs queue and recent errors
+        if: inputs.task == 'status'
+        run: |
+          set -o pipefail
+          for app in web api worker forecaster; do
+            gcloud run services describe "$app" --project "$PROJECT_ID" --region "$REGION" --format=json 2>/dev/null \
+              | jq -r --arg app "$app" '"\($app): ready=\(.status.conditions[] | select(.type=="Ready") | .status) revision=\(.status.latestReadyRevisionName) traffic=\([.status.traffic[] | "\(.revisionName // "latest"):\(.percent)"] | join(","))"' \
+              || echo "${app}: not found"
+          done
+          gcloud tasks queues describe execution-jobs --project "$PROJECT_ID" --location "$REGION" --format='value(state)' | sed 's/^/execution-jobs queue: /'
+          since="$(date -u -d '-1 hour' +%Y-%m-%dT%H:%M:%SZ)"
+          for app in web api worker; do
+            n="$(gcloud logging read "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"${app}\" AND severity>=ERROR AND timestamp>=\"${since}\"" \
+              --project "$PROJECT_ID" --limit 500 --format='value(insertId)' | wc -l)"
+            echo "${app}: ${n} error entries in the last hour"
+          done
+
+      - name: Back up Firestore
+        if: inputs.task == 'backup' || inputs.task == 'migrate'
+        run: |
+          folder="gs://${{ steps.config.outputs.bucket }}/$(date -u +%Y%m%dT%H%M%SZ)-run-${GITHUB_RUN_ID}"
+          gcloud firestore export "$folder" --project "$PROJECT_ID" --database='(default)'
+          echo "Firestore exported to ${folder}"
+          echo "Restore, if a person decides to: gcloud firestore import ${folder} --project ${PROJECT_ID}"
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        if: inputs.task != 'backup'
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: inputs.task != 'backup'
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - name: Build the operator tools
+        if: inputs.task != 'backup'
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm turbo run build --filter=@melonoffice/api
+
+      # The approver is the creator of the given organization, read from Firestore and masked.
+      - name: Resolve the approver
+        id: approver
+        if: inputs.task != 'backup'
+        env:
+          ORG: ${{ steps.config.outputs.approver_org }}
+        run: |
+          token="$(gcloud auth print-access-token)"
+          url="https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/organizations/${ORG}?mask.fieldPaths=createdBy"
+          user="$(curl -sS --fail -H "Authorization: Bearer ${token}" "$url" | jq -r '.fields.createdBy.stringValue // empty')"
+          [ -n "$user" ] || { echo "::error::that organization has no creator"; exit 1; }
+          echo "::add-mask::${user}"
+          echo "user=${user}" >> "$GITHUB_OUTPUT"
+
+      - name: Run the operator migrations
+        if: inputs.task != 'backup'
+        env:
+          APPROVED_BY: ${{ steps.approver.outputs.user }}
+          IDENTITY_PLATFORM_PROJECT_ID: ${{ steps.config.outputs.project }}
+        run: |
+          # Organization ids are replaced by a short hash: the logs are public.
+          set -o pipefail
+          hash() { while IFS= read -r line; do
+            id="$(printf '%s' "$line" | jq -r '.organizationId // empty')"
+            if [ -n "$id" ]; then
+              short="$(printf '%s' "$id" | sha256sum | cut -c1-8)"
+              printf '%s\n' "$line" | jq -c --arg s "org:${short}" '.organizationId = $s'
+            else
+              printf '%s\n' "$line"
+            fi
+          done; }
+          run() { # $1 = script, $2 = apply (yes or empty)
+            echo "== ${1} (${2:-dry run})"
+            MIGRATION_APPLY="$2" node "apps/api/dist/${1}.js" | hash
+          }
+          if [ "$TASK" = migrate ]; then
+            run migrate-departments yes
+            run migrate-agent-policies yes
+            echo "== Check: a second dry run must change nothing"
+          fi
+          run migrate-departments ""
+          run migrate-agent-policies ""
+          if [ "$TASK" = migrate ]; then
+            left="$( { MIGRATION_APPLY= node apps/api/dist/migrate-departments.js; MIGRATION_APPLY= node apps/api/dist/migrate-agent-policies.js; } | jq -r 'select(.status? and .status != "unchanged") | .status' | wc -l)"
+            [ "$left" = 0 ] || { echo "::error::${left} organizations still have changes planned or were skipped; a person must look"; exit 1; }
+            echo "Every organization is unchanged on a second run."
+          fi

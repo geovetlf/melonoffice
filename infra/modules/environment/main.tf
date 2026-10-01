@@ -72,6 +72,12 @@ locals {
   document_storage_enabled = var.document_storage && local.runtime_enabled
   documents_bucket_name    = "${var.project_id}-documents"
 
+  # Operator access (ADR-0112): GitHub Actions jobs of this environment run operator tasks
+  # (migrations, Firestore backups, read-only checks) with their own identity, no key. Only where
+  # Firestore exists, and only when turned on (dev today).
+  operator_access_enabled = var.operator_access && var.firestore_and_auth
+  operator_backups_bucket = "${var.project_id}-operator-backups"
+
   base_services = [
     "artifactregistry.googleapis.com",
     "cloudresourcemanager.googleapis.com",
@@ -279,11 +285,13 @@ module "services" {
     local.ai_assist_enabled ? local.ai_assist_services : [],
     local.whatsapp_channel_enabled ? local.whatsapp_channel_services : [],
     local.document_storage_enabled ? local.document_storage_services : [],
+    # The operator's backups bucket (ADR-0112).
+    local.operator_access_enabled ? local.document_storage_services : [],
   )
 }
 
 data "google_project" "this" {
-  count = local.runtime_enabled || local.web_sign_in_enabled ? 1 : 0
+  count = local.runtime_enabled || local.web_sign_in_enabled || local.operator_access_enabled ? 1 : 0
 
   project_id = var.project_id
 }
@@ -945,6 +953,92 @@ resource "google_storage_bucket_iam_member" "vertex_ai_documents_viewer" {
   bucket = google_storage_bucket.documents[0].name
   role   = "roles/storage.objectViewer"
   member = "serviceAccount:service-${data.google_project.this[0].number}@gcp-sa-aiplatform.iam.gserviceaccount.com"
+
+  depends_on = [module.services]
+}
+
+# ---------------------------------------------------------------------------------------------
+# Operator access (ADR-0112). The `Ops (dev)` workflow runs the operator tasks a person used to
+# run from Cloud Shell: the operator migrations (dry run by default), a Firestore export before
+# any write, and read-only checks of Cloud Run, Cloud Tasks and logs. Jobs of this GitHub
+# environment (main only) use it through Workload Identity Federation: no key.
+
+resource "google_service_account" "operator" {
+  count = local.operator_access_enabled ? 1 : 0
+
+  project      = var.project_id
+  account_id   = "github-operator"
+  display_name = "GitHub Actions operator (${var.environment})"
+
+  depends_on = [module.services]
+}
+
+resource "google_service_account_iam_member" "operator_federation" {
+  count = local.operator_access_enabled ? 1 : 0
+
+  service_account_id = google_service_account.operator[0].name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "${module.github_oidc.environment_principal_set}${var.github_environment}"
+}
+
+# Reads and writes documents (the migrations), exports the database (the backup before a write),
+# and reads Cloud Run, Cloud Tasks and logs (the checks). No IAM, no deploy, no delete of the
+# database, no Secret Manager.
+resource "google_project_iam_member" "operator_roles" {
+  for_each = local.operator_access_enabled ? toset([
+    "roles/datastore.user",
+    "roles/datastore.importExportAdmin",
+    "roles/run.viewer",
+    "roles/cloudtasks.viewer",
+    "roles/logging.viewer",
+  ]) : toset([])
+
+  project = var.project_id
+  role    = each.value
+  member  = "serviceAccount:${google_service_account.operator[0].email}"
+}
+
+# Firestore exports land here, one folder per run. Private; kept 30 days, then deleted by the
+# bucket itself. A restore is a person's decision (gcloud firestore import), never automatic.
+resource "google_storage_bucket" "operator_backups" {
+  count = local.operator_access_enabled ? 1 : 0
+
+  project                     = var.project_id
+  name                        = local.operator_backups_bucket
+  location                    = var.region
+  uniform_bucket_level_access = true
+  public_access_prevention    = "enforced"
+  force_destroy               = false
+  labels                      = local.labels
+
+  lifecycle_rule {
+    condition {
+      age = 30
+    }
+    action {
+      type = "Delete"
+    }
+  }
+
+  depends_on = [module.services]
+}
+
+# The operator starts exports into the bucket and lists them.
+resource "google_storage_bucket_iam_member" "operator_backups_admin" {
+  count = local.operator_access_enabled ? 1 : 0
+
+  bucket = google_storage_bucket.operator_backups[0].name
+  role   = "roles/storage.admin"
+  member = "serviceAccount:${google_service_account.operator[0].email}"
+}
+
+# Firestore writes an export with its own service agent, which needs to write into the bucket.
+resource "google_storage_bucket_iam_member" "firestore_backups_writer" {
+  count = local.operator_access_enabled ? 1 : 0
+
+  bucket = google_storage_bucket.operator_backups[0].name
+  role   = "roles/storage.objectAdmin"
+  member = "serviceAccount:service-${data.google_project.this[0].number}@gcp-sa-firestore.iam.gserviceaccount.com"
 
   depends_on = [module.services]
 }
