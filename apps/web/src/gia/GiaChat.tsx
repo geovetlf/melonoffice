@@ -19,6 +19,7 @@ import type { AgentTaskView, AgentTasksClient } from '../office/agentTasksClient
 import { formatMoney } from '../opportunities/OpportunitiesSection.js';
 import { paths } from '../shell/routes.js';
 import { GiaAvatar } from './GiaAvatar.js';
+import { giaEngagements } from './presence.js';
 import type {
   GiaAnswerView,
   GiaClient,
@@ -555,7 +556,10 @@ function AgentTaskProposal({ answer }: { readonly answer: GiaAnswerView }) {
     setState('sending');
     setError(undefined);
     try {
-      setState(await client.assign(proposal.agentId, request, key.current));
+      const task = await client.assign(proposal.agentId, request, key.current);
+      // GIA goes to the agent she brought the work to, for as long as it is in its hands.
+      giaEngagements.record({ taskId: task.id, agentId: proposal.agentId, at: Date.now() });
+      setState(task);
     } catch (failure) {
       setError(errorKey(failure));
       setState('open');

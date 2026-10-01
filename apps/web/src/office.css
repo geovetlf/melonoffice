@@ -1603,6 +1603,8 @@ a.sidebar__item:hover {
 .gia-avatar {
   display: block;
   flex: none;
+  border-radius: 50%;
+  object-fit: cover;
 }
 
 .gia-workplace__header .gia-avatar {
@@ -1610,45 +1612,35 @@ a.sidebar__item:hover {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--mo-color-highlight) 35%, transparent);
 }
 
-.gia-desk {
-  position: relative;
-  margin: 0;
-  padding: var(--mo-space-4);
-  border: 1px solid var(--mo-color-border);
-  border-radius: var(--mo-radius-xl);
-  background: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--mo-color-highlight) 10%, transparent),
-    var(--mo-color-surface)
-  );
+.gia-workplace__chat {
+  display: grid;
+  grid-template-columns: clamp(7.5rem, 16vw, 11rem) minmax(0, 1fr);
+  gap: var(--mo-space-6);
+  align-items: start;
 }
 
-.gia-desk__art {
+/* GIA from the chest up, beside her conversation: the same person as in the office. */
+.gia-workplace__portrait {
   display: block;
   width: 100%;
-  max-height: 16rem;
-}
-
-.gia-desk__gia {
-  position: absolute;
-  bottom: 34%;
-  left: 38%;
-  width: 22%;
-  max-width: 112px;
-}
-
-.gia-desk__avatar {
-  width: 100%;
   height: auto;
+  border-radius: var(--mo-radius-xl);
+  box-shadow: var(--mo-shadow-md);
 }
 
-.gia-desk__caption {
-  display: flex;
-  align-items: center;
-  gap: var(--mo-space-2);
-  margin-top: var(--mo-space-2);
-  color: var(--mo-color-text-secondary);
-  font-size: var(--mo-font-size-xs);
+.gia-workplace__talk {
+  min-width: 0;
+}
+
+/* On a phone her portrait sits above the conversation, smaller. */
+@media (max-width: 36rem) {
+  .gia-workplace__chat {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .gia-workplace__portrait {
+    width: 7.5rem;
+  }
 }
 
 .gia-state {

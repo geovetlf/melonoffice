@@ -1,5 +1,5 @@
 import { I18nProvider } from '@melonoffice/i18n';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../../App.js';
@@ -8,12 +8,16 @@ import { REFRESH_KEY } from '../../identity/session.js';
 import { API, KEY, fakeBackend, memoryStore } from '../../identity/testing.js';
 import type { AgentTaskView } from '../agentTasksClient.js';
 import type { DepartmentView } from '../officeClient.js';
+import { giaEngagements } from '../../gia/presence.js';
 import { workStateOf } from './agentWork.js';
 import { buildingFloors, MIN_FLOORS } from './layout.js';
 import { handOffs } from './motor.js';
 
 afterEach(cleanup);
-beforeEach(() => globalThis.history.replaceState(null, '', '/'));
+beforeEach(() => {
+  globalThis.history.replaceState(null, '', '/');
+  giaEngagements.reset();
+});
 
 function open(configure?: (backend: ReturnType<typeof fakeBackend>) => void) {
   const backend = fakeBackend();
@@ -282,6 +286,46 @@ describe('the Home’s office (Home V4)', () => {
     );
     expect(await screen.findByRole('heading', { level: 1, name: 'GIA' })).toBeTruthy();
     expect(globalThis.location.pathname).toBe('/gia');
+  });
+
+  it('puts GIA with the agent she brought work to while it is under way, then back home', async () => {
+    // Sent ten minutes ago: only the task's real state puts her there.
+    giaEngagements.record({ taskId: 'task-1', agentId: 'spec_ana', at: Date.now() - 600_000 });
+    open(agents);
+    const gia = await screen.findByRole('link', {
+      name: 'GIA, online, is with Ana Ventas in Commercial. Open GIA',
+    });
+    // Her platform waits; she stands in Comercial, named on its link.
+    expect(gia.querySelector('.gia-figure')).toBeNull();
+    const sales = document.querySelector<HTMLElement>('[data-room="org_1_sales"]');
+    expect(sales?.querySelector('.b-gia-here .gia-figure')).toBeTruthy();
+    if (sales === null) throw new Error('no Comercial room');
+    expect(within(sales).getByRole('link').getAttribute('aria-label')).toContain(
+      'GIA is here, with Ana Ventas',
+    );
+    expect(document.querySelector('.building__frame')?.getAttribute('data-gia-activity')).toBe(
+      'working',
+    );
+    // The work is no longer hers to follow: she is home, coordinating.
+    act(() => giaEngagements.forget('task-1'));
+    expect(
+      await screen.findByRole('link', {
+        name: 'GIA, online, coordinating 2 active agents. Open GIA',
+      }),
+    ).toBeTruthy();
+    expect(document.querySelector('.b-room--gia .gia-figure')).toBeTruthy();
+    expect(sales?.querySelector('.b-gia-here')).toBeNull();
+  });
+
+  it('keeps GIA home when the task she brought is done, whatever the session recorded', async () => {
+    giaEngagements.record({ taskId: 'task-old', agentId: 'spec_ana', at: Date.now() - 600_000 });
+    open(agents);
+    expect(
+      await screen.findByRole('link', {
+        name: 'GIA, online, coordinating 2 active agents. Open GIA',
+      }),
+    ).toBeTruthy();
+    expect(document.querySelector('[data-room] .b-gia-here')).toBeNull();
   });
 
   it('shows MelonMotor’s real flows: work under way and plans handing work between departments', async () => {

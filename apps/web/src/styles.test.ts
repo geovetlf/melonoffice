@@ -38,7 +38,7 @@ describe('type in the stylesheets', () => {
 
 /**
  * Motion shows real work or answers a person (ADR-0109, phase 6): a live screen, a work bar, an
- * agent typing, a desk's light, a room's data, and a sheet opening. Anything else is decoration,
+ * agent typing, a desk's light, a room's data, GIA walking where the work is, and a sheet opening. Anything else is decoration,
  * and every looping animation stops with `prefers-reduced-motion: reduce`.
  */
 describe('motion in the stylesheets', () => {
@@ -48,6 +48,8 @@ describe('motion in the stylesheets', () => {
     'desk-typing',
     'desk-light',
     'room-data',
+    // GIA's steps, only while she really walks somewhere (`GiaInOffice.tsx`).
+    'gia-step',
   ];
   const ANSWERS = ['sheet-in', 'sheet-up'];
   const sheets = ['app.css', 'office.css', 'home.css'].map((name) => ({

@@ -26,7 +26,7 @@ function open(at: string, configure?: (backend: ReturnType<typeof fakeBackend>) 
 }
 
 describe("GIA's Workplace (ADR-0050)", () => {
-  it('is entered from the Home through GIA, with her face', async () => {
+  it('is entered from the Home through GIA, standing on her platform', async () => {
     open('/');
     await screen.findByRole('heading', { level: 1 });
     // GIA sits at her desk in headquarters (Home V4).
@@ -35,7 +35,7 @@ describe("GIA's Workplace (ADR-0050)", () => {
       if (found === null) throw new Error('no GIA at her desk');
       return found;
     });
-    expect(card.querySelector('svg.gia-avatar')).toBeTruthy();
+    expect(card.querySelector('img.gia-figure')).toBeTruthy();
     fireEvent.click(card);
     const title = await screen.findByRole('heading', { level: 1, name: 'GIA' });
     expect(globalThis.location.pathname).toBe('/gia');
@@ -43,10 +43,11 @@ describe("GIA's Workplace (ADR-0050)", () => {
     expect(document.activeElement).toBe(title);
   });
 
-  it('shows her desk, state, capabilities and limits, without simulating anything', async () => {
+  it('shows her portrait by the chat, state, capabilities and limits, without simulating anything', async () => {
     open('/gia');
     await screen.findByRole('heading', { level: 1, name: 'GIA' });
-    expect(screen.getByRole('figure', { name: "GIA's desk" })).toBeTruthy();
+    const chat = screen.getByRole('region', { name: 'Talk to GIA' });
+    expect(chat.querySelector('img.gia-portrait')?.getAttribute('aria-hidden')).toBe('true');
     expect(screen.getByText('Available: ask GIA about your business')).toBeTruthy();
     const capabilities = screen.getByRole('region', { name: 'What GIA does' });
     expect(within(capabilities).queryByText('Soon')).toBeNull();
@@ -336,8 +337,9 @@ describe("GIA's Workplace (ADR-0050)", () => {
   it('keeps the avatar decorative where her name is written, and named where it is alone', async () => {
     open('/gia');
     await screen.findByRole('heading', { level: 1, name: 'GIA' });
-    for (const svg of document.querySelectorAll('.gia-workplace svg.gia-avatar')) {
-      expect(svg.getAttribute('aria-hidden')).toBe('true');
+    for (const face of document.querySelectorAll('.gia-workplace img.gia-avatar')) {
+      expect(face.getAttribute('aria-hidden')).toBe('true');
+      expect(face.getAttribute('alt')).toBe('');
     }
   });
 

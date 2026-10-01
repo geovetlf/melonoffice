@@ -9,8 +9,8 @@ import {
 } from '../activity/ActivityFeed.js';
 import type { ActivityPeriod } from '../activity/activityClient.js';
 import { OfficeBreadcrumb } from '../office/DepartmentOffice.js';
-import { Icon } from '../office/icons.js';
 import { GiaAvatar } from './GiaAvatar.js';
+import { GiaPortrait } from './character.js';
 import { GiaConversation, useGiaChat } from './GiaChat.js';
 
 /**
@@ -58,13 +58,15 @@ export function GiaWorkplace() {
         description={<FormattedMessage id="gia.role" />}
       />
 
-      <GiaDesk />
-
-      <section className="mo-panel mo-page-section" aria-labelledby="gia-chat">
-        <h2 id="gia-chat" className="mo-section-title">
-          <FormattedMessage id="gia.chat.title" />
-        </h2>
-        <GiaConversation />
+      {/* Talking to GIA: her portrait from the chest up beside the conversation. */}
+      <section className="mo-panel mo-page-section gia-workplace__chat" aria-labelledby="gia-chat">
+        <GiaPortrait className="gia-workplace__portrait" />
+        <div className="gia-workplace__talk">
+          <h2 id="gia-chat" className="mo-section-title">
+            <FormattedMessage id="gia.chat.title" />
+          </h2>
+          <GiaConversation />
+        </div>
       </section>
 
       <div className="gia-workplace__grid">
@@ -151,60 +153,4 @@ function GiaHistory({ state }: { readonly state: ActivityState }) {
     );
   }
   return <ActivityList state={state} />;
-}
-
-/**
- * GIA's desk, drawn: GIA at her desk with a screen, a lamp and a plant. It is decoration only
- * (hidden from screen readers); the screen shows MelonOffice's mark, never invented work.
- */
-function GiaDesk() {
-  const intl = useIntl();
-  return (
-    <figure className="gia-desk" aria-label={intl.formatMessage({ id: 'gia.workplace.desk' })}>
-      <svg className="gia-desk__art" viewBox="0 0 480 220" aria-hidden="true" focusable="false">
-        {/* Floor and wall line. */}
-        <rect x="0" y="176" width="480" height="44" rx="8" fill="rgb(255 226 206 / 0.06)" />
-        {/* Plant. */}
-        <rect x="40" y="130" width="34" height="46" rx="6" fill="#8a3442" />
-        <path d="M57 130 C40 110 44 90 57 80 C70 90 74 110 57 130 Z" fill="#c9a24a" />
-        <path d="M57 128 C36 120 30 104 34 94 C48 98 56 110 57 128 Z" fill="#b8893a" />
-        <path d="M57 128 C78 120 84 104 80 94 C66 98 58 110 57 128 Z" fill="#b8893a" />
-        {/* Desk. */}
-        <rect x="120" y="140" width="300" height="12" rx="4" fill="#6b4a3a" />
-        <rect x="136" y="152" width="10" height="24" fill="#5a3d30" />
-        <rect x="394" y="152" width="10" height="24" fill="#5a3d30" />
-        {/* Screen with the MelonOffice mark only. */}
-        <rect
-          x="286"
-          y="72"
-          width="110"
-          height="64"
-          rx="8"
-          fill="#241915"
-          stroke="#f5b942"
-          strokeOpacity="0.5"
-        />
-        <circle cx="341" cy="104" r="12" fill="#f2784b" opacity="0.8" />
-        <rect x="334" y="136" width="14" height="6" fill="#3a2a22" />
-        {/* Lamp. */}
-        <path
-          d="M412 140 L412 96 L392 84"
-          fill="none"
-          stroke="#d9c2b3"
-          strokeWidth="4"
-          strokeLinecap="round"
-        />
-        <path d="M378 78 L404 76 L398 92 Z" fill="#f5b942" />
-        {/* Mug. */}
-        <rect x="258" y="124" width="16" height="16" rx="3" fill="#fff1e6" />
-      </svg>
-      <div className="gia-desk__gia">
-        <GiaAvatar size={112} decorative className="gia-desk__avatar" />
-      </div>
-      <figcaption className="gia-desk__caption">
-        <Icon name="gia" size={16} />
-        <FormattedMessage id="gia.workplace.desk" />
-      </figcaption>
-    </figure>
-  );
 }
