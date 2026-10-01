@@ -70,6 +70,19 @@ describe('contrast (WCAG 2.2 AA)', () => {
     );
   });
 
+  // White-label colours are accepted at 4.5:1 or more on white (brand.ts); a few such, from the
+  // default melon to a colour that barely passes.
+  const brands = ['#C0451D', '#1D4ED8', '#047857', '#7C3AED', '#B42318', '#767676'];
+
+  it.each(brands.flatMap((brand) => surfaces.map(([s, bg]) => [brand, s, bg] as const)))(
+    'keeps %s as selected text readable on its soft tint over the %s',
+    (brand, _surface, background) => {
+      const soft = mix(brand, 0.12, background);
+      const strong = mix(brand, 0.8, '#000000');
+      expect(contrastRatio(strong, soft)).toBeGreaterThanOrEqual(AA_TEXT);
+    },
+  );
+
   it('computes known reference ratios', () => {
     expect(contrastRatio('#000000', '#FFFFFF')).toBeCloseTo(21, 5);
     expect(contrastRatio('#FFFFFF', '#FFFFFF')).toBeCloseTo(1, 5);
@@ -86,6 +99,7 @@ describe('brand identity', () => {
   it('derives the accent tints from the accent, so a white-label colour carries them', () => {
     expect(color.accentHover).toContain('var(--mo-color-accent)');
     expect(color.accentSoft).toContain('var(--mo-color-accent)');
+    expect(color.accentStrong).toContain('var(--mo-color-accent)');
   });
 });
 

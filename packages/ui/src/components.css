@@ -250,7 +250,7 @@
 .mo-button[aria-pressed='true']:hover:not(:disabled) {
   border-color: var(--mo-color-accent);
   background: var(--mo-color-accent-soft);
-  color: var(--mo-color-accent);
+  color: var(--mo-color-accent-strong);
   box-shadow: none;
 }
 
@@ -295,7 +295,7 @@
 .mo-chip[aria-current='true'] {
   border-color: var(--mo-color-accent);
   background: var(--mo-color-accent-soft);
-  color: var(--mo-color-accent);
+  color: var(--mo-color-accent-strong);
 }
 
 .mo-chip:disabled {
@@ -394,7 +394,7 @@
 
 .mo-badge--accent {
   background: var(--mo-color-accent-soft);
-  color: var(--mo-color-accent);
+  color: var(--mo-color-accent-strong);
 }
 
 .mo-badge--success {
@@ -806,6 +806,9 @@
 
 /* A record's name that opens it: text, not a button's box, underlined so it reads as a link. */
 .mo-link-button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
   padding: 0;
   border: 0;
   background: none;
@@ -1025,17 +1028,15 @@
 }
 
 /*
- * On a tablet, a phone or any touch screen, the dense controls of a page grow to the 44 px target
- * size. The Home's panels keep theirs.
+ * On a tablet, a phone or any touch screen, dense controls grow to the 44 px target size; a
+ * desktop with a pointer keeps their density.
  */
 @media (max-width: 48rem), (pointer: coarse) {
-  .mo-page .mo-chip,
-  .mo-page .mo-button--sm {
+  .mo-chip,
+  .mo-button--sm,
+  .mo-segmented > button,
+  .mo-link-button {
     min-height: var(--mo-control-height-md);
-  }
-
-  .mo-page .mo-segmented > button {
-    min-height: calc(var(--mo-control-height-md) - 6px);
   }
 
   .mo-page-header__actions {

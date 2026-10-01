@@ -562,7 +562,7 @@ describe('ambient figures (ADR-0042)', () => {
     expect(screen.getByRole('dialog', { name: 'Workstation 1' })).toBeTruthy();
   });
 
-  it('only breathe when motion is welcome, and phones keep the workstation cards', () => {
+  it('keeps the room still (phase 6), and phones keep the workstation cards', () => {
     const officeCss = readFileSync(`${import.meta.dirname}/../office.css`, 'utf8');
     const block = (query: string) => {
       const start = officeCss.indexOf(`@media ${query}`);
@@ -574,12 +574,8 @@ describe('ambient figures (ADR-0042)', () => {
       }
       return '';
     };
-    const motion = block('(prefers-reduced-motion: no-preference)');
-    expect(motion).toContain('.room__breath');
-    expect(motion).toContain('.room__presence');
-    // Outside that block, nothing animates the figures.
-    const rest = officeCss.replace(motion, '');
-    expect(rest).not.toMatch(/\.room__(breath|presence|worker)[^{]*\{[^}]*animation/);
+    // Figures, presence lights and screens show no work: nothing animates them.
+    expect(officeCss).not.toMatch(/\.room__(breath|presence|worker|screen)[^{]*\{[^}]*animation/);
     expect(block('(max-width: 40rem)')).toContain('.seat');
   });
 

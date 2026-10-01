@@ -1721,3 +1721,10 @@
     transform: none;
   }
 }
+
+/* Touch targets (phase 6): GIA's suggestions are 44 px tall on a touch screen or a narrow one. */
+@media (max-width: 48rem), (pointer: coarse) {
+  .gia-suggest__item {
+    min-height: var(--mo-min-target-size);
+  }
+}

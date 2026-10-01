@@ -14,6 +14,7 @@ export { StateMessage } from './StateMessage.js';
 export type { StateKind } from './StateMessage.js';
 export { StatusDot } from './StatusDot.js';
 export { Toolbar } from './Toolbar.js';
+export { useScrollsSideways } from './useScrollsSideways.js';
 export type { AgentState } from './StatusDot.js';
 export {
   color,

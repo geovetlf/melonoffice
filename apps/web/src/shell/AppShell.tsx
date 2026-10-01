@@ -524,6 +524,17 @@ export function AppShell(locale: LocaleProps) {
               {...(canAskAgents ? { agentTasks: clients.agentTasks } : {})}
             >
               <div className="app">
+                {/* The first stop of the keyboard: past the menus, to what the page is about. */}
+                <a
+                  className="skip-link"
+                  href="#main"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    document.getElementById('main')?.focus();
+                  }}
+                >
+                  <FormattedMessage id="nav.skipToContent" />
+                </a>
                 <Sidebar
                   route={route}
                   canReadConversations={canReadConversations}
@@ -567,6 +578,8 @@ export function AppShell(locale: LocaleProps) {
                     }}
                   />
                   <main
+                    id="main"
+                    tabIndex={-1}
                     className="app__main"
                     key={route.kind === 'office' ? route.slug : route.kind}
                   >

@@ -62,7 +62,7 @@ export function GiaQuickAsk() {
           aria-label={intl.formatMessage({ id: 'gia.bar.placeholder' })}
           maxLength={2000}
         />
-        <p className="customers__meta">
+        <p className="gia-quick__hint">
           <FormattedMessage id="gia.quick.hint" />
         </p>
       </form>

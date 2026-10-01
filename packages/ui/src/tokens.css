@@ -17,6 +17,7 @@
   --mo-color-accent: #c0451d;
   --mo-color-accent-hover: color-mix(in srgb, var(--mo-color-accent) 84%, #000000);
   --mo-color-accent-soft: color-mix(in srgb, var(--mo-color-accent) 12%, transparent);
+  --mo-color-accent-strong: color-mix(in srgb, var(--mo-color-accent) 80%, #000000);
   --mo-color-accent-expressive: #ff8a5c;
   --mo-color-highlight: #f5b942;
   --mo-color-focus-ring: #c0451d;
