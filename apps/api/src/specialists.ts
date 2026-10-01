@@ -11,7 +11,7 @@ import {
   type SpecialistService,
   type ToolLookup,
 } from '@melonoffice/specialists';
-import type { ToolRegistry } from '@melonoffice/tools';
+import { toolCanRun, type ToolRegistry } from '@melonoffice/tools';
 import type { Context, Hono } from 'hono';
 import type { AuthEnv } from './auth.js';
 import { withPermission, type AuthorizationDependencies } from './authorization.js';
@@ -138,9 +138,30 @@ export function registerSpecialistRoutes(
 
   app.get(
     '/v1/organizations/:organizationId/specialists',
-    withPermission('specialist.read', dependencies, async (c, tenant) =>
-      c.json({ specialists: (await specialists.list(tenant)).map(toSpecialistView) }),
-    ),
+    withPermission('specialist.read', dependencies, async (c, tenant) => {
+      // One page (AE-4, ADR-0115) when the caller asks for one; without any of these parameters
+      // the answer is the whole list, exactly as before, for the screens that still read it so.
+      const params = Object.fromEntries(
+        PAGE_PARAMS.map((name) => [name, c.req.query(name)] as const).filter(
+          ([, value]) => value !== undefined,
+        ),
+      );
+      if (Object.keys(params).length === 0) {
+        return c.json({ specialists: (await specialists.list(tenant)).map(toSpecialistView) });
+      }
+      try {
+        const page = await specialists.page(tenant, params);
+        return c.json({
+          specialists: page.items.map(toSpecialistView),
+          nextCursor: page.nextCursor,
+        });
+      } catch (error) {
+        if (isSpecialistError(error) && error.code === 'invalid_specialist') {
+          return c.json({ error: error.code, field: error.detail ?? null }, 400);
+        }
+        throw error;
+      }
+    }),
   );
 
   app.get(
@@ -180,6 +201,17 @@ export function toSpecialistView(specialist: Specialist) {
     skills: configuration.skills.map(({ id, version }) => ({ id, version })),
     createdAt: identity.createdAt,
     updatedAt: specialist.updatedAt,
+    // Who last changed its status, when and why (AE-4): the person decided it, so it is shown.
+    lastStatusChange:
+      specialist.lastStatusChange === undefined
+        ? null
+        : {
+            from: specialist.lastStatusChange.from,
+            to: specialist.lastStatusChange.to,
+            at: specialist.lastStatusChange.at,
+            by: specialist.lastStatusChange.by,
+            reason: specialist.lastStatusChange.reason ?? null,
+          },
   };
 }
 
@@ -193,8 +225,12 @@ export const toolLookupOf =
       riskLevel: found.version.riskLevel,
       approval: found.version.approvalPolicy,
       permissions: found.version.permissions,
+      active: toolCanRun(found.definition.status),
     };
   };
+
+/** The query parameters of one page of agents (AE-4). */
+const PAGE_PARAMS = ['limit', 'cursor', 'status', 'departmentId', 'q', 'skill'] as const;
 
 const bodyOf = async (c: Context<AuthEnv>): Promise<Record<string, unknown>> => {
   const body: unknown = await c.req.json().catch(() => undefined);
@@ -213,6 +249,7 @@ const STATUS: Partial<Record<SpecialistError['code'], 400 | 403 | 404 | 409>> = 
   invalid_specialist_transition: 409,
   specialist_archived: 409,
   specialist_concurrency_conflict: 409,
+  specialist_not_ready: 409,
 };
 
 async function answer(
@@ -231,6 +268,8 @@ async function answer(
         ...(error.code === 'invalid_specialist' && error.detail !== undefined
           ? { field: error.detail }
           : {}),
+        // What stops activation, each a stable code a screen explains (AE-4).
+        ...(error.code === 'specialist_not_ready' ? { problems: error.problems ?? [] } : {}),
       },
       status,
     );

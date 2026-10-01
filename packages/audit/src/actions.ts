@@ -327,7 +327,8 @@ export const AUDIT_ACTIONS = {
   },
   'specialist.status_changed': {
     category: 'specialist',
-    description: "A person changed an agent's status (ADR-0062); `transition` is from → to.",
+    description:
+      "A person changed an agent's status (ADR-0062, ADR-0115); `transition` is from → to, `reason` is `reason_given` when they gave one (the words stay on the agent).",
     results: ['success'],
   },
   'billing.subscription_created': {

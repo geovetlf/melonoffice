@@ -14,6 +14,7 @@ import {
   type EligibilityRequest,
 } from './eligibility.js';
 import { SpecialistError } from './errors.js';
+import { checkAgentListQuery, pageOfAgents, type AgentListPage } from './listing.js';
 import { isSpecialistId, isVersionNumber } from './model.js';
 import type { SpecialistRepository } from './repository.js';
 
@@ -24,6 +25,14 @@ import type { SpecialistRepository } from './repository.js';
  */
 export interface SpecialistService {
   list(tenant: TenantContext): Promise<readonly Specialist[]>;
+  /**
+   * One page of the organization's agents (AE-4): `limit`, `cursor`, `status`, `departmentId`,
+   * `q` (name) and `skill`, as a list request's query parameters. Never reads every agent.
+   */
+  page(
+    tenant: TenantContext,
+    params: Readonly<Record<string, string | undefined>>,
+  ): Promise<AgentListPage>;
   /** `specialist_not_found` for an unknown id or another organization's specialist alike. */
   get(tenant: TenantContext, id: string): Promise<Specialist>;
   /** One stored version of a specialist, for rebuilding what an execution used. */
@@ -97,6 +106,10 @@ export function createSpecialistService({
   return Object.freeze({
     async list(tenant: TenantContext) {
       return repository.list(await organizationOf(tenant));
+    },
+    async page(tenant: TenantContext, params: Readonly<Record<string, string | undefined>>) {
+      const organizationId = await organizationOf(tenant);
+      return pageOfAgents(repository, organizationId, checkAgentListQuery(params, organizationId));
     },
     get,
     async getVersion(tenant: TenantContext, id: string, version: number) {

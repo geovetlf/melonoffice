@@ -43,6 +43,14 @@ const NEEDS_AUTHORIZATION = new Set([
  * approval a person rejected, stays with that person's decision: no hand-off. A running task has
  * none yet.
  */
+/** The codes a task ends with when its agent stopped (AE-4, ADR-0115). */
+const AGENT_STOPPED: ReadonlySet<string> = new Set([
+  'agent_paused',
+  'agent_disabled',
+  'agent_not_active',
+  'agent_archived',
+]);
+
 export function handoffForTask(outcome: {
   readonly status: string;
   readonly failure: string | null;
@@ -51,6 +59,8 @@ export function handoffForTask(outcome: {
   const { status, failure, missing } = outcome;
   if (status === 'failed') {
     if (failure === 'approval_rejected') return null;
+    // Its agent was paused or disabled (AE-4): a person's decision, not an error to recover.
+    if (failure !== null && AGENT_STOPPED.has(failure)) return handoffTo('policy', failure);
     if (failure !== null && NEEDS_AUTHORIZATION.has(failure)) {
       return handoffTo('authorization_required', failure);
     }

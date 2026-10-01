@@ -14,6 +14,8 @@ export interface ToolFacts {
   readonly riskLevel: string;
   readonly approval: string;
   readonly permissions: readonly string[];
+  /** Whether the tool may run now (its definition is active). Absent: not known here. */
+  readonly active?: boolean;
 }
 
 export type ToolLookup = (id: string, version: number) => ToolFacts | undefined;

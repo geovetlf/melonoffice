@@ -2,6 +2,7 @@ import { createAIUsageLedger, type AIUsageStore } from '@melonoffice/ai-usage';
 import { createActivityService } from '@melonoffice/activity';
 import {
   createAgentTaskService,
+  createAgentWorkStop,
   TASK_PROPOSAL_LIMITS,
   type AgentTaskRepository,
   type TaskKickoff,
@@ -62,6 +63,7 @@ import {
   createExecutionService,
   type AgentOutputRepository,
   type ExecutionRepository,
+  type OpenExecutionIndex,
 } from '@melonoffice/execution';
 import {
   createForecastEngine,
@@ -200,7 +202,8 @@ export interface AppOptions {
    */
   readonly entitlementOverrides?: OverrideSource;
   /** Executions (ADR-0024). Absent: the execution route answers 503 (fails closed). */
-  readonly executions?: ExecutionRepository;
+  /** Also finds an agent's open executions, so stopping an agent reaches them (AE-4). */
+  readonly executions?: ExecutionRepository & OpenExecutionIndex;
   /**
    * Departments and specialists (ADR-0025). Absent: their routes answer 503 (fails closed), and
    * an execution that names a specialist is refused.
@@ -868,6 +871,20 @@ export function createApp({
             }),
       });
     }
+    const executionService =
+      tenancy !== undefined && executions !== undefined
+        ? createExecutionService({
+            repository: executions,
+            organizations: tenancy,
+            ...(specialists === undefined ? {} : { assignments: specialists.assignments }),
+            authorization,
+            audit,
+            // A cancelled planning execution reaches the children its plan delegated.
+            ...(plans === undefined
+              ? {}
+              : { cascade: createPlanCancellationCascade({ repository: plans }) }),
+          })
+        : undefined;
     if (tenancy !== undefined && structure !== undefined && specialists !== undefined) {
       const dependencies = { store: tenancy, authorization, audit };
       registerDepartmentRoutes(app, {
@@ -891,6 +908,28 @@ export function createApp({
           authorization,
           skills,
           tools: toolLookupOf(tools),
+          // No model policy check here: agents' policies live in the worker's catalogue, not the
+          // API's (ADR-0100), so the API cannot tell an unknown one from one it never loads.
+          // Pausing, disabling or archiving an agent cancels its work in progress (AE-4).
+          ...(executionService === undefined || executions === undefined
+            ? {}
+            : {
+                work: createAgentWorkStop({
+                  executions: executionService,
+                  open: executions,
+                  ...(approvals === undefined
+                    ? {}
+                    : {
+                        approvals: createApprovalService({
+                          repository: approvals,
+                          organizations: tenancy,
+                          authorization,
+                          audit,
+                        }),
+                      }),
+                  logger: logger.child({ component: 'agent-lifecycle' }),
+                }),
+              }),
         }),
       });
     } else if (tenancy !== undefined) {
@@ -900,20 +939,6 @@ export function createApp({
       app.all('/v1/organizations/:organizationId/specialists', unavailable);
       app.all('/v1/organizations/:organizationId/specialists/*', unavailable);
     }
-    const executionService =
-      tenancy !== undefined && executions !== undefined
-        ? createExecutionService({
-            repository: executions,
-            organizations: tenancy,
-            ...(specialists === undefined ? {} : { assignments: specialists.assignments }),
-            authorization,
-            audit,
-            // A cancelled planning execution reaches the children its plan delegated.
-            ...(plans === undefined
-              ? {}
-              : { cascade: createPlanCancellationCascade({ repository: plans }) }),
-          })
-        : undefined;
     if (tenancy !== undefined && executionService !== undefined) {
       registerExecutionRoutes(app, {
         store: tenancy,

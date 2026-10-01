@@ -344,16 +344,34 @@ export function reviseSpecialist(
 export interface SpecialistStatusChange {
   readonly from: SpecialistStatus;
   readonly to: SpecialistStatus;
+  /** Why, in the person's words (AE-4). A person must give one to disable an agent. */
+  readonly reason?: unknown;
+}
+
+/** The longest reason a status change may carry. */
+export const MAX_STATUS_REASON_LENGTH = 500;
+
+/**
+ * A status change's reason: trimmed text, or absent (AE-4, ADR-0115). Whether one is required is
+ * the caller's rule: a person disabling an agent must give one (`SpecialistManagement`).
+ */
+export function checkStatusReason(value: unknown): string | undefined {
+  if (value === undefined || value === null || (typeof value === 'string' && !value.trim())) {
+    return undefined;
+  }
+  return checkText(value, 'reason', MAX_STATUS_REASON_LENGTH);
 }
 
 /**
  * Applies one status change, or refuses it without changing anything. A status is not part of
- * the configuration, so it creates no version.
+ * the configuration, so it creates no version. The specialist keeps who changed it, when and why
+ * (AE-4): the audit log has every change, the specialist shows the last one.
  */
 export function applySpecialistStatus(
   current: Specialist,
   change: SpecialistStatusChange,
   now: IsoTimestamp,
+  by?: UserId,
 ): SpecialistWrite {
   if (current.status !== change.from) {
     throw new SpecialistError('specialist_concurrency_conflict');
@@ -362,12 +380,25 @@ export function applySpecialistStatus(
   if (!isSpecialistStatus(change.to) || !canChangeSpecialistStatus(current.status, change.to)) {
     throw new SpecialistError('invalid_specialist_transition');
   }
+  const reason = checkStatusReason(change.reason);
+  const at = later(current, now);
   return {
     specialist: Object.freeze({
       ...current,
       status: change.to,
       revision: current.revision + 1,
-      updatedAt: later(current, now),
+      updatedAt: at,
+      ...(by === undefined
+        ? {}
+        : {
+            lastStatusChange: Object.freeze({
+              from: current.status,
+              to: change.to,
+              at,
+              by,
+              ...(reason === undefined ? {} : { reason }),
+            }),
+          }),
     }),
   };
 }
@@ -426,6 +457,21 @@ export function checkStoredSpecialist(specialist: Specialist): Specialist {
   if (!isVersionNumber(specialist.version)) invalid('version');
   if (!isVersionNumber(specialist.revision)) invalid('revision');
   checkConfiguration(specialist.configuration, specialist.organizationId);
+  const change = specialist.lastStatusChange;
+  if (change !== undefined) {
+    if (
+      !isSpecialistStatus(change.from) ||
+      change.to !== specialist.status ||
+      typeof change.by !== 'string' ||
+      change.by.length === 0 ||
+      Number.isNaN(Date.parse(change.at))
+    ) {
+      invalid('lastStatusChange');
+    }
+    if (change.reason !== undefined) {
+      checkText(change.reason, 'lastStatusChange.reason', MAX_STATUS_REASON_LENGTH);
+    }
+  }
   return specialist;
 }
 

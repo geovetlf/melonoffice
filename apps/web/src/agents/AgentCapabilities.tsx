@@ -2,6 +2,7 @@ import { FormattedMessage, useIntl } from '@melonoffice/i18n';
 import { Button, StateMessage } from '@melonoffice/ui';
 import { useCallback, useEffect, useState } from 'react';
 import type { AgentCapabilitiesView, AgentsClient } from './agentsClient.js';
+import { ReadinessProblems } from './ReadinessProblems.js';
 
 /**
  * What an agent can do now (ADR-0062, ADR-0069, ADR-0083), on its page: its version, then each
@@ -107,15 +108,7 @@ export function AgentCapabilities({
               id={found.ready ? 'agents.capabilities.ready' : 'agents.capabilities.notReady'}
             />
           </p>
-          {found.problems.length === 0 ? null : (
-            <ul className="coming">
-              {[...new Set(found.problems.map((p) => p.kind))].map((kind) => (
-                <li key={kind} className="coming__item">
-                  {message(`agents.problem.${kind}`, kind)}
-                </li>
-              ))}
-            </ul>
-          )}
+          <ReadinessProblems problems={found.problems} />
           {notice === undefined ? null : (
             <StateMessage kind={notice === 'error' ? 'error' : 'success'}>
               <FormattedMessage id={`agents.upgrade.${notice}`} />

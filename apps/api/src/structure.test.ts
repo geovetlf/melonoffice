@@ -235,6 +235,7 @@ describe.each(STORES)('departments and specialists with storage in %s', (_name, 
         skills: [{ id: 'web_research', version: 5 }],
         createdAt: AT,
         updatedAt: AT,
+        lastStatusChange: null,
       });
       expect(JSON.stringify(body)).not.toMatch(
         /secret_tool|hidden_budget|organization\.read|permissions|policies|tools|createdBy|revision/,

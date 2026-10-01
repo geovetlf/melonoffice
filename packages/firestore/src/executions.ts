@@ -10,6 +10,8 @@ import {
   checkStoredExecution,
   ExecutionError,
   isExecutionId,
+  OPEN_STATUSES,
+  type OpenExecutionIndex,
   type ExecutionRepository,
   type ExecutionWrite,
 } from '@melonoffice/execution';
@@ -22,6 +24,7 @@ import type {
   ExecutionVerification,
   IsoTimestamp,
   OrganizationId,
+  SpecialistId,
   VersionRef,
 } from '@melonoffice/domain';
 import { isOrganizationId } from '@melonoffice/tenancy';
@@ -250,8 +253,39 @@ function toExecution(id: string, d: ExecutionDocument): Execution {
 }
 
 /** Executions in Firestore. Each write is one transaction with its audit events. */
-export class FirestoreExecutionRepository implements ExecutionRepository {
+export class FirestoreExecutionRepository implements ExecutionRepository, OpenExecutionIndex {
   constructor(private readonly db: Firestore) {}
+
+  /**
+   * One query per open status, each with equality filters only, so Firestore serves them from
+   * its automatic single-field indexes: no composite index (AE-4, ADR-0115). Ids only.
+   */
+  async openOfSpecialist(
+    organizationId: OrganizationId,
+    specialistId: SpecialistId,
+    limit: number,
+  ) {
+    if (!isOrganizationId(organizationId) || !Number.isSafeInteger(limit) || limit < 1) {
+      return { ids: Object.freeze([] as ExecutionId[]), more: false };
+    }
+    const pages = await Promise.all(
+      OPEN_STATUSES.map((status) =>
+        this.db
+          .collection(EXECUTIONS)
+          .where('organizationId', '==', organizationId)
+          .where('specialistId', '==', specialistId)
+          .where('status', '==', status)
+          .select()
+          .limit(limit + 1)
+          .get(),
+      ),
+    );
+    const ids = pages.flatMap((p) => p.docs.map((d) => d.id as ExecutionId)).sort();
+    return {
+      ids: Object.freeze(ids.slice(0, limit)),
+      more: ids.length > limit || pages.some((p) => p.size > limit),
+    };
+  }
 
   async find(organizationId: OrganizationId, id: ExecutionId): Promise<Execution | undefined> {
     if (!isOrganizationId(organizationId) || !isExecutionId(id)) return undefined;

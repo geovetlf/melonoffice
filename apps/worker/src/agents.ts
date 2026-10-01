@@ -152,7 +152,8 @@ export function createConversationAgentParts(
         outputs,
         ...clock,
       }),
-      { ...clock },
+      // A paused or disabled agent stops at its next step (AE-4).
+      { ...clock, agents: stores.specialists },
     ),
     verifier: createAgentTurnVerifier({ outputs, conversations: stores.conversations }),
     outputs,
@@ -432,6 +433,7 @@ export function createAgentTaskParts(options: {
   // the AI Gateway's router are unchanged. Each turn's budget is what the earlier turns left.
   const work = createHarnessAgentWork(loop === undefined ? taskWork : loop.work(taskWork), {
     now: clock,
+    agents: stores.specialists,
     async taskOf(tenant, execution) {
       const facts = taskOf(execution);
       if (facts === undefined || !isResolvedTenant(tenant)) return undefined;
@@ -479,7 +481,7 @@ export function createAgentTaskParts(options: {
                 context,
                 outputs,
               }),
-              { now: clock },
+              { now: clock, agents: stores.specialists },
             ),
             verifier: createPlanStepVerifier({ outputs }),
           }),

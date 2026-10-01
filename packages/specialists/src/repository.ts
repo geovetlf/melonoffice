@@ -1,8 +1,10 @@
 import type { InMemoryAuditStore } from '@melonoffice/audit';
 import type {
+  DepartmentId,
   OrganizationId,
   Specialist,
   SpecialistId,
+  SpecialistStatus,
   SpecialistVersion,
 } from '@melonoffice/domain';
 import { SpecialistError } from './errors.js';
@@ -24,6 +26,11 @@ export interface SpecialistRepository {
   find(organizationId: OrganizationId, id: SpecialistId): Promise<Specialist | undefined>;
   /** Every specialist of the organization, in any status. */
   list(organizationId: OrganizationId): Promise<readonly Specialist[]>;
+  /**
+   * One page of the organization's specialists in id order, after `after` when given, narrowed
+   * by status and department in the store itself (AE-4, ADR-0115). Never reads the others.
+   */
+  page(organizationId: OrganizationId, request: SpecialistPageRequest): Promise<SpecialistPage>;
   /** One version of a specialist of the organization. */
   findVersion(
     organizationId: OrganizationId,
@@ -43,6 +50,39 @@ export interface SpecialistRepository {
     id: SpecialistId,
     change: (current: Specialist) => SpecialistWrite,
   ): Promise<Specialist>;
+}
+
+/** What one page asks the store for (AE-4): equality filters only, so no composite index. */
+export interface SpecialistPageRequest {
+  readonly after?: SpecialistId;
+  readonly limit: number;
+  readonly status?: SpecialistStatus;
+  readonly departmentId?: DepartmentId;
+}
+
+export interface SpecialistPage {
+  readonly items: readonly Specialist[];
+  readonly hasMore: boolean;
+}
+
+/** The page of `specialists` a request asks for, the way every store cuts it. */
+export function pageOfSpecialists(
+  specialists: readonly Specialist[],
+  request: SpecialistPageRequest,
+): SpecialistPage {
+  const { after, limit, status, departmentId } = request;
+  const matching = specialists
+    .filter(
+      (s) =>
+        (after === undefined || s.identity.id > after) &&
+        (status === undefined || s.status === status) &&
+        (departmentId === undefined || s.configuration.departmentId === departmentId),
+    )
+    .sort((a, b) => (a.identity.id < b.identity.id ? -1 : 1));
+  return {
+    items: Object.freeze(matching.slice(0, limit)),
+    hasMore: matching.length > limit,
+  };
 }
 
 const versionKey = (id: SpecialistId, version: number): string => `${id}_${version}`;
@@ -67,6 +107,12 @@ export class InMemorySpecialistRepository implements SpecialistRepository {
       .filter((s) => s.organizationId === organizationId)
       .map(checkStoredSpecialist)
       .sort((a, b) => (a.identity.id < b.identity.id ? -1 : 1));
+  }
+
+  async page(organizationId: OrganizationId, request: SpecialistPageRequest) {
+    const mine = [...this.#specialists.values()].filter((s) => s.organizationId === organizationId);
+    const page = pageOfSpecialists(mine, request);
+    return { items: Object.freeze(page.items.map(checkStoredSpecialist)), hasMore: page.hasMore };
   }
 
   async findVersion(

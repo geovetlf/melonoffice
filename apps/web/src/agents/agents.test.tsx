@@ -41,16 +41,26 @@ const statusCalls = (backend: ReturnType<typeof fakeBackend>) =>
   backend.apiCalls().filter((c) => c.method === 'POST' && c.url.includes('/specialists'));
 
 describe('Agents (ADR-0025, ADR-0062)', () => {
-  it('lists agents by status with their department', async () => {
-    open('/agents');
+  /** The agents' list on the page, and one agent's row in it. */
+  const list = () => screen.findByRole('region', { name: 'Agents' });
+  const row = async (name: string) =>
+    within(
+      (await within(await list()).findByRole('button', { name })).closest('li') as HTMLElement,
+    );
+
+  it('lists agents with their status and department', async () => {
+    const backend = open('/agents');
     expect(await screen.findByRole('heading', { level: 1, name: 'Agents' })).toBeTruthy();
-    const active = await screen.findByRole('region', { name: /Active/ });
-    expect(within(active).getByRole('button', { name: 'Lucía' })).toBeTruthy();
-    const drafts = screen.getByRole('region', { name: /Drafts/ });
-    expect(within(drafts).getByRole('button', { name: 'Mateo' })).toBeTruthy();
-    expect(within(drafts).getByRole('button', { name: 'Activate' })).toBeTruthy();
+    const lucia = await row('Lucía');
+    expect(lucia.getByText('Active')).toBeTruthy();
+    const mateo = await row('Mateo');
+    expect(mateo.getByText('Draft')).toBeTruthy();
+    expect(mateo.getByRole('button', { name: 'Activate' })).toBeTruthy();
     const sidebar = screen.getByRole('navigation', { name: 'Tools' });
     expect(within(sidebar).getByRole('link', { name: /Agents/ })).toBeTruthy();
+    // The list is asked for one page at a time (AE-4.3).
+    const read = backend.apiCalls().find((c) => /\/specialists\?/.test(c.url));
+    expect(read?.url).toContain('limit=25');
   });
 
   it('creates an agent from a template as a draft', async () => {
@@ -65,8 +75,7 @@ describe('Agents (ADR-0025, ADR-0062)', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: 'Create as draft' }));
     expect(await screen.findByText('Rosa was created as a draft.')).toBeTruthy();
-    const drafts = screen.getByRole('region', { name: /Drafts/ });
-    expect(within(drafts).getByRole('button', { name: 'Rosa' })).toBeTruthy();
+    expect((await row('Rosa')).getByText('Draft')).toBeTruthy();
     const created = statusCalls(backend).find((c) => c.url.endsWith('/specialists'));
     expect(JSON.parse(created?.body ?? '{}')).toEqual({
       templateId: 'commercial',
@@ -75,29 +84,130 @@ describe('Agents (ADR-0025, ADR-0062)', () => {
     });
   });
 
-  it('activates and pauses an agent through the status route', async () => {
+  it('activates an agent through the status route', async () => {
     const backend = open('/agents');
-    const drafts = await screen.findByRole('region', { name: /Drafts/ });
-    fireEvent.click(within(drafts).getByRole('button', { name: 'Activate' }));
+    fireEvent.click((await row('Mateo')).getByRole('button', { name: 'Activate' }));
     expect(await screen.findByText('Mateo is now active.')).toBeTruthy();
     const call = statusCalls(backend).find((c) => c.url.endsWith('/spec_mateo/status'));
     expect(JSON.parse(call?.body ?? '{}')).toEqual({ from: 'draft', to: 'active' });
-    expect(screen.queryByRole('region', { name: /Drafts/ })).toBeNull();
+    expect(await (await row('Mateo')).findByText('Active')).toBeTruthy();
   });
 
-  it('asks before archiving, and does nothing when the person says no', async () => {
+  it('names what an agent lacks when it cannot be activated yet (AE-4.2)', async () => {
+    open('/agents', (b) => {
+      b.options.activationProblems = {
+        spec_mateo: [
+          { kind: 'permission_not_held', permission: 'opportunity.read' },
+          { kind: 'no_skills' },
+        ],
+      };
+    });
+    fireEvent.click((await row('Mateo')).getByRole('button', { name: 'Activate' }));
+    expect(await screen.findByText("Mateo can't be activated yet:")).toBeTruthy();
+    expect(screen.getByText(/It needs access to .*, which you don't have\./)).toBeTruthy();
+    expect((await row('Mateo')).getByText('Draft')).toBeTruthy();
+  });
+
+  it('says what pausing does, and pauses with the reason only once confirmed (AE-4.1)', async () => {
     const backend = open('/agents');
-    vi.spyOn(globalThis, 'confirm').mockReturnValue(false);
-    const active = await screen.findByRole('region', { name: /Active/ });
-    fireEvent.click(within(active).getByRole('button', { name: 'Archive' }));
+    fireEvent.click((await row('Lucía')).getByRole('button', { name: 'Pause' }));
+    expect(await screen.findByRole('heading', { name: 'Pause Lucía' })).toBeTruthy();
+    expect(screen.getByText(/the ones in progress stop/)).toBeTruthy();
     expect(statusCalls(backend)).toHaveLength(0);
+    fireEvent.change(screen.getByRole('textbox', { name: 'Reason (optional)' }), {
+      target: { value: 'Vacaciones' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    expect(
+      await screen.findByText('Lucía is paused. Its tasks in progress were stopped.'),
+    ).toBeTruthy();
+    const call = statusCalls(backend).find((c) => c.url.endsWith('/spec_lucia/status'));
+    expect(JSON.parse(call?.body ?? '{}')).toEqual({
+      from: 'active',
+      to: 'paused',
+      reason: 'Vacaciones',
+    });
+  });
+
+  it('disabling cannot be confirmed without a reason (AE-4.1)', async () => {
+    const backend = open('/agents');
+    fireEvent.click((await row('Lucía')).getByRole('button', { name: 'Disable' }));
+    const confirm = await screen.findByRole('button', { name: 'Confirm' });
+    expect((confirm as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByRole('textbox', { name: 'Reason' }), {
+      target: { value: 'Respuestas fuera de tono' },
+    });
+    fireEvent.click(confirm);
+    expect(
+      await screen.findByText('Lucía is disabled. Its tasks in progress were stopped.'),
+    ).toBeTruthy();
+    const call = statusCalls(backend).find((c) => c.url.endsWith('/spec_lucia/status'));
+    expect(JSON.parse(call?.body ?? '{}')).toMatchObject({ reason: 'Respuestas fuera de tono' });
+  });
+
+  it('archiving does nothing when the person goes back', async () => {
+    const backend = open('/agents');
+    fireEvent.click((await row('Lucía')).getByRole('button', { name: 'Archive' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Back' }));
+    expect(screen.queryByRole('heading', { name: 'Archive Lucía' })).toBeNull();
+    expect(statusCalls(backend)).toHaveLength(0);
+  });
+
+  it('pages through the agents and filters them on the server (AE-4.3)', async () => {
+    const backend = open('/agents', (b) => {
+      b.options.pageSize = 25;
+      b.options.specialists.org_1 = Array.from({ length: 30 }, (_, i) => ({
+        id: `spec_${String(i).padStart(2, '0')}`,
+        name: `Agent ${String(i).padStart(2, '0')}`,
+        type: 'sales',
+        status: i % 2 === 0 ? 'active' : 'draft',
+      }));
+    });
+    expect(await row('Agent 00')).toBeTruthy();
+    expect(within(await list()).queryByRole('button', { name: 'Agent 25' })).toBeNull();
+    const previous = screen.getByRole('button', { name: 'Previous' }) as HTMLButtonElement;
+    expect(previous.disabled).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    expect(await row('Agent 29')).toBeTruthy();
+    expect(screen.getByText('Page 2')).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'Next' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Previous' }));
+    expect(await row('Agent 00')).toBeTruthy();
+
+    fireEvent.change(screen.getByRole('combobox', { name: 'Status' }), {
+      target: { value: 'draft' },
+    });
+    expect(await row('Agent 01')).toBeTruthy();
+    expect(within(await list()).queryByRole('button', { name: 'Agent 00' })).toBeNull();
+    expect(backend.apiCalls().some((c) => c.url.includes('status=draft'))).toBe(true);
+
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search by name' }), {
+      target: { value: 'nobody' },
+    });
+    fireEvent.submit(screen.getByRole('searchbox', { name: 'Search by name' }));
+    expect(await screen.findByText('No agent matches the search.')).toBeTruthy();
+  });
+
+  it('says so when a page cannot be read', async () => {
+    open('/agents', (b) => {
+      b.options.specialists.org_1 = Array.from({ length: 26 }, (_, i) => ({
+        id: `spec_${String(i).padStart(2, '0')}`,
+        name: `Agent ${String(i).padStart(2, '0')}`,
+        type: 'sales',
+        status: 'active',
+      }));
+      b.options.nextPagesFail = true;
+    });
+    await row('Agent 00');
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    expect(await screen.findByText('The agents could not be loaded.')).toBeTruthy();
   });
 
   it('without specialist.manage, lists agents with no create or status buttons', async () => {
     open('/agents', (b) => {
       b.options.permissions = b.options.permissions.filter((p) => p !== 'specialist.manage');
     });
-    await screen.findByRole('region', { name: /Active/ });
+    await row('Lucía');
     expect(screen.queryByRole('button', { name: 'Create agent' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Pause' })).toBeNull();
   });

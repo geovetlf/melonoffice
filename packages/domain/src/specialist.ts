@@ -120,6 +120,21 @@ export interface Specialist {
   /** Increases with every change; a write expecting an older revision is refused. */
   readonly revision: number;
   readonly updatedAt: IsoTimestamp;
+  /**
+   * Who last changed the status, when and why (AE-4, ADR-0115). Absent on specialists whose
+   * status nobody has changed since it was introduced: their audit log still has it.
+   */
+  readonly lastStatusChange?: SpecialistStatusChangeRecord;
+}
+
+/** One status change, as the specialist keeps it (AE-4, ADR-0115). */
+export interface SpecialistStatusChangeRecord {
+  readonly from: SpecialistStatus;
+  readonly to: SpecialistStatus;
+  readonly at: IsoTimestamp;
+  readonly by: UserId;
+  /** The person's own words, when they gave a reason. Required to disable. */
+  readonly reason?: string;
 }
 
 /**
