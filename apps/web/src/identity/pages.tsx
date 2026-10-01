@@ -160,6 +160,15 @@ function ContinueWithGoogle({
 }) {
   const { signInWithGoogle } = useAuth();
   const [leaving, setLeaving] = useState(false);
+  // Coming back with the browser's Back button can restore this page as it was left, still
+  // leaving for Google: the button is ready again.
+  useEffect(() => {
+    const restored = (event: PageTransitionEvent) => {
+      if (event.persisted) setLeaving(false);
+    };
+    globalThis.addEventListener('pageshow', restored);
+    return () => globalThis.removeEventListener('pageshow', restored);
+  }, []);
 
   async function google() {
     if (busy || leaving) return;

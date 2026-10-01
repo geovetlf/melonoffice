@@ -228,6 +228,19 @@ describe('signing in with Google (ADR-0105)', () => {
     expect([...store.data.keys()]).toEqual([REFRESH_KEY]);
   });
 
+  it('makes the button usable again when Back restores the page', async () => {
+    const { services, leave } = withGoogle('/login');
+    renderApp(services);
+    const button = await screen.findByRole('button', { name: 'Continue with Google' });
+    fireEvent.click(button);
+    await waitFor(() => expect(leave).toHaveBeenCalled());
+    expect((button as HTMLButtonElement).disabled).toBe(true);
+    act(() => {
+      globalThis.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));
+    });
+    expect((button as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it('says so when Google sign-in is not turned on here', async () => {
     const { services, backend, leave } = withGoogle('/login');
     backend.options.google = 'off';
