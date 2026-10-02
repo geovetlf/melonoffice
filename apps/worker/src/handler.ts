@@ -35,6 +35,15 @@ export interface JobHandlerOptions {
   readonly runtime: Pick<Runtime, 'advance'>;
   /** This worker instance, recorded on the lease. Infrastructure, never an actor. */
   readonly workerId: string;
+  /**
+   * Told when a job's node now waits on a person's approval (ADR-0117), so they can be told. It
+   * changes nothing here, and its failure is only logged.
+   */
+  readonly onWaitingApproval?: (job: {
+    readonly organizationId: string;
+    readonly executionId: string;
+    readonly jobId: string;
+  }) => Promise<void>;
   readonly logger?: Logger;
 }
 
@@ -82,6 +91,7 @@ export function createJobHandler({
   jobs,
   runtime,
   workerId,
+  onWaitingApproval,
   logger,
 }: JobHandlerOptions): JobHandler {
   return {
@@ -133,6 +143,13 @@ export function createJobHandler({
           code: result.code,
           durationMs: Math.round(performance.now() - started),
         });
+        if (result.outcome === 'waiting_approval' && onWaitingApproval !== undefined) {
+          await onWaitingApproval({
+            organizationId: claim.job.organizationId,
+            executionId: claim.job.executionId,
+            jobId: claim.job.id,
+          }).catch(() => log?.warn('waiting approval hook failed'));
+        }
         return answer(200, { result: 'advanced', outcome: result.outcome, code: result.code });
       } catch (error) {
         // Nothing is undone or repeated here. A later delivery finds the lease (live: 409; expired:

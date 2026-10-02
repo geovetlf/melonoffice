@@ -64,8 +64,33 @@ export interface AgentPageView {
   readonly nextCursor: string | null;
 }
 
+/** What else an agent's work uses (ADR-0117): each off until a person switches it on. */
+export interface AgentWorkSettingsView {
+  readonly memory: boolean;
+  readonly aiVerification: boolean;
+  readonly collaboration: boolean;
+}
+
+export const AGENT_WORK_SETTINGS: readonly (keyof AgentWorkSettingsView)[] = [
+  'memory',
+  'aiVerification',
+  'collaboration',
+];
+
+/** One note of an agent's own memory (ADR-0117): never Company Brain's. */
+export interface AgentMemoryNoteView {
+  readonly id: string;
+  readonly kind: 'preference' | 'lesson' | 'note';
+  readonly text: string;
+  readonly source: 'task' | 'person';
+  readonly createdAt: string;
+  readonly expiresAt: string;
+}
+
 export interface AgentCapabilitiesView {
   readonly version: number;
+  /** Its work settings (ADR-0117). Absent from an older server: all off. */
+  readonly work?: AgentWorkSettingsView;
   /** How far it acts on its own (AE-4.4). Absent from an older server: the default. */
   readonly autonomy?: AgentAutonomyLevel;
   readonly ready: boolean;
@@ -172,6 +197,19 @@ export interface AgentsClient {
     id: string,
     input: { readonly fromVersion: number; readonly autonomy: AgentAutonomyLevel },
   ): Promise<AgentView>;
+  /** Needs `specialist.manage`: its memory, AI check and collaboration, as a new version. */
+  setWorkSettings?(
+    id: string,
+    input: { readonly fromVersion: number } & Partial<AgentWorkSettingsView>,
+  ): Promise<AgentView>;
+  /** Its own memory (ADR-0117): whether it is on, and its notes. */
+  memories?(
+    id: string,
+  ): Promise<{ readonly enabled: boolean; readonly items: readonly AgentMemoryNoteView[] }>;
+  /** Needs `specialist.manage`: a person's note for the agent. */
+  remember?(id: string, text: string): Promise<AgentMemoryNoteView>;
+  forget?(id: string, memoryId: string): Promise<void>;
+  clearMemory?(id: string): Promise<number>;
 }
 
 /** How many agents one page shows. */
@@ -232,5 +270,26 @@ export function createAgentsClient(request: ReplyRequest, organizationId: string
       post<AgentView>(`/specialists/${encodeURIComponent(id)}/skills/upgrade`, input),
     setAutonomy: (id, input) =>
       post<AgentView>(`/specialists/${encodeURIComponent(id)}/autonomy`, input),
+    setWorkSettings: (id, input) =>
+      post<AgentView>(`/specialists/${encodeURIComponent(id)}/settings`, input),
+    memories: (id) =>
+      call<{ enabled: boolean; items: AgentMemoryNoteView[] }>(
+        `/specialists/${encodeURIComponent(id)}/memories`,
+      ),
+    remember: (id, text) =>
+      post<AgentMemoryNoteView>(`/specialists/${encodeURIComponent(id)}/memories`, { text }),
+    async forget(id, memoryId) {
+      await call(
+        `/specialists/${encodeURIComponent(id)}/memories/${encodeURIComponent(memoryId)}`,
+        { method: 'DELETE' },
+      );
+    },
+    async clearMemory(id) {
+      const body = await call<{ deleted?: number }>(
+        `/specialists/${encodeURIComponent(id)}/memories`,
+        { method: 'DELETE' },
+      );
+      return body.deleted ?? 0;
+    },
   };
 }

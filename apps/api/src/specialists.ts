@@ -12,6 +12,7 @@ import {
   type SpecialistManagement,
   type SpecialistService,
   type ToolLookup,
+  workSettingsOf,
 } from '@melonoffice/specialists';
 import { toolCanRun, type ToolRegistry } from '@melonoffice/tools';
 import type { Context, Hono } from 'hono';
@@ -109,6 +110,16 @@ export function registerSpecialistRoutes(
     ),
   );
 
+  // Its work settings (ADR-0117): its own memory, an AI check of its answers, collaboration.
+  app.post(
+    '/v1/organizations/:organizationId/specialists/:specialistId/settings',
+    withPermission('specialist.manage', dependencies, async (c, tenant) =>
+      answer(c, 200, async () =>
+        management.setWorkSettings(tenant, c.req.param('specialistId') ?? '', await bodyOf(c)),
+      ),
+    ),
+  );
+
   // The organization's rules for its agents (AE-4.4, ADR-0116): what else it counts as
   // sensitive, and the furthest any of its agents acts on its own.
   if (agentPolicies !== undefined) {
@@ -173,6 +184,7 @@ export function registerSpecialistRoutes(
           version: specialist.version,
           // How far it acts on its own (AE-4.4): a person with specialist.manage changes it.
           autonomy: autonomyOf(specialist.configuration),
+          work: workSettingsOf(specialist.configuration),
           ...found,
           upgrades,
         });
@@ -250,6 +262,8 @@ export function toSpecialistView(specialist: Specialist) {
     skills: configuration.skills.map(({ id, version }) => ({ id, version })),
     // How far it acts on its own (AE-4.4, ADR-0116): the default when it names none.
     autonomy: autonomyOf(configuration),
+    // What else its work uses (ADR-0117), each off until a person switches it on.
+    work: workSettingsOf(configuration),
     createdAt: identity.createdAt,
     updatedAt: specialist.updatedAt,
     // Who last changed its status, when and why (AE-4): the person decided it, so it is shown.

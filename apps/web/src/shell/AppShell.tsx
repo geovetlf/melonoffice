@@ -30,10 +30,12 @@ import { usePath } from '../identity/router.js';
 import { GiaChatProvider } from '../gia/GiaChat.js';
 import { GiaQuickAsk } from '../gia/GiaQuickAsk.js';
 import { createGiaClient } from '../gia/giaClient.js';
+import { createGiaTeamClient } from '../gia/teamClient.js';
 import { GiaWorkplace } from '../gia/GiaWorkplace.js';
 import { AgentPlace, DepartmentOffice, NotFound } from '../office/DepartmentOffice.js';
 import { createOfficeClient } from '../office/officeClient.js';
 import { createAgentTasksClient } from '../office/agentTasksClient.js';
+import { createAgentNotificationsClient } from './agentNotificationsClient.js';
 import { createExecutionsClient } from '../executions/executionsClient.js';
 import { MemoryPage } from '../memory/MemoryPage.js';
 import { ReportsPage, ReportsSection } from '../reports/Reports.js';
@@ -183,6 +185,8 @@ export function AppShell(locale: LocaleProps) {
             approvals: createApprovalsClient(services.api.request, organizationId),
             agents: createAgentsClient(services.api.request, organizationId),
             agentTasks: createAgentTasksClient(services.api.request, organizationId),
+            agentNotices: createAgentNotificationsClient(services.api.request, organizationId),
+            giaTeam: createGiaTeamClient(services.api.request, organizationId),
             executions: createExecutionsClient(services.api.request, organizationId),
             automations: createAutomationsClient(services.api.request, organizationId),
             partners: createPartnersClient(services.api.request, organizationId),
@@ -537,7 +541,7 @@ export function AppShell(locale: LocaleProps) {
             <GiaChatProvider
               client={canAskGia ? clients.gia : undefined}
               {...(canManageFollowUps ? { followUps: clients.followUps } : {})}
-              {...(canAskAgents ? { agentTasks: clients.agentTasks } : {})}
+              {...(canAskAgents ? { agentTasks: clients.agentTasks, team: clients.giaTeam } : {})}
             >
               {/* The Home is the office's picture, edge to edge: its menu is the drawer at any width. */}
               <div className={route.kind === 'home' ? 'app app--scene' : 'app'}>
@@ -592,6 +596,7 @@ export function AppShell(locale: LocaleProps) {
                       approvals: canReadApprovals ? clients.approvals : undefined,
                       automations: canReadPlans ? clients.automations : undefined,
                       followUps: canReadFollowUps ? clients.followUps : undefined,
+                      agents: canReadAgents ? clients.agentNotices : undefined,
                     }}
                   />
                   <main

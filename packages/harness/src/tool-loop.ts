@@ -1,6 +1,7 @@
 import {
   aiToolOf,
   type AIContentPart,
+  type AIGateway,
   type AIMessage,
   type AIRequest,
   type AIToolDefinition,
@@ -239,6 +240,7 @@ interface LoopVerifier {
   verify(
     tenant: TenantContext,
     execution: Execution,
+    context?: { readonly ai: Pick<AIGateway, 'generate'> },
   ): Promise<
     { readonly verification: VerificationInput; readonly result?: ExecutionRef } | undefined
   >;
@@ -546,8 +548,12 @@ export function createHarnessToolLoop(options: HarnessToolLoopOptions): HarnessT
 
     verifier(inner) {
       return Object.freeze({
-        async verify(tenant: TenantContext, execution: Execution) {
-          const result = await inner.verify(tenant, execution);
+        async verify(
+          tenant: TenantContext,
+          execution: Execution,
+          context?: { readonly ai: Pick<AIGateway, 'generate'> },
+        ) {
+          const result = await inner.verify(tenant, execution, context);
           if (result === undefined) return undefined;
           const covered = new Set(result.verification.nodes.map((n) => n.nodeId as string));
           const added: VerificationInput['nodes'][number][] = [];

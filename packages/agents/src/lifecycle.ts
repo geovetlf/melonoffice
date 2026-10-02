@@ -24,13 +24,22 @@ export interface AgentWorkStopOptions {
     cancel(tenant: TenantContext, id: string, reason: string): Promise<unknown>;
   };
   readonly limit?: number;
+  /**
+   * Told of each execution it cancelled (ADR-0117): the API tells the task's person their agent
+   * was stopped. Its failure changes nothing.
+   */
+  readonly onCancelled?: (
+    tenant: TenantContext,
+    execution: { readonly id: ExecutionId },
+    reason: SpecialistStopReason,
+  ) => Promise<void>;
   readonly logger?: {
     warn(message: string, fields?: Readonly<Record<string, unknown>>): void;
   };
 }
 
 export function createAgentWorkStop(options: AgentWorkStopOptions): SpecialistWorkStop {
-  const { executions, open, approvals, logger } = options;
+  const { executions, open, approvals, onCancelled, logger } = options;
   const limit = options.limit ?? AGENT_STOP_LIMIT;
   return Object.freeze({
     async stop(tenant: TenantContext, specialistId: SpecialistId, reason: SpecialistStopReason) {
@@ -53,6 +62,7 @@ export function createAgentWorkStop(options: AgentWorkStopOptions): SpecialistWo
             // Only a pending approval is withdrawn; a decided or expired one refuses, harmlessly.
             await approvals.cancel(tenant, node.approvalId, reason).catch(() => undefined);
           }
+          await onCancelled?.(tenant, execution, reason).catch(() => undefined);
         } catch {
           // Another cancellation, or the end, came first; or the write failed: the Harness stops
           // it at its next step either way.

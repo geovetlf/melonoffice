@@ -27,3 +27,6 @@ export * from './users.js';
 export * from './workflows.js';
 export * from './ai-usage.js';
 export * from './agent-policies.js';
+export * from './agent-memories.js';
+export * from './agent-handoffs.js';
+export * from './agent-notifications.js';

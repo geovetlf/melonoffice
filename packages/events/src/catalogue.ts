@@ -68,12 +68,24 @@ export const EVENT_CATALOGUE: readonly EventDefinition[] = Object.freeze([
   define('agent_task.finished', 'execution', 'agents', {
     specialistId: { kind: 'id' },
     outcome: { kind: 'code' },
+    // When it now needs a person (ADR-0102): why, and the failure code (ADR-0117 notices).
+    handoff: { kind: 'code', optional: true },
+    code: { kind: 'code', optional: true },
   }),
   // A task the Harness or an agent ran now needs a person (ADR-0101, ADR-0102): why, as codes.
   define('agent_execution.handoff', 'execution', 'harness', {
     specialistId: { kind: 'id' },
     reason: { kind: 'code' },
     code: { kind: 'code', optional: true },
+  }),
+  // An agent's task waits on a person's approval of one of its steps (ADR-0117).
+  define('agent_task.approval_required', 'execution', 'agents', {
+    specialistId: { kind: 'id' },
+  }),
+  // An agent proposed handing part of its task to another (ADR-0117); a person decides.
+  define('agent_handoff.proposed', 'agent_handoff', 'agents', {
+    specialistId: { kind: 'id' },
+    receivingId: { kind: 'id', optional: true },
   }),
   // A decision asked for approval (ADR-0065).
   define('decision.approval_required', 'decision', 'decisions', {

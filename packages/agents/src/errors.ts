@@ -9,7 +9,18 @@ export type AgentTaskErrorCode =
   | 'specialist_not_found'
   | 'specialist_not_available'
   | 'task_not_found'
-  | 'idempotency_conflict';
+  | 'idempotency_conflict'
+  // An agent's own memory (ADR-0117).
+  | 'invalid_memory'
+  | 'memory_not_found'
+  | 'memory_full'
+  // Handoffs between agents (ADR-0117).
+  | 'handoff_not_found'
+  | 'handoff_not_pending'
+  | 'no_agent_available'
+  | 'budget_exhausted'
+  // In-app notifications (ADR-0117).
+  | 'notification_not_found';
 
 export class AgentTaskError extends Error {
   override readonly name = 'AgentTaskError';

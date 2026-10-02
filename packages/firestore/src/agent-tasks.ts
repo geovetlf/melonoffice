@@ -33,6 +33,8 @@ interface AgentTaskDocument {
   readonly createdAt: FirestoreTimestamp;
   /** Absent on tasks without a budget, and on every task written before ADR-0100. */
   readonly maxCredits?: number;
+  /** The task it was handed from (ADR-0117); absent on tasks a person asked for directly. */
+  readonly parentTaskId?: string;
 }
 
 const toDocument = (task: AgentTask): AgentTaskDocument => ({
@@ -43,6 +45,7 @@ const toDocument = (task: AgentTask): AgentTaskDocument => ({
   requestedBy: task.requestedBy,
   createdAt: Timestamp.fromDate(new Date(task.createdAt)),
   ...(task.maxCredits === undefined ? {} : { maxCredits: task.maxCredits }),
+  ...(task.parentTaskId === undefined ? {} : { parentTaskId: task.parentTaskId }),
 });
 
 const toTask = (id: string, data: DocumentData): AgentTask => {
@@ -56,6 +59,7 @@ const toTask = (id: string, data: DocumentData): AgentTask => {
     requestedBy: d.requestedBy as UserId,
     createdAt: d.createdAt.toDate().toISOString() as IsoTimestamp,
     ...(typeof d.maxCredits === 'number' ? { maxCredits: d.maxCredits } : {}),
+    ...(typeof d.parentTaskId === 'string' ? { parentTaskId: d.parentTaskId as ExecutionId } : {}),
   });
 };
 

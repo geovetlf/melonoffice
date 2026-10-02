@@ -62,7 +62,16 @@ import {
   type ChannelTemplateRepository,
 } from '@melonoffice/integrations';
 import { InMemoryPlanRepository, type PlanRepository } from '@melonoffice/planning';
-import { InMemoryAgentTaskRepository, type AgentTaskRepository } from '@melonoffice/agents';
+import {
+  InMemoryAgentHandoffRepository,
+  InMemoryAgentNotificationRepository,
+  InMemoryAgentMemoryRepository,
+  InMemoryAgentTaskRepository,
+  type AgentHandoffRepository,
+  type AgentNotificationRepository,
+  type AgentMemoryRepository,
+  type AgentTaskRepository,
+} from '@melonoffice/agents';
 import { InMemoryWorkflowRepository, type WorkflowRepository } from '@melonoffice/workflows';
 import type {
   BillingAccount,
@@ -111,6 +120,9 @@ import {
   FirestoreApprovalRepository,
   FirestoreSpecialistRepository,
   FirestoreDepartmentMigrationStore,
+  FirestoreAgentHandoffRepository,
+  FirestoreAgentNotificationRepository,
+  FirestoreAgentMemoryRepository,
   FirestoreAgentPolicyRepository,
   FirestoreBusinessProfileRepository,
   FirestoreKnowledgeRepository,
@@ -199,6 +211,9 @@ export interface Stores {
   readonly knowledge: KnowledgeRepository;
   /** What people asked agents (ADR-0063). */
   readonly agentTasks: AgentTaskRepository;
+  readonly agentMemories: AgentMemoryRepository;
+  readonly agentHandoffs: AgentHandoffRepository;
+  readonly agentNotifications: AgentNotificationRepository;
   /** Uploaded documents' records (ADR-0078); their bytes are in `setupApp`'s file store. */
   readonly documents: DocumentRepository;
   /** The department catalogue migration's storage (ADR-0047). */
@@ -281,6 +296,9 @@ function memoryStores(): Stores {
     auditReader: events,
     knowledge: new InMemoryKnowledgeRepository(breakable),
     agentTasks: new InMemoryAgentTaskRepository(),
+    agentMemories: new InMemoryAgentMemoryRepository(breakable),
+    agentHandoffs: new InMemoryAgentHandoffRepository(breakable),
+    agentNotifications: new InMemoryAgentNotificationRepository(),
     documents: new InMemoryDocumentRepository(breakable),
     departmentMigration: new InMemoryDepartmentMigrationStore(
       departments,
@@ -348,6 +366,9 @@ function firestoreStores(): Stores {
     auditReader: new FirestoreAuditStore(db),
     knowledge: new FirestoreKnowledgeRepository(db),
     agentTasks: new FirestoreAgentTaskRepository(db),
+    agentMemories: new FirestoreAgentMemoryRepository(db),
+    agentHandoffs: new FirestoreAgentHandoffRepository(db),
+    agentNotifications: new FirestoreAgentNotificationRepository(db),
     documents: new FirestoreDocumentRepository(db),
     departmentMigration: new FirestoreDepartmentMigrationStore(db),
     async putStructure(record) {
@@ -541,7 +562,14 @@ export function setupApp(
       ...(scheduler === null ? {} : { followUpScheduler: scheduler }),
     },
     webhooks: engine,
-    agentTasks: { repository: stores.agentTasks, outputs: agentOutputs, runtime: kickoff },
+    agentTasks: {
+      repository: stores.agentTasks,
+      outputs: agentOutputs,
+      runtime: kickoff,
+      memories: stores.agentMemories,
+      handoffs: stores.agentHandoffs,
+      notifications: stores.agentNotifications,
+    },
     documents: {
       repository: stores.documents,
       ...(files === null ? {} : { files }),

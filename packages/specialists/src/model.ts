@@ -2,6 +2,7 @@ import type { AuditEvent } from '@melonoffice/audit';
 import { acceptsAssignments, organizationOfDepartmentId } from '@melonoffice/departments';
 import type {
   AgentAutonomy,
+  AgentWorkSettings,
   ConversationAgentProfile,
   DefinitionRef,
   Department,
@@ -230,7 +231,43 @@ export function checkConfiguration(
     ...(value.autonomy === undefined
       ? {}
       : { autonomy: isAgentAutonomy(value.autonomy) ? value.autonomy : invalid('autonomy') }),
+    ...(value.work === undefined ? {} : { work: checkWorkSettings(value.work) }),
   });
+}
+
+/** An agent's work settings (ADR-0117), by name. */
+export const AGENT_WORK_SETTINGS = Object.freeze([
+  'memory',
+  'aiVerification',
+  'collaboration',
+] as const);
+export type AgentWorkSetting = (typeof AGENT_WORK_SETTINGS)[number];
+
+/** Whether a work setting is on for this configuration: off unless a person switched it on. */
+export const workSettingOf = (
+  configuration: Pick<SpecialistConfiguration, 'work'>,
+  setting: AgentWorkSetting,
+): boolean => configuration.work?.[setting] === true;
+
+/** Every work setting, each on or off. */
+export const workSettingsOf = (
+  configuration: Pick<SpecialistConfiguration, 'work'>,
+): Readonly<Record<AgentWorkSetting, boolean>> =>
+  Object.freeze(
+    Object.fromEntries(
+      AGENT_WORK_SETTINGS.map((s) => [s, workSettingOf(configuration, s)]),
+    ) as Record<AgentWorkSetting, boolean>,
+  );
+
+function checkWorkSettings(value: unknown): AgentWorkSettings {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) invalid('work');
+  const entries = Object.entries(value as Record<string, unknown>);
+  for (const [key, on] of entries) {
+    if (!(AGENT_WORK_SETTINGS as readonly string[]).includes(key) || typeof on !== 'boolean') {
+      invalid(`work.${key}`);
+    }
+  }
+  return Object.freeze(Object.fromEntries(entries)) as AgentWorkSettings;
 }
 
 /** Whether two configurations say the same thing. Lists compare in order. */

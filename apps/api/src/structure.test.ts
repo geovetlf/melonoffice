@@ -237,6 +237,7 @@ describe.each(STORES)('departments and specialists with storage in %s', (_name, 
         updatedAt: AT,
         autonomy: 'controlled',
         lastStatusChange: null,
+        work: { memory: false, aiVerification: false, collaboration: false },
       });
       expect(JSON.stringify(body)).not.toMatch(
         /secret_tool|hidden_budget|organization\.read|permissions|policies|tools|createdBy|revision/,

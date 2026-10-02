@@ -25,12 +25,14 @@ import {
   autonomyOf,
   checkConfiguration,
   checkStatusReason,
+  AGENT_WORK_SETTINGS,
   isAgentAutonomy,
   isSpecialistId,
   isVersionNumber,
   newSpecialist,
   reviseSpecialist,
   type SpecialistWrite,
+  workSettingsOf,
 } from './model.js';
 import { agentReadiness } from './readiness.js';
 import type { SpecialistRepository } from './repository.js';
@@ -68,6 +70,15 @@ export interface SpecialistManagement {
    * and permissions stay exactly as they are, and sensitive actions still wait on a person.
    */
   setAutonomy(
+    tenant: TenantContext,
+    id: string,
+    input: Record<string, unknown>,
+  ): Promise<Specialist>;
+  /**
+   * Switches the agent's work settings on or off, as a new version of the agent:
+   * `{ fromVersion, memory?, aiVerification?, collaboration? }` (ADR-0117). It grants nothing.
+   */
+  setWorkSettings(
     tenant: TenantContext,
     id: string,
     input: Record<string, unknown>,
@@ -153,7 +164,8 @@ export function createSpecialistManagement(
       | 'specialist.created'
       | 'specialist.version_created'
       | 'specialist.status_changed'
-      | 'specialist.autonomy_changed',
+      | 'specialist.autonomy_changed'
+      | 'specialist.settings_changed',
     at: Date,
     transition?: { readonly from: string; readonly to: string },
     reason?: string,
@@ -324,14 +336,18 @@ export function createSpecialistManagement(
         if (configuration.autonomy !== undefined && configuration.autonomy !== autonomy) {
           bad('autonomy');
         }
+        // So do the work settings, through `setWorkSettings` (ADR-0117).
+        const work = current.configuration.work;
+        if (configuration.work !== undefined && !same(configuration.work, work)) bad('work');
         const write = reviseSpecialist(
           current,
           {
             fromVersion: input.fromVersion as number,
-            configuration:
-              autonomy === undefined
-                ? configuration
-                : Object.freeze({ ...configuration, autonomy }),
+            configuration: Object.freeze({
+              ...configuration,
+              ...(autonomy === undefined ? {} : { autonomy }),
+              ...(work === undefined ? {} : { work }),
+            }),
             department,
           },
           person.userId,
@@ -434,6 +450,64 @@ export function createSpecialistManagement(
             event(person, write.specialist, 'specialist.autonomy_changed', at, {
               from: before,
               to: level,
+            }),
+          ],
+        };
+      });
+    },
+
+    async setWorkSettings(tenant, id, input) {
+      const organizationId = await managerOf(tenant);
+      const person = userOf(tenant);
+      if (!isRecord(input)) bad('body');
+      const changes: [string, boolean][] = [];
+      for (const [key, value] of Object.entries(input)) {
+        if (key === 'fromVersion') continue;
+        if (!(AGENT_WORK_SETTINGS as readonly string[]).includes(key)) bad(key);
+        if (typeof value !== 'boolean') bad(key);
+        changes.push([key, value as boolean]);
+      }
+      if (!isVersionNumber(input.fromVersion)) bad('fromVersion');
+      if (changes.length === 0) bad('work');
+      if (!isSpecialistId(id)) throw new SpecialistError('specialist_not_found');
+      const read = await repository.find(organizationId, id);
+      if (read === undefined) throw new SpecialistError('specialist_not_found');
+      const department = await departmentOf(organizationId, read.configuration);
+      return update(organizationId, id, (current, at) => {
+        const before = workSettingsOf(current.configuration);
+        const after = Object.freeze({ ...before, ...Object.fromEntries(changes) });
+        // Nothing to change is a mistake, not a new version.
+        if (AGENT_WORK_SETTINGS.every((s) => before[s] === after[s])) bad('work');
+        // Only what is on is stored: an agent with everything off reads like one from before.
+        const on = Object.fromEntries(
+          AGENT_WORK_SETTINGS.filter((s) => after[s]).map((s) => [s, true]),
+        );
+        const rest = Object.fromEntries(
+          Object.entries(current.configuration).filter(([key]) => key !== 'work'),
+        ) as unknown as SpecialistConfiguration;
+        const write = reviseSpecialist(
+          current,
+          {
+            fromVersion: input.fromVersion as number,
+            configuration: Object.freeze(
+              Object.keys(on).length === 0 ? rest : { ...rest, work: Object.freeze(on) },
+            ),
+            department,
+          },
+          person.userId,
+          at.toISOString() as IsoTimestamp,
+        );
+        // As audit codes: `memory_and_ai_verification`, or `none` with everything off.
+        const codes = (settings: Readonly<Record<string, boolean>>) =>
+          AGENT_WORK_SETTINGS.filter((s) => settings[s])
+            .map((s) => s.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`))
+            .join('_and_') || 'none';
+        return {
+          ...write,
+          events: [
+            event(person, write.specialist, 'specialist.settings_changed', at, {
+              from: codes(before),
+              to: codes(after),
             }),
           ],
         };

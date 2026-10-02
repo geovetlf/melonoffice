@@ -1,12 +1,21 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
 import { Button, ListItem, StateMessage } from '@melonoffice/ui';
-import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from 'react';
 import { navigate } from '../identity/router.js';
 import { paths } from '../shell/routes.js';
 import {
   AgentTaskError,
   followUpOfTask,
   isOpenTask,
+  type AgentTaskTraceView,
   type AgentTaskView,
   type AgentTasksClient,
   type TaskFollowUpView,
@@ -62,6 +71,34 @@ export const statusKey = (task: AgentTaskView) => {
   }
   return STATUS_KEYS[task.status] ?? 'agentTasks.status.running';
 };
+
+/**
+ * What the agent is doing, in one plain sentence (ADR-0117): working, needs your approval,
+ * finished, needs information, blocked because it needs access, stopped, or could not finish.
+ */
+export function sentenceKey(task: AgentTaskView): string {
+  const follow = followUpOfTask(task)?.state;
+  if (follow === 'waiting_approval' || task.status === 'waiting_approval') {
+    return 'agentTasks.sentence.approval';
+  }
+  if (isOpenTask(task)) return 'agentTasks.sentence.working';
+  const reason = task.handoff?.reason;
+  if (task.status === 'completed') {
+    return reason === 'missing_information'
+      ? 'agentTasks.sentence.needsInfo'
+      : 'agentTasks.sentence.finished';
+  }
+  if (task.status === 'cancelled') return 'agentTasks.sentence.stopped';
+  if (task.status === 'failed') {
+    if (follow === 'rejected' || follow === 'expired') {
+      return task.answer === null ? 'agentTasks.sentence.stopped' : 'agentTasks.sentence.finished';
+    }
+    if (reason === 'policy') return 'agentTasks.sentence.stopped';
+    if (reason === 'authorization_required') return 'agentTasks.sentence.blocked';
+    return 'agentTasks.sentence.failed';
+  }
+  return 'agentTasks.sentence.unknown';
+}
 
 /** An internal link that stays in the app. */
 function Link({ to, children }: { readonly to: string; readonly children: ReactNode }) {
@@ -148,13 +185,205 @@ function ProposedFollowUp({
   );
 }
 
+function departmentName(intl: ReturnType<typeof useIntl>, type: string): string {
+  const key = `department.${type}.short`;
+  return Object.hasOwn(intl.messages, key) ? intl.formatMessage({ id: key }) : type;
+}
+
+/** What the agent proposed to hand to another department's agent (ADR-0117); a person decides. */
+function HandoffPanel({
+  task,
+  agentName,
+  onDecide,
+  busy,
+}: {
+  readonly task: AgentTaskView;
+  readonly agentName: string;
+  readonly onDecide?: ((decision: 'accept' | 'decline') => void) | undefined;
+  readonly busy: boolean;
+}) {
+  const intl = useIntl();
+  const handoff = task.agentHandoff;
+  if (handoff === null || handoff === undefined) return null;
+  const department = departmentName(intl, handoff.department);
+  return (
+    <div
+      className="agent-task__proposal agent-task__handoff"
+      role="group"
+      aria-label={intl.formatMessage({ id: 'agentTasks.handoff.title' })}
+    >
+      <p className="mo-list-item__meta">
+        <FormattedMessage
+          id={`agentTasks.handoff.state.${handoff.state}`}
+          values={{ name: agentName, department }}
+        />
+      </p>
+      <p>{handoff.request}</p>
+      {handoff.state === 'refused' && handoff.refusal !== null ? (
+        <p className="mo-list-item__meta">
+          <FormattedMessage id={`agentTasks.handoff.refusal.${handoff.refusal}`} />
+        </p>
+      ) : null}
+      {handoff.state === 'proposed' ? (
+        onDecide === undefined ? (
+          <p className="mo-hint">
+            <FormattedMessage id="agentTasks.handoff.ownerDecides" />
+          </p>
+        ) : (
+          <>
+            <p className="mo-hint">
+              <FormattedMessage id="agentTasks.handoff.hint" values={{ department }} />
+            </p>
+            <div className="mo-form__actions">
+              <Button size="sm" disabled={busy} onClick={() => onDecide('accept')}>
+                <FormattedMessage id="agentTasks.handoff.accept" />
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={busy}
+                onClick={() => onDecide('decline')}
+              >
+                <FormattedMessage id="agentTasks.handoff.decline" />
+              </Button>
+            </div>
+          </>
+        )
+      ) : null}
+    </div>
+  );
+}
+
+/** "Ver detalles" (ADR-0117): the task's steps, tools, approvals, models, credits and errors. */
+function TaskDetails({
+  taskId,
+  trace,
+}: {
+  readonly taskId: string;
+  readonly trace: (taskId: string) => Promise<AgentTaskTraceView>;
+}) {
+  const intl = useIntl();
+  const [open, setOpen] = useState(false);
+  const [found, setFound] = useState<AgentTaskTraceView | 'error' | undefined>();
+  useEffect(() => {
+    if (!open) return;
+    let live = true;
+    trace(taskId).then(
+      (t) => live && setFound(t),
+      () => live && setFound('error'),
+    );
+    return () => {
+      live = false;
+    };
+  }, [open, taskId, trace]);
+  const label = (prefix: string, code: string) => {
+    const key = `${prefix}.${code}`;
+    return Object.hasOwn(intl.messages, key) ? intl.formatMessage({ id: key }) : code;
+  };
+  return (
+    <div className="agent-task__details">
+      <Button size="sm" variant="secondary" onClick={() => setOpen((v) => !v)}>
+        <FormattedMessage id={open ? 'agentTasks.details.hide' : 'agentTasks.details.show'} />
+      </Button>
+      {!open ? null : found === undefined ? (
+        <StateMessage kind="loading" inline>
+          <FormattedMessage id="agentTasks.details.loading" />
+        </StateMessage>
+      ) : found === 'error' ? (
+        <StateMessage kind="warning" inline>
+          <FormattedMessage id="agentTasks.details.error" />
+        </StateMessage>
+      ) : (
+        <div className="agent-task__trace">
+          <p className="mo-list-item__meta">
+            <FormattedMessage
+              id="agentTasks.details.credits"
+              values={{ total: found.credits.total, task: found.credits.task }}
+            />
+            {found.credits.budget === null ? null : (
+              <>
+                {' '}
+                <FormattedMessage
+                  id="agentTasks.details.budget"
+                  values={{ budget: found.credits.budget }}
+                />
+              </>
+            )}
+          </p>
+          <ol className="agent-task__steps">
+            {found.steps.map((step) => (
+              <li key={step.nodeId}>
+                <FormattedMessage
+                  id={`agentTasks.details.step.${step.type === 'tool' ? 'tool' : 'agent'}`}
+                  values={{ tool: step.tool?.id ?? '' }}
+                />{' '}
+                · {label('agentTasks.details.status', step.status)}
+                {step.model === null ? null : (
+                  <>
+                    {' '}
+                    ·{' '}
+                    <FormattedMessage
+                      id="agentTasks.details.model"
+                      values={{ model: step.model.model, credits: step.model.credits }}
+                    />
+                  </>
+                )}
+                {step.approvalId === null ? null : (
+                  <>
+                    {' '}
+                    · <FormattedMessage id="agentTasks.details.approval" />
+                  </>
+                )}
+                {step.error === null ? null : (
+                  <>
+                    {' '}
+                    ·{' '}
+                    <FormattedMessage
+                      id="agentTasks.details.error.code"
+                      values={{ code: step.error }}
+                    />
+                  </>
+                )}
+              </li>
+            ))}
+          </ol>
+          {found.review === null ? null : (
+            <p className="mo-list-item__meta">
+              <FormattedMessage
+                id={`agentTasks.details.review.${found.review.verdict}`}
+                values={{ credits: found.credits.review }}
+              />
+            </p>
+          )}
+          {found.subtasks.length === 0 ? null : (
+            <p className="mo-list-item__meta">
+              <FormattedMessage
+                id="agentTasks.details.subtasks"
+                values={{ count: found.subtasks.length, credits: found.credits.subtasks }}
+              />
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TaskItem({
   task,
+  agentName,
   onStop,
   onDecide,
+  onHandoff,
+  trace,
   busy = false,
 }: {
   readonly task: AgentTaskView;
+  readonly agentName: string;
+  /** Accepts or declines the handoff the task proposed; absent, only the owner decides. */
+  readonly onHandoff?: ((decision: 'accept' | 'decline') => void) | undefined;
+  /** Reads what happened in the task, for "Ver detalles". */
+  readonly trace?: ((taskId: string) => Promise<AgentTaskTraceView>) | undefined;
   /** Stops an open task; absent, it has no stop. */
   readonly onStop?: (() => void) | undefined;
   /** Decides the follow-up it proposed; absent, the person is sent to the approvals. */
@@ -187,6 +416,9 @@ function TaskItem({
         ) : null
       }
     >
+      <p className="agent-task__sentence">
+        <FormattedMessage id={sentenceKey(task)} values={{ name: agentName }} />
+      </p>
       {task.answer === null ? null : (
         <div className="agent-task__answer">
           <p>{task.answer.answer}</p>
@@ -231,6 +463,8 @@ function TaskItem({
           <FormattedMessage id="agentTasks.failed" />
         </StateMessage>
       ) : null}
+      <HandoffPanel task={task} agentName={agentName} onDecide={onHandoff} busy={busy} />
+      {trace === undefined ? null : <TaskDetails taskId={task.id} trace={trace} />}
     </ListItem>
   );
 }
@@ -365,6 +599,35 @@ export function AgentTasks({
       setTasks((current) => current.map((t) => (t.id === fresh.id ? fresh : t)));
   }
 
+  const traceOf = useMemo(() => {
+    const read = client.trace;
+    return read === undefined ? undefined : (taskId: string) => read.call(client, taskId);
+  }, [client]);
+
+  async function decideHandoff(task: AgentTaskView, decision: 'accept' | 'decline') {
+    const act = decision === 'accept' ? client.acceptHandoff : client.declineHandoff;
+    if (act === undefined) return;
+    setDeciding(task.id);
+    setError(undefined);
+    try {
+      await act(task.id);
+    } catch (failure) {
+      // Refused (no agent free, no budget left) or decided elsewhere: reading it again says so.
+      setError(
+        failure instanceof AgentTaskError && failure.code === 'budget_exhausted'
+          ? 'agentTasks.handoff.error.budget'
+          : failure instanceof AgentTaskError && failure.code === 'no_agent_available'
+            ? 'agentTasks.handoff.error.noAgent'
+            : 'agentTasks.handoff.error',
+      );
+    } finally {
+      setDeciding(undefined);
+    }
+    const fresh = await client.get(task.id).catch(() => undefined);
+    if (fresh !== undefined)
+      setTasks((current) => current.map((t) => (t.id === fresh.id ? fresh : t)));
+  }
+
   async function submit(event: FormEvent) {
     event.preventDefault();
     const request = text.trim();
@@ -443,6 +706,13 @@ export function AgentTasks({
             <TaskItem
               key={task.id}
               task={task}
+              agentName={agentName}
+              onHandoff={
+                canAsk && client.acceptHandoff !== undefined
+                  ? (decision) => void decideHandoff(task, decision)
+                  : undefined
+              }
+              trace={traceOf}
               onStop={stop === undefined ? undefined : () => void stopTask(task)}
               onDecide={
                 decide === undefined ? undefined : (decision) => void decideFollowUp(task, decision)

@@ -1,4 +1,10 @@
-import { isGiaError, type GiaErrorCode, type GiaService } from '@melonoffice/gia';
+import {
+  isGiaError,
+  type createGiaSummary,
+  type GiaErrorCode,
+  type GiaService,
+} from '@melonoffice/gia';
+import { isPlanningError } from '@melonoffice/planning';
 import type { Hono } from 'hono';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import type { AuthEnv } from './auth.js';
@@ -54,6 +60,58 @@ export function registerGiaRoutes(
         });
         return c.json({ ...answer, generatedBy: 'ai' });
       } catch (error) {
+        if (!isGiaError(error)) throw error;
+        return c.json(
+          { error: error.code, ...(error.field === undefined ? {} : { field: error.field }) },
+          STATUS[error.code],
+        );
+      }
+    }),
+  );
+}
+
+const SUMMARY_FIELDS = new Set(['requestKey', 'locale']);
+
+/**
+ * GIA summarizes a team's work (ADR-0117): `POST .../gia/plans/:planId/summary` with exactly
+ * `{ requestKey, locale? }`. She reads the plan and its agents' answers as the person; a plan they
+ * may not read is not found. Nothing is stored and nothing in the summary is run.
+ */
+export function registerGiaSummaryRoute(
+  app: Hono<AuthEnv>,
+  dependencies: AuthorizationDependencies & {
+    readonly summary?: ReturnType<typeof createGiaSummary>;
+  },
+): void {
+  const { summary } = dependencies;
+  app.post(
+    '/v1/organizations/:organizationId/gia/plans/:planId/summary',
+    withPermission('gia.ask', dependencies, async (c, tenant) => {
+      if (summary === undefined) return c.json({ error: 'ai_not_available' }, 503);
+      const body: unknown = await c.req.json().catch(() => undefined);
+      if (
+        typeof body !== 'object' ||
+        body === null ||
+        Array.isArray(body) ||
+        Object.keys(body).some((k) => !SUMMARY_FIELDS.has(k))
+      ) {
+        return c.json({ error: 'invalid_request' }, 400);
+      }
+      const { requestKey, locale } = body as Record<string, unknown>;
+      try {
+        const result = await summary.summarize(tenant, {
+          planId: c.req.param('planId'),
+          requestKey,
+          ...(locale === undefined ? {} : { locale }),
+        });
+        return c.json({ ...result, generatedBy: 'ai' });
+      } catch (error) {
+        if (isPlanningError(error)) {
+          if (error.code === 'plan_not_found') return c.json({ error: 'plan_not_found' }, 404);
+          if (error.code === 'permission_denied') {
+            return c.json({ error: 'permission_denied' }, 403);
+          }
+        }
         if (!isGiaError(error)) throw error;
         return c.json(
           { error: error.code, ...(error.field === undefined ? {} : { field: error.field }) },

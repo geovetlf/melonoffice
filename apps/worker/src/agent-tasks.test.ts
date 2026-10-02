@@ -510,6 +510,8 @@ describe.each(STORES)('AE-2 agent tasks with storage in %s', (_storage, createSt
       missing: ['Margen del Combo Familiar'],
       followUp: null,
       facts: [],
+      remember: [],
+      handoff: null,
     });
     // Its end on the event bus, as the runtime for Alice (ADR-0102): it finished, and what it
     // could not answer goes to a person.
@@ -522,7 +524,11 @@ describe.each(STORES)('AE-2 agent tasks with storage in %s', (_storage, createSt
           {
             type: 'agent_task.finished',
             subject,
-            data: { specialistId: lucia.identity.id, outcome: 'completed' },
+            data: {
+              specialistId: lucia.identity.id,
+              outcome: 'completed',
+              handoff: 'missing_information',
+            },
             idempotencyKey: `${subject.id}:finished`,
           },
           {
@@ -632,7 +638,15 @@ describe.each(STORES)('AE-2 agent tasks with storage in %s', (_storage, createSt
     expect(execution?.status).toBe('failed');
     // A person must add credits: the hand-off says so (ADR-0102).
     expect(w.published.flatMap((p) => p.drafts.map((d) => [d.type, d.data]))).toEqual([
-      ['agent_task.finished', { specialistId: lucia.identity.id, outcome: 'failed' }],
+      [
+        'agent_task.finished',
+        {
+          specialistId: lucia.identity.id,
+          outcome: 'failed',
+          handoff: 'authorization_required',
+          code: execution?.failure?.code,
+        },
+      ],
       [
         'agent_execution.handoff',
         {

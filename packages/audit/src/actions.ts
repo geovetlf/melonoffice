@@ -337,6 +337,63 @@ export const AUDIT_ACTIONS = {
       'A person changed how far an agent acts on its own (AE-4.4, ADR-0116) as a new immutable version (`targetVersion`); `transition` is the level before → after (propose, controlled, within_policy).',
     results: ['success'],
   },
+  'specialist.settings_changed': {
+    category: 'specialist',
+    description:
+      "A person switched an agent's work settings on or off (ADR-0117) as a new immutable version (`targetVersion`); `transition` is the settings on before → after (memory, aiVerification, collaboration, or none).",
+    results: ['success'],
+  },
+  'agent_memory.recorded': {
+    category: 'specialist',
+    description:
+      "A note was kept in an agent's own memory (ADR-0117), by a person or by the agent from a task (`reference` is the task). The note's words stay in the memory, never here.",
+    results: ['success'],
+  },
+  'agent_memory.forgotten': {
+    category: 'specialist',
+    description: "A person deleted one note from an agent's own memory (ADR-0117).",
+    results: ['success'],
+  },
+  'agent_memory.cleared': {
+    category: 'specialist',
+    description: "A person deleted every note of an agent's own memory (ADR-0117).",
+    results: ['success'],
+  },
+  'agent_handoff.proposed': {
+    category: 'specialist',
+    description:
+      'An agent proposed, at the end of a task, to hand part of it to an agent of another department (ADR-0117); a person decides. `reason` is the code the agent gave.',
+    results: ['success'],
+  },
+  'agent_handoff.accepted': {
+    category: 'specialist',
+    description:
+      'A person accepted a handoff (ADR-0117): the receiving agent got its own task, with its own permissions and a budget no larger than what the first task had left.',
+    results: ['success'],
+  },
+  'agent_handoff.declined': {
+    category: 'specialist',
+    description: 'A person declined a handoff an agent proposed (ADR-0117); nothing was started.',
+    results: ['success'],
+  },
+  'agent_handoff.refused': {
+    category: 'specialist',
+    description:
+      'MelonOffice refused a handoff (ADR-0117) before or when a person decided; `reason` is why (for example `no_agent_available`, `budget_exhausted`, `permission_denied`).',
+    results: ['denied'],
+  },
+  'agent_handoff.settled': {
+    category: 'specialist',
+    description:
+      "The receiving agent's task of a handoff ended (ADR-0117); `transition` is accepted → completed or failed.",
+    results: ['success'],
+  },
+  'gia.results_summarized': {
+    category: 'gia',
+    description:
+      'GIA summarized for a person the answers of the agents of a plan (ADR-0117). She reads only what the person may read; the summary is not stored.',
+    results: ['success'],
+  },
   'agent_policy.changed': {
     category: 'specialist',
     description:
