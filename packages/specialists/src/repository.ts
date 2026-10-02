@@ -1,5 +1,6 @@
 import type { InMemoryAuditStore } from '@melonoffice/audit';
 import type {
+  AgentAutonomy,
   DepartmentId,
   OrganizationId,
   Specialist,
@@ -52,12 +53,28 @@ export interface SpecialistRepository {
   ): Promise<Specialist>;
 }
 
-/** What one page asks the store for (AE-4): equality filters only, so no composite index. */
+/**
+ * What one page asks the store for (AE-4). Status and department are equality filters with no
+ * composite index. A skill (any of these exact references, at most 30) or a stored autonomy level
+ * needs one of the two composite indexes of ADR-0118; a store without it throws
+ * `SpecialistIndexUnavailable` and the caller reads without them.
+ */
 export interface SpecialistPageRequest {
   readonly after?: SpecialistId;
   readonly limit: number;
   readonly status?: SpecialistStatus;
   readonly departmentId?: DepartmentId;
+  readonly skillRefs?: readonly { readonly id: string; readonly version: number }[];
+  /** The level as stored: an agent at the default level has none stored and does not match. */
+  readonly autonomy?: AgentAutonomy;
+}
+
+/** The store cannot serve a request's skill or autonomy filter yet: its index is missing. */
+export class SpecialistIndexUnavailable extends Error {
+  constructor() {
+    super('specialist index unavailable');
+    this.name = 'SpecialistIndexUnavailable';
+  }
 }
 
 export interface SpecialistPage {
@@ -70,13 +87,18 @@ export function pageOfSpecialists(
   specialists: readonly Specialist[],
   request: SpecialistPageRequest,
 ): SpecialistPage {
-  const { after, limit, status, departmentId } = request;
+  const { after, limit, status, departmentId, skillRefs, autonomy } = request;
   const matching = specialists
     .filter(
       (s) =>
         (after === undefined || s.identity.id > after) &&
         (status === undefined || s.status === status) &&
-        (departmentId === undefined || s.configuration.departmentId === departmentId),
+        (departmentId === undefined || s.configuration.departmentId === departmentId) &&
+        (skillRefs === undefined ||
+          s.configuration.skills.some((r) =>
+            skillRefs.some((w) => w.id === r.id && w.version === r.version),
+          )) &&
+        (autonomy === undefined || s.configuration.autonomy === autonomy),
     )
     .sort((a, b) => (a.identity.id < b.identity.id ? -1 : 1));
   return {

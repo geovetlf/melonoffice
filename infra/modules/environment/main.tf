@@ -617,6 +617,41 @@ resource "google_firestore_index" "documents" {
   }
 }
 
+# An organization's agents searched by skill or by autonomy level, one page at a time in id order
+# (ADR-0118). A skill is asked with `array-contains-any` over its versions; an autonomy level other
+# than the default by equality; the document id that orders them is implicit. Until these exist, the API reads the agents without them (at most
+# 500 per request) and logs it, so applying them never has to come before the code.
+locals {
+  specialist_indexes = {
+    specialists_skills = [
+      ["organizationId", "ASCENDING", null],
+      ["configuration.skills", null, "CONTAINS"],
+    ]
+    specialists_autonomy = [
+      ["organizationId", "ASCENDING", null],
+      ["configuration.autonomy", "ASCENDING", null],
+    ]
+  }
+}
+
+resource "google_firestore_index" "specialists" {
+  for_each = var.firestore_and_auth ? local.specialist_indexes : {}
+
+  project     = var.project_id
+  database    = google_firestore_database.default[0].name
+  collection  = "specialists"
+  query_scope = "COLLECTION"
+
+  dynamic "fields" {
+    for_each = each.value
+    content {
+      field_path   = fields.value[0]
+      order        = fields.value[1]
+      array_config = fields.value[2]
+    }
+  }
+}
+
 # Enables Identity Platform with email and password sign-in only. Other providers and MFA are
 # added when the auth work needs them. Identity Platform cannot be disabled once enabled; a
 # destroy only removes it from state.

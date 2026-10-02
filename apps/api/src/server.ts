@@ -83,7 +83,10 @@ function services(projectId: string) {
   const approvals = new FirestoreApprovalRepository(firestore);
   const structure = {
     departments: new FirestoreDepartmentRepository(firestore),
-    specialists: new FirestoreSpecialistRepository(firestore),
+    // An agent search by skill or autonomy read the old way while its index is missing (ADR-0118).
+    specialists: new FirestoreSpecialistRepository(firestore, {
+      onIndexMissing: (query) => logger.warn('firestore.index_missing', { query }),
+    }),
   };
   const audit = createAuditService(new FirestoreAuditStore(firestore));
   // The Integration Engine (ADR-0044), only where channel secrets are configured: its registry

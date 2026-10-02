@@ -1,5 +1,6 @@
 import type {
   Firestore,
+  QuerySnapshot,
   Timestamp as FirestoreTimestamp,
   Transaction,
 } from '@google-cloud/firestore';
@@ -19,6 +20,7 @@ import {
   isSpecialistId,
   isVersionNumber,
   SpecialistError,
+  SpecialistIndexUnavailable,
   type SpecialistPageRequest,
   type SpecialistRepository,
   type SpecialistWrite,
@@ -223,7 +225,11 @@ function toVersion(d: SpecialistVersionDocument): SpecialistVersion {
 
 /** Specialists and their versions in Firestore. Each write is one transaction. */
 export class FirestoreSpecialistRepository implements SpecialistRepository {
-  constructor(private readonly db: Firestore) {}
+  constructor(
+    private readonly db: Firestore,
+    /** Told when a skill or autonomy page meets a missing index (ADR-0118), to log it. */
+    private readonly options: { readonly onIndexMissing?: (query: string) => void } = {},
+  ) {}
 
   async find(organizationId: OrganizationId, id: SpecialistId): Promise<Specialist | undefined> {
     if (!isOrganizationId(organizationId) || !isSpecialistId(id)) return undefined;
@@ -248,8 +254,10 @@ export class FirestoreSpecialistRepository implements SpecialistRepository {
   }
 
   /**
-   * One page in document-id order (AE-4, ADR-0115). Equality filters only, ordered by document
-   * id, so Firestore serves it from its automatic single-field indexes: no composite index.
+   * One page in document-id order (AE-4, ADR-0115). Status and department are equality filters
+   * Firestore serves from its automatic single-field indexes. A skill (`array-contains-any`) or an
+   * autonomy level needs its composite index (ADR-0118); while that is missing Firestore answers
+   * FAILED_PRECONDITION and this throws `SpecialistIndexUnavailable`, so the caller reads without.
    */
   async page(organizationId: OrganizationId, request: SpecialistPageRequest) {
     if (!isOrganizationId(organizationId)) return { items: Object.freeze([]), hasMore: false };
@@ -258,9 +266,35 @@ export class FirestoreSpecialistRepository implements SpecialistRepository {
     if (request.departmentId !== undefined) {
       query = query.where('configuration.departmentId', '==', request.departmentId);
     }
+    const indexed = request.skillRefs !== undefined || request.autonomy !== undefined;
+    if (request.skillRefs !== undefined) {
+      if (request.skillRefs.length === 0 || request.skillRefs.length > 30) {
+        throw new Error('skillRefs must name 1 to 30 skill versions');
+      }
+      query = query.where(
+        'configuration.skills',
+        'array-contains-any',
+        request.skillRefs.map(({ id, version }) => ({ id, version })),
+      );
+    }
+    if (request.autonomy !== undefined) {
+      query = query.where('configuration.autonomy', '==', request.autonomy);
+    }
     query = query.orderBy(FieldPath.documentId());
     if (request.after !== undefined) query = query.startAfter(request.after);
-    const snapshot = await query.limit(request.limit + 1).get();
+    let snapshot: QuerySnapshot;
+    try {
+      snapshot = await query.limit(request.limit + 1).get();
+    } catch (error) {
+      // FAILED_PRECONDITION: the composite index of ADR-0118 is not there (yet).
+      if (indexed && (error as { code?: unknown }).code === 9) {
+        this.options.onIndexMissing?.(
+          request.skillRefs === undefined ? 'specialists_autonomy' : 'specialists_skills',
+        );
+        throw new SpecialistIndexUnavailable();
+      }
+      throw error;
+    }
     const items = snapshot.docs
       .slice(0, request.limit)
       .map((doc) => toSpecialist(doc.id, doc.data() as SpecialistDocument));
