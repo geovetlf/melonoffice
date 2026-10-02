@@ -86,7 +86,9 @@ export function sentenceKey(task: AgentTaskView): string {
   if (follow === 'waiting_approval' || task.status === 'waiting_approval') {
     return 'agentTasks.sentence.approval';
   }
-  if (isOpenTask(task)) return 'agentTasks.sentence.working';
+  if (isOpenTask(task)) {
+    return task.stale === true ? 'agentTasks.sentence.stuck' : 'agentTasks.sentence.working';
+  }
   const reason = task.handoff?.reason;
   if (task.status === 'completed') {
     return reason === 'missing_information'

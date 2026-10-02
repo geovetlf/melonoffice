@@ -6,6 +6,7 @@ import {
   answerNodeOf,
   AGENT_TASK_SCHEDULE_NODE,
   isAgentTaskError,
+  isStaleWork,
   MODEL_FOLLOW_UP_TOOL,
   parseAgentAnswer,
   parseTaskFollowUp,
@@ -97,10 +98,12 @@ export function registerAgentTaskRoutes(
     readonly notifications?: AgentNotificationService;
     /** The audit trail of a task and its handoff, for its trace (ADR-0117). */
     readonly history?: AuditHistoryReader;
+    readonly now?: () => Date;
   },
 ): void {
   const { tasksFor, outputs, contacts, memoriesFor, handoffsFor, notifications, history } =
     dependencies;
+  const now = dependencies.now ?? (() => new Date());
 
   /** A handoff as a person reads it: who asked whom, why, its state and what it spent. */
   const handoffView = (h: AgentHandoff) => ({
@@ -259,6 +262,8 @@ export function registerAgentTaskRoutes(
       status: execution?.status ?? 'unknown',
       failure: execution?.failure?.code ?? null,
       completedAt: execution?.completedAt ?? null,
+      // Open but not moving for long (ADR-0120): the person may stop it; it never blocks the agent.
+      stale: execution !== undefined && isStaleWork(execution, now()),
       answer,
       // A follow-up the agent asked for with its tool (ADR-0104), approved by a person first.
       toolFollowUp: execution === undefined ? null : await toolFollowUpOf(tenant, execution),

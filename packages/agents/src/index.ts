@@ -9,3 +9,4 @@ export * from './handoffs.js';
 export * from './notifications.js';
 export * from './ai-review.js';
 export * from './trace.js';
+export * from './stale.js';

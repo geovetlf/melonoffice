@@ -1923,6 +1923,7 @@
   "platform.commercial.resellers": "Most resellers",
   "platform.commercial.resellerLimit": "up to {resellers} resellers",
   "agentTasks.sentence.working": "{name} is working on this.",
+  "agentTasks.sentence.stuck": "{name} has made no progress on this for hours. It may be stuck: you can stop it.",
   "agentTasks.sentence.approval": "{name} needs your approval to go on.",
   "agentTasks.sentence.finished": "{name} finished.",
   "agentTasks.sentence.needsInfo": "{name} finished, but needs information from you.",
