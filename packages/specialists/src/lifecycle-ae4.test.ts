@@ -29,6 +29,8 @@ import { isSpecialistError } from './errors.js';
 import {
   AGENT_SCAN_MAX,
   checkAgentListQuery,
+  indexedAgentFilter,
+  SKILL_VERSIONS_QUERIED,
   decodeAgentCursor,
   encodeAgentCursor,
   pageOfAgents,
@@ -36,7 +38,7 @@ import {
 import { createSpecialistManagement, type SpecialistWorkStop } from './management.js';
 import { applySpecialistStatus, checkStoredSpecialist } from './model.js';
 import { agentReadiness } from './readiness.js';
-import { InMemorySpecialistRepository } from './repository.js';
+import { InMemorySpecialistRepository, SpecialistIndexUnavailable } from './repository.js';
 import { createSpecialistService } from './service.js';
 import { createSkillCatalogue } from './skills.js';
 
@@ -590,5 +592,223 @@ describe('pagination (AE-4.3)', () => {
     expect(narrowed.ids).toEqual(w.ids);
     const direct = await pageOfAgents(w.repository, w.orgA, { limit: 30 });
     expect(direct.nextCursor).toBeNull();
+  });
+  // Stage 1 of the search beyond 500 agents (ADR-0118): a skill or an autonomy level is asked of
+  // the store through its index; without the index the same request reads as before.
+
+  /** Makes `w`'s store refuse skill and autonomy queries, as Firestore does without the index. */
+  function withoutIndexes(w: Awaited<ReturnType<typeof many>>) {
+    const page = w.repository.page.bind(w.repository);
+    let refused = 0;
+    w.repository.page = async (organizationId, request) => {
+      if (request.skillRefs !== undefined || request.autonomy !== undefined) {
+        refused += 1;
+        throw new SpecialistIndexUnavailable();
+      }
+      return page(organizationId, request);
+    };
+    return { refused: () => refused };
+  }
+
+  /** What organization A's agents matching `test` are, by id, read straight from the store. */
+  const expected = async (
+    w: Awaited<ReturnType<typeof many>>,
+    test: (s: Specialist) => boolean,
+  ): Promise<string[]> =>
+    (await w.repository.list(w.orgA))
+      .filter(test)
+      .map((s) => s.identity.id)
+      .sort();
+
+  const hasSkill = (skill: string) => (s: Specialist) =>
+    s.configuration.skills.some((r) => r.id === skill);
+
+  for (const count of [500, 501]) {
+    it(`finds every match exactly once among ${String(count)} agents, indexed or not`, async () => {
+      const w = await many(count);
+      const finance = await expected(w, hasSkill('finance_review'));
+      expect(finance.length).toBeGreaterThan(0);
+      const requests: { skillRefs?: unknown; status?: unknown }[] = [];
+      const page = w.repository.page.bind(w.repository);
+      w.repository.page = async (organizationId, request) => {
+        requests.push(request);
+        return page(organizationId, request);
+      };
+      const all = await walk(w, { limit: '25' });
+      expect(all.ids).toEqual(w.ids);
+      expect(all.pages).toBe(Math.ceil(count / 25));
+      requests.length = 0;
+      const indexed = await walk(w, { skill: 'finance_review', limit: '25' });
+      expect(indexed.ids).toEqual(finance);
+      // Through the index every store request names the skill, and a page is a full page.
+      expect(requests.every((r) => Array.isArray(r.skillRefs))).toBe(true);
+      expect(indexed.pages).toBe(
+        Math.ceil(finance.length / 25) + (finance.length % 25 === 0 ? 1 : 0),
+      );
+      const named = await walk(w, { q: 'monica', limit: '25' });
+      expect(named.ids).toEqual(
+        await expected(w, (s) => s.identity.displayName.includes('Mónica')),
+      );
+      const off = withoutIndexes(w);
+      const fallback = await walk(w, { skill: 'finance_review', limit: '25' });
+      expect(fallback.ids).toEqual(finance);
+      expect(off.refused()).toBeGreaterThan(0);
+    }, 120_000);
+  }
+
+  it('fills skill pages from matches only among 1200 agents, and loses or repeats none', async () => {
+    const w = await many(1200);
+    let read = 0;
+    const page = w.repository.page.bind(w.repository);
+    w.repository.page = async (organizationId, request) => {
+      const found = await page(organizationId, request);
+      read += found.items.length;
+      return found;
+    };
+    const finance = await expected(w, hasSkill('finance_review'));
+    expect(finance).toHaveLength(400);
+    const indexed = await walk(w, { skill: 'finance_review', limit: '50' });
+    expect(indexed.ids).toEqual(finance);
+    expect(new Set(indexed.ids).size).toBe(400);
+    // Only matching agents are read (plus one look-ahead per page), never the other 800.
+    expect(read).toBeLessThanOrEqual(400 + indexed.pages);
+    expect(indexed.pages).toBe(8);
+    // Without the index: the same agents, each request bounded.
+    withoutIndexes(w);
+    read = 0;
+    const fallback = await walk(w, { skill: 'finance_review', limit: '50' });
+    expect(fallback.ids).toEqual(finance);
+    // It reads every agent to find them, where the index read only the matches.
+    expect(read).toBeGreaterThanOrEqual(1200);
+  }, 180_000);
+
+  it('asks for an autonomy level other than the default through the index, and reads the default', async () => {
+    const w = await many(40);
+    const chosen = w.ids.filter((_, i) => i % 5 === 0);
+    for (const id of chosen) {
+      await w.management.setAutonomy(w.tenantA, id as SpecialistId, {
+        fromVersion: (await w.repository.find(w.orgA, id as SpecialistId))?.version ?? 1,
+        autonomy: 'propose',
+      });
+    }
+    const requests: { autonomy?: unknown }[] = [];
+    const page = w.repository.page.bind(w.repository);
+    w.repository.page = async (organizationId, request) => {
+      requests.push(request);
+      return page(organizationId, request);
+    };
+    const propose = await walk(w, { autonomy: 'propose', limit: '3' });
+    expect(propose.ids).toEqual([...chosen].sort());
+    expect(requests.every((r) => r.autonomy === 'propose')).toBe(true);
+    requests.length = 0;
+    // The default level is not stored on older agents: it is read, never asked of the index.
+    const controlled = await walk(w, { autonomy: 'controlled', limit: '10' });
+    expect(controlled.ids).toEqual(w.ids.filter((id) => !chosen.includes(id)));
+    expect(requests.every((r) => r.autonomy === undefined)).toBe(true);
+    withoutIndexes(w);
+    expect((await walk(w, { autonomy: 'propose', limit: '3' })).ids).toEqual([...chosen].sort());
+  }, 60_000);
+
+  it('combines a skill with status, department, name and autonomy, and checks each one', async () => {
+    const w = await many(90);
+    const finance = departmentIdOf(w.orgA, 'finance' as DepartmentTypeId);
+    const first = (await expected(w, hasSkill('finance_review')))[0] as SpecialistId;
+    await w.management.setAutonomy(w.tenantA, first, {
+      fromVersion: (await w.repository.find(w.orgA, first))?.version ?? 1,
+      autonomy: 'within_policy',
+    });
+    const cases: [Record<string, string>, (s: Specialist) => boolean][] = [
+      [
+        { skill: 'finance_review', status: 'active' },
+        (s) => hasSkill('finance_review')(s) && s.status === 'active',
+      ],
+      [
+        { skill: 'finance_review', departmentId: finance },
+        (s) => s.configuration.departmentId === finance,
+      ],
+      [
+        { skill: 'finance_review', q: 'monica', status: 'draft' },
+        (s) =>
+          hasSkill('finance_review')(s) &&
+          s.status === 'draft' &&
+          s.identity.displayName.includes('Mónica'),
+      ],
+      [
+        { skill: 'finance_review', autonomy: 'controlled' },
+        (s) =>
+          hasSkill('finance_review')(s) &&
+          (s.configuration.autonomy ?? 'controlled') === 'controlled',
+      ],
+      [
+        { autonomy: 'within_policy', status: 'active' },
+        (s) => s.configuration.autonomy === 'within_policy' && s.status === 'active',
+      ],
+      [{ skill: 'operations_nothing' }, () => false],
+    ];
+    for (const [params, test] of cases) {
+      const want = await expected(w, test);
+      expect((await walk(w, { ...params, limit: '4' })).ids).toEqual(want);
+    }
+    withoutIndexes(w);
+    for (const [params, test] of cases) {
+      expect((await walk(w, { ...params, limit: '4' })).ids).toEqual(await expected(w, test));
+    }
+  }, 60_000);
+
+  it('keeps cursors stable: a cursor goes on across the index appearing or disappearing, and new agents never repeat one', async () => {
+    const w = await many(120);
+    const finance = await expected(w, hasSkill('finance_review'));
+    const first = await w.service.page(w.tenantA, { skill: 'finance_review', limit: '10' });
+    // The index goes away between two requests: the cursor still goes on from the same agent.
+    const off = withoutIndexes(w);
+    const second = await w.service.page(w.tenantA, {
+      skill: 'finance_review',
+      limit: '10',
+      cursor: String(first.nextCursor),
+    });
+    expect(off.refused()).toBe(1);
+    expect([...first.items, ...second.items].map((s) => s.identity.id)).toEqual(
+      finance.slice(0, 20),
+    );
+    // An agent added mid-walk is either after the cursor (and seen once) or before (and not seen).
+    await w.management.create(w.tenantA, { templateId: 'finance', displayName: 'Late agent' });
+    const rest = await walk(w, { skill: 'finance_review', limit: '10' });
+    expect(new Set(rest.ids).size).toBe(rest.ids.length);
+    expect(rest.ids).toEqual(await expected(w, hasSkill('finance_review')));
+  }, 60_000);
+
+  it("never returns another organization's agents through the index, even with its cursor", async () => {
+    const w = await many(30);
+    await w.management.create(w.tenantB, { templateId: 'finance', displayName: 'Finance B' });
+    const a = await walk(w, { skill: 'finance_review', limit: '5' });
+    expect(a.ids).toEqual(await expected(w, hasSkill('finance_review')));
+    const b = await w.service.page(w.tenantB, { skill: 'finance_review' });
+    expect(b.items.map((s) => s.identity.displayName)).toEqual(['Finance B']);
+    // Organization A's cursor in B's request reads B's agents only.
+    const fromA = await w.service.page(w.tenantA, { skill: 'finance_review', limit: '1' });
+    const crossed = await w.service.page(w.tenantB, {
+      skill: 'finance_review',
+      cursor: String(fromA.nextCursor),
+    });
+    expect(crossed.items.every((s) => s.organizationId === w.orgB)).toBe(true);
+    // A store that returned another organization's agent would still have it dropped.
+    const page = w.repository.page.bind(w.repository);
+    const intruder = (await w.repository.list(w.orgB))[0] as Specialist;
+    w.repository.page = async (organizationId, request) => {
+      const found = await page(organizationId, request);
+      return { ...found, items: [intruder, ...found.items] };
+    };
+    const guarded = await w.service.page(w.tenantA, { skill: 'finance_review', limit: '100' });
+    expect(guarded.items.some((s) => s.organizationId === w.orgB)).toBe(false);
+  });
+
+  it('asks a skill as its versions 1 to 30, and the default autonomy never through the index', () => {
+    const filter = indexedAgentFilter({ skill: 'finance_review' });
+    expect(filter?.skillRefs).toHaveLength(SKILL_VERSIONS_QUERIED);
+    expect(filter?.skillRefs?.[0]).toEqual({ id: 'finance_review', version: 1 });
+    expect(filter?.skillRefs?.[29]).toEqual({ id: 'finance_review', version: 30 });
+    expect(indexedAgentFilter({ autonomy: 'controlled' })).toBeUndefined();
+    expect(indexedAgentFilter({ autonomy: 'propose' })).toEqual({ autonomy: 'propose' });
+    expect(indexedAgentFilter({})).toBeUndefined();
   });
 });
