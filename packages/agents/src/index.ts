@@ -4,3 +4,8 @@ export * from './work.js';
 export * from './plan-steps.js';
 export * from './proposals.js';
 export * from './lifecycle.js';
+export * from './memory.js';
+export * from './handoffs.js';
+export * from './notifications.js';
+export * from './ai-review.js';
+export * from './trace.js';

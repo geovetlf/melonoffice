@@ -36,6 +36,10 @@ import {
   FirestoreConnectionRateLimiter,
   FirestoreRequestRateLimiter,
   FirestoreConversationRepository,
+  FirestoreAgentHandoffRepository,
+  FirestoreAgentNotificationRepository,
+  FirestoreAgentMemoryRepository,
+  FirestoreAgentPolicyRepository,
   FirestoreBusinessProfileRepository,
   FirestoreKnowledgeRepository,
   FirestoreDepartmentRepository,
@@ -161,6 +165,8 @@ function services(projectId: string) {
     approvals,
     structure,
     businessProfiles: new FirestoreBusinessProfileRepository(firestore),
+    // Organizations' rules for their agents (AE-4.4): one document per organization, by id.
+    agentPolicies: new FirestoreAgentPolicyRepository(firestore),
     knowledge: new FirestoreKnowledgeRepository(firestore),
     // Uploaded documents (ADR-0078): records in Firestore, bytes in the documents bucket, reached
     // with the service's own identity. Without the bucket, uploads and downloads are refused.
@@ -194,6 +200,9 @@ function services(projectId: string) {
       }),
       outputs: new FirestoreAgentOutputRepository(firestore),
       runtime: agentTurns,
+      memories: new FirestoreAgentMemoryRepository(firestore),
+      handoffs: new FirestoreAgentHandoffRepository(firestore),
+      notifications: new FirestoreAgentNotificationRepository(firestore),
     },
     entitlementOverrides: new FirestoreEntitlementOverrideStore(firestore),
     conversations: {

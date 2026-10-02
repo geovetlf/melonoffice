@@ -97,3 +97,56 @@ export function agentTaskProposalOf(
     request: text,
   });
 }
+
+// ---------------------------------------------------------------------------------------------
+// Work for several agents (ADR-0117)
+
+/**
+ * A request that needs agents of more than one department ("prepare a campaign"): GIA prepares
+ * it for the Melon Agent Harness, which plans it with the existing planner, one step per agent.
+ * The person confirms; the plan then waits for their approval; each agent does its own step with
+ * its own permissions. GIA coordinates and summarizes: she never does an agent's work, and she
+ * has no permission of her own beyond the person's.
+ */
+export interface GiaTeamTaskProposal {
+  readonly request: string;
+  /** The departments she expects to take part, by catalogue type: at least two. */
+  readonly departments: readonly string[];
+}
+
+/** The most departments one team request names (the Harness's agents per task, ADR-0101). */
+export const GIA_TEAM_LIMITS = Object.freeze({ departments: 4, requestLength: 1000 });
+
+/** The departments of the agents she was shown, each once, in order. */
+export const teamDepartmentsOf = (agents: readonly GiaAgent[]): readonly string[] =>
+  [...new Set(agents.map((a) => a.department))].sort();
+
+export function teamRules(departments: readonly string[]): readonly string[] {
+  if (departments.length < 2) return [];
+  return [
+    `teamTask: only when the request plainly needs the work of agents of two or more departments (for example a campaign: marketing's strategy, design's pieces, sales' audience), propose it instead of agentTask: request is the whole request in the person's words and details, at most ${String(GIA_TEAM_LIMITS.requestLength)} characters; departments are the ones you expect to take part, from: ${departments.join(', ')}. MelonOffice plans it and the person approves the plan before any agent works. Otherwise teamTask is null.`,
+    'Never say a team task is planned, started or done: you only prepare it.',
+  ];
+}
+
+/** The team request she proposed, checked against the departments she was given. */
+export function teamTaskProposalOf(
+  raw: unknown,
+  agents: readonly GiaAgent[],
+): GiaTeamTaskProposal | null {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null;
+  const { request, departments } = raw as Record<string, unknown>;
+  if (typeof request !== 'string' || !Array.isArray(departments)) return null;
+  const known = teamDepartmentsOf(agents);
+  const named = [...new Set(departments.filter((d): d is string => typeof d === 'string'))];
+  if (
+    named.length < 2 ||
+    named.length > GIA_TEAM_LIMITS.departments ||
+    !named.every((d) => known.includes(d))
+  ) {
+    return null;
+  }
+  const text = request.normalize('NFC').replace(CONTROL, ' ').replace(/\s+/g, ' ').trim();
+  if (text === '' || [...text].length > GIA_TEAM_LIMITS.requestLength) return null;
+  return Object.freeze({ request: text, departments: Object.freeze(named.sort()) });
+}

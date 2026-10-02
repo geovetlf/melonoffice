@@ -3,13 +3,16 @@ import { PERMISSIONS, type Permission } from '@melonoffice/rbac';
 import {
   AGENT_TEMPLATES,
   agentCapabilities,
+  autonomyOf,
   isSpecialistError,
   skillAllowedIn,
+  type AgentPolicyService,
   type SkillCatalogue,
   type SpecialistError,
   type SpecialistManagement,
   type SpecialistService,
   type ToolLookup,
+  workSettingsOf,
 } from '@melonoffice/specialists';
 import { toolCanRun, type ToolRegistry } from '@melonoffice/tools';
 import type { Context, Hono } from 'hono';
@@ -31,9 +34,11 @@ export function registerSpecialistRoutes(
     readonly management: SpecialistManagement;
     readonly skills: SkillCatalogue;
     readonly tools: ToolRegistry;
+    /** The organization's rules for its agents (AE-4.4). Absent: its routes are not served. */
+    readonly agentPolicies?: AgentPolicyService;
   },
 ): void {
-  const { specialists, management, skills, authorization } = dependencies;
+  const { specialists, management, skills, authorization, agentPolicies } = dependencies;
   const tools = toolLookupOf(dependencies.tools);
 
   app.get(
@@ -96,6 +101,59 @@ export function registerSpecialistRoutes(
     ),
   );
 
+  app.post(
+    '/v1/organizations/:organizationId/specialists/:specialistId/autonomy',
+    withPermission('specialist.manage', dependencies, async (c, tenant) =>
+      answer(c, 200, async () =>
+        management.setAutonomy(tenant, c.req.param('specialistId') ?? '', await bodyOf(c)),
+      ),
+    ),
+  );
+
+  // Its work settings (ADR-0117): its own memory, an AI check of its answers, collaboration.
+  app.post(
+    '/v1/organizations/:organizationId/specialists/:specialistId/settings',
+    withPermission('specialist.manage', dependencies, async (c, tenant) =>
+      answer(c, 200, async () =>
+        management.setWorkSettings(tenant, c.req.param('specialistId') ?? '', await bodyOf(c)),
+      ),
+    ),
+  );
+
+  // The organization's rules for its agents (AE-4.4, ADR-0116): what else it counts as
+  // sensitive, and the furthest any of its agents acts on its own.
+  if (agentPolicies !== undefined) {
+    const policyAnswer = async (c: Context<AuthEnv>, run: () => Promise<unknown>) => {
+      try {
+        return c.json(await run());
+      } catch (error) {
+        const status = isSpecialistError(error) ? STATUS[error.code] : undefined;
+        if (status === undefined || !isSpecialistError(error)) throw error;
+        return c.json(
+          {
+            error: error.code,
+            ...(error.code === 'invalid_specialist' && error.detail !== undefined
+              ? { field: error.detail }
+              : {}),
+          },
+          status,
+        );
+      }
+    };
+    app.get(
+      '/v1/organizations/:organizationId/agent-policy',
+      withPermission('specialist.read', dependencies, async (c, tenant) =>
+        policyAnswer(c, () => agentPolicies.read(tenant)),
+      ),
+    );
+    app.put(
+      '/v1/organizations/:organizationId/agent-policy',
+      withPermission('specialist.manage', dependencies, async (c, tenant) =>
+        policyAnswer(c, async () => agentPolicies.change(tenant, await bodyOf(c))),
+      ),
+    );
+  }
+
   app.get(
     '/v1/organizations/:organizationId/specialists/:specialistId/capabilities',
     withPermission('specialist.read', dependencies, async (c, tenant) => {
@@ -124,6 +182,9 @@ export function registerSpecialistRoutes(
         return c.json({
           id: specialist.identity.id,
           version: specialist.version,
+          // How far it acts on its own (AE-4.4): a person with specialist.manage changes it.
+          autonomy: autonomyOf(specialist.configuration),
+          work: workSettingsOf(specialist.configuration),
           ...found,
           upgrades,
         });
@@ -199,6 +260,10 @@ export function toSpecialistView(specialist: Specialist) {
     description: configuration.description ?? null,
     capabilities: [...configuration.capabilities],
     skills: configuration.skills.map(({ id, version }) => ({ id, version })),
+    // How far it acts on its own (AE-4.4, ADR-0116): the default when it names none.
+    autonomy: autonomyOf(configuration),
+    // What else its work uses (ADR-0117), each off until a person switches it on.
+    work: workSettingsOf(configuration),
     createdAt: identity.createdAt,
     updatedAt: specialist.updatedAt,
     // Who last changed its status, when and why (AE-4): the person decided it, so it is shown.
@@ -230,7 +295,15 @@ export const toolLookupOf =
   };
 
 /** The query parameters of one page of agents (AE-4). */
-const PAGE_PARAMS = ['limit', 'cursor', 'status', 'departmentId', 'q', 'skill'] as const;
+const PAGE_PARAMS = [
+  'limit',
+  'cursor',
+  'status',
+  'departmentId',
+  'q',
+  'skill',
+  'autonomy',
+] as const;
 
 const bodyOf = async (c: Context<AuthEnv>): Promise<Record<string, unknown>> => {
   const body: unknown = await c.req.json().catch(() => undefined);

@@ -363,9 +363,15 @@ importers:
       '@melonoffice/ai-gateway':
         specifier: workspace:*
         version: link:../ai-gateway
+      '@melonoffice/audit':
+        specifier: workspace:*
+        version: link:../audit
       '@melonoffice/brain':
         specifier: workspace:*
         version: link:../brain
+      '@melonoffice/departments':
+        specifier: workspace:*
+        version: link:../departments
       '@melonoffice/domain':
         specifier: workspace:*
         version: link:../domain
@@ -385,9 +391,6 @@ importers:
         specifier: workspace:*
         version: link:../tenancy
     devDependencies:
-      '@melonoffice/audit':
-        specifier: workspace:*
-        version: link:../audit
       '@melonoffice/auth':
         specifier: workspace:*
         version: link:../auth
@@ -397,9 +400,6 @@ importers:
       '@melonoffice/credits':
         specifier: workspace:*
         version: link:../credits
-      '@melonoffice/departments':
-        specifier: workspace:*
-        version: link:../departments
 
   packages/ai-deepseek:
     dependencies:

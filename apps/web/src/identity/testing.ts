@@ -51,7 +51,14 @@ export interface FakeBackend {
     /** Each organization's agents (specialist records), by department type. */
     specialists: Record<
       string,
-      { id: string; name: string; type: string; status: string; purpose?: string }[]
+      {
+        id: string;
+        name: string;
+        type: string;
+        status: string;
+        purpose?: string;
+        autonomy?: string;
+      }[]
     >;
     /** What the API names as missing when activating an agent (AE-4.2), by agent id. */
     activationProblems?: Record<string, Record<string, string>[]>;
@@ -1279,6 +1286,24 @@ export function fakeBackend(): FakeBackend {
         },
       });
     }
+    const agentAutonomy = route?.match(/^specialists\/([^/]+)\/autonomy$/);
+    if (agentAutonomy !== null && agentAutonomy !== undefined && method === 'POST') {
+      const denied = needs('specialist.manage');
+      if (denied !== undefined) return denied;
+      const found = (options.specialists[organizationId] ?? []).find(
+        (s) => s.id === agentAutonomy[1],
+      );
+      if (found === undefined) return json(404, { error: 'specialist_not_found' });
+      const { autonomy } = JSON.parse(body ?? '{}') as { autonomy: string };
+      found.autonomy = autonomy;
+      return json(200, {
+        id: found.id,
+        departmentId: `${organizationId}_${found.type}`,
+        displayName: found.name,
+        status: found.status,
+        autonomy,
+      });
+    }
     const agentCapabilities = route?.match(/^specialists\/([^/]+)\/capabilities$/);
     if (agentCapabilities !== null && agentCapabilities !== undefined) {
       const denied = needs('specialist.read');
@@ -1290,6 +1315,7 @@ export function fakeBackend(): FakeBackend {
       return json(200, {
         id: found.id,
         version: 2,
+        autonomy: found.autonomy ?? 'controlled',
         ready: found.status === 'active',
         // As the API gives it for the supervised conversation agent (ADR-0043, ADR-0069).
         skills: [

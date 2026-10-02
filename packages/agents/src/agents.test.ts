@@ -565,12 +565,16 @@ describe('Agent tasks: the answer and its verification (ADR-0063)', () => {
       missing: ['x'],
       followUp: null,
       facts: [],
+      remember: [],
+      handoff: null,
     });
     expect(parseAgentAnswer({ text: '```json\n{"answer":"Hola","missing":[]}\n```' })).toEqual({
       answer: 'Hola',
       missing: [],
       followUp: null,
       facts: [],
+      remember: [],
+      handoff: null,
     });
     expect(parseAgentAnswer({ structured: { answer: '' } })).toBeUndefined();
     expect(parseAgentAnswer({ structured: { answer: 'x'.repeat(4001) } })).toBeUndefined();

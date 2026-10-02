@@ -2,9 +2,16 @@ import {
   answerNodeOf,
   parseAgentAnswer,
   createAgentTaskFactProposer,
+  createAgentAnswerReviewer,
   createAgentTaskVerifier,
   createAgentTaskWork,
   createBrainContextSource,
+  createAgentMemoryContext,
+  createAgentMemoryRecorder,
+  createHandoffDirectory,
+  createHandoffRecorder,
+  createHandoffSettler,
+  creditsSpentBy,
   findContactRef,
   MODEL_FOLLOW_UP_DESCRIPTION,
   MODEL_FOLLOW_UP_TOOL,
@@ -14,6 +21,8 @@ import {
   createPlanStepVerifier,
   createPlanStepWork,
   taskOf,
+  type AgentHandoffRepository,
+  type AgentMemoryRepository,
   type AgentTaskRepository,
 } from '@melonoffice/agents';
 import { createCompanyBrain, knowledgeItemId, type KnowledgeRepository } from '@melonoffice/brain';
@@ -29,7 +38,7 @@ import {
 } from '@melonoffice/conversations';
 import { createDecisionEngine } from '@melonoffice/decisions';
 import type { DepartmentRepository } from '@melonoffice/departments';
-import type { Execution, OrganizationId, UserId } from '@melonoffice/domain';
+import type { Execution, ExecutionId, OrganizationId, UserId } from '@melonoffice/domain';
 import {
   createAgentOutputStore,
   type AgentOutputRepository,
@@ -67,7 +76,11 @@ import type {
   NodeWorkSource,
   VerificationSource,
 } from '@melonoffice/runtime';
-import { createSkillCatalogue, type SpecialistRepository } from '@melonoffice/specialists';
+import {
+  createSkillCatalogue,
+  type AgentPolicySource,
+  type SpecialistRepository,
+} from '@melonoffice/specialists';
 import { isResolvedTenant, type TenancyStore, type TenantContext } from '@melonoffice/tenancy';
 import type { ToolExecutors, ToolRegistry } from '@melonoffice/tools';
 
@@ -174,6 +187,16 @@ export interface AgentTaskStores {
   readonly outputs: AgentOutputRepository;
   /** The plans, for the steps of approved plans (WF-1, ADR-0070). */
   readonly plans?: PlanRepository;
+  /** Agents' own memories (ADR-0117). Absent: no agent keeps or reads notes. */
+  readonly memories?: AgentMemoryRepository;
+  /**
+   * Handoffs between agents (ADR-0117), with the departments the receiving agent is chosen in.
+   * Absent: no agent is offered a handoff.
+   */
+  readonly handoffs?: {
+    readonly repository: AgentHandoffRepository;
+    readonly departments: DepartmentRepository;
+  };
 }
 
 /**
@@ -202,6 +225,15 @@ export interface AgentTaskParts {
    * for mid-task. Absent: agents are offered no tools, as before.
    */
   readonly toolLoop?: AgentToolLoop;
+  /**
+   * Tells the task's person that a step of it waits on their approval (ADR-0117), as
+   * `agent_task.approval_required`. Only an agent task's execution publishes anything.
+   */
+  readonly waitingApproval?: (job: {
+    readonly organizationId: string;
+    readonly executionId: string;
+    readonly jobId: string;
+  }) => Promise<void>;
 }
 
 /**
@@ -227,6 +259,11 @@ export function createAgentTaskParts(options: {
     readonly executors: readonly string[];
     /** The Harness's limits. Absent: its defaults (ADR-0100); tests set smaller ones. */
     readonly limits?: HarnessLimits;
+    /**
+     * Organizations' rules for their agents (AE-4.4, ADR-0116), read before each action. Absent:
+     * MelonOffice's defaults for every organization.
+     */
+    readonly policies?: AgentPolicySource;
   };
   readonly logger?: Logger;
   readonly now?: () => Date;
@@ -333,6 +370,8 @@ export function createAgentTaskParts(options: {
    * The task's end on the event bus (ADR-0102), as the runtime for the person it ran for. Keyed on
    * the execution, so a repeated end hook stores each event once.
    */
+  // The catalogue's code shape: a failure code that is not one is left out, never published.
+  const EVENT_CODE = /^[a-z][a-z_]{0,63}$/;
   async function publishEnd(tenant: TenantContext, execution: Execution): Promise<void> {
     const task = taskOf(execution);
     if (events === undefined || task === undefined || execution.specialistId === undefined) {
@@ -340,14 +379,6 @@ export function createAgentTaskParts(options: {
     }
     const specialistId = execution.specialistId;
     const subject = { type: 'execution', id: execution.id };
-    const drafts: EventDraft[] = [
-      {
-        type: 'agent_task.finished',
-        subject,
-        data: { specialistId, outcome: execution.status },
-        idempotencyKey: `${execution.id}:finished`,
-      },
-    ];
     const record =
       execution.status === 'completed'
         ? await outputs.find(tenant, task.taskId, answerNodeOf(execution))
@@ -358,6 +389,21 @@ export function createAgentTaskParts(options: {
       failure: execution.failure?.code ?? null,
       missing: answer?.missing ?? [],
     });
+    const drafts: EventDraft[] = [
+      {
+        type: 'agent_task.finished',
+        subject,
+        data: {
+          specialistId,
+          outcome: execution.status,
+          ...(handoff === null ? {} : { handoff: handoff.reason }),
+          ...(execution.failure?.code !== undefined && EVENT_CODE.test(execution.failure.code)
+            ? { code: execution.failure.code }
+            : {}),
+        },
+        idempotencyKey: `${execution.id}:finished`,
+      },
+    ];
     if (handoff !== null) {
       drafts.push({
         type: 'agent_execution.handoff',
@@ -412,6 +458,10 @@ export function createAgentTaskParts(options: {
               authorization,
             }),
             executors: [...options.tools.executors, ...Object.keys(taskExecutors)],
+            // Each action is evaluated against the agent as stored now, its version's level of
+            // autonomy and its organization's rules (AE-4.4).
+            specialists: stores.specialists,
+            ...(options.tools.policies === undefined ? {} : { policies: options.tools.policies }),
           }),
           outputs,
           describe: (tool) =>
@@ -421,13 +471,109 @@ export function createAgentTaskParts(options: {
           ...(options.tools.limits === undefined ? {} : { limits: options.tools.limits }),
           now: clock,
         });
+  const handoffDirectory =
+    stores.handoffs === undefined
+      ? undefined
+      : createHandoffDirectory({
+          departments: stores.handoffs.departments,
+          specialists: stores.specialists,
+        });
   const taskWork = createAgentTaskWork({
     tasks: stores.tasks,
     specialists: stores.specialists,
     skills,
     context,
     proposals,
+    ...(stores.handoffs === undefined || handoffDirectory === undefined
+      ? {}
+      : { handoffs: { directory: handoffDirectory, repository: stores.handoffs.repository } }),
+    ...(stores.memories === undefined
+      ? {}
+      : { memory: createAgentMemoryContext({ repository: stores.memories, now: clock }) }),
   });
+  const memories =
+    stores.memories === undefined
+      ? undefined
+      : createAgentMemoryRecorder({
+          repository: stores.memories,
+          specialists: stores.specialists,
+          now: clock,
+        });
+  const spent = (tenant: TenantContext, execution: Execution) =>
+    creditsSpentBy(outputs, tenant, execution);
+  const handoffs =
+    stores.handoffs === undefined || handoffDirectory === undefined
+      ? undefined
+      : {
+          recorder: createHandoffRecorder({
+            repository: stores.handoffs.repository,
+            tasks: stores.tasks,
+            specialists: stores.specialists,
+            directory: handoffDirectory,
+            authorization,
+            now: clock,
+          }),
+          settler: createHandoffSettler({
+            repository: stores.handoffs.repository,
+            tasks: stores.tasks,
+            spent,
+            now: clock,
+          }),
+        };
+  /**
+   * When a task ends (ADR-0117): the handoff its answer proposed is recorded for a person to
+   * decide, and a handed task's end settles its handoff. A failure here never changes the task.
+   */
+  async function handOff(tenant: TenantContext, execution: Execution): Promise<void> {
+    const task = taskOf(execution);
+    if (handoffs === undefined || task === undefined) return;
+    try {
+      await handoffs.settler.settle(tenant, execution);
+      if (execution.status !== 'completed') return;
+      const record = await outputs.find(tenant, task.taskId, answerNodeOf(execution));
+      const proposed = record === undefined ? undefined : parseAgentAnswer(record.output)?.handoff;
+      if (proposed === undefined || proposed === null) return;
+      const handoff = await handoffs.recorder.record(tenant, task, proposed);
+      if (handoff?.state === 'proposed' && events !== undefined) {
+        await events.publishRuntime(
+          execution.organizationId as OrganizationId,
+          execution.userId as UserId,
+          [
+            {
+              type: 'agent_handoff.proposed',
+              subject: { type: 'agent_handoff', id: handoff.id },
+              data: {
+                specialistId: task.specialistId,
+                receivingId: handoff.receivingAgent?.specialistId ?? null,
+              },
+              idempotencyKey: `${handoff.id}:handoff_proposed`,
+            },
+          ],
+        );
+      }
+    } catch (error) {
+      const code = (error as { code?: unknown }).code;
+      logger?.warn('agent_task.handoff_not_recorded', {
+        code: typeof code === 'string' ? code : 'error',
+      });
+    }
+  }
+  /** The notes a finished task asked to keep (ADR-0117): only from its answer, if any. */
+  async function remember(tenant: TenantContext, execution: Execution): Promise<void> {
+    const task = taskOf(execution);
+    if (memories === undefined || task === undefined || execution.status !== 'completed') return;
+    const record = await outputs.find(tenant, task.taskId, answerNodeOf(execution));
+    const answer = record === undefined ? undefined : parseAgentAnswer(record.output);
+    if (answer === undefined || answer.remember.length === 0) return;
+    try {
+      await memories.record(tenant, task, answer.remember);
+    } catch (error) {
+      const code = (error as { code?: unknown }).code;
+      logger?.warn('agent_task.memory_not_kept', {
+        code: typeof code === 'string' ? code : 'error',
+      });
+    }
+  }
   // The Melon Agent Harness (ADR-0099): a task reads only the context it needs, and its model call
   // carries the order to try models in for what it asks. The agent's prompt, its model policy and
   // the AI Gateway's router are unchanged. Each turn's budget is what the earlier turns left.
@@ -443,6 +589,13 @@ export function createAgentTaskParts(options: {
   });
   const taskVerifier = createAgentTaskVerifier({
     outputs,
+    // The optional AI review (ADR-0117): only for agents whose version has it on.
+    reviewer: createAgentAnswerReviewer({
+      outputs,
+      specialists: stores.specialists,
+      tasks: stores.tasks,
+      spent: (tenant, execution) => creditsSpentBy(outputs, tenant, execution),
+    }),
     ...(records === undefined
       ? {}
       : {
@@ -462,9 +615,33 @@ export function createAgentTaskParts(options: {
     verifier: loop === undefined ? taskVerifier : loop.verifier(taskVerifier),
     executors: taskExecutors,
     ...(loop === undefined ? {} : { toolLoop: { plan: loop.plan } }),
+    ...(events === undefined
+      ? {}
+      : {
+          async waitingApproval(job: {
+            readonly organizationId: string;
+            readonly executionId: string;
+            readonly jobId: string;
+          }) {
+            const organizationId = job.organizationId as OrganizationId;
+            const task = await stores.tasks.find(organizationId, job.executionId as ExecutionId);
+            if (task === undefined) return;
+            await events.publishRuntime(organizationId, task.requestedBy, [
+              {
+                type: 'agent_task.approval_required',
+                subject: { type: 'execution', id: task.id },
+                data: { specialistId: task.specialistId },
+                // Each job that stops for an approval is one notice; a repeated delivery is not.
+                idempotencyKey: `${task.id}:approval:${job.jobId}`,
+              },
+            ]);
+          },
+        }),
     onEnded: {
       async ended(tenant: TenantContext, execution: Execution) {
         await facts.ended(tenant, execution);
+        await remember(tenant, execution);
+        await handOff(tenant, execution);
         if (events !== undefined) await publishEnd(tenant, execution);
       },
     },
@@ -541,7 +718,8 @@ export function routeAgentWork(
           : { stop: 'tool_use_unsupported' },
     } satisfies AgentToolLoop),
     verifier: Object.freeze({
-      verify: (tenant, execution) => partsOf(execution).verifier.verify(tenant, execution),
+      verify: (tenant, execution, context) =>
+        partsOf(execution).verifier.verify(tenant, execution, context),
     } satisfies VerificationSource),
     onStopped: Object.freeze({
       // A task or a plan step that stops has nobody to hand over to: its failure is on the

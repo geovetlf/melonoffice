@@ -1,3 +1,8 @@
+import {
+  createAgentNotificationSubscriber,
+  createAgentNotifier,
+  inAppChannel,
+} from '@melonoffice/agents';
 import { createAIUsageLedger } from '@melonoffice/ai-usage';
 import { Firestore } from '@google-cloud/firestore';
 import { serve } from '@hono/node-server';
@@ -42,6 +47,10 @@ import {
   FirestoreAgentTaskRepository,
   FirestoreApprovalRepository,
   FirestoreAuditStore,
+  FirestoreAgentHandoffRepository,
+  FirestoreAgentNotificationRepository,
+  FirestoreAgentMemoryRepository,
+  FirestoreAgentPolicyRepository,
   FirestoreBusinessProfileRepository,
   FirestoreChannelConnectionRepository,
   FirestoreChannelTemplateRepository,
@@ -78,6 +87,7 @@ import {
 } from '@melonoffice/forecasting';
 import { createLogger } from '@melonoffice/observability';
 import { createAuthorizationService } from '@melonoffice/rbac';
+import { createAgentPolicySource } from '@melonoffice/specialists';
 import { createToolRegistry, TOOL_CATALOGUE } from '@melonoffice/tools';
 import { createAgentTaskParts, createConversationAgentParts, routeAgentWork } from './agents.js';
 import { createPlanConditions } from './conditions.js';
@@ -169,8 +179,19 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
     }),
   });
   // Domain events (EV-2, ADR-0067): stored in the outbox, queued on the same queue, delivered by
-  // this worker behind the same invoker. No subscriber reacts yet: an event is stored, delivered
-  // and recorded, and starts nothing until a reaction is approved and registered here.
+  // this worker behind the same invoker. The one reaction registered (ADR-0117, AE-D5): agents'
+  // facts become in-app notices for the person who asked for the task; nothing else is started.
+  const agentTaskRepository = new FirestoreAgentTaskRepository(firestore);
+  const agentHandoffRepository = new FirestoreAgentHandoffRepository(firestore);
+  const notifications = createAgentNotificationSubscriber({
+    tasks: agentTaskRepository,
+    handoffs: agentHandoffRepository,
+    notifier: createAgentNotifier({
+      channels: [inAppChannel(new FirestoreAgentNotificationRepository(firestore))],
+      onError: (channel, kind) =>
+        logger.warn('agent notification not delivered', { channel, kind }),
+    }),
+  });
   const events = createEventBus({
     outbox: new FirestoreEventOutbox(firestore),
     queue: {
@@ -185,7 +206,7 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
         return (ref) => scheduler.schedule(ref, new Date());
       })(),
     },
-    subscribers: [],
+    subscribers: [notifications],
     leaseMs: runtime.leaseMs,
     audit: createAuditService(stores.audit),
     logger: logger.child({ component: 'events' }),
@@ -198,10 +219,15 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
     stores: {
       tenancy,
       specialists: stores.specialists,
-      tasks: new FirestoreAgentTaskRepository(firestore),
+      tasks: agentTaskRepository,
       knowledge: new FirestoreKnowledgeRepository(firestore),
       outputs: agentOutputs,
       plans,
+      memories: new FirestoreAgentMemoryRepository(firestore),
+      handoffs: {
+        repository: agentHandoffRepository,
+        departments: stores.departments,
+      },
     },
     proposals: {
       conversations: new FirestoreConversationRepository(firestore),
@@ -217,6 +243,8 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
     tools: {
       registry: createToolRegistry(TOOL_CATALOGUE),
       executors: Object.keys(agents.executors),
+      // The organization's rules for its agents (AE-4.4): what else it counts as sensitive.
+      policies: createAgentPolicySource(new FirestoreAgentPolicyRepository(firestore)),
     },
     logger: logger.child({ component: 'agent-tasks' }),
   });
@@ -384,7 +412,15 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
     limits: forecasting.limits,
   });
   return {
-    handler: createJobHandler({ jobs: jobService, runtime: engine, workerId, logger }),
+    handler: createJobHandler({
+      jobs: jobService,
+      runtime: engine,
+      workerId,
+      ...(taskParts.waitingApproval === undefined
+        ? {}
+        : { onWaitingApproval: taskParts.waitingApproval }),
+      logger,
+    }),
     forecasts: createForecastHandler({
       engine: forecastEngine,
       logger: logger.child({ component: 'forecasts' }),

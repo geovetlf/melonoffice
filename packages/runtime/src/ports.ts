@@ -158,10 +158,20 @@ export const isAgentWorkStop = (value: unknown): value is AgentWorkStop =>
  * `checks`, never a human or specialist review). Absent, or answering `undefined`, the execution
  * stays `verifying`: it is never completed without evidence.
  */
+/**
+ * What a verifier may use beyond the execution (ADR-0117): the same AI Gateway as the work, for an
+ * agent whose optional AI verification is on. The gateway checks the execution, its agent and its
+ * credits as for any call; nothing else is offered.
+ */
+export interface VerificationContext {
+  readonly ai: Pick<AIGateway, 'generate'>;
+}
+
 export interface VerificationSource {
   verify(
     tenant: TenantContext,
     execution: Execution,
+    context?: VerificationContext,
   ): Promise<
     { readonly verification: VerificationInput; readonly result?: ExecutionRef } | undefined
   >;

@@ -236,6 +236,8 @@ interface AgentSetup {
   readonly modelPolicy?: boolean;
   readonly maxReplies?: number;
   readonly organization?: 'A' | 'B';
+  /** The agent's level of autonomy for its work (AE-4.4). Absent: the default. */
+  readonly work?: 'propose' | 'controlled' | 'within_policy';
 }
 
 interface WorldOptions {
@@ -489,6 +491,7 @@ describe.each(STORES)('CV-6B conversation agent with storage in %s', (_storage, 
               autonomy: setup.autonomy ?? 'autonomous',
               maxRepliesPerConversation: setup.maxReplies ?? 10,
             },
+            ...(setup.work === undefined ? {} : { autonomy: setup.work }),
           },
         },
         must(await stores.departments.find(organizationId, departmentId)),
@@ -766,6 +769,31 @@ describe.each(STORES)('CV-6B conversation agent with storage in %s', (_storage, 
     await x.customer();
     expect(x.outcomes).toEqual([{ status: 'skipped', code: 'agent_not_configured' }]);
     expect(x.providerCalls).toHaveLength(0);
+  });
+
+  it('8b. an agent that only proposes never replies by itself, whatever its profile (AE-4.4)', async () => {
+    // Its profile says autonomous, but at `propose` its replies need a person: with only the
+    // autonomous reply listed, it is never asked anything rather than sending without one.
+    const w = await world();
+    await w.configure('autonomous', { work: 'propose' });
+    await w.customer();
+    expect(w.outcomes).toEqual([{ status: 'skipped', code: 'agent_not_configured' }]);
+    expect(w.providerCalls).toHaveLength(0);
+    expect(w.sends).toHaveLength(0);
+    // With the approved reply listed, it proposes the reply and a person decides.
+    const x = await world();
+    await x.configure('autonomous', {
+      work: 'propose',
+      tools: [
+        { id: 'message_send', version: 2 },
+        { id: 'conversation_handoff', version: 1 },
+      ],
+    });
+    await x.customer();
+    await x.drive();
+    const execution = await x.executionOf(must(x.started()[0]));
+    expect(execution.status).toBe('waiting_approval');
+    expect(x.sends).toHaveLength(0);
   });
 
   // -------------------------------------------------------------------------------------------

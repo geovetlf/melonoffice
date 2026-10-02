@@ -345,7 +345,7 @@ export function createRuntime(options: RuntimeOptions): Runtime {
       let result;
       if (current.verification === undefined) {
         const evidence =
-          verifier === undefined ? undefined : await verifier.verify(tenant, current);
+          verifier === undefined ? undefined : await verifier.verify(tenant, current, { ai: s.ai });
         if (evidence === undefined) {
           return finish('succeeded', 'verification_pending', 'verification_pending');
         }

@@ -1,7 +1,18 @@
 import { createAIUsageLedger, type AIUsageStore } from '@melonoffice/ai-usage';
 import { createActivityService } from '@melonoffice/activity';
 import {
+  createAgentHandoffService,
+  createAgentMemoryService,
+  createAgentNotificationService,
+  createAgentNotifier,
+  inAppChannel,
+  type AgentNotificationRepository,
   createAgentTaskService,
+  createHandoffDirectory,
+  creditsSpentBy,
+  readPlanResults,
+  type AgentHandoffRepository,
+  type AgentMemoryRepository,
   createAgentWorkStop,
   TASK_PROPOSAL_LIMITS,
   type AgentTaskRepository,
@@ -83,7 +94,7 @@ import {
   createDecisionAgentRouter,
   createHarnessToolDirectory,
 } from '@melonoffice/harness';
-import { createGia } from '@melonoffice/gia';
+import { createGia, createGiaSummary } from '@melonoffice/gia';
 import type { AIDataPolicy, DeploymentEnvironment, OrganizationId } from '@melonoffice/domain';
 import { createToolGate } from '@melonoffice/guardrails';
 import {
@@ -110,7 +121,9 @@ import {
 import {
   createSkillCatalogue,
   createSpecialistManagement,
+  createAgentPolicyService,
   createSpecialistService,
+  type AgentPolicyRepository,
   type SpecialistRepository,
 } from '@melonoffice/specialists';
 import {
@@ -145,7 +158,7 @@ import { registerFollowUpRoutes } from './follow-ups.js';
 import { registerForecastRoutes } from './forecasts.js';
 import { registerMetricRoutes } from './metrics.js';
 import { registerOpportunityRoutes } from './opportunities.js';
-import { registerGiaRoutes } from './gia.js';
+import { registerGiaRoutes, registerGiaSummaryRoute } from './gia.js';
 import { registerDepartmentRoutes } from './departments.js';
 import { registerDocumentRoutes } from './documents.js';
 import { registerConnectionRoutes } from './connections.js';
@@ -216,6 +229,11 @@ export interface AppOptions {
   readonly activity?: AuditReader & AuditHistoryReader;
   /** Business profiles (ADR-0048). Absent: the profile route answers 503 (fails closed). */
   readonly businessProfiles?: BusinessProfileRepository;
+  /**
+   * Organizations' rules for their agents (AE-4.4, ADR-0116). Absent: the policy routes are not
+   * served, and every organization has MelonOffice's defaults.
+   */
+  readonly agentPolicies?: AgentPolicyRepository;
   /** Company Brain (ADR-0051). Absent: the brain routes answer 503 (fails closed). */
   readonly knowledge?: KnowledgeRepository;
   /**
@@ -350,6 +368,12 @@ export interface AppOptions {
      * created and started, and its job is never queued (nothing runs here).
      */
     readonly runtime?: TaskKickoff;
+    /** Agents' own memories (ADR-0117). Absent: their routes are not served. */
+    readonly memories?: AgentMemoryRepository;
+    /** Handoffs between agents (ADR-0117). Absent: their routes are not served. */
+    readonly handoffs?: AgentHandoffRepository;
+    /** People's in-app notices about their agents (ADR-0117). Absent: none are kept or served. */
+    readonly notifications?: AgentNotificationRepository;
   };
   /**
    * The web app's exact origins, allowed to call `/v1` from a browser (ADR-0036). Empty or
@@ -397,6 +421,7 @@ export function createApp({
   executions,
   structure,
   businessProfiles,
+  agentPolicies,
   knowledge,
   documents,
   activity,
@@ -791,6 +816,17 @@ export function createApp({
     const giaConfigured = aiGateway !== undefined && structure !== undefined;
     const agentTasksConfigured =
       agentTasks !== undefined && executions !== undefined && specialists !== undefined;
+    // People's in-app notices about their agents (ADR-0117): the API makes the ones a person's
+    // own action causes (an agent stopped, a handoff received); the worker makes the rest.
+    const notificationRepository = agentTasks?.notifications;
+    const agentNotifier =
+      notificationRepository === undefined
+        ? undefined
+        : createAgentNotifier({
+            channels: [inAppChannel(notificationRepository)],
+            onError: (channel, kind) =>
+              logger.warn('agent notification not delivered', { channel, kind }),
+          });
     const decisions = createDecisionEngine({
       authorization,
       configured: (action) =>
@@ -871,6 +907,7 @@ export function createApp({
             }),
       });
     }
+    let giaSummaryRegistered = false;
     const executionService =
       tenancy !== undefined && executions !== undefined
         ? createExecutionService({
@@ -900,6 +937,15 @@ export function createApp({
         specialists,
         skills,
         tools,
+        ...(agentPolicies === undefined
+          ? {}
+          : {
+              agentPolicies: createAgentPolicyService({
+                repository: agentPolicies,
+                organizations: tenancy,
+                authorization,
+              }),
+            }),
         // Agent management (ADR-0062): owner only, a person directly, audited with each change.
         management: createSpecialistManagement({
           repository: structure.specialists,
@@ -926,6 +972,28 @@ export function createApp({
                           authorization,
                           audit,
                         }),
+                      }),
+                  ...(agentNotifier === undefined || agentTasks === undefined
+                    ? {}
+                    : {
+                        // The task's person learns their agent was stopped, and why.
+                        onCancelled: async (tenant, execution, reason) => {
+                          const organizationId = tenant.organizationId as OrganizationId;
+                          const task = await agentTasks.repository.find(
+                            organizationId,
+                            execution.id,
+                          );
+                          if (task === undefined) return;
+                          await agentNotifier.notify({
+                            organizationId,
+                            recipientId: task.requestedBy,
+                            kind: 'agent_stopped',
+                            specialistId: task.specialistId,
+                            taskId: task.id,
+                            code: reason,
+                            key: `${task.id}:stopped`,
+                          });
+                        },
                       }),
                   logger: logger.child({ component: 'agent-lifecycle' }),
                 }),
@@ -959,29 +1027,76 @@ export function createApp({
       agentTasks !== undefined
     ) {
       const taskExecutions = executions;
+      const tasksFor = (requestId: string | undefined) =>
+        createAgentTaskService({
+          tasks: agentTasks.repository,
+          specialists: structure.specialists,
+          executions: createExecutionService({
+            repository: taskExecutions,
+            organizations: tenancy,
+            assignments: specialists.assignments,
+            authorization,
+            audit,
+            ...(requestId === undefined ? {} : { requestId }),
+          }),
+          authorization,
+          ...(agentTasks.runtime === undefined ? {} : { runtime: agentTasks.runtime }),
+          ...(requestId === undefined ? {} : { requestId }),
+        });
+      const taskOutputs =
+        agentTasks.outputs === undefined ? undefined : createAgentOutputStore(agentTasks.outputs);
+      const handoffRepository = agentTasks.handoffs;
       registerAgentTaskRoutes(app, {
         store: tenancy,
         authorization,
         audit,
-        tasksFor: (requestId) =>
-          createAgentTaskService({
-            tasks: agentTasks.repository,
-            specialists: structure.specialists,
-            executions: createExecutionService({
-              repository: taskExecutions,
-              organizations: tenancy,
-              assignments: specialists.assignments,
-              authorization,
-              audit,
-              ...(requestId === undefined ? {} : { requestId }),
-            }),
-            authorization,
-            ...(agentTasks.runtime === undefined ? {} : { runtime: agentTasks.runtime }),
-            ...(requestId === undefined ? {} : { requestId }),
-          }),
-        ...(agentTasks.outputs === undefined
+        tasksFor,
+        ...(handoffRepository === undefined
           ? {}
-          : { outputs: createAgentOutputStore(agentTasks.outputs) }),
+          : {
+              handoffsFor: (requestId: string | undefined) =>
+                createAgentHandoffService({
+                  repository: handoffRepository,
+                  tasks: agentTasks.repository,
+                  assign: tasksFor(requestId),
+                  specialists: structure.specialists,
+                  directory: createHandoffDirectory({
+                    departments: structure.departments,
+                    specialists: structure.specialists,
+                  }),
+                  authorization,
+                  // What the first task spent: its own agent nodes' kept records (ADR-0100).
+                  spent: async (tenant, taskId) => {
+                    const organizationId = tenant.organizationId as OrganizationId;
+                    const found = await taskExecutions.find(organizationId, taskId);
+                    return found === undefined || taskOutputs === undefined
+                      ? 0
+                      : creditsSpentBy(taskOutputs, tenant, found);
+                  },
+                  ...(agentNotifier === undefined ? {} : { notifier: agentNotifier }),
+                  ...(requestId === undefined ? {} : { requestId }),
+                }),
+            }),
+        ...(activity === undefined ? {} : { history: activity }),
+        ...(notificationRepository === undefined
+          ? {}
+          : {
+              notifications: createAgentNotificationService({
+                repository: notificationRepository,
+              }),
+            }),
+        ...(taskOutputs === undefined ? {} : { outputs: taskOutputs }),
+        ...(agentTasks.memories === undefined
+          ? {}
+          : {
+              memoriesFor: (requestId: string | undefined) =>
+                createAgentMemoryService({
+                  repository: agentTasks.memories as AgentMemoryRepository,
+                  specialists: structure.specialists,
+                  authorization,
+                  ...(requestId === undefined ? {} : { requestId }),
+                }),
+            }),
         ...(commercial === undefined
           ? {}
           : {
@@ -1160,6 +1275,30 @@ export function createApp({
             : { outputs: createAgentOutputStore(agentTasks.outputs) }),
         },
       });
+      // GIA summarizes what the agents of a plan answered (ADR-0117), read as the person.
+      const planOutputs =
+        agentTasks?.outputs === undefined ? undefined : createAgentOutputStore(agentTasks.outputs);
+      giaSummaryRegistered = true;
+      registerGiaSummaryRoute(app, {
+        ...dependencies,
+        ...(aiGateway === undefined || planOutputs === undefined
+          ? {}
+          : {
+              summary: createGiaSummary({
+                gateway: aiGateway,
+                plans: {
+                  results: (tenant, planId) =>
+                    readPlanResults(tenant, planId, {
+                      plans: planService,
+                      executions: executionService,
+                      outputs: planOutputs,
+                    }),
+                },
+                authorization,
+                audit,
+              }),
+            }),
+      });
       if (workflows !== undefined) {
         registerWorkflowRoutes(app, {
           ...dependencies,
@@ -1174,6 +1313,10 @@ export function createApp({
           }),
         });
       }
+    }
+    // Without plans, GIA has no plan to summarize: the route answers that no model serves it.
+    if (tenancy !== undefined && !giaSummaryRegistered) {
+      registerGiaSummaryRoute(app, { store: tenancy, authorization, audit });
     }
     if (tenancy !== undefined) {
       const unavailable = (what: string) => (c: Context<Env>) =>

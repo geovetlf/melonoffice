@@ -5,6 +5,8 @@ import type { AutomationsClient } from '../automations/automationsClient.js';
 import type { FollowUpsClient } from '../followUps/followUpsClient.js';
 import { navigate } from '../identity/router.js';
 import { Icon } from '../office/icons.js';
+import { useOfficeData } from '../office/OfficeData.js';
+import type { AgentNoticeView, AgentNotificationsClient } from './agentNotificationsClient.js';
 import { paths } from './routes.js';
 
 /**
@@ -27,7 +29,10 @@ export function Notifications({
   approvals,
   automations,
   followUps,
+  agents,
 }: {
+  /** The person's own notices about their agents (ADR-0117), with `specialist.read`. */
+  readonly agents?: AgentNotificationsClient | undefined;
   /** With `approval.read`. */
   readonly approvals?: ApprovalsClient | undefined;
   /** With `plan.read`. */
@@ -38,6 +43,10 @@ export function Notifications({
   const intl = useIntl();
   const menu = useRef<HTMLDetailsElement>(null);
   const [items, setItems] = useState<readonly Item[] | undefined>();
+  const [notices, setNotices] = useState<
+    { readonly items: readonly AgentNoticeView[]; readonly unread: number } | undefined
+  >();
+  const office = useOfficeData();
 
   const read = useCallback(() => {
     const count = <T,>(load: Promise<T>, of: (value: T) => number): Promise<Count> =>
@@ -68,17 +77,37 @@ export function Notifications({
     }
     let live = true;
     void Promise.all(reads).then((all) => live && setItems(all));
+    agents?.list().then(
+      (page) => live && setNotices({ items: page.notifications, unread: page.unread }),
+      () => live && setNotices(undefined),
+    );
     return () => {
       live = false;
     };
-  }, [approvals, automations, followUps]);
+  }, [approvals, automations, followUps, agents]);
 
   useEffect(read, [read]);
 
-  const waiting = (items ?? []).reduce(
-    (sum, i) => sum + (typeof i.count === 'number' ? i.count : 0),
-    0,
-  );
+  const waiting =
+    (items ?? []).reduce((sum, i) => sum + (typeof i.count === 'number' ? i.count : 0), 0) +
+    (notices?.unread ?? 0);
+  const specialists = office.specialists.status === 'ready' ? office.specialists.value : [];
+  const departments = office.departments.status === 'ready' ? office.departments.value : [];
+  const agentName = (id: string | null) =>
+    specialists.find((s) => s.id === id)?.displayName ??
+    intl.formatMessage({ id: 'notifications.agent.someone' });
+  /** The agent's place, where its task is read; the agents page when it is not known. */
+  const placeOf = (specialistId: string) => {
+    const agent = specialists.find((s) => s.id === specialistId);
+    const type = departments.find((d) => d.id === agent?.departmentId)?.typeId;
+    return agent === undefined || type === null || type === undefined
+      ? paths.agents()
+      : paths.agent(type.replaceAll('_', '-'), agent.id);
+  };
+  const openNotice = (notice: AgentNoticeView) => {
+    if (!notice.read) void agents?.markRead(notice.id).catch(() => undefined);
+    go(placeOf(notice.specialistId));
+  };
   const shown = (items ?? []).filter((i) => i.count === 'error' || i.count > 0);
   const label =
     waiting === 0
@@ -114,16 +143,33 @@ export function Notifications({
           <p className="panel__empty" role="status">
             <FormattedMessage id="notifications.loading" />
           </p>
-        ) : items.length === 0 ? (
+        ) : items.length === 0 && notices === undefined ? (
           <p className="panel__empty">
             <FormattedMessage id="notifications.none" />
           </p>
-        ) : shown.length === 0 ? (
+        ) : shown.length === 0 && (notices?.items.length ?? 0) === 0 ? (
           <p className="panel__empty">
             <FormattedMessage id="notifications.empty" />
           </p>
         ) : (
           <ul className="notifications__list">
+            {(notices?.items ?? []).map((notice) => (
+              <li key={notice.id}>
+                <button
+                  type="button"
+                  className={`notifications__item${notice.read ? '' : ' notifications__item--unread'}`}
+                  onClick={() => openNotice(notice)}
+                >
+                  <FormattedMessage
+                    id={`notifications.agent.${notice.kind}`}
+                    values={{
+                      name: agentName(notice.specialistId),
+                      other: agentName(notice.otherSpecialistId),
+                    }}
+                  />
+                </button>
+              </li>
+            ))}
             {shown.map((item) => (
               <li key={item.id}>
                 <button type="button" className="notifications__item" onClick={() => go(item.path)}>

@@ -6,7 +6,15 @@ import { GIA_LIMITS, GIA_SCREENS, type GiaLocale } from './catalogue.js';
 import { FOLLOW_UP_LIMITS, FOLLOW_UP_TYPES } from '@melonoffice/conversations';
 import { commercialContext, commercialRules, followUpRules } from './commercial.js';
 import { forecastBlock, forecastRules, type GiaForecastContext } from './forecast.js';
-import { agentRules, agentsBlock, GIA_AGENT_LIMITS, type GiaAgent } from './agents.js';
+import {
+  agentRules,
+  agentsBlock,
+  GIA_AGENT_LIMITS,
+  GIA_TEAM_LIMITS,
+  teamDepartmentsOf,
+  teamRules,
+  type GiaAgent,
+} from './agents.js';
 import { PRIORITY_RULES } from './priorities.js';
 
 /**
@@ -75,6 +83,7 @@ export function giaOutputSchema(
   followUpRecords: readonly string[] = [],
   agentRefs: readonly string[] = [],
   priorities = false,
+  teamDepartments: readonly string[] = [],
 ): AIOutputSchema {
   return {
     type: 'object',
@@ -127,6 +136,24 @@ export function giaOutputSchema(
               required: ['agent', 'request'],
             },
           }),
+      // Work for agents of several departments (ADR-0117); planned, then a person approves.
+      ...(teamDepartments.length < 2
+        ? {}
+        : {
+            teamTask: {
+              type: 'object',
+              nullable: true,
+              properties: {
+                request: { type: 'string', maxLength: GIA_TEAM_LIMITS.requestLength },
+                departments: {
+                  type: 'array',
+                  items: { type: 'string', enum: [...teamDepartments] },
+                  maxItems: GIA_TEAM_LIMITS.departments,
+                },
+              },
+              required: ['request', 'departments'],
+            },
+          }),
       // Whether the answer is about the Decision Engine's ranking (ADR-0065).
       ...(priorities ? { priorities: { type: 'boolean' } } : {}),
     },
@@ -148,6 +175,7 @@ function system(
   agents: number | undefined,
   priorities: boolean,
   presentation: boolean,
+  teamDepartments: readonly string[] = [],
 ): string {
   const sources = `${commercial ? ', <commercial_context>' : ''}${priorities ? ', <priorities>' : ''}${forecast ? ', <forecast>' : ''}${agents === undefined ? '' : ', <agents>'}`;
   return [
@@ -176,7 +204,8 @@ function system(
           'There is no <forecast> for this message: never forecast, project or estimate future figures yourself. If asked for one, say you have no projection for it.',
         ]),
     ...(agents === undefined ? [] : agentRules(agents)),
-    `Answer with exactly one JSON object with answer, department, screen, proposedAction (or null)${commercial ? ', facts, links and followUp (or null)' : ' and facts'}${agents === undefined || agents === 0 ? '' : ' and agentTask (or null)'}${priorities ? ' and priorities' : ''}.`,
+    ...teamRules(teamDepartments),
+    `Answer with exactly one JSON object with answer, department, screen, proposedAction (or null)${commercial ? ', facts, links and followUp (or null)' : ' and facts'}${agents === undefined || agents === 0 ? '' : ' and agentTask (or null)'}${teamDepartments.length < 2 ? '' : ' and teamTask (or null)'}${priorities ? ' and priorities' : ''}.`,
   ].join('\n');
 }
 
@@ -257,6 +286,7 @@ export function giaMessages(input: GiaPromptInput): readonly AIMessage[] {
           input.agents?.length,
           input.priorities !== undefined,
           input.presentation !== undefined,
+          teamDepartmentsOf(input.agents ?? []),
         ),
       ),
     },

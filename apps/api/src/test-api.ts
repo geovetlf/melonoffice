@@ -62,7 +62,16 @@ import {
   type ChannelTemplateRepository,
 } from '@melonoffice/integrations';
 import { InMemoryPlanRepository, type PlanRepository } from '@melonoffice/planning';
-import { InMemoryAgentTaskRepository, type AgentTaskRepository } from '@melonoffice/agents';
+import {
+  InMemoryAgentHandoffRepository,
+  InMemoryAgentNotificationRepository,
+  InMemoryAgentMemoryRepository,
+  InMemoryAgentTaskRepository,
+  type AgentHandoffRepository,
+  type AgentNotificationRepository,
+  type AgentMemoryRepository,
+  type AgentTaskRepository,
+} from '@melonoffice/agents';
 import { InMemoryWorkflowRepository, type WorkflowRepository } from '@melonoffice/workflows';
 import type {
   BillingAccount,
@@ -80,7 +89,12 @@ import type {
 import { createLogger } from '@melonoffice/observability';
 import type { EntitlementService } from '@melonoffice/entitlements';
 import type { AuthorizationService } from '@melonoffice/rbac';
-import { InMemorySpecialistRepository, type SpecialistRepository } from '@melonoffice/specialists';
+import {
+  InMemoryAgentPolicyRepository,
+  InMemorySpecialistRepository,
+  type AgentPolicyRepository,
+  type SpecialistRepository,
+} from '@melonoffice/specialists';
 import {
   InMemoryCommercialStore,
   InMemoryTenancyStore,
@@ -106,6 +120,10 @@ import {
   FirestoreApprovalRepository,
   FirestoreSpecialistRepository,
   FirestoreDepartmentMigrationStore,
+  FirestoreAgentHandoffRepository,
+  FirestoreAgentNotificationRepository,
+  FirestoreAgentMemoryRepository,
+  FirestoreAgentPolicyRepository,
   FirestoreBusinessProfileRepository,
   FirestoreKnowledgeRepository,
   SPECIALISTS,
@@ -186,11 +204,16 @@ export interface Stores {
   readonly putStructure: (record: Department | Specialist | SpecialistVersion) => Promise<void>;
   /** Business profiles (ADR-0048). */
   readonly businessProfiles: BusinessProfileRepository;
+  /** Organizations' rules for their agents (AE-4.4). */
+  readonly agentPolicies: AgentPolicyRepository;
   /** The audit trail's read side (ADR-0049). */
   readonly auditReader: AuditReader & AuditHistoryReader;
   readonly knowledge: KnowledgeRepository;
   /** What people asked agents (ADR-0063). */
   readonly agentTasks: AgentTaskRepository;
+  readonly agentMemories: AgentMemoryRepository;
+  readonly agentHandoffs: AgentHandoffRepository;
+  readonly agentNotifications: AgentNotificationRepository;
   /** Uploaded documents' records (ADR-0078); their bytes are in `setupApp`'s file store. */
   readonly documents: DocumentRepository;
   /** The department catalogue migration's storage (ADR-0047). */
@@ -269,9 +292,13 @@ function memoryStores(): Stores {
     departments,
     specialists,
     businessProfiles: new InMemoryBusinessProfileRepository(breakable),
+    agentPolicies: new InMemoryAgentPolicyRepository(breakable),
     auditReader: events,
     knowledge: new InMemoryKnowledgeRepository(breakable),
     agentTasks: new InMemoryAgentTaskRepository(),
+    agentMemories: new InMemoryAgentMemoryRepository(breakable),
+    agentHandoffs: new InMemoryAgentHandoffRepository(breakable),
+    agentNotifications: new InMemoryAgentNotificationRepository(),
     documents: new InMemoryDocumentRepository(breakable),
     departmentMigration: new InMemoryDepartmentMigrationStore(
       departments,
@@ -335,9 +362,13 @@ function firestoreStores(): Stores {
     departments: new FirestoreDepartmentRepository(db),
     specialists: new FirestoreSpecialistRepository(db),
     businessProfiles: new FirestoreBusinessProfileRepository(db),
+    agentPolicies: new FirestoreAgentPolicyRepository(db),
     auditReader: new FirestoreAuditStore(db),
     knowledge: new FirestoreKnowledgeRepository(db),
     agentTasks: new FirestoreAgentTaskRepository(db),
+    agentMemories: new FirestoreAgentMemoryRepository(db),
+    agentHandoffs: new FirestoreAgentHandoffRepository(db),
+    agentNotifications: new FirestoreAgentNotificationRepository(db),
     documents: new FirestoreDocumentRepository(db),
     departmentMigration: new FirestoreDepartmentMigrationStore(db),
     async putStructure(record) {
@@ -509,6 +540,7 @@ export function setupApp(
     executions: stores.executions,
     structure: { departments: stores.departments, specialists: stores.specialists },
     businessProfiles: stores.businessProfiles,
+    agentPolicies: stores.agentPolicies,
     activity: stores.auditReader,
     knowledge: stores.knowledge,
     approvals: stores.approvals,
@@ -530,7 +562,14 @@ export function setupApp(
       ...(scheduler === null ? {} : { followUpScheduler: scheduler }),
     },
     webhooks: engine,
-    agentTasks: { repository: stores.agentTasks, outputs: agentOutputs, runtime: kickoff },
+    agentTasks: {
+      repository: stores.agentTasks,
+      outputs: agentOutputs,
+      runtime: kickoff,
+      memories: stores.agentMemories,
+      handoffs: stores.agentHandoffs,
+      notifications: stores.agentNotifications,
+    },
     documents: {
       repository: stores.documents,
       ...(files === null ? {} : { files }),

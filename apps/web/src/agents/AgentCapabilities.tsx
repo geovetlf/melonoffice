@@ -2,6 +2,8 @@ import { FormattedMessage, useIntl } from '@melonoffice/i18n';
 import { Button, StateMessage } from '@melonoffice/ui';
 import { useCallback, useEffect, useState } from 'react';
 import type { AgentCapabilitiesView, AgentsClient } from './agentsClient.js';
+import { AgentAutonomy } from './AgentAutonomy.js';
+import { AgentMemory, AgentWorkSettings } from './AgentWork.js';
 import { ReadinessProblems } from './ReadinessProblems.js';
 
 /**
@@ -109,6 +111,25 @@ export function AgentCapabilities({
             />
           </p>
           <ReadinessProblems problems={found.problems} />
+          <AgentAutonomy
+            key={`${found.version}`}
+            client={client}
+            agentId={agentId}
+            version={found.version}
+            level={found.autonomy ?? 'controlled'}
+            canManage={canManage}
+            onChanged={() => void load(() => true)}
+          />
+          <AgentWorkSettings
+            key={`work-${found.version}`}
+            client={client}
+            agentId={agentId}
+            version={found.version}
+            settings={found.work ?? { memory: false, aiVerification: false, collaboration: false }}
+            canManage={canManage}
+            onChanged={() => void load(() => true)}
+          />
+          <AgentMemory client={client} agentId={agentId} canManage={canManage} />
           {notice === undefined ? null : (
             <StateMessage kind={notice === 'error' ? 'error' : 'success'}>
               <FormattedMessage id={`agents.upgrade.${notice}`} />

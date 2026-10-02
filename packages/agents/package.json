@@ -20,7 +20,9 @@
   },
   "dependencies": {
     "@melonoffice/ai-gateway": "workspace:*",
+    "@melonoffice/audit": "workspace:*",
     "@melonoffice/brain": "workspace:*",
+    "@melonoffice/departments": "workspace:*",
     "@melonoffice/domain": "workspace:*",
     "@melonoffice/execution": "workspace:*",
     "@melonoffice/planning": "workspace:*",
@@ -29,10 +31,8 @@
     "@melonoffice/tenancy": "workspace:*"
   },
   "devDependencies": {
-    "@melonoffice/audit": "workspace:*",
     "@melonoffice/auth": "workspace:*",
     "@melonoffice/config": "workspace:*",
-    "@melonoffice/credits": "workspace:*",
-    "@melonoffice/departments": "workspace:*"
+    "@melonoffice/credits": "workspace:*"
   }
 }

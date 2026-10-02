@@ -19,6 +19,7 @@ import type { AgentTaskView, AgentTasksClient } from '../office/agentTasksClient
 import { formatMoney } from '../opportunities/OpportunitiesSection.js';
 import { paths } from '../shell/routes.js';
 import { GiaAvatar } from './GiaAvatar.js';
+import type { GiaTeamClient, TeamStart, TeamSummary } from './teamClient.js';
 import { giaEngagements } from './presence.js';
 import type {
   GiaAnswerView,
@@ -52,6 +53,8 @@ export interface GiaChat {
   readonly followUps?: FollowUpsClient;
   /** Where a task GIA prepared for an agent is sent (AE-3); absent when the role may not. */
   readonly agentTasks?: AgentTasksClient;
+  /** Where work GIA prepared for several departments is confirmed (ADR-0117). */
+  readonly team?: GiaTeamClient;
 }
 
 const UNAVAILABLE: GiaChat = {
@@ -68,8 +71,11 @@ export function GiaChatProvider({
   client,
   followUps,
   agentTasks,
+  team,
   children,
 }: {
+  /** The Harness's work for several departments (ADR-0117), for a role that may give tasks. */
+  readonly team?: GiaTeamClient;
   readonly client: GiaClient | undefined;
   /** Follow-ups (C5), for a role that may schedule them: GIA's proposals are confirmed here. */
   readonly followUps?: FollowUpsClient;
@@ -124,8 +130,9 @@ export function GiaChatProvider({
             send,
             ...(followUps === undefined ? {} : { followUps }),
             ...(agentTasks === undefined ? {} : { agentTasks }),
+            ...(team === undefined ? {} : { team }),
           },
-    [client, entries, pending, send, followUps, agentTasks],
+    [client, entries, pending, send, followUps, agentTasks, team],
   );
   return <GiaChatContext.Provider value={value}>{children}</GiaChatContext.Provider>;
 }
@@ -610,6 +617,147 @@ function AgentTaskProposal({ answer }: { readonly answer: GiaAnswerView }) {
   );
 }
 
+/**
+ * Work GIA prepared for several departments (ADR-0117): the person reads and edits it, and
+ * confirms. The Melon Agent Harness plans it; a plan waits for their approval in Automations.
+ * Once the agents answered, GIA summarizes their answers on request. Nothing runs without them.
+ */
+function TeamTaskProposal({ answer }: { readonly answer: GiaAnswerView }) {
+  const chat = useGiaChat();
+  const intl = useIntl();
+  const proposal = answer.proposedTeamTask ?? null;
+  const [text, setText] = useState(proposal?.request ?? '');
+  const [state, setState] = useState<'open' | 'sending' | 'discarded' | TeamStart>('open');
+  const [summary, setSummary] = useState<TeamSummary | 'loading'>();
+  const key = useRef(newRequestKey());
+  if (proposal === null) return null;
+  const departments = proposal.departments
+    .map((d) => {
+      const id = `department.${d}.short`;
+      return Object.hasOwn(intl.messages, id) ? intl.formatMessage({ id }) : d;
+    })
+    .join(', ');
+  const team = chat.team;
+  if (team === undefined) {
+    return (
+      <p className="gia-chat__meta">
+        <FormattedMessage id="gia.chat.team.notAllowed" />
+      </p>
+    );
+  }
+  if (state === 'discarded') {
+    return (
+      <p className="gia-chat__meta">
+        <FormattedMessage id="gia.chat.agentTask.discarded" />
+      </p>
+    );
+  }
+  if (state !== 'open' && state !== 'sending') {
+    if (state.kind !== 'plan') {
+      return (
+        <p className="gia-chat__meta" role="status">
+          <FormattedMessage
+            id={state.kind === 'task' ? 'gia.chat.team.single' : 'gia.chat.team.notStarted'}
+          />
+        </p>
+      );
+    }
+    const planId = state.planId;
+    const summarize = () => {
+      setSummary('loading');
+      const locale = intl.locale.toLowerCase().startsWith('es') ? 'es' : 'en';
+      void team
+        .summarize(planId, newRequestKey(), locale)
+        .then(setSummary, () => setSummary({ kind: 'failed', reason: 'unavailable' }));
+    };
+    return (
+      <div className="gia-chat__proposal" role="status">
+        <p className="gia-chat__meta">
+          <FormattedMessage id="gia.chat.team.planned" />{' '}
+          <a
+            className="gia-chat__go"
+            href={paths.automations()}
+            onClick={(event) => {
+              event.preventDefault();
+              navigate(paths.automations());
+            }}
+          >
+            <FormattedMessage id="gia.chat.team.review" />
+          </a>
+        </p>
+        <Button size="sm" variant="secondary" disabled={summary === 'loading'} onClick={summarize}>
+          <FormattedMessage id="gia.chat.team.summarize" />
+        </Button>
+        {summary === undefined || summary === 'loading' ? null : summary.kind === 'summary' ? (
+          <div className="gia-chat__summary">
+            <p>{summary.summary}</p>
+            {summary.pending === 0 ? null : (
+              <p className="gia-chat__meta">
+                <FormattedMessage id="gia.chat.team.pending" values={{ count: summary.pending }} />
+              </p>
+            )}
+          </div>
+        ) : (
+          <p className="gia-chat__meta">
+            <FormattedMessage
+              id={
+                summary.reason === 'nothing_yet'
+                  ? 'gia.chat.team.nothingYet'
+                  : 'gia.chat.team.summaryFailed'
+              }
+            />
+          </p>
+        )}
+      </div>
+    );
+  }
+  const confirm = async (event: FormEvent) => {
+    event.preventDefault();
+    const request = text.trim();
+    if (request === '' || state === 'sending') return;
+    setState('sending');
+    const started = await team
+      .start(request, key.current)
+      .catch((): TeamStart => ({ kind: 'not_started', reason: 'unavailable' }));
+    setState(started);
+  };
+  return (
+    <form className="gia-chat__proposal" aria-label="team task proposal" onSubmit={confirm}>
+      <p className="gia-chat__meta">
+        <FormattedMessage id="gia.chat.team.prepared" values={{ departments }} />
+      </p>
+      <label>
+        <FormattedMessage id="gia.chat.team.request" />
+        <textarea
+          className="gia-chat__input"
+          value={text}
+          maxLength={MAX_REQUEST}
+          rows={3}
+          onChange={(event) => setText(event.target.value)}
+        />
+      </label>
+      <p className="gia-chat__meta">
+        <FormattedMessage id="gia.chat.team.hint" />
+      </p>
+      <div className="mo-form__actions">
+        <Button type="submit" disabled={state === 'sending' || text.trim() === ''}>
+          <FormattedMessage
+            id={state === 'sending' ? 'gia.chat.agentTask.sending' : 'gia.chat.team.confirm'}
+          />
+        </Button>
+        <Button
+          type="button"
+          variant="secondary"
+          disabled={state === 'sending'}
+          onClick={() => setState('discarded')}
+        >
+          <FormattedMessage id="gia.chat.agentTask.discard" />
+        </Button>
+      </div>
+    </form>
+  );
+}
+
 function GiaReply({ answer }: { readonly answer: GiaAnswerView }) {
   const intl = useIntl();
   const key = answer.department === null ? undefined : `department.${answer.department}.short`;
@@ -705,6 +853,7 @@ function GiaReply({ answer }: { readonly answer: GiaAnswerView }) {
       <Priorities answer={answer} />
       <FollowUpProposal answer={answer} />
       <AgentTaskProposal answer={answer} />
+      <TeamTaskProposal answer={answer} />
       {place === undefined ? null : (
         <a
           className="gia-chat__go"

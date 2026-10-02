@@ -1,4 +1,5 @@
-import type { AICallTrace } from '@melonoffice/domain';
+import type { AuditHistoryReader } from '@melonoffice/audit';
+import type { AgentHandoff, AICallTrace } from '@melonoffice/domain';
 import { callRefOf, handoffForTask } from '@melonoffice/harness';
 import {
   AGENT_TASK_NODE,
@@ -8,8 +9,12 @@ import {
   MODEL_FOLLOW_UP_TOOL,
   parseAgentAnswer,
   parseTaskFollowUp,
+  readAgentTaskTrace,
   resolveContactRef,
   type TaskContacts,
+  type AgentHandoffService,
+  type AgentMemoryService,
+  type AgentNotificationService,
   type AgentTaskError,
   type AgentTaskService,
   type TaskWithExecution,
@@ -84,9 +89,35 @@ export function registerAgentTaskRoutes(
     readonly outputs?: Pick<AgentOutputStore, 'find'>;
     /** The contacts a proposed follow-up names, read as the caller (`contact.read`). */
     readonly contacts?: TaskContacts;
+    /** Agents' own memories (ADR-0117). Absent: their routes are not served. */
+    readonly memoriesFor?: (requestId: string | undefined) => AgentMemoryService;
+    /** Handoffs between agents (ADR-0117). Absent: tasks show none and none can be decided. */
+    readonly handoffsFor?: (requestId: string | undefined) => AgentHandoffService;
+    /** The person's in-app notices about their agents (ADR-0117). Absent: not served. */
+    readonly notifications?: AgentNotificationService;
+    /** The audit trail of a task and its handoff, for its trace (ADR-0117). */
+    readonly history?: AuditHistoryReader;
   },
 ): void {
-  const { tasksFor, outputs, contacts } = dependencies;
+  const { tasksFor, outputs, contacts, memoriesFor, handoffsFor, notifications, history } =
+    dependencies;
+
+  /** A handoff as a person reads it: who asked whom, why, its state and what it spent. */
+  const handoffView = (h: AgentHandoff) => ({
+    state: h.state,
+    reason: h.reason,
+    department: h.department,
+    request: h.request,
+    context: h.context,
+    requestingAgentId: h.requestingAgent.specialistId,
+    receivingAgentId: h.receivingAgent?.specialistId ?? null,
+    childTaskId: h.childTaskId ?? null,
+    refusal: h.refusal ?? null,
+    maxCredits: h.maxCredits ?? null,
+    creditsConsumed: h.creditsConsumed ?? null,
+    decidedAt: h.decision?.at ?? null,
+    createdAt: h.createdAt,
+  });
 
   /**
    * Where the follow-up the agent proposed stands (ADR-0084): waiting for a person's approval,
@@ -210,10 +241,16 @@ export function registerAgentTaskRoutes(
         };
       }
     }
+    const proposed =
+      handoffsFor === undefined ? undefined : await handoffsFor(undefined).get(tenant, task.id);
     return {
       id: task.id,
       specialistId: task.specialistId,
       specialistVersion: task.specialistVersion,
+      // The task it was handed from (ADR-0117), when another agent proposed it.
+      parentTaskId: task.parentTaskId ?? null,
+      // The handoff this task proposed (ADR-0117), if any: a person accepts or declines it.
+      agentHandoff: proposed === undefined ? null : handoffView(proposed),
       request: task.request,
       requestedBy: task.requestedBy,
       createdAt: task.createdAt,
@@ -270,6 +307,130 @@ export function registerAgentTaskRoutes(
     ),
   );
 
+  // An agent's own memory (ADR-0117): read with `specialist.read`; adding a note, deleting one
+  // or all of them with `specialist.manage`, a person directly, which the service checks again.
+  if (memoriesFor !== undefined) {
+    const memoryPath = '/v1/organizations/:organizationId/specialists/:specialistId/memories';
+    app.get(
+      memoryPath,
+      withPermission('specialist.read', dependencies, async (c, tenant) =>
+        answer(c, async () =>
+          c.json(
+            await memoriesFor(c.get('requestId')).list(tenant, c.req.param('specialistId') ?? ''),
+          ),
+        ),
+      ),
+    );
+    app.post(
+      memoryPath,
+      withPermission('specialist.manage', dependencies, async (c, tenant) =>
+        answer(c, async () =>
+          c.json(
+            await memoriesFor(c.get('requestId')).remember(
+              tenant,
+              c.req.param('specialistId') ?? '',
+              await bodyOf(c),
+            ),
+            201,
+          ),
+        ),
+      ),
+    );
+    app.delete(
+      memoryPath,
+      withPermission('specialist.manage', dependencies, async (c, tenant) =>
+        answer(c, async () =>
+          c.json({
+            deleted: await memoriesFor(c.get('requestId')).clear(
+              tenant,
+              c.req.param('specialistId') ?? '',
+            ),
+          }),
+        ),
+      ),
+    );
+    app.delete(
+      `${memoryPath}/:memoryId`,
+      withPermission('specialist.manage', dependencies, async (c, tenant) =>
+        answer(c, async () => {
+          await memoriesFor(c.get('requestId')).forget(
+            tenant,
+            c.req.param('specialistId') ?? '',
+            c.req.param('memoryId') ?? '',
+          );
+          return c.body(null, 204);
+        }),
+      ),
+    );
+  }
+
+  // The person's own notices about their agents (ADR-0117): only theirs, ids and codes only.
+  if (notifications !== undefined) {
+    const notificationsPath = '/v1/organizations/:organizationId/notifications';
+    app.get(
+      notificationsPath,
+      withPermission('specialist.read', dependencies, async (c, tenant) =>
+        answer(c, async () => {
+          const cursor = c.req.query('cursor');
+          const limit = c.req.query('limit');
+          const page = await notifications.list(tenant, {
+            ...(cursor === undefined ? {} : { cursor }),
+            ...(limit === undefined ? {} : { limit: /^\d{1,3}$/.test(limit) ? Number(limit) : -1 }),
+          });
+          return c.json({
+            notifications: page.items.map((n) => ({
+              id: n.id,
+              kind: n.kind,
+              specialistId: n.specialistId,
+              taskId: n.taskId,
+              code: n.code,
+              otherSpecialistId: n.otherSpecialistId,
+              createdAt: n.createdAt,
+              read: n.readAt !== null,
+            })),
+            nextCursor: page.nextCursor,
+            unread: page.unread,
+          });
+        }),
+      ),
+    );
+    app.post(
+      `${notificationsPath}/read`,
+      withPermission('specialist.read', dependencies, async (c, tenant) =>
+        answer(c, async () => c.json({ marked: await notifications.markAllRead(tenant) })),
+      ),
+    );
+    app.post(
+      `${notificationsPath}/:notificationId/read`,
+      withPermission('specialist.read', dependencies, async (c, tenant) =>
+        answer(c, async () => {
+          await notifications.markRead(tenant, c.req.param('notificationId'));
+          return c.body(null, 204);
+        }),
+      ),
+    );
+  }
+
+  // Handoffs between agents (ADR-0117): a person accepts or declines what an agent proposed.
+  if (handoffsFor !== undefined) {
+    for (const decision of ['accept', 'decline'] as const) {
+      app.post(
+        `/v1/organizations/:organizationId/agent-tasks/:taskId/handoff/${decision}`,
+        withPermission('specialist.task', dependencies, async (c, tenant) =>
+          answer(c, async () => {
+            const handoffs = handoffsFor(c.get('requestId'));
+            const taskId = c.req.param('taskId') ?? '';
+            const decided =
+              decision === 'accept'
+                ? await handoffs.accept(tenant, taskId)
+                : await handoffs.decline(tenant, taskId);
+            return c.json(handoffView(decided));
+          }),
+        ),
+      );
+    }
+  }
+
   app.get(
     '/v1/organizations/:organizationId/agent-tasks/:taskId',
     withPermission('specialist.read', dependencies, async (c, tenant) =>
@@ -279,6 +440,26 @@ export function registerAgentTaskRoutes(
       }),
     ),
   );
+
+  // Everything that happened in the task (ADR-0117): steps, tools, approvals, models, credits, its
+  // review, the task it handed on and its audit trail. Codes, ids and numbers only.
+  if (outputs !== undefined) {
+    app.get(
+      '/v1/organizations/:organizationId/agent-tasks/:taskId/trace',
+      withPermission('specialist.read', dependencies, async (c, tenant) =>
+        answer(c, async () =>
+          c.json(
+            await readAgentTaskTrace(tenant, c.req.param('taskId') ?? '', {
+              tasks: tasksFor(c.get('requestId')),
+              outputs,
+              ...(handoffsFor === undefined ? {} : { handoffs: handoffsFor(undefined) }),
+              ...(history === undefined ? {} : { history }),
+            }),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 const bodyOf = async (c: Context<AuthEnv>): Promise<Record<string, unknown>> => {
@@ -296,6 +477,14 @@ const TASK_STATUS: Record<AgentTaskError['code'], 400 | 403 | 404 | 409> = {
   task_not_found: 404,
   specialist_not_available: 409,
   idempotency_conflict: 409,
+  invalid_memory: 400,
+  memory_not_found: 404,
+  memory_full: 409,
+  handoff_not_found: 404,
+  handoff_not_pending: 409,
+  no_agent_available: 409,
+  budget_exhausted: 409,
+  notification_not_found: 404,
 };
 
 /** What the execution service may refuse while a task is created and started. */
@@ -317,7 +506,8 @@ async function answer(c: Context<AuthEnv>, run: () => Promise<Response>): Promis
       return c.json(
         {
           error: error.code,
-          ...(error.code === 'invalid_task' && error.detail !== undefined
+          ...((error.code === 'invalid_task' || error.code === 'invalid_memory') &&
+          error.detail !== undefined
             ? { field: error.detail }
             : {}),
         },

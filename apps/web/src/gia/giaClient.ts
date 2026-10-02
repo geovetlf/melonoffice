@@ -49,6 +49,25 @@ export interface GiaAgentTaskProposalView {
   readonly request: string;
 }
 
+/** Work GIA prepared for several departments' agents (ADR-0117): the request and who. */
+export interface GiaTeamTaskProposalView {
+  readonly request: string;
+  /** Catalogue department types (`marketing`, `sales`…). */
+  readonly departments: readonly string[];
+}
+
+function teamTaskOf(raw: unknown): GiaTeamTaskProposalView | null {
+  if (!isRecord(raw)) return null;
+  const { request, departments } = raw;
+  if (typeof request !== 'string' || request.trim() === '' || !Array.isArray(departments)) {
+    return null;
+  }
+  const known = departments.filter(
+    (d): d is string => typeof d === 'string' && DEPARTMENT_TYPE.test(d),
+  );
+  return known.length < 2 ? null : { request, departments: known };
+}
+
 /**
  * What needs attention first, as the Decision Engine ranked it (ADR-0065): each item with its
  * reason and data, its record, the next step and whether it needs approval. Only shown.
@@ -74,6 +93,8 @@ export interface GiaAnswerView {
   readonly links: readonly GiaLinkView[];
   readonly proposedFollowUp: GiaFollowUpProposalView | null;
   readonly proposedAgentTask: GiaAgentTaskProposalView | null;
+  /** Work for several departments she prepared (ADR-0117); the person confirms it. */
+  readonly proposedTeamTask?: GiaTeamTaskProposalView | null;
   /** The ranking the answer is about, when it is about one. */
   readonly priorities: readonly GiaPriorityView[];
   /** The answer carries a finished projection (ADR-0059): by the model or the simple fallback. */
@@ -294,6 +315,7 @@ export function createGiaClient(request: ReplyRequest, organizationId: string): 
           links: linksOf(body.links),
           proposedFollowUp: proposalOf(body.proposedFollowUp),
           proposedAgentTask: agentTaskOf(body.proposedAgentTask),
+          proposedTeamTask: teamTaskOf(body.proposedTeamTask),
           priorities: prioritiesOf(body.priorities),
           forecast: forecastOf(body.forecast),
           forecastGap: forecastGapOf(body.forecast),

@@ -197,6 +197,11 @@ export interface AgentTaskService {
     tenant: TenantContext,
     specialistId: string,
     input: Record<string, unknown>,
+    /**
+     * A task handed from another agent's (ADR-0117): set only by the handoff service, never from a
+     * request's body, once a person accepted the handoff.
+     */
+    link?: { readonly parentTaskId: ExecutionId },
   ): Promise<TaskWithExecution>;
   get(tenant: TenantContext, taskId: string): Promise<TaskWithExecution>;
   list(
@@ -270,7 +275,7 @@ export function createAgentTaskService(options: AgentTaskServiceOptions): AgentT
   }
 
   return Object.freeze({
-    async assign(tenant, specialistId, input) {
+    async assign(tenant, specialistId, input, link) {
       const organizationId = organizationOf(tenant, 'specialist.task');
       // Asking an agent for work is a person's decision: never GIA's, never the runtime's.
       if (tenant.actor !== 'user') throw new AgentTaskError('permission_denied');
@@ -373,6 +378,7 @@ export function createAgentTaskService(options: AgentTaskServiceOptions): AgentT
             requestedBy: tenant.userId,
             createdAt: now().toISOString() as IsoTimestamp,
             ...(maxCredits === undefined ? {} : { maxCredits }),
+            ...(link === undefined ? {} : { parentTaskId: link.parentTaskId }),
           }),
         ));
       if (task.request !== request) throw new AgentTaskError('idempotency_conflict');

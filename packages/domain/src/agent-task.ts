@@ -21,4 +21,9 @@ export interface AgentTask {
    * no task budget; each call is still limited by the balance and its model policy.
    */
   readonly maxCredits?: number;
+  /**
+   * The task this one was handed from (ADR-0117), when another agent proposed it and a person
+   * accepted. A handed task never hands on again.
+   */
+  readonly parentTaskId?: ExecutionId;
 }

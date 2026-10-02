@@ -231,6 +231,43 @@ describe('Agents (ADR-0025, ADR-0062)', () => {
     expect(knowledge.queryByText(/Send a message/)).toBeNull();
   });
 
+  it('shows how far an agent acts on its own, and lets an owner change it (AE-4.4)', async () => {
+    const backend = open('/office/sales/agent/spec_lucia');
+    const section = await screen.findByRole('region', { name: 'What this agent can do' });
+    expect(await within(section).findByText('How far it acts on its own')).toBeTruthy();
+    expect(within(section).getByText(/Sensitive actions, such as sending outside/)).toBeTruthy();
+    const controlled = within(section).getByRole('radio', { name: /Controlled \(recommended\)/ });
+    expect((controlled as HTMLInputElement).checked).toBe(true);
+    const save = within(section).getByRole('button', { name: 'Save' }) as HTMLButtonElement;
+    expect(save.disabled).toBe(true);
+    fireEvent.click(within(section).getByRole('radio', { name: /Propose/ }));
+    fireEvent.click(save);
+    expect(await within(section).findByText('Saved. The agent has a new version.')).toBeTruthy();
+    const call = backend.apiCalls().find((c) => c.url.endsWith('/spec_lucia/autonomy'));
+    expect(JSON.parse(call?.body ?? '{}')).toEqual({ fromVersion: 2, autonomy: 'propose' });
+  });
+
+  it('without specialist.manage, only says how far the agent acts on its own', async () => {
+    open('/office/sales/agent/spec_lucia', (b) => {
+      b.options.permissions = b.options.permissions.filter((p) => p !== 'specialist.manage');
+    });
+    const section = await screen.findByRole('region', { name: 'What this agent can do' });
+    expect(await within(section).findByText('Controlled (recommended)')).toBeTruthy();
+    expect(within(section).queryByRole('radio')).toBeNull();
+    expect(within(section).queryByRole('button', { name: 'Save' })).toBeNull();
+  });
+
+  it('filters the agents by autonomy on the server', async () => {
+    const backend = open('/agents');
+    await row('Lucía');
+    fireEvent.change(screen.getByRole('combobox', { name: 'Autonomy' }), {
+      target: { value: 'within_policy' },
+    });
+    await waitFor(() =>
+      expect(backend.apiCalls().some((c) => c.url.includes('autonomy=within_policy'))).toBe(true),
+    );
+  });
+
   it('shows the skills catalogue, and the tools with their approval policy to tool.read', async () => {
     open('/agents', (b) => b.options.permissions.push('tool.read'));
     const catalogue = await screen.findByRole('region', { name: 'Skills and tools' });

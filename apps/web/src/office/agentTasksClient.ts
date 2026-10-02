@@ -40,6 +40,63 @@ export interface AgentTaskView {
    * can wait for a person's approval before the agent has answered.
    */
   readonly toolFollowUp?: TaskFollowUpView | null;
+  /** The task it was handed from (ADR-0117), when another agent proposed it. */
+  readonly parentTaskId?: string | null;
+  /** The handoff this task proposed to another department's agent (ADR-0117), if any. */
+  readonly agentHandoff?: AgentHandoffView | null;
+  /** Whether it now needs a person, and why (ADR-0101): codes only. */
+  readonly handoff?: { readonly reason: string; readonly code: string | null } | null;
+}
+
+/** What an agent proposed to hand to another department's agent, and where it stands. */
+export interface AgentHandoffView {
+  readonly state: 'proposed' | 'accepted' | 'declined' | 'refused' | 'completed' | 'failed';
+  readonly reason: string;
+  /** The department's catalogue type (`marketing`, `design`…). */
+  readonly department: string;
+  readonly request: string;
+  readonly context: string;
+  readonly requestingAgentId: string;
+  readonly receivingAgentId: string | null;
+  readonly childTaskId: string | null;
+  readonly refusal: string | null;
+  readonly maxCredits: number | null;
+  readonly creditsConsumed: number | null;
+}
+
+/** Everything that happened in a task (ADR-0117): steps, tools, approvals, models and credits. */
+export interface AgentTaskTraceView {
+  readonly taskId: string;
+  readonly status: string;
+  readonly failure: string | null;
+  readonly steps: readonly {
+    readonly nodeId: string;
+    readonly type: string;
+    readonly status: string;
+    readonly tool: { readonly id: string; readonly version: number } | null;
+    readonly approvalId: string | null;
+    readonly error: string | null;
+    readonly model: {
+      readonly provider: string;
+      readonly model: string;
+      readonly credits: number;
+    } | null;
+  }[];
+  readonly review: { readonly verdict: string; readonly reason: string } | null;
+  readonly subtasks: readonly {
+    readonly taskId: string;
+    readonly specialistId: string;
+    readonly status: string;
+    readonly credits: number;
+  }[];
+  readonly credits: {
+    readonly task: number;
+    readonly review: number;
+    readonly subtasks: number;
+    readonly total: number;
+    readonly budget: number | null;
+    readonly byAgent: readonly { readonly specialistId: string; readonly credits: number }[];
+  };
 }
 
 /** The follow-up a task proposed or asked for with its tool, if any. */
@@ -71,6 +128,11 @@ export interface AgentTasksClient {
   /** The same `requestKey` for the same agent is the same task: a retry never asks twice. */
   assign(agentId: string, request: string, requestKey: string): Promise<AgentTaskView>;
   get(taskId: string): Promise<AgentTaskView>;
+  /** A person accepts the handoff the task proposed (ADR-0117): the other agent gets the work. */
+  acceptHandoff?(taskId: string): Promise<unknown>;
+  declineHandoff?(taskId: string): Promise<unknown>;
+  /** What happened in the task, step by step (ADR-0117). */
+  trace?(taskId: string): Promise<AgentTaskTraceView>;
 }
 
 /** The API refused or failed, with its code: the screen says what happened, never guesses. */
@@ -117,5 +179,10 @@ export function createAgentTasksClient(
         body: JSON.stringify({ request: text, idempotencyKey: requestKey }),
       }),
     get: (taskId) => call<AgentTaskView>(`/agent-tasks/${encodeURIComponent(taskId)}`),
+    acceptHandoff: (taskId) =>
+      call(`/agent-tasks/${encodeURIComponent(taskId)}/handoff/accept`, { method: 'POST' }),
+    declineHandoff: (taskId) =>
+      call(`/agent-tasks/${encodeURIComponent(taskId)}/handoff/decline`, { method: 'POST' }),
+    trace: (taskId) => call<AgentTaskTraceView>(`/agent-tasks/${encodeURIComponent(taskId)}/trace`),
   };
 }

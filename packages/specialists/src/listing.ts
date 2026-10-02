@@ -1,8 +1,14 @@
 import { isDepartmentId } from '@melonoffice/departments';
-import type { DepartmentId, OrganizationId, Specialist, SpecialistId } from '@melonoffice/domain';
+import type {
+  AgentAutonomy,
+  DepartmentId,
+  OrganizationId,
+  Specialist,
+  SpecialistId,
+} from '@melonoffice/domain';
 import { SpecialistError } from './errors.js';
 import { isSpecialistStatus } from './lifecycle.js';
-import { isSpecialistId } from './model.js';
+import { autonomyOf, isAgentAutonomy, isSpecialistId } from './model.js';
 import type { SpecialistRepository, SpecialistPageRequest } from './repository.js';
 
 /**
@@ -27,6 +33,8 @@ export interface AgentListQuery {
   readonly q?: string;
   /** An agent that has this skill, at any version. */
   readonly skill?: string;
+  /** An agent at this level of autonomy (AE-4.4), the default included. */
+  readonly autonomy?: AgentAutonomy;
 }
 
 export interface AgentListPage {
@@ -70,7 +78,7 @@ export function checkAgentListQuery(
   params: Readonly<Record<string, string | undefined>>,
   organizationId: OrganizationId,
 ): AgentListQuery {
-  const { limit, cursor, status, departmentId, q, skill } = params;
+  const { limit, cursor, status, departmentId, q, skill, autonomy } = params;
   let size: number = AGENT_PAGE_SIZE.page;
   if (limit !== undefined) {
     size = Number(limit);
@@ -86,6 +94,7 @@ export function checkAgentListQuery(
   const text = q?.normalize('NFC').trim();
   if (text !== undefined && [...text].length > MAX_AGENT_QUERY_LENGTH) bad('q');
   if (skill !== undefined && !SKILL.test(skill)) bad('skill');
+  if (autonomy !== undefined && !isAgentAutonomy(autonomy)) bad('autonomy');
   return Object.freeze({
     limit: size,
     ...(cursor === undefined || cursor === '' ? {} : { after: decodeAgentCursor(cursor) }),
@@ -93,6 +102,7 @@ export function checkAgentListQuery(
     ...(departmentId === undefined ? {} : { departmentId: departmentId as DepartmentId }),
     ...(text === undefined || text === '' ? {} : { q: text }),
     ...(skill === undefined ? {} : { skill }),
+    ...(autonomy === undefined ? {} : { autonomy: autonomy as AgentAutonomy }),
   });
 }
 
@@ -102,12 +112,13 @@ export async function pageOfAgents(
   organizationId: OrganizationId,
   query: AgentListQuery,
 ): Promise<AgentListPage> {
-  const { limit, status, departmentId, q, skill } = query;
+  const { limit, status, departmentId, q, skill, autonomy } = query;
   const words = q === undefined ? [] : foldText(q).split(/\s+/).filter(Boolean);
   const matches = (s: Specialist) =>
     (skill === undefined || s.configuration.skills.some((r) => r.id === skill)) &&
+    (autonomy === undefined || autonomyOf(s.configuration) === autonomy) &&
     words.every((w) => foldText(s.identity.displayName).includes(w));
-  const narrowed = words.length > 0 || skill !== undefined;
+  const narrowed = words.length > 0 || skill !== undefined || autonomy !== undefined;
   const items: Specialist[] = [];
   let after = query.after;
   let scanned = 0;

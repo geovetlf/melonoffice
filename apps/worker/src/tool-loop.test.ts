@@ -29,6 +29,7 @@ import {
   type DepartmentRepository,
 } from '@melonoffice/departments';
 import type {
+  AgentAutonomy,
   AIModelDefinition,
   DepartmentTypeId,
   Execution,
@@ -73,6 +74,7 @@ import {
   DEFAULT_HARNESS_LIMITS,
   harnessTaskPolicy,
   type HarnessLimits,
+  type ToolUseRules,
 } from '@melonoffice/harness';
 import { createJobService, InMemoryJobRepository, type JobRepository } from '@melonoffice/jobs';
 import { createAuthorizationService } from '@melonoffice/rbac';
@@ -87,6 +89,7 @@ import {
   applySpecialistStatus,
   createSkillCatalogue,
   createSpecialistService,
+  defaultOrganizationAgentPolicy,
   InMemorySpecialistRepository,
   newSpecialist,
   type SpecialistRepository,
@@ -191,6 +194,8 @@ const TOOLS: readonly ToolDefinition[] = [
   tool('lookup'),
   // B: a reversible change inside MelonOffice.
   tool('update_record', { mutating: true }),
+  // B too, of medium risk: the default level of autonomy asks a person (AE-4.4).
+  tool('update_price', { mutating: true, riskLevel: 'medium' }),
   // C: it leaves MelonOffice. Its own policy is `auto`: only the Harness asks for a person.
   tool('send_email', {
     mutating: true,
@@ -325,6 +330,10 @@ interface WorldOptions {
   readonly tools?: Record<string, () => Promise<ToolExecutorOutcome>>;
   /** `none`: the runtime has no tool loop at all. */
   readonly loop?: 'none';
+  /** The agent's level of autonomy (AE-4.4). Absent: the default. */
+  readonly autonomy?: AgentAutonomy;
+  /** The organization's rules for its agents (AE-4.4). Absent: MelonOffice's defaults. */
+  readonly policy?: Partial<ToolUseRules>;
 }
 
 describe.each(STORES)('Harness tool loop (ADR-0103) with storage in %s', (_storage, create) => {
@@ -518,6 +527,17 @@ describe.each(STORES)('Harness tool loop (ADR-0103) with storage in %s', (_stora
           authorization,
         }),
         executors: ['fixture'],
+        specialists: stores.specialists,
+        ...(options.policy === undefined
+          ? {}
+          : {
+              policies: {
+                forOrganization: async (organizationId) => ({
+                  ...defaultOrganizationAgentPolicy(organizationId),
+                  ...options.policy,
+                }),
+              },
+            }),
       }),
       outputs,
       limits,
@@ -591,6 +611,7 @@ describe.each(STORES)('Harness tool loop (ADR-0103) with storage in %s', (_stora
             tools: TOOLS.map((t) => ({ id: t.id, version: 1 })),
             permissions: ['organization.read'],
             policies: {},
+            ...(options.autonomy === undefined ? {} : { autonomy: options.autonomy }),
           } as never,
         },
         must(await stores.departments.find(orgA, departmentId)),
@@ -712,6 +733,7 @@ describe.each(STORES)('Harness tool loop (ADR-0103) with storage in %s', (_stora
     expect(w.providerCalls[0]?.tools?.map((t) => t.name)).toEqual([
       'lookup',
       'update_record',
+      'update_price',
       'send_email',
       'broken',
       'slow',
@@ -935,5 +957,69 @@ describe.each(STORES)('Harness tool loop (ADR-0103) with storage in %s', (_stora
     const answer = await w.outputs.find(w.tenantA, execution.id, 'work_turn2');
     expect(answer?.output.text).toBe('There are 3 open records.');
     expect(answer?.ai).toMatchObject({ sensitivity: 'confidential' });
+  });
+
+  describe('autonomy and the sensitive-action policy (AE-4.4, ADR-0116)', () => {
+    const waitsOn = async (w: Awaited<ReturnType<typeof world>>, execution: Execution) => {
+      const node = must(execution.nodes.find((n) => n.id === 'work_t0'));
+      expect(execution.status).toBe('waiting_approval');
+      expect(node).toMatchObject({ status: 'pending', approvalRequired: true });
+      expect((await w.approvals.get(w.tenantA, must(node.approvalId))).status).toBe('pending');
+      expect(w.toolCalls).toHaveLength(0);
+    };
+
+    it('14. an agent that only proposes runs a read, but every change waits on a person', async () => {
+      const w = await world({ autonomy: 'propose' });
+      const read = await w.run(asks({ name: 'lookup', subject: 'open' }), ANSWER);
+      expect(read.execution.status).toBe('completed');
+      const change = await world({ autonomy: 'propose' });
+      const { execution } = await change.run(asks({ name: 'update_record', subject: 'r-1' }));
+      await waitsOn(change, execution);
+    });
+
+    it('15. the default level makes low-risk changes only; within policy makes the rest', async () => {
+      const medium = { name: 'update_price', subject: 'p-1' };
+      const controlled = await world();
+      await waitsOn(controlled, (await controlled.run(asks(medium))).execution);
+      const low = await world();
+      const { execution } = await low.run(asks({ name: 'update_record', subject: 'r-1' }), ANSWER);
+      expect(execution.status).toBe('completed');
+      const within = await world({ autonomy: 'within_policy' });
+      expect((await within.run(asks(medium), ANSWER)).execution.status).toBe('completed');
+      expect(within.toolCalls).toEqual([{ toolId: 'update_price', input: { subject: 'p-1' } }]);
+    });
+
+    it("16. the organization's maximum caps every agent: within policy acts as propose", async () => {
+      const w = await world({ autonomy: 'within_policy', policy: { maxAutonomy: 'propose' } });
+      const { execution } = await w.run(asks({ name: 'update_record', subject: 'r-1' }));
+      await waitsOn(w, execution);
+    });
+
+    it('17. an action the organization counts as sensitive waits on a person at every level', async () => {
+      const w = await world({
+        autonomy: 'within_policy',
+        policy: { sensitiveTools: ['update_record'] },
+      });
+      const { execution } = await w.run(asks({ name: 'update_record', subject: 'r-1' }));
+      await waitsOn(w, execution);
+      // MelonOffice's own list: sending outside waits too, whatever the level.
+      const send = await world({ autonomy: 'within_policy' });
+      await waitsOn(send, (await send.run(asks({ name: 'send_email', subject: 'x' }))).execution);
+    });
+
+    it('18. an agent disabled while its action waits never runs it, nor asks the model again', async () => {
+      const w = await world();
+      const { execution } = await w.run(asks({ name: 'send_email', subject: 'offer' }), ANSWER);
+      const specialistId = must(execution.specialistId);
+      await w.stores.specialists.update(w.orgA, specialistId, (s) =>
+        applySpecialistStatus(s, { from: 'active', to: 'disabled', reason: 'test' }, AT),
+      );
+      const calls = w.providerCalls.length;
+      const { execution: after } = await w.decide(execution.id, 'approve');
+      // The Tool Gate refuses an agent that is no longer active; nothing ran, no model was asked.
+      expect(w.toolCalls).toHaveLength(0);
+      expect(w.providerCalls).toHaveLength(calls);
+      expect(after.status).toBe('failed');
+    });
   });
 });

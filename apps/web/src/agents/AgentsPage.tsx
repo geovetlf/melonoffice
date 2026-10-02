@@ -8,8 +8,10 @@ import type { SpecialistStatus, SpecialistView } from '../office/officeClient.js
 import { paths } from '../shell/routes.js';
 import { CapabilityCatalogue } from './CapabilityCatalogue.js';
 import {
+  AGENT_AUTONOMY_LEVELS,
   AgentRequestError,
   TRANSITIONS,
+  type AgentAutonomyLevel,
   type AgentPageView,
   type AgentTemplateView,
   type AgentView,
@@ -50,9 +52,10 @@ interface Filters {
   readonly status: SpecialistStatus | '';
   readonly departmentId: string;
   readonly skill: string;
+  readonly autonomy: AgentAutonomyLevel | '';
 }
 
-const NO_FILTERS: Filters = { q: '', status: '', departmentId: '', skill: '' };
+const NO_FILTERS: Filters = { q: '', status: '', departmentId: '', skill: '', autonomy: '' };
 
 /** A status change that needs the person to read what it does first. */
 type Pending = { readonly agent: AgentView; readonly to: SpecialistStatus };
@@ -117,6 +120,7 @@ export function AgentsPage({
         ...(filters.status === '' ? {} : { status: filters.status }),
         ...(filters.departmentId === '' ? {} : { departmentId: filters.departmentId }),
         ...(filters.skill === '' ? {} : { skill: filters.skill }),
+        ...(filters.autonomy === '' ? {} : { autonomy: filters.autonomy }),
       })
       .then(
         (found) => live && setLoaded({ request: asked, page: found }),
@@ -174,7 +178,8 @@ export function AgentsPage({
     filters.q !== '' ||
     filters.status !== '' ||
     filters.departmentId !== '' ||
-    filters.skill !== '';
+    filters.skill !== '' ||
+    filters.autonomy !== '';
 
   return (
     <article className="mo-page agents-page">
@@ -281,6 +286,22 @@ export function AgentsPage({
             {skills.map((id) => (
               <option key={id} value={id}>
                 {skillName(id)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="mo-field">
+          <span className="mo-label">
+            <FormattedMessage id="agents.filters.autonomy" />
+          </span>
+          <select
+            value={filters.autonomy}
+            onChange={(e) => filter({ autonomy: e.target.value as Filters['autonomy'] })}
+          >
+            <option value="">{intl.formatMessage({ id: 'agents.filters.all' })}</option>
+            {AGENT_AUTONOMY_LEVELS.map((level) => (
+              <option key={level} value={level}>
+                {intl.formatMessage({ id: `agents.autonomy.level.${level}` })}
               </option>
             ))}
           </select>

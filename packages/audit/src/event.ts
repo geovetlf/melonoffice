@@ -74,7 +74,10 @@ export interface AuditTarget {
     | 'customer_invitation'
     | 'member_invitation'
     | 'brand_config'
-    | 'domain_binding';
+    | 'domain_binding'
+    | 'agent_policy'
+    | 'agent_memory'
+    | 'agent_handoff';
   readonly id: string;
 }
 

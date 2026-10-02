@@ -2,6 +2,7 @@ import type {
   Execution,
   ExecutionNode,
   OrganizationId,
+  Plan,
   PlanStep,
   PlanVersion,
 } from '@melonoffice/domain';
@@ -226,4 +227,69 @@ export function createPlanStepVerifier(options: {
       };
     },
   });
+}
+
+/** One step of a plan as a person reads its result (ADR-0117). */
+export interface PlanStepResult {
+  readonly stepId: string;
+  readonly label: string;
+  readonly specialistId: string | null;
+  readonly departmentId: string | null;
+  /** Its execution's status, or `not_started` when it has none yet. */
+  readonly status: string;
+  /** The agent's verified answer, once its step completed. */
+  readonly answer: string | null;
+}
+
+export interface PlanResults {
+  readonly planId: string;
+  readonly status: string;
+  readonly steps: readonly PlanStepResult[];
+}
+
+/**
+ * What the agents of a plan answered (ADR-0117), read as the person: the plan with `plan.read`,
+ * each step's execution with `execution.read`, and only a completed step's verified answer. GIA
+ * summarizes this for the person; nothing here runs or changes anything.
+ */
+export async function readPlanResults(
+  tenant: TenantContext,
+  planId: string,
+  ports: {
+    readonly plans: {
+      get(tenant: TenantContext, id: string): Promise<Plan>;
+      getVersion(tenant: TenantContext, id: string, version: number): Promise<PlanVersion>;
+    };
+    readonly executions: { get(tenant: TenantContext, id: string): Promise<Execution> };
+    readonly outputs: Pick<AgentOutputStore, 'find'>;
+  },
+): Promise<PlanResults> {
+  const plan = await ports.plans.get(tenant, planId);
+  const version = await ports.plans.getVersion(tenant, plan.id, plan.version);
+  const children = new Map(plan.delegations.map((d) => [d.stepId, d.executionId]));
+  const steps = await Promise.all(
+    version.steps
+      .filter((s) => s.kind === 'specialist')
+      .map(async (step): Promise<PlanStepResult> => {
+        const childId = children.get(step.id);
+        const child =
+          childId === undefined
+            ? undefined
+            : await ports.executions.get(tenant, childId).catch(() => undefined);
+        const node = child?.nodes.find((n) => n.id === step.id);
+        const record =
+          child?.status === 'completed' && node?.status === 'completed'
+            ? await ports.outputs.find(tenant, child.id, step.id)
+            : undefined;
+        return Object.freeze({
+          stepId: step.id,
+          label: step.label,
+          specialistId: step.specialist?.id ?? null,
+          departmentId: step.specialist?.departmentId ?? null,
+          status: child?.status ?? 'not_started',
+          answer: record === undefined ? null : (parseAgentAnswer(record.output)?.answer ?? null),
+        });
+      }),
+  );
+  return Object.freeze({ planId: plan.id, status: plan.status, steps: Object.freeze(steps) });
 }

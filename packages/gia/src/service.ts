@@ -56,6 +56,9 @@ import {
 import {
   agentRefOf,
   agentTaskProposalOf,
+  teamDepartmentsOf,
+  teamTaskProposalOf,
+  type GiaTeamTaskProposal,
   GIA_AGENT_LIMITS,
   type GiaAgent,
   type GiaAgentsPort,
@@ -115,6 +118,11 @@ export interface GiaAnswer {
    * confirm in the app: nothing is assigned until they do.
    */
   readonly proposedAgentTask: GiaAgentTaskProposal | null;
+  /**
+   * Work she prepared for agents of several departments (ADR-0117), for the person to confirm:
+   * the Melon Agent Harness then plans it, and the plan waits for their approval.
+   */
+  readonly proposedTeamTask: GiaTeamTaskProposal | null;
   /**
    * What needs attention first, as the Decision Engine ranked it (ADR-0065), when the answer is
    * about it: each item with its reason, its link and its next step. Nothing in it is run.
@@ -281,6 +289,7 @@ function parseAnswer(
       links: unknown[];
       followUp: unknown;
       agentTask: unknown;
+      teamTask: unknown;
       priorities: boolean;
     }
   | undefined {
@@ -302,6 +311,7 @@ function parseAnswer(
     links,
     followUp,
     agentTask,
+    teamTask,
     priorities,
   } = output;
   if (typeof answer !== 'string' || answer.trim() === '') return undefined;
@@ -327,6 +337,7 @@ function parseAnswer(
     links: Array.isArray(links) ? links : [],
     followUp,
     agentTask,
+    teamTask,
     priorities: priorities === true,
   };
 }
@@ -592,6 +603,7 @@ export function createGia(options: GiaOptions): GiaService {
         followUpRecords,
         (team ?? []).map((_, index) => agentRefOf(index)),
         ranking !== undefined,
+        teamDepartmentsOf(team ?? []),
       ),
       messages: giaMessages({
         locale,
@@ -657,8 +669,13 @@ export function createGia(options: GiaOptions): GiaService {
             message,
             earlier: history.filter((t) => t.role === 'person').map((t) => t.text),
           });
+    const proposedTeamTask =
+      team === undefined || team.length === 0 ? null : teamTaskProposalOf(parsed.teamTask, team);
+    // One proposal at most: work for a team takes the place of a single agent's.
     const proposedAgentTask =
-      team === undefined || team.length === 0 ? null : agentTaskProposalOf(parsed.agentTask, team);
+      team === undefined || team.length === 0 || proposedTeamTask !== null
+        ? null
+        : agentTaskProposalOf(parsed.agentTask, team);
     log.info('gia.message_answered', {
       latencyMs,
       facts: facts.length,
@@ -669,6 +686,7 @@ export function createGia(options: GiaOptions): GiaService {
       commercial: insights !== undefined,
       followUpProposed: proposedFollowUp !== null,
       agentTaskProposed: proposedAgentTask !== null,
+      teamTaskProposed: proposedTeamTask !== null,
       priorities: ranking === undefined ? null : parsed.priorities,
       forecast: projection?.kind ?? null,
     });
@@ -690,6 +708,7 @@ export function createGia(options: GiaOptions): GiaService {
       links: Object.freeze(links),
       proposedFollowUp,
       proposedAgentTask,
+      proposedTeamTask,
       priorities: ranking !== undefined && parsed.priorities ? prioritiesOf(ranking) : null,
       forecast: projection === undefined ? null : forecastSummaryOf(projection),
       context: Object.freeze({
