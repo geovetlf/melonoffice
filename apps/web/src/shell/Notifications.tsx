@@ -97,8 +97,10 @@ export function Notifications({
     specialists.find((s) => s.id === id)?.displayName ??
     intl.formatMessage({ id: 'notifications.agent.someone' });
   /** The agent's place, where its task is read; the agents page when it is not known. */
-  const placeOf = (specialistId: string) => {
-    const agent = specialists.find((s) => s.id === specialistId);
+  const placeOf = (notice: AgentNoticeView) => {
+    // A plan's result opens GIA, who summarizes what the agents did (ADR-0119).
+    if (typeof notice.planId === 'string') return paths.giaPlan(notice.planId);
+    const agent = specialists.find((s) => s.id === notice.specialistId);
     const type = departments.find((d) => d.id === agent?.departmentId)?.typeId;
     return agent === undefined || type === null || type === undefined
       ? paths.agents()
@@ -106,7 +108,7 @@ export function Notifications({
   };
   const openNotice = (notice: AgentNoticeView) => {
     if (!notice.read) void agents?.markRead(notice.id).catch(() => undefined);
-    go(placeOf(notice.specialistId));
+    go(placeOf(notice));
   };
   const shown = (items ?? []).filter((i) => i.count === 'error' || i.count > 0);
   const label =

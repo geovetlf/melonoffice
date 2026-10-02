@@ -69,6 +69,8 @@ export interface AgentTaskTraceView {
   readonly taskId: string;
   readonly status: string;
   readonly failure: string | null;
+  /** From creation to the end, once it ended (ADR-0119). */
+  readonly durationMs?: number | null;
   readonly steps: readonly {
     readonly nodeId: string;
     readonly type: string;
@@ -76,6 +78,7 @@ export interface AgentTaskTraceView {
     readonly tool: { readonly id: string; readonly version: number } | null;
     readonly approvalId: string | null;
     readonly error: string | null;
+    readonly durationMs?: number | null;
     readonly model: {
       readonly provider: string;
       readonly model: string;

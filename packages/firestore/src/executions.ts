@@ -12,6 +12,7 @@ import {
   isExecutionId,
   OPEN_STATUSES,
   type OpenExecutionIndex,
+  type OpenOrganizationIndex,
   type ExecutionRepository,
   type ExecutionWrite,
 } from '@melonoffice/execution';
@@ -253,7 +254,9 @@ function toExecution(id: string, d: ExecutionDocument): Execution {
 }
 
 /** Executions in Firestore. Each write is one transaction with its audit events. */
-export class FirestoreExecutionRepository implements ExecutionRepository, OpenExecutionIndex {
+export class FirestoreExecutionRepository
+  implements ExecutionRepository, OpenExecutionIndex, OpenOrganizationIndex
+{
   constructor(private readonly db: Firestore) {}
 
   /**
@@ -285,6 +288,30 @@ export class FirestoreExecutionRepository implements ExecutionRepository, OpenEx
       ids: Object.freeze(ids.slice(0, limit)),
       more: ids.length > limit || pages.some((p) => p.size > limit),
     };
+  }
+
+  /**
+   * One count aggregation per open status, equality filters only (single-field indexes, no
+   * composite index), each stopped at `limit` (ADR-0119): a count, never the documents.
+   */
+  async countOpenOfOrganization(organizationId: OrganizationId, limit: number) {
+    if (!isOrganizationId(organizationId) || !Number.isSafeInteger(limit) || limit < 1) return 0;
+    const counts = await Promise.all(
+      OPEN_STATUSES.map(async (status) => {
+        const snapshot = await this.db
+          .collection(EXECUTIONS)
+          .where('organizationId', '==', organizationId)
+          .where('status', '==', status)
+          .limit(limit)
+          .count()
+          .get();
+        return snapshot.data().count;
+      }),
+    );
+    return Math.min(
+      counts.reduce((sum, n) => sum + n, 0),
+      limit,
+    );
   }
 
   async find(organizationId: OrganizationId, id: ExecutionId): Promise<Execution | undefined> {

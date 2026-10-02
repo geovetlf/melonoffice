@@ -8,7 +8,13 @@ import type {
   Specialist,
   SpecialistId,
 } from '@melonoffice/domain';
-import { executionIdFor, isExecutionError, type ExecutionService } from '@melonoffice/execution';
+import {
+  executionIdFor,
+  isExecutionError,
+  type ExecutionService,
+  type OpenExecutionIndex,
+  type OpenOrganizationIndex,
+} from '@melonoffice/execution';
 import type { AuthorizationService } from '@melonoffice/rbac';
 import {
   canTakeNewWork,
@@ -49,6 +55,14 @@ export function checkTaskCredits(value: unknown): number {
   return value;
 }
 export const TASK_PAGE_SIZE = Object.freeze({ page: 20, max: 50 });
+
+/**
+ * How much work may be open at once (ADR-0119): our safety defaults, not a plan's limits (those
+ * wait for D-12). A new task is refused while its agent has `perAgent` executions that have not
+ * ended (`agent_busy`), or its organization `perOrganization` (`organization_busy`). Repeating a
+ * request for a task that already exists is never refused.
+ */
+export const AGENT_WORK_LIMITS = Object.freeze({ perAgent: 10, perOrganization: 200 });
 
 // Control characters other than line breaks and tabs are never stored.
 // eslint-disable-next-line no-control-regex
@@ -223,6 +237,12 @@ export interface AgentTaskServiceOptions {
   readonly authorization: Pick<AuthorizationService, 'authorize'>;
   /** Queues the task's first job. Absent: a started task waits in the queue (fails closed). */
   readonly runtime?: TaskKickoff;
+  /**
+   * Counts open work (ADR-0119). Absent: no limit is checked (tests and local runs that do not
+   * care); the API and the worker always pass the execution repository.
+   */
+  readonly openWork?: Pick<OpenExecutionIndex, 'openOfSpecialist'> & Partial<OpenOrganizationIndex>;
+  readonly limits?: { readonly perAgent: number; readonly perOrganization: number };
   readonly now?: () => Date;
   readonly requestId?: string;
   /** A fresh key for a task asked without one. */
@@ -243,7 +263,21 @@ export function checkTaskRequest(value: unknown): string {
 }
 
 export function createAgentTaskService(options: AgentTaskServiceOptions): AgentTaskService {
-  const { tasks, specialists, executions, authorization, runtime, requestId } = options;
+  const { tasks, specialists, executions, authorization, runtime, openWork, requestId } = options;
+  const limits = options.limits ?? AGENT_WORK_LIMITS;
+
+  /** Refuses new work while the agent or the organization already has too much open. */
+  async function checkOpenWork(organizationId: OrganizationId, specialistId: SpecialistId) {
+    if (openWork === undefined) return;
+    const [ofAgent, ofOrganization] = await Promise.all([
+      openWork.openOfSpecialist(organizationId, specialistId, limits.perAgent),
+      openWork.countOpenOfOrganization?.(organizationId, limits.perOrganization),
+    ]);
+    if (ofAgent.ids.length >= limits.perAgent) throw new AgentTaskError('agent_busy');
+    if (ofOrganization !== undefined && ofOrganization >= limits.perOrganization) {
+      throw new AgentTaskError('organization_busy');
+    }
+  }
   const now = options.now ?? (() => new Date());
   const newKey = options.newKey ?? (() => randomUUID());
 
@@ -310,6 +344,8 @@ export function createAgentTaskService(options: AgentTaskServiceOptions): AgentT
       // organization) leaves no task behind. A task record without its execution never exists.
       let execution = await executionOf(tenant, id);
       if (execution === undefined) {
+        // Only new work is bounded: a repeat of a task already made goes on as before.
+        if (stored === undefined) await checkOpenWork(organizationId, agent.identity.id);
         const ref = { type: AGENT_TASK_INPUT, id };
         const schedules = agent.configuration.tools.some(
           (t) => t.id === AGENT_FOLLOW_UP_TOOL.id && t.version === AGENT_FOLLOW_UP_TOOL.version,

@@ -92,6 +92,8 @@ export const paths = {
   connections: () => '/settings/connections',
   memory: () => '/memory',
   gia: () => '/gia',
+  /** A plan's result, opened in GIA to summarize (ADR-0119). */
+  giaPlan: (planId: string) => `/gia?plan=${encodeURIComponent(planId)}`,
   reports: () => '/reports',
   documents: () => '/documents',
   aiUsage: () => '/ai-usage',
@@ -110,10 +112,10 @@ export const paths = {
 
 /**
  * An id a page was opened with (`?c=`, `?contact=` (C3); `?opportunity=`, `?stage=`, `?view=`
- * (C4); `?followUp=` (C5)), when it looks like one.
+ * (C4); `?followUp=` (C5); `?plan=` (ADR-0119)), when it looks like one.
  */
 export function openedWith(
-  name: 'c' | 'contact' | 'opportunity' | 'stage' | 'view' | 'followUp',
+  name: 'c' | 'contact' | 'opportunity' | 'stage' | 'view' | 'followUp' | 'plan',
 ): string | undefined {
   const value = new URLSearchParams(globalThis.location.search).get(name);
   return value !== null && ID.test(value) ? value : undefined;

@@ -44,6 +44,8 @@ export const AGENT_NOTIFICATION_KINDS: readonly AgentNotificationKind[] = Object
   'needs_info',
   'task_delegated',
   'task_received',
+  'result_available',
+  'plan_failed',
 ]);
 
 const MAX_MS = 9_999_999_999_999;
@@ -170,8 +172,9 @@ export interface AgentNotificationDraft {
   readonly organizationId: OrganizationId;
   readonly recipientId: UserId;
   readonly kind: AgentNotificationKind;
-  readonly specialistId: SpecialistId;
+  readonly specialistId: SpecialistId | null;
   readonly taskId: string;
+  readonly planId?: string | null;
   readonly code?: string | null;
   readonly otherSpecialistId?: SpecialistId | null;
   /** What makes it unique (an event id, or a task and kind). */
@@ -205,6 +208,7 @@ export function createAgentNotifier(options: {
         kind: draft.kind,
         specialistId: draft.specialistId,
         taskId: draft.taskId,
+        planId: draft.planId ?? null,
         // Only a plain code is kept: nothing else from the fact reaches the person's screen.
         code: code !== null && CODE.test(code) ? code : null,
         otherSpecialistId: draft.otherSpecialistId ?? null,
@@ -262,7 +266,17 @@ export const NOTIFIED_EVENT_TYPES = Object.freeze([
   'agent_task.finished',
   'agent_task.approval_required',
   'agent_handoff.proposed',
+  'plan.finished',
 ]);
+
+/** The part of a stored plan a result notice reads (the planning package's `Plan`). */
+export interface NotifiablePlan {
+  readonly id: string;
+  readonly organizationId: OrganizationId;
+  readonly executionId: string;
+  readonly status: string;
+  readonly createdBy: UserId;
+}
 
 const text = (value: unknown): string | null => (typeof value === 'string' ? value : null);
 
@@ -274,13 +288,17 @@ const text = (value: unknown): string | null => (typeof value === 'string' ? val
 export function createAgentNotificationSubscriber(options: {
   readonly tasks: Pick<AgentTaskRepository, 'find'>;
   readonly handoffs?: Pick<AgentHandoffRepository, 'find'>;
+  /** Plans, for `plan.finished` (ADR-0119). Absent: a plan's end makes no notice. */
+  readonly plans?: {
+    find(organizationId: OrganizationId, id: string): Promise<NotifiablePlan | undefined>;
+  };
   readonly notifier: AgentNotifier;
 }): {
   readonly id: string;
   readonly types: readonly string[];
   handle(event: NotifiableEvent): Promise<void>;
 } {
-  const { tasks, handoffs, notifier } = options;
+  const { tasks, handoffs, plans, notifier } = options;
   return Object.freeze({
     id: 'agent_notifications',
     types: NOTIFIED_EVENT_TYPES,
@@ -289,6 +307,24 @@ export function createAgentNotificationSubscriber(options: {
       const at = new Date(event.occurredAt);
       const when = Number.isNaN(at.getTime()) ? undefined : at;
       const base = { organizationId, key: event.id, ...(when === undefined ? {} : { at: when }) };
+      if (event.type === 'plan.finished') {
+        // The person who made the plan, read from the stored plan in the event's organization;
+        // what it says is read from the plan too, never from the event alone.
+        if (plans === undefined) return;
+        const plan = await plans.find(organizationId, event.subject.id);
+        if (plan === undefined || plan.organizationId !== organizationId) return;
+        if (plan.status !== 'completed' && plan.status !== 'failed') return;
+        await notifier.notify({
+          ...base,
+          recipientId: plan.createdBy,
+          kind: plan.status === 'completed' ? 'result_available' : 'plan_failed',
+          specialistId: null,
+          taskId: plan.executionId,
+          planId: plan.id,
+          code: plan.status === 'failed' ? text(event.data.code) : null,
+        });
+        return;
+      }
       if (event.type === 'agent_handoff.proposed') {
         if (handoffs === undefined) return;
         const handoff = await handoffs.find(organizationId, event.subject.id as ExecutionId);

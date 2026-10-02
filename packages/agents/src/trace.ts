@@ -18,6 +18,13 @@ import type { AgentTaskService } from './tasks.js';
 
 export const TRACE_LIMITS = Object.freeze({ history: 50 });
 
+/** Milliseconds from `from` to `to`, when both are times and in order; otherwise null. */
+export function durationOf(from: string | null | undefined, to: string | null | undefined) {
+  if (from == null || to == null) return null;
+  const ms = Date.parse(to) - Date.parse(from);
+  return Number.isFinite(ms) && ms >= 0 ? ms : null;
+}
+
 export interface AgentTaskTraceStep {
   readonly nodeId: string;
   readonly type: string;
@@ -30,6 +37,8 @@ export interface AgentTaskTraceStep {
   readonly model: AgentTaskTraceModel | null;
   readonly startedAt: string | null;
   readonly completedAt: string | null;
+  /** How long the step ran, once it ended (ADR-0119). */
+  readonly durationMs: number | null;
 }
 
 export interface AgentTaskTraceModel {
@@ -49,6 +58,8 @@ export interface AgentTaskTrace {
   readonly failure: string | null;
   readonly createdAt: string;
   readonly completedAt: string | null;
+  /** From the task's creation to its end, once it ended (ADR-0119). */
+  readonly durationMs: number | null;
   readonly steps: readonly AgentTaskTraceStep[];
   readonly review: {
     readonly verdict: string;
@@ -229,6 +240,7 @@ export async function readAgentTaskTrace(
     failure: execution?.failure?.code ?? null,
     createdAt: task.createdAt,
     completedAt: execution?.completedAt ?? null,
+    durationMs: durationOf(task.createdAt, execution?.completedAt),
     steps: (execution?.nodes ?? []).map((n) => ({
       nodeId: n.id,
       type: n.type,
@@ -241,6 +253,7 @@ export async function readAgentTaskTrace(
       model: modelOf(calls.get(n.id)),
       startedAt: n.startedAt ?? null,
       completedAt: n.completedAt ?? null,
+      durationMs: durationOf(n.startedAt, n.completedAt),
     })),
     review:
       review === undefined

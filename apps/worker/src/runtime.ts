@@ -15,6 +15,7 @@ import type { AIDataPolicy, DeploymentEnvironment } from '@melonoffice/domain';
 import { createExecutionService, type ExecutionRepository } from '@melonoffice/execution';
 import { createToolGate } from '@melonoffice/guardrails';
 import { createJobService, type JobRepository, type JobService } from '@melonoffice/jobs';
+import type { EventBus } from '@melonoffice/events';
 import type { Logger } from '@melonoffice/observability';
 import {
   createPlanConductor,
@@ -109,9 +110,16 @@ export interface WorkerRuntimeOptions {
    * with `condition_not_configured` and its plan stops.
    */
   readonly conditions?: ConditionEvaluator;
+  /**
+   * Where a plan's end is told (ADR-0119): `plan.finished`, once, for the person who made it, so
+   * their bell says the result is ready. Absent: a plan ends quietly, as before.
+   */
+  readonly events?: Pick<EventBus, 'publishRuntime'>;
   readonly logger?: Logger;
   readonly now?: () => Date;
 }
+
+const PLAN_EVENT_CODE = /^[a-z][a-z_]{0,63}$/;
 
 /**
  * Wires the existing services for the worker (ADR-0032). It builds nothing new: the job service
@@ -217,7 +225,11 @@ export function createWorkerRuntime(options: WorkerRuntimeOptions): {
             const step = planStepOf(execution);
             if (step === undefined) return;
             const executions = executionsFor(execution.id);
-            await createPlanConductor({
+            const before =
+              options.events === undefined
+                ? undefined
+                : await plans.find(execution.organizationId, step.planId);
+            const after = await createPlanConductor({
               plans,
               executions,
               starter: {
@@ -231,6 +243,34 @@ export function createWorkerRuntime(options: WorkerRuntimeOptions): {
               ...clock,
               ...(logger === undefined ? {} : { logger: logger.child({ component: 'plans' }) }),
             }).advance(tenant, step.planId);
+            // Told once, by the step end that closed the plan (the event's key repeats it at most).
+            if (
+              options.events === undefined ||
+              before?.status !== 'executing' ||
+              (after.status !== 'completed' && after.status !== 'failed')
+            ) {
+              return;
+            }
+            const code = after.delegationFailure;
+            try {
+              await options.events.publishRuntime(after.organizationId, after.createdBy, [
+                {
+                  type: 'plan.finished',
+                  subject: { type: 'plan', id: after.id },
+                  data: {
+                    outcome: after.status,
+                    ...(code !== undefined && PLAN_EVENT_CODE.test(code) ? { code } : {}),
+                  },
+                  idempotencyKey: `${after.id}:finished`,
+                },
+              ]);
+            } catch (error) {
+              // The plan ended either way: a notice is never worth failing it for.
+              logger?.warn('plan.finished not published', {
+                planId: after.id,
+                code: (error as { code?: unknown }).code ?? 'error',
+              });
+            }
           },
         };
   const extra = options.onEnded;

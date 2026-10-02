@@ -279,6 +279,14 @@ describe.each(STORES)(
         }),
       );
       const dispatched: JobId[] = [];
+      // What the worker told the event bus (ADR-0119): a plan's end, for its maker's bell.
+      const published: {
+        organizationId: string;
+        userId: string;
+        type: string;
+        data: unknown;
+        key?: string;
+      }[] = [];
       const { jobs, runtime } = createWorkerRuntime({
         stores,
         environment: 'dev',
@@ -324,6 +332,20 @@ describe.each(STORES)(
           now,
         }),
         dispatcher: { dispatch: async (id) => void dispatched.push(id) },
+        events: {
+          publishRuntime: async (organizationId, userId, drafts) => {
+            for (const d of drafts) {
+              published.push({
+                organizationId,
+                userId,
+                type: d.type,
+                data: d.data,
+                ...(d.idempotencyKey === undefined ? {} : { key: d.idempotencyKey }),
+              });
+            }
+            return [];
+          },
+        },
         now,
       });
 
@@ -482,6 +504,7 @@ describe.each(STORES)(
         conductor,
         providerCalls,
         dispatched,
+        published,
         agent,
         approvedPlan,
         drive,
@@ -530,6 +553,16 @@ describe.each(STORES)(
           .filter((e) => e.action === 'plan.state_changed')
           .map((e) => `${e.transition?.from}>${e.transition?.to}`),
       ).toEqual(['approved>executing', 'executing>completed']);
+      // Its end is told once, for the person who made it (ADR-0119).
+      expect(w.published).toEqual([
+        {
+          organizationId: done.organizationId,
+          userId: done.createdBy,
+          type: 'plan.finished',
+          data: { outcome: 'completed' },
+          key: `${done.id}:finished`,
+        },
+      ]);
     });
 
     it('2. a step whose answer fails verification stops the plan: the next step never runs', async () => {
@@ -550,6 +583,9 @@ describe.each(STORES)(
         'pending',
       );
       expect(w.providerCalls).toHaveLength(1);
+      expect(w.published.map((p) => [p.type, p.data])).toEqual([
+        ['plan.finished', { outcome: 'failed' }],
+      ]);
     });
     it('3. a condition the Decision Engine allows lets the next step run (WF-4)', async () => {
       const w = await world();
