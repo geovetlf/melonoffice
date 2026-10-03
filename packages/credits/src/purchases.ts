@@ -22,12 +22,17 @@ export interface Money {
   readonly amountMinor: number;
 }
 
-/** A pack of credits that can be bought. Versioned: a purchase keeps the version it was sold at. */
+/**
+ * A pack of credits that can be bought (its `id` is the package id). Versioned: a purchase keeps
+ * the version it was sold at. Only `active` packs are on sale; a `retired` one stays readable for
+ * the purchases made with it.
+ */
 export interface CreditPack {
   readonly id: string;
   readonly version: number;
   readonly credits: number;
   readonly price: Money;
+  readonly status: 'active' | 'retired';
 }
 
 /**
@@ -78,8 +83,14 @@ export interface CreditPurchase {
   readonly provider: string;
   readonly checkoutRef: string;
   readonly buyer: UserId;
-  /** The provider's id of the payment that settled it. */
+  /** The provider's id of the payment that settled it (the transaction). */
   readonly paymentRef?: string;
+  /** Once fulfilled: the ledger entry that added its credits, how many, and when. */
+  readonly credited?: {
+    readonly entryId: string;
+    readonly credits: number;
+    readonly at: IsoTimestamp;
+  };
   readonly failure?: string;
   readonly createdAt: IsoTimestamp;
   readonly updatedAt: IsoTimestamp;
@@ -176,13 +187,15 @@ export function createCreditPurchaseService({
   packs = CREDIT_PACKS,
   now = () => new Date(),
 }: CreditPurchaseServiceOptions): CreditPurchaseService {
-  const onSale = packs.filter((p) => isCreditAmount(p.credits) && isMoney(p.price));
+  const onSale = packs.filter(
+    (p) => p.status === 'active' && isCreditAmount(p.credits) && isMoney(p.price),
+  );
   const iso = () => now().toISOString() as IsoTimestamp;
 
   async function fulfil(purchase: CreditPurchase, paymentRef: string): Promise<PaymentOutcome> {
     // The ledger credits a purchase once (`purchase:<id>`), so a crash between this grant and
     // the status below is repaired by the next notification, never credited twice.
-    await credits.grantPurchase({
+    const granted = await credits.grantPurchase({
       organizationId: purchase.organizationId,
       purchaseId: purchase.id,
       credits: purchase.credits,
@@ -192,6 +205,11 @@ export function createCreditPurchaseService({
       ...purchase,
       status: 'fulfilled',
       paymentRef,
+      credited: Object.freeze({
+        entryId: granted.entry.id,
+        credits: granted.entry.amount,
+        at: granted.entry.createdAt,
+      }),
       updatedAt: iso(),
     });
     if (!(await store.update(done, 'awaiting_payment'))) {

@@ -80,6 +80,36 @@ describe('plan and credits (D-12, ADR-0123)', () => {
     expect(document.body.textContent).not.toMatch(/upgrade/i);
   });
 
+  it('says what the plan included this period, what was used and what is left, and when it renews (ADR-0127)', async () => {
+    open('/ai-usage', (b) => {
+      b.options.creditPeriods = {
+        org_1: {
+          startsAt: '2026-10-03T00:00:00.000Z',
+          renewsAt: '2026-11-03T12:00:00.000Z',
+          included: 100,
+          consumed: 40,
+        },
+      };
+    });
+    const panel = await screen.findByRole('region', { name: 'Plan and credits' });
+    expect(
+      await within(panel).findByText(
+        'Your plan includes 100 credits this period. You have used 40. You have 498 left.',
+      ),
+    ).toBeTruthy();
+    const stat = (label: string) =>
+      within(panel).getByText(label, { selector: 'dt' }).parentElement?.querySelector('dd')
+        ?.textContent;
+    expect(stat('Used this period')).toBe('40');
+    expect(stat('Next renewal')).toBe('November 3, 2026');
+    expect(
+      within(panel).getByRole('link', { name: 'See usage history' }).getAttribute('href'),
+    ).toBe('#ai-usage-events');
+    expect(
+      await within(panel).findByRole('heading', { name: 'Credits by function this month' }),
+    ).toBeTruthy();
+  });
+
   it('is hidden for a role that cannot read credits', async () => {
     open('/ai-usage', (b) => {
       b.options.permissions = b.options.permissions.filter((p) => p !== 'credits.read');
@@ -108,12 +138,14 @@ describe('AI usage and credits (ADR-0074, ADR-0081, ADR-0082)', () => {
   it('filters the recent operations by a breakdown row', async () => {
     open('/ai-usage');
     const department = await screen.findByRole('region', { name: 'By department' });
-    expect(await screen.findAllByText('Text AI (LLM)', { selector: 'span' })).toHaveLength(2);
+    const operations = screen.getByRole('region', { name: 'Recent operations' });
+    const rows = () => within(operations).queryAllByText('Text AI (LLM)', { selector: 'span' });
+    await vi.waitFor(() => expect(rows()).toHaveLength(2));
     fireEvent.click(within(department).getAllByRole('button')[0] as HTMLElement);
     expect(screen.getByText(/Showing the loaded operations for By department/)).toBeTruthy();
-    expect(screen.getAllByText('Text AI (LLM)', { selector: 'span' })).toHaveLength(1);
+    expect(rows()).toHaveLength(1);
     fireEvent.click(screen.getByRole('button', { name: 'Show all' }));
-    expect(screen.getAllByText('Text AI (LLM)', { selector: 'span' })).toHaveLength(2);
+    expect(rows()).toHaveLength(2);
   });
 
   it('reads the chosen period from the ledger', async () => {

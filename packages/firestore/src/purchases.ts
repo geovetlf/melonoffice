@@ -26,6 +26,12 @@ interface PurchaseDocument {
   readonly buyer: string;
   readonly paymentRef: string | null;
   readonly failure: string | null;
+  /** Absent until fulfilled, and on purchases written before it existed. */
+  readonly credited?: {
+    readonly entryId: string;
+    readonly credits: number;
+    readonly at: FirestoreTimestamp;
+  };
   readonly createdAt: FirestoreTimestamp;
   readonly updatedAt: FirestoreTimestamp;
 }
@@ -47,6 +53,15 @@ const toDocument = (p: CreditPurchase): PurchaseDocument => ({
   buyer: p.buyer,
   paymentRef: p.paymentRef ?? null,
   failure: p.failure ?? null,
+  ...(p.credited === undefined
+    ? {}
+    : {
+        credited: {
+          entryId: p.credited.entryId,
+          credits: p.credited.credits,
+          at: at(p.credited.at),
+        },
+      }),
   createdAt: at(p.createdAt),
   updatedAt: at(p.updatedAt),
 });
@@ -57,7 +72,9 @@ function toPurchase(id: string, d: PurchaseDocument): CreditPurchase {
     !STATUSES.includes(d.status) ||
     !whole(d.credits) ||
     !whole(d.price?.amountMinor) ||
-    typeof d.price.currency !== 'string'
+    typeof d.price.currency !== 'string' ||
+    (d.credited !== undefined &&
+      (typeof d.credited.entryId !== 'string' || !whole(d.credited.credits)))
   ) {
     throw new Error('invalid credit purchase record');
   }
@@ -73,6 +90,15 @@ function toPurchase(id: string, d: PurchaseDocument): CreditPurchase {
     buyer: d.buyer as UserId,
     ...(d.paymentRef === null ? {} : { paymentRef: d.paymentRef }),
     ...(d.failure === null ? {} : { failure: d.failure }),
+    ...(d.credited === undefined
+      ? {}
+      : {
+          credited: Object.freeze({
+            entryId: d.credited.entryId,
+            credits: d.credited.credits,
+            at: iso(d.credited.at),
+          }),
+        }),
     createdAt: iso(d.createdAt),
     updatedAt: iso(d.updatedAt),
   });

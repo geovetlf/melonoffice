@@ -4,11 +4,19 @@ import { useEffect, useState } from 'react';
 import { readyList, useOfficeData } from '../office/OfficeData.js';
 import { periodDays, type AIUsageClient, type UsageSummary } from './aiUsageClient.js';
 
+/** The top `count` keys of a usage breakdown, most credits first. */
+const top = (rows: UsageSummary['by'][string], count = 5) =>
+  Object.entries(rows ?? {})
+    .sort(([, a], [, b]) => b.credits - a.credits)
+    .slice(0, count);
+
 /**
- * The organization's plan and credits (D-12, ADR-0123), above its AI usage: the plan, what can be
- * spent now, where the balance came from, what running operations hold, what the plan includes
- * each month, and what AI used this month and on which agents. Every figure is the API's; what is
- * not decided yet (the renewal date, buying credits) says so and is never made up.
+ * The organization's plan and credits (D-12, ADR-0123, ADR-0127), above its AI usage: in one
+ * sentence what the plan included this period, what was used and what is left; then the plan,
+ * what can be spent now, where the balance came from, what running operations hold, the next
+ * renewal, and what AI used this month on which agents and functions. Every figure is the API's;
+ * what is not decided or not available yet (buying credits) says so and is never made up. Buying
+ * credits never requires changing plan.
  */
 export function CreditsPanel({
   client,
@@ -58,18 +66,32 @@ export function CreditsPanel({
   const planKey = planId === undefined ? undefined : `plan.${planId}.name`;
   const included = planLimits.status === 'ready' ? planLimits.value.monthlyIncluded : undefined;
   const agents = readyList(specialists);
-  const topAgents =
-    month === undefined || month === 'error'
-      ? []
-      : Object.entries(month.by.agent ?? {})
-          .sort(([, a], [, b]) => b.credits - a.credits)
-          .slice(0, 5);
+  const usage = month === undefined || month === 'error' ? undefined : month;
+  const topAgents = top(usage?.by.agent);
+  const topFunctions = top(usage?.by.capability);
+  const period = wallet.period ?? undefined;
+  const capabilityName = (key: string) => {
+    const id = `aiUsage.capability.${key}`;
+    return intl.messages[id] === undefined ? key : intl.formatMessage({ id });
+  };
 
   return (
     <section className="mo-panel mo-page-section credits-panel" aria-labelledby="credits-panel">
       <h2 id="credits-panel" className="mo-section-title">
         <FormattedMessage id="credits.panel.title" />
       </h2>
+      {period === undefined ? null : (
+        <p className="credits-panel__summary">
+          <FormattedMessage
+            id="credits.panel.summary"
+            values={{
+              included: period.included,
+              used: period.consumed,
+              left: wallet.available ?? wallet.balance,
+            }}
+          />
+        </p>
+      )}
       <dl className="mo-stats">
         {planKey === undefined ? null : (
           <Stat label="credits.panel.plan">
@@ -97,11 +119,18 @@ export function CreditsPanel({
             )}
           </Stat>
         )}
-        {month === undefined || month === 'error' ? null : (
-          <Stat label="credits.panel.usedThisMonth">{n(month.totals.credits)}</Stat>
+        {period === undefined ? null : (
+          <Stat label="credits.panel.consumed">{n(period.consumed)}</Stat>
+        )}
+        {usage === undefined ? null : (
+          <Stat label="credits.panel.usedThisMonth">{n(usage.totals.credits)}</Stat>
         )}
         <Stat label="credits.panel.renewal">
-          <FormattedMessage id="credits.panel.renewal.pending" />
+          {period === undefined ? (
+            <FormattedMessage id="credits.panel.renewal.pending" />
+          ) : (
+            intl.formatDate(period.renewsAt, { dateStyle: 'long' })
+          )}
         </Stat>
       </dl>
       {topAgents.length === 0 ? null : (
@@ -119,10 +148,28 @@ export function CreditsPanel({
           </ul>
         </>
       )}
+      {topFunctions.length === 0 ? null : (
+        <>
+          <h3 className="mo-section-title">
+            <FormattedMessage id="credits.panel.byFunction" />
+          </h3>
+          <ul className="credits-panel__agents">
+            {topFunctions.map(([key, bucket]) => (
+              <li key={key}>
+                <span>{capabilityName(key)}</span>{' '}
+                <FormattedMessage id="topbar.credits" values={{ count: bucket.credits }} />
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
       <p className="mo-toolbar">
         <button type="button" className="mo-button mo-button--secondary" disabled>
           <FormattedMessage id="credits.panel.buy" />
         </button>{' '}
+        <a className="mo-button mo-button--ghost" href="#ai-usage-events">
+          <FormattedMessage id="credits.panel.history" />
+        </a>{' '}
         <span className="mo-hint">
           <FormattedMessage id="credits.panel.buy.soon" />
         </span>

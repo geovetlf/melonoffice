@@ -321,10 +321,11 @@ describe("GIA's Workplace (ADR-0050)", () => {
     fireEvent.click(within(chat).getByRole('button', { name: 'Send' }));
     // What happened, what is available, and what can be done: never a forced upgrade.
     const alert = await within(chat).findByRole('alert');
-    expect(alert.textContent).toContain('This action did not run: there are not enough credits.');
+    expect(alert.textContent).toContain('You need more credits: this action did not run.');
     expect(alert.textContent).toContain('498 credits available.');
-    expect(alert.textContent).toContain('wait for your plan');
-    fireEvent.click(within(alert).getByRole('button', { name: 'See plan and credits' }));
+    expect(alert.textContent).toContain('You do not need to change plans.');
+    expect(within(alert).getByRole('button', { name: 'Buy credits' })).toBeTruthy();
+    fireEvent.click(within(alert).getByRole('button', { name: 'See my plan' }));
     expect(globalThis.location.pathname).toBe('/ai-usage');
     cleanup();
     open('/gia', (b) => {

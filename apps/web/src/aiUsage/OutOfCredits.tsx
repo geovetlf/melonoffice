@@ -5,8 +5,9 @@ import { paths } from '../shell/routes.js';
 
 /**
  * What a person sees when an action was refused for credits (D-12): that it did not run, what
- * is available now, and what they can do. Buying more credits never forces a plan change, and
- * nothing here buys, upgrades or retries by itself.
+ * is available now, and what they can do: buy credits or see their plan, both on the plan and
+ * credits panel. Buying more credits never forces a plan change, and nothing here buys, upgrades
+ * or retries by itself.
  */
 export function OutOfCredits() {
   const intl = useIntl();
@@ -23,6 +24,13 @@ export function OutOfCredits() {
       )}
       <span className="out-of-credits__options">
         <FormattedMessage id="credits.out.options" />{' '}
+        <button
+          type="button"
+          className="mo-button mo-button--secondary mo-button--sm"
+          onClick={() => navigate(paths.aiUsage())}
+        >
+          <FormattedMessage id="credits.out.buy" />
+        </button>{' '}
         <button
           type="button"
           className="mo-button mo-button--ghost mo-button--sm"
