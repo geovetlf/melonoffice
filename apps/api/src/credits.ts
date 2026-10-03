@@ -26,7 +26,11 @@ export function registerCreditRoutes(
   );
 }
 
-/** The public view: the balance in whole credits and when it last moved. No ledger entries. */
+/**
+ * The public view: the balance in whole credits, where it came from (included with the plan or
+ * purchased), how much is held for running operations, what is available, and when it last moved.
+ * No ledger entries.
+ */
 function toView(organizationId: string, balance: CreditBalance) {
   if (balance.status !== 'present') {
     return { organizationId, status: balance.status, reason: balance.reason };
@@ -35,6 +39,10 @@ function toView(organizationId: string, balance: CreditBalance) {
     organizationId,
     status: balance.status,
     balance: balance.balance,
+    included: balance.included,
+    purchased: balance.purchased,
+    reserved: balance.reserved,
+    available: balance.available,
     updatedAt: balance.updatedAt,
   };
 }

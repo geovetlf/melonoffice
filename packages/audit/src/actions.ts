@@ -827,6 +827,17 @@ export const AUDIT_ACTIONS = {
     description: 'Credits were given back for an earlier consume.',
     results: ['success'],
   },
+  'credits.hold': {
+    category: 'credits',
+    description:
+      "Credits were set aside in an organization's wallet for an operation about to run (ADR-0123); the balance did not move. Settling it is recorded as `credits.consume`.",
+    results: ['success'],
+  },
+  'credits.release': {
+    category: 'credits',
+    description: 'A hold on credits was closed without spending anything (ADR-0123).',
+    results: ['success'],
+  },
   'platform.ai_read': {
     category: 'platform',
     description:

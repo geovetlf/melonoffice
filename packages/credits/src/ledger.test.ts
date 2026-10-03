@@ -152,7 +152,14 @@ describe('applyOperation', () => {
     if (grant.kind === 'posted') {
       expect(Object.isFrozen(grant.entry)).toBe(true);
       expect(Object.isFrozen(grant.wallet)).toBe(true);
-      expect(grant.wallet).toEqual({ ...before, balance: 60, updatedAt: AT });
+      // A wallet from before D-12 reads as all purchased, and is written with its buckets.
+      expect(grant.wallet).toEqual({
+        ...before,
+        balance: 60,
+        buckets: { included: 0, purchased: 60 },
+        holds: [],
+        updatedAt: AT,
+      });
     }
   });
 
@@ -313,7 +320,10 @@ describe('verifyLedger', () => {
       { type: 'grant', amount: 100, referenceId: 'g', reason: 'test' },
       { type: 'consume', amount: 30, referenceId: 'c', reason: 'test' },
     ]);
-    expect(verifyLedger({ ...w, balance: 71 }, entries)).toEqual(['balance_mismatch']);
+    expect(verifyLedger({ ...w, balance: 71 }, entries)).toEqual([
+      'balance_mismatch',
+      'buckets_mismatch',
+    ]);
     expect(verifyLedger(w, [...entries, { ...must(entries[0]), organizationId: OTHER }])).toEqual(
       expect.arrayContaining(['foreign_entry']),
     );
@@ -328,11 +338,98 @@ describe('verifyLedger', () => {
       balanceAfter: 101,
       refundOf: must(entries[1]).id,
     };
-    expect(verifyLedger({ ...w, balance: 101 }, [...entries, overRefund])).toEqual([
-      'refund_exceeds_consume',
+    const buckets = (purchased: number) => ({ included: 0, purchased });
+    expect(
+      verifyLedger({ ...w, balance: 101, buckets: buckets(101) }, [...entries, overRefund]),
+    ).toEqual(['refund_exceeds_consume']);
+    expect(
+      verifyLedger({ ...w, balance: -1, buckets: buckets(-1) }, [
+        { ...must(entries[1]), amount: -1, balanceAfter: -1, split: buckets(1) },
+      ]),
+    ).toEqual(['negative_balance']);
+  });
+});
+
+describe('buckets and holds (ADR-0123)', () => {
+  const post = (w: CreditWallet, operation: CreditOperation, state: Partial<LedgerState> = {}) => {
+    const posting = applyOperation(ORG, operation, { ...fresh(w), ...state }, AT);
+    if (posting.kind !== 'posted') throw new Error('expected a posting');
+    return posting;
+  };
+
+  it('reads a wallet from before D-12 as all purchased, and spends it', () => {
+    const consumed = post(wallet(50), {
+      type: 'consume',
+      amount: 20,
+      referenceId: 'c',
+      reason: 'test',
+    });
+    expect(consumed.entry.split).toEqual({ included: 0, purchased: 20 });
+    expect(consumed.wallet.buckets).toEqual({ included: 0, purchased: 30 });
+  });
+
+  it('reports buckets that no longer add up', () => {
+    const granted = post(wallet(0), {
+      type: 'grant',
+      amount: 10,
+      referenceId: 'g',
+      reason: 'test',
+      bucket: 'included',
+    });
+    expect(verifyLedger(granted.wallet, [granted.entry])).toEqual([]);
+    expect(
+      verifyLedger({ ...granted.wallet, buckets: { included: 0, purchased: 10 } }, [granted.entry]),
+    ).toEqual(['buckets_mismatch']);
+  });
+
+  it('holds without moving the balance, and refuses a hold that already expired', () => {
+    const held = post(wallet(50), {
+      type: 'hold',
+      amount: 20,
+      referenceId: 'h',
+      reason: 'test',
+      expiresAt: '2026-09-27T12:01:00.000Z' as IsoTimestamp,
+    });
+    expect(held.entry).toMatchObject({ type: 'hold', amount: 0, held: 20, balanceAfter: 50 });
+    expect(held.wallet.holds).toEqual([
+      { entryId: entryIdOf(ORG, 'h'), amount: 20, expiresAt: '2026-09-27T12:01:00.000Z' },
     ]);
     expect(
-      verifyLedger({ ...w, balance: -1 }, [{ ...must(entries[1]), amount: -1, balanceAfter: -1 }]),
-    ).toEqual(['negative_balance']);
+      codeOf(() =>
+        post(wallet(50), {
+          type: 'hold',
+          amount: 1,
+          referenceId: 'h2',
+          reason: 'test',
+          expiresAt: AT,
+        }),
+      ),
+    ).toBe('invalid_hold_expiry');
+  });
+
+  it('keeps every hold closable: its closing reference must be valid', () => {
+    const long = 'x'.repeat(125);
+    expect(
+      codeOf(() =>
+        post(wallet(50), {
+          type: 'hold',
+          amount: 1,
+          referenceId: long,
+          reason: 'test',
+          expiresAt: '2026-09-28T00:00:00.000Z' as IsoTimestamp,
+        }),
+      ),
+    ).toBe('invalid_reference');
+    // Other operations keep the full reference length.
+    expect(
+      codeOf(() =>
+        post(wallet(50), {
+          type: 'grant',
+          amount: 1,
+          referenceId: 'x'.repeat(128),
+          reason: 'test',
+        }),
+      ),
+    ).toBe('accepted');
   });
 });
