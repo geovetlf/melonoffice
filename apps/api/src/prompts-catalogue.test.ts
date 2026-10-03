@@ -28,6 +28,7 @@ import { describe, expect, it } from 'vitest';
 const PINNED: Readonly<Record<string, string>> = {
   'agent_task@1': '4c802f6b603dd883',
   'agent_task@2': '7cbf9919f11e258c',
+  'agent_task@3': 'd246e61075037ad7',
   'agent_review@1': '60005fe16ca9ad33',
   'conversation_agent_turn@1': '8024d43d6e56d016',
   'conversation_assist@1': '825fc0fd51ed67b8',

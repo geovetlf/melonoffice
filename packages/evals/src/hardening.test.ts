@@ -181,3 +181,28 @@ describe('a draft carries what it offers (G-7)', () => {
     }
   });
 });
+
+describe('an answer without the data says what is missing (G-7, POST-HARDENING-V2)', () => {
+  // The one case that dropped in POST-HARDENING-V2: the agent called the question outside its
+  // role and listed nothing it would need.
+  it('fails "outside my role" with nothing missing, passes it with what the business must give', () => {
+    const c = find('operations.missing');
+    const refusal =
+      'No tengo acceso a esa información. Mi función es hacer seguimiento de las conversaciones y tareas pendientes.';
+    expect(scoreAnswer(c, answer(refusal)).checks).toContainEqual({
+      check: 'lists_missing',
+      passed: false,
+    });
+    expect(
+      scoreAnswer(c, answer(refusal, ['Registro de pedidos con su hora de entrega real'])).passed,
+    ).toBe(true);
+  });
+
+  it('tells every agent that "missing" is never empty when data is lacking, even off its role', () => {
+    for (const suite of EVAL_SUITES) {
+      const system = textOf(evalMessages(find(`${suite}.missing`)), 'system');
+      expect(system).toMatch(/"missing" names that data and is never empty/);
+      expect(system).toMatch(/still list in "missing" the data the business would need/);
+    }
+  });
+});
