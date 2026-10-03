@@ -1,5 +1,5 @@
 import type { ActivityItem } from '@melonoffice/activity';
-import type { AIMessage, AIOutputSchema } from '@melonoffice/ai-gateway';
+import { promptRef, type AIMessage, type AIOutputSchema } from '@melonoffice/ai-gateway';
 import { FACT_CANDIDATE_SCHEMA, FACT_RULES, type ContextFact } from '@melonoffice/brain';
 import type { CommercialInsights } from '@melonoffice/conversations';
 import { GIA_LIMITS, GIA_SCREENS, type GiaLocale } from './catalogue.js';
@@ -223,6 +223,9 @@ function factLine(fact: ContextFact): string {
 function activityLine(item: ActivityItem): string {
   return `- ${item.at} ${item.action} ${item.result} by ${item.actor}`;
 }
+
+/** GIA's chat prompt version (G-3, ADR-0133). */
+export const GIA_PROMPT = promptRef('gia_chat', 1);
 
 export function giaMessages(input: GiaPromptInput): readonly AIMessage[] {
   const text = (value: string): AIMessage['content'] => [{ type: 'text', text: value }];

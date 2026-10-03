@@ -1,4 +1,10 @@
-import { creditReferenceOf, type AIGateway, type AIMessage } from '@melonoffice/ai-gateway';
+import {
+  promptLabel,
+  promptRef,
+  creditReferenceOf,
+  type AIGateway,
+  type AIMessage,
+} from '@melonoffice/ai-gateway';
 import { actorOf, type AuditService } from '@melonoffice/audit';
 import type { AuthorizationService } from '@melonoffice/rbac';
 import { isResolvedTenant, type TenantContext } from '@melonoffice/tenancy';
@@ -51,6 +57,9 @@ const LANGUAGE: Readonly<Record<GiaLocale, string>> = { en: 'English', es: 'Span
 
 const escape = (value: string) => value.replace(/</g, '‹').replace(/>/g, '›');
 const clip = (text: string, max: number) => [...text].slice(0, max).join('');
+
+/** GIA's plan summary prompt version (G-3, ADR-0133). */
+export const GIA_SUMMARY_PROMPT = promptRef('gia_summary', 1);
 
 export function summaryMessages(
   locale: GiaLocale,
@@ -140,7 +149,7 @@ export function createGiaSummary(options: {
         outputModality: 'text',
         maxOutputTokens: GIA_SUMMARY_LIMITS.outputTokens,
         sensitivity: 'confidential',
-        metadata: { locale, steps: steps.length },
+        metadata: { locale, steps: steps.length, prompt: promptLabel(GIA_SUMMARY_PROMPT) },
       });
       const record = (result: 'success' | 'denied' | 'failure', reason?: string) =>
         audit.record({

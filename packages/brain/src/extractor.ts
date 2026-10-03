@@ -1,4 +1,9 @@
-import type { AIGateway, AIOutputSchema } from '@melonoffice/ai-gateway';
+import {
+  promptLabel,
+  promptRef,
+  type AIGateway,
+  type AIOutputSchema,
+} from '@melonoffice/ai-gateway';
 import type { TenantContext } from '@melonoffice/tenancy';
 import { randomUUID } from 'node:crypto';
 import { DOMAIN_IDS, LIMITS, SUBJECT_TYPES } from './catalogue.js';
@@ -60,6 +65,9 @@ export const FACT_RULES: readonly string[] = Object.freeze([
   'confidence is how clearly the text states it, from 0 to 1.',
 ]);
 
+/** The fact extractor's prompt version (G-3, ADR-0133). */
+export const EXTRACTOR_PROMPT = promptRef('knowledge_extract', 1);
+
 const SYSTEM = [
   "You extract facts about one small business from text its owner gave, for the business's own knowledge base.",
   'Only extract what the text states. Never guess, complete, invent or infer figures, prices or names that are not written.',
@@ -67,6 +75,9 @@ const SYSTEM = [
   ...FACT_RULES,
   'Answer with exactly one JSON object: {"facts": [...]}. With nothing to extract, {"facts": []}.',
 ].join('\n');
+
+/** What the extractor tells the model, as `EXTRACTOR_PROMPT`'s version says. */
+export const EXTRACTOR_INSTRUCTIONS = SYSTEM;
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -157,7 +168,7 @@ export function createGatewayKnowledgeExtractor(
         maxOutputTokens: 2048,
         // The business's own knowledge: confidential, whatever the policy allows.
         sensitivity: 'confidential',
-        metadata: { kind: request.kind },
+        metadata: { kind: request.kind, prompt: promptLabel(EXTRACTOR_PROMPT) },
       });
       if (response.status === 'denied') return { status: 'unavailable', code: response.code };
       if (response.status === 'failed') return { status: 'failed', code: response.code };

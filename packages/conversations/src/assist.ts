@@ -1,4 +1,9 @@
-import { creditReferenceOf, type AIGateway, type AIResponse } from '@melonoffice/ai-gateway';
+import {
+  promptLabel,
+  creditReferenceOf,
+  type AIGateway,
+  type AIResponse,
+} from '@melonoffice/ai-gateway';
 import { actorOf, type AuditAction, type AuditModel, type AuditService } from '@melonoffice/audit';
 import type { DepartmentRepository } from '@melonoffice/departments';
 import type { ConversationId, OrganizationId, UserId } from '@melonoffice/domain';
@@ -15,6 +20,7 @@ import {
   type AssistContextLimits,
   type AssistLocale,
   type AssistOperation,
+  ASSIST_PROMPT,
 } from './assist-context.js';
 import { ASSIST_OUTPUT_SCHEMAS, parseAssistOutput, type AssistResult } from './assist-output.js';
 import { ConversationError } from './errors.js';
@@ -311,7 +317,7 @@ export function createConversationAssistant(
       maxOutputTokens: OUTPUT_TOKENS[operation],
       // A customer's words and details: never below confidential, whatever the policy allows.
       sensitivity: 'confidential',
-      metadata: { operation },
+      metadata: { operation, prompt: promptLabel(ASSIST_PROMPT) },
     });
     const latencyMs = Math.round(performance.now() - started);
 

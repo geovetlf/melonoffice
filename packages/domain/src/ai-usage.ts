@@ -108,6 +108,8 @@ export interface AIUsageAttribution {
   readonly parentExecutionId?: ExecutionId;
   /** What the operation was for, e.g. `summarise` or `lead_qualification`. A code, not text. */
   readonly taskType?: string;
+  /** The prompt version the call ran with, `id@version` (G-3, ADR-0133). */
+  readonly prompt?: string;
   /** The record it was about, e.g. a conversation. */
   readonly subject?: { readonly type: string; readonly id: string };
 }

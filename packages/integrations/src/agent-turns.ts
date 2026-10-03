@@ -1,4 +1,4 @@
-import type { AIRequest } from '@melonoffice/ai-gateway';
+import { promptLabel, type AIRequest } from '@melonoffice/ai-gateway';
 import type { AuditService } from '@melonoffice/audit';
 import {
   AGENT_DECISION_SCHEMA,
@@ -23,6 +23,7 @@ import {
   type ConversationService,
   type HandoffReason,
   type ReceiveResult,
+  AGENT_TURN_PROMPT,
 } from '@melonoffice/conversations';
 import type {
   AutonomyLevel,
@@ -574,6 +575,7 @@ export function createAgentTurnWork(options: AgentTurnWorkOptions): AgentTurnWor
       );
       return {
         taskType: AGENT_TURN_TASK,
+        metadata: { prompt: promptLabel(AGENT_TURN_PROMPT) },
         capability: 'text_generation',
         requirements: { structuredOutput: true },
         messages: agentTurnMessages(agent.profile, agent.name, context),

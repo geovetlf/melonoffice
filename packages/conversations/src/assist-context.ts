@@ -1,4 +1,4 @@
-import { redactSecretText, type AIMessage } from '@melonoffice/ai-gateway';
+import { promptRef, redactSecretText, type AIMessage } from '@melonoffice/ai-gateway';
 import type { Department, Message } from '@melonoffice/domain';
 import type { ConversationDetail } from './service.js';
 
@@ -173,6 +173,9 @@ const LANGUAGE: Readonly<Record<AssistLocale, string>> = { en: 'English', es: 'S
  *   it can close the block. It is data: the policy says so, and nothing in it can grant anything,
  *   since the model can do nothing but answer.
  */
+/** The reply assistant prompt's version (G-3, ADR-0133). */
+export const ASSIST_PROMPT = promptRef('conversation_assist', 1);
+
 export function assistMessages(
   operation: AssistOperation,
   context: AssistContext,

@@ -40,6 +40,7 @@ import {
   type ProviderOutcome,
   type ProviderStreamEvent,
 } from './adapter.js';
+import { promptOf } from './prompts.js';
 import { costMicroUsd, type CreditRate } from './cost.js';
 import { AI_HOLD_TTL_MS, creditReferenceOf, type AICreditsPort } from './credits.js';
 import { checkDataPolicy } from './data-policy.js';
@@ -531,6 +532,7 @@ export function createAIGateway(options: AIGatewayOptions): AIGateway {
       }
     }
     if (usageSink !== undefined) {
+      const prompt = promptOf(request.metadata);
       try {
         await usageSink.record(
           usageEventOf({
@@ -541,6 +543,8 @@ export function createAIGateway(options: AIGatewayOptions): AIGateway {
               actor: USAGE_ACTORS[tenant.actor] ?? 'system',
               userId: tenant.userId,
               taskType: request.taskType,
+              // The prompt version the call ran with (G-3), when it names one.
+              ...(prompt === undefined ? {} : { prompt }),
               ...known.attribution,
             },
             provider: candidate.provider.id,

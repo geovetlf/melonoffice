@@ -1,4 +1,9 @@
-import { looksLikeSecretText, type AIMessage, type AIOutputSchema } from '@melonoffice/ai-gateway';
+import {
+  promptRef,
+  looksLikeSecretText,
+  type AIMessage,
+  type AIOutputSchema,
+} from '@melonoffice/ai-gateway';
 import type { ConversationAgentProfile } from '@melonoffice/domain';
 import type { AssistContext } from './assist-context.js';
 import type { HandoffReason } from './control.js';
@@ -171,6 +176,9 @@ const asData = (value: unknown): string =>
  * Nothing in 2 or 3 can grant a tool, a permission, a recipient or a level: the model can only
  * answer with a reply or a hand-off, and the server decides what happens with it.
  */
+/** The conversation agent's prompt version (G-3, ADR-0133). */
+export const AGENT_TURN_PROMPT = promptRef('conversation_agent_turn', 1);
+
 export function agentTurnMessages(
   profile: Pick<ConversationAgentProfile, 'instructions'>,
   agentName: string,

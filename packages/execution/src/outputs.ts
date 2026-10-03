@@ -11,6 +11,9 @@ import { isResolvedTenant, type TenantContext } from '@melonoffice/tenancy';
 import { ExecutionError } from './errors.js';
 import { isExecutionId } from './model.js';
 
+/** A prompt version, `id@version` (G-3). */
+const PROMPT = /^[a-z][a-z0-9_]{0,63}@[1-9]\d{0,5}$/;
+
 /**
  * Where agent node answers live (CV-6B, ADR-0043): Firestore `agentOutputs/{executionId}_{nodeId}`
  * in the worker, memory in tests. One record per node: a retried node's answer replaces the last.
@@ -108,7 +111,9 @@ export function checkTrace(trace: AICallTrace): AICallTrace {
     [trace.capability, trace.sensitivity, trace.dataClass, trace.intent].every(
       (v) => v === undefined || codeOrNull(v),
     );
-  if (!ok) throw new ExecutionError('invalid_execution', 'agent_output_trace');
+  if (!ok || (trace.prompt !== undefined && !PROMPT.test(trace.prompt))) {
+    throw new ExecutionError('invalid_execution', 'agent_output_trace');
+  }
   return Object.freeze({
     provider: trace.provider,
     model: trace.model,
@@ -125,6 +130,7 @@ export function checkTrace(trace: AICallTrace): AICallTrace {
     ...(typeof trace.sensitivity === 'string' ? { sensitivity: trace.sensitivity } : {}),
     ...(typeof trace.dataClass === 'string' ? { dataClass: trace.dataClass } : {}),
     ...(typeof trace.intent === 'string' ? { intent: trace.intent } : {}),
+    ...(typeof trace.prompt === 'string' ? { prompt: trace.prompt } : {}),
   });
 }
 

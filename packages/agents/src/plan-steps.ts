@@ -1,3 +1,4 @@
+import { promptLabel } from '@melonoffice/ai-gateway';
 import type {
   Execution,
   ExecutionNode,
@@ -22,6 +23,7 @@ import {
   type AgentTaskWork,
   type TaskSpecialists,
 } from './work.js';
+import { AGENT_TASK_PROMPT } from './prompts.js';
 
 /**
  * How the runtime runs one step of an approved plan (WF-1, ADR-0070). A plan step is an agent
@@ -183,7 +185,11 @@ export function createPlanStepWork(options: PlanStepWorkOptions): AgentTaskWork 
         maxOutputTokens: AGENT_TASK_MAX_OUTPUT_TOKENS,
         outputSchema: AGENT_ANSWER_SCHEMA,
         sensitivity: 'confidential',
-        metadata: { skills: known.length, previousSteps: previous.length },
+        metadata: {
+          skills: known.length,
+          previousSteps: previous.length,
+          prompt: promptLabel(AGENT_TASK_PROMPT),
+        },
       } satisfies Awaited<ReturnType<AgentTaskWork['agentWork']>>;
     },
   });
