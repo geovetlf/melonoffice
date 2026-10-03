@@ -63,7 +63,13 @@ import {
   type FollowUpService,
   type ConversationRepository,
 } from '@melonoffice/conversations';
-import { createCreditRenewal, createCreditService, type CreditStore } from '@melonoffice/credits';
+import {
+  createCreditRenewal,
+  createCreditService,
+  renewalSubjectOf,
+  withRenewal,
+  type CreditStore,
+} from '@melonoffice/credits';
 import {
   createEntitlementService,
   type EntitlementService,
@@ -164,7 +170,7 @@ import { registerDepartmentRoutes } from './departments.js';
 import { registerDocumentRoutes } from './documents.js';
 import { registerConnectionRoutes } from './connections.js';
 import { registerConversationRoutes } from './conversations.js';
-import { registerCreditRoutes, renewalSubjectOf, withRenewal } from './credits.js';
+import { registerCreditRoutes } from './credits.js';
 import { registerAIUsageRoutes } from './ai-usage.js';
 import { registerPlatformCreditRoutes } from './platform-credits.js';
 import { registerPlatformRoutes } from './platform.js';

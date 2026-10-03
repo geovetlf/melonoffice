@@ -132,6 +132,8 @@ async function world(
   options: {
     readonly without?: readonly Permission[];
     readonly balance?: number | null;
+    /** What is not held by running operations. Absent: the whole balance. */
+    readonly available?: number;
     readonly routingAnswer?: string;
     /** The planning model's answer, from the plan owner's id. Absent: no planner (block 1). */
     readonly planAnswer?: (agentId: string) => unknown;
@@ -241,7 +243,11 @@ async function world(
       creditsAsked.push(tenant.organizationId);
       return balance === null
         ? { status: 'unavailable', reason: 'test' }
-        : { status: 'present', balance };
+        : {
+            status: 'present',
+            balance,
+            ...(options.available === undefined ? {} : { available: options.available }),
+          };
     },
   };
   // The planning engine as the API builds it for the Harness (ADR-0101): the real planner,
@@ -738,6 +744,14 @@ describe('Preparing and starting a task (ADR-0099 block 1)', () => {
       expect(task).toBeUndefined();
       expect(w.kicked).toEqual([]);
     }
+  });
+
+  it('starts nothing when running operations hold every credit (ADR-0127)', async () => {
+    const w = await world({ balance: 50, available: 0 });
+    await w.agent();
+    const { strategy, task } = await w.harness.start(w.alice, { request: 'Redacta un saludo' });
+    expect(strategy).toMatchObject({ verdict: 'refused', reasons: ['insufficient_credits'] });
+    expect(task).toBeUndefined();
   });
 
   it('marks a complex plan as multi-step, and still runs it as one task in block 1', async () => {
