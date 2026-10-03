@@ -131,9 +131,12 @@ describe.each(STORES)('credits with storage in %s', (_name, createStores) => {
       await service.grant(tenantA, req(100, 'g1'));
       await service.consume(tenantA, req(30, 'c1'));
       await service.hold(tenantA, { ...req(20, 'h1'), ttlMs: 60_000 });
-      const wallet = await stores.credits.findWallet(orgA);
+      const response = await credits('token-alice', orgA);
+      // The read opened the wallet's first plan period (ADR-0127), which keeps what it had.
+      const wallet = must(await stores.credits.findWallet(orgA));
+      const period = must(wallet.period);
       // Included credits go first (ADR-0123); the hold is reserved, not spent.
-      expect(await credits('token-alice', orgA)).toEqual({
+      expect(response).toEqual({
         status: 200,
         body: {
           organizationId: orgA,
@@ -143,9 +146,26 @@ describe.each(STORES)('credits with storage in %s', (_name, createStores) => {
           purchased: 100,
           reserved: 20,
           available: 90,
-          updatedAt: wallet?.updatedAt,
+          period: {
+            startsAt: period.startsAt,
+            renewsAt: period.endsAt,
+            included: 10,
+            consumed: 0,
+          },
+          updatedAt: wallet.updatedAt,
         },
       });
+    });
+
+    it('renews the plan period once, however often it is read (ADR-0127)', async () => {
+      const { credits, orgA, stores, events } = await setup();
+      await credits('token-alice', orgA);
+      await credits('token-alice', orgA);
+      const renewals = (await stores.credits.ledger(orgA)).filter((e) => e.type === 'renewal');
+      // Emprendedor's included credits are not decided yet, so the renewal adds nothing.
+      expect(renewals).toHaveLength(1);
+      expect(renewals[0]).toMatchObject({ amount: 0, renewal: { granted: 0, expired: 0 } });
+      expect(await events('credits.renewal')).toHaveLength(1);
     });
 
     it('2. never shows another organization balance, whatever id is sent, and audits it', async () => {

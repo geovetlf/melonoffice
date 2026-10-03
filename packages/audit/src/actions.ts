@@ -856,6 +856,12 @@ export const AUDIT_ACTIONS = {
     description: 'A hold on credits was closed without spending anything (ADR-0123).',
     results: ['success'],
   },
+  'credits.renewal': {
+    category: 'credits',
+    description:
+      "An organization's wallet started a new plan period (ADR-0127): the plan's included credits for the period were added, and the last period's included credits that do not carry over were removed. `reference` names the period. Once per period.",
+    results: ['success'],
+  },
   'platform.ai_read': {
     category: 'platform',
     description:

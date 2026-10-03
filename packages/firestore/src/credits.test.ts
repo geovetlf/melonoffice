@@ -96,6 +96,34 @@ describe.runIf(emulatorHost)('FirestoreCreditStore buckets and holds (emulator)'
     ).toEqual([]);
   });
 
+  it('stores a renewal and its period, and replays it once (ADR-0127)', async () => {
+    const { store, service, tenant, organizationId } = await setup();
+    const period = {
+      startsAt: '2026-10-01T00:00:00.000Z' as IsoTimestamp,
+      endsAt: '2026-11-01T00:00:00.000Z' as IsoTimestamp,
+    };
+    const first = await service.renew(tenant, { period, included: 40, carryMax: 0 });
+    const again = await service.renew(tenant, { period, included: 40, carryMax: 0 });
+    expect(again.replayed).toBe(true);
+    await service.consume(tenant, req(15, 'use-1'));
+    const wallet = await store.findWallet(organizationId);
+    expect(wallet).toMatchObject({
+      balance: 25,
+      buckets: { included: 25, purchased: 0 },
+      period: { ...period, included: 40, consumed: 15 },
+    });
+    const entries = await store.ledger(organizationId);
+    expect(entries.find((e) => e.id === first.entry.id)?.renewal).toEqual({
+      periodStartsAt: period.startsAt,
+      periodEndsAt: period.endsAt,
+      granted: 40,
+      carried: 0,
+      expired: 0,
+    });
+    if (wallet === undefined) throw new Error('no wallet');
+    expect(verifyLedger(wallet, entries)).toEqual([]);
+  });
+
   it('lets only as many concurrent holds as the balance covers', async () => {
     const { service, tenant } = await setup();
     await service.grant(tenant, req(100, 'g1'));

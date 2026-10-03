@@ -407,12 +407,13 @@ describe('tenancy', () => {
     expect(await codeOf(service.consume(gia, req(1000, 'c2')))).toBe('credits_insufficient');
   });
 
-  it('has no adjustment, transfer or plan-based grant', () => {
+  it('has no adjustment or transfer', () => {
     const service = createCreditService({
       store: new InMemoryCreditStore(),
       organizations: new InMemoryTenancyStore(),
     });
     // `grantAsPlatform` is the same grant, authorized by the platform administrator (ADR-0091).
+    // `renew` adds a plan period's included credits, once per period (ADR-0127).
     expect(Object.keys(service).sort()).toEqual([
       'balanceOf',
       'consume',
@@ -422,6 +423,7 @@ describe('tenancy', () => {
       'hold',
       'refund',
       'release',
+      'renew',
       'settle',
     ]);
   });

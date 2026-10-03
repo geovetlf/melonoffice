@@ -8,6 +8,7 @@ import type {
   CreditBucket,
   CreditEntryType,
   CreditLedgerEntry,
+  CreditPeriod,
   IsoTimestamp,
   OrganizationId,
   UserId,
@@ -25,7 +26,10 @@ import {
   availableOf,
   bucketsOf,
   closingReferenceOf,
+  DEFAULT_CONSUMPTION_ORDER,
   entryIdOf,
+  isConsumptionOrder,
+  renewalReferenceOf,
   type CreditOperation,
 } from './ledger.js';
 import type { CreditStore } from './store.js';
@@ -42,6 +46,8 @@ export type CreditBalance =
       readonly reserved: number;
       /** What can be spent or held now: `balance` − `reserved`. */
       readonly available: number;
+      /** The plan period the wallet is in (ADR-0127), absent until its first renewal. */
+      readonly period?: CreditPeriod;
       readonly updatedAt: IsoTimestamp;
     }
   | {
@@ -81,6 +87,15 @@ export interface CreditSettleRequest {
   /** Whole credits actually spent, 0 or more. It may exceed the hold if the balance covers it. */
   readonly amount: number;
   readonly reason: string;
+}
+
+/** What a renewal applies (ADR-0127), worked out from the plan by the caller. */
+export interface CreditRenewalTerms {
+  readonly period: { readonly startsAt: IsoTimestamp; readonly endsAt: IsoTimestamp };
+  /** Included credits the plan gives for the period. 0 or more. */
+  readonly included: number;
+  /** How many of the last period's included credits may stay: a number, or `'all'`. */
+  readonly carryMax: number | 'all';
 }
 
 /** The longest a hold may last. */
@@ -148,6 +163,14 @@ export interface CreditService {
     readonly credits: number;
     readonly buyer: UserId;
   }): Promise<CreditResult>;
+  /**
+   * Opens a new plan period (ADR-0127): adds the period's included credits and removes the last
+   * period's included credits beyond `carryMax`. Bought credits are never touched, nor credits
+   * held by running operations. Once per period (`renewal:<startsAt>`): asking again replays the
+   * first renewal and never adds the credits twice. Audited as `credits.renewal`, by the runtime
+   * for the tenant's user. Only server-side flows call it; no client route reaches it.
+   */
+  renew(tenant: TenantContext, terms: CreditRenewalTerms): Promise<CreditResult>;
 }
 
 /** The ledger reference of a purchase's credits: a purchase is credited once. */
@@ -158,6 +181,11 @@ export interface CreditServiceOptions {
   /** Only `findOrganization` is used, to refuse inactive organizations. */
   readonly organizations: Pick<TenancyStore, 'findOrganization'>;
   readonly now?: () => Date;
+  /**
+   * The order credits are spent in (ADR-0127). Default: `DEFAULT_CONSUMPTION_ORDER`, included
+   * first, then purchased.
+   */
+  readonly consumptionOrder?: readonly CreditBucket[];
 }
 
 const ACTION: Record<Exclude<CreditEntryType, 'adjustment'>, AuditAction> = {
@@ -166,13 +194,20 @@ const ACTION: Record<Exclude<CreditEntryType, 'adjustment'>, AuditAction> = {
   refund: 'credits.refund',
   hold: 'credits.hold',
   release: 'credits.release',
+  renewal: 'credits.renewal',
 };
 
 type ServiceOperation = Exclude<CreditOperation, { type: 'adjustment' }>;
 
 /** The entry type an operation is recorded as: a settle is a consume, or a release for 0. */
 const entryTypeOf = (operation: ServiceOperation): Exclude<CreditEntryType, 'adjustment'> =>
-  operation.type === 'settle' ? (operation.amount === 0 ? 'release' : 'consume') : operation.type;
+  operation.type === 'settle'
+    ? operation.amount === 0
+      ? 'release'
+      : 'consume'
+    : operation.type === 'renew'
+      ? 'renewal'
+      : operation.type;
 
 const referenceOf = (operation: ServiceOperation): string =>
   operation.type === 'settle'
@@ -183,7 +218,9 @@ export function createCreditService({
   store,
   organizations,
   now = () => new Date(),
+  consumptionOrder = DEFAULT_CONSUMPTION_ORDER,
 }: CreditServiceOptions): CreditService {
+  if (!isConsumptionOrder(consumptionOrder)) throw new Error('invalid consumption order');
   async function organizationOf(tenant: TenantContext): Promise<OrganizationId> {
     if (!isResolvedTenant(tenant)) throw new CreditsError('unresolved_tenant');
     const organization = await organizations.findOrganization(tenant.organizationId);
@@ -230,6 +267,7 @@ export function createCreditService({
         operation,
         { wallet, existing, original, alreadyRefunded, hold },
         at.toISOString() as IsoTimestamp,
+        { consumptionOrder },
       );
       if (posting.kind === 'replayed') {
         return { entry: posting.entry, balance: posting.entry.balanceAfter, replayed: true };
@@ -283,6 +321,7 @@ export function createCreditService({
         purchased: buckets.purchased,
         reserved: wallet.balance - available,
         available,
+        ...(wallet.period === undefined ? {} : { period: wallet.period }),
         updatedAt: wallet.updatedAt,
       });
     },
@@ -345,6 +384,24 @@ export function createCreditService({
         {
           action: 'credits.purchase',
           actor: { type: 'system', id: 'runtime', initiatedBy: buyer, via: 'runtime' },
+        },
+      );
+    },
+    async renew(tenant, { period, included, carryMax }) {
+      const organizationId = await organizationOf(tenant);
+      return write(
+        organizationId,
+        {
+          type: 'renew',
+          referenceId: renewalReferenceOf(period.startsAt),
+          reason: 'plan_renewal',
+          period: { startsAt: period.startsAt, endsAt: period.endsAt },
+          included,
+          carryMax,
+        },
+        {
+          action: 'credits.renewal',
+          actor: { type: 'system', id: 'runtime', initiatedBy: tenant.userId, via: 'runtime' },
         },
       );
     },

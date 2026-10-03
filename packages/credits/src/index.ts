@@ -3,3 +3,4 @@ export * from './ledger.js';
 export * from './store.js';
 export * from './service.js';
 export * from './purchases.js';
+export * from './renewal.js';

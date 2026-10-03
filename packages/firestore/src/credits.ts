@@ -12,6 +12,8 @@ import type {
   CreditEntryId,
   CreditEntryType,
   CreditLedgerEntry,
+  CreditPeriod,
+  CreditRenewal,
   CreditWallet,
   CreditWalletId,
   IsoTimestamp,
@@ -36,12 +38,29 @@ interface HoldDocument {
   readonly expiresAt: FirestoreTimestamp;
 }
 
+interface PeriodDocument {
+  readonly startsAt: FirestoreTimestamp;
+  readonly endsAt: FirestoreTimestamp;
+  readonly included: number;
+  readonly consumed: number;
+}
+
+interface RenewalDocument {
+  readonly periodStartsAt: FirestoreTimestamp;
+  readonly periodEndsAt: FirestoreTimestamp;
+  readonly granted: number;
+  readonly carried: number;
+  readonly expired: number;
+}
+
 interface WalletDocument {
   readonly walletId: string;
   readonly balance: number;
   /** Absent on wallets written before D-12 (ADR-0123): all of the balance is `purchased`. */
   readonly buckets?: CreditBuckets;
   readonly holds?: readonly HoldDocument[];
+  /** Absent until the wallet's first renewal (ADR-0127). */
+  readonly period?: PeriodDocument;
   readonly createdAt: FirestoreTimestamp;
   readonly updatedAt: FirestoreTimestamp;
 }
@@ -61,10 +80,19 @@ interface EntryDocument {
   readonly held?: number;
   readonly expiresAt?: FirestoreTimestamp;
   readonly holdOf?: string;
+  readonly renewal?: RenewalDocument;
   readonly createdAt: FirestoreTimestamp;
 }
 
-const TYPES: readonly string[] = ['grant', 'consume', 'refund', 'adjustment', 'hold', 'release'];
+const TYPES: readonly string[] = [
+  'grant',
+  'consume',
+  'refund',
+  'adjustment',
+  'hold',
+  'release',
+  'renewal',
+];
 const BUCKETS: readonly string[] = ['included', 'purchased'];
 const at = (value: IsoTimestamp): FirestoreTimestamp => Timestamp.fromDate(new Date(value));
 const iso = (timestamp: FirestoreTimestamp): IsoTimestamp =>
@@ -83,6 +111,40 @@ const isBuckets = (value: unknown): value is CreditBuckets => {
   );
 };
 
+const count = (value: unknown): value is number => whole(value) && value >= 0;
+
+const periodDocumentOf = (period: CreditPeriod): PeriodDocument => ({
+  startsAt: at(period.startsAt),
+  endsAt: at(period.endsAt),
+  included: period.included,
+  consumed: period.consumed,
+});
+
+function toPeriod(data: PeriodDocument): CreditPeriod {
+  if (!count(data.included) || !count(data.consumed)) {
+    throw new Error('invalid credit wallet record');
+  }
+  return Object.freeze({
+    startsAt: iso(data.startsAt),
+    endsAt: iso(data.endsAt),
+    included: data.included,
+    consumed: data.consumed,
+  });
+}
+
+function toRenewal(data: RenewalDocument): CreditRenewal {
+  if (!count(data.granted) || !count(data.carried) || !count(data.expired)) {
+    throw new Error('invalid credit ledger record');
+  }
+  return Object.freeze({
+    periodStartsAt: iso(data.periodStartsAt),
+    periodEndsAt: iso(data.periodEndsAt),
+    granted: data.granted,
+    carried: data.carried,
+    expired: data.expired,
+  });
+}
+
 const holdsOf = (wallet: CreditWallet): HoldDocument[] =>
   (wallet.holds ?? []).map((h) => ({
     entryId: h.entryId,
@@ -95,6 +157,7 @@ export const toWalletDocument = (wallet: CreditWallet): WalletDocument => ({
   balance: wallet.balance,
   ...(wallet.buckets === undefined ? {} : { buckets: { ...wallet.buckets } }),
   ...(wallet.holds === undefined ? {} : { holds: holdsOf(wallet) }),
+  ...(wallet.period === undefined ? {} : { period: periodDocumentOf(wallet.period) }),
   createdAt: at(wallet.createdAt),
   updatedAt: at(wallet.updatedAt),
 });
@@ -113,6 +176,17 @@ const toEntryDocument = (entry: CreditLedgerEntry): EntryDocument => ({
   ...(entry.held === undefined ? {} : { held: entry.held }),
   ...(entry.expiresAt === undefined ? {} : { expiresAt: at(entry.expiresAt) }),
   ...(entry.holdOf === undefined ? {} : { holdOf: entry.holdOf }),
+  ...(entry.renewal === undefined
+    ? {}
+    : {
+        renewal: {
+          periodStartsAt: at(entry.renewal.periodStartsAt),
+          periodEndsAt: at(entry.renewal.periodEndsAt),
+          granted: entry.renewal.granted,
+          carried: entry.renewal.carried,
+          expired: entry.renewal.expired,
+        },
+      }),
   createdAt: at(entry.createdAt),
 });
 
@@ -150,6 +224,7 @@ function toWallet(organizationId: OrganizationId, data: WalletDocument): CreditW
           }),
         }),
     ...(holds === undefined ? {} : { holds: Object.freeze(holds) }),
+    ...(data.period === undefined ? {} : { period: toPeriod(data.period) }),
     createdAt: iso(data.createdAt),
     updatedAt: iso(data.updatedAt),
   });
@@ -185,6 +260,7 @@ function toEntry(id: string, data: EntryDocument): CreditLedgerEntry {
     ...(data.held === undefined ? {} : { held: data.held }),
     ...(data.expiresAt === undefined ? {} : { expiresAt: iso(data.expiresAt) }),
     ...(data.holdOf === undefined ? {} : { holdOf: data.holdOf as CreditEntryId }),
+    ...(data.renewal === undefined ? {} : { renewal: toRenewal(data.renewal) }),
     createdAt: iso(data.createdAt),
   });
 }
@@ -252,6 +328,7 @@ export class FirestoreCreditStore implements CreditStore {
             balance: wallet.balance,
             buckets: { ...(wallet.buckets ?? { included: 0, purchased: wallet.balance }) },
             holds: holdsOf(wallet),
+            ...(wallet.period === undefined ? {} : { period: periodDocumentOf(wallet.period) }),
             updatedAt: at(wallet.updatedAt),
           });
           t.create(ledger.doc(entry.id), toEntryDocument(entry));

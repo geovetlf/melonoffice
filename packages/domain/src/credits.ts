@@ -21,6 +21,11 @@ export interface CreditWallet {
   readonly buckets?: CreditBuckets;
   /** Credits held for operations still running (ADR-0123). An expired hold holds nothing. */
   readonly holds?: readonly CreditHold[];
+  /**
+   * The plan period the wallet is in (ADR-0127): set by its last renewal. A wallet that was never
+   * renewed has none.
+   */
+  readonly period?: CreditPeriod;
   readonly createdAt: IsoTimestamp;
   readonly updatedAt: IsoTimestamp;
 }
@@ -38,6 +43,19 @@ export interface CreditBuckets {
   readonly purchased: number;
 }
 
+/**
+ * One plan period of a wallet (ADR-0127), from its renewal to the next one.
+ */
+export interface CreditPeriod {
+  readonly startsAt: IsoTimestamp;
+  /** When the next renewal is due. */
+  readonly endsAt: IsoTimestamp;
+  /** Included credits the period started with: those granted plus those carried over. */
+  readonly included: number;
+  /** Credits spent in the period, from either bucket, less what was refunded in it. */
+  readonly consumed: number;
+}
+
 /** Credits set aside for one running operation until it settles, is released or expires. */
 export interface CreditHold {
   /** The `hold` ledger entry. */
@@ -53,10 +71,13 @@ export interface CreditHold {
  * - `adjustment`: an internal correction (positive or negative). No code can post one yet.
  * - `hold`: credits set aside for a running operation (amount 0: the balance does not move).
  * - `release`: a hold given back without spending anything (amount 0).
+ * - `renewal`: a new plan period (ADR-0127): the period's included credits, less the included
+ *   credits of the last period that did not carry over. Its amount may be 0 or negative.
  *
  * A `consume` that settles a hold names it in `holdOf`.
  */
-export type CreditEntryType = 'grant' | 'consume' | 'refund' | 'adjustment' | 'hold' | 'release';
+export type CreditEntryType =
+  'grant' | 'consume' | 'refund' | 'adjustment' | 'hold' | 'release' | 'renewal';
 
 /** One movement in the append-only ledger. Never updated or deleted. */
 export interface CreditLedgerEntry {
@@ -65,7 +86,10 @@ export interface CreditLedgerEntry {
   readonly organizationId: OrganizationId;
   readonly walletId: CreditWalletId;
   readonly type: CreditEntryType;
-  /** Signed whole credits: positive adds, negative subtracts. 0 only for `hold` and `release`. */
+  /**
+   * Signed whole credits: positive adds, negative subtracts. 0 only for `hold`, `release` and a
+   * `renewal` that changed nothing.
+   */
   readonly amount: number;
   readonly balanceAfter: number;
   /** The caller's idempotency key for this operation. */
@@ -84,5 +108,19 @@ export interface CreditLedgerEntry {
   readonly expiresAt?: IsoTimestamp;
   /** For a `release` or a settling `consume`: the `hold` entry it closes. */
   readonly holdOf?: CreditEntryId;
+  /** For a `renewal`: what it did to the `included` bucket, and the period it opened. */
+  readonly renewal?: CreditRenewal;
   readonly createdAt: IsoTimestamp;
+}
+
+/** What one renewal did (ADR-0127). `amount` = `granted` − `expired`. */
+export interface CreditRenewal {
+  readonly periodStartsAt: IsoTimestamp;
+  readonly periodEndsAt: IsoTimestamp;
+  /** Included credits the plan gave for the new period. */
+  readonly granted: number;
+  /** Included credits of the last period that stayed. */
+  readonly carried: number;
+  /** Included credits of the last period that were removed. */
+  readonly expired: number;
 }
