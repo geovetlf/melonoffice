@@ -41,6 +41,8 @@ import {
   InMemoryAgentTaskRepository,
   isAgentTaskError,
   isHandoffExpired,
+  isStaleWork,
+  STALE_WORK,
   type NotifiablePlan,
 } from './index.js';
 
@@ -435,5 +437,41 @@ describe('Durations in a task’s trace (ADR-0119)', () => {
     expect(durationOf(undefined, '2026-10-02T12:00:00.000Z')).toBeNull();
     expect(durationOf('2026-10-02T12:00:02.000Z', '2026-10-02T12:00:00.000Z')).toBeNull();
     expect(durationOf('not a time', '2026-10-02T12:00:00.000Z')).toBeNull();
+  });
+});
+
+describe('Stuck work never blocks an agent (ADR-0120)', () => {
+  const at = (iso: string) => iso as never;
+  it('reads open work as stuck only after its time, an approval after the longest wait', () => {
+    expect(STALE_WORK).toEqual({ afterMs: 6 * 3_600_000, approvalAfterMs: 31 * DAY });
+    const updatedAt = at(T0.toISOString());
+    const later = (ms: number) => new Date(T0.getTime() + ms);
+    expect(isStaleWork({ status: 'running', updatedAt }, later(6 * 3_600_000))).toBe(false);
+    expect(isStaleWork({ status: 'running', updatedAt }, later(6 * 3_600_000 + 1))).toBe(true);
+    expect(isStaleWork({ status: 'pending', updatedAt }, later(7 * 3_600_000))).toBe(true);
+    expect(isStaleWork({ status: 'waiting_approval', updatedAt }, later(30 * DAY))).toBe(false);
+    expect(isStaleWork({ status: 'waiting_approval', updatedAt }, later(32 * DAY))).toBe(true);
+    // Ended work is never stuck, and an unreadable time is not read as stuck.
+    expect(isStaleWork({ status: 'completed', updatedAt }, later(90 * DAY))).toBe(false);
+    expect(isStaleWork({ status: 'running', updatedAt: at('nope') }, later(90 * DAY))).toBe(false);
+  });
+
+  it('lets an agent take work again once its open tasks stopped moving, without closing them', async () => {
+    const w = await world({ perAgent: 2, perOrganization: 50 });
+    const lucia = await w.agent('commercial', 'Lucía');
+    const first = await w.service.assign(w.alice, lucia.identity.id, { request: 'Uno' });
+    await w.service.assign(w.alice, lucia.identity.id, { request: 'Dos' });
+    expect(await codeOf(w.service.assign(w.alice, lucia.identity.id, { request: 'Tres' }))).toBe(
+      'agent_busy',
+    );
+    w.travel(7 * 3_600_000);
+    await w.service.assign(w.alice, lucia.identity.id, { request: 'Tres' });
+    // Nothing was closed for the person: the stuck task is still theirs to stop.
+    expect((await w.executions.get(w.alice, first.task.id)).status).toBe(first.execution?.status);
+    // The new one moves, so with one more the agent is busy again only past its limit.
+    await w.service.assign(w.alice, lucia.identity.id, { request: 'Cuatro' });
+    expect(await codeOf(w.service.assign(w.alice, lucia.identity.id, { request: 'Cinco' }))).toBe(
+      'agent_busy',
+    );
   });
 });

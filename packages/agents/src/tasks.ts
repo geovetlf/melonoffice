@@ -11,6 +11,7 @@ import type {
 import {
   executionIdFor,
   isExecutionError,
+  type ExecutionRepository,
   type ExecutionService,
   type OpenExecutionIndex,
   type OpenOrganizationIndex,
@@ -23,6 +24,7 @@ import {
 } from '@melonoffice/specialists';
 import { isResolvedTenant, type TenantContext } from '@melonoffice/tenancy';
 import { AgentTaskError } from './errors.js';
+import { isStaleWork } from './stale.js';
 import { AGENT_FOLLOW_UP_TOOL, AGENT_TASK_SCHEDULE_NODE } from './proposals.js';
 
 /**
@@ -241,7 +243,10 @@ export interface AgentTaskServiceOptions {
    * Counts open work (ADR-0119). Absent: no limit is checked (tests and local runs that do not
    * care); the API and the worker always pass the execution repository.
    */
-  readonly openWork?: Pick<OpenExecutionIndex, 'openOfSpecialist'> & Partial<OpenOrganizationIndex>;
+  readonly openWork?: Pick<OpenExecutionIndex, 'openOfSpecialist'> &
+    Partial<OpenOrganizationIndex> &
+    /** Reads the agent's open executions, so stuck ones never count (ADR-0120). */
+    Partial<Pick<ExecutionRepository, 'find'>>;
   readonly limits?: { readonly perAgent: number; readonly perOrganization: number };
   readonly now?: () => Date;
   readonly requestId?: string;
@@ -270,10 +275,21 @@ export function createAgentTaskService(options: AgentTaskServiceOptions): AgentT
   async function checkOpenWork(organizationId: OrganizationId, specialistId: SpecialistId) {
     if (openWork === undefined) return;
     const [ofAgent, ofOrganization] = await Promise.all([
-      openWork.openOfSpecialist(organizationId, specialistId, limits.perAgent),
+      // Twice the limit: stuck work (ADR-0120) read among them does not count.
+      openWork.openOfSpecialist(organizationId, specialistId, limits.perAgent * 2),
       openWork.countOpenOfOrganization?.(organizationId, limits.perOrganization),
     ]);
-    if (ofAgent.ids.length >= limits.perAgent) throw new AgentTaskError('agent_busy');
+    if (ofAgent.ids.length >= limits.perAgent) {
+      const find = openWork.find?.bind(openWork);
+      const at = now();
+      const moving =
+        find === undefined
+          ? ofAgent.ids.length
+          : (await Promise.all(ofAgent.ids.map((id) => find(organizationId, id)))).filter(
+              (e) => e !== undefined && !isStaleWork(e, at),
+            ).length;
+      if (moving >= limits.perAgent) throw new AgentTaskError('agent_busy');
+    }
     if (ofOrganization !== undefined && ofOrganization >= limits.perOrganization) {
       throw new AgentTaskError('organization_busy');
     }

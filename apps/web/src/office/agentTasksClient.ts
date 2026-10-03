@@ -26,6 +26,8 @@ export interface AgentTaskView {
   readonly createdAt: string;
   readonly status: AgentTaskStatus;
   readonly failure: string | null;
+  /** Open but not moving for long (ADR-0120): it may be stopped. Absent from older APIs. */
+  readonly stale?: boolean;
   readonly completedAt: string | null;
   readonly answer: {
     readonly answer: string;
