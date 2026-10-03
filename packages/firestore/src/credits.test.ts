@@ -2,11 +2,13 @@ import { FieldValue } from '@google-cloud/firestore';
 import type { AuthenticatedContext } from '@melonoffice/auth';
 import { openBilling } from '@melonoffice/billing';
 import { createCreditService, openWallet, verifyLedger } from '@melonoffice/credits';
-import type { Organization, UserId } from '@melonoffice/domain';
+import type { CreditPurchase } from '@melonoffice/credits';
+import type { IsoTimestamp, Organization, OrganizationId, UserId } from '@melonoffice/domain';
 import { resolveTenant } from '@melonoffice/tenancy';
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { CREDIT_WALLETS, FirestoreCreditStore } from './credits.js';
+import { FirestoreCreditPurchaseStore } from './purchases.js';
 import { FirestoreTenancyStore } from './tenancy.js';
 import { emulatorFirestore, emulatorHost } from './testing.js';
 
@@ -104,5 +106,37 @@ describe.runIf(emulatorHost)('FirestoreCreditStore buckets and holds (emulator)'
     );
     expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(4);
     expect(await service.balanceOf(tenant)).toMatchObject({ reserved: 100, available: 0 });
+  });
+});
+
+describe.runIf(emulatorHost)('FirestoreCreditPurchaseStore (emulator)', () => {
+  it('creates a purchase once, and moves it only from the status it was read in', async () => {
+    const store = new FirestoreCreditPurchaseStore(emulatorFirestore());
+    const id = randomUUID().replaceAll('-', '').padEnd(40, '0');
+    const at = NOW.toISOString() as IsoTimestamp;
+    const purchase: CreditPurchase = {
+      id,
+      organizationId: randomUUID() as OrganizationId,
+      pack: { id: 'test-pack', version: 1 },
+      credits: 500,
+      price: { currency: 'USD', amountMinor: 1234 },
+      status: 'awaiting_payment',
+      provider: 'test-card',
+      checkoutRef: 'chk-1',
+      buyer: randomUUID() as UserId,
+      createdAt: at,
+      updatedAt: at,
+    };
+    expect(await store.create(purchase)).toBe(true);
+    expect(await store.create(purchase)).toBe(false);
+    expect(await store.find(id)).toEqual(purchase);
+    const done = { ...purchase, status: 'fulfilled' as const, paymentRef: 'pay-1' };
+    const results = await Promise.all([
+      store.update(done, 'awaiting_payment'),
+      store.update(done, 'awaiting_payment'),
+    ]);
+    expect(results.filter(Boolean)).toHaveLength(1);
+    expect(await store.find(id)).toEqual(done);
+    expect(await store.find('not-an-id')).toBeUndefined();
   });
 });

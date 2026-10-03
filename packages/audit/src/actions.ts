@@ -833,6 +833,24 @@ export const AUDIT_ACTIONS = {
       "Credits were set aside in an organization's wallet for an operation about to run (ADR-0123); the balance did not move. Settling it is recorded as `credits.consume`.",
     results: ['success'],
   },
+  'credits.purchase': {
+    category: 'credits',
+    description:
+      "The credits of a paid purchase were added to an organization's wallet, once, after the payment provider confirmed the payment (ADR-0126). `reference` is the purchase.",
+    results: ['success'],
+  },
+  'credits.purchase_started': {
+    category: 'credits',
+    description:
+      'Someone started buying a credit pack (ADR-0126): `target` is the purchase, `reason` the pack. Denied when no pack or payment method is available.',
+    results: ['success', 'denied'],
+  },
+  'credits.purchase_failed': {
+    category: 'credits',
+    description:
+      'A purchase ended without credits (ADR-0126): the provider reported the payment failed, or it did not match the purchase. `reason` says which.',
+    results: ['failure'],
+  },
   'credits.release': {
     category: 'credits',
     description: 'A hold on credits was closed without spending anything (ADR-0123).',

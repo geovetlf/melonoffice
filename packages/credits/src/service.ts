@@ -10,6 +10,7 @@ import type {
   CreditLedgerEntry,
   IsoTimestamp,
   OrganizationId,
+  UserId,
 } from '@melonoffice/domain';
 import {
   isResolvedPlatformAdmin,
@@ -135,7 +136,22 @@ export interface CreditService {
     organizationId: OrganizationId,
     request: CreditRequest,
   ): Promise<CreditResult>;
+  /**
+   * Adds the credits of a paid purchase (ADR-0126) to the `purchased` bucket, once per purchase
+   * (`purchase:<id>`). Only the purchase service calls it, after the payment provider confirmed
+   * the payment; no client route reaches it. Audited as `credits.purchase`, with the buyer as the
+   * one who started it.
+   */
+  grantPurchase(purchase: {
+    readonly organizationId: OrganizationId;
+    readonly purchaseId: string;
+    readonly credits: number;
+    readonly buyer: UserId;
+  }): Promise<CreditResult>;
 }
+
+/** The ledger reference of a purchase's credits: a purchase is credited once. */
+export const purchaseReferenceOf = (purchaseId: string): string => `purchase:${purchaseId}`;
 
 export interface CreditServiceOptions {
   readonly store: CreditStore;
@@ -309,6 +325,26 @@ export function createCreditService({
           action: 'credits.platform_grant',
           actor: { type: 'user', userId: admin.userId, via: 'direct' },
           actorRole: 'platform_admin',
+        },
+      );
+    },
+    async grantPurchase({ organizationId, purchaseId, credits, buyer }) {
+      const organization = await organizations.findOrganization(organizationId);
+      if (organization?.id !== organizationId || organization.status !== 'active') {
+        throw new CreditsError('organization_inactive');
+      }
+      return write(
+        organization.id,
+        {
+          type: 'grant',
+          amount: credits,
+          referenceId: purchaseReferenceOf(purchaseId),
+          reason: 'credit_purchase',
+          bucket: 'purchased',
+        },
+        {
+          action: 'credits.purchase',
+          actor: { type: 'system', id: 'runtime', initiatedBy: buyer, via: 'runtime' },
         },
       );
     },

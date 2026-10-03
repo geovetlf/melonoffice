@@ -77,7 +77,8 @@ export interface AuditTarget {
     | 'domain_binding'
     | 'agent_policy'
     | 'agent_memory'
-    | 'agent_handoff';
+    | 'agent_handoff'
+    | 'credit_purchase';
   readonly id: string;
 }
 

@@ -418,6 +418,7 @@ describe('tenancy', () => {
       'consume',
       'grant',
       'grantAsPlatform',
+      'grantPurchase',
       'hold',
       'refund',
       'release',
