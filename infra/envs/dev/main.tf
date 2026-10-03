@@ -6,6 +6,7 @@
 # 1 credit (Geovet, 2026-09-28); cache hits, refusals and the fallback cost nothing.
 # DOC-1 adds a private bucket for uploaded documents, which only the api reads and writes (ADR-0078).
 # Operator access lets the Ops (dev) workflow run migrations, backups and checks (ADR-0112).
+# G-6 adds monitoring: log-based metrics, alerts and uptime checks (ADR-0136).
 module "environment" {
   source = "../../modules/environment"
 
@@ -22,6 +23,7 @@ module "environment" {
   forecasting         = true
   document_storage    = true
   operator_access     = true
+  monitoring          = true
   # Whole credits per forecast run (ADR-0059), set by Geovet on 2026-09-28.
   forecast_credits_per_run = 1
   # Meta Graph API version for sending, as Meta shows it for the DEV app (App settings → Advanced).

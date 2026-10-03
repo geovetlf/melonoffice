@@ -170,3 +170,20 @@ variable "budget" {
   })
   default = null
 }
+
+variable "monitoring" {
+  description = "Log-based metrics, alert policies and uptime checks (G-6, ADR-0136). Needs the apps, Firestore and auth."
+  type        = bool
+  default     = false
+}
+
+variable "monitoring_thresholds" {
+  description = "When the monitoring alerts fire. Empty: the module's technical defaults (ADR-0136)."
+  type = object({
+    errors_per_5m             = optional(number)
+    api_latency_p95_ms        = optional(number)
+    failed_agent_tasks_per_1h = optional(number)
+    ai_cost_usd_per_day       = optional(number)
+  })
+  default = {}
+}

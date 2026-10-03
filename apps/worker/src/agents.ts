@@ -419,11 +419,24 @@ export function createAgentTaskParts(options: {
         idempotencyKey: `${execution.id}:finished`,
       },
     ];
+    // Counted by the log-based metrics of the monitoring module (G-6, ADR-0136): codes only.
+    logger?.info('agent_task.finished', {
+      outcome: execution.status,
+      code:
+        execution.failure?.code !== undefined && EVENT_CODE.test(execution.failure.code)
+          ? execution.failure.code
+          : null,
+    });
     // What the Agent Guardian found that a person should check (G-2, ADR-0132).
     const kept = await outputs.find(tenant, task.taskId, GUARDIAN_NODE);
     const report = kept === undefined ? undefined : parseGuardianReport(kept.output.structured);
     const warning = report === undefined ? undefined : guardianWarningOf(report);
     if (warning !== undefined) {
+      logger?.info('agent_guardian.warning', {
+        code: warning.code,
+        // Not `severity`: the logger keeps that key for the entry's own level.
+        guardianSeverity: warning.severity,
+      });
       drafts.push({
         type: 'agent_guardian.warning',
         subject,

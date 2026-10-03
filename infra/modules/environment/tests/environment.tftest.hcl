@@ -1138,3 +1138,77 @@ run "staging_has_no_operator" {
     error_message = "Operator access is off unless turned on."
   }
 }
+
+run "monitoring_is_off_unless_turned_on" {
+  command = plan
+
+  variables {
+    environment         = "dev"
+    deploy_apps         = true
+    firestore_and_auth  = true
+    deletion_protection = false
+  }
+
+  assert {
+    condition     = length(module.monitoring) == 0
+    error_message = "Monitoring must be off by default."
+  }
+
+  assert {
+    condition     = !contains(google_project_iam_custom_role.planner.permissions, "monitoring.alertPolicies.get")
+    error_message = "The planner must not get monitoring permissions without monitoring."
+  }
+}
+
+run "monitoring_watches_the_public_services" {
+  command = plan
+
+  variables {
+    environment         = "dev"
+    deploy_apps         = true
+    firestore_and_auth  = true
+    monitoring          = true
+    deletion_protection = false
+  }
+
+  assert {
+    condition     = length(module.monitoring) == 1
+    error_message = "Monitoring must be created when turned on."
+  }
+
+  assert {
+    condition = (
+      module.monitoring[0].uptime_hosts.web == "web-123456789012.test-region.run.app" &&
+      module.monitoring[0].uptime_hosts.api == "api-123456789012.test-region.run.app"
+    )
+    error_message = "The uptime checks must watch the web and api URLs."
+  }
+
+  assert {
+    condition = alltrue([
+      for p in ["logging.logMetrics.get", "monitoring.alertPolicies.get", "monitoring.uptimeCheckConfigs.get"] :
+      contains(google_project_iam_custom_role.planner.permissions, p)
+    ])
+    error_message = "The planner must be able to read what monitoring creates."
+  }
+
+  assert {
+    condition     = contains(module.services.services, "monitoring.googleapis.com")
+    error_message = "Monitoring needs its API."
+  }
+}
+
+run "monitoring_needs_the_apps" {
+  command = plan
+
+  variables {
+    environment = "dev"
+    deploy_apps = false
+    monitoring  = true
+  }
+
+  assert {
+    condition     = length(module.monitoring) == 0
+    error_message = "Without the apps there is nothing to watch."
+  }
+}

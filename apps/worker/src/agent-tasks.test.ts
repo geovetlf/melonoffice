@@ -36,6 +36,7 @@ import {
   type ConversationRepository,
 } from '@melonoffice/conversations';
 import type { EventDraft } from '@melonoffice/events';
+import { createLogger } from '@melonoffice/observability';
 import { openWallet } from '@melonoffice/credits';
 import {
   DEFAULT_DEPARTMENT_CATALOGUE,
@@ -306,7 +307,13 @@ describe.each(STORES)('AE-2 agent tasks with storage in %s', (_storage, createSt
       initiatedBy: string;
       drafts: readonly EventDraft[];
     }[] = [];
+    // What the monitoring module's log-based metrics count (G-6, ADR-0136).
+    const logged: Record<string, unknown>[] = [];
     const taskParts = createAgentTaskParts({
+      logger: createLogger({
+        service: 'worker',
+        sink: (line) => void logged.push(JSON.parse(line) as Record<string, unknown>),
+      }),
       stores: {
         tenancy: stores.tenancy,
         specialists: stores.specialists,
@@ -457,6 +464,7 @@ describe.each(STORES)('AE-2 agent tasks with storage in %s', (_storage, createSt
       promptOf,
       taskParts,
       published,
+      logged,
       outputs: createAgentOutputStore(stores.outputs),
       management,
       setModel: (...next: (() => Promise<ProviderOutcome>)[]) => {
@@ -515,6 +523,10 @@ describe.each(STORES)('AE-2 agent tasks with storage in %s', (_storage, createSt
       remember: [],
       handoff: null,
     });
+    // Its end in the logs, for the monitoring metrics: codes only, never the answer (G-6).
+    expect(w.logged.filter((l) => l.message === 'agent_task.finished')).toEqual([
+      expect.objectContaining({ severity: 'INFO', outcome: 'completed', code: null }),
+    ]);
     // Its end on the event bus, as the runtime for Alice (ADR-0102): it finished, and what it
     // could not answer goes to a person.
     const subject = { type: 'execution', id: must(execution).id };
@@ -630,6 +642,32 @@ describe.each(STORES)('AE-2 agent tasks with storage in %s', (_storage, createSt
     expect(execution?.result).toBeUndefined();
   });
 
+  it('3b. an answer that claims it sent something is completed with a Guardian warning, published and logged (G-2, G-6)', async () => {
+    const w = await world();
+    const lucia = await w.agent();
+    w.setModel(async () =>
+      answer({ answer: 'Listo, ya envié el WhatsApp a Rosa con su pedido.', missing: [] }),
+    );
+    const { task } = await w.tasks.assign(w.tenantA, lucia.identity.id, {
+      request: 'Confirma el pedido de Rosa',
+    });
+    await w.drive();
+    const { execution } = await w.tasks.get(w.tenantA, task.id);
+    // A warning never fails the task: only a critical finding does (ADR-0132).
+    expect(execution?.status).toBe('completed');
+    expect(
+      w.published.flatMap((p) =>
+        p.drafts.filter((d) => d.type === 'agent_guardian.warning').map((d) => d.data),
+      ),
+    ).toEqual([
+      { specialistId: lucia.identity.id, code: 'unsupported_completion', severity: 'warning' },
+    ]);
+    const guardian = w.logged.filter((l) => l.message === 'agent_guardian.warning');
+    expect(guardian).toEqual([
+      expect.objectContaining({ code: 'unsupported_completion', guardianSeverity: 'warning' }),
+    ]);
+  });
+
   it('4. without credits the model is never reached and the task fails', async () => {
     const w = await world({ balance: 0 });
     const lucia = await w.agent();
@@ -638,6 +676,9 @@ describe.each(STORES)('AE-2 agent tasks with storage in %s', (_storage, createSt
     expect(w.providerCalls).toHaveLength(0);
     const { execution } = await w.tasks.get(w.tenantA, task.id);
     expect(execution?.status).toBe('failed');
+    expect(w.logged.filter((l) => l.message === 'agent_task.finished')).toEqual([
+      expect.objectContaining({ outcome: 'failed', code: execution?.failure?.code }),
+    ]);
     // A person must add credits: the hand-off says so (ADR-0102).
     expect(w.published.flatMap((p) => p.drafts.map((d) => [d.type, d.data]))).toEqual([
       [
