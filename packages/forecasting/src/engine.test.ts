@@ -247,6 +247,7 @@ async function world(options: WorldOptions = {}) {
   };
   return {
     engine,
+    credits,
     tasks,
     drain,
     records,
@@ -624,6 +625,18 @@ describe('22. credits', () => {
 
   it('refuses before queuing when the balance cannot pay a run', async () => {
     const w = await world({ grant: 0 });
+    expect(await codeOf(w.engine.request(w.tenantA, SALES))).toBe('forecast_credits_insufficient');
+    expect(w.tasks).toHaveLength(0);
+  });
+
+  it('does not count credits another operation holds (ADR-0123)', async () => {
+    const w = await world({ grant: 10 });
+    await w.credits.hold(w.tenantA, {
+      amount: 10,
+      referenceId: 'ai:other',
+      reason: 'ai_generation',
+      ttlMs: 60_000,
+    });
     expect(await codeOf(w.engine.request(w.tenantA, SALES))).toBe('forecast_credits_insufficient');
     expect(w.tasks).toHaveLength(0);
   });

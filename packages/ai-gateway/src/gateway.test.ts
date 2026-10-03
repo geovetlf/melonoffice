@@ -430,6 +430,7 @@ async function world(options: WorldOptions = {}) {
 
   return {
     creditService,
+    creditStore,
     audit,
     events,
     logLines,
@@ -1035,6 +1036,90 @@ describe('AI gateway with the real Credits engine (#20)', () => {
     await call({ requestId: 'req-real' });
     expect(await w.creditService.balanceOf(w.tenantA)).toMatchObject({ balance: 10 - charged });
     expect(w.events('credits.consume')).toHaveLength(1);
+  });
+});
+
+describe('AI gateway holds credits before the call (D-12, ADR-0123)', () => {
+  const grant = (w: Awaited<ReturnType<typeof world>>, amount: number) =>
+    w.creditService.grant(w.tenantA, { amount, referenceId: 'grant-1', reason: 'test_grant' });
+  const ledgerOf = async (w: Awaited<ReturnType<typeof world>>) =>
+    (await w.creditStore.ledger(w.orgA)).map((e) => [e.type, e.amount, e.referenceId]);
+
+  it('holds the estimate, settles the real cost once, and frees the rest', async () => {
+    const { w, call } = await setup({ realCredits: true });
+    await grant(w, 10);
+    const answer = await call({ requestId: 'req-hold' });
+    expect(answer).toMatchObject({ status: 'completed', credits: { state: 'consumed' } });
+    const charged = answer.status === 'completed' ? answer.credits.consumed : -1;
+    expect(await ledgerOf(w)).toEqual([
+      ['grant', 10, 'grant-1'],
+      ['hold', 0, 'ai:req-hold'],
+      ['consume', -charged, 'ai:req-hold:close'],
+    ]);
+    expect(await w.creditService.balanceOf(w.tenantA)).toMatchObject({
+      balance: 10 - charged,
+      reserved: 0,
+    });
+    // A retry of the same request is never charged twice.
+    await call({ requestId: 'req-hold' });
+    expect(await ledgerOf(w)).toHaveLength(3);
+    expect(w.events('credits.consume')).toHaveLength(1);
+  });
+
+  it('releases the hold when the call fails, so nothing is spent', async () => {
+    const { w, call } = await setup({
+      realCredits: true,
+      defaultPolicy: onlyModels('alpha/alpha-large'),
+      script: {
+        'alpha-large': [() => ({ status: 'error', kind: 'invalid_request', httpStatus: 400 })],
+      },
+    });
+    await grant(w, 10);
+    expect(await call({ requestId: 'req-fail' })).toMatchObject({ status: 'failed' });
+    expect(await ledgerOf(w)).toEqual([
+      ['grant', 10, 'grant-1'],
+      ['hold', 0, 'ai:req-fail'],
+      ['release', 0, 'ai:req-fail:close'],
+    ]);
+    expect(await w.creditService.balanceOf(w.tenantA)).toMatchObject({
+      balance: 10,
+      reserved: 0,
+      available: 10,
+    });
+  });
+
+  it('never spends what another operation holds: the call is denied before any provider', async () => {
+    const { w, call } = await setup({ realCredits: true });
+    await grant(w, 10);
+    await w.creditService.hold(w.tenantA, {
+      amount: 10,
+      referenceId: 'other-task',
+      reason: 'test_hold',
+      ttlMs: 60_000,
+    });
+    expect(await call({ requestId: 'req-short' })).toMatchObject({
+      status: 'denied',
+      code: 'credits_insufficient',
+    });
+    expect(w.calls).toHaveLength(0);
+    expect(await w.creditService.balanceOf(w.tenantA)).toMatchObject({ balance: 10, reserved: 10 });
+  });
+
+  it('settles a streamed answer the same way', async () => {
+    const models = MODELS.map((m) => (m.modelId === 'alpha-small' ? { ...m, streaming: true } : m));
+    const { w, execution } = await setup({ realCredits: true, models });
+    await grant(w, 10);
+    let done: unknown;
+    for await (const event of w.gateway.stream(
+      w.tenantA,
+      requestFor(execution, { requestId: 'req-s' }),
+    )) {
+      if (event.type === 'done') done = event.response;
+    }
+    expect(done).toMatchObject({ status: 'completed', credits: { state: 'consumed' } });
+    const types = (await ledgerOf(w)).map(([type]) => type);
+    expect(types).toEqual(['grant', 'hold', 'consume']);
+    expect(await w.creditService.balanceOf(w.tenantA)).toMatchObject({ reserved: 0 });
   });
 });
 
