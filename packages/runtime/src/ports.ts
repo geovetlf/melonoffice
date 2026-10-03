@@ -27,6 +27,7 @@ export interface RuntimeServices {
     ExecutionService,
     | 'get'
     | 'runtimeChangeStatus'
+    | 'runtimeAbandon'
     | 'runtimeChangeNode'
     | 'recordVerification'
     | 'retryNode'

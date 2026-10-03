@@ -97,6 +97,8 @@ export function sentenceKey(task: AgentTaskView): string {
   }
   if (task.status === 'cancelled') return 'agentTasks.sentence.stopped';
   if (task.status === 'failed') {
+    // Closed by the automatic sweep (ADR-0121).
+    if (task.failure === 'stale_execution') return 'agentTasks.sentence.abandoned';
     if (follow === 'rejected' || follow === 'expired') {
       return task.answer === null ? 'agentTasks.sentence.stopped' : 'agentTasks.sentence.finished';
     }

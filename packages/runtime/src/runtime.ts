@@ -10,6 +10,7 @@ import {
   isExecutionError,
   isTerminal,
   retryRuleOf,
+  STALE_EXECUTION,
   UNKNOWN_OUTCOME_CODES,
 } from '@melonoffice/execution';
 import { isJobError, jobIdFor, type JobClaim, type JobService } from '@melonoffice/jobs';
@@ -90,6 +91,22 @@ export interface Runtime {
    * tool gate then checks it again against the exact input when the node runs.
    */
   resume(tenant: TenantContext, executionId: string, correlationId?: string): Promise<ExecutionJob>;
+  /**
+   * Closes an execution the automatic sweep found abandoned (ADR-0121), as the runtime of the
+   * person it runs for: failed with `stale_execution` only if it is still exactly as found, its
+   * jobs cancelled, then the stop and end hooks, so its person is told. No node runs, no model or
+   * tool is called and nothing new is started.
+   */
+  abandon(
+    tenant: TenantContext,
+    executionId: string,
+    found: {
+      readonly from: Execution['status'];
+      readonly revision: number;
+      readonly sweepId: string;
+      readonly why: string;
+    },
+  ): Promise<Execution>;
 }
 
 export interface RuntimeOptions {
@@ -684,6 +701,31 @@ export function createRuntime(options: RuntimeOptions): Runtime {
       const job = await s.jobs.enqueue(tenant, { executionId: execution.id, nodeId: ready.id });
       await dispatch(job);
       return job;
+    },
+
+    async abandon(tenant, executionId, found) {
+      if (tenant.actor !== 'runtime') throw new RuntimeError('invalid_request', 'runtime_only');
+      const s = services(correlationOf(found.sweepId));
+      const failed = await s.executions.runtimeAbandon(tenant, executionId, found);
+      const log = logger?.child({ executionId: failed.id, sweepId: found.sweepId });
+      // Its jobs are not worth keeping it open for: a job delivered after this finds it ended.
+      try {
+        await s.jobs.cancelForExecution(tenant, failed.id);
+      } catch (error) {
+        log?.warn('jobs not cancelled', { code: (error as { code?: unknown }).code ?? 'error' });
+      }
+      try {
+        await onStopped?.stopped(tenant, failed, STALE_EXECUTION);
+      } catch {
+        log?.warn('stop hook failed', { code: STALE_EXECUTION });
+      }
+      try {
+        await onEnded?.ended(tenant, failed, 'failed');
+      } catch {
+        log?.warn('end hook failed', { status: 'failed' });
+      }
+      log?.info('execution abandoned', { from: found.from, why: found.why });
+      return failed;
     },
 
     async resume(tenant, executionId, correlationId) {

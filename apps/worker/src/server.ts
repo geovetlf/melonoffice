@@ -66,6 +66,7 @@ import {
   FirestoreKnowledgeRepository,
   FirestorePlanRepository,
   FirestoreSpecialistRepository,
+  FirestoreSweepLedger,
   FirestoreTenancyStore,
 } from '@melonoffice/firestore';
 import {
@@ -101,6 +102,7 @@ import { createFollowUpHandler, RUN_FOLLOW_UP_PATH } from './follow-ups.js';
 import { createForecastHandler } from './forecasts.js';
 import { createJobHandler } from './handler.js';
 import { createWorkerRuntime } from './runtime.js';
+import { createExecutionSweeper, RUN_SWEEP_PATH } from './sweeps.js';
 
 const config = loadConfig(process.env);
 const logger = createLogger({ service: SERVICE_NAME, level: config.logLevel });
@@ -119,7 +121,10 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
     tenancy,
     departments: new FirestoreDepartmentRepository(firestore),
     specialists: new FirestoreSpecialistRepository(firestore),
-    executions: new FirestoreExecutionRepository(firestore),
+    executions: new FirestoreExecutionRepository(firestore, {
+      // The sweep's query runs without its index until Terraform adds it (ADR-0121).
+      onIndexMissing: (query) => logger.warn('firestore.index_missing', { query }),
+    }),
     approvals: new FirestoreApprovalRepository(firestore),
     jobs: new FirestoreJobRepository(firestore),
     audit: new FirestoreAuditStore(firestore),
@@ -416,7 +421,27 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
     logger: logger.child({ component: 'forecasting' }),
     limits: forecasting.limits,
   });
+  // The automatic sweep of abandoned agent work (ADR-0121): a task every 3 hours on the same
+  // queue, behind the same invoker. Each run queues the next; every start queues it if missing.
+  const sweeper = createExecutionSweeper({
+    executions: stores.executions,
+    jobs: stores.jobs,
+    approvals: stores.approvals,
+    tenancy,
+    runtime: engine,
+    ledger: new FirestoreSweepLedger(firestore),
+    scheduler: createCloudTasksScheduler({
+      queue: runtime.queue,
+      targetUrl: `${runtime.workerUrl}${RUN_SWEEP_PATH}`,
+      audience: runtime.workerUrl,
+      invokerEmail: runtime.invokerEmail,
+      dispatchDeadlineSeconds: Math.ceil(runtime.leaseMs / 1000),
+    }),
+    logger: logger.child({ component: 'sweeps' }),
+  });
+  void sweeper.ensureNext();
   return {
+    sweeps: sweeper,
     handler: createJobHandler({
       jobs: jobService,
       runtime: engine,

@@ -617,6 +617,27 @@ resource "google_firestore_index" "documents" {
   }
 }
 
+# The automatic sweep of abandoned agent work (ADR-0121): executions of one open status not
+# updated since a cutoff, oldest first, across organizations, read by the worker every 3 hours.
+# Until this index exists, the worker reads up to 500 per status without it and logs it.
+resource "google_firestore_index" "executions_sweep" {
+  count = var.firestore_and_auth ? 1 : 0
+
+  project     = var.project_id
+  database    = google_firestore_database.default[0].name
+  collection  = "executions"
+  query_scope = "COLLECTION"
+
+  fields {
+    field_path = "status"
+    order      = "ASCENDING"
+  }
+  fields {
+    field_path = "updatedAt"
+    order      = "ASCENDING"
+  }
+}
+
 # An organization's agents searched by skill or by autonomy level, one page at a time in id order
 # (ADR-0118). A skill is asked with `array-contains-any` over its versions; an autonomy level other
 # than the default by equality; the document id that orders them is implicit. Until these exist, the API reads the agents without them (at most

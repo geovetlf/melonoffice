@@ -3,6 +3,7 @@ import type {
   Execution,
   ExecutionId,
   ExecutionStatus,
+  IsoTimestamp,
   OrganizationId,
   SpecialistId,
 } from '@melonoffice/domain';
@@ -63,6 +64,19 @@ export interface OpenOrganizationIndex {
   countOpenOfOrganization(organizationId: OrganizationId, limit: number): Promise<number>;
 }
 
+/**
+ * Open executions of every organization, in one status, not updated since `before`, oldest first
+ * (ADR-0121): the automatic sweep's candidates, read by the worker only. Each one carries its own
+ * organization, which every later step checks again.
+ */
+export interface StaleExecutionIndex {
+  openSince(
+    status: ExecutionStatus,
+    before: IsoTimestamp,
+    limit: number,
+  ): Promise<readonly Execution[]>;
+}
+
 /** Checks what `change` returned: the same execution, one revision ahead. */
 export function checkNextRevision(current: Execution, next: Execution): void {
   if (
@@ -76,7 +90,7 @@ export function checkNextRevision(current: Execution, next: Execution): void {
 
 /** For tests and local runs only. */
 export class InMemoryExecutionRepository
-  implements ExecutionRepository, OpenExecutionIndex, OpenOrganizationIndex
+  implements ExecutionRepository, OpenExecutionIndex, OpenOrganizationIndex, StaleExecutionIndex
 {
   readonly #executions = new Map<string, Execution>();
 
@@ -132,6 +146,13 @@ export class InMemoryExecutionRepository
       .map((e) => e.id)
       .sort();
     return { ids: Object.freeze(ids.slice(0, limit)), more: ids.length > limit };
+  }
+
+  async openSince(status: ExecutionStatus, before: IsoTimestamp, limit: number) {
+    return [...this.#executions.values()]
+      .filter((e) => e.status === status && e.updatedAt < before)
+      .sort((a, b) => (a.updatedAt < b.updatedAt ? -1 : a.updatedAt > b.updatedAt ? 1 : 0))
+      .slice(0, limit);
   }
 
   async countOpenOfOrganization(organizationId: OrganizationId, limit: number) {

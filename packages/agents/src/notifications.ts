@@ -46,6 +46,7 @@ export const AGENT_NOTIFICATION_KINDS: readonly AgentNotificationKind[] = Object
   'task_received',
   'result_available',
   'plan_failed',
+  'task_abandoned',
 ]);
 
 const MAX_MS = 9_999_999_999_999;
@@ -246,6 +247,10 @@ export function notificationOfTaskEnd(end: {
       : { kind: 'task_finished', code: null };
   }
   if (outcome === 'cancelled') return { kind: 'agent_stopped', code };
+  // Closed by the automatic sweep because nothing moved it any more (ADR-0121).
+  if (outcome === 'failed' && code === 'stale_execution') {
+    return { kind: 'task_abandoned', code };
+  }
   if (outcome !== 'failed' || handoff === null) return null;
   if (handoff === 'policy') return { kind: 'agent_stopped', code };
   if (handoff === 'authorization_required') return { kind: 'task_blocked', code };

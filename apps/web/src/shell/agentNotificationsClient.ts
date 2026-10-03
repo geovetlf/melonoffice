@@ -15,7 +15,9 @@ export type AgentNoticeKind =
   | 'task_received'
   // A plan of several agents ended (ADR-0119).
   | 'result_available'
-  | 'plan_failed';
+  | 'plan_failed'
+  // Closed by the automatic sweep (ADR-0121).
+  | 'task_abandoned';
 
 export interface AgentNoticeView {
   readonly id: string;

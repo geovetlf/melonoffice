@@ -416,6 +416,12 @@ export const AUDIT_ACTIONS = {
     description: "An execution's status changed; the event records from and to (ADR-0024).",
     results: ['success'],
   },
+  'execution.abandoned': {
+    category: 'execution',
+    description:
+      "The automatic sweep closed an execution nobody was moving any more (ADR-0121): failed with `stale_execution`; `reason` says what it found, and the execution's failure points at the sweep.",
+    results: ['success'],
+  },
   'execution.start_denied': {
     category: 'execution',
     description:
