@@ -1,4 +1,10 @@
-import type { AIMessage, AIRequest, AIResponse } from '@melonoffice/ai-gateway';
+import {
+  promptLabel,
+  promptRef,
+  type AIMessage,
+  type AIRequest,
+  type AIResponse,
+} from '@melonoffice/ai-gateway';
 import type {
   AICallTrace,
   Execution,
@@ -48,6 +54,9 @@ export type AIReview =
 
 const clip = (text: string, max: number) => [...text].slice(0, max).join('');
 const escape = (value: string) => value.replace(/</g, '‹').replace(/>/g, '›');
+
+/** The answer review prompt's version (G-3, ADR-0133). */
+export const AI_REVIEW_PROMPT = promptRef('agent_review', 1);
 
 export function aiReviewMessages(request: string, answer: string): readonly AIMessage[] {
   const system = [
@@ -103,6 +112,7 @@ function traceOf(
     attempts: response.attempts,
     capability: request.capability,
     sensitivity: request.sensitivity,
+    prompt: promptLabel(AI_REVIEW_PROMPT),
   };
 }
 
@@ -187,7 +197,7 @@ export function createAgentAnswerReviewer(options: {
         },
         sensitivity: 'confidential',
         ...(maxCredits === undefined ? {} : { maxCredits }),
-        metadata: { review: 'answer' },
+        metadata: { review: 'answer', prompt: promptLabel(AI_REVIEW_PROMPT) },
       };
       let response: AIResponse;
       try {

@@ -13,3 +13,4 @@ export * from './stale.js';
 export * from './knowledge-tool.js';
 export * from './audit.js';
 export * from './guardian.js';
+export * from './prompts.js';

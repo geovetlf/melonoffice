@@ -1,4 +1,11 @@
-import type { AIGateway, AIMessage, AIOutputSchema, AIRequest } from '@melonoffice/ai-gateway';
+import { AGENT_TASK_PROMPT } from './prompts.js';
+import {
+  promptLabel,
+  type AIGateway,
+  type AIMessage,
+  type AIOutputSchema,
+  type AIRequest,
+} from '@melonoffice/ai-gateway';
 import { AI_REVIEW_NODE, type AgentAnswerReviewer } from './ai-review.js';
 import {
   GUARDIAN_NODE,
@@ -698,7 +705,7 @@ export function createAgentTaskWork(options: AgentTaskWorkOptions): AgentTaskWor
         }),
         // The company's own data: never more than its agents' model policy allows.
         sensitivity: 'confidential',
-        metadata: { skills: known.length },
+        metadata: { skills: known.length, prompt: promptLabel(AGENT_TASK_PROMPT) },
       } satisfies TaskAIWork;
     },
   });

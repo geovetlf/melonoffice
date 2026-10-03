@@ -233,12 +233,19 @@ describe('Agent tasks: asking an agent (ADR-0063)', () => {
       dependsOn: ['work'],
       tool: { id: 'follow_up_schedule', version: 2 },
     });
-    // The snapshot names the agent's version, each of its skills' versions and the tool version.
+    // The snapshot names the agent's version, its prompt's (G-3), each of its skills' versions
+    // and the tool version.
     expect(execution?.versionSnapshot.components.map((c) => c.kind)).toEqual([
       'specialist',
+      'prompt',
       ...lucia.configuration.skills.map(() => 'skill'),
       'tool',
     ]);
+    expect(execution?.versionSnapshot.components[1]).toEqual({
+      kind: 'prompt',
+      id: 'agent_task',
+      version: '1',
+    });
     expect(w.kicked).toEqual([task.id]);
     expect(taskOf(execution as Execution)).toEqual({
       taskId: task.id,

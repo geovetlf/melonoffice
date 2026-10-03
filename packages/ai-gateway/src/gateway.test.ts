@@ -63,6 +63,7 @@ import {
   MAX_RETRY_WAIT_MS,
   retryDelayMs,
 } from './gateway.js';
+import { promptLabel, promptOf, promptRef } from './prompts.js';
 import { createModelPolicyCatalogue, DEFAULT_MODEL_POLICY } from './policy.js';
 import { createProviderRegistry } from './registry.js';
 import {
@@ -1367,6 +1368,20 @@ describe('AI gateway: customer credit pricing (ADR-0081)', () => {
     });
     expect(usage.events[0]?.cost.usage.quantities.length).toBeGreaterThan(0);
     expect(usage.events[0]).not.toHaveProperty('fallbackFrom');
+  });
+
+  it('records the prompt version a call names, and only a well-formed one (G-3)', async () => {
+    const usage = new InMemoryUsageSink();
+    const { call } = await setup({ usage, models: onlyFree });
+    await call({ metadata: { prompt: 'agent_task@1' } });
+    await call({ requestId: 'req-2', metadata: { prompt: 'Agent Task v1' } });
+    expect(usage.events[0]?.attribution).toMatchObject({ prompt: 'agent_task@1' });
+    expect(usage.events[1]?.attribution).not.toHaveProperty('prompt');
+    expect(promptOf({ prompt: 'agent_task@1' })).toBe('agent_task@1');
+    expect(promptOf({ prompt: 'agent_task@0' })).toBeUndefined();
+    expect(promptOf(undefined)).toBeUndefined();
+    expect(promptLabel(promptRef('gia_chat', 2))).toBe('gia_chat@2');
+    expect(() => promptRef('Bad Id', 1)).toThrow();
   });
 
   it('charges what a pricing policy says, without touching the provider cost', async () => {

@@ -14,3 +14,4 @@ export * from './health.js';
 export * from './tools.js';
 export * from './stream.js';
 export * from './sse.js';
+export * from './prompts.js';

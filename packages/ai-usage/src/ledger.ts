@@ -9,6 +9,9 @@ import { AIUsageError } from './errors.js';
 import type { AIUsageSink } from './sink.js';
 import { addUsageEvent, dayOf, emptyUsageDay, summarize, type AIUsageDay } from './totals.js';
 
+/** A prompt version, `id@version` (G-3). */
+const PROMPT = /^[a-z][a-z0-9_]{0,63}@[1-9]\d{0,5}$/;
+
 /**
  * The AI Usage Ledger (ADR-0074): every AI operation's usage event, append-only and idempotent by
  * id, with its organization's daily totals updated in the same write. It is where every engine's
@@ -89,6 +92,7 @@ export function checkUsageEvent(event: AIUsageEvent): void {
   ]) {
     if (code !== undefined && !isUsageCode(code)) fail('attribution');
   }
+  if (a.prompt !== undefined && !PROMPT.test(a.prompt)) fail('attribution');
 }
 
 /** Every UTC day from one to another, both included. */

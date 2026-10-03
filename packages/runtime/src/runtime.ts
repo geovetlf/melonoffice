@@ -130,6 +130,9 @@ export interface RuntimeOptions {
 
 const LEASE_PROOF_FIELDS = ['jobId', 'leaseId', 'revision'];
 
+/** A prompt version, `id@version` (G-3). */
+const PROMPT = /^[a-z][a-z0-9_]{0,63}@[1-9]\d{0,5}$/;
+
 /**
  * How a model call was served (ADR-0100), from the gateway's answer and the call's own limits: the
  * chosen provider and model, cost, credits, the budget cap and any escalation the work asked for.
@@ -145,6 +148,9 @@ function traceOf(
   const escalation = label('harnessEscalation');
   const dataClass = label('harnessData');
   const intent = label('harnessIntent');
+  // The prompt version the call names (G-3, ADR-0133), when well formed.
+  const named = label('prompt');
+  const prompt = named !== undefined && PROMPT.test(named) ? named : undefined;
   return {
     provider: response.provider,
     model: response.model,
@@ -161,6 +167,7 @@ function traceOf(
     sensitivity: request.sensitivity,
     ...(dataClass === undefined ? {} : { dataClass }),
     ...(intent === undefined ? {} : { intent }),
+    ...(prompt === undefined ? {} : { prompt }),
   };
 }
 

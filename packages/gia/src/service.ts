@@ -1,5 +1,10 @@
 import type { ActivityItem } from '@melonoffice/activity';
-import { creditReferenceOf, type AIGateway, type AIResponse } from '@melonoffice/ai-gateway';
+import {
+  promptLabel,
+  creditReferenceOf,
+  type AIGateway,
+  type AIResponse,
+} from '@melonoffice/ai-gateway';
 import { actorOf, type AuditModel, type AuditService } from '@melonoffice/audit';
 import {
   candidateOf,
@@ -70,7 +75,13 @@ import {
   prioritiesOf,
   type GiaPriorities,
 } from './priorities.js';
-import { giaMessages, giaOutputSchema, type GiaPresentation, type GiaTurn } from './prompt.js';
+import {
+  GIA_PROMPT,
+  giaMessages,
+  giaOutputSchema,
+  type GiaPresentation,
+  type GiaTurn,
+} from './prompt.js';
 
 /**
  * GIA's chat (Fase 1c, ADR-0052). A person asks; GIA reads, as that person, a few Company Brain
@@ -627,7 +638,7 @@ export function createGia(options: GiaOptions): GiaService {
       maxOutputTokens: GIA_LIMITS.outputTokens,
       // The business's own knowledge and the person's words: confidential.
       sensitivity: 'confidential',
-      metadata: { locale },
+      metadata: { locale, prompt: promptLabel(GIA_PROMPT) },
     });
     const latencyMs = Math.round(performance.now() - started);
 

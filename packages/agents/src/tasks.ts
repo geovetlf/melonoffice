@@ -25,6 +25,7 @@ import {
 import { isResolvedTenant, type TenantContext } from '@melonoffice/tenancy';
 import { AgentTaskError } from './errors.js';
 import { isStaleWork } from './stale.js';
+import { AGENT_TASK_PROMPT } from './prompts.js';
 import { AGENT_FOLLOW_UP_TOOL, AGENT_TASK_SCHEDULE_NODE } from './proposals.js';
 
 /**
@@ -377,6 +378,12 @@ export function createAgentTaskService(options: AgentTaskServiceOptions): AgentT
               schemaVersion: 1,
               components: [
                 { kind: 'specialist', id: agent.identity.id, version: String(agent.version) },
+                // The prompt the task's model call is written with (G-3, ADR-0133).
+                {
+                  kind: 'prompt',
+                  id: AGENT_TASK_PROMPT.id,
+                  version: String(AGENT_TASK_PROMPT.version),
+                },
                 ...agent.configuration.skills.map((s) => ({
                   kind: 'skill',
                   id: s.id as string,

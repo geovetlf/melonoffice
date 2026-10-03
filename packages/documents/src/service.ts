@@ -1,4 +1,10 @@
-import { MAX_DOCUMENT_PAGES, type AIGateway, type AIResponse } from '@melonoffice/ai-gateway';
+import {
+  promptLabel,
+  promptRef,
+  MAX_DOCUMENT_PAGES,
+  type AIGateway,
+  type AIResponse,
+} from '@melonoffice/ai-gateway';
 import { actorOf, buildAuditEvent } from '@melonoffice/audit';
 import { isBrainError, LIMITS, type CompanyBrainService } from '@melonoffice/brain';
 import type {
@@ -53,6 +59,9 @@ export const DOCUMENT_TRANSCRIPTION_MAX_OUTPUT_TOKENS = 16_000;
  * What the model is told when it reads a scan. Fixed here: nothing from the document or the
  * person is ever part of it, and the document's words are data, never instructions.
  */
+/** The transcription prompt's version (G-3, ADR-0133). */
+export const TRANSCRIPTION_PROMPT = promptRef('document_transcription', 1);
+
 export const DOCUMENT_TRANSCRIPTION_PROMPT =
   "You transcribe documents. Transcribe all of the attached document's text as plain text, in " +
   'reading order, keeping its line breaks and the text of its tables. Do not summarise, ' +
@@ -256,6 +265,7 @@ export function createDocumentService(options: DocumentServiceOptions): Document
         requestId: `document-read-${document.id}`,
         subject: { type: 'document', id: document.id },
         taskType: 'document_transcription',
+        metadata: { prompt: promptLabel(TRANSCRIPTION_PROMPT) },
         capability: 'text_generation',
         messages: [
           { role: 'system', content: [{ type: 'text', text: DOCUMENT_TRANSCRIPTION_PROMPT }] },

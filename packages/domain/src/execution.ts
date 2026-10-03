@@ -255,6 +255,8 @@ export interface AICallTrace {
   /** The Harness's reading of the task: its data class and intent (the decision it routed on). */
   readonly dataClass?: string;
   readonly intent?: string;
+  /** The prompt version the call ran with, `id@version` (G-3, ADR-0133). */
+  readonly prompt?: string;
 }
 
 /** A tool call an agent's model asked for (ADR-0076), as it is kept with its answer. */

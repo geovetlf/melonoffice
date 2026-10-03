@@ -635,6 +635,7 @@ describe('Documents: reading PDF and DOCX text (ADR-0079)', () => {
       requestId: `document-read-${document.id}`,
       subject: { type: 'document', id: document.id },
       taskType: 'document_transcription',
+      metadata: { prompt: 'document_transcription@1' },
       capability: 'text_generation',
       messages: [
         { role: 'system', content: [{ type: 'text', text: DOCUMENT_TRANSCRIPTION_PROMPT }] },

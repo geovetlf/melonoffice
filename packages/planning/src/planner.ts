@@ -1,4 +1,4 @@
-import type { AIGateway, AIRequest } from '@melonoffice/ai-gateway';
+import { promptLabel, promptRef, type AIGateway, type AIRequest } from '@melonoffice/ai-gateway';
 import type { DepartmentRepository } from '@melonoffice/departments';
 import type { DataSensitivity, DefinitionRef, ToolId } from '@melonoffice/domain';
 import type { ExecutionService } from '@melonoffice/execution';
@@ -80,6 +80,9 @@ const failureCode = (code: string): string => (CODE.test(code) ? code : 'plannin
  * never calls a provider, never approves, never delegates and never runs anything. The model's
  * answer is only a proposal: `PlanService.propose` validates it and stores the plan.
  */
+/** The planner's prompt version (G-3, ADR-0133): a new one whenever its text changes. */
+export const PLANNER_PROMPT = promptRef('plan_proposal', 1);
+
 export function createPlanner({
   plans,
   executions,
@@ -149,6 +152,7 @@ export function createPlanner({
         executionId: execution.id,
         specialistId: execution.specialistId as string,
         taskType: 'plan_proposal',
+        metadata: { prompt: promptLabel(PLANNER_PROMPT) },
         capability: 'structured_output',
         requirements: { structuredOutput: true },
         messages: [
