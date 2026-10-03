@@ -279,6 +279,6 @@ describe('worker architecture', () => {
       [...agents.matchAll(/executors\.(\w+) =|^\s+(\w+): create\w+Executor\(/gm)]
         .map((m) => m[1] ?? m[2])
         .sort(),
-    ).toEqual(['channel', 'conversation', 'follow_up']);
+    ).toEqual(['channel', 'conversation', 'follow_up', 'knowledge']);
   });
 });

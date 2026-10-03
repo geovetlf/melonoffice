@@ -21,6 +21,8 @@ import {
   FOLLOW_UP_SCHEDULE_TOOL,
   MESSAGE_SEND_TOOL,
   TOOL_CATALOGUE,
+  KNOWLEDGE_SEARCH_LIMITS,
+  KNOWLEDGE_SEARCH_TOOL,
 } from './registry.js';
 import { isForbiddenField, looksLikeCredential, schemaProblem, validate } from './schema.js';
 
@@ -190,16 +192,18 @@ describe('tool registry', () => {
     expect(codeOf(() => createToolRegistry([definition()], [version()]))).toBe('accepted');
   });
 
-  it('ships message_send, conversation_handoff and follow_up_schedule: real tools with executors, none invented', () => {
+  it('ships message_send, conversation_handoff, follow_up_schedule and knowledge_search: real tools with executors, none invented', () => {
     expect(TOOL_CATALOGUE.map((t) => t.id)).toEqual([
       'message_send',
       'conversation_handoff',
       'follow_up_schedule',
+      'knowledge_search',
     ]);
     expect(defaultToolRegistry().list()).toEqual([
       MESSAGE_SEND_TOOL,
       CONVERSATION_HANDOFF_TOOL,
       FOLLOW_UP_SCHEDULE_TOOL,
+      KNOWLEDGE_SEARCH_TOOL,
     ]);
     const v = defaultToolRegistry().resolve('message_send', 1)?.version;
     expect(v).toMatchObject({
@@ -295,11 +299,52 @@ describe('invocation modes (ADR-0034)', () => {
     expect(codeOf(() => checkToolVersion(version({ invocationModes: ['model'] })))).toBe(
       'invocationModes.model_runtime',
     );
-    // In the real catalogue, only `follow_up_schedule@3` says a model may ask for it (ADR-0104).
+    // In the real catalogue, a model may ask for `follow_up_schedule@3` (ADR-0104) and
+    // `knowledge_search@1` (ADR-0130), nothing else.
     const modelTools = TOOL_CATALOGUE.flatMap((tool) =>
       tool.versions.filter(isModelInvocable).map((v) => `${v.toolId}@${v.version}`),
     );
-    expect(modelTools).toEqual(['follow_up_schedule@3']);
+    expect(modelTools).toEqual(['follow_up_schedule@3', 'knowledge_search@1']);
+  });
+
+  it('knowledge_search@1 only reads, takes words alone and gives back bounded facts (ADR-0130)', () => {
+    const v = must(KNOWLEDGE_SEARCH_TOOL.versions[0]);
+    expect(v).toMatchObject({
+      version: 1,
+      category: 'knowledge',
+      action: 'search',
+      mutating: false,
+      approvalPolicy: 'auto',
+      riskLevel: 'low',
+      provider: { kind: 'internal', id: 'knowledge' },
+      invocationModes: ['runtime', 'model'],
+      permissions: ['knowledge.read'],
+      credentials: [],
+      environments: ['dev'],
+    });
+    expect(validate(v.inputSchema, { query: 'precio combo' })).toEqual({ valid: true });
+    // Words only: no department, organization, domain or limit can be sent with them.
+    for (const extra of ['department', 'domain', 'limit', 'organizationId', 'purpose']) {
+      expect(validate(v.inputSchema, { query: 'precio', [extra]: 'x' }).valid).toBe(false);
+    }
+    expect(validate(v.inputSchema, { query: 'x' }).valid).toBe(false);
+    expect(validate(v.inputSchema, { query: 'x'.repeat(201) }).valid).toBe(false);
+    const fact = { label: 'Combo Familiar', value: 'S/ 25', confirmed: true };
+    const facts = Array.from({ length: KNOWLEDGE_SEARCH_LIMITS.facts }, () => fact);
+    expect(validate(v.outputSchema, { available: true, facts, truncated: false })).toEqual({
+      valid: true,
+    });
+    expect(
+      validate(v.outputSchema, { available: true, facts: [...facts, fact], truncated: false })
+        .valid,
+    ).toBe(false);
+    expect(
+      validate(v.outputSchema, {
+        available: true,
+        facts: [{ ...fact, value: 'x'.repeat(KNOWLEDGE_SEARCH_LIMITS.value + 1) }],
+        truncated: false,
+      }).valid,
+    ).toBe(false);
   });
 
   it('follow_up_schedule@3 takes a contact reference, never an id, and a person approves it', () => {
