@@ -292,7 +292,7 @@ resource "google_monitoring_alert_policy" "ai_cost" {
   notification_channels = var.notification_channel_ids
 
   conditions {
-    display_name = "AI provider cost above US$${var.thresholds.ai_cost_usd_per_day} in one day"
+    display_name = "AI provider cost above USD ${var.thresholds.ai_cost_usd_per_day} in one day"
     condition_prometheus_query_language {
       query               = "sum(increase(logging_googleapis_com:user_${google_logging_metric.ai_cost.name}_sum{monitored_resource=\"cloud_run_revision\"}[1d])) > ${var.thresholds.ai_cost_usd_per_day * 1000000}"
       duration            = "0s"
