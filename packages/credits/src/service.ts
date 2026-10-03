@@ -226,7 +226,9 @@ export function createCreditService({
           result: 'success',
           organizationId,
           target: { type: 'credit_entry', id: entry.id },
-          reference: entry.referenceId,
+          // A hold's close is audited under the operation's own reference, so the operation's
+          // events and its charge share one reference; the ledger keeps `<hold>:close`.
+          reference: operation.type === 'settle' ? operation.holdOf : entry.referenceId,
           reason: entry.reason,
           source: 'api',
         },
