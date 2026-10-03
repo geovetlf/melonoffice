@@ -39,9 +39,20 @@ export type CreditsView =
       readonly purchased?: number;
       readonly reserved?: number;
       readonly available?: number;
+      /** The plan period (ADR-0127): absent or null before the wallet's first renewal. */
+      readonly period?: CreditPeriodView | null;
       readonly updatedAt: string;
     }
   | { readonly status: 'absent' | 'unavailable' };
+
+export interface CreditPeriodView {
+  readonly startsAt: string;
+  readonly renewsAt: string;
+  /** Included credits the period started with. */
+  readonly included: number;
+  /** Credits spent in the period. */
+  readonly consumed: number;
+}
 
 /** What the plan gives (entitlements, ADR-0021): credits included each month, when it gives any. */
 export interface PlanLimitsView {

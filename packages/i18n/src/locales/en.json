@@ -2044,8 +2044,13 @@
   "credits.panel.byAgent": "Credits by agent this month",
   "credits.panel.buy": "Buy credits",
   "credits.panel.buy.soon": "Buying credits is not available yet. You will not need to change plan to buy them.",
-  "credits.out.title": "This action did not run: there are not enough credits.",
+  "credits.out.title": "You need more credits: this action did not run.",
   "credits.out.available": "{count, plural, one {# credit available.} other {# credits available.}}",
-  "credits.out.options": "You can buy credits when it becomes available, review your plan, or wait for your plan's renewal.",
-  "credits.out.review": "See plan and credits"
+  "credits.out.options": "You can buy credits or see your plan. You do not need to change plans.",
+  "credits.out.review": "See my plan",
+  "credits.panel.summary": "Your plan includes {included, plural, one {# credit} other {# credits}} this period. You have used {used, number}. You have {left, number} left.",
+  "credits.panel.consumed": "Used this period",
+  "credits.panel.byFunction": "Credits by function this month",
+  "credits.panel.history": "See usage history",
+  "credits.out.buy": "Buy credits"
 }

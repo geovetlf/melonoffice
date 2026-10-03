@@ -64,6 +64,11 @@ export interface FakeBackend {
     activationProblems?: Record<string, Record<string, string>[]>;
     /** Each organization's credit balance, if it has a wallet. */
     credits: Record<string, number>;
+    /** Each organization's plan period (ADR-0127). Absent: not renewed yet. */
+    creditPeriods?: Record<
+      string,
+      { startsAt: string; renewsAt: string; included: number; consumed: number }
+    >;
     /** Each organization's conversations: only its members can read them. */
     conversations: Record<string, { id: string; name: string; priority: string }[]>;
     organizationLimitReached?: boolean;
@@ -1398,6 +1403,7 @@ export function fakeBackend(): FakeBackend {
                 purchased: balance,
                 reserved: 0,
                 available: balance,
+                period: options.creditPeriods?.[organizationId] ?? null,
                 updatedAt: '2026-09-27T12:00:00Z',
               },
         )

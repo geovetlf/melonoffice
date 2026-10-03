@@ -50,6 +50,7 @@ const PACK: CreditPack = {
   version: 1,
   credits: 500,
   price: { currency: 'USD', amountMinor: 1234 },
+  status: 'active',
 };
 
 async function world(
@@ -169,6 +170,12 @@ describe('credit purchases (D-12, ADR-0126)', () => {
     expect(ledger.map((e) => [e.type, e.amount, e.referenceId, e.bucket])).toEqual([
       ['grant', 500, `purchase:${id}`, 'purchased'],
     ]);
+    // The purchase records the ledger entry that credited it.
+    expect(first.purchase.credited).toEqual({
+      entryId: ledger[0]?.id,
+      credits: 500,
+      at: ledger[0]?.createdAt,
+    });
     const wallet = await w.creditStore.findWallet(w.a.organization.id);
     expect(verifyLedger(wallet as never, ledger)).toEqual([]);
     expect(w.events('credits.purchase').map((e) => e.action)).toEqual([
@@ -197,6 +204,11 @@ describe('credit purchases (D-12, ADR-0126)', () => {
       purchase: { paymentRef: 'pay-2' },
     });
     expect(await w.balance(w.a.organization.id)).toBe(500);
+  });
+
+  it('never sells a retired pack', async () => {
+    const w = await world({ packs: [{ ...PACK, status: 'retired' }] });
+    expect(w.purchases.catalogue()).toEqual([]);
   });
 
   it('credits nothing for a payment that does not match what was sold', async () => {
