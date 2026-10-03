@@ -1,4 +1,5 @@
-import type { KnowledgeValue } from '@melonoffice/domain';
+import type { KnowledgeItem, KnowledgeValue } from '@melonoffice/domain';
+import { sensitivityAllows, type PurposeAccess } from './catalogue.js';
 
 /**
  * Deterministic checks of a text against Company Brain's facts (G-1, ADR-0131): no model is asked
@@ -159,4 +160,34 @@ export function figureContradictions(
     }
   }
   return Object.freeze(found);
+}
+
+/** Facts a person confirmed, or that MelonOffice calculated or imported, count as confirmed. */
+const CONFIRMED: ReadonlySet<string> = new Set(['confirmed', 'calculated', 'imported']);
+
+/**
+ * The figures among Company Brain's items, as the checks above read them: active money and number
+ * facts with a name (their label, or their subject's id). With `access`, only those a department
+ * may read: its domains, up to its sensitivity ceiling.
+ */
+export function figureFactsOf(
+  items: readonly Pick<
+    KnowledgeItem,
+    'id' | 'label' | 'subject' | 'value' | 'status' | 'verification' | 'domain' | 'sensitivity'
+  >[],
+  access?: PurposeAccess,
+): readonly FigureFact[] {
+  return items.flatMap((item): FigureFact[] => {
+    const label = item.label ?? item.subject?.id.replace(/_/g, ' ');
+    if (label === undefined || item.status !== 'active') return [];
+    if (item.value.type !== 'money' && item.value.type !== 'number') return [];
+    if (
+      access !== undefined &&
+      (!access.domains.includes(item.domain) ||
+        !sensitivityAllows(access.maxSensitivity, item.sensitivity))
+    ) {
+      return [];
+    }
+    return [{ id: item.id, label, value: item.value, confirmed: CONFIRMED.has(item.verification) }];
+  });
 }

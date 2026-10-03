@@ -175,7 +175,10 @@ describe.each(STORES)('agents with storage in %s', (_name, createStores) => {
     });
     const before = await call('token-alice', 'GET', `${base(orgA)}/specialists/${id}/capabilities`);
     // The newest version is offered (RT-1 added version 3, ADR-0130); any may be chosen.
-    expect(before.body.upgrades).toEqual([{ skillId: 'company_knowledge', from: 1, to: 3 }]);
+    // It names what each upgrade would take away (G-2): this one takes away nothing.
+    expect(before.body.upgrades).toEqual([
+      { skillId: 'company_knowledge', from: 1, to: 3, removes: [], breaks: [] },
+    ]);
     const upgrade = (body: Record<string, unknown>) =>
       call('token-alice', 'POST', `${base(orgA)}/specialists/${id}/skills/upgrade`, body);
     expect(await upgrade({ fromVersion: 2, skillId: 'company_knowledge', version: 4 })).toEqual({
@@ -187,7 +190,9 @@ describe.each(STORES)('agents with storage in %s', (_name, createStores) => {
     expect(moved.body).toMatchObject({ version: 3 });
     expect(moved.body.skills).toContainEqual({ id: 'company_knowledge', version: 2 });
     const after = await call('token-alice', 'GET', `${base(orgA)}/specialists/${id}/capabilities`);
-    expect(after.body.upgrades).toEqual([{ skillId: 'company_knowledge', from: 2, to: 3 }]);
+    expect(after.body.upgrades).toEqual([
+      { skillId: 'company_knowledge', from: 2, to: 3, removes: [], breaks: [] },
+    ]);
     expect(await upgrade({ fromVersion: 3, skillId: 'company_knowledge', version: 2 })).toEqual({
       status: 400,
       body: { error: 'invalid_specialist', field: 'version' },

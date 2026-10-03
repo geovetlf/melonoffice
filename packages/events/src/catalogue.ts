@@ -82,6 +82,13 @@ export const EVENT_CATALOGUE: readonly EventDefinition[] = Object.freeze([
   define('agent_task.approval_required', 'execution', 'agents', {
     specialistId: { kind: 'id' },
   }),
+  // The Agent Guardian found something in an agent's answer a person should check (G-2,
+  // ADR-0132): the most serious finding, as codes.
+  define('agent_guardian.warning', 'execution', 'agents', {
+    specialistId: { kind: 'id' },
+    code: { kind: 'code' },
+    severity: { kind: 'code' },
+  }),
   // An agent proposed handing part of its task to another (ADR-0117); a person decides.
   define('agent_handoff.proposed', 'agent_handoff', 'agents', {
     specialistId: { kind: 'id' },

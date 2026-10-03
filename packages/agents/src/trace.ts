@@ -3,6 +3,7 @@ import type { AgentHandoff, AICallTrace, Execution, OrganizationId } from '@melo
 import type { AgentOutputStore } from '@melonoffice/execution';
 import { isResolvedTenant, type TenantContext } from '@melonoffice/tenancy';
 import { AI_REVIEW_NODE, parseAIReview } from './ai-review.js';
+import { GUARDIAN_NODE, parseGuardianReport } from './guardian.js';
 import type { AgentTaskService } from './tasks.js';
 
 /**
@@ -65,6 +66,14 @@ export interface AgentTaskTrace {
     readonly verdict: string;
     readonly reason: string;
     readonly model: AgentTaskTraceModel | null;
+  } | null;
+  /** What the Agent Guardian found (G-2, ADR-0132), as codes; null before it checked. */
+  readonly guardian: {
+    readonly findings: readonly {
+      readonly code: string;
+      readonly severity: string;
+      readonly recommendation: string;
+    }[];
   } | null;
   readonly verification: {
     readonly result: string;
@@ -177,6 +186,14 @@ export async function readAgentTaskTrace(
       : await ports.outputs.find(tenant, execution.id, AI_REVIEW_NODE);
   const review =
     reviewRecord === undefined ? undefined : parseAIReview(reviewRecord.output.structured);
+  const guardianRecord =
+    execution === undefined
+      ? undefined
+      : await ports.outputs.find(tenant, execution.id, GUARDIAN_NODE);
+  const guardian =
+    guardianRecord === undefined
+      ? undefined
+      : parseGuardianReport(guardianRecord.output.structured);
   const handoff =
     ports.handoffs === undefined ? undefined : await ports.handoffs.get(tenant, task.id);
   // The task it handed on (one level: a handed task never hands on again).
@@ -259,6 +276,16 @@ export async function readAgentTaskTrace(
       review === undefined
         ? null
         : { verdict: review.verdict, reason: review.reason, model: modelOf(reviewCall) },
+    guardian:
+      guardian === undefined
+        ? null
+        : {
+            findings: guardian.findings.map((f) => ({
+              code: f.code,
+              severity: f.severity,
+              recommendation: f.recommendation,
+            })),
+          },
     verification:
       execution?.verification === undefined
         ? null

@@ -5,6 +5,9 @@ import {
   createAgentAnswerReviewer,
   createAgentTaskVerifier,
   createAgentTaskWork,
+  GUARDIAN_NODE,
+  guardianWarningOf,
+  parseGuardianReport,
   createBrainContextSource,
   createAgentMemoryContext,
   createAgentMemoryRecorder,
@@ -28,7 +31,13 @@ import {
   type AgentMemoryRepository,
   type AgentTaskRepository,
 } from '@melonoffice/agents';
-import { createCompanyBrain, knowledgeItemId, type KnowledgeRepository } from '@melonoffice/brain';
+import {
+  createCompanyBrain,
+  DEPARTMENT_ACCESS,
+  figureFactsOf,
+  knowledgeItemId,
+  type KnowledgeRepository,
+} from '@melonoffice/brain';
 import {
   createCommercialInsights,
   createConversationService,
@@ -410,6 +419,18 @@ export function createAgentTaskParts(options: {
         idempotencyKey: `${execution.id}:finished`,
       },
     ];
+    // What the Agent Guardian found that a person should check (G-2, ADR-0132).
+    const kept = await outputs.find(tenant, task.taskId, GUARDIAN_NODE);
+    const report = kept === undefined ? undefined : parseGuardianReport(kept.output.structured);
+    const warning = report === undefined ? undefined : guardianWarningOf(report);
+    if (warning !== undefined) {
+      drafts.push({
+        type: 'agent_guardian.warning',
+        subject,
+        data: { specialistId, code: warning.code, severity: warning.severity },
+        idempotencyKey: `${execution.id}:guardian`,
+      });
+    }
     if (handoff !== null) {
       drafts.push({
         type: 'agent_execution.handoff',
@@ -605,6 +626,40 @@ export function createAgentTaskParts(options: {
   });
   const taskVerifier = createAgentTaskVerifier({
     outputs,
+    // The Agent Guardian (G-2, ADR-0132): deterministic, for every agent, no model and no credits.
+    guardian: {
+      record: (tenant, input) => outputs.record(tenant, input),
+      // Company Brain's figures the agent's department may read, as the person the task is for,
+      // never above `confidential`: what the Guardian keeps is read with the task.
+      async figures(tenant, execution) {
+        const facts = taskOf(execution);
+        if (facts === undefined || !isResolvedTenant(tenant)) return undefined;
+        const organizationId = tenant.organizationId as OrganizationId;
+        const version = await stores.specialists.findVersion(
+          organizationId,
+          facts.specialistId,
+          facts.specialistVersion,
+        );
+        if (version === undefined) return undefined;
+        const { configuration } = version;
+        if (!configuration.permissions.includes('knowledge.read')) return undefined;
+        const prefix = `${organizationId}_`;
+        const purpose = configuration.departmentId.startsWith(prefix)
+          ? configuration.departmentId.slice(prefix.length)
+          : undefined;
+        const access = purpose === undefined ? undefined : DEPARTMENT_ACCESS[purpose];
+        if (access === undefined) return undefined;
+        const items = await brain.list(tenant);
+        return figureFactsOf(items, {
+          domains: access.domains,
+          maxSensitivity:
+            access.maxSensitivity === 'restricted' ? 'confidential' : access.maxSensitivity,
+        });
+      },
+      // Unknown to this worker's catalogue: counted as a step that changed something.
+      mutating: (id, version) =>
+        options.tools?.registry.resolve(id, version)?.version.mutating ?? true,
+    },
     // The optional AI review (ADR-0117): only for agents whose version has it on.
     reviewer: createAgentAnswerReviewer({
       outputs,

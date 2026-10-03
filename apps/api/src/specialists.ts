@@ -1,4 +1,6 @@
-import type { Specialist } from '@melonoffice/domain';
+import { upgradeImpact } from '@melonoffice/agents';
+import type { DepartmentRepository } from '@melonoffice/departments';
+import type { OrganizationId, Specialist, Workflow, WorkflowVersion } from '@melonoffice/domain';
 import { PERMISSIONS, type Permission } from '@melonoffice/rbac';
 import {
   AGENT_TEMPLATES,
@@ -15,6 +17,7 @@ import {
   workSettingsOf,
 } from '@melonoffice/specialists';
 import { toolCanRun, type ToolRegistry } from '@melonoffice/tools';
+import type { WorkflowRepository } from '@melonoffice/workflows';
 import type { Context, Hono } from 'hono';
 import type { AuthEnv } from './auth.js';
 import { withPermission, type AuthorizationDependencies } from './authorization.js';
@@ -36,6 +39,12 @@ export function registerSpecialistRoutes(
     readonly tools: ToolRegistry;
     /** The organization's rules for its agents (AE-4.4). Absent: its routes are not served. */
     readonly agentPolicies?: AgentPolicyService;
+    /**
+     * Departments and workflows, to warn before a skill upgrade takes away a tool a workflow
+     * needs (G-2, ADR-0132). Absent: the upgrade names only the tools it removes.
+     */
+    readonly departments?: Pick<DepartmentRepository, 'list'>;
+    readonly workflows?: Pick<WorkflowRepository, 'list' | 'findVersion'>;
   },
 ): void {
   const { specialists, management, skills, authorization, agentPolicies } = dependencies;
@@ -179,6 +188,30 @@ export function registerSpecialistRoutes(
           );
           return latest > version ? [{ skillId: id, from: version, to: latest }] : [];
         });
+        // What each upgrade would take away (G-2, ADR-0132): a warning before the person confirms.
+        const organizationId = specialist.organizationId as OrganizationId;
+        const flows =
+          upgrades.length > 0 &&
+          dependencies.workflows !== undefined &&
+          dependencies.departments !== undefined &&
+          authorization.authorize(tenant, 'workflow.read').allowed
+            ? await activeWorkflows(dependencies.workflows, organizationId)
+            : undefined;
+        const departments =
+          flows === undefined || dependencies.departments === undefined
+            ? []
+            : await dependencies.departments.list(organizationId);
+        const warned = upgrades.map((u) => {
+          const impact = upgradeImpact({
+            agent: specialist,
+            skillId: u.skillId,
+            toVersion: u.to,
+            skills,
+            departments,
+            ...(flows === undefined ? {} : { workflows: flows }),
+          });
+          return { ...u, removes: impact.removes, breaks: impact.breaks };
+        });
         return c.json({
           id: specialist.identity.id,
           version: specialist.version,
@@ -186,7 +219,7 @@ export function registerSpecialistRoutes(
           autonomy: autonomyOf(specialist.configuration),
           work: workSettingsOf(specialist.configuration),
           ...found,
-          upgrades,
+          upgrades: warned,
         });
       } catch (error) {
         if (isSpecialistError(error) && error.code === 'specialist_not_found') {
@@ -347,4 +380,21 @@ async function answer(
       status,
     );
   }
+}
+
+/** At most this many workflows are read to warn about an upgrade, newest first. */
+const UPGRADE_WORKFLOW_LIMIT = 200;
+
+async function activeWorkflows(
+  workflows: Pick<WorkflowRepository, 'list' | 'findVersion'>,
+  organizationId: OrganizationId,
+) {
+  const all = await workflows.list(organizationId, UPGRADE_WORKFLOW_LIMIT);
+  const read: { workflow: Workflow; version: WorkflowVersion }[] = [];
+  for (const workflow of all) {
+    if (workflow.status !== 'active') continue;
+    const version = await workflows.findVersion(organizationId, workflow.id, workflow.version);
+    if (version !== undefined) read.push({ workflow, version });
+  }
+  return read;
 }

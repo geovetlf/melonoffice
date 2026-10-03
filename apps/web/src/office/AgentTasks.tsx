@@ -392,6 +392,19 @@ function TaskDetails({
               />
             </p>
           )}
+          {found.guardian == null ? null : found.guardian.findings.length === 0 ? (
+            <p className="mo-list-item__meta">
+              <FormattedMessage id="agentTasks.details.guardian.clean" />
+            </p>
+          ) : (
+            <ul className="mo-list-item__meta">
+              {found.guardian.findings.map((f, i) => (
+                <li key={`${f.code}-${i}`}>
+                  <FormattedMessage id={`agentTasks.details.guardian.${f.code}`} />
+                </li>
+              ))}
+            </ul>
+          )}
           {found.subtasks.length === 0 ? null : (
             <p className="mo-list-item__meta">
               <FormattedMessage

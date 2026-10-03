@@ -990,6 +990,8 @@ export function createApp({
         specialists,
         skills,
         tools,
+        departments: structure.departments,
+        ...(workflows === undefined ? {} : { workflows }),
         ...(agentPolicies === undefined
           ? {}
           : {

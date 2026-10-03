@@ -363,6 +363,37 @@ describe('moving a skill to its newer version (ADR-0084)', () => {
     expect(screen.queryByRole('button', { name: 'Update to version 2' })).toBeNull();
   });
 
+  it('warns, before confirming, which workflow would lose a tool (G-2)', async () => {
+    const agents = {
+      capabilities: vi.fn(async () =>
+        view(1, [
+          {
+            skillId: 'customer_follow_up',
+            from: 1,
+            to: 2,
+            removes: ['follow_up_schedule@2'],
+            breaks: [
+              {
+                workflowId: 'w1',
+                name: 'Weekly follow-up',
+                step: 's2',
+                tool: 'follow_up_schedule@2',
+              },
+            ],
+          },
+        ]),
+      ),
+      upgradeSkill: vi.fn(),
+    } as unknown as AgentsClient;
+    const confirm = vi.spyOn(globalThis, 'confirm').mockReturnValueOnce(false);
+    show(agents, true);
+    const note = await screen.findByRole('note');
+    expect(note.textContent).toContain('Weekly follow-up');
+    fireEvent.click(screen.getByRole('button', { name: 'Update to version 2' }));
+    expect(confirm.mock.calls[0]?.[0]).toContain('Weekly follow-up');
+    expect(agents.upgradeSkill).not.toHaveBeenCalled();
+  });
+
   it('without specialist.manage, only says a newer version exists', async () => {
     show(client(), false);
     expect(

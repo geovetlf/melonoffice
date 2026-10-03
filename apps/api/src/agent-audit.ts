@@ -1,5 +1,5 @@
 import { auditAgents, type OutdatedPolicy } from '@melonoffice/agents';
-import type { CompanyBrainService, FigureFact } from '@melonoffice/brain';
+import { figureFactsOf, type CompanyBrainService, type FigureFact } from '@melonoffice/brain';
 import type { DepartmentRepository } from '@melonoffice/departments';
 import type {
   OrganizationId,
@@ -21,9 +21,6 @@ import { toolLookupOf } from './specialists.js';
 
 /** How many workflows and plans one review reads, newest first. */
 export const AUDIT_READ_LIMIT = 200;
-
-/** Facts a person confirmed, or that MelonOffice calculated or imported, count as confirmed. */
-const CONFIRMED = new Set(['confirmed', 'calculated', 'imported']);
 
 /**
  * `GET /v1/organizations/:org/agents/audit` (G-1, ADR-0131): the review of the organization's
@@ -59,20 +56,7 @@ export function registerAgentAuditRoute(
 
   async function figuresOf(tenant: TenantContext): Promise<readonly FigureFact[] | undefined> {
     if (brain === undefined || !can(tenant, 'knowledge.read')) return undefined;
-    const items = await brain.list(tenant);
-    return items.flatMap((item): FigureFact[] => {
-      const label = item.label ?? item.subject?.id.replace(/_/g, ' ');
-      if (label === undefined || item.status !== 'active') return [];
-      if (item.value.type !== 'money' && item.value.type !== 'number') return [];
-      return [
-        {
-          id: item.id,
-          label,
-          value: item.value,
-          confirmed: CONFIRMED.has(item.verification),
-        },
-      ];
-    });
+    return figureFactsOf(await brain.list(tenant));
   }
 
   async function workflowsOf(organizationId: OrganizationId, tenant: TenantContext) {

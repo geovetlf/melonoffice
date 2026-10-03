@@ -9,6 +9,7 @@ import type {
 } from '@melonoffice/domain';
 import {
   agentReadiness,
+  grantsOf,
   skillAllowedIn,
   toolKey,
   type ReadinessProblem,
@@ -377,4 +378,66 @@ export function auditAgents(facts: AgentAuditFacts): AgentAudit {
       ).length,
     }),
   });
+}
+
+/** A workflow step an upgrade would leave without its tool. */
+export interface UpgradeBreak {
+  readonly workflowId: string;
+  readonly name: string;
+  readonly step: string;
+  readonly tool: string;
+}
+
+/**
+ * What moving an agent's skill to a newer version would take away, before a person confirms it
+ * (G-2, ADR-0132): the tools the agent would no longer have (exactly as `upgradeSkill` keeps them)
+ * and the steps of active workflows that this kind of agent performs and that need one of them.
+ * A warning, never a refusal: the person decides.
+ */
+export function upgradeImpact(facts: {
+  readonly agent: Specialist;
+  readonly skillId: string;
+  readonly toVersion: number;
+  readonly skills: SkillCatalogue;
+  readonly departments: readonly Department[];
+  readonly workflows?: readonly {
+    readonly workflow: Workflow;
+    readonly version: WorkflowVersion;
+  }[];
+}): { readonly removes: readonly string[]; readonly breaks: readonly UpgradeBreak[] } {
+  const { configuration } = facts.agent;
+  const nextSkills = configuration.skills.map((s) =>
+    s.id === facts.skillId ? { id: s.id, version: facts.toVersion } : s,
+  );
+  const granted = grantsOf(nextSkills, facts.skills).tools;
+  const removes = configuration.tools
+    .map((t) => toolKey(t.id, t.version))
+    .filter((key) => !granted.has(key));
+  const department = facts.departments.find((d) => d.id === configuration.departmentId);
+  const typeId = department?.origin.kind === 'catalog' ? department.origin.typeId : undefined;
+  const breaks: UpgradeBreak[] = [];
+  if (removes.length > 0 && typeId !== undefined) {
+    const gone = new Set(removes);
+    for (const { workflow, version } of facts.workflows ?? []) {
+      if (workflow.status !== 'active') continue;
+      const performs = new Set(
+        version.steps
+          .filter(
+            (s) =>
+              s.assignee?.departmentTypeId === typeId &&
+              s.assignee.roleId === configuration.mainRoleId,
+          )
+          .map((s) => s.id as string),
+      );
+      for (const step of version.steps) {
+        if (step.tool === undefined || step.performedBy === undefined) continue;
+        if (!performs.has(step.performedBy)) continue;
+        const key = toolKey(step.tool.id, step.tool.version);
+        if (gone.has(key)) {
+          breaks.push({ workflowId: workflow.id, name: version.name, step: step.id, tool: key });
+        }
+      }
+    }
+  }
+  return Object.freeze({ removes: Object.freeze(removes), breaks: Object.freeze(breaks) });
 }
