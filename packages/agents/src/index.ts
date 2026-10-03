@@ -11,3 +11,4 @@ export * from './ai-review.js';
 export * from './trace.js';
 export * from './stale.js';
 export * from './knowledge-tool.js';
+export * from './audit.js';

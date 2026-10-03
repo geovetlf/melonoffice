@@ -185,6 +185,8 @@ import { registerExecutionRoutes } from './executions.js';
 import { registerHealth } from './health.js';
 import { registerPlanRoutes } from './plans.js';
 import { registerSpecialistRoutes, toolLookupOf } from './specialists.js';
+import { registerAgentAuditRoute } from './agent-audit.js';
+import { HARNESS_POLICY_MOVES } from './agent-policy-migration.js';
 import { giaAgentsOf, registerAgentTaskRoutes } from './agent-tasks.js';
 import { registerHarnessRoutes } from './harness.js';
 import { registerDecisionRoutes } from './decisions.js';
@@ -971,6 +973,18 @@ export function createApp({
         }),
       });
       const skills = createSkillCatalogue();
+      // The review of the organization's agents, workflows and plans (G-1, ADR-0131): read-only.
+      registerAgentAuditRoute(app, {
+        ...dependencies,
+        specialists,
+        departments: structure.departments,
+        skills,
+        tools,
+        outdatedPolicies: HARNESS_POLICY_MOVES,
+        ...(brain === undefined ? {} : { brain }),
+        ...(workflows === undefined ? {} : { workflows }),
+        ...(plans === undefined ? {} : { plans }),
+      });
       registerSpecialistRoutes(app, {
         ...dependencies,
         specialists,

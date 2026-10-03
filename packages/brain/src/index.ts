@@ -6,3 +6,4 @@ export * from './merge.js';
 export * from './repository.js';
 export * from './service.js';
 export * from './sources.js';
+export * from './consistency.js';
