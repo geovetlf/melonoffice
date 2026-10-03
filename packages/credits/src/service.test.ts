@@ -593,10 +593,11 @@ describe('holds: reserve, settle, release (ADR-0123)', () => {
       reserved: 0,
       available: 75,
     });
-    expect(creditEvents().map((e) => e.action)).toEqual([
-      'credits.grant',
-      'credits.hold',
-      'credits.consume',
+    expect(creditEvents().map((e) => [e.action, e.reference])).toEqual([
+      ['credits.grant', 'g1'],
+      ['credits.hold', 'op-1'],
+      // The charge is audited under the operation's reference, like the hold.
+      ['credits.consume', 'op-1'],
     ]);
     const wallet = must(await credits.findWallet(a.organization.id));
     expect(verifyLedger(wallet, await credits.ledger(a.organization.id))).toEqual([]);
