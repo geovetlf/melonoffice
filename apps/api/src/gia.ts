@@ -62,7 +62,14 @@ export function registerGiaRoutes(
       } catch (error) {
         if (!isGiaError(error)) throw error;
         return c.json(
-          { error: error.code, ...(error.field === undefined ? {} : { field: error.field }) },
+          {
+            error: error.code,
+            ...(error.field === undefined ? {} : { field: error.field }),
+            // About how many credits the request would have used, when credits refused it.
+            ...(error.estimatedCredits === undefined
+              ? {}
+              : { estimatedCredits: error.estimatedCredits }),
+          },
           STATUS[error.code],
         );
       }
@@ -114,7 +121,14 @@ export function registerGiaSummaryRoute(
         }
         if (!isGiaError(error)) throw error;
         return c.json(
-          { error: error.code, ...(error.field === undefined ? {} : { field: error.field }) },
+          {
+            error: error.code,
+            ...(error.field === undefined ? {} : { field: error.field }),
+            // About how many credits the request would have used, when credits refused it.
+            ...(error.estimatedCredits === undefined
+              ? {}
+              : { estimatedCredits: error.estimatedCredits }),
+          },
           STATUS[error.code],
         );
       }

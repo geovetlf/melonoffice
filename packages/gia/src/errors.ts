@@ -19,6 +19,8 @@ export class GiaError extends Error {
     readonly code: GiaErrorCode,
     /** For `invalid_request`: which field. */
     readonly field?: string,
+    /** For `ai_credits_insufficient`: about how many credits the request would have used. */
+    readonly estimatedCredits?: number,
   ) {
     super(field === undefined ? code : `${code}: ${field}`);
   }

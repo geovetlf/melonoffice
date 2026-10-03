@@ -72,6 +72,8 @@ export class ConversationError extends Error {
     readonly code: ConversationErrorCode,
     /** Which field or rule, for `invalid_*`. A code, never user data. */
     readonly detail?: string,
+    /** For `ai_credits_insufficient`: about how many credits the request would have used. */
+    readonly estimatedCredits?: number,
   ) {
     super(detail === undefined ? code : `${code}: ${detail}`);
   }

@@ -309,10 +309,10 @@ export function createAIGateway(options: AIGatewayOptions): AIGateway {
         source: 'api',
       });
     };
-    const deny = async (code: string): Promise<AIResponse> => {
+    const deny = async (code: string, estimatedCredits?: number): Promise<AIResponse> => {
       await record('ai.request_denied', code);
       log.info('ai request denied', { code });
-      return deniedResponse(requestId, code);
+      return deniedResponse(requestId, code, estimatedCredits);
     };
     return {
       tenant,
@@ -424,15 +424,18 @@ export function createAIGateway(options: AIGatewayOptions): AIGateway {
         : customerCreditsFor(pricing, c, request.capability, c.estimatedCostMicroUsd);
     const priced = routed.filter((c) => creditsOf(c) !== undefined);
     if (priced.length === 0) return deny('price_unknown');
+    // What the cheapest model would cost, told to the person when credits refuse the request.
+    const cheapest = (list: readonly RouteCandidate[]) =>
+      Math.min(...list.map((c) => creditsOf(c) ?? Infinity));
     const affordable = priced.filter(
       (c) => request.maxCredits === undefined || (creditsOf(c) ?? Infinity) <= request.maxCredits,
     );
-    if (affordable.length === 0) return deny('credit_limit_exceeded');
+    if (affordable.length === 0) return deny('credit_limit_exceeded', cheapest(priced));
     const balance = await port.balanceOf(tenant);
     if (balance.status !== 'present') return deny('credits_unavailable');
     const spendable = balance.available ?? balance.balance;
     const covered = affordable.filter((c) => (creditsOf(c) ?? Infinity) <= spendable);
-    if (covered.length === 0) return deny('credits_insufficient');
+    if (covered.length === 0) return deny('credits_insufficient', cheapest(affordable));
     // The chosen model first; the others only when the policy allows a fallback.
     const candidates = policy.fallback === 'compatible' ? covered : covered.slice(0, 1);
     const prepared: Prepared = {
@@ -1132,8 +1135,13 @@ function nextWithin<T>(
   return Promise.race([next, timeout]).finally(() => clearTimeout(timer));
 }
 
-const deniedResponse = (requestId: string, code: string): AIResponse =>
-  Object.freeze({ status: 'denied', requestId, code });
+const deniedResponse = (requestId: string, code: string, estimatedCredits?: number): AIResponse =>
+  Object.freeze({
+    status: 'denied',
+    requestId,
+    code,
+    ...(estimatedCredits === undefined ? {} : { estimatedCredits }),
+  });
 
 const failedResponse = (
   requestId: string,

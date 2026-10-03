@@ -654,7 +654,10 @@ describe('AI gateway: the 20 security cases of the X4 brief', () => {
 
   it('10. insufficient credits are denied before any provider is called', async () => {
     const { w, call } = await setup({ balance: 0 });
-    expect(await call()).toMatchObject({ status: 'denied', code: 'credits_insufficient' });
+    const response = await call();
+    expect(response).toMatchObject({ status: 'denied', code: 'credits_insufficient' });
+    // The person is told about how many credits it would have used.
+    expect(response.status === 'denied' ? response.estimatedCredits : undefined).toBeGreaterThan(0);
     expect(w.calls).toHaveLength(0);
   });
 

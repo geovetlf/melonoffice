@@ -38,6 +38,7 @@ type State =
       readonly operation: AssistOperation;
       readonly key: string;
       readonly code: string;
+      readonly estimatedCredits?: number;
     }
   | { readonly kind: 'done'; readonly operation: AssistOperation; readonly result: AssistResult };
 
@@ -69,7 +70,14 @@ export function AssistPanel({
       setState({ kind: 'done', operation, result });
     } catch (e) {
       const code = e instanceof InboxError && ERRORS.has(e.code) ? e.code : 'generic';
-      setState({ kind: 'failed', operation, key, code });
+      const estimate = e instanceof InboxError ? e.estimatedCredits : undefined;
+      setState({
+        kind: 'failed',
+        operation,
+        key,
+        code,
+        ...(estimate === undefined ? {} : { estimatedCredits: estimate }),
+      });
     }
   }
 
@@ -257,7 +265,7 @@ export function AssistPanel({
             }
           >
             {state.code === 'ai_credits_insufficient' ? (
-              <OutOfCredits />
+              <OutOfCredits estimate={state.estimatedCredits} />
             ) : (
               <FormattedMessage id={`conversations.assist.error.${state.code}`} />
             )}

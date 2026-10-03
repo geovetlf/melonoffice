@@ -42,7 +42,12 @@ const HISTORY_TURNS = 6;
 export type GiaChatEntry =
   | { readonly id: string; readonly role: 'person'; readonly text: string }
   | { readonly id: string; readonly role: 'gia'; readonly answer: GiaAnswerView }
-  | { readonly id: string; readonly role: 'error'; readonly reason: GiaFailure };
+  | {
+      readonly id: string;
+      readonly role: 'error';
+      readonly reason: GiaFailure;
+      readonly estimatedCredits?: number;
+    };
 
 export interface GiaChat {
   /** False when the role may not talk to GIA: no call is ever made. */
@@ -112,7 +117,14 @@ export function GiaChatProvider({
             ...current,
             result.kind === 'answered'
               ? { id: `${requestKey}-a`, role: 'gia', answer: result.answer }
-              : { id: `${requestKey}-e`, role: 'error', reason: result.reason },
+              : {
+                  id: `${requestKey}-e`,
+                  role: 'error',
+                  reason: result.reason,
+                  ...(result.estimatedCredits === undefined
+                    ? {}
+                    : { estimatedCredits: result.estimatedCredits }),
+                },
           ]);
         })
         .finally(() => setPending(false));
@@ -228,7 +240,7 @@ export function GiaConversation() {
             ) : (
               <p className="gia-chat__error" role="alert">
                 {entry.reason === 'credits' ? (
-                  <OutOfCredits />
+                  <OutOfCredits estimate={entry.estimatedCredits} />
                 ) : (
                   <FormattedMessage id={ERRORS[entry.reason]} />
                 )}
