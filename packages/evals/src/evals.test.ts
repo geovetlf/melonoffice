@@ -233,7 +233,7 @@ describe('running the evals', () => {
       now: at,
       clock,
     });
-    expect(run.prompt).toBe('agent_task@2');
+    expect(run.prompt).toBe('agent_task@3');
     expect(run.policy).toBe('agent_task@2');
     expect(run.cases.map((c) => [c.id, c.status, c.score?.passed])).toEqual([
       ['commercial.grounded', 'scored', true],
