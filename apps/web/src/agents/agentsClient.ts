@@ -119,6 +119,31 @@ export interface AgentCapabilitiesView {
   }[];
 }
 
+/** One thing the review of the team found (G-1, ADR-0131), as plain values. */
+export interface AuditFindingView {
+  readonly code: string;
+  readonly severity: 'info' | 'warning' | 'critical';
+  readonly subject: {
+    readonly type: 'agent' | 'workflow' | 'plan';
+    readonly id: string;
+    readonly version: number;
+    readonly name?: string;
+  };
+  readonly evidence: Readonly<Record<string, string | number | boolean>>;
+  readonly recommendation: string;
+}
+
+/** The review of the team (G-1): read only, it changes nothing and asks no model. */
+export interface AgentAuditView {
+  readonly findings: readonly AuditFindingView[];
+  readonly skipped: readonly string[];
+  readonly reviewed: {
+    readonly agents: number;
+    readonly workflows: number;
+    readonly plans: number;
+  };
+}
+
 /** Where each status may go (ADR-0025): archived is final. */
 export const TRANSITIONS: Readonly<Record<SpecialistStatus, readonly SpecialistStatus[]>> = {
   draft: ['active', 'archived'],
@@ -210,6 +235,8 @@ export interface AgentsClient {
   remember?(id: string, text: string): Promise<AgentMemoryNoteView>;
   forget?(id: string, memoryId: string): Promise<void>;
   clearMemory?(id: string): Promise<number>;
+  /** The review of the organization's agents, workflows and plans (G-1). */
+  audit?(): Promise<AgentAuditView>;
 }
 
 /** How many agents one page shows. */
@@ -291,5 +318,6 @@ export function createAgentsClient(request: ReplyRequest, organizationId: string
       );
       return body.deleted ?? 0;
     },
+    audit: () => call<AgentAuditView>('/agents/audit'),
   };
 }

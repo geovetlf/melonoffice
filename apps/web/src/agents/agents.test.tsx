@@ -6,7 +6,8 @@ import { createServices } from '../identity/services.js';
 import { REFRESH_KEY } from '../identity/session.js';
 import { API, KEY, fakeBackend, memoryStore } from '../identity/testing.js';
 import { AgentCapabilities } from './AgentCapabilities.js';
-import type { AgentCapabilitiesView, AgentsClient } from './agentsClient.js';
+import type { AgentAuditView, AgentCapabilitiesView, AgentsClient } from './agentsClient.js';
+import { TeamReview } from './TeamReview.js';
 
 afterEach(() => {
   cleanup();
@@ -370,5 +371,89 @@ describe('moving a skill to its newer version (ADR-0084)', () => {
       ),
     ).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Update to version 2' })).toBeNull();
+  });
+});
+
+describe('the team review (G-1, ADR-0131)', () => {
+  const audit: AgentAuditView = {
+    reviewed: { agents: 2, workflows: 1, plans: 0 },
+    skipped: ['plans'],
+    findings: [
+      {
+        code: 'instructions_contradict_company_brain',
+        severity: 'critical',
+        subject: { type: 'agent', id: 'spec_lucia', version: 3, name: 'Lucía' },
+        evidence: {
+          fact: 'k_1',
+          label: 'Combo Familiar',
+          recorded: 'PEN 25.00',
+          stated: 's/ 30',
+          confirmed: true,
+        },
+        recommendation: 'review_instructions',
+      },
+      {
+        code: 'workflow_tool_missing',
+        severity: 'critical',
+        subject: { type: 'workflow', id: 'wf_1', version: 1, name: 'Seguimiento' },
+        evidence: {
+          step: 'send',
+          tool: 'knowledge_search@1',
+          agent: 'spec_lucia',
+          agentVersion: 3,
+        },
+        recommendation: 'review_workflow',
+      },
+      {
+        code: 'skill_upgrade_available',
+        severity: 'info',
+        subject: { type: 'agent', id: 'spec_mateo', version: 1, name: 'Mateo' },
+        evidence: { skill: 'customer_follow_up', from: 1, to: 3 },
+        recommendation: 'upgrade_skill',
+      },
+    ],
+  };
+
+  it('runs only when asked, and says what it found, how serious and what to do', async () => {
+    const agents = { audit: vi.fn(async () => audit) } as unknown as AgentsClient;
+    render(
+      <I18nProvider locale="en" messages={catalogs.en}>
+        <TeamReview client={agents} />
+      </I18nProvider>,
+    );
+    expect(agents.audit).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Review now' }));
+    expect(
+      await screen.findByText(
+        'Its instructions say s/ 30 for “Combo Familiar”, but the company memory records PEN 25.00.',
+      ),
+    ).toBeTruthy();
+    expect(screen.getByText('Agent Lucía')).toBeTruthy();
+    expect(screen.getByText('Workflow Seguimiento')).toBeTruthy();
+    expect(screen.getAllByText('Critical')).toHaveLength(2);
+    expect(screen.getByText('Info')).toBeTruthy();
+    expect(
+      screen.getByText(
+        'What to do: correct the instructions or the company memory, whichever is wrong.',
+      ),
+    ).toBeTruthy();
+    expect(
+      screen.getByText('Plans were not reviewed: you do not have access to them.'),
+    ).toBeTruthy();
+    expect(screen.getByText('Reviewed: 2 agents, 1 workflow and 0 pending plans.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Review again' })).toBeTruthy();
+  });
+
+  it('says so when there is nothing to fix', async () => {
+    const agents = {
+      audit: vi.fn(async () => ({ ...audit, findings: [], skipped: [] })),
+    } as unknown as AgentsClient;
+    render(
+      <I18nProvider locale="en" messages={catalogs.en}>
+        <TeamReview client={agents} />
+      </I18nProvider>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Review now' }));
+    expect(await screen.findByText('All in order: nothing to fix was found.')).toBeTruthy();
   });
 });

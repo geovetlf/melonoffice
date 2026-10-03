@@ -19,6 +19,7 @@ import {
   type ReadinessProblemView,
 } from './agentsClient.js';
 import { ReadinessProblems } from './ReadinessProblems.js';
+import { TeamReview } from './TeamReview.js';
 import { errorCode } from '../shell/errors.js';
 
 /**
@@ -404,6 +405,7 @@ export function AgentsPage({
           </nav>
         </section>
       )}
+      <TeamReview client={client} />
       <CapabilityCatalogue client={client} canReadTools={canReadTools} />
     </article>
   );
