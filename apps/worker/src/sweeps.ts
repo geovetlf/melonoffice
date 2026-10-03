@@ -18,6 +18,7 @@ import {
   type SweptExecution,
 } from '@melonoffice/execution';
 import { jobIdFor, type JobRepository } from '@melonoffice/jobs';
+import { turnOf } from '@melonoffice/integrations';
 import type { Logger } from '@melonoffice/observability';
 import { planStepOf } from '@melonoffice/planning';
 import type { Runtime } from '@melonoffice/runtime';
@@ -26,7 +27,7 @@ import { resolveRuntimeTenant, type TenancyStore } from '@melonoffice/tenancy';
 /**
  * The automatic sweep of abandoned agent work (ADR-0121). Every 3 hours one Cloud Tasks task on
  * the execution jobs queue reaches this route, behind the same invoker check as every job. It
- * closes only agent tasks and plan steps that nothing moved for 24 hours and that no worker,
+ * closes only agent tasks, plan steps and conversation turns (ADR-0122) that nothing moved for 24 hours and that no worker,
  * person or outside service is still holding. It never starts anything, calls no model or tool
  * and charges no credits.
  */
@@ -69,9 +70,14 @@ export function slotStartOf(id: string): Date | undefined {
   return start;
 }
 
-/** The work the sweep may close: an agent's task, or a step of an approved plan. */
+/**
+ * The work the sweep may close: an agent's task, a step of an approved plan, or a conversation
+ * agent's turn (ADR-0122), whose stop hook hands its conversation to a person.
+ */
 const inScope = (execution: Execution): boolean =>
-  taskOf(execution) !== undefined || planStepOf(execution) !== undefined;
+  taskOf(execution) !== undefined ||
+  planStepOf(execution) !== undefined ||
+  turnOf(execution) !== undefined;
 
 export interface ExecutionSweeperOptions {
   readonly executions: StaleExecutionIndex & Pick<ExecutionRepository, 'find'>;
