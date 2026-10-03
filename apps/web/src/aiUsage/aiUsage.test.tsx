@@ -60,6 +60,35 @@ function open(at: string, configure?: (backend: ReturnType<typeof fakeBackend>) 
 const usageCalls = (backend: ReturnType<typeof fakeBackend>) =>
   backend.apiCalls().filter((c) => c.url.includes('/ai-usage'));
 
+describe('plan and credits (D-12, ADR-0123)', () => {
+  it('shows the plan, what is available, where it came from, and what is not decided yet', async () => {
+    open('/ai-usage', (b) => b.options.permissions.push('entitlement.read'));
+    const panel = await screen.findByRole('region', { name: 'Plan and credits' });
+    const stat = async (label: string) =>
+      (await within(panel).findByText(label, { selector: 'dt' })).parentElement?.querySelector('dd')
+        ?.textContent;
+    expect(await stat('Plan')).toBe('Entrepreneur plan');
+    expect(await stat('Available credits')).toBe('498');
+    expect(await stat('Purchased')).toBe('498');
+    expect(await stat('Included each month')).toBe('None yet');
+    expect(await stat('Used by AI this month')).toBe('2');
+    expect(await stat('Next renewal')).toBe('Not set yet');
+    expect(within(panel).queryByText('Reserved for running tasks')).toBeNull();
+    // Buying is not available yet, and never asks for a plan change.
+    const buy = within(panel).getByRole('button', { name: 'Buy credits' }) as HTMLButtonElement;
+    expect(buy.disabled).toBe(true);
+    expect(document.body.textContent).not.toMatch(/upgrade/i);
+  });
+
+  it('is hidden for a role that cannot read credits', async () => {
+    open('/ai-usage', (b) => {
+      b.options.permissions = b.options.permissions.filter((p) => p !== 'credits.read');
+    });
+    await screen.findByRole('heading', { level: 1, name: 'AI usage and credits' });
+    expect(screen.queryByRole('region', { name: 'Plan and credits' })).toBeNull();
+  });
+});
+
 describe('AI usage and credits (ADR-0074, ADR-0081, ADR-0082)', () => {
   it('shows credits and operations by capability and department, never provider, model or internal cost', async () => {
     open('/ai-usage');

@@ -5,7 +5,7 @@ import { App } from '../App.js';
 import { createServices } from '../identity/services.js';
 import { API, KEY, fakeBackend, memoryStore } from '../identity/testing.js';
 import { REFRESH_KEY } from '../identity/session.js';
-import { AgentTasks } from './AgentTasks.js';
+import { AgentTasks, sentenceKey } from './AgentTasks.js';
 import { AgentTaskError, type AgentTaskView, type AgentTasksClient } from './agentTasksClient.js';
 
 /**
@@ -177,6 +177,16 @@ describe('the tasks section (ADR-0063)', () => {
     expect(
       screen.getByText('The agent could not finish this task. Nothing was done on its behalf.'),
     ).toBeTruthy();
+  });
+
+  it('says a task stopped for credits, never that it lacked a permission (D-12)', () => {
+    const failed = (failure: string) =>
+      sentenceKey(
+        task({ status: 'failed', failure, handoff: { reason: 'authorization_required' } } as never),
+      );
+    expect(failed('credits_insufficient')).toBe('agentTasks.sentence.noCredits');
+    expect(failed('credit_limit_exceeded')).toBe('agentTasks.sentence.budget');
+    expect(failed('approval_expired')).toBe('agentTasks.sentence.blocked');
   });
 
   it('explains a refusal, and retries with the same key after a failure', async () => {

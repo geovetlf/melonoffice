@@ -3,6 +3,7 @@ import { FormattedMessage, useIntl } from '@melonoffice/i18n';
 import { useEffect, useState } from 'react';
 import { readyList, useOfficeData } from '../office/OfficeData.js';
 import { departmentName } from '../office/departments.js';
+import { CreditsPanel } from './CreditsPanel.js';
 import {
   eventKey,
   periodDays,
@@ -103,6 +104,7 @@ export function AIUsagePage({
         title={<FormattedMessage id="aiUsage.title" />}
         description={<FormattedMessage id="aiUsage.lead" />}
       />
+      <CreditsPanel client={client} now={now} />
       <Toolbar>
         <PeriodPicker
           label={intl.formatMessage({ id: 'aiUsage.period' })}

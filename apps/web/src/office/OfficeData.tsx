@@ -5,6 +5,7 @@ import type {
   CreditsView,
   DepartmentView,
   OfficeClient,
+  PlanLimitsView,
   SpecialistView,
 } from './officeClient.js';
 
@@ -24,6 +25,8 @@ export interface OfficeData {
   readonly specialists: Loadable<readonly SpecialistView[]>;
   readonly credits: Loadable<CreditsView>;
   readonly billing: Loadable<BillingView>;
+  /** What the plan includes (credits per month), read from entitlements. */
+  readonly planLimits: Loadable<PlanLimitsView>;
   /** The business profile (ADR-0048): what kind of business, and the order it suggests. */
   readonly business: Loadable<BusinessProfileView>;
 }
@@ -33,6 +36,7 @@ const LOADING: OfficeData = {
   specialists: { status: 'loading' },
   credits: { status: 'loading' },
   billing: { status: 'loading' },
+  planLimits: { status: 'loading' },
   business: { status: 'loading' },
 };
 
@@ -81,6 +85,7 @@ export function OfficeDataProvider({
   const canSpecialists = can('specialist.read');
   const canCredits = can('credits.read');
   const canBilling = can('billing.read');
+  const canPlanLimits = can('entitlement.read') && client.entitlements !== undefined;
   const canBusiness = can('organization.read') && business !== undefined;
   const [data, setData] = useState<OfficeData>(LOADING);
 
@@ -109,13 +114,27 @@ export function OfficeDataProvider({
     load('specialists', canSpecialists, () => client.specialists());
     load('credits', canCredits, () => client.credits());
     load('billing', canBilling, () => client.billing());
+    load('planLimits', canPlanLimits, () =>
+      client.entitlements === undefined
+        ? Promise.reject(new Error('no entitlements'))
+        : client.entitlements(),
+    );
     load('business', canBusiness, () =>
       business === undefined ? Promise.reject(new Error('no client')) : business.profile(),
     );
     return () => {
       live = false;
     };
-  }, [client, business, canDepartments, canSpecialists, canCredits, canBilling, canBusiness]);
+  }, [
+    client,
+    business,
+    canDepartments,
+    canSpecialists,
+    canCredits,
+    canBilling,
+    canPlanLimits,
+    canBusiness,
+  ]);
 
   const saved = useCallback(
     (view: BusinessProfileView) =>

@@ -1390,8 +1390,29 @@ export function fakeBackend(): FakeBackend {
           200,
           balance === undefined
             ? { organizationId, status: 'absent', reason: 'no_wallet' }
-            : { organizationId, status: 'present', balance, updatedAt: '2026-09-27T12:00:00Z' },
+            : {
+                organizationId,
+                status: 'present',
+                balance,
+                included: 0,
+                purchased: balance,
+                reserved: 0,
+                available: balance,
+                updatedAt: '2026-09-27T12:00:00Z',
+              },
         )
+      );
+    }
+    if (route === 'entitlements') {
+      return (
+        needs('entitlement.read') ??
+        json(200, {
+          organizationId,
+          status: 'active',
+          plan: { id: 'entrepreneur', version: 1 },
+          capabilities: {},
+          limits: { 'users.max': 1, 'credits.monthlyIncluded': 0 },
+        })
       );
     }
     if (route === 'activity') {
