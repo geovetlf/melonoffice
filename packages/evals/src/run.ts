@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import {
   AGENT_ANSWER_SCHEMA,
   AGENT_TASK_MAX_OUTPUT_TOKENS,
@@ -39,6 +40,8 @@ import { scoreAnswer, type EvalScore } from './score.js';
 export interface EvalCaseResult {
   readonly id: string;
   readonly suite: EvalSuiteId;
+  /** Which repetition of the case, from 1, when the run repeats cases. */
+  readonly attempt?: number;
   /**
    * `scored`: the model answered and the answer was scored. `no_route`: no model fits the policy.
    * `provider_error`: every candidate failed. `budget_reached`: not run, it could go over budget.
@@ -64,6 +67,12 @@ export interface EvalRun {
   readonly environment: DeploymentEnvironment;
   readonly startedAt: string;
   readonly budgetCredits: number;
+  /** The cases' digest: two runs measured the same thing only when it matches. */
+  readonly dataset: string;
+  /** The one model the run was held to (`provider/model`), when it was: a variant. */
+  readonly pinned?: string;
+  /** How many times each case ran. */
+  readonly repeat: number;
   readonly cases: readonly EvalCaseResult[];
   readonly totals: EvalTotals;
 }
@@ -81,6 +90,14 @@ export interface EvalTotals {
   readonly latencyMsMax?: number;
   /** Which model answered how many cases. */
   readonly models: Readonly<Record<string, number>>;
+  /** Reliability: cases every candidate failed, and cases not run (no model fits, or budget). */
+  readonly providerErrors: number;
+  readonly notRun: number;
+  /**
+   * With repetitions: the share of cases, 0..1, whose every scored repetition had the same
+   * outcome. Absent when each case ran once.
+   */
+  readonly consistency?: number;
 }
 
 export interface EvalRunOptions {
@@ -95,8 +112,42 @@ export interface EvalRunOptions {
   readonly now?: () => Date;
   /** A monotonic clock in milliseconds, for latency. */
   readonly clock?: () => number;
+  /**
+   * A variant (G-5): hold the run to one model, `provider/model`. The policy still applies: a
+   * model it leaves out is never called, and every case is `no_route`.
+   */
+  readonly pin?: string;
+  /** Runs each case this many times (1 to 5), to measure consistency. Default 1. */
+  readonly repeat?: number;
   /** After each case, e.g. to print progress. */
   readonly onCase?: (result: EvalCaseResult) => void;
+}
+
+export const MAX_EVAL_REPEAT = 5;
+
+/** The digest of a set of cases: their ids, requests, facts and expectations. */
+export const datasetDigest = (cases: readonly EvalCase[]): string =>
+  createHash('sha256')
+    .update(JSON.stringify(cases.map((c) => [c.id, c.request, c.facts, c.expect])))
+    .digest('hex')
+    .slice(0, 16);
+
+/** Whether a case passed in a run: scored at least once, and every scored repetition passed. */
+export function casePassed(run: Pick<EvalRun, 'cases'>, id: string): boolean {
+  const scored = run.cases.filter((c) => c.id === id && c.status === 'scored');
+  return scored.length > 0 && scored.every((c) => c.score?.passed === true);
+}
+
+/** The registry seen through one model only. */
+function pinned(registry: ProviderRegistry, pin: string): ProviderRegistry {
+  const only = registry.models().filter((r) => `${r.provider.id}/${r.model.modelId}` === pin);
+  return Object.freeze({
+    providers: () => registry.providers(),
+    provider: (id: string) => registry.provider(id),
+    models: () => only,
+    model: (providerId: string, modelId: string) =>
+      `${providerId}/${modelId}` === pin ? registry.model(providerId, modelId) : undefined,
+  });
 }
 
 /** The names the agents of each template carry in the eval: fixed, never a customer's. */
@@ -164,6 +215,14 @@ export function totalsOf(cases: readonly EvalCaseResult[]): EvalTotals {
   for (const c of scored) if (c.model !== undefined) models[c.model] = (models[c.model] ?? 0) + 1;
   const p50 = percentile(latencies, 0.5);
   const max = latencies.at(-1);
+  const repeated = cases.some((c) => (c.attempt ?? 1) > 1);
+  const outcomes = new Map<string, Set<boolean>>();
+  for (const c of scored) {
+    const seen = outcomes.get(c.id) ?? new Set<boolean>();
+    seen.add(c.score?.passed === true);
+    outcomes.set(c.id, seen);
+  }
+  const steady = [...outcomes.values()].filter((o) => o.size === 1).length;
   return Object.freeze({
     cases: cases.length,
     scored: scored.length,
@@ -174,11 +233,20 @@ export function totalsOf(cases: readonly EvalCaseResult[]): EvalTotals {
     ...(p50 === undefined ? {} : { latencyMsP50: p50 }),
     ...(max === undefined ? {} : { latencyMsMax: max }),
     models: Object.freeze(models),
+    providerErrors: cases.filter((c) => c.status === 'provider_error').length,
+    notRun: cases.filter((c) => c.status === 'no_route' || c.status === 'budget_reached').length,
+    ...(repeated ? { consistency: outcomes.size === 0 ? 0 : steady / outcomes.size } : {}),
   });
 }
 
 export async function runEvals(options: EvalRunOptions): Promise<EvalRun> {
-  const { registry, policy, environment, dataPolicy } = options;
+  const { policy, environment, dataPolicy } = options;
+  const registry =
+    options.pin === undefined ? options.registry : pinned(options.registry, options.pin);
+  const repeat = options.repeat ?? 1;
+  if (!Number.isInteger(repeat) || repeat < 1 || repeat > MAX_EVAL_REPEAT) {
+    throw new Error(`repeat must be 1 to ${MAX_EVAL_REPEAT}`);
+  }
   const now = options.now ?? (() => new Date());
   const clock = options.clock ?? (() => performance.now());
   const timeoutMs = options.timeoutMs ?? 60_000;
@@ -187,79 +255,80 @@ export async function runEvals(options: EvalRunOptions): Promise<EvalRun> {
   const results: EvalCaseResult[] = [];
   let spent = 0;
 
-  for (const c of options.cases) {
-    const messages = evalMessages(c);
-    const route = routeModel(
-      registry,
-      policy,
-      environment,
-      {
-        capability: 'text_generation',
-        inputModalities: ['text'],
-        outputModality: 'text',
-        sensitivity: 'confidential',
-        estimatedInputTokens: estimateInputTokens({ messages }),
-        maxOutputTokens: AGENT_TASK_MAX_OUTPUT_TOKENS,
-        structuredOutput: true,
-      },
-      undefined,
-      undefined,
-      dataPolicy,
-    );
-    const base = { id: c.id, suite: c.suite } as const;
-    let result: EvalCaseResult;
-    if (route.status === 'none') {
-      result = { ...base, status: 'no_route', reason: route.reason };
-    } else {
-      const calls = Math.min(route.candidates.length, policy.maxCalls ?? route.candidates.length);
-      result = { ...base, status: 'provider_error' };
-      for (const candidate of route.candidates.slice(0, Math.max(1, calls))) {
-        const model = `${candidate.provider.id}/${candidate.model.modelId}@${candidate.model.version}`;
-        // Its worst case must fit what is left: the run never spends past its budget.
-        if (spent + (candidate.estimatedCostMicroUsd ?? Infinity) > budget) {
-          result = { ...base, status: 'budget_reached', model };
-          break;
-        }
-        const call: ProviderCall = {
-          requestId: `eval-${c.id}`,
-          idempotencyKey: `eval-${startedAt}-${c.id}`,
-          model: { id: candidate.model.modelId, version: candidate.model.version },
+  for (const c of options.cases)
+    for (let attempt = 1; attempt <= repeat; attempt++) {
+      const messages = evalMessages(c);
+      const route = routeModel(
+        registry,
+        policy,
+        environment,
+        {
           capability: 'text_generation',
-          messages,
+          inputModalities: ['text'],
           outputModality: 'text',
+          sensitivity: 'confidential',
+          estimatedInputTokens: estimateInputTokens({ messages }),
           maxOutputTokens: AGENT_TASK_MAX_OUTPUT_TOKENS,
           structuredOutput: true,
-          outputSchema: AGENT_ANSWER_SCHEMA,
-          credential: candidate.provider.credential,
-          deadline: new Date(now().getTime() + timeoutMs),
-        };
-        const started = clock();
-        const outcome = await candidate.adapter.generate(call).catch(() => undefined);
-        const latencyMs = Math.round(clock() - started);
-        if (outcome === undefined || outcome.status === 'error') {
-          const kind = outcome?.kind ?? 'invalid_response';
-          result = { ...base, status: 'provider_error', model, latencyMs, reason: kind };
-          if (outcome !== undefined && allowsFallback(kind)) continue;
+        },
+        undefined,
+        undefined,
+        dataPolicy,
+      );
+      const base = { id: c.id, suite: c.suite, ...(repeat > 1 ? { attempt } : {}) };
+      let result: EvalCaseResult;
+      if (route.status === 'none') {
+        result = { ...base, status: 'no_route', reason: route.reason };
+      } else {
+        const calls = Math.min(route.candidates.length, policy.maxCalls ?? route.candidates.length);
+        result = { ...base, status: 'provider_error' };
+        for (const candidate of route.candidates.slice(0, Math.max(1, calls))) {
+          const model = `${candidate.provider.id}/${candidate.model.modelId}@${candidate.model.version}`;
+          // Its worst case must fit what is left: the run never spends past its budget.
+          if (spent + (candidate.estimatedCostMicroUsd ?? Infinity) > budget) {
+            result = { ...base, status: 'budget_reached', model };
+            break;
+          }
+          const call: ProviderCall = {
+            requestId: `eval-${c.id}`,
+            idempotencyKey: `eval-${startedAt}-${c.id}-${attempt}`,
+            model: { id: candidate.model.modelId, version: candidate.model.version },
+            capability: 'text_generation',
+            messages,
+            outputModality: 'text',
+            maxOutputTokens: AGENT_TASK_MAX_OUTPUT_TOKENS,
+            structuredOutput: true,
+            outputSchema: AGENT_ANSWER_SCHEMA,
+            credential: candidate.provider.credential,
+            deadline: new Date(now().getTime() + timeoutMs),
+          };
+          const started = clock();
+          const outcome = await candidate.adapter.generate(call).catch(() => undefined);
+          const latencyMs = Math.round(clock() - started);
+          if (outcome === undefined || outcome.status === 'error') {
+            const kind = outcome?.kind ?? 'invalid_response';
+            result = { ...base, status: 'provider_error', model, latencyMs, reason: kind };
+            if (outcome !== undefined && allowsFallback(kind)) continue;
+            break;
+          }
+          const cost = costMicroUsd(candidate.model.pricing, outcome.usage) ?? 0;
+          spent += cost;
+          result = {
+            ...base,
+            status: 'scored',
+            model,
+            latencyMs,
+            inputTokens: outcome.usage.inputTokens,
+            outputTokens: outcome.usage.outputTokens,
+            costMicroUsd: cost,
+            score: scoreAnswer(c, outcome.output),
+          };
           break;
         }
-        const cost = costMicroUsd(candidate.model.pricing, outcome.usage) ?? 0;
-        spent += cost;
-        result = {
-          ...base,
-          status: 'scored',
-          model,
-          latencyMs,
-          inputTokens: outcome.usage.inputTokens,
-          outputTokens: outcome.usage.outputTokens,
-          costMicroUsd: cost,
-          score: scoreAnswer(c, outcome.output),
-        };
-        break;
       }
+      results.push(Object.freeze(result));
+      options.onCase?.(result);
     }
-    results.push(Object.freeze(result));
-    options.onCase?.(result);
-  }
 
   return Object.freeze({
     format: 1,
@@ -268,6 +337,9 @@ export async function runEvals(options: EvalRunOptions): Promise<EvalRun> {
     environment,
     startedAt,
     budgetCredits: options.budgetCredits,
+    dataset: datasetDigest(options.cases),
+    ...(options.pin === undefined ? {} : { pinned: options.pin }),
+    repeat,
     cases: Object.freeze(results),
     totals: totalsOf(results),
   });

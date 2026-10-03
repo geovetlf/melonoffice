@@ -314,6 +314,114 @@ describe('running the evals', () => {
   });
 });
 
+describe('variants and repetitions (G-5)', () => {
+  it('holds a variant to one model, under the same policy', async () => {
+    const run = await runEvals({
+      cases: [find('marketing.grounded')],
+      registry: registryOf(scripted('alpha', good), scripted('beta', good)),
+      policy: evalTaskPolicy(),
+      environment: 'dev',
+      budgetCredits: 70,
+      pin: 'beta/beta-model',
+      clock,
+    });
+    expect(run).toMatchObject({ pinned: 'beta/beta-model', repeat: 1 });
+    expect(run.cases[0]).toMatchObject({ status: 'scored', model: 'beta/beta-model@v1' });
+    const none = await runEvals({
+      cases: [find('marketing.grounded')],
+      registry: registryOf(scripted('alpha', good)),
+      policy: evalTaskPolicy(),
+      environment: 'dev',
+      budgetCredits: 70,
+      pin: 'gamma/unknown',
+      clock,
+    });
+    expect(none.cases[0]).toMatchObject({ status: 'no_route' });
+    expect(none.totals).toMatchObject({ notRun: 1, providerErrors: 0 });
+  });
+
+  it('repeats cases and measures how consistently each one passes', async () => {
+    let calls = 0;
+    const run = await runEvals({
+      cases: [find('research.grounded'), find('research.draft')],
+      registry: registryOf(
+        scripted('alpha', (c) =>
+          // The grounded case answers wrongly once in three; the draft always well.
+          c.id === 'research.grounded' && ++calls === 2 ? ok('No lo sé.') : good(c),
+        ),
+      ),
+      policy: evalTaskPolicy(),
+      environment: 'dev',
+      budgetCredits: 70,
+      repeat: 3,
+      clock,
+    });
+    expect(run.cases.map((c) => `${c.id}#${c.attempt}`)).toEqual([
+      'research.grounded#1',
+      'research.grounded#2',
+      'research.grounded#3',
+      'research.draft#1',
+      'research.draft#2',
+      'research.draft#3',
+    ]);
+    expect(run.totals).toMatchObject({ scored: 6, passed: 5, consistency: 0.5 });
+    await expect(
+      runEvals({
+        cases: [],
+        registry: registryOf(scripted('alpha', good)),
+        policy: evalTaskPolicy(),
+        environment: 'dev',
+        budgetCredits: 70,
+        repeat: 6,
+      }),
+    ).rejects.toThrow('repeat must be 1 to 5');
+  });
+
+  it('counts a repeated case as passed only when every repetition passed', async () => {
+    const base = await runEvals({
+      cases: [find('creative.draft')],
+      registry: registryOf(scripted('alpha', good)),
+      policy: evalTaskPolicy(),
+      environment: 'dev',
+      budgetCredits: 70,
+      repeat: 2,
+      clock,
+    });
+    let n = 0;
+    const flaky = await runEvals({
+      cases: [find('creative.draft')],
+      registry: registryOf(scripted('alpha', (c) => (++n === 2 ? ok('Ideas.') : good(c)))),
+      policy: evalTaskPolicy(),
+      environment: 'dev',
+      budgetCredits: 70,
+      repeat: 2,
+      clock,
+    });
+    expect(compareRuns(base, flaky)).toMatchObject({
+      verdict: 'revert',
+      regressions: [{ id: 'creative.draft', failed: ['mentions'] }],
+      consistency: { baseline: 1, current: 0 },
+    });
+  });
+
+  it('never accepts a comparison of runs over different cases', async () => {
+    const run = (cases: readonly EvalCase[]) =>
+      runEvals({
+        cases,
+        registry: registryOf(scripted('alpha', good)),
+        policy: evalTaskPolicy(),
+        environment: 'dev',
+        budgetCredits: 70,
+        clock,
+      });
+    const result = compareRuns(
+      await run([find('finance.draft')]),
+      await run([find('finance.draft'), find('finance.missing')]),
+    );
+    expect(result).toMatchObject({ verdict: 'revert', sameDataset: false, regressions: [] });
+  });
+});
+
 describe('baseline against a change', () => {
   const runWith = (script: (c: EvalCase) => ProviderOutcome, prompt?: string): Promise<EvalRun> =>
     runEvals({
