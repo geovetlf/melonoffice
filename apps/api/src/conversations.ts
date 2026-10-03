@@ -484,7 +484,12 @@ async function answer(c: Context<AuthEnv>, work: () => Promise<unknown>): Promis
       Object.hasOwn(STATUS, error.code)
     ) {
       const code = error.code as keyof typeof STATUS;
-      return c.json({ error: code }, STATUS[code]);
+      // About how many credits the request would have used, when credits refused it.
+      const estimate = isConversationError(error) ? error.estimatedCredits : undefined;
+      return c.json(
+        { error: code, ...(estimate === undefined ? {} : { estimatedCredits: estimate }) },
+        STATUS[code],
+      );
     }
     throw error;
   }

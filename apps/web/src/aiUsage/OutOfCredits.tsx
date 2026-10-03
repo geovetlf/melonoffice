@@ -9,7 +9,12 @@ import { paths } from '../shell/routes.js';
  * credits panel. Buying more credits never forces a plan change, and nothing here buys, upgrades
  * or retries by itself.
  */
-export function OutOfCredits() {
+export function OutOfCredits({
+  estimate,
+}: {
+  /** About how many credits the refused action would have used, when the API said. */
+  readonly estimate?: number | undefined;
+} = {}) {
   const intl = useIntl();
   const { credits } = useOfficeData();
   const available =
@@ -19,6 +24,11 @@ export function OutOfCredits() {
   return (
     <span className="out-of-credits">
       <FormattedMessage id="credits.out.title" />{' '}
+      {estimate === undefined ? null : (
+        <>
+          <FormattedMessage id="credits.out.estimate" values={{ count: estimate }} />{' '}
+        </>
+      )}
       {available === undefined ? null : (
         <FormattedMessage id="credits.out.available" values={{ count: available }} />
       )}

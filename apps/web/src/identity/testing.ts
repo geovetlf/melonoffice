@@ -79,7 +79,9 @@ export interface FakeBackend {
     /** The activity read fails (for example, before the index exists). */
     activityFails?: boolean;
     /** What GIA's chat answers (ADR-0052): the API's body, or an error code with its status. */
-    gia: Record<string, unknown> | { readonly error: string; readonly status: number };
+    gia:
+      | Record<string, unknown>
+      | { readonly error: string; readonly status: number; readonly estimatedCredits?: number };
     /** Each organization's customers and leads (C1), as the API's views, newest first. */
     customers: Record<string, Record<string, unknown>[]>;
     /** Notes of each contact, by contact id. */
@@ -1531,7 +1533,10 @@ export function fakeBackend(): FakeBackend {
       if (denied !== undefined) return denied;
       const answer = options.gia;
       return 'error' in answer && typeof answer.status === 'number'
-        ? json(answer.status, { error: answer.error })
+        ? json(answer.status, {
+            error: answer.error,
+            ...('estimatedCredits' in answer ? { estimatedCredits: answer.estimatedCredits } : {}),
+          })
         : json(200, answer);
     }
     if (

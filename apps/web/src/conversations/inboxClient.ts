@@ -104,10 +104,18 @@ export interface InboxQuery {
 /** Why the API refused something: a stable code, never a message from the server. */
 export class InboxError extends Error {
   override readonly name = 'InboxError';
-  constructor(readonly code: string) {
+  constructor(
+    readonly code: string,
+    /** When credits refused an AI request: about how many it would have used (D-12). */
+    readonly estimatedCredits?: number,
+  ) {
     super(code);
   }
 }
+
+/** A whole, positive number of credits from an error body, or nothing. */
+export const estimateOf = (value: unknown): number | undefined =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined;
 
 /** What a person can ask the AI about a conversation (CV-4, ADR-0037). */
 export type AssistOperation = 'summary' | 'intent' | 'reply' | 'next_steps';
@@ -218,9 +226,15 @@ export function createInboxClient(request: ReplyRequest, organizationId: string)
 
   async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
     const response = await request(path, init);
-    const body = (await response.json().catch(() => ({}))) as { error?: unknown };
+    const body = (await response.json().catch(() => ({}))) as {
+      error?: unknown;
+      estimatedCredits?: unknown;
+    };
     if (!response.ok) {
-      throw new InboxError(typeof body.error === 'string' ? body.error : 'generic');
+      throw new InboxError(
+        typeof body.error === 'string' ? body.error : 'generic',
+        estimateOf(body.estimatedCredits),
+      );
     }
     return body as T;
   }

@@ -54,7 +54,16 @@ export type AIResponse =
       readonly attempts: number;
       readonly latencyMs: number;
     }
-  | { readonly status: 'denied'; readonly requestId: string; readonly code: string };
+  | {
+      readonly status: 'denied';
+      readonly requestId: string;
+      readonly code: string;
+      /**
+       * For a refusal for credits (`credits_insufficient`, `credit_limit_exceeded`): about how
+       * many credits the cheapest model that could serve the request would have cost (D-12).
+       */
+      readonly estimatedCredits?: number;
+    };
 
 const PROVIDER_REQUEST_ID = /^[A-Za-z0-9._:-]{1,200}$/;
 const FINISH: readonly FinishReason[] = ['stop', 'length', 'content_filter', 'tool_use'];

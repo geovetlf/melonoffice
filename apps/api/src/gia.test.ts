@@ -258,9 +258,10 @@ describe.each(STORES)('GIA chat with storage in %s (ADR-0052)', (_name, createSt
 
   it('says so when the organization has no credits, and calls no model', async () => {
     const t = await setup();
+    // About how many credits the question would have used (D-12), so the person knows.
     expect(await t.ask('token-bob', t.orgB, body())).toEqual({
       status: 409,
-      body: { error: 'ai_credits_insufficient' },
+      body: { error: 'ai_credits_insufficient', estimatedCredits: expect.any(Number) },
     });
     expect(t.provider.calls).toHaveLength(0);
   });

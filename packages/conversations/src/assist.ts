@@ -319,7 +319,7 @@ export function createConversationAssistant(
       const code = DENIALS[response.code] ?? 'ai_not_available';
       await record('denied', { reason: response.code });
       log.info('conversation assist denied', { operation, code: response.code, latencyMs });
-      throw new ConversationError(code);
+      throw new ConversationError(code, undefined, response.estimatedCredits);
     }
     if (response.status === 'failed') {
       const model =

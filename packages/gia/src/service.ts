@@ -634,7 +634,11 @@ export function createGia(options: GiaOptions): GiaService {
     if (response.status === 'denied') {
       await record('denied', { reason: response.code });
       log.info('gia.message_denied', { code: response.code, latencyMs });
-      throw new GiaError(DENIALS[response.code] ?? 'ai_not_available');
+      throw new GiaError(
+        DENIALS[response.code] ?? 'ai_not_available',
+        undefined,
+        response.estimatedCredits,
+      );
     }
     if (response.status === 'failed') {
       const model =

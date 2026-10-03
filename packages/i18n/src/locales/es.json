@@ -2052,5 +2052,6 @@
   "credits.panel.consumed": "Consumidos en este periodo",
   "credits.panel.byFunction": "Créditos por función este mes",
   "credits.panel.history": "Ver historial de consumo",
-  "credits.out.buy": "Comprar créditos"
+  "credits.out.buy": "Comprar créditos",
+  "credits.out.estimate": "Esta acción utilizaría aproximadamente {count, plural, one {# crédito} other {# créditos}}."
 }

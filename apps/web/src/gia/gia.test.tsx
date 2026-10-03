@@ -312,7 +312,7 @@ describe("GIA's Workplace (ADR-0050)", () => {
 
   it('says plainly when there are no credits, or the role cannot talk to her', async () => {
     open('/gia', (b) => {
-      b.options.gia = { error: 'ai_credits_insufficient', status: 409 };
+      b.options.gia = { error: 'ai_credits_insufficient', status: 409, estimatedCredits: 3 };
     });
     const chat = await screen.findByRole('region', { name: 'Talk to GIA' });
     fireEvent.change(within(chat).getByRole('textbox', { name: 'Your message to GIA' }), {
@@ -322,6 +322,7 @@ describe("GIA's Workplace (ADR-0050)", () => {
     // What happened, what is available, and what can be done: never a forced upgrade.
     const alert = await within(chat).findByRole('alert');
     expect(alert.textContent).toContain('You need more credits: this action did not run.');
+    expect(alert.textContent).toContain('This action would use about 3 credits.');
     expect(alert.textContent).toContain('498 credits available.');
     expect(alert.textContent).toContain('You do not need to change plans.');
     expect(within(alert).getByRole('button', { name: 'Buy credits' })).toBeTruthy();

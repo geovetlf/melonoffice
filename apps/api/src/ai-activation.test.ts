@@ -514,7 +514,7 @@ describe.each(STORES)('assisted AI on Vertex AI with storage in %s (ADR-0038)', 
     const id = await t.receive(t.other, 'Hola');
     expect(
       await t.assist('token-bob', t.other, id, { operation: 'summary', requestKey: 'click-0001' }),
-    ).toEqual({ status: 409, body: { error: 'ai_credits_insufficient' } });
+    ).toEqual({ status: 409, body: { error: 'ai_credits_insufficient', estimatedCredits: 1 } });
     expect(t.cloud.requests).toHaveLength(0);
     expect(await t.balanceOf(t.other, 'token-bob')).toBe(0);
   });
