@@ -30,6 +30,7 @@ import {
   sensitivityAllows,
   type ContextPurpose,
 } from './catalogue.js';
+import { isCredentialFact } from './credentials.js';
 import { BrainError } from './errors.js';
 import {
   checkKnowledgeInput,
@@ -787,10 +788,12 @@ export function createCompanyBrain(options: CompanyBrainOptions): CompanyBrainSe
       const asked = (request.domains ?? allowed).filter(isKnowledgeDomain);
       const domains = asked.filter((d) => allowed.includes(d));
       const withheld = (request.domains ?? []).filter((d) => !allowed.includes(d));
-      const items =
+      const readable =
         domains.length === 0
           ? []
           : await visibleItems(tenant, organizationId, domains, false, ceiling);
+      // Context goes to models: a stored credential never does, whoever asks (G-7).
+      const items = readable.filter((item) => !isCredentialFact(item));
 
       const keys = new Set(request.keys ?? []);
       const subjects = new Set((request.subjects ?? []).map((s) => `${s.type}:${s.id}`));
@@ -839,6 +842,8 @@ export function createCompanyBrain(options: CompanyBrainOptions): CompanyBrainSe
         purpose: request.purpose,
         facts: chosen.length,
         candidates: items.length,
+        // Credentials kept out of the context (G-7); the logger hides keys named like one.
+        withheld: readable.length - items.length,
         latencyMs: Date.now() - started,
       });
       return Object.freeze({

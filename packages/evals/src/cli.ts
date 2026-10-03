@@ -2,7 +2,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { EVAL_CASES, EVAL_SUITES, type EvalSuiteId } from './cases.js';
-import { compareRuns } from './compare.js';
+import { compareRuns, comparisonText } from './compare.js';
 import { devVertexRegistry, EVAL_MAX_BUDGET_CREDITS, evalTaskPolicy } from './dev.js';
 import { reportFileOf, reportOf } from './gate.js';
 import { MAX_EVAL_REPEAT, runEvals, type EvalRun } from './run.js';
@@ -108,12 +108,14 @@ async function run(args: readonly string[]): Promise<void> {
 }
 
 function compare(args: readonly string[]): void {
-  const [baseline, current] = flags(args).rest;
+  const given = flags(args);
+  const [baseline, current] = given.rest;
   if (baseline === undefined || current === undefined)
-    fail('compare <baseline.json> <current.json>');
+    fail('compare <baseline.json> <current.json> [--out <comparison.json>]');
   const read = (file: string) => JSON.parse(readFileSync(file, 'utf8')) as EvalRun;
   const result = compareRuns(read(baseline as string), read(current as string));
-  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  if (given.out !== undefined) writeFileSync(given.out, `${JSON.stringify(result, null, 2)}\n`);
+  process.stdout.write(comparisonText(result));
   process.exitCode = result.verdict === 'accept' ? 0 : 1;
 }
 

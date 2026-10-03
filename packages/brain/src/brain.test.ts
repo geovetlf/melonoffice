@@ -556,6 +556,44 @@ describe('retrieval: selective, with least privilege', () => {
     expect(one.truncated).toBe(true);
   });
 
+  it("never puts a stored credential in a model's context, and keeps the rest (G-7)", async () => {
+    const w = await stocked();
+    // Invented values: a password and an API key someone typed into the company memory.
+    await w.brain.ingest(w.alice, { type: 'user', id: 'access' }, [
+      {
+        domain: 'integrations',
+        key: 'delivery_panel',
+        label: 'Clave del panel de delivery',
+        value: { type: 'text', text: 'Brasa-tst-K9x4!' },
+      },
+      {
+        domain: 'integrations',
+        key: 'payments_api_key',
+        value: { type: 'text', text: 'pagos-demo-0000' },
+      },
+      {
+        domain: 'integrations',
+        key: 'delivery_apps',
+        label: 'Apps de delivery',
+        value: { type: 'text', text: 'Rappi y PedidosYa' },
+      },
+    ]);
+    // Still stored, for the people who may read it.
+    expect((await w.brain.list(w.alice)).some((i) => i.key === 'delivery_panel')).toBe(true);
+    for (const query of [undefined, 'clave del panel de delivery', 'api key pagos']) {
+      const context = await w.brain.context(w.gia, {
+        purpose: 'gia',
+        ...(query === undefined ? {} : { query }),
+      });
+      const sent = JSON.stringify(context);
+      expect(sent).not.toContain('K9x4');
+      expect(sent).not.toContain('pagos-demo');
+    }
+    const all = await w.brain.context(w.gia, { purpose: 'gia' });
+    expect(all.facts.map((f) => f.key)).toContain('delivery_apps');
+    expect(all.facts.map((f) => f.key)).toContain('price');
+  });
+
   it("follows the person's own permissions: GIA sees no more than the person", async () => {
     const limited: RoleCatalogue = {
       owner: ROLES.owner.filter(

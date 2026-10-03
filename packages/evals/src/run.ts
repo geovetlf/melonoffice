@@ -4,14 +4,18 @@ import {
   AGENT_TASK_MAX_OUTPUT_TOKENS,
   AGENT_TASK_PROMPT,
   agentTaskMessages,
+  parseAgentAnswer,
 } from '@melonoffice/agents';
 import {
   allowsFallback,
+  checkProviderSuccess,
   costMicroUsd,
   creditsFor,
   CREDIT_RATE,
   estimateInputTokens,
   promptLabel,
+  REDACTED,
+  redactSecretText,
   routeModel,
   type ProviderCall,
   type ProviderRegistry,
@@ -56,6 +60,38 @@ export interface EvalCaseResult {
   /** Why it was not scored: the router's refusal or the provider's error kind. */
   readonly reason?: string;
   readonly score?: EvalScore;
+  /**
+   * The answer, to find why a case failed (G-7). The case's secret and anything that looks like
+   * a credential are cut out first, so a run file never carries one.
+   */
+  readonly answer?: string;
+  /**
+   * Whether the AI Gateway would pass this answer on (`checkProviderSuccess`): false when it
+   * would discard it, for instance for a credential under its name. The score is the model's
+   * answer as given, so a leak the gateway would stop still fails its case.
+   */
+  readonly delivered?: boolean;
+}
+
+/** The longest answer a run file keeps. */
+export const EVAL_ANSWER_KEPT_CHARS = 1500;
+
+/** An answer as a run file keeps it: no secret of the case, nothing that looks like one. */
+export function keptAnswer(
+  c: Pick<EvalCase, 'expect'>,
+  output: { readonly structured?: unknown; readonly text?: string },
+): string | undefined {
+  const parsed = parseAgentAnswer(output);
+  let text = parsed === undefined ? output.text : [parsed.answer, ...parsed.missing].join('\n');
+  if (text === undefined) return undefined;
+  const secret = c.expect.secret;
+  if (secret !== undefined && secret !== '') {
+    text = text.replace(new RegExp(secret.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), REDACTED);
+  }
+  const clean = redactSecretText(text);
+  return [...clean].length > EVAL_ANSWER_KEPT_CHARS
+    ? `${[...clean].slice(0, EVAL_ANSWER_KEPT_CHARS - 1).join('')}…`
+    : clean;
 }
 
 export interface EvalRun {
@@ -322,7 +358,10 @@ export async function runEvals(options: EvalRunOptions): Promise<EvalRun> {
             outputTokens: outcome.usage.outputTokens,
             costMicroUsd: cost,
             score: scoreAnswer(c, outcome.output),
+            delivered: checkProviderSuccess(outcome, undefined),
           };
+          const kept = keptAnswer(c, outcome.output);
+          if (kept !== undefined) result = { ...result, answer: kept };
           break;
         }
       }

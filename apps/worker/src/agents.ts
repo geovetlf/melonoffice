@@ -35,6 +35,7 @@ import {
   createCompanyBrain,
   DEPARTMENT_ACCESS,
   figureFactsOf,
+  storedSecretsOf,
   knowledgeItemId,
   type KnowledgeRepository,
 } from '@melonoffice/brain';
@@ -668,6 +669,12 @@ export function createAgentTaskParts(options: {
           maxSensitivity:
             access.maxSensitivity === 'restricted' ? 'confidential' : access.maxSensitivity,
         });
+      },
+      // The credentials stored in Company Brain (G-7), as the person the task is for may read
+      // them: only compared with the answer, never kept, logged or shown.
+      async secrets(tenant, execution) {
+        if (taskOf(execution) === undefined || !isResolvedTenant(tenant)) return undefined;
+        return storedSecretsOf(await brain.list(tenant));
       },
       // Unknown to this worker's catalogue: counted as a step that changed something.
       mutating: (id, version) =>

@@ -7,3 +7,4 @@ export * from './repository.js';
 export * from './service.js';
 export * from './sources.js';
 export * from './consistency.js';
+export * from './credentials.js';

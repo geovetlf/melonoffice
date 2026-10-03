@@ -2008,6 +2008,7 @@
   "agentTasks.details.review.fail": "An AI review found the answer does not do what you asked ({credits, plural, one {# credit} other {# credits}}).",
   "agentTasks.details.review.unavailable": "The AI review could not be made; the usual checks applied.",
   "agentTasks.details.guardian.clean": "The Guardian checked the answer and found nothing to review.",
+  "agentTasks.details.guardian.secret_disclosed": "Guardian: the answer contained a password, key or token, so it was discarded. Ask again without asking for access data.",
   "agentTasks.details.guardian.figure_contradiction": "Guardian: a figure in the answer does not match the company memory. Check which one is right before using it.",
   "agentTasks.details.guardian.unsupported_completion": "Guardian: the answer says something was already done, but no step of the task did it. Confirm it before counting on it.",
   "agentTasks.details.guardian.tool_failed": "Guardian: a tool failed during the task. Check whether the answer relies on it.",

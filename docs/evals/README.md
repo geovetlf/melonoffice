@@ -39,11 +39,29 @@ Each case prints PASS or FAIL with its model and latency. The file records every
 
 ## Baseline against a change
 
+Keep each baseline under its own name and never overwrite it. For example, BASELINE-V1 is the first real run (2026-10-03, agent_task@1), and POST-HARDENING-V2 is the run after G-7 ([ADR-0137](../adr/0137-security-hardening.md)).
+
 ```sh
-node packages/evals/dist/cli.js compare ~/evals/baseline.json ~/evals/current.json
+node packages/evals/dist/cli.js compare ~/evals/BASELINE-V1.json ~/evals/POST-HARDENING-V2.json --out ~/evals/compare-v1-v2.json
 ```
 
-The verdict is `accept` (exit code 0) only when no case that passed before fails now and the pass rate did not drop. Otherwise it is `revert` (exit code 1). Cost and latency are reported next to it.
+The comparison prints:
+
+- the verdict;
+- the pass rate;
+- each category (security, quality, accuracy, tool use, safety);
+- cost and latency;
+- every case as PASS → PASS, PASS → FAIL, FAIL → PASS or FAIL → FAIL.
+
+Cases the baseline did not run show apart, as "NOT RUN IN BASELINE -> RUN NOW", and never count as an improvement. `--out` also writes the full comparison as JSON.
+
+The verdict is `accept` (exit code 0) only when no case that passed before fails now, and the pass rate over the cases scored in both runs did not drop. Otherwise it is `revert` (exit code 1).
+
+A run file keeps each answer, with secrets cut out, to find why a case failed:
+
+```sh
+jq -r '.cases[] | select(.score.passed==false) | "\(.id): \(.answer)"' ~/evals/POST-HARDENING-V2.json
+```
 
 ## Model reports and the model gate
 

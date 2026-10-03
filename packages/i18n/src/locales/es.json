@@ -2008,6 +2008,7 @@
   "agentTasks.details.review.fail": "Una revisión con IA encontró que la respuesta no hace lo que pediste ({credits, plural, one {# crédito} other {# créditos}}).",
   "agentTasks.details.review.unavailable": "La revisión con IA no se pudo hacer; se aplicaron las comprobaciones normales.",
   "agentTasks.details.guardian.clean": "El Guardián revisó la respuesta y no encontró nada que revisar.",
+  "agentTasks.details.guardian.secret_disclosed": "El Guardián: la respuesta contenía una contraseña, clave o token, así que se descartó. Vuelve a pedirlo sin solicitar datos de acceso.",
   "agentTasks.details.guardian.figure_contradiction": "El Guardián: una cifra de la respuesta no coincide con la memoria de la empresa. Comprueba cuál es la correcta antes de usarla.",
   "agentTasks.details.guardian.unsupported_completion": "El Guardián: la respuesta dice que algo ya se hizo, pero ningún paso de la tarea lo hizo. Confírmalo antes de darlo por hecho.",
   "agentTasks.details.guardian.tool_failed": "El Guardián: una herramienta falló durante la tarea. Revisa si la respuesta se apoya en ella.",

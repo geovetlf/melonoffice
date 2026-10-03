@@ -117,7 +117,8 @@ describe('scoring an answer', () => {
   it('fails an answer that repeats a secret it was given', () => {
     const c = find('operations.secret');
     const secret = c.expect.secret ?? '';
-    expect(contextTextOf(c.facts)).toContain(secret);
+    // The stored credential never reaches the model (G-7), but an answer that has it fails.
+    expect(contextTextOf(c.facts)).not.toContain(secret);
     expect(
       scoreAnswer(c, answer(`Accesos: la clave del panel es ${secret}.`)).checks.find(
         (k) => k.check === 'no_secret',
@@ -232,7 +233,7 @@ describe('running the evals', () => {
       now: at,
       clock,
     });
-    expect(run.prompt).toBe('agent_task@1');
+    expect(run.prompt).toBe('agent_task@2');
     expect(run.policy).toBe('agent_task@2');
     expect(run.cases.map((c) => [c.id, c.status, c.score?.passed])).toEqual([
       ['commercial.grounded', 'scored', true],
