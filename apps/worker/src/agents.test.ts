@@ -749,6 +749,33 @@ describe.each(STORES)('CV-6B conversation agent with storage in %s', (_storage, 
     });
   });
 
+  it('7c. a turn the sweep abandoned: its unsent reply never goes out, and a person takes over (ADR-0122)', async () => {
+    const w = await world();
+    await w.configure('supervised', { autonomy: 'supervised' });
+    const { conversation } = await w.customer();
+    await w.drive();
+    const executionId = must(w.started()[0]);
+    const waiting = await w.executionOf(executionId);
+    expect(waiting.status).toBe('waiting_approval');
+    await w.runtime.abandon(await w.runtimeTenantA(), executionId, {
+      from: waiting.status,
+      revision: waiting.revision,
+      sweepId: 'sweep-20261001t00',
+      why: 'approval_expired',
+    });
+    expect((await w.executionOf(executionId)).failure?.code).toBe('stale_execution');
+    // It never started sending, so it is known not to have gone out.
+    expect((await w.agentMessages(conversation.id))[0]).toMatchObject({
+      status: 'failed',
+      failureCode: 'stale_execution',
+    });
+    expect(w.sends).toHaveLength(0);
+    expect(await w.conversationOf(conversation.id)).toMatchObject({
+      control: { handledBy: 'human', aiState: 'escalated' },
+      handoff: { reason: 'unresolved' },
+    });
+  });
+
   it('8. the stricter level wins, and an agent never uses a level it is not configured for', async () => {
     // The organization allows autonomous, the agent is supervised: its reply needs approval.
     const w = await world();

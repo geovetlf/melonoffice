@@ -67,7 +67,7 @@ Geovet authorized the sweep on 2026-10-02, with these conditions:
 
 ## Not done
 
-- **Conversation agent turns.** A person already takes over the conversation, so they are not swept.
+- **Conversation agent turns.** Swept since [ADR-0122](0122-abandoned-conversation-turns.md).
 - **Expired handoffs.** None is needed: an expired handoff is read as refused (ADR-0119).
 - **A setting per organization.** The thresholds are platform safety defaults: 6 hours to show work as stuck, and 24 hours to close it.
 

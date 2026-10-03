@@ -809,6 +809,9 @@ export function createAgentTurnVerifier(options: {
 }
 
 /** The hand-off reason of a turn that stopped with this code; `undefined`: nothing to hand off. */
+/** The failure the automatic sweep closes an abandoned execution with (ADR-0121). */
+const STALE_TURN = 'stale_execution';
+
 export function handoffReasonOf(code: string): HandoffReason | undefined {
   // Someone or something else is in charge now: a person, a newer turn, or no agent at all.
   if (
@@ -840,7 +843,8 @@ export function handoffReasonOf(code: string): HandoffReason | undefined {
   ) {
     return 'channel_unavailable';
   }
-  if (code === 'outcome_unknown') return 'unresolved';
+  // Nothing moved it for a day and the sweep closed it (ADR-0122): a person picks it up.
+  if (code === 'outcome_unknown' || code === STALE_TURN) return 'unresolved';
   // The tool gate refused: the agent may not do this, or the tool cannot run here.
   if (code.startsWith('permission') || code.startsWith('tool_') || code === 'not_a_turn') {
     return 'not_permitted';
@@ -883,13 +887,16 @@ export function createAgentTurnStopHook(options: AgentTurnStopHookOptions): {
         agentReplyKeyOf(execution.id),
       );
       const reply = await conversations.findMessage(organizationId, replyId);
+      const node = execution.nodes.find((n) => n.id === TURN_NODES.reply);
       if (reply?.status === 'queued') {
-        // A reply whose outcome nobody knows is never marked failed: it may have gone out.
+        // A reply whose outcome nobody knows is never marked failed: it may have gone out. A turn
+        // the sweep closed (ADR-0122) may have stopped mid-send, but only if its send had started.
         const settlement =
-          code === 'outcome_unknown'
-            ? ({ status: 'unknown', failureCode: 'outcome_unknown' } as const)
+          code === 'outcome_unknown' ||
+          (code === STALE_TURN &&
+            (node?.status === 'running' || node?.idempotencyKey !== undefined))
+            ? ({ status: 'unknown', failureCode: code } as const)
             : ({ status: 'failed', failureCode: code } as const);
-        const node = execution.nodes.find((n) => n.id === TURN_NODES.reply);
         const at = now();
         await conversations.settleOutbound(
           organizationId,

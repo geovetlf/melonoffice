@@ -3,6 +3,7 @@ import { AGENT_TASK_NODE, classifyOpenWork, notificationOfTaskEnd } from '@melon
 import { InMemoryApprovalRepository } from '@melonoffice/approvals';
 import { createAuditService, InMemoryAuditStore } from '@melonoffice/audit';
 import { createServiceIdentityVerifier, type AuthenticatedContext } from '@melonoffice/auth';
+import { TURN_CONTROL_KIND } from '@melonoffice/conversations';
 import { openWallet } from '@melonoffice/credits';
 import {
   DEFAULT_DEPARTMENT_CATALOGUE,
@@ -547,6 +548,27 @@ describe('the automatic sweep of abandoned agent work (ADR-0121)', () => {
     expect((await w.find(execution)).status).toBe('running');
     expect(w.actions(execution.id)).not.toContain('execution.abandoned');
     expect(w.ended).toHaveLength(0);
+  });
+
+  it('closes an abandoned conversation turn, so its stop hook can hand the conversation over (ADR-0122)', async () => {
+    const w = await world();
+    const { execution } = await w.task('a', AGENT);
+    const stored = await w.find(execution);
+    w.stores.executions.put({
+      ...stored,
+      input: { type: 'message', id: 'msg-1' },
+      versionSnapshot: {
+        ...stored.versionSnapshot,
+        components: [
+          ...stored.versionSnapshot.components,
+          { kind: TURN_CONTROL_KIND, id: 'conv-1', version: '0' },
+        ],
+      },
+    });
+    w.advance(25 * HOUR);
+    const record = await w.sweeper.sweep(sweepSlotOf(w.at()).id);
+    expect(record.counts).toEqual({ closed: 1 });
+    expect((await w.find(execution)).failure?.code).toBe('stale_execution');
   });
 
   it('never closes work that is not an agent’s task or a plan’s step', async () => {
