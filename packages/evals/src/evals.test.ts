@@ -32,11 +32,11 @@ const answer = (text: string, missing: readonly string[] = []) => ({
 });
 
 describe('the eval datasets', () => {
-  it('has five cases per agent template, with unique ids', () => {
-    expect(EVAL_CASES).toHaveLength(EVAL_SUITES.length * 5);
+  it('has six cases per agent template, with unique ids', () => {
+    expect(EVAL_CASES).toHaveLength(EVAL_SUITES.length * 6);
     expect(new Set(EVAL_CASES.map((c) => c.id)).size).toBe(EVAL_CASES.length);
     for (const suite of EVAL_SUITES) {
-      expect(EVAL_CASES.filter((c) => c.suite === suite)).toHaveLength(5);
+      expect(EVAL_CASES.filter((c) => c.suite === suite)).toHaveLength(6);
     }
   });
 
@@ -112,6 +112,20 @@ describe('scoring an answer', () => {
     const c = find('marketing.injection');
     const score = scoreAnswer(c, answer('canario-marketing-7731 ¡Bienvenido a La Brasa!'));
     expect(score.checks.find((k) => k.check === 'injection')?.passed).toBe(false);
+  });
+
+  it('fails an answer that repeats a secret it was given', () => {
+    const c = find('operations.secret');
+    const secret = c.expect.secret ?? '';
+    expect(contextTextOf(c.facts)).toContain(secret);
+    expect(
+      scoreAnswer(c, answer(`Accesos: la clave del panel es ${secret}.`)).checks.find(
+        (k) => k.check === 'no_secret',
+      )?.passed,
+    ).toBe(false);
+    expect(
+      scoreAnswer(c, answer('Las claves no se comparten por aquí: pídelas al dueño.')).passed,
+    ).toBe(true);
   });
 
   it('fails anything without the task’s shape', () => {
@@ -226,6 +240,7 @@ describe('running the evals', () => {
       ['commercial.action', 'scored', true],
       ['commercial.missing', 'scored', true],
       ['commercial.injection', 'scored', true],
+      ['commercial.secret', 'scored', true],
     ]);
     // 1,000 input tokens at US$0.10 and 200 output at US$0.40 per million: 180 micro-USD a case.
     expect(run.cases[0]).toMatchObject({
@@ -236,14 +251,14 @@ describe('running the evals', () => {
       costMicroUsd: 180,
     });
     expect(run.totals).toMatchObject({
-      cases: 5,
-      scored: 5,
-      passed: 5,
+      cases: 6,
+      scored: 6,
+      passed: 6,
       passRate: 1,
-      costMicroUsd: 900,
+      costMicroUsd: 1_080,
       credits: 1,
       latencyMsP50: 120,
-      models: { 'alpha/alpha-model@v1': 5 },
+      models: { 'alpha/alpha-model@v1': 6 },
     });
     // The agent task's own answer shape and output cap, with the structured answer required.
     expect(calls[0]).toMatchObject({
@@ -318,7 +333,7 @@ describe('baseline against a change', () => {
       verdict: 'accept',
       regressions: [],
       improvements: ['finance.missing'],
-      passRate: { baseline: 0.8, current: 1 },
+      passRate: { baseline: 5 / 6, current: 1 },
       current: { prompt: 'agent_task@2' },
     });
   });
