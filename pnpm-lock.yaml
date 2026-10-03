@@ -859,6 +859,12 @@ importers:
         specifier: workspace:*
         version: link:../specialists
     devDependencies:
+      '@melonoffice/ai-deepseek':
+        specifier: workspace:*
+        version: link:../ai-deepseek
+      '@melonoffice/ai-nvidia':
+        specifier: workspace:*
+        version: link:../ai-nvidia
       '@melonoffice/config':
         specifier: workspace:*
         version: link:../config

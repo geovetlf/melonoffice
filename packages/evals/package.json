@@ -18,7 +18,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "eval:dev": "node dist/cli.js run",
-    "eval:compare": "node dist/cli.js compare"
+    "eval:compare": "node dist/cli.js compare",
+    "eval:report": "node dist/cli.js report"
   },
   "dependencies": {
     "@melonoffice/agents": "workspace:*",
@@ -30,6 +31,8 @@
     "@melonoffice/specialists": "workspace:*"
   },
   "devDependencies": {
+    "@melonoffice/ai-deepseek": "workspace:*",
+    "@melonoffice/ai-nvidia": "workspace:*",
     "@melonoffice/config": "workspace:*"
   }
 }

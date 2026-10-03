@@ -1,9 +1,11 @@
 #!/usr/bin/env node
-import { readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { EVAL_CASES, EVAL_SUITES, type EvalSuiteId } from './cases.js';
 import { compareRuns } from './compare.js';
 import { devVertexRegistry, EVAL_MAX_BUDGET_CREDITS, evalTaskPolicy } from './dev.js';
-import { runEvals, type EvalRun } from './run.js';
+import { reportFileOf, reportOf } from './gate.js';
+import { MAX_EVAL_REPEAT, runEvals, type EvalRun } from './run.js';
 
 /**
  * The eval command (ADR-0134), run by a person in Cloud Shell against DEV:
@@ -11,9 +13,11 @@ import { runEvals, type EvalRun } from './run.js';
  *   EVAL_ACCESS_TOKEN=$(gcloud auth print-access-token) \
  *     pnpm --filter @melonoffice/evals eval:dev -- --out baseline.json
  *   pnpm --filter @melonoffice/evals eval:compare -- baseline.json current.json
+ *   node dist/cli.js report run.json   (a run held to one model → docs/evals/reports/, G-5)
  *
  * `run` options: `--out <file>` (required), `--budget <credits>` (default and most: 70),
- * `--suite <id>` (repeatable; default every suite).
+ * `--suite <id>` (repeatable; default every suite), `--model <provider/model>` (a variant held
+ * to one model), `--repeat <n>` (1 to 5, for consistency).
  */
 
 const fail = (message: string): never => {
@@ -22,7 +26,15 @@ const fail = (message: string): never => {
 };
 
 function flags(args: readonly string[]) {
-  const out: { out?: string; budget?: number; suites: EvalSuiteId[]; rest: string[] } = {
+  const out: {
+    out?: string;
+    budget?: number;
+    model?: string;
+    repeat?: number;
+    dir?: string;
+    suites: EvalSuiteId[];
+    rest: string[];
+  } = {
     suites: [],
     rest: [],
   };
@@ -31,6 +43,9 @@ function flags(args: readonly string[]) {
     const value = () => args[++i] ?? fail(`${arg} needs a value`);
     if (arg === '--out') out.out = value();
     else if (arg === '--budget') out.budget = Number(value());
+    else if (arg === '--model') out.model = value();
+    else if (arg === '--repeat') out.repeat = Number(value());
+    else if (arg === '--dir') out.dir = value();
     else if (arg === '--suite') {
       const suite = value();
       if (!EVAL_SUITES.includes(suite as EvalSuiteId)) fail(`unknown suite ${suite}`);
@@ -51,6 +66,12 @@ async function run(args: readonly string[]): Promise<void> {
   if (!Number.isFinite(budget) || budget <= 0 || budget > EVAL_MAX_BUDGET_CREDITS) {
     fail(`--budget must be more than 0 and at most ${EVAL_MAX_BUDGET_CREDITS} credits`);
   }
+  if (
+    given.repeat !== undefined &&
+    (!Number.isInteger(given.repeat) || given.repeat < 1 || given.repeat > MAX_EVAL_REPEAT)
+  ) {
+    fail(`--repeat must be 1 to ${MAX_EVAL_REPEAT}`);
+  }
   const cases =
     given.suites.length === 0
       ? EVAL_CASES
@@ -61,6 +82,8 @@ async function run(args: readonly string[]): Promise<void> {
     policy: evalTaskPolicy(),
     environment: 'dev',
     budgetCredits: budget,
+    ...(given.model === undefined ? {} : { pin: given.model }),
+    ...(given.repeat === undefined ? {} : { repeat: given.repeat }),
     onCase: (c) =>
       process.stderr.write(
         `${c.score?.passed === true ? 'PASS' : c.status === 'scored' ? 'FAIL' : c.status.toUpperCase()} ${c.id}` +
@@ -94,7 +117,22 @@ function compare(args: readonly string[]): void {
   process.exitCode = result.verdict === 'accept' ? 0 : 1;
 }
 
+function report(args: readonly string[]): void {
+  const given = flags(args);
+  const [file] = given.rest;
+  if (file === undefined) fail('report <run.json> [--dir <reports directory>]');
+  const result = reportOf(JSON.parse(readFileSync(file as string, 'utf8')) as EvalRun);
+  if ('error' in result) fail(`not a report: ${result.error} (run with --model <provider/model>)`);
+  const dir = given.dir ?? 'docs/evals/reports';
+  mkdirSync(dir, { recursive: true });
+  const ok = result as Exclude<typeof result, { error: string }>;
+  const path = join(dir, reportFileOf(ok.model));
+  writeFileSync(path, `${JSON.stringify(ok, null, 2)}\n`);
+  process.stdout.write(`${ok.model} · ${Math.round(ok.passRate * 100)}% → ${path}\n`);
+}
+
 const [command, ...rest] = process.argv.slice(2);
 if (command === 'run') await run(rest);
 else if (command === 'compare') compare(rest);
-else fail('usage: cli.js run --out <file> [--budget <credits>] [--suite <id>] | compare <a> <b>');
+else if (command === 'report') report(rest);
+else fail('usage: cli.js run --out <file> [options] | compare <a> <b> | report <run.json>');
