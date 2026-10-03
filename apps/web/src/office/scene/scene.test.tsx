@@ -190,11 +190,12 @@ describe('the Home’s office (Home V4)', () => {
 
   it('shows each agent at its desk with its real state and work, and opens its card', async () => {
     open(agents);
-    // The agents' tasks are read after the office: on a slow runner that takes a while.
+    // The agents' tasks are read after the office: on a slow CI runner, as the file's first
+    // whole-app render, that has taken over 5 s. Still well within the 20 s test timeout.
     const ana = await screen.findByRole(
       'button',
       { name: 'Sales agent, Working. Review this week’s leads. Open their card' },
-      { timeout: 5000 },
+      { timeout: 15_000 },
     );
     expect(
       screen.getByRole('button', {
