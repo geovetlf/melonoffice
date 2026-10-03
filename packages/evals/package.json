@@ -1,0 +1,35 @@
+{
+  "name": "@melonoffice/evals",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "@melonoffice/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "eval:dev": "node dist/cli.js run",
+    "eval:compare": "node dist/cli.js compare"
+  },
+  "dependencies": {
+    "@melonoffice/agents": "workspace:*",
+    "@melonoffice/ai-gateway": "workspace:*",
+    "@melonoffice/ai-vertex": "workspace:*",
+    "@melonoffice/brain": "workspace:*",
+    "@melonoffice/domain": "workspace:*",
+    "@melonoffice/harness": "workspace:*",
+    "@melonoffice/specialists": "workspace:*"
+  },
+  "devDependencies": {
+    "@melonoffice/config": "workspace:*"
+  }
+}
