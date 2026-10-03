@@ -36,8 +36,9 @@ Until now there was no period: a subscription had a start and a status, and noth
    - `credits.rollover` turns carry-over on.
    - `credits.rolloverMax` (new) caps how many carry over; `unlimited` carries all.
    - Unset values deny, as every entitlement does: 0 included and nothing carried, so a renewal adds nothing today. `unlimited` included credits are refused rather than turned into a number.
-6. **Renewal runs when credits are used.** The first credits read, hold or spend of an organization in a new period renews it (`ensureCurrent`), through the API's credit routes and the AI gateway's credit port. It only runs while the plan is in force, and it remembers each organization's current period, so most calls read nothing. A failed renewal never blocks the read or the spend; it is retried on the next one. No scheduled job, index or migration is needed.
-7. **Consumption order is configuration.** `createCreditService({ consumptionOrder })` defaults to `DEFAULT_CONSUMPTION_ORDER` (included, then purchased), as the owner decided for now. An order that does not name each bucket once is refused at startup.
+6. **Renewal runs when credits are used.** The first credits read, hold or spend of an organization in a new period renews it (`ensureCurrent`), through the API's credit routes and the AI gateway's credit port. It only runs while the plan is in force, and it remembers each organization's current period, so most calls read nothing. A failed renewal never blocks the read or the spend; it is retried on the next one. The worker does not renew: by design it does not read billing, so an organization's period is renewed by its first credit use through the API (any GIA, assisted AI or panel read). A scheduled renewal can be added if autonomous agents need it before anyone opens the app. No scheduled job, index or migration is needed now.
+7. **The Agent Engine checks what it can spend.** The Harness's credit check before an agent works uses the available credits (balance less what running operations hold), the same figure the AI gateway holds against.
+8. **Consumption order is configuration.** `createCreditService({ consumptionOrder })` defaults to `DEFAULT_CONSUMPTION_ORDER` (included, then purchased), as the owner decided for now. An order that does not name each bucket once is refused at startup.
 
 ## Still pending (not decided here)
 

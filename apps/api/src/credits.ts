@@ -1,12 +1,4 @@
-import type { BillingService } from '@melonoffice/billing';
-import type {
-  CreditBalance,
-  CreditRenewal,
-  CreditService,
-  RenewalSubject,
-} from '@melonoffice/credits';
-import type { EntitlementService } from '@melonoffice/entitlements';
-import type { TenantContext } from '@melonoffice/tenancy';
+import type { CreditBalance, CreditRenewal, CreditService } from '@melonoffice/credits';
 import type { Hono } from 'hono';
 import type { AuthEnv } from './auth.js';
 import { withPermission, type AuthorizationDependencies } from './authorization.js';
@@ -70,57 +62,5 @@ function toView(organizationId: string, balance: CreditBalance) {
             consumed: balance.period.consumed,
           },
     updatedAt: balance.updatedAt,
-  };
-}
-
-/**
- * What renewal needs, read from billing and entitlements (ADR-0127): the subscription's start,
- * from which monthly periods are counted, and the plan's credit terms. Nothing when no plan is in
- * force, so nothing renews.
- */
-export function renewalSubjectOf(
-  billing: Pick<BillingService, 'billingOf'>,
-  entitlements: Pick<EntitlementService, 'entitlementsOf'>,
-): (tenant: TenantContext) => Promise<RenewalSubject | undefined> {
-  return async (tenant) => {
-    const account = await billing.billingOf(tenant);
-    if (account.status !== 'present' || !account.planInForce) return undefined;
-    const plan = await entitlements.entitlementsOf(tenant);
-    if (plan.status !== 'active') return undefined;
-    return {
-      anchor: account.subscription.createdAt,
-      terms: {
-        monthlyIncluded: plan.values['credits.monthlyIncluded'],
-        rollover: plan.values['credits.rollover'],
-        rolloverMax: plan.values['credits.rolloverMax'],
-      },
-    };
-  };
-}
-
-/**
- * The credit service, renewing the wallet first when a new plan period started (ADR-0127), so
- * every spend and hold sees the period's included credits. A failed renewal never blocks it.
- */
-export function withRenewal<T extends Pick<CreditService, 'balanceOf' | 'hold' | 'consume'>>(
-  credits: T,
-  renewal: CreditRenewal,
-  onError: (error: unknown) => void,
-): T {
-  const renew = (tenant: TenantContext) => renewal.ensureCurrent(tenant).catch(onError);
-  return {
-    ...credits,
-    balanceOf: async (tenant: TenantContext) => {
-      await renew(tenant);
-      return credits.balanceOf(tenant);
-    },
-    hold: async (tenant: TenantContext, request: Parameters<T['hold']>[1]) => {
-      await renew(tenant);
-      return credits.hold(tenant, request);
-    },
-    consume: async (tenant: TenantContext, request: Parameters<T['consume']>[1]) => {
-      await renew(tenant);
-      return credits.consume(tenant, request);
-    },
   };
 }

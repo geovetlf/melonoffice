@@ -138,3 +138,83 @@ export function createCreditRenewal({
     },
   };
 }
+
+/** The part of billing renewal reads: the subscription's start and whether its plan is in force. */
+export interface RenewalBillingPort {
+  billingOf(tenant: TenantContext): Promise<
+    | {
+        readonly status: 'present';
+        readonly subscription: { readonly createdAt: IsoTimestamp };
+        readonly planInForce: boolean;
+      }
+    | { readonly status: 'unavailable' }
+  >;
+}
+
+/** The part of entitlements renewal reads: the plan's credit values. */
+export interface RenewalEntitlementsPort {
+  entitlementsOf(tenant: TenantContext): Promise<
+    | {
+        readonly status: 'active';
+        readonly values: {
+          readonly 'credits.monthlyIncluded': number | 'unlimited';
+          readonly 'credits.rollover': boolean;
+          readonly 'credits.rolloverMax': number | 'unlimited';
+        };
+      }
+    | { readonly status: 'unavailable' }
+  >;
+}
+
+/**
+ * What renewal needs, read from billing and entitlements: the subscription's start, from which
+ * monthly periods are counted, and the plan's credit terms. Nothing when no plan is in force, so
+ * nothing renews.
+ */
+export function renewalSubjectOf(
+  billing: RenewalBillingPort,
+  entitlements: RenewalEntitlementsPort,
+): (tenant: TenantContext) => Promise<RenewalSubject | undefined> {
+  return async (tenant) => {
+    const account = await billing.billingOf(tenant);
+    if (account.status !== 'present' || !account.planInForce) return undefined;
+    const plan = await entitlements.entitlementsOf(tenant);
+    if (plan.status !== 'active') return undefined;
+    return {
+      anchor: account.subscription.createdAt,
+      terms: {
+        monthlyIncluded: plan.values['credits.monthlyIncluded'],
+        rollover: plan.values['credits.rollover'],
+        rolloverMax: plan.values['credits.rolloverMax'],
+      },
+    };
+  };
+}
+
+/**
+ * The credit service, renewing the wallet first when a new plan period started, so every read,
+ * spend and hold sees the period's included credits. A failed renewal never blocks it: it is
+ * reported to `onError` and retried on the next call.
+ */
+export function withRenewal<T extends Pick<CreditService, 'balanceOf' | 'hold' | 'consume'>>(
+  credits: T,
+  renewal: CreditRenewal,
+  onError: (error: unknown) => void,
+): T {
+  const renew = (tenant: TenantContext) => renewal.ensureCurrent(tenant).catch(onError);
+  return {
+    ...credits,
+    balanceOf: async (tenant: TenantContext) => {
+      await renew(tenant);
+      return credits.balanceOf(tenant);
+    },
+    hold: async (tenant: TenantContext, request: Parameters<T['hold']>[1]) => {
+      await renew(tenant);
+      return credits.hold(tenant, request);
+    },
+    consume: async (tenant: TenantContext, request: Parameters<T['consume']>[1]) => {
+      await renew(tenant);
+      return credits.consume(tenant, request);
+    },
+  };
+}
