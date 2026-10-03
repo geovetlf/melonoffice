@@ -83,10 +83,13 @@ export interface HarnessAgentDirectory {
 
 /** The Credits engine's balance, as the AI Gateway reads it (ADR-0023). */
 export interface HarnessCredits {
-  balanceOf(
-    tenant: TenantContext,
-  ): Promise<
-    | { readonly status: 'present'; readonly balance: number }
+  balanceOf(tenant: TenantContext): Promise<
+    | {
+        readonly status: 'present';
+        readonly balance: number;
+        /** The balance less what running operations hold (ADR-0123). */
+        readonly available?: number;
+      }
     | { readonly status: 'unavailable'; readonly reason: string }
   >;
 }
@@ -234,14 +237,16 @@ export function createAgentHarness(options: AgentHarnessOptions): AgentHarness {
         reasons.push('credits_unavailable');
         return 'refused';
       }
-      if (balance.balance <= 0) {
+      // What other running operations hold cannot be spent here (ADR-0123, ADR-0127).
+      const spendable = balance.available ?? balance.balance;
+      if (spendable <= 0) {
         budget = { status: 'insufficient', maxCredits };
         reasons.push('insufficient_credits');
         return 'refused';
       }
       budget = { status: 'available', maxCredits };
       // The balance is the real limit: a budget above it only says how far the task may go.
-      if (maxCredits !== null && maxCredits > balance.balance) reasons.push('budget_above_balance');
+      if (maxCredits !== null && maxCredits > spendable) reasons.push('budget_above_balance');
 
       if (task.specialistId !== undefined) {
         const named = (await directory.active(tenant)).find((a) => a.id === task.specialistId);

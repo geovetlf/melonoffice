@@ -48,7 +48,9 @@ export const ENTITLEMENT_REGISTRY = {
   // Credits
   'credits.monthlyIncluded': limit,
   'credits.maxBalance': limit,
+  // Whether included credits left at renewal carry over, and how many (ADR-0127). Unset: none do.
   'credits.rollover': feature,
+  'credits.rolloverMax': limit,
   'credits.dailyCap': limit,
   'credits.packsPurchasable': feature,
   // GIA

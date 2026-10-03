@@ -63,7 +63,13 @@ import {
   type FollowUpService,
   type ConversationRepository,
 } from '@melonoffice/conversations';
-import { createCreditService, type CreditStore } from '@melonoffice/credits';
+import {
+  createCreditRenewal,
+  createCreditService,
+  renewalSubjectOf,
+  withRenewal,
+  type CreditStore,
+} from '@melonoffice/credits';
 import {
   createEntitlementService,
   type EntitlementService,
@@ -560,11 +566,40 @@ export function createApp({
     // because the gateway is built whole; an assisted call reads neither. The credits engine
     // accounts for every call; with no rate it denies all.
     const usageLedger = aiUsage === undefined ? undefined : createAIUsageLedger(aiUsage);
+    // Plan periods (ADR-0127): a wallet is renewed once per period, the first time its credits
+    // are read or spent in it. One instance, so its memory of current periods is shared.
+    const creditRenewal =
+      credits === undefined || tenancy === undefined || billing === undefined
+        ? undefined
+        : (() => {
+            const plans = createBillingService({ billing, organizations: tenancy });
+            return createCreditRenewal({
+              credits: createCreditService({ store: credits, organizations: tenancy }),
+              subjectOf: renewalSubjectOf(
+                plans,
+                entitlements ??
+                  createEntitlementService({
+                    organizations: tenancy,
+                    plans,
+                    ...(entitlementOverrides === undefined
+                      ? {}
+                      : { overrides: entitlementOverrides }),
+                  }),
+              ),
+            });
+          })();
+    const renewalLogger = logger.child({ component: 'credits-renewal' });
     const aiCredits =
       ai.credits ??
       (credits === undefined || tenancy === undefined
         ? undefined
-        : createCreditService({ store: credits, organizations: tenancy }));
+        : creditRenewal === undefined
+          ? createCreditService({ store: credits, organizations: tenancy })
+          : withRenewal(
+              createCreditService({ store: credits, organizations: tenancy }),
+              creditRenewal,
+              (error) => renewalLogger.warn('credits renewal failed', { error }),
+            ));
     // The gateway's health tracker, also read by the platform AI view (ADR-0082).
     const aiHealth = createProviderHealthTracker();
     const aiRegistry = ai.registry ?? defaultProviderRegistry();
@@ -1568,6 +1603,7 @@ export function createApp({
         authorization,
         audit,
         credits: creditService,
+        ...(creditRenewal === undefined ? {} : { renewal: creditRenewal }),
       });
       registerPlatformCreditRoutes(app, {
         admins: new Set(platformAdmins),

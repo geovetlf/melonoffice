@@ -4,6 +4,8 @@ import type {
   CreditEntryId,
   CreditHold,
   CreditLedgerEntry,
+  CreditPeriod,
+  CreditRenewal,
   CreditWallet,
   CreditWalletId,
   IsoTimestamp,
@@ -112,7 +114,26 @@ export type CreditOperation =
       readonly reason: string;
       /** The `referenceId` of the hold. */
       readonly holdOf: string;
+    }
+  | {
+      /**
+       * Opens a new plan period (ADR-0127): grants the period's included credits and removes the
+       * last period's included credits that do not carry over. Its reference is fixed by the
+       * period (`renewalReferenceOf`), so a period is renewed once, however often this is asked.
+       */
+      readonly type: 'renew';
+      readonly referenceId: string;
+      readonly reason: string;
+      readonly period: { readonly startsAt: IsoTimestamp; readonly endsAt: IsoTimestamp };
+      /** Included credits the plan gives for the period. 0 or more. */
+      readonly included: number;
+      /** How many of the last period's included credits may stay: a number, or `'all'`. */
+      readonly carryMax: number | 'all';
     };
+
+/** The reference of a period's renewal: a period is renewed once. */
+export const renewalReferenceOf = (periodStartsAt: IsoTimestamp): string =>
+  `renewal:${periodStartsAt}`;
 
 /** The reference of the one entry that may close a hold: a settle or a release. */
 export const closingReferenceOf = (holdReference: string): string => `${holdReference}:close`;
@@ -135,16 +156,39 @@ export const availableOf = (
 ): number => wallet.balance - liveHolds(wallet, at).reduce((sum, h) => sum + h.amount, 0);
 
 /**
- * The order credits are spent in (ADR-0123): what the plan included first, then what was bought,
- * so bought credits last longest. A provisional default until the owner decides (D-12).
+ * The order credits are spent in by default (ADR-0123, confirmed by the owner for now on
+ * 2026-10-03): what the plan included first, then what was bought, so bought credits last
+ * longest. It is configuration (`LedgerOptions.consumptionOrder`), not a rule of the ledger.
  */
-export const CONSUMPTION_ORDER: readonly CreditBucket[] = ['included', 'purchased'];
+export const DEFAULT_CONSUMPTION_ORDER: readonly CreditBucket[] = Object.freeze([
+  'included',
+  'purchased',
+]);
+/** @deprecated The default order; use `DEFAULT_CONSUMPTION_ORDER`. */
+export const CONSUMPTION_ORDER = DEFAULT_CONSUMPTION_ORDER;
 
-/** How `amount` is taken from the buckets, in `CONSUMPTION_ORDER`. */
-function take(buckets: CreditBuckets, amount: number): CreditBuckets {
+/** Whether an order names every bucket exactly once. */
+export const isConsumptionOrder = (value: unknown): value is readonly CreditBucket[] =>
+  Array.isArray(value) &&
+  value.length === 2 &&
+  value.includes('included') &&
+  value.includes('purchased');
+
+/** How the ledger applies its configurable policies (ADR-0127). */
+export interface LedgerOptions {
+  /** The order credits are spent in. Default: `DEFAULT_CONSUMPTION_ORDER`. */
+  readonly consumptionOrder?: readonly CreditBucket[];
+}
+
+/** How `amount` is taken from the buckets, in `order`. */
+function take(
+  buckets: CreditBuckets,
+  amount: number,
+  order: readonly CreditBucket[],
+): CreditBuckets {
   let left = amount;
   const split = { included: 0, purchased: 0 };
-  for (const bucket of CONSUMPTION_ORDER) {
+  for (const bucket of order) {
     const part = Math.min(buckets[bucket], left);
     split[bucket] = part;
     left -= part;
@@ -196,6 +240,20 @@ function signedAmount(operation: CreditOperation): number {
     throw new CreditsError('invalid_reference');
   }
   if (!isReasonCode(operation.reason)) throw new CreditsError('invalid_reason');
+  if (operation.type === 'renew') {
+    const { period, included, carryMax } = operation;
+    const starts = Date.parse(String(period?.startsAt));
+    const ends = Date.parse(String(period?.endsAt));
+    if (Number.isNaN(starts) || Number.isNaN(ends) || ends <= starts) {
+      throw new CreditsError('invalid_period');
+    }
+    if (included !== 0 && !isCreditAmount(included)) throw new CreditsError('invalid_amount');
+    if (carryMax !== 'all' && carryMax !== 0 && !isCreditAmount(carryMax)) {
+      throw new CreditsError('invalid_amount');
+    }
+    // The amount depends on the wallet; it is decided in `applyOperation`.
+    return 0;
+  }
   if (operation.type === 'adjustment') {
     const { amount } = operation;
     if (typeof amount !== 'number' || !isCreditAmount(Math.abs(amount))) {
@@ -240,8 +298,11 @@ export function applyOperation(
   operation: CreditOperation,
   state: LedgerState,
   at: IsoTimestamp,
+  options: LedgerOptions = {},
 ): Posting {
-  const amount = signedAmount(operation);
+  const order = options.consumptionOrder ?? DEFAULT_CONSUMPTION_ORDER;
+  if (!isConsumptionOrder(order)) throw new Error('invalid consumption order');
+  let amount = signedAmount(operation);
   const referenceId =
     operation.type === 'settle' ? closingReferenceOf(operation.holdOf) : operation.referenceId;
   const id = entryIdOf(organizationId, referenceId);
@@ -254,10 +315,28 @@ export function applyOperation(
     operation.type === 'settle' ? entryIdOf(organizationId, operation.holdOf) : undefined;
   // A settle for nothing is recorded as a release.
   const type =
-    operation.type === 'settle' ? (amount === 0 ? 'release' : 'consume') : operation.type;
+    operation.type === 'settle'
+      ? amount === 0
+        ? 'release'
+        : 'consume'
+      : operation.type === 'renew'
+        ? 'renewal'
+        : operation.type;
   const bucket = operation.type === 'grant' ? (operation.bucket ?? 'purchased') : undefined;
 
   const { existing, wallet } = state;
+  // A period is renewed once: asking again, even with other plan values, replays the first.
+  if (existing !== undefined && operation.type === 'renew') {
+    if (
+      existing.id !== id ||
+      existing.organizationId !== organizationId ||
+      existing.type !== 'renewal' ||
+      existing.renewal?.periodStartsAt !== operation.period.startsAt
+    ) {
+      throw new CreditsError('credits_reference_conflict');
+    }
+    return { kind: 'replayed', entry: existing };
+  }
   if (existing !== undefined) {
     // A hold is closed once: a different close of the same hold is refused, never applied.
     if (holdOf !== undefined && existing.holdOf === holdOf && existing.type !== type) {
@@ -291,7 +370,10 @@ export function applyOperation(
   let split: CreditBuckets | undefined;
   let held: number | undefined;
   let expiresAt: IsoTimestamp | undefined;
+  let renewal: CreditRenewal | undefined;
+  let period: CreditPeriod | undefined = wallet.period;
   const available = availableOf(wallet, at);
+  const reserved = wallet.balance - available;
 
   switch (operation.type) {
     case 'grant': {
@@ -303,7 +385,7 @@ export function applyOperation(
     }
     case 'consume': {
       if (-amount > available) throw new CreditsError('credits_insufficient');
-      split = take(buckets, -amount);
+      split = take(buckets, -amount, order);
       nextBuckets = minus(buckets, split);
       break;
     }
@@ -361,11 +443,48 @@ export function applyOperation(
       nextHolds = open.filter((h) => h.entryId !== holdOf);
       if (-amount > available + held) throw new CreditsError('credits_insufficient');
       if (amount !== 0) {
-        split = take(buckets, -amount);
+        split = take(buckets, -amount, order);
         nextBuckets = minus(buckets, split);
       }
       break;
     }
+    case 'renew': {
+      const { startsAt, endsAt } = operation.period;
+      // Periods only move forward: an older period is never renewed over a newer one.
+      if (wallet.period !== undefined && startsAt <= wallet.period.startsAt) {
+        throw new CreditsError('credits_renewal_out_of_order');
+      }
+      // A period is renewed once it has started, never ahead of time.
+      if (startsAt > at) throw new CreditsError('invalid_period');
+      const last = buckets.included;
+      // Only a period's own included credits can end with it: a wallet's first renewal keeps
+      // whatever it already had, since no plan period gave it.
+      const wanted =
+        wallet.period === undefined || operation.carryMax === 'all'
+          ? last
+          : Math.min(last, operation.carryMax);
+      // Credits held by running operations are never taken away: they are spent first (included
+      // first by default), so what is reserved stays until those operations close.
+      const expired = Math.min(last - wanted, Math.max(0, last - reserved));
+      const carried = last - expired;
+      amount = operation.included - expired;
+      nextBuckets = { ...buckets, included: carried + operation.included };
+      renewal = {
+        periodStartsAt: startsAt,
+        periodEndsAt: endsAt,
+        granted: operation.included,
+        carried,
+        expired,
+      };
+      period = { startsAt, endsAt, included: carried + operation.included, consumed: 0 };
+      break;
+    }
+  }
+
+  // What the period spent: consumes add, refunds give back (never below 0).
+  if (period !== undefined && operation.type !== 'renew') {
+    if (type === 'consume') period = { ...period, consumed: period.consumed - amount };
+    if (type === 'refund') period = { ...period, consumed: Math.max(0, period.consumed - amount) };
   }
 
   const balance = wallet.balance + amount;
@@ -387,6 +506,7 @@ export function applyOperation(
     ...(held === undefined ? {} : { held }),
     ...(expiresAt === undefined ? {} : { expiresAt }),
     ...(holdOf === undefined ? {} : { holdOf }),
+    ...(renewal === undefined ? {} : { renewal: Object.freeze(renewal) }),
     createdAt: at,
   });
   return {
@@ -396,6 +516,7 @@ export function applyOperation(
       balance,
       buckets: Object.freeze(nextBuckets),
       holds: Object.freeze(nextHolds),
+      ...(period === undefined ? {} : { period: Object.freeze(period) }),
       updatedAt: at,
     }),
     entry,
@@ -437,6 +558,12 @@ export function verifyLedger(
       buckets = plus(buckets, entry.split ?? { included: 0, purchased: entry.amount });
     } else if (entry.type === 'adjustment') {
       buckets = { ...buckets, purchased: buckets.purchased + entry.amount };
+    } else if (entry.type === 'renewal') {
+      const r = entry.renewal;
+      if (r === undefined || r.granted - r.expired !== entry.amount) {
+        problems.add('buckets_mismatch');
+      }
+      buckets = { ...buckets, included: buckets.included + entry.amount };
     }
     if (buckets.included < 0 || buckets.purchased < 0) problems.add('negative_balance');
     if (entry.organizationId !== wallet.organizationId || entry.walletId !== wallet.id) {

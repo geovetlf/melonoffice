@@ -1,4 +1,4 @@
-import type { CreditBalance, CreditService } from '@melonoffice/credits';
+import type { CreditBalance, CreditRenewal, CreditService } from '@melonoffice/credits';
 import type { Hono } from 'hono';
 import type { AuthEnv } from './auth.js';
 import { withPermission, type AuthorizationDependencies } from './authorization.js';
@@ -11,12 +11,20 @@ import { withPermission, type AuthorizationDependencies } from './authorization.
  */
 export function registerCreditRoutes(
   app: Hono<AuthEnv>,
-  dependencies: AuthorizationDependencies & { readonly credits: CreditService },
+  dependencies: AuthorizationDependencies & {
+    readonly credits: CreditService;
+    /** Renews the wallet when a new plan period started (ADR-0127). Absent: never renewed. */
+    readonly renewal?: CreditRenewal;
+  },
 ): void {
-  const { credits } = dependencies;
+  const { credits, renewal } = dependencies;
   app.get(
     '/v1/organizations/:organizationId/credits',
     withPermission('credits.read', dependencies, async (c, tenant) => {
+      // A renewal that fails never hides the balance: it is retried on the next read.
+      await renewal?.ensureCurrent(tenant).catch((error: unknown) => {
+        c.get('logger').warn('credits renewal failed', { error });
+      });
       const balance = await credits.balanceOf(tenant);
       if (balance.status !== 'present') {
         c.get('logger').warn('credits unavailable', { reason: balance.reason });
@@ -43,6 +51,16 @@ function toView(organizationId: string, balance: CreditBalance) {
     purchased: balance.purchased,
     reserved: balance.reserved,
     available: balance.available,
+    // The plan period (ADR-0127): when it started, when it renews, what it included and spent.
+    period:
+      balance.period === undefined
+        ? null
+        : {
+            startsAt: balance.period.startsAt,
+            renewsAt: balance.period.endsAt,
+            included: balance.period.included,
+            consumed: balance.period.consumed,
+          },
     updatedAt: balance.updatedAt,
   };
 }

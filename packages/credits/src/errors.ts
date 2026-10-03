@@ -18,7 +18,9 @@ export type CreditsErrorCode =
   | 'credits_holds_limit'
   | 'credits_hold_invalid'
   | 'credits_hold_closed'
-  | 'invalid_hold_expiry';
+  | 'invalid_hold_expiry'
+  | 'invalid_period'
+  | 'credits_renewal_out_of_order';
 
 export class CreditsError extends Error {
   override readonly name = 'CreditsError';
