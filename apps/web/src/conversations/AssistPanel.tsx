@@ -1,6 +1,7 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
 import { Button, StateMessage } from '@melonoffice/ui';
 import { useId, useState } from 'react';
+import { OutOfCredits } from '../aiUsage/OutOfCredits.js';
 import { InboxError, type AssistOperation, type AssistResult } from './inboxClient.js';
 
 export interface AssistPanelProps {
@@ -255,7 +256,11 @@ export function AssistPanel({
               ) : undefined
             }
           >
-            <FormattedMessage id={`conversations.assist.error.${state.code}`} />
+            {state.code === 'ai_credits_insufficient' ? (
+              <OutOfCredits />
+            ) : (
+              <FormattedMessage id={`conversations.assist.error.${state.code}`} />
+            )}
           </StateMessage>
         ) : null}
         {state.kind === 'done' ? (

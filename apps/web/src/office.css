@@ -2787,3 +2787,21 @@ a.sidebar__item:hover {
     background: color-mix(in srgb, var(--mo-color-accent) 14%, transparent);
   }
 }
+
+/* Plan and credits (D-12, ADR-0123). */
+.credits-panel__agents {
+  display: grid;
+  gap: var(--mo-space-1, 4px);
+  margin: 0 0 var(--mo-space-3, 12px);
+  padding: 0;
+  list-style: none;
+}
+.credits-panel__agents li {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--mo-space-2, 8px);
+}
+.out-of-credits__options {
+  display: block;
+  margin-top: var(--mo-space-1, 4px);
+}

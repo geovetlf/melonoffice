@@ -11,6 +11,7 @@ import {
   type FormEvent,
   type ReactNode,
 } from 'react';
+import { OutOfCredits } from '../aiUsage/OutOfCredits.js';
 import { FollowUpForm } from '../followUps/FollowUps.js';
 import type { FollowUpView, FollowUpsClient } from '../followUps/followUpsClient.js';
 import { navigate } from '../identity/router.js';
@@ -226,7 +227,11 @@ export function GiaConversation() {
               <GiaReply answer={entry.answer} />
             ) : (
               <p className="gia-chat__error" role="alert">
-                <FormattedMessage id={ERRORS[entry.reason]} />
+                {entry.reason === 'credits' ? (
+                  <OutOfCredits />
+                ) : (
+                  <FormattedMessage id={ERRORS[entry.reason]} />
+                )}
               </p>
             )}
           </li>

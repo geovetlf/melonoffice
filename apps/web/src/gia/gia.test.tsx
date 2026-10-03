@@ -319,9 +319,13 @@ describe("GIA's Workplace (ADR-0050)", () => {
       target: { value: 'Hola' },
     });
     fireEvent.click(within(chat).getByRole('button', { name: 'Send' }));
-    expect((await within(chat).findByRole('alert')).textContent).toBe(
-      'Your organization has no credits left for GIA.',
-    );
+    // What happened, what is available, and what can be done: never a forced upgrade.
+    const alert = await within(chat).findByRole('alert');
+    expect(alert.textContent).toContain('This action did not run: there are not enough credits.');
+    expect(alert.textContent).toContain('498 credits available.');
+    expect(alert.textContent).toContain('wait for your plan');
+    fireEvent.click(within(alert).getByRole('button', { name: 'See plan and credits' }));
+    expect(globalThis.location.pathname).toBe('/ai-usage');
     cleanup();
     open('/gia', (b) => {
       b.options.permissions = b.options.permissions.filter((p) => p !== 'gia.ask');

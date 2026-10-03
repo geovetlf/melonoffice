@@ -31,8 +31,22 @@ export interface SpecialistView {
 }
 
 export type CreditsView =
-  | { readonly status: 'present'; readonly balance: number; readonly updatedAt: string }
+  | {
+      readonly status: 'present';
+      readonly balance: number;
+      /** Where the balance came from, and what running operations hold (ADR-0123). */
+      readonly included?: number;
+      readonly purchased?: number;
+      readonly reserved?: number;
+      readonly available?: number;
+      readonly updatedAt: string;
+    }
   | { readonly status: 'absent' | 'unavailable' };
+
+/** What the plan gives (entitlements, ADR-0021): credits included each month, when it gives any. */
+export interface PlanLimitsView {
+  readonly monthlyIncluded: number | 'unlimited' | null;
+}
 
 export type BillingView =
   | {
@@ -47,6 +61,7 @@ export interface OfficeClient {
   specialists(): Promise<readonly SpecialistView[]>;
   credits(): Promise<CreditsView>;
   billing(): Promise<BillingView>;
+  entitlements?(): Promise<PlanLimitsView>;
 }
 
 /** The API refused or failed: the screen shows the part as unavailable, never guesses it. */
@@ -80,6 +95,14 @@ export function createOfficeClient(request: ReplyRequest, organizationId: string
       return body.status === 'present'
         ? body
         : { status: body.status === 'absent' ? 'absent' : 'unavailable' };
+    },
+    entitlements: async () => {
+      const body = await get<{ limits?: Record<string, unknown> }>('/entitlements');
+      const value = body.limits?.['credits.monthlyIncluded'];
+      return {
+        monthlyIncluded:
+          value === 'unlimited' || (typeof value === 'number' && value > 0) ? value : null,
+      };
     },
   };
 }
