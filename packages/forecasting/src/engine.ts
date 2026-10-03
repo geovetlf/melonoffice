@@ -60,10 +60,13 @@ export interface ForecastContextPort {
 
 /** The existing credits engine (ADR-0023), by `CreditService`'s own signatures. */
 export interface ForecastCreditsPort {
-  balanceOf(
-    tenant: TenantContext,
-  ): Promise<
-    | { readonly status: 'present'; readonly balance: number }
+  balanceOf(tenant: TenantContext): Promise<
+    | {
+        readonly status: 'present';
+        readonly balance: number;
+        /** The balance less what running operations hold (ADR-0123). */
+        readonly available?: number;
+      }
     | { readonly status: 'unavailable'; readonly reason: string }
   >;
   consume(
@@ -493,7 +496,11 @@ export function createForecastEngine(options: ForecastEngineOptions): ForecastEn
       }
       if (creditsPerRun > 0) {
         const balance = await credits.balanceOf(tenant);
-        if (balance.status !== 'present' || balance.balance < creditsPerRun) {
+        // Credits another operation holds are not this run's (ADR-0123).
+        if (
+          balance.status !== 'present' ||
+          (balance.available ?? balance.balance) < creditsPerRun
+        ) {
           return denied(tenant, 'forecast_credits_insufficient', { target: id });
         }
       }

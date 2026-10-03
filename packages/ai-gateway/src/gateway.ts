@@ -41,7 +41,7 @@ import {
   type ProviderStreamEvent,
 } from './adapter.js';
 import { costMicroUsd, type CreditRate } from './cost.js';
-import { creditReferenceOf, type AICreditsPort } from './credits.js';
+import { AI_HOLD_TTL_MS, creditReferenceOf, type AICreditsPort } from './credits.js';
 import { checkDataPolicy } from './data-policy.js';
 import { createProviderHealthTracker, type ProviderHealthTracker } from './health.js';
 import type { ModelPolicyCatalogue } from './policy.js';
@@ -346,6 +346,8 @@ export function createAIGateway(options: AIGatewayOptions): AIGateway {
     readonly strategy: AIRoutingStrategy;
     readonly idempotencyKey: string;
     readonly creditsOf: (candidate: RouteCandidate) => number | undefined;
+    /** The call's hold (ADR-0123), while it is open. */
+    hold?: { readonly reference: string; open: boolean };
   }
 
   /**
@@ -428,11 +430,12 @@ export function createAIGateway(options: AIGatewayOptions): AIGateway {
     if (affordable.length === 0) return deny('credit_limit_exceeded');
     const balance = await port.balanceOf(tenant);
     if (balance.status !== 'present') return deny('credits_unavailable');
-    const covered = affordable.filter((c) => (creditsOf(c) ?? Infinity) <= balance.balance);
+    const spendable = balance.available ?? balance.balance;
+    const covered = affordable.filter((c) => (creditsOf(c) ?? Infinity) <= spendable);
     if (covered.length === 0) return deny('credits_insufficient');
     // The chosen model first; the others only when the policy allows a fallback.
     const candidates = policy.fallback === 'compatible' ? covered : covered.slice(0, 1);
-    return {
+    const prepared: Prepared = {
       candidates,
       port,
       pricing,
@@ -440,6 +443,25 @@ export function createAIGateway(options: AIGatewayOptions): AIGateway {
       idempotencyKey: digestOf({ organizationId, requestId: request.requestId }),
       creditsOf,
     };
+    // 6. Hold the most any candidate may cost, so no other operation spends it meanwhile.
+    const most = Math.max(0, ...candidates.map((c) => creditsOf(c) ?? 0));
+    if (port.hold !== undefined && most > 0) {
+      const reference = creditReferenceOf(request.requestId);
+      try {
+        await port.hold(tenant, {
+          amount: most,
+          referenceId: reference,
+          reason: 'ai_generation',
+          ttlMs: AI_HOLD_TTL_MS,
+        });
+      } catch (error) {
+        return deny(
+          codeOf(error) === 'credits_insufficient' ? 'credits_insufficient' : 'credits_unavailable',
+        );
+      }
+      prepared.hold = { reference, open: true };
+    }
+    return prepared;
   }
 
   const isPrepared = (value: Prepared | AIResponse): value is Prepared => 'candidates' in value;
@@ -478,13 +500,26 @@ export function createAIGateway(options: AIGatewayOptions): AIGateway {
       callLog.error('ai credits not priced', { attempts, latencyMs });
       return failedResponse(requestId, 'credits_charge_failed', model, attempts, latencyMs);
     }
-    if (charge > 0) {
+    const { hold } = prepared;
+    if (charge > 0 || hold !== undefined) {
       try {
-        await port.consume(tenant, {
-          amount: charge,
-          referenceId: creditReferenceOf(request.requestId),
-          reason: 'ai_generation',
-        });
+        if (hold !== undefined && port.settle !== undefined && port.release !== undefined) {
+          // The real cost, once: whatever the hold set aside beyond it is freed.
+          await (charge > 0
+            ? port.settle(tenant, {
+                holdOf: hold.reference,
+                amount: charge,
+                reason: 'ai_generation',
+              })
+            : port.release(tenant, { holdOf: hold.reference, reason: 'ai_generation' }));
+          hold.open = false;
+        } else {
+          await port.consume(tenant, {
+            amount: charge,
+            referenceId: creditReferenceOf(request.requestId),
+            reason: 'ai_generation',
+          });
+        }
       } catch {
         // The answer is not passed on when it cannot be accounted for.
         await record('ai.request_failed', 'credits_charge_failed');
@@ -576,6 +611,21 @@ export function createAIGateway(options: AIGatewayOptions): AIGateway {
           : modelKey(first.provider.id, first.model.modelId),
       strategy,
     });
+  }
+
+  /**
+   * A call that ends without settling its hold (it failed, or could not be charged) gives the
+   * credits back. A release that fails is logged: the hold still expires by itself.
+   */
+  async function releaseHold(ctx: CallContext, prepared: Prepared): Promise<void> {
+    const { hold, port } = prepared;
+    if (hold === undefined || !hold.open || port.release === undefined) return;
+    try {
+      await port.release(ctx.tenant, { holdOf: hold.reference, reason: 'ai_generation' });
+      hold.open = false;
+    } catch {
+      ctx.log.warn('ai credits hold not released');
+    }
   }
 
   /** The call reached a provider and did not complete. */
@@ -709,7 +759,7 @@ export function createAIGateway(options: AIGatewayOptions): AIGateway {
       return {
         response: await settle(ctx, request, policy, prepared, c, outcome, progress, callLog),
       };
-    });
+    }).finally(() => releaseHold(ctx, prepared));
   }
 
   /**
@@ -781,7 +831,9 @@ export function createAIGateway(options: AIGatewayOptions): AIGateway {
         return { response };
       },
       () => !passedOn,
-    ).finally(() => out.close());
+    )
+      .finally(() => releaseHold(ctx, prepared))
+      .finally(() => out.close());
     let finished = false;
     try {
       for await (const text of out) yield Object.freeze({ type: 'text', text });
@@ -1107,3 +1159,9 @@ const silent: Logger = {
   error: () => undefined,
   child: () => silent,
 };
+
+/** The stable code of an error from a port, if it has one. */
+function codeOf(error: unknown): string | undefined {
+  const code = (error as { readonly code?: unknown } | null)?.code;
+  return typeof code === 'string' ? code : undefined;
+}
