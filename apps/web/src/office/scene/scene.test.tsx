@@ -414,7 +414,8 @@ describe('the Home’s office (Home V4)', () => {
     expect(motor.getAttribute('aria-expanded')).toBe('true');
     const panel = screen.getByRole('dialog', { name: 'MelonMotor' });
     expect(await within(panel).findByText('October launch')).toBeTruthy();
-    expect(within(panel).getByText('1 task under way')).toBeTruthy();
+    // The plans and the tasks under way load separately: wait for each.
+    expect(await within(panel).findByText('1 task under way')).toBeTruthy();
     fireEvent.keyDown(globalThis.window, { key: 'Escape' });
     expect(screen.queryByRole('dialog', { name: 'MelonMotor' })).toBeNull();
   });
