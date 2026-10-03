@@ -6,6 +6,7 @@ import { RUN_EVENT_PATH, type EventHandler } from './events.js';
 import { RUN_FORECAST_PATH, type ForecastHandler } from './forecasts.js';
 import type { JobHandler } from './handler.js';
 import { registerHealth } from './health.js';
+import { RUN_SWEEP_PATH, type ExecutionSweeper } from './sweeps.js';
 
 export const SERVICE_NAME = 'worker';
 
@@ -41,6 +42,11 @@ export interface AppOptions {
      * event deliveries are refused with 503.
      */
     readonly events?: EventHandler;
+    /**
+     * Closes abandoned agent work every 3 hours (ADR-0121), behind the same invoker check.
+     * Absent: sweep deliveries are refused with 503.
+     */
+    readonly sweeps?: Pick<ExecutionSweeper, 'run'>;
   };
 }
 
@@ -157,6 +163,15 @@ export function createApp({ logger, version, jobs }: AppOptions): Hono<Env> {
       read.body,
       Number.isSafeInteger(retries) && retries >= 0 ? retries : 0,
     );
+    return c.json(result.body, result.status);
+  });
+
+  // The automatic sweep of abandoned agent work (ADR-0121): same invoker, same checks.
+  app.post(RUN_SWEEP_PATH, async (c) => {
+    if (jobs?.sweeps === undefined) return c.json({ error: 'sweeps_not_configured' }, 503);
+    const read = await delivery(c);
+    if ('refused' in read) return read.refused;
+    const result = await jobs.sweeps.run(read.body);
     return c.json(result.body, result.status);
   });
 

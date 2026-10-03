@@ -13,6 +13,7 @@ export * from './departments.js';
 export * from './documents.js';
 export * from './events.js';
 export * from './executions.js';
+export * from './sweeps.js';
 export * from './forecasts.js';
 export * from './jobs.js';
 export * from './knowledge.js';

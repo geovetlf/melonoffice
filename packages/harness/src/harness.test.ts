@@ -1076,6 +1076,7 @@ describe('Multi-step plans, limits and hand-off (ADR-0101)', () => {
     expect(at('completed')).toBeNull();
     expect(at('cancelled')).toBeNull();
     expect(at('failed', 'approval_rejected')).toBeNull();
+    expect(at('failed', 'stale_execution')).toBeNull();
     expect(at('completed', null, ['price list'])).toMatchObject({ reason: 'missing_information' });
     expect(at('waiting_approval')).toMatchObject({ reason: 'authorization_required' });
     expect(at('failed', 'credit_limit_exceeded')).toEqual({

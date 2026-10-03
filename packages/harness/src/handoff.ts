@@ -59,6 +59,9 @@ export function handoffForTask(outcome: {
   const { status, failure, missing } = outcome;
   if (status === 'failed') {
     if (failure === 'approval_rejected') return null;
+    // Closed by the automatic sweep (ADR-0121): nothing failed to recover, its person gets a
+    // "task abandoned" notice instead.
+    if (failure === 'stale_execution') return null;
     // Its agent was paused or disabled (AE-4): a person's decision, not an error to recover.
     if (failure !== null && AGENT_STOPPED.has(failure)) return handoffTo('policy', failure);
     if (failure !== null && NEEDS_AUTHORIZATION.has(failure)) {

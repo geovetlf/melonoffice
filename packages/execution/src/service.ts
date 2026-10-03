@@ -1,5 +1,6 @@
 import { actorOf, buildAuditEvent, type AuditEvent } from '@melonoffice/audit';
 import type {
+  ExecutionStatus,
   Execution,
   ExecutionId,
   ExecutionNode,
@@ -32,6 +33,9 @@ import {
 } from './model.js';
 import type { ExecutionRepository } from './repository.js';
 
+/** Why the automatic sweep closed an execution (ADR-0121). */
+export const STALE_EXECUTION = 'stale_execution';
+
 /** What a caller gives to create an execution. The organization and user come from the tenant. */
 export type ExecutionRequest = Omit<NewExecution, 'organizationId' | 'userId'>;
 
@@ -60,6 +64,23 @@ export interface ExecutionService {
    * `verifying` with unfinished nodes, no `completed` without passing evidence).
    */
   runtimeChangeStatus(tenant: TenantContext, id: string, change: StatusChange): Promise<Execution>;
+  /**
+   * The automatic sweep closes an abandoned execution (ADR-0121): only a `runtime` context, never
+   * a plan's own execution, and only when it is still exactly as the sweep found it (`from` and
+   * `revision`); otherwise `execution_concurrency_conflict` and nothing changes. It fails with
+   * `stale_execution`, pointing at the sweep, recorded as `execution.state_changed` and
+   * `execution.abandoned` in the same write. Nothing is deleted, nothing new is started.
+   */
+  runtimeAbandon(
+    tenant: TenantContext,
+    id: string,
+    found: {
+      readonly from: ExecutionStatus;
+      readonly revision: number;
+      readonly sweepId: string;
+      readonly why: string;
+    },
+  ): Promise<Execution>;
   /**
    * The runtime moves one node (ADR-0031): only a `runtime` context, recorded as
    * `execution.node_changed` in the same write. There is no other way to change a node's status
@@ -206,7 +227,8 @@ export function createExecutionService({
         | 'execution.node_changed'
         | 'execution.verification_recorded'
         | 'execution.node_retried'
-        | 'execution.node_outcome_unknown';
+        | 'execution.node_outcome_unknown'
+        | 'execution.abandoned';
     },
     at: Date,
   ): AuditEvent =>
@@ -574,6 +596,49 @@ export function createExecutionService({
     runtimeChangeStatus: (tenant, id, change) => runtimeStatus(tenant, id, change, false),
 
     runtimePlanChangeStatus: (tenant, id, change) => runtimeStatus(tenant, id, change, true),
+
+    async runtimeAbandon(tenant, id, found) {
+      requireRuntime(tenant);
+      if (!/^[a-z0-9:_-]{1,64}$/.test(found.sweepId) || !/^[a-z][a-z_]{0,63}$/.test(found.why)) {
+        throw new ExecutionError('invalid_execution', 'sweep');
+      }
+      const organizationId = await organizationOf(tenant);
+      const at = now();
+      return repository.update(organizationId, idOf(id), (current) => {
+        if (current.mode === 'plan') {
+          throw new ExecutionError('actor_not_allowed', 'plan_execution');
+        }
+        // Moved since the sweep looked: it is not abandoned, and is left as it is.
+        if (current.status !== found.from || current.revision !== found.revision) {
+          throw new ExecutionError('execution_concurrency_conflict');
+        }
+        const write = statusWrite(
+          tenant,
+          {
+            from: found.from,
+            to: 'failed',
+            failure: { code: STALE_EXECUTION, ref: { type: 'execution_sweep', id: found.sweepId } },
+          },
+          at,
+        )(current);
+        return {
+          execution: write.execution,
+          events: [
+            ...write.events,
+            event(
+              tenant,
+              write.execution,
+              {
+                action: 'execution.abandoned',
+                transition: { from: found.from, to: 'failed' },
+                reason: found.why,
+              },
+              at,
+            ),
+          ],
+        };
+      });
+    },
 
     // Graph changes are operational detail: they live in the execution itself, not the audit log.
     async addNodes(tenant, id, nodes) {

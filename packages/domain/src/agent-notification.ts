@@ -44,4 +44,6 @@ export type AgentNotificationKind =
   | 'task_received'
   // A plan of several agents ended (ADR-0119): its result is ready, or it stopped.
   | 'result_available'
-  | 'plan_failed';
+  | 'plan_failed'
+  // The automatic sweep closed an abandoned task (ADR-0121).
+  | 'task_abandoned';

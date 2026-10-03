@@ -14,6 +14,7 @@ import {
   type OpenExecutionIndex,
   type OpenOrganizationIndex,
   type ExecutionRepository,
+  type StaleExecutionIndex,
   type ExecutionWrite,
 } from '@melonoffice/execution';
 import type {
@@ -22,6 +23,7 @@ import type {
   ExecutionId,
   ExecutionNode,
   ExecutionRef,
+  ExecutionStatus,
   ExecutionVerification,
   IsoTimestamp,
   OrganizationId,
@@ -253,11 +255,62 @@ function toExecution(id: string, d: ExecutionDocument): Execution {
   }
 }
 
+/** A query Firestore refuses until its composite index exists (gRPC FAILED_PRECONDITION). */
+const isMissingIndex = (error: unknown): boolean =>
+  typeof error === 'object' &&
+  error !== null &&
+  (error as { code?: unknown }).code === 9 &&
+  /index/i.test(String((error as { message?: unknown }).message));
+
+/** How many executions of one status the sweep reads when its index is missing (ADR-0121). */
+const SWEEP_FALLBACK_LIMIT = 500;
+
 /** Executions in Firestore. Each write is one transaction with its audit events. */
 export class FirestoreExecutionRepository
-  implements ExecutionRepository, OpenExecutionIndex, OpenOrganizationIndex
+  implements ExecutionRepository, OpenExecutionIndex, OpenOrganizationIndex, StaleExecutionIndex
 {
-  constructor(private readonly db: Firestore) {}
+  constructor(
+    private readonly db: Firestore,
+    /** Told when the sweep had to read without its index (ADR-0061's fallback). */
+    private readonly options: { readonly onIndexMissing?: (query: string) => void } = {},
+  ) {}
+
+  /**
+   * The sweep's candidates (ADR-0121): one status, not updated since `before`, oldest first.
+   * Needs the composite index `executions (status, updatedAt)`; without it, reads up to 500 of
+   * the status and filters here. A record that does not read as an execution is skipped, never
+   * swept.
+   */
+  async openSince(status: ExecutionStatus, before: IsoTimestamp, limit: number) {
+    if (!OPEN_STATUSES.includes(status) || !Number.isSafeInteger(limit) || limit < 1) return [];
+    const cutoff = new Date(before);
+    if (Number.isNaN(cutoff.getTime())) return [];
+    const ofStatus = this.db.collection(EXECUTIONS).where('status', '==', status);
+    const read = (docs: readonly { id: string; data: () => unknown }[]): Execution[] =>
+      docs.flatMap((doc) => {
+        try {
+          return [toExecution(doc.id, doc.data() as ExecutionDocument)];
+        } catch {
+          return [];
+        }
+      });
+    try {
+      const snapshot = await ofStatus
+        .where('updatedAt', '<', Timestamp.fromDate(cutoff))
+        .orderBy('updatedAt', 'asc')
+        .limit(limit)
+        .get();
+      return read(snapshot.docs);
+    } catch (error) {
+      if (!isMissingIndex(error)) throw error;
+      this.options.onIndexMissing?.('executions_status_updated');
+      const snapshot = await ofStatus.limit(SWEEP_FALLBACK_LIMIT).get();
+      return read(snapshot.docs)
+        .filter((e) => e.updatedAt < before)
+        .sort((a, b) => (a.updatedAt < b.updatedAt ? -1 : a.updatedAt > b.updatedAt ? 1 : 0))
+        .slice(0, limit);
+    }
+  }
 
   /**
    * One query per open status, each with equality filters only, so Firestore serves them from

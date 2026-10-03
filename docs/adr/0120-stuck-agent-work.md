@@ -1,6 +1,6 @@
 # ADR-0120: Stuck agent work never blocks an agent (AE-7)
 
-- Status: Proposed
+- Status: Proposed. Its "Not done" sweeper is built by [ADR-0121](0121-automatic-sweep-of-abandoned-work.md).
 - Date: 2026-10-02
 - Builds on: [ADR-0029](0029-runtime-guards.md), [ADR-0032](0032-worker-and-job-transport.md), [ADR-0119](0119-bounded-work-and-plan-results.md)
 

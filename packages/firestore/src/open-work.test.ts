@@ -1,6 +1,8 @@
 import { notificationIdOf } from '@melonoffice/agents';
 import type {
   AgentNotification,
+  Execution,
+  ExecutionId,
   IsoTimestamp,
   OrganizationId,
   SpecialistId,
@@ -8,7 +10,8 @@ import type {
 } from '@melonoffice/domain';
 import { describe, expect, it } from 'vitest';
 import { FirestoreAgentNotificationRepository } from './agent-notifications.js';
-import { EXECUTIONS, FirestoreExecutionRepository } from './executions.js';
+import { EXECUTIONS, FirestoreExecutionRepository, toExecutionDocument } from './executions.js';
+import { FirestoreSweepLedger } from './sweeps.js';
 import { emulatorFirestore, emulatorHost } from './testing.js';
 
 /**
@@ -81,5 +84,66 @@ describe.runIf(emulatorHost)('open work and plan notices (ADR-0119, emulator)', 
     await repository.put(task);
     const page = await repository.page(ORG_A, ALICE, { limit: 10 });
     expect(page.items).toEqual(expect.arrayContaining([result, task]));
+  });
+
+  it('reads the sweep’s candidates: one status, older than the cutoff, oldest first (ADR-0121)', async () => {
+    const db = emulatorFirestore();
+    // Dates no other test uses, so other files' executions never show up here.
+    const execution = (n: number, status: Execution['status'], updatedAt: string): Execution =>
+      ({
+        id: `00000000-0000-4000-8000-00000000${String(n).padStart(4, '0')}` as ExecutionId,
+        organizationId: ORG_A,
+        userId: ALICE,
+        mode: 'execute',
+        status,
+        input: { type: 'agent_task', id: 'x' },
+        versionSnapshot: { schemaVersion: 1, components: [] },
+        nodes: [{ id: 'work', type: 'agent', label: 'work', status: 'pending', dependsOn: [] }],
+        revision: 1,
+        createdAt: '2000-01-01T00:00:00.000Z',
+        updatedAt,
+      }) as unknown as Execution;
+    const rows = [
+      execution(1, 'running', '2000-01-03T00:00:00.000Z'),
+      execution(2, 'running', '2000-01-02T00:00:00.000Z'),
+      execution(3, 'running', '2000-01-09T00:00:00.000Z'),
+      execution(4, 'verifying', '2000-01-02T00:00:00.000Z'),
+    ];
+    await Promise.all(
+      rows.map((e) => db.collection(EXECUTIONS).doc(e.id).set(toExecutionDocument(e))),
+    );
+    const missing: string[] = [];
+    const repository = new FirestoreExecutionRepository(db, {
+      onIndexMissing: (query) => missing.push(query),
+    });
+    const before = '2000-01-05T00:00:00.000Z' as IsoTimestamp;
+    const found = await repository.openSince('running', before, 10);
+    const mine = found.filter((e) => rows.some((r) => r.id === e.id)).map((e) => e.id);
+    expect(mine).toEqual([rows[1]?.id, rows[0]?.id]);
+    expect(await repository.openSince('completed', before, 10)).toEqual([]);
+    expect(await repository.openSince('running', 'not a time' as IsoTimestamp, 10)).toEqual([]);
+    // The emulator needs no composite index: nothing fell back.
+    expect(missing).toEqual([]);
+  });
+
+  it('keeps one record per sweep slot, run once (ADR-0121)', async () => {
+    const ledger = new FirestoreSweepLedger(emulatorFirestore());
+    const slot = `sweep-2000010${String(Date.now() % 10)}t${String(Date.now() % 7).padStart(2, '0')}x${String(Math.random()).slice(2, 8)}`;
+    const at = '2026-10-02T00:00:00.000Z' as IsoTimestamp;
+    expect(await ledger.reserve(slot, at)).toBe(true);
+    expect(await ledger.reserve(slot, at)).toBe(false);
+    expect(await ledger.claim(slot, at, 60_000)).toBe('claimed');
+    expect(await ledger.claim(slot, at, 60_000)).toBe('running');
+    // A run that died long ago may be claimed again.
+    expect(await ledger.claim(slot, '2026-10-02T01:00:00.000Z' as IsoTimestamp, 60_000)).toBe(
+      'claimed',
+    );
+    await ledger.finish({ slotId: slot, counts: { closed: 0 }, closed: [], finishedAt: at });
+    expect(await ledger.claim(slot, at, 60_000)).toBe('done');
+    expect(await ledger.reserve(slot, at)).toBe(false);
+    const other = `${slot}b`;
+    expect(await ledger.reserve(other, at)).toBe(true);
+    await ledger.unreserve(other);
+    expect(await ledger.reserve(other, at)).toBe(true);
   });
 });
