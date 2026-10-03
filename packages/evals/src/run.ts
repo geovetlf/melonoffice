@@ -1,0 +1,274 @@
+import {
+  AGENT_ANSWER_SCHEMA,
+  AGENT_TASK_MAX_OUTPUT_TOKENS,
+  AGENT_TASK_PROMPT,
+  agentTaskMessages,
+} from '@melonoffice/agents';
+import {
+  allowsFallback,
+  costMicroUsd,
+  creditsFor,
+  CREDIT_RATE,
+  estimateInputTokens,
+  promptLabel,
+  routeModel,
+  type ProviderCall,
+  type ProviderRegistry,
+} from '@melonoffice/ai-gateway';
+import type {
+  AIDataPolicy,
+  DepartmentId,
+  DeploymentEnvironment,
+  ModelPolicy,
+  RoleId,
+  SpecialistConfiguration,
+} from '@melonoffice/domain';
+import { findAgentTemplate } from '@melonoffice/specialists';
+import { contextTextOf, type EvalCase, type EvalSuiteId } from './cases.js';
+import { scoreAnswer, type EvalScore } from './score.js';
+
+/**
+ * Runs the eval cases against real models (ADR-0134): each case is the agent task's own prompt
+ * (`agentTaskMessages`, the version in `AGENT_TASK_PROMPT`) and answer shape, routed by the AI
+ * Gateway's own router under the policy the worker uses, called through the provider's own
+ * adapter, and scored by `scoreAnswer`. No organization, credits wallet or execution is involved:
+ * the run spends from its own budget, stops before going over it, and records what each case cost.
+ */
+
+/** What the run records of one case. */
+export interface EvalCaseResult {
+  readonly id: string;
+  readonly suite: EvalSuiteId;
+  /**
+   * `scored`: the model answered and the answer was scored. `no_route`: no model fits the policy.
+   * `provider_error`: every candidate failed. `budget_reached`: not run, it could go over budget.
+   */
+  readonly status: 'scored' | 'no_route' | 'provider_error' | 'budget_reached';
+  /** `provider/model@version` that answered, or the last one tried. */
+  readonly model?: string;
+  readonly latencyMs?: number;
+  readonly inputTokens?: number;
+  readonly outputTokens?: number;
+  readonly costMicroUsd?: number;
+  /** Why it was not scored: the router's refusal or the provider's error kind. */
+  readonly reason?: string;
+  readonly score?: EvalScore;
+}
+
+export interface EvalRun {
+  readonly format: 1;
+  /** The prompt version every case ran with, `id@version`. */
+  readonly prompt: string;
+  /** The model policy, `id@version`. */
+  readonly policy: string;
+  readonly environment: DeploymentEnvironment;
+  readonly startedAt: string;
+  readonly budgetCredits: number;
+  readonly cases: readonly EvalCaseResult[];
+  readonly totals: EvalTotals;
+}
+
+export interface EvalTotals {
+  readonly cases: number;
+  readonly scored: number;
+  readonly passed: number;
+  /** Passed over scored, 0..1; 0 when nothing was scored. */
+  readonly passRate: number;
+  readonly costMicroUsd: number;
+  /** At the credit rate (D-12): provider cost, rounded up. */
+  readonly credits: number;
+  readonly latencyMsP50?: number;
+  readonly latencyMsMax?: number;
+  /** Which model answered how many cases. */
+  readonly models: Readonly<Record<string, number>>;
+}
+
+export interface EvalRunOptions {
+  readonly cases: readonly EvalCase[];
+  readonly registry: ProviderRegistry;
+  readonly policy: ModelPolicy;
+  readonly environment: DeploymentEnvironment;
+  readonly dataPolicy?: AIDataPolicy;
+  /** The most the whole run may spend, in credits. A case that could go over it is not run. */
+  readonly budgetCredits: number;
+  readonly timeoutMs?: number;
+  readonly now?: () => Date;
+  /** A monotonic clock in milliseconds, for latency. */
+  readonly clock?: () => number;
+  /** After each case, e.g. to print progress. */
+  readonly onCase?: (result: EvalCaseResult) => void;
+}
+
+/** The names the agents of each template carry in the eval: fixed, never a customer's. */
+const AGENT_NAMES: Readonly<Record<EvalSuiteId, string>> = Object.freeze({
+  commercial: 'Agente Comercial',
+  marketing: 'Agente de Marketing',
+  creative: 'Agente Creativo',
+  operations: 'Agente de Operaciones',
+  finance: 'Agente de Finanzas',
+  research: 'Agente de Investigación',
+});
+
+/** The agent of a suite: its template's role, purpose (Spanish) and skills, as created. */
+export function evalAgent(suite: EvalSuiteId): {
+  readonly name: string;
+  readonly configuration: SpecialistConfiguration;
+} {
+  const template = findAgentTemplate(suite);
+  if (template === undefined) throw new Error(`unknown agent template ${suite}`);
+  return {
+    name: AGENT_NAMES[suite],
+    configuration: {
+      departmentId: `eval_${template.departmentTypeId}` as DepartmentId,
+      mainRoleId: template.mainRoleId as RoleId,
+      roleVersion: template.roleVersion,
+      purpose: template.purpose.es,
+      capabilities: [],
+      skills: template.skills,
+      tools: [],
+      permissions: ['knowledge.read'],
+      policies: template.policies,
+    },
+  };
+}
+
+/** The model request of one case, as the agent task builds it (no proposals offered). */
+export function evalMessages(c: EvalCase) {
+  const agent = evalAgent(c.suite);
+  const skills = agent.configuration.skills.map((s) => ({
+    id: s.id as string,
+    description: (s.id as string).replace(/_/g, ' '),
+  }));
+  return agentTaskMessages(
+    agent,
+    skills,
+    [{ name: 'company_context', text: contextTextOf(c.facts) }],
+    c.request,
+  );
+}
+
+const percentile = (sorted: readonly number[], p: number): number | undefined =>
+  sorted.length === 0
+    ? undefined
+    : sorted[Math.min(sorted.length - 1, Math.ceil(p * sorted.length) - 1)];
+
+export function totalsOf(cases: readonly EvalCaseResult[]): EvalTotals {
+  const scored = cases.filter((c) => c.status === 'scored');
+  const passed = scored.filter((c) => c.score?.passed === true).length;
+  const cost = cases.reduce((sum, c) => sum + (c.costMicroUsd ?? 0), 0);
+  const latencies = scored
+    .map((c) => c.latencyMs)
+    .filter((l): l is number => l !== undefined)
+    .sort((a, b) => a - b);
+  const models: Record<string, number> = {};
+  for (const c of scored) if (c.model !== undefined) models[c.model] = (models[c.model] ?? 0) + 1;
+  const p50 = percentile(latencies, 0.5);
+  const max = latencies.at(-1);
+  return Object.freeze({
+    cases: cases.length,
+    scored: scored.length,
+    passed,
+    passRate: scored.length === 0 ? 0 : passed / scored.length,
+    costMicroUsd: cost,
+    credits: creditsFor(cost, CREDIT_RATE),
+    ...(p50 === undefined ? {} : { latencyMsP50: p50 }),
+    ...(max === undefined ? {} : { latencyMsMax: max }),
+    models: Object.freeze(models),
+  });
+}
+
+export async function runEvals(options: EvalRunOptions): Promise<EvalRun> {
+  const { registry, policy, environment, dataPolicy } = options;
+  const now = options.now ?? (() => new Date());
+  const clock = options.clock ?? (() => performance.now());
+  const timeoutMs = options.timeoutMs ?? 60_000;
+  const budget = options.budgetCredits * CREDIT_RATE.microUsdPerCredit;
+  const startedAt = now().toISOString();
+  const results: EvalCaseResult[] = [];
+  let spent = 0;
+
+  for (const c of options.cases) {
+    const messages = evalMessages(c);
+    const route = routeModel(
+      registry,
+      policy,
+      environment,
+      {
+        capability: 'text_generation',
+        inputModalities: ['text'],
+        outputModality: 'text',
+        sensitivity: 'confidential',
+        estimatedInputTokens: estimateInputTokens({ messages }),
+        maxOutputTokens: AGENT_TASK_MAX_OUTPUT_TOKENS,
+        structuredOutput: true,
+      },
+      undefined,
+      undefined,
+      dataPolicy,
+    );
+    const base = { id: c.id, suite: c.suite } as const;
+    let result: EvalCaseResult;
+    if (route.status === 'none') {
+      result = { ...base, status: 'no_route', reason: route.reason };
+    } else {
+      const calls = Math.min(route.candidates.length, policy.maxCalls ?? route.candidates.length);
+      result = { ...base, status: 'provider_error' };
+      for (const candidate of route.candidates.slice(0, Math.max(1, calls))) {
+        const model = `${candidate.provider.id}/${candidate.model.modelId}@${candidate.model.version}`;
+        // Its worst case must fit what is left: the run never spends past its budget.
+        if (spent + (candidate.estimatedCostMicroUsd ?? Infinity) > budget) {
+          result = { ...base, status: 'budget_reached', model };
+          break;
+        }
+        const call: ProviderCall = {
+          requestId: `eval-${c.id}`,
+          idempotencyKey: `eval-${startedAt}-${c.id}`,
+          model: { id: candidate.model.modelId, version: candidate.model.version },
+          capability: 'text_generation',
+          messages,
+          outputModality: 'text',
+          maxOutputTokens: AGENT_TASK_MAX_OUTPUT_TOKENS,
+          structuredOutput: true,
+          outputSchema: AGENT_ANSWER_SCHEMA,
+          credential: candidate.provider.credential,
+          deadline: new Date(now().getTime() + timeoutMs),
+        };
+        const started = clock();
+        const outcome = await candidate.adapter.generate(call).catch(() => undefined);
+        const latencyMs = Math.round(clock() - started);
+        if (outcome === undefined || outcome.status === 'error') {
+          const kind = outcome?.kind ?? 'invalid_response';
+          result = { ...base, status: 'provider_error', model, latencyMs, reason: kind };
+          if (outcome !== undefined && allowsFallback(kind)) continue;
+          break;
+        }
+        const cost = costMicroUsd(candidate.model.pricing, outcome.usage) ?? 0;
+        spent += cost;
+        result = {
+          ...base,
+          status: 'scored',
+          model,
+          latencyMs,
+          inputTokens: outcome.usage.inputTokens,
+          outputTokens: outcome.usage.outputTokens,
+          costMicroUsd: cost,
+          score: scoreAnswer(c, outcome.output),
+        };
+        break;
+      }
+    }
+    results.push(Object.freeze(result));
+    options.onCase?.(result);
+  }
+
+  return Object.freeze({
+    format: 1,
+    prompt: promptLabel(AGENT_TASK_PROMPT),
+    policy: `${policy.id}@${policy.version}`,
+    environment,
+    startedAt,
+    budgetCredits: options.budgetCredits,
+    cases: Object.freeze(results),
+    totals: totalsOf(results),
+  });
+}
