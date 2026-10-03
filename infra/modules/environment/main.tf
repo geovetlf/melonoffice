@@ -24,8 +24,12 @@ locals {
   # accepts calls from the web's origin only. Both URLs are the deterministic run.app ones, known
   # before the services exist, so neither service has to wait for the other.
   web_sign_in_enabled = var.deploy_apps && var.firestore_and_auth
-  web_url             = local.web_sign_in_enabled ? "https://web-${data.google_project.this[0].number}.${var.region}.run.app" : null
-  api_url             = local.web_sign_in_enabled ? "https://api-${data.google_project.this[0].number}.${var.region}.run.app" : null
+
+  # Monitoring (G-6, ADR-0136): metrics, alerts and uptime checks where the public services and
+  # their known URLs exist. Turned on per environment (dev today).
+  monitoring_enabled = var.monitoring && local.web_sign_in_enabled
+  web_url            = local.web_sign_in_enabled ? "https://web-${data.google_project.this[0].number}.${var.region}.run.app" : null
+  api_url            = local.web_sign_in_enabled ? "https://api-${data.google_project.this[0].number}.${var.region}.run.app" : null
 
   # Assisted AI (ADR-0038): the api calls Vertex AI's generateContent with its own identity.
   # Only where the apps, Firestore and the runtime exist, and only when turned on (dev today).
@@ -113,6 +117,9 @@ locals {
     "billingbudgets.googleapis.com",
     "monitoring.googleapis.com",
   ]
+  monitoring_services = [
+    "monitoring.googleapis.com",
+  ]
 
   deployer_member = "serviceAccount:${google_service_account.deployer.email}"
 
@@ -148,6 +155,11 @@ locals {
     ]
     budget = [
       "monitoring.notificationChannels.get", # budget alert channels
+    ]
+    monitoring = [
+      "logging.logMetrics.get",            # log-based metrics, never log entries
+      "monitoring.alertPolicies.get",      # alert policies
+      "monitoring.uptimeCheckConfigs.get", # uptime checks
     ]
     runtime = [
       "cloudtasks.queues.get",          # the execution jobs queue
@@ -280,6 +292,7 @@ module "services" {
     local.base_services,
     var.firestore_and_auth ? local.firestore_and_auth_services : [],
     local.budget_enabled ? local.budget_services : [],
+    local.monitoring_enabled ? local.monitoring_services : [],
     local.runtime_enabled ? local.runtime_services : [],
     local.web_sign_in_enabled ? local.web_sign_in_services : [],
     local.ai_assist_enabled ? local.ai_assist_services : [],
@@ -369,6 +382,7 @@ resource "google_project_iam_custom_role" "planner" {
     var.deploy_apps ? local.planner_permissions.cloud_run : [],
     var.firestore_and_auth ? local.planner_permissions.firestore_and_auth : [],
     local.budget_enabled ? local.planner_permissions.budget : [],
+    local.monitoring_enabled ? local.planner_permissions.monitoring : [],
     local.runtime_enabled ? local.planner_permissions.runtime : [],
     local.web_sign_in_enabled ? local.planner_permissions.web_sign_in : [],
   ))
@@ -743,6 +757,25 @@ module "budget" {
   monthly_amount     = var.budget.monthly_amount
   currency_code      = var.budget.currency_code
   alert_emails       = var.budget.alert_emails
+
+  depends_on = [module.services]
+}
+
+# Monitoring (G-6, ADR-0136): log-based metrics, alerts and uptime checks of this environment. The
+# alerts reuse the budget's email channels, when there is a budget.
+module "monitoring" {
+  source = "../monitoring"
+  count  = local.monitoring_enabled ? 1 : 0
+
+  project_id  = var.project_id
+  environment = var.environment
+  uptime_hosts = {
+    web = trimprefix(local.web_url, "https://")
+    api = trimprefix(local.api_url, "https://")
+  }
+  api_service              = "api"
+  notification_channel_ids = local.budget_enabled ? module.budget[0].notification_channel_ids : []
+  thresholds               = var.monitoring_thresholds
 
   depends_on = [module.services]
 }
