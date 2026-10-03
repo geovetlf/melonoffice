@@ -244,7 +244,7 @@ describe('Agent tasks: asking an agent (ADR-0063)', () => {
     expect(execution?.versionSnapshot.components[1]).toEqual({
       kind: 'prompt',
       id: 'agent_task',
-      version: '1',
+      version: '2',
     });
     expect(w.kicked).toEqual([task.id]);
     expect(taskOf(execution as Execution)).toEqual({

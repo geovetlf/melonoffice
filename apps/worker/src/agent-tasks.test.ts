@@ -512,7 +512,7 @@ describe.each(STORES)('AE-2 agent tasks with storage in %s', (_storage, createSt
       escalation: null,
       attempts: 1,
       // The prompt version it was written with (G-3).
-      prompt: 'agent_task@1',
+      prompt: 'agent_task@2',
     });
     expect(must(record).ai?.actualMicroUsd).toEqual(expect.any(Number));
     expect(parseAgentAnswer(must(record).output)).toEqual({

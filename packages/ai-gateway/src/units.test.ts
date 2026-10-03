@@ -318,6 +318,20 @@ describe('provider answers, errors and credentials', () => {
     expect(checkProviderSuccess(ok)).toBe(true);
     expect(checkProviderSuccess({ ...ok, output: { text: LEAKED_KEY } })).toBe(false);
     expect(checkProviderSuccess({ ...ok, output: { structured: { k: LEAKED_KEY } } })).toBe(false);
+    // A credential under its name, such as a password copied from data (G-7): never passed on.
+    expect(checkProviderSuccess({ ...ok, output: { text: 'Contraseña: Pollo2026!' } })).toBe(false);
+    expect(
+      checkProviderSuccess({
+        ...ok,
+        output: { structured: { answer: 'Accesos:\n- Clave del panel: Brasa-tst-K9x4!' } },
+      }),
+    ).toBe(false);
+    expect(
+      checkProviderSuccess({
+        ...ok,
+        output: { structured: { answer: 'Combo Familiar: PEN 25.00' } },
+      }),
+    ).toBe(true);
     expect(checkProviderSuccess({ ...ok, output: { text: 'x', html: 'y' } as never })).toBe(false);
     expect(checkProviderSuccess({ ...ok, usage: { inputTokens: -1, outputTokens: 0 } })).toBe(
       false,

@@ -1,7 +1,7 @@
 import type { AIRoutingStrategy } from '@melonoffice/domain';
 import type { AIOutput, FinishReason, ProviderOutcome, ProviderUsage } from './adapter.js';
 import type { AICreditState } from './credits.js';
-import { looksLikeSecretText } from './secrets.js';
+import { carriesLabelledSecret, looksLikeSecretText } from './secrets.js';
 import { checkToolCalls, type AIToolDefinition } from './tools.js';
 
 /** Which versions answered, for reproducibility: adapter, exact model, and policy. */
@@ -71,6 +71,13 @@ const FINISH: readonly FinishReason[] = ['stop', 'length', 'content_filter', 'to
 const count = (v: unknown): boolean =>
   typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 && v <= 100_000_000;
 
+/** Every string in a structured output, at any depth. */
+function stringsOf(value: unknown, depth = 0): string[] {
+  if (typeof value === 'string') return [value];
+  if (depth > 8 || typeof value !== 'object' || value === null) return [];
+  return Object.values(value).flatMap((v) => stringsOf(v, depth + 1));
+}
+
 /**
  * Checks what an adapter returned before anything else sees it: known fields and types,
  * sane usage, and no text that looks like a credential. A provider's answer that fails is an
@@ -98,6 +105,8 @@ export function checkProviderSuccess(
   if ((finishReason === 'tool_use') !== (output.toolCalls !== undefined)) return false;
   if (output.text !== undefined && typeof output.text !== 'string') return false;
   if (output.text !== undefined && looksLikeSecretText(output.text)) return false;
+  // A credential under its name, such as a password copied from the data (G-7).
+  if (output.text !== undefined && carriesLabelledSecret(output.text)) return false;
   if (output.structured !== undefined) {
     let json: string;
     try {
@@ -106,6 +115,7 @@ export function checkProviderSuccess(
       return false;
     }
     if (json === undefined || looksLikeSecretText(json.replace(/[{}[\]",:]/g, ' '))) return false;
+    if (stringsOf(output.structured).some(carriesLabelledSecret)) return false;
   }
   if (typeof usage !== 'object' || usage === null) return false;
   if (!count(usage.inputTokens) || !count(usage.outputTokens)) return false;

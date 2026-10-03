@@ -1,6 +1,8 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { AGENT_TASK_PROMPT } from '@melonoffice/agents';
+import { promptLabel } from '@melonoffice/ai-gateway';
 import { DEEPSEEK_MODELS, DEEPSEEK_PROVIDER } from '@melonoffice/ai-deepseek';
 import { NVIDIA_MODELS, NVIDIA_PROVIDER } from '@melonoffice/ai-nvidia';
 import { VERTEX_AI_MODELS, VERTEX_AI_PROVIDER } from '@melonoffice/ai-vertex';
@@ -14,6 +16,9 @@ import {
   type ModelEvalReport,
 } from './gate.js';
 import { datasetDigest, totalsOf, type EvalCaseResult, type EvalRun } from './run.js';
+
+/** The agent task prompt as it reads now: a report on another version is stale. */
+const CURRENT_PROMPT = promptLabel(AGENT_TASK_PROMPT);
 
 /**
  * The model gate (G-5, ADR-0135): every model a provider catalogue lets run outside DEV needs a
@@ -63,7 +68,7 @@ const runOf = (passed: number, extra: Partial<EvalRun> = {}): EvalRun => {
   }));
   return {
     format: 1,
-    prompt: 'agent_task@1',
+    prompt: CURRENT_PROMPT,
     policy: 'agent_task@2',
     environment: 'dev',
     startedAt: '2026-10-03T21:00:00.000Z',
@@ -122,7 +127,7 @@ describe('the model gate', () => {
     expect(reportOf(free)).toEqual({ error: 'not_pinned' });
     expect(reportFrom(runOf(EVAL_CASES.length))).toMatchObject({
       model: key,
-      prompt: 'agent_task@1',
+      prompt: CURRENT_PROMPT,
       passRate: 1,
       cases: EVAL_CASES.length,
       costMicroUsd: 200 * EVAL_CASES.length,

@@ -1,4 +1,5 @@
-import { figureContradictions, type FigureFact } from '@melonoffice/brain';
+import { carriesLabelledSecret, looksLikeSecretText } from '@melonoffice/ai-gateway';
+import { figureContradictions, type FigureFact, type StoredSecret } from '@melonoffice/brain';
 import type { Execution } from '@melonoffice/domain';
 
 /**
@@ -6,8 +7,8 @@ import type { Execution } from '@melonoffice/domain';
  * person relies on it. No model is asked and nothing is charged, so they run for every agent; the
  * optional AI review (ADR-0117) stays a separate setting of each agent. The Guardian never changes
  * the answer, never runs or undoes anything: it warns, with evidence, a severity and what to do.
- * Only a critical finding (a figure that disagrees with a fact a person confirmed) fails the
- * task's verification, like a failed AI review.
+ * Only a critical finding (a figure that disagrees with a fact a person confirmed, or a secret in
+ * the answer) fails the task's verification, like a failed AI review.
  */
 
 export const GUARDIAN_NODE = 'guardian';
@@ -15,6 +16,11 @@ export const GUARDIAN_NODE = 'guardian';
 export type GuardianSeverity = 'info' | 'warning' | 'critical';
 
 export type GuardianCode =
+  /**
+   * The answer gives a credential (G-7): a password, key or token stored in Company Brain, one
+   * written under its name, or one of a known shape. Its evidence never carries the value.
+   */
+  | 'secret_disclosed'
   /** A figure in the answer disagrees with Company Brain. */
   | 'figure_contradiction'
   /** The answer says something was done (sent, scheduled…) and no step of the task did it. */
@@ -25,7 +31,11 @@ export type GuardianCode =
   | 'missing_information';
 
 export type GuardianRecommendation =
-  'check_figure' | 'confirm_before_acting' | 'review_tool_error' | 'provide_missing_data';
+  | 'discard_answer'
+  | 'check_figure'
+  | 'confirm_before_acting'
+  | 'review_tool_error'
+  | 'provide_missing_data';
 
 export interface GuardianFinding {
   readonly code: GuardianCode;
@@ -44,6 +54,11 @@ export const GUARDIAN_LIMITS = Object.freeze({ findings: 10, evidenceText: 120 }
 const SEVERITY_ORDER: readonly GuardianSeverity[] = ['critical', 'warning', 'info'];
 
 const fold = (text: string): string => text.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+
+const clip = (text: string): string =>
+  [...text].length > GUARDIAN_LIMITS.evidenceText
+    ? `${[...text].slice(0, GUARDIAN_LIMITS.evidenceText - 1).join('')}…`
+    : text;
 
 /**
  * Claims, in Spanish or English, that something outside the answer was already done. Only past or
@@ -80,6 +95,11 @@ export interface GuardianFacts {
   readonly execution: Pick<Execution, 'nodes'>;
   /** Company Brain's figures the agent's department may read. Absent: not compared. */
   readonly figures?: readonly FigureFact[];
+  /**
+   * The credentials stored in Company Brain (G-7), to look for in the answer. Absent: only
+   * credentials written under their name or of a known shape are found.
+   */
+  readonly secrets?: readonly StoredSecret[];
   /** Whether a tool version changes something (from the tool catalogue). Unknown counts as yes. */
   readonly mutating: (id: string, version: number) => boolean;
 }
@@ -88,6 +108,26 @@ export interface GuardianFacts {
 export function guardAnswer(facts: GuardianFacts): GuardianReport {
   const findings: GuardianFinding[] = [];
   const tools = facts.execution.nodes.filter((n) => n.type === 'tool' && n.tool !== undefined);
+
+  // A secret in the answer: never a valid answer, whatever else it says (G-7).
+  const said = [facts.answer, ...facts.missing].join('\n');
+  const folded = fold(said);
+  const stored = (facts.secrets ?? []).find((s) => folded.includes(fold(s.value)));
+  if (stored !== undefined) {
+    findings.push({
+      code: 'secret_disclosed',
+      severity: 'critical',
+      evidence: { fact: stored.factId, label: clip(stored.label), source: 'company_brain' },
+      recommendation: 'discard_answer',
+    });
+  } else if (carriesLabelledSecret(said) || looksLikeSecretText(said)) {
+    findings.push({
+      code: 'secret_disclosed',
+      severity: 'critical',
+      evidence: { source: 'pattern' },
+      recommendation: 'discard_answer',
+    });
+  }
 
   for (const c of figureContradictions(facts.answer, facts.figures ?? [])) {
     findings.push({
@@ -149,6 +189,7 @@ export function guardAnswer(facts: GuardianFacts): GuardianReport {
 }
 
 const CODES: ReadonlySet<string> = new Set([
+  'secret_disclosed',
   'figure_contradiction',
   'unsupported_completion',
   'tool_failed',
@@ -156,6 +197,7 @@ const CODES: ReadonlySet<string> = new Set([
 ]);
 const SEVERITIES: ReadonlySet<string> = new Set(SEVERITY_ORDER);
 const RECOMMENDATIONS: ReadonlySet<string> = new Set([
+  'discard_answer',
   'check_figure',
   'confirm_before_acting',
   'review_tool_error',

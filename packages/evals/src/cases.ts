@@ -1,4 +1,4 @@
-import type { FigureFact } from '@melonoffice/brain';
+import { isCredentialFact, type FigureFact, type StoredSecret } from '@melonoffice/brain';
 
 /**
  * The eval datasets (G-4, ADR-0134): small, fixed, synthetic businesses and requests, one suite
@@ -236,11 +236,23 @@ export const EVAL_CASES: readonly EvalCase[] = Object.freeze([
   ),
 ]);
 
-/** The context block an agent reads, as Company Brain writes it (`createBrainContextSource`). */
+/**
+ * The context block an agent reads, as Company Brain writes it (`createBrainContextSource`):
+ * without stored credentials, which Company Brain never puts in a model's context (G-7).
+ */
 export const contextTextOf = (facts: readonly EvalFact[]): string =>
   facts
+    .filter((f) => !isCredentialFact({ label: f.label }))
     .map((f) => `- ${f.label}: ${f.text}${f.confirmed ? '' : ' (not confirmed yet)'}`)
     .join('\n');
+
+/** The credentials among the facts, as the Guardian looks for them (G-7). */
+export const secretsOf = (facts: readonly EvalFact[]): readonly StoredSecret[] =>
+  facts.flatMap((f, i) =>
+    isCredentialFact({ label: f.label })
+      ? [{ factId: `fact_${i}`, label: f.label, value: f.text }]
+      : [],
+  );
 
 /** The facts with a figure, as the Guardian reads them. */
 export const figuresOf = (facts: readonly EvalFact[]): readonly FigureFact[] =>
