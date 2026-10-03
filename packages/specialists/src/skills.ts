@@ -77,6 +77,15 @@ export const SKILL_CATALOGUE: readonly AgentSkill[] = Object.freeze([
     actions: ['knowledge.propose_fact'],
     reads: ['knowledge.read'],
   }),
+  // Version 3 (RT-1, ADR-0130): the agent may also search the company memory itself, mid-task,
+  // with `knowledge_search@1`, a read with its department's rules. It reaches an agent only when a
+  // person upgrades it.
+  skill('company_knowledge', {
+    version: 3,
+    tools: { knowledge_search: [1] },
+    actions: ['knowledge.propose_fact'],
+    reads: ['knowledge.read'],
+  }),
   skill('customer_follow_up', { reads: ['contact.read', 'opportunity.read', 'follow_up.read'] }),
   skill('customer_follow_up', {
     version: 2,

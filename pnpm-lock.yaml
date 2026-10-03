@@ -390,6 +390,9 @@ importers:
       '@melonoffice/tenancy':
         specifier: workspace:*
         version: link:../tenancy
+      '@melonoffice/tools':
+        specifier: workspace:*
+        version: link:../tools
     devDependencies:
       '@melonoffice/auth':
         specifier: workspace:*

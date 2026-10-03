@@ -28,7 +28,8 @@
     "@melonoffice/planning": "workspace:*",
     "@melonoffice/rbac": "workspace:*",
     "@melonoffice/specialists": "workspace:*",
-    "@melonoffice/tenancy": "workspace:*"
+    "@melonoffice/tenancy": "workspace:*",
+    "@melonoffice/tools": "workspace:*"
   },
   "devDependencies": {
     "@melonoffice/auth": "workspace:*",

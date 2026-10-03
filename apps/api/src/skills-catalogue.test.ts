@@ -74,6 +74,7 @@ describe('skills grant only what exists, and only to agents (SK-1)', () => {
       ]),
     ).toEqual([
       ['conversation_reply@1', ['message_send@2|3', 'conversation_handoff@1']],
+      ['company_knowledge@3', ['knowledge_search@1']],
       ['customer_follow_up@2', ['follow_up_schedule@2']],
       ['customer_follow_up@3', ['follow_up_schedule@3']],
     ]);
@@ -84,6 +85,7 @@ describe('skills grant only what exists, and only to agents (SK-1)', () => {
       ]),
     ).toEqual([
       ['company_knowledge@2', ['knowledge.propose_fact']],
+      ['company_knowledge@3', ['knowledge.propose_fact']],
       ['customer_follow_up@2', ['follow_up.schedule']],
       ['customer_follow_up@3', ['follow_up.schedule']],
     ]);
@@ -106,6 +108,7 @@ describe('skills grant only what exists, and only to agents (SK-1)', () => {
         "campaign_analysis@1": "d71dcf655bed",
         "company_knowledge@1": "39a1e0299b99",
         "company_knowledge@2": "a70483029a3a",
+        "company_knowledge@3": "650106e1e634",
         "content_drafting@1": "39a1e0299b99",
         "conversation_reply@1": "338e7530cc39",
         "customer_follow_up@1": "ffa7c617dfde",

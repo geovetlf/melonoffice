@@ -13,8 +13,11 @@ import {
   createHandoffSettler,
   creditsSpentBy,
   findContactRef,
+  createKnowledgeSearchExecutor,
   MODEL_FOLLOW_UP_DESCRIPTION,
   MODEL_FOLLOW_UP_TOOL,
+  MODEL_KNOWLEDGE_DESCRIPTION,
+  MODEL_KNOWLEDGE_TOOL,
   taskFollowUpKey,
   TASK_PROPOSAL_LIMITS,
   type AgentTaskProposalPorts,
@@ -214,7 +217,10 @@ export interface AgentTaskProposalStores {
 export interface AgentTaskParts {
   readonly work: NodeWorkSource;
   readonly verifier: VerificationSource;
-  /** The tools agents' tasks use (ADR-0084): `follow_up_schedule@2`, by provider. */
+  /**
+   * The tools agents' tasks use, by provider: `follow_up_schedule@2` and `@3` (ADR-0084,
+   * ADR-0104) and `knowledge_search@1` (ADR-0130).
+   */
   readonly executors: ToolExecutors;
   /** When a task ends, the facts it proposed go to Company Brain (ADR-0084). */
   readonly onEnded?: ExecutionEndHook;
@@ -427,8 +433,14 @@ export function createAgentTaskParts(options: {
     onError: (code) => logger?.warn('agent_task.facts_not_proposed', { code }),
   });
   const taskContacts = proposals.contacts;
-  const taskExecutors: ToolExecutors =
-    records === undefined || taskContacts === undefined
+  const taskExecutors: ToolExecutors = {
+    // The company memory, searched mid-task (RT-1, ADR-0130): a read with the department's rules.
+    knowledge: createKnowledgeSearchExecutor({
+      brain,
+      organizations: stores.tenancy,
+      specialists: stores.specialists,
+    }),
+    ...(records === undefined || taskContacts === undefined
       ? {}
       : {
           follow_up: createAgentFollowUpScheduleExecutor({
@@ -443,7 +455,8 @@ export function createAgentTaskParts(options: {
               },
             },
           }),
-        };
+        }),
+  };
   // Tools in the middle of a task (ADR-0103): the agent asks, the Harness decides each call with
   // `authorizeToolUse`, and the runtime runs what it allowed through the Tool Gate.
   const loop =
@@ -467,7 +480,10 @@ export function createAgentTaskParts(options: {
           describe: (tool) =>
             tool.toolId === MODEL_FOLLOW_UP_TOOL.id && tool.version === MODEL_FOLLOW_UP_TOOL.version
               ? MODEL_FOLLOW_UP_DESCRIPTION
-              : `${tool.toolId.replace(/_/g, ' ')} (${tool.action}).`,
+              : tool.toolId === MODEL_KNOWLEDGE_TOOL.id &&
+                  tool.version === MODEL_KNOWLEDGE_TOOL.version
+                ? MODEL_KNOWLEDGE_DESCRIPTION
+                : `${tool.toolId.replace(/_/g, ' ')} (${tool.action}).`,
           ...(options.tools.limits === undefined ? {} : { limits: options.tools.limits }),
           now: clock,
         });

@@ -246,8 +246,9 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
     // An agent task's end, and whether it now needs a person, on the event bus (ADR-0102).
     events,
     // Tools mid-task (ADR-0103): only ones that say a model may ask for them, with an executor
-    // here. Today one: `follow_up_schedule@3` (ADR-0104), for commercial agents a person moved to
-    // customer_follow_up@3, approved by a person on every call.
+    // here. Today two: `follow_up_schedule@3` (ADR-0104), for commercial agents a person moved to
+    // customer_follow_up@3, approved by a person on every call; and `knowledge_search@1`
+    // (ADR-0130), a read for agents a person moved to company_knowledge@3.
     tools: {
       registry: createToolRegistry(TOOL_CATALOGUE),
       executors: Object.keys(agents.executors),

@@ -133,9 +133,13 @@ describe.each(STORES)('agents with storage in %s', (_name, createStores) => {
         ],
         missing: [],
       },
-      // The commercial template stays at customer_follow_up@2: version 3 (ADR-0104), the tool
-      // the agent asks for mid-task, is offered, and a person decides whether to move to it.
-      upgrades: [{ skillId: 'customer_follow_up', from: 2, to: 3 }],
+      // The commercial template stays at company_knowledge@2 and customer_follow_up@2: their
+      // versions 3 (ADR-0130, ADR-0104), the tools the agent asks for mid-task, are offered, and a
+      // person decides whether to move to them.
+      upgrades: [
+        { skillId: 'company_knowledge', from: 2, to: 3 },
+        { skillId: 'customer_follow_up', from: 2, to: 3 },
+      ],
     });
 
     const events = (await stores.auditEvents()).filter((e) => e.action.startsWith('specialist.'));
@@ -170,10 +174,11 @@ describe.each(STORES)('agents with storage in %s', (_name, createStores) => {
       },
     });
     const before = await call('token-alice', 'GET', `${base(orgA)}/specialists/${id}/capabilities`);
-    expect(before.body.upgrades).toEqual([{ skillId: 'company_knowledge', from: 1, to: 2 }]);
+    // The newest version is offered (RT-1 added version 3, ADR-0130); any may be chosen.
+    expect(before.body.upgrades).toEqual([{ skillId: 'company_knowledge', from: 1, to: 3 }]);
     const upgrade = (body: Record<string, unknown>) =>
       call('token-alice', 'POST', `${base(orgA)}/specialists/${id}/skills/upgrade`, body);
-    expect(await upgrade({ fromVersion: 2, skillId: 'company_knowledge', version: 3 })).toEqual({
+    expect(await upgrade({ fromVersion: 2, skillId: 'company_knowledge', version: 4 })).toEqual({
       status: 400,
       body: { error: 'invalid_specialist', field: 'version' },
     });
@@ -182,7 +187,7 @@ describe.each(STORES)('agents with storage in %s', (_name, createStores) => {
     expect(moved.body).toMatchObject({ version: 3 });
     expect(moved.body.skills).toContainEqual({ id: 'company_knowledge', version: 2 });
     const after = await call('token-alice', 'GET', `${base(orgA)}/specialists/${id}/capabilities`);
-    expect(after.body.upgrades).toEqual([]);
+    expect(after.body.upgrades).toEqual([{ skillId: 'company_knowledge', from: 2, to: 3 }]);
     expect(await upgrade({ fromVersion: 3, skillId: 'company_knowledge', version: 2 })).toEqual({
       status: 400,
       body: { error: 'invalid_specialist', field: 'version' },

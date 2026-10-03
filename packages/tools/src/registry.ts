@@ -390,15 +390,81 @@ export const FOLLOW_UP_SCHEDULE_TOOL: ToolDefinition = {
   ],
 };
 
+/** How many facts one `knowledge_search` call gives back, and how long each value may be. */
+export const KNOWLEDGE_SEARCH_LIMITS = Object.freeze({ facts: 10, label: 200, value: 1_000 });
+
+/**
+ * `knowledge_search` (RT-1, ADR-0130): the first read tool (level A) an agent's model may ask for in
+ * the middle of a task. It searches the company memory (Company Brain, ADR-0051), which also holds
+ * what was read from the organization's documents (ADR-0078, ADR-0079), for a few words, with the
+ * same rules as the context a task starts with: the agent's department's domains and sensitivity
+ * ceiling, as the person the task is for. It changes nothing, so it runs without a person's
+ * approval at every level of autonomy (ADR-0116). The input is the words alone: the department,
+ * the organization and the person come from the execution, never from the model.
+ */
+export const KNOWLEDGE_SEARCH_TOOL: ToolDefinition = {
+  id: 'knowledge_search' as ToolDefinition['id'],
+  status: 'active',
+  versions: [
+    {
+      toolId: 'knowledge_search' as ToolVersion['toolId'],
+      version: 1,
+      nameKey: 'tools.knowledge_search.name' as ToolVersion['nameKey'],
+      descriptionKey: 'tools.knowledge_search.description' as ToolVersion['descriptionKey'],
+      category: 'knowledge',
+      action: 'search',
+      mutating: false,
+      inputSchema: {
+        type: 'object',
+        properties: { query: { type: 'string', minLength: 2, maxLength: 200 } },
+        required: ['query'],
+      },
+      outputSchema: {
+        type: 'object',
+        properties: {
+          available: { type: 'boolean' },
+          facts: {
+            type: 'array',
+            maxItems: KNOWLEDGE_SEARCH_LIMITS.facts,
+            items: {
+              type: 'object',
+              properties: {
+                label: { type: 'string', minLength: 1, maxLength: KNOWLEDGE_SEARCH_LIMITS.label },
+                value: { type: 'string', maxLength: KNOWLEDGE_SEARCH_LIMITS.value },
+                confirmed: { type: 'boolean' },
+              },
+              required: ['label', 'value', 'confirmed'],
+            },
+          },
+          truncated: { type: 'boolean' },
+        },
+        required: ['available', 'facts', 'truncated'],
+      },
+      permissions: ['knowledge.read'],
+      credentials: [],
+      riskLevel: 'low',
+      approvalPolicy: 'auto',
+      approvalTtlSeconds: 600,
+      timeoutMs: 10_000,
+      // Its failures (no permission, invalid words) would fail the same way again.
+      retryPolicy: { maxAttempts: 1, backoffMs: 0 },
+      provider: { kind: 'internal', id: 'knowledge' },
+      environments: ['dev'],
+      invocationModes: ['runtime', 'model'],
+    },
+  ],
+};
+
 /**
  * MelonOffice's tool catalogue. Only what exists, with its executor: tools are never invented.
  * Today, `message_send` (CV-2: a person's send; CV-6B: an agent's reply),
- * `conversation_handoff` (CV-6B) and `follow_up_schedule` (TL-1).
+ * `conversation_handoff` (CV-6B), `follow_up_schedule` (TL-1) and `knowledge_search` (RT-1).
  */
 export const TOOL_CATALOGUE: readonly ToolDefinition[] = Object.freeze([
   MESSAGE_SEND_TOOL,
   CONVERSATION_HANDOFF_TOOL,
   FOLLOW_UP_SCHEDULE_TOOL,
+  KNOWLEDGE_SEARCH_TOOL,
 ]);
 
 export const defaultToolRegistry = (): ToolRegistry => createToolRegistry(TOOL_CATALOGUE);
