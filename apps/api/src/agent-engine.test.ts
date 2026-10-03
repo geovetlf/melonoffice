@@ -144,6 +144,7 @@ describe.each(STORES)('agent engine with storage in %s', (_name, createStores) =
       kind: 'task_finished',
       specialistId: 'spec_x' as SpecialistId,
       taskId: 'task-1',
+      planId: null,
       code: null,
       otherSpecialistId: null,
       createdAt: at.toISOString() as AgentNotification['createdAt'],

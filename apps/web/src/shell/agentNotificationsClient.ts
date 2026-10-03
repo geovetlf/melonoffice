@@ -12,13 +12,19 @@ export type AgentNoticeKind =
   | 'agent_stopped'
   | 'needs_info'
   | 'task_delegated'
-  | 'task_received';
+  | 'task_received'
+  // A plan of several agents ended (ADR-0119).
+  | 'result_available'
+  | 'plan_failed';
 
 export interface AgentNoticeView {
   readonly id: string;
   readonly kind: AgentNoticeKind;
-  readonly specialistId: string;
+  /** Null for a plan's result, which is several agents' work. */
+  readonly specialistId: string | null;
   readonly taskId: string;
+  /** For a plan's result (ADR-0119): GIA's page opens it to summarize. */
+  readonly planId?: string | null;
   readonly code: string | null;
   readonly otherSpecialistId: string | null;
   readonly createdAt: string;

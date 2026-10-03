@@ -75,6 +75,7 @@ import {
   type AgentOutputRepository,
   type ExecutionRepository,
   type OpenExecutionIndex,
+  type OpenOrganizationIndex,
 } from '@melonoffice/execution';
 import {
   createForecastEngine,
@@ -215,8 +216,11 @@ export interface AppOptions {
    */
   readonly entitlementOverrides?: OverrideSource;
   /** Executions (ADR-0024). Absent: the execution route answers 503 (fails closed). */
-  /** Also finds an agent's open executions, so stopping an agent reaches them (AE-4). */
-  readonly executions?: ExecutionRepository & OpenExecutionIndex;
+  /**
+   * Also finds an agent's open executions, so stopping an agent reaches them (AE-4), and counts
+   * an organization's, so new agent work is bounded (ADR-0119).
+   */
+  readonly executions?: ExecutionRepository & OpenExecutionIndex & Partial<OpenOrganizationIndex>;
   /**
    * Departments and specialists (ADR-0025). Absent: their routes answer 503 (fails closed), and
    * an execution that names a specialist is refused.
@@ -1041,6 +1045,8 @@ export function createApp({
           }),
           authorization,
           ...(agentTasks.runtime === undefined ? {} : { runtime: agentTasks.runtime }),
+          // Open work is bounded per agent and per organization (ADR-0119).
+          openWork: taskExecutions,
           ...(requestId === undefined ? {} : { requestId }),
         });
       const taskOutputs =
@@ -1160,6 +1166,7 @@ export function createApp({
               executions: harnessExecutions,
               authorization,
               ...(agentTasks.runtime === undefined ? {} : { runtime: agentTasks.runtime }),
+              openWork: executions,
               ...(requestId === undefined ? {} : { requestId }),
             }),
             ...(aiCredits === undefined ? {} : { credits: aiCredits }),

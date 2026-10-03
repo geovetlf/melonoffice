@@ -383,6 +383,7 @@ export function registerAgentTaskRoutes(
               kind: n.kind,
               specialistId: n.specialistId,
               taskId: n.taskId,
+              planId: n.planId,
               code: n.code,
               otherSpecialistId: n.otherSpecialistId,
               createdAt: n.createdAt,
@@ -469,7 +470,7 @@ const bodyOf = async (c: Context<AuthEnv>): Promise<Record<string, unknown>> => 
   ) as Record<string, unknown>;
 };
 
-const TASK_STATUS: Record<AgentTaskError['code'], 400 | 403 | 404 | 409> = {
+const TASK_STATUS: Record<AgentTaskError['code'], 400 | 403 | 404 | 409 | 429> = {
   invalid_task: 400,
   unresolved_tenant: 403,
   permission_denied: 403,
@@ -482,9 +483,12 @@ const TASK_STATUS: Record<AgentTaskError['code'], 400 | 403 | 404 | 409> = {
   memory_full: 409,
   handoff_not_found: 404,
   handoff_not_pending: 409,
+  handoff_expired: 409,
   no_agent_available: 409,
   budget_exhausted: 409,
   notification_not_found: 404,
+  agent_busy: 429,
+  organization_busy: 429,
 };
 
 /** What the execution service may refuse while a task is created and started. */

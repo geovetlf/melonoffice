@@ -23,8 +23,10 @@ export interface AgentNotificationDocument {
   readonly organizationId: string;
   readonly recipientId: string;
   readonly kind: string;
-  readonly specialistId: string;
+  readonly specialistId: string | null;
   readonly taskId: string;
+  /** Absent on notices from before ADR-0119. */
+  readonly planId?: string | null;
   readonly code: string | null;
   readonly otherSpecialistId: string | null;
   readonly read: boolean;
@@ -43,6 +45,7 @@ function toDocument(n: AgentNotification): AgentNotificationDocument {
     kind: n.kind,
     specialistId: n.specialistId,
     taskId: n.taskId,
+    planId: n.planId,
     code: n.code,
     otherSpecialistId: n.otherSpecialistId,
     read: n.readAt !== null,
@@ -55,14 +58,18 @@ function toDocument(n: AgentNotification): AgentNotificationDocument {
 // Stored values are checked, not trusted: a malformed notice is skipped, never repaired.
 function toNotification(id: string, d: AgentNotificationDocument): AgentNotification | undefined {
   if (!(AGENT_NOTIFICATION_KINDS as readonly string[]).includes(d.kind)) return undefined;
-  if (typeof d.taskId !== 'string' || typeof d.specialistId !== 'string') return undefined;
+  if (typeof d.taskId !== 'string') return undefined;
+  const planId = typeof d.planId === 'string' ? d.planId : null;
+  // A notice names its agent, or (a plan's result) its plan.
+  if (typeof d.specialistId !== 'string' && planId === null) return undefined;
   return Object.freeze({
     id,
     organizationId: d.organizationId as OrganizationId,
     recipientId: d.recipientId as UserId,
     kind: d.kind as AgentNotificationKind,
-    specialistId: d.specialistId as SpecialistId,
+    specialistId: typeof d.specialistId === 'string' ? (d.specialistId as SpecialistId) : null,
     taskId: d.taskId,
+    planId,
     code: typeof d.code === 'string' ? d.code : null,
     otherSpecialistId:
       typeof d.otherSpecialistId === 'string' ? (d.otherSpecialistId as SpecialistId) : null,

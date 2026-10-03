@@ -17,10 +17,14 @@ export type AgentTaskErrorCode =
   // Handoffs between agents (ADR-0117).
   | 'handoff_not_found'
   | 'handoff_not_pending'
+  | 'handoff_expired'
   | 'no_agent_available'
   | 'budget_exhausted'
   // In-app notifications (ADR-0117).
-  | 'notification_not_found';
+  | 'notification_not_found'
+  // Bounded work (ADR-0119): too many open tasks for one agent or one organization.
+  | 'agent_busy'
+  | 'organization_busy';
 
 export class AgentTaskError extends Error {
   override readonly name = 'AgentTaskError';

@@ -3,6 +3,7 @@ import {
   createAgentNotifier,
   inAppChannel,
 } from '@melonoffice/agents';
+import type { PlanId } from '@melonoffice/domain';
 import { createAIUsageLedger } from '@melonoffice/ai-usage';
 import { Firestore } from '@google-cloud/firestore';
 import { serve } from '@hono/node-server';
@@ -183,9 +184,12 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
   // facts become in-app notices for the person who asked for the task; nothing else is started.
   const agentTaskRepository = new FirestoreAgentTaskRepository(firestore);
   const agentHandoffRepository = new FirestoreAgentHandoffRepository(firestore);
+  const plans = new FirestorePlanRepository(firestore);
   const notifications = createAgentNotificationSubscriber({
     tasks: agentTaskRepository,
     handoffs: agentHandoffRepository,
+    // A plan's end (ADR-0119): its result is ready, for the person who made it.
+    plans: { find: (organizationId, id) => plans.find(organizationId, id as PlanId) },
     notifier: createAgentNotifier({
       channels: [inAppChannel(new FirestoreAgentNotificationRepository(firestore))],
       onError: (channel, kind) =>
@@ -214,7 +218,6 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
   // Agent tasks (ADR-0063): the same runtime runs them, with Company Brain as their context. What
   // an agent proposes from a task (ADR-0084): a follow-up, scheduled with the same follow-up
   // service once a person approves it, and facts for Company Brain.
-  const plans = new FirestorePlanRepository(firestore);
   const taskParts = createAgentTaskParts({
     stores: {
       tenancy,
@@ -358,6 +361,8 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
     toolLoop: routed.toolLoop,
     ...(taskParts.onEnded === undefined ? {} : { onEnded: taskParts.onEnded }),
     plans,
+    // A plan's end on the event bus, for the person's bell (ADR-0119).
+    events,
     // Plans' condition steps (WF-4, ADR-0075): decided by the Decision Engine, rules only.
     conditions: createPlanConditions({
       stores: {

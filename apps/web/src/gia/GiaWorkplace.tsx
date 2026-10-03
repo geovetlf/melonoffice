@@ -11,7 +11,8 @@ import type { ActivityPeriod } from '../activity/activityClient.js';
 import { OfficeBreadcrumb } from '../office/DepartmentOffice.js';
 import { GiaAvatar } from './GiaAvatar.js';
 import { GiaPortrait } from './character.js';
-import { GiaConversation, useGiaChat } from './GiaChat.js';
+import { openedWith } from '../shell/routes.js';
+import { GiaConversation, TeamResult, useGiaChat } from './GiaChat.js';
 
 /**
  * GIA's Workplace (ADR-0050): GIA's own office, entered from the Home like a department's. It
@@ -47,6 +48,8 @@ export function GiaWorkplace() {
   const [period, setPeriod] = useState<ActivityPeriod>('week');
   const activity = useActivity(period);
   const chat = useGiaChat();
+  // Opened from a plan's "result available" notice (ADR-0119).
+  const [planId] = useState(() => openedWith('plan'));
   return (
     <article className="mo-page gia-workplace">
       <OfficeBreadcrumb trail={[{ label: <FormattedMessage id="gia.name" /> }]} />
@@ -57,6 +60,8 @@ export function GiaWorkplace() {
         title={<FormattedMessage id="gia.name" />}
         description={<FormattedMessage id="gia.role" />}
       />
+
+      {planId === undefined ? null : <TeamResult planId={planId} />}
 
       {/* Talking to GIA: her portrait from the chest up beside the conversation. */}
       <section className="mo-panel mo-page-section gia-workplace__chat" aria-labelledby="gia-chat">

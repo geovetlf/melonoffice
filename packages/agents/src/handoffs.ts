@@ -42,7 +42,30 @@ import type { AgentTaskRepository, AgentTaskService } from './tasks.js';
  * who decided, the receiving agent's permissions, and what the receiving task spent.
  */
 
-export const HANDOFF_LIMITS = Object.freeze({ request: 1000, context: 1000 });
+export const HANDOFF_LIMITS = Object.freeze({
+  request: 1000,
+  context: 1000,
+  /**
+   * How long a proposed handoff waits for a person (ADR-0119). After that it is expired: read as
+   * refused (`expired`), and accepting or declining it is refused with `handoff_expired`. Nothing
+   * sweeps it: it is recorded as refused the first time a person tries to decide it.
+   */
+  expiryDays: 7,
+});
+
+/** Whether a proposed handoff waited longer than it may for a person (ADR-0119). */
+export const isHandoffExpired = (
+  handoff: Pick<AgentHandoff, 'state' | 'createdAt'>,
+  now: Date,
+): boolean =>
+  handoff.state === 'proposed' &&
+  now.getTime() - Date.parse(handoff.createdAt) > HANDOFF_LIMITS.expiryDays * 86_400_000;
+
+/** A handoff as it stands at `now`: one that expired reads as refused, without a write. */
+export const handoffAsOf = (handoff: AgentHandoff, now: Date): AgentHandoff =>
+  isHandoffExpired(handoff, now)
+    ? Object.freeze({ ...handoff, state: 'refused' as const, refusal: 'expired' })
+    : handoff;
 export const HANDOFF_REASONS: readonly AgentHandoffReason[] = Object.freeze([
   'outside_role',
   'needs_specialist',
@@ -438,7 +461,7 @@ export function createAgentHandoffService(options: {
   async function refuse(
     tenant: TenantContext,
     handoff: AgentHandoff,
-    code: 'no_agent_available' | 'budget_exhausted' | 'permission_denied',
+    code: 'no_agent_available' | 'budget_exhausted' | 'permission_denied' | 'expired',
   ): Promise<never> {
     const at = now();
     await repository.update(handoff.organizationId, handoff.id, (current) => {
@@ -459,14 +482,21 @@ export function createAgentHandoffService(options: {
         ],
       };
     });
-    throw new AgentTaskError(code === 'permission_denied' ? 'permission_denied' : code);
+    throw new AgentTaskError(
+      code === 'permission_denied'
+        ? 'permission_denied'
+        : code === 'expired'
+          ? 'handoff_expired'
+          : code,
+    );
   }
 
   return Object.freeze({
     async get(tenant, taskId) {
       const organizationId = organizationOf(tenant, 'specialist.read');
       if (!/^[0-9a-f-]{36}$/.test(taskId)) return undefined;
-      return repository.find(organizationId, taskId as ExecutionId);
+      const found = await repository.find(organizationId, taskId as ExecutionId);
+      return found === undefined ? undefined : handoffAsOf(found, now());
     },
 
     async accept(tenant, taskId) {
@@ -475,6 +505,7 @@ export function createAgentHandoffService(options: {
       const handoff = await pending(organizationId, taskId);
       if (handoff.state === 'accepted' || handoff.state === 'completed') return handoff;
       if (handoff.state !== 'proposed') throw new AgentTaskError('handoff_not_pending');
+      if (isHandoffExpired(handoff, now())) return refuse(tenant, handoff, 'expired');
       const parent = await tasks.find(organizationId, handoff.parentTaskId);
       if (parent === undefined) throw new AgentTaskError('handoff_not_found');
       // The agent chosen then, if it can still take work; otherwise the department's next one.
@@ -558,6 +589,7 @@ export function createAgentHandoffService(options: {
       const handoff = await pending(organizationId, taskId);
       if (handoff.state === 'declined') return handoff;
       if (handoff.state !== 'proposed') throw new AgentTaskError('handoff_not_pending');
+      if (isHandoffExpired(handoff, now())) return refuse(tenant, handoff, 'expired');
       const at = now();
       return repository.update(organizationId, handoff.id, (current) => {
         if (current.state !== 'proposed') throw new AgentTaskError('handoff_not_pending');

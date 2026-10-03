@@ -50,6 +50,11 @@ export function errorKey(error: unknown): string {
       return 'agentTasks.error.notAvailable';
     case 'invalid_task':
       return 'agentTasks.error.invalid';
+    // Too much open work (ADR-0119).
+    case 'agent_busy':
+      return 'agentTasks.error.agentBusy';
+    case 'organization_busy':
+      return 'agentTasks.error.organizationBusy';
     default:
       return 'agentTasks.error.unavailable';
   }
@@ -254,6 +259,9 @@ function HandoffPanel({
   );
 }
 
+/** Seconds, to a tenth, for a duration in milliseconds (ADR-0119). */
+const secondsOf = (ms: number) => Math.round(ms / 100) / 10;
+
 /** "Ver detalles" (ADR-0117): the task's steps, tools, approvals, models, credits and errors. */
 function TaskDetails({
   taskId,
@@ -309,6 +317,15 @@ function TaskDetails({
                 />
               </>
             )}
+            {found.durationMs == null ? null : (
+              <>
+                {' '}
+                <FormattedMessage
+                  id="agentTasks.details.took"
+                  values={{ seconds: secondsOf(found.durationMs) }}
+                />
+              </>
+            )}
           </p>
           <ol className="agent-task__steps">
             {found.steps.map((step) => (
@@ -318,6 +335,16 @@ function TaskDetails({
                   values={{ tool: step.tool?.id ?? '' }}
                 />{' '}
                 · {label('agentTasks.details.status', step.status)}
+                {step.durationMs == null ? null : (
+                  <>
+                    {' '}
+                    ·{' '}
+                    <FormattedMessage
+                      id="agentTasks.details.duration"
+                      values={{ seconds: secondsOf(step.durationMs) }}
+                    />
+                  </>
+                )}
                 {step.model === null ? null : (
                   <>
                     {' '}
@@ -618,7 +645,12 @@ export function AgentTasks({
           ? 'agentTasks.handoff.error.budget'
           : failure instanceof AgentTaskError && failure.code === 'no_agent_available'
             ? 'agentTasks.handoff.error.noAgent'
-            : 'agentTasks.handoff.error',
+            : failure instanceof AgentTaskError && failure.code === 'handoff_expired'
+              ? 'agentTasks.handoff.error.expired'
+              : failure instanceof AgentTaskError &&
+                  (failure.code === 'agent_busy' || failure.code === 'organization_busy')
+                ? 'agentTasks.handoff.error.busy'
+                : 'agentTasks.handoff.error',
       );
     } finally {
       setDeciding(undefined);

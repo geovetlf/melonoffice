@@ -87,6 +87,12 @@ export const EVENT_CATALOGUE: readonly EventDefinition[] = Object.freeze([
     specialistId: { kind: 'id' },
     receivingId: { kind: 'id', optional: true },
   }),
+  // A plan of several agents ended (ADR-0119): completed, or failed with why, as codes. Published
+  // by the worker's plan conductor once, after the plan's last step.
+  define('plan.finished', 'plan', 'plans', {
+    outcome: { kind: 'code' },
+    code: { kind: 'code', optional: true },
+  }),
   // A decision asked for approval (ADR-0065).
   define('decision.approval_required', 'decision', 'decisions', {
     decisionType: { kind: 'code' },

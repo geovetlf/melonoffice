@@ -618,6 +618,78 @@ function AgentTaskProposal({ answer }: { readonly answer: GiaAnswerView }) {
 }
 
 /**
+ * GIA's summary of what a team's agents answered (ADR-0117), on request: one call, nothing stored,
+ * nothing in it run. Also where a plan's "result available" notice opens (ADR-0119).
+ */
+function TeamSummaryPanel({
+  team,
+  planId,
+}: {
+  readonly team: GiaTeamClient;
+  readonly planId: string;
+}) {
+  const intl = useIntl();
+  const [summary, setSummary] = useState<TeamSummary | 'loading'>();
+  const summarize = () => {
+    setSummary('loading');
+    const locale = intl.locale.toLowerCase().startsWith('es') ? 'es' : 'en';
+    void team
+      .summarize(planId, newRequestKey(), locale)
+      .then(setSummary, () => setSummary({ kind: 'failed', reason: 'unavailable' }));
+  };
+  return (
+    <>
+      <Button size="sm" variant="secondary" disabled={summary === 'loading'} onClick={summarize}>
+        <FormattedMessage id="gia.chat.team.summarize" />
+      </Button>
+      {summary === undefined || summary === 'loading' ? null : summary.kind === 'summary' ? (
+        <div className="gia-chat__summary">
+          <p>{summary.summary}</p>
+          {summary.pending === 0 ? null : (
+            <p className="gia-chat__meta">
+              <FormattedMessage id="gia.chat.team.pending" values={{ count: summary.pending }} />
+            </p>
+          )}
+        </div>
+      ) : (
+        <p className="gia-chat__meta">
+          <FormattedMessage
+            id={
+              summary.reason === 'nothing_yet'
+                ? 'gia.chat.team.nothingYet'
+                : 'gia.chat.team.summaryFailed'
+            }
+          />
+        </p>
+      )}
+    </>
+  );
+}
+
+/**
+ * A plan's result, when GIA's page was opened from its notice (`?plan=`, ADR-0119): the person
+ * asks GIA to summarize it. Nothing runs by opening it.
+ */
+export function TeamResult({ planId }: { readonly planId: string }) {
+  const chat = useGiaChat();
+  const team = chat.team;
+  return (
+    <section className="mo-panel gia-chat__proposal" aria-labelledby="gia-team-result">
+      <h2 id="gia-team-result" className="mo-section-title">
+        <FormattedMessage id="gia.chat.team.result" />
+      </h2>
+      {team === undefined ? (
+        <p className="gia-chat__meta">
+          <FormattedMessage id="gia.chat.team.notAllowed" />
+        </p>
+      ) : (
+        <TeamSummaryPanel team={team} planId={planId} />
+      )}
+    </section>
+  );
+}
+
+/**
  * Work GIA prepared for several departments (ADR-0117): the person reads and edits it, and
  * confirms. The Melon Agent Harness plans it; a plan waits for their approval in Automations.
  * Once the agents answered, GIA summarizes their answers on request. Nothing runs without them.
@@ -628,7 +700,6 @@ function TeamTaskProposal({ answer }: { readonly answer: GiaAnswerView }) {
   const proposal = answer.proposedTeamTask ?? null;
   const [text, setText] = useState(proposal?.request ?? '');
   const [state, setState] = useState<'open' | 'sending' | 'discarded' | TeamStart>('open');
-  const [summary, setSummary] = useState<TeamSummary | 'loading'>();
   const key = useRef(newRequestKey());
   if (proposal === null) return null;
   const departments = proposal.departments
@@ -662,14 +733,6 @@ function TeamTaskProposal({ answer }: { readonly answer: GiaAnswerView }) {
         </p>
       );
     }
-    const planId = state.planId;
-    const summarize = () => {
-      setSummary('loading');
-      const locale = intl.locale.toLowerCase().startsWith('es') ? 'es' : 'en';
-      void team
-        .summarize(planId, newRequestKey(), locale)
-        .then(setSummary, () => setSummary({ kind: 'failed', reason: 'unavailable' }));
-    };
     return (
       <div className="gia-chat__proposal" role="status">
         <p className="gia-chat__meta">
@@ -685,29 +748,7 @@ function TeamTaskProposal({ answer }: { readonly answer: GiaAnswerView }) {
             <FormattedMessage id="gia.chat.team.review" />
           </a>
         </p>
-        <Button size="sm" variant="secondary" disabled={summary === 'loading'} onClick={summarize}>
-          <FormattedMessage id="gia.chat.team.summarize" />
-        </Button>
-        {summary === undefined || summary === 'loading' ? null : summary.kind === 'summary' ? (
-          <div className="gia-chat__summary">
-            <p>{summary.summary}</p>
-            {summary.pending === 0 ? null : (
-              <p className="gia-chat__meta">
-                <FormattedMessage id="gia.chat.team.pending" values={{ count: summary.pending }} />
-              </p>
-            )}
-          </div>
-        ) : (
-          <p className="gia-chat__meta">
-            <FormattedMessage
-              id={
-                summary.reason === 'nothing_yet'
-                  ? 'gia.chat.team.nothingYet'
-                  : 'gia.chat.team.summaryFailed'
-              }
-            />
-          </p>
-        )}
+        <TeamSummaryPanel team={team} planId={state.planId} />
       </div>
     );
   }

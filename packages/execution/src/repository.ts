@@ -55,6 +55,14 @@ export interface OpenExecutionIndex {
   ): Promise<{ readonly ids: readonly ExecutionId[]; readonly more: boolean }>;
 }
 
+/**
+ * How many executions of one organization have not ended, counted up to `limit` (ADR-0119), so
+ * that new agent work can be refused when an organization already has too much open.
+ */
+export interface OpenOrganizationIndex {
+  countOpenOfOrganization(organizationId: OrganizationId, limit: number): Promise<number>;
+}
+
 /** Checks what `change` returned: the same execution, one revision ahead. */
 export function checkNextRevision(current: Execution, next: Execution): void {
   if (
@@ -67,7 +75,9 @@ export function checkNextRevision(current: Execution, next: Execution): void {
 }
 
 /** For tests and local runs only. */
-export class InMemoryExecutionRepository implements ExecutionRepository, OpenExecutionIndex {
+export class InMemoryExecutionRepository
+  implements ExecutionRepository, OpenExecutionIndex, OpenOrganizationIndex
+{
   readonly #executions = new Map<string, Execution>();
 
   constructor(private readonly audit?: InMemoryAuditStore) {}
@@ -122,6 +132,13 @@ export class InMemoryExecutionRepository implements ExecutionRepository, OpenExe
       .map((e) => e.id)
       .sort();
     return { ids: Object.freeze(ids.slice(0, limit)), more: ids.length > limit };
+  }
+
+  async countOpenOfOrganization(organizationId: OrganizationId, limit: number) {
+    const open = [...this.#executions.values()].filter(
+      (e) => e.organizationId === organizationId && !isTerminal(e.status),
+    ).length;
+    return Math.min(open, limit);
   }
 
   /** Test hook: stores a record as given, the way corrupted or legacy data would look. */
