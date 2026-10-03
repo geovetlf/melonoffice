@@ -51,7 +51,12 @@ export function AgentCapabilities({
       intl.messages[`agents.skill.${skillId}.name`] === undefined
         ? skillId
         : intl.formatMessage({ id: `agents.skill.${skillId}.name` });
-    const ask = intl.formatMessage({ id: 'agents.upgrade.confirm' }, { skill: name, version: to });
+    // The Agent Guardian's warning (G-2): the workflows that would lose a tool, said first.
+    const warning = breaksOf(view.upgrades?.find((u) => u.skillId === skillId));
+    const ask = [
+      ...(warning === undefined ? [] : [warning]),
+      intl.formatMessage({ id: 'agents.upgrade.confirm' }, { skill: name, version: to }),
+    ].join('\n\n');
     if (!globalThis.confirm(ask)) return;
     setUpgrading(skillId);
     setNotice(undefined);
@@ -67,6 +72,23 @@ export function AgentCapabilities({
   }
   const message = (id: string, fallback: string) =>
     intl.messages[id] === undefined ? fallback : intl.formatMessage({ id });
+  /** What an upgrade breaks, in words, or undefined when it breaks nothing. */
+  function breaksOf(
+    upgrade: NonNullable<AgentCapabilitiesView['upgrades']>[number] | undefined,
+  ): string | undefined {
+    const breaks = upgrade?.breaks ?? [];
+    if (breaks.length === 0) return undefined;
+    const workflows = [...new Set(breaks.map((b) => b.name))].join(', ');
+    const tools = [
+      ...new Set(
+        breaks.map((b) => {
+          const id = b.tool.split('@')[0] ?? b.tool;
+          return message(`approvals.tool.${id}`, id);
+        }),
+      ),
+    ].join(', ');
+    return intl.formatMessage({ id: 'agents.upgrade.breaks' }, { workflows, tools });
+  }
   const readName = (permission: string) => {
     const resource = permission.split('.')[0] ?? permission;
     return message(`capabilities.reads.${resource}`, resource);
@@ -168,6 +190,11 @@ export function AgentCapabilities({
                             ),
                           )}
                         </span>
+                        {breaksOf(newer) === undefined ? null : (
+                          <span className="agent-skills__line" role="note">
+                            {breaksOf(newer)}
+                          </span>
+                        )}
                         {canManage ? (
                           <Button
                             variant="secondary"

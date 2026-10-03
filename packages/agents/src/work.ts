@@ -1,12 +1,19 @@
 import type { AIGateway, AIMessage, AIOutputSchema, AIRequest } from '@melonoffice/ai-gateway';
 import { AI_REVIEW_NODE, type AgentAnswerReviewer } from './ai-review.js';
-import type { CompanyBrainService } from '@melonoffice/brain';
+import {
+  GUARDIAN_NODE,
+  guardAnswer,
+  parseGuardianReport,
+  type GuardianReport,
+} from './guardian.js';
+import type { CompanyBrainService, FigureFact } from '@melonoffice/brain';
 import { DEPARTMENT_ACCESS, FACT_RULES } from '@melonoffice/brain';
 import type {
   AgentTask,
   Execution,
   ExecutionId,
   ExecutionNode,
+  ExecutionNodeId,
   OrganizationId,
   SpecialistConfiguration,
   SpecialistId,
@@ -732,8 +739,52 @@ export function createAgentTaskVerifier(options: {
    * checks only, as before.
    */
   readonly reviewer?: AgentAnswerReviewer;
+  /**
+   * The Agent Guardian (G-2, ADR-0132): deterministic checks of the answer, for every agent, kept
+   * as the execution's `guardian` output. Absent: no Guardian, as before.
+   */
+  readonly guardian?: {
+    readonly record: AgentOutputStore['record'];
+    /** Company Brain's figures the task's agent may read. Absent or undefined: not compared. */
+    readonly figures?: (
+      tenant: TenantContext,
+      execution: Execution,
+    ) => Promise<readonly FigureFact[] | undefined>;
+    readonly mutating: (id: string, version: number) => boolean;
+  };
 }): AgentTaskVerifier {
-  const { outputs, scheduled, reviewer } = options;
+  const { outputs, scheduled, reviewer, guardian } = options;
+
+  /** The Guardian's report: the one kept for this execution, or a new one, kept. */
+  async function guard(
+    tenant: TenantContext,
+    execution: Execution,
+    answer: AgentAnswer,
+  ): Promise<GuardianReport | undefined> {
+    if (guardian === undefined) return undefined;
+    const kept = await outputs.find(tenant, execution.id, GUARDIAN_NODE);
+    const previous = kept === undefined ? undefined : parseGuardianReport(kept.output.structured);
+    if (previous !== undefined) return previous;
+    // Company Brain that cannot be read now leaves the figures unchecked, never the task failed.
+    const figures = await guardian.figures?.(tenant, execution).catch(() => undefined);
+    const report = guardAnswer({
+      answer: answer.answer,
+      missing: answer.missing,
+      execution,
+      ...(figures === undefined ? {} : { figures }),
+      mutating: guardian.mutating,
+    });
+    await guardian
+      .record(tenant, {
+        executionId: execution.id,
+        nodeId: GUARDIAN_NODE as ExecutionNodeId,
+        requestId: `guardian-${execution.id}`,
+        output: { structured: report },
+      })
+      .catch(() => undefined);
+    return report;
+  }
+
   return Object.freeze({
     async verify(
       tenant: TenantContext,
@@ -753,7 +804,10 @@ export function createAgentTaskVerifier(options: {
           ? await reviewer.review(tenant, execution, parsed.answer, context?.ai)
           : undefined;
       const reviewed = review !== undefined && review.verdict !== 'unavailable';
-      const passed = valid && (!reviewed || review.verdict === 'pass');
+      const report = valid ? await guard(tenant, execution, parsed) : undefined;
+      const guarded = report !== undefined;
+      const critical = report?.findings.some((f) => f.severity === 'critical') ?? false;
+      const passed = valid && (!reviewed || review.verdict === 'pass') && !critical;
       const nodes: VerificationInput['nodes'][number][] = [
         {
           nodeId: answerNode,
@@ -770,6 +824,15 @@ export function createAgentTaskVerifier(options: {
                     code: 'ai_review',
                     result: review.verdict === 'pass' ? ('passed' as const) : ('failed' as const),
                     evidence: { type: 'agent_output', id: `${execution.id}:${AI_REVIEW_NODE}` },
+                  },
+                ]
+              : []),
+            ...(guarded
+              ? [
+                  {
+                    code: 'agent_guardian',
+                    result: critical ? ('failed' as const) : ('passed' as const),
+                    evidence: { type: 'agent_output', id: `${execution.id}:${GUARDIAN_NODE}` },
                   },
                 ]
               : []),

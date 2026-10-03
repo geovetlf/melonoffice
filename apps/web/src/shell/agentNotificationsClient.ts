@@ -17,7 +17,9 @@ export type AgentNoticeKind =
   | 'result_available'
   | 'plan_failed'
   // Closed by the automatic sweep (ADR-0121).
-  | 'task_abandoned';
+  | 'task_abandoned'
+  // The Agent Guardian found something to check in an answer (G-2).
+  | 'guardian_warning';
 
 export interface AgentNoticeView {
   readonly id: string;

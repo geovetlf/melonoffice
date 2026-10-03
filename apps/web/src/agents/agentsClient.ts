@@ -116,6 +116,15 @@ export interface AgentCapabilitiesView {
     readonly skillId: string;
     readonly from: number;
     readonly to: number;
+    /** The tools the upgrade takes away (G-2). Absent from an older server. */
+    readonly removes?: readonly string[];
+    /** Steps of active workflows that need one of them (G-2): a warning before confirming. */
+    readonly breaks?: readonly {
+      readonly workflowId: string;
+      readonly name: string;
+      readonly step: string;
+      readonly tool: string;
+    }[];
   }[];
 }
 

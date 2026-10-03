@@ -13,7 +13,7 @@ import type {
 import { createSkillCatalogue, type ToolLookup } from '@melonoffice/specialists';
 import { createToolRegistry, isModelInvocable, TOOL_CATALOGUE } from '@melonoffice/tools';
 import { describe, expect, it } from 'vitest';
-import { auditAgents, type AgentAuditFacts, type AuditFinding } from './index.js';
+import { auditAgents, upgradeImpact, type AgentAuditFacts, type AuditFinding } from './index.js';
 
 /** The review of an organization's agents (G-1, ADR-0131): pure, deterministic, read-only. */
 
@@ -375,5 +375,71 @@ describe('auditAgents (G-1, ADR-0131)', () => {
       skipped: ['company_brain', 'workflows', 'plans'],
       reviewed: { agents: 0, workflows: 0, plans: 0 },
     });
+  });
+});
+
+describe('upgradeImpact (G-2, ADR-0132)', () => {
+  const workflow = {
+    id: 'w1',
+    organizationId: ORG,
+    status: 'active',
+    version: 1,
+  } as unknown as Workflow;
+  const version = {
+    workflowId: 'w1',
+    version: 1,
+    name: 'Seguimiento semanal',
+    steps: [
+      {
+        id: 's1',
+        kind: 'specialist',
+        assignee: { departmentTypeId: 'sales', roleId: 'commercial_agent' },
+      },
+      { id: 's2', kind: 'tool', performedBy: 's1', tool: { id: 'follow_up_schedule', version: 2 } },
+    ],
+  } as unknown as WorkflowVersion;
+  const onTwo = agent('a1', {
+    configuration: {
+      skills: [
+        { id: 'company_knowledge', version: 3 },
+        { id: 'customer_follow_up', version: 2 },
+      ] as never,
+      tools: [{ id: 'follow_up_schedule', version: 2 }] as never,
+    },
+  });
+  const base = {
+    agent: onTwo,
+    skillId: 'customer_follow_up',
+    toVersion: 3,
+    skills: createSkillCatalogue(),
+    departments: [department('sales')],
+  };
+
+  it('names the tools an upgrade takes away and the workflow steps that need them', () => {
+    expect(upgradeImpact({ ...base, workflows: [{ workflow, version }] })).toEqual({
+      removes: ['follow_up_schedule@2'],
+      breaks: [
+        { workflowId: 'w1', name: 'Seguimiento semanal', step: 's2', tool: 'follow_up_schedule@2' },
+      ],
+    });
+  });
+
+  it('ignores paused workflows, other kinds of agents, and unread workflows', () => {
+    const paused = { ...workflow, status: 'paused' } as unknown as Workflow;
+    expect(upgradeImpact({ ...base, workflows: [{ workflow: paused, version }] }).breaks).toEqual(
+      [],
+    );
+    const research = agent('a2', {
+      configuration: { ...onTwo.configuration, departmentId: `${ORG}_research` as DepartmentId },
+    });
+    expect(
+      upgradeImpact({
+        ...base,
+        agent: research,
+        departments: [department('research')],
+        workflows: [{ workflow, version }],
+      }).breaks,
+    ).toEqual([]);
+    expect(upgradeImpact(base)).toEqual({ removes: ['follow_up_schedule@2'], breaks: [] });
   });
 });

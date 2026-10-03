@@ -46,4 +46,6 @@ export type AgentNotificationKind =
   | 'result_available'
   | 'plan_failed'
   // The automatic sweep closed an abandoned task (ADR-0121).
-  | 'task_abandoned';
+  | 'task_abandoned'
+  /** The Agent Guardian found something in an answer to check (G-2, ADR-0132). */
+  | 'guardian_warning';

@@ -88,6 +88,14 @@ export interface AgentTaskTraceView {
     } | null;
   }[];
   readonly review: { readonly verdict: string; readonly reason: string } | null;
+  /** What the Agent Guardian found (G-2), as codes. Absent from an older server. */
+  readonly guardian?: {
+    readonly findings: readonly {
+      readonly code: string;
+      readonly severity: string;
+      readonly recommendation: string;
+    }[];
+  } | null;
   readonly subtasks: readonly {
     readonly taskId: string;
     readonly specialistId: string;

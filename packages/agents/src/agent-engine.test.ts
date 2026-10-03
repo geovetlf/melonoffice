@@ -41,6 +41,7 @@ import { describe, expect, it } from 'vitest';
 import {
   AGENT_TASK_NODE,
   AI_REVIEW_NODE,
+  completionClaim,
   createAgentAnswerReviewer,
   createAgentHandoffService,
   createAgentMemoryContext,
@@ -55,6 +56,9 @@ import {
   createHandoffRecorder,
   createHandoffSettler,
   creditsSpentBy,
+  GUARDIAN_NODE,
+  guardAnswer,
+  guardianWarningOf,
   inAppChannel,
   InMemoryAgentHandoffRepository,
   InMemoryAgentMemoryRepository,
@@ -63,6 +67,7 @@ import {
   isAgentTaskError,
   memoryTextProblem,
   notificationOfTaskEnd,
+  parseGuardianReport,
   readAgentTaskTrace,
 } from './index.js';
 
@@ -629,6 +634,36 @@ describe('In-app notifications (ADR-0117)', () => {
     expect((await notices.list(w.alice)).unread).toBe(0);
   });
 
+  it('tells the task’s person what the Agent Guardian found (G-2)', async () => {
+    const w = await world();
+    const lucia = await w.agent();
+    const { task } = await w.service.assign(w.alice, lucia.identity.id, { request: 'Hola' });
+    const repository = new InMemoryAgentNotificationRepository();
+    const subscriber = createAgentNotificationSubscriber({
+      tasks: w.tasks,
+      notifier: createAgentNotifier({ channels: [inAppChannel(repository)], now: w.now }),
+    });
+    const warning = {
+      id: 'evt_g1',
+      type: 'agent_guardian.warning',
+      organizationId: w.orgA,
+      occurredAt: '2026-10-01T12:40:00.000Z',
+      subject: { type: 'execution', id: task.id },
+      data: { specialistId: lucia.identity.id, code: 'figure_contradiction', severity: 'critical' },
+    };
+    await subscriber.handle(warning);
+    await subscriber.handle(warning);
+    await subscriber.handle({ ...warning, id: 'evt_g2', organizationId: w.orgB });
+    expect(repository.all()).toEqual([
+      expect.objectContaining({
+        kind: 'guardian_warning',
+        recipientId: ALICE,
+        taskId: task.id,
+        code: 'figure_contradiction',
+      }),
+    ]);
+  });
+
   it('pages a person’s notices with a cursor', async () => {
     const w = await world();
     const repository = new InMemoryAgentNotificationRepository();
@@ -823,6 +858,201 @@ describe('Optional AI verification (ADR-0117)', () => {
       verdict: 'unavailable',
       reason: 'credits_insufficient',
     });
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+
+describe('Agent Guardian (G-2, ADR-0132)', () => {
+  const price = (soles: number, confirmed: boolean) => ({
+    id: 'k_combo',
+    label: 'Combo Familiar',
+    value: { type: 'money' as const, amountMinor: soles * 100, currency: 'PEN' },
+    confirmed,
+  });
+
+  async function setup(answer: string, confirmed = true) {
+    const w = await world();
+    const ana = await w.agent('marketing', 'Ana', w.alice);
+    const { execution } = await w.service.assign(w.alice, ana.identity.id, {
+      request: 'Escribe un post',
+    });
+    const running = execution as Execution;
+    const done: Execution = {
+      ...running,
+      nodes: running.nodes.map((n) => ({ ...n, status: 'completed' as const })),
+    };
+    await w.outputs.record(w.runtime, {
+      executionId: running.id,
+      nodeId: AGENT_TASK_NODE as ExecutionNodeId,
+      requestId: `req-${running.id.slice(0, 8)}`,
+      output: { structured: { answer, missing: [] } },
+    });
+    let reads = 0;
+    const verifier = createAgentTaskVerifier({
+      outputs: w.outputs,
+      guardian: {
+        record: (tenant, input) => w.outputs.record(tenant, input),
+        figures: async () => {
+          reads += 1;
+          return [price(25, confirmed)];
+        },
+        mutating: () => true,
+      },
+    });
+    return { w, done, verifier, reads: () => reads };
+  }
+
+  it('passes a clean answer, keeps its report and never checks twice', async () => {
+    const t = await setup('El Combo Familiar cuesta S/ 25. ¿Lo publico?');
+    const first = await t.verifier.verify(t.w.runtime, t.done);
+    expect(first?.verification.nodes[0]?.checks).toEqual([
+      expect.objectContaining({ code: 'agent_answer_valid', result: 'passed' }),
+      expect.objectContaining({ code: 'agent_guardian', result: 'passed' }),
+    ]);
+    expect(first?.result).toBeDefined();
+    const kept = await t.w.outputs.find(t.w.runtime, t.done.id, GUARDIAN_NODE);
+    expect(parseGuardianReport(kept?.output.structured)).toEqual({ findings: [] });
+    await t.verifier.verify(t.w.runtime, t.done);
+    expect(t.reads()).toBe(1);
+  });
+
+  it('fails the verification when a figure disagrees with a confirmed fact', async () => {
+    const t = await setup('Publica que el Combo Familiar cuesta S/ 30.');
+    const result = await t.verifier.verify(t.w.runtime, t.done);
+    expect(result?.verification.nodes[0]?.checks[1]).toMatchObject({
+      code: 'agent_guardian',
+      result: 'failed',
+    });
+    expect(result?.result).toBeUndefined();
+    const kept = await t.w.outputs.find(t.w.runtime, t.done.id, GUARDIAN_NODE);
+    expect(parseGuardianReport(kept?.output.structured)?.findings).toEqual([
+      {
+        code: 'figure_contradiction',
+        severity: 'critical',
+        evidence: {
+          fact: 'k_combo',
+          label: 'Combo Familiar',
+          recorded: 'PEN 25.00',
+          stated: 's/ 30',
+          confirmed: true,
+        },
+        recommendation: 'check_figure',
+      },
+    ]);
+  });
+
+  it('only warns when the fact is not confirmed yet', async () => {
+    const t = await setup('El Combo Familiar cuesta S/ 30.', false);
+    const result = await t.verifier.verify(t.w.runtime, t.done);
+    expect(result?.verification.nodes[0]?.checks[1]).toMatchObject({ result: 'passed' });
+    expect(result?.result).toBeDefined();
+  });
+});
+
+describe('Agent Guardian checks (G-2)', () => {
+  const node = (
+    id: string,
+    status: 'completed' | 'failed',
+    tool?: { id: string; version: number },
+  ) =>
+    ({
+      id,
+      type: tool === undefined ? 'agent' : 'tool',
+      label: id,
+      status,
+      dependsOn: [],
+      ...(tool === undefined ? {} : { tool }),
+      ...(status === 'failed' ? { error: { code: 'provider_unavailable' } } : {}),
+    }) as unknown as Execution['nodes'][number];
+
+  it('warns about a claim that something was done when no step did it', () => {
+    const report = guardAnswer({
+      answer: 'Listo. Ya envié el mensaje a Rosa y quedó agendada la visita.',
+      missing: [],
+      execution: { nodes: [node('agent_task', 'completed')] },
+      mutating: () => true,
+    });
+    expect(report.findings).toEqual([
+      expect.objectContaining({
+        code: 'unsupported_completion',
+        severity: 'warning',
+        recommendation: 'confirm_before_acting',
+        evidence: { claim: 'Ya envié el mensaje a Rosa y quedó agendada la visita.' },
+      }),
+    ]);
+  });
+
+  it('accepts the claim when a step that changes something completed', () => {
+    const facts = {
+      answer: 'I have scheduled the follow-up for Monday.',
+      missing: [],
+      execution: {
+        nodes: [
+          node('agent_task', 'completed'),
+          node('schedule', 'completed', { id: 'follow_up_schedule', version: 2 }),
+        ],
+      },
+    };
+    expect(guardAnswer({ ...facts, mutating: () => true }).findings).toEqual([]);
+    // A read tool does not do what the answer claims.
+    expect(guardAnswer({ ...facts, mutating: () => false }).findings[0]?.code).toBe(
+      'unsupported_completion',
+    );
+  });
+
+  it('never reads a proposal or a question as a claim', () => {
+    for (const answer of [
+      'Puedo enviar el mensaje a Rosa si me confirmas.',
+      '¿He enviado ya la propuesta?',
+      'I can schedule it for Monday once you approve.',
+      'Propongo agendar la visita el lunes.',
+    ]) {
+      expect(completionClaim(answer)).toBeUndefined();
+    }
+  });
+
+  it('reports failed tools and what the agent still needs, most serious first', () => {
+    const report = guardAnswer({
+      answer: 'Aquí está el resumen.',
+      missing: ['El presupuesto', 'La fecha'],
+      execution: {
+        nodes: [
+          node('agent_task', 'completed'),
+          node('agent_task_t1_0', 'failed', { id: 'knowledge_search', version: 1 }),
+        ],
+      },
+      mutating: () => false,
+    });
+    expect(report.findings.map((f) => [f.code, f.severity])).toEqual([
+      ['tool_failed', 'warning'],
+      ['missing_information', 'info'],
+    ]);
+    expect(report.findings[0]?.evidence).toEqual({
+      step: 'agent_task_t1_0',
+      tool: 'knowledge_search@1',
+      error: 'provider_unavailable',
+    });
+    expect(guardianWarningOf(report)?.code).toBe('tool_failed');
+    expect(guardianWarningOf({ findings: report.findings.slice(1) })).toBeUndefined();
+  });
+
+  it('reads back only a well-formed report', () => {
+    expect(parseGuardianReport({ findings: [] })).toEqual({ findings: [] });
+    expect(parseGuardianReport({ findings: [{ code: 'made_up' }] })).toBeUndefined();
+    expect(
+      parseGuardianReport({
+        findings: [
+          {
+            code: 'tool_failed',
+            severity: 'warning',
+            evidence: { nested: { a: 1 } },
+            recommendation: 'review_tool_error',
+          },
+        ],
+      }),
+    ).toBeUndefined();
+    expect(parseGuardianReport('x')).toBeUndefined();
   });
 });
 

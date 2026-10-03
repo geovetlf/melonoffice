@@ -47,6 +47,7 @@ export const AGENT_NOTIFICATION_KINDS: readonly AgentNotificationKind[] = Object
   'result_available',
   'plan_failed',
   'task_abandoned',
+  'guardian_warning',
 ]);
 
 const MAX_MS = 9_999_999_999_999;
@@ -270,6 +271,7 @@ export interface NotifiableEvent {
 export const NOTIFIED_EVENT_TYPES = Object.freeze([
   'agent_task.finished',
   'agent_task.approval_required',
+  'agent_guardian.warning',
   'agent_handoff.proposed',
   'plan.finished',
 ]);
@@ -357,6 +359,16 @@ export function createAgentNotificationSubscriber(options: {
           kind: 'approval_required',
           taskId: task.id,
           code: 'approval_required',
+        });
+        return;
+      }
+      if (event.type === 'agent_guardian.warning') {
+        await notifier.notify({
+          ...base,
+          ...recipient,
+          kind: 'guardian_warning',
+          taskId: task.id,
+          code: text(event.data.code),
         });
         return;
       }
