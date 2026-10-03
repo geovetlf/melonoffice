@@ -226,7 +226,11 @@ export function registerResellerRoutes(app: Hono<AuthEnv>, deps: CommercialDepen
       if (!canChangeAccountStatus(reseller.status, status)) {
         return c.json({ error: 'invalid_account_transition' }, 409);
       }
-      const at = now();
+      // A version is its timestamp: it must move even when two writes share a millisecond,
+      // or a stale `expectedUpdatedAt` would still match.
+      const previous = Date.parse(reseller.updatedAt);
+      const clock = now();
+      const at = clock.getTime() > previous ? clock : new Date(previous + 1);
       const next: CommercialAccount = {
         ...reseller,
         status,
