@@ -127,15 +127,22 @@ describe.each(STORES)('credits with storage in %s', (_name, createStores) => {
   describe('GET /v1/organizations/:organizationId/credits', () => {
     it('1. shows the owner their balance, and nothing from the ledger', async () => {
       const { credits, service, tenantA, orgA, stores } = await setup();
+      await service.grant(tenantA, { ...req(40, 'g0'), bucket: 'included' });
       await service.grant(tenantA, req(100, 'g1'));
       await service.consume(tenantA, req(30, 'c1'));
+      await service.hold(tenantA, { ...req(20, 'h1'), ttlMs: 60_000 });
       const wallet = await stores.credits.findWallet(orgA);
+      // Included credits go first (ADR-0123); the hold is reserved, not spent.
       expect(await credits('token-alice', orgA)).toEqual({
         status: 200,
         body: {
           organizationId: orgA,
           status: 'present',
-          balance: 70,
+          balance: 110,
+          included: 10,
+          purchased: 100,
+          reserved: 20,
+          available: 90,
           updatedAt: wallet?.updatedAt,
         },
       });

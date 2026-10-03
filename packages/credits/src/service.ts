@@ -5,6 +5,7 @@ import {
   type AuditEventInput,
 } from '@melonoffice/audit';
 import type {
+  CreditBucket,
   CreditEntryType,
   CreditLedgerEntry,
   IsoTimestamp,
@@ -18,14 +19,28 @@ import {
   type TenantContext,
 } from '@melonoffice/tenancy';
 import { CreditsError } from './errors.js';
-import { applyOperation, entryIdOf, type CreditOperation } from './ledger.js';
+import {
+  applyOperation,
+  availableOf,
+  bucketsOf,
+  closingReferenceOf,
+  entryIdOf,
+  type CreditOperation,
+} from './ledger.js';
 import type { CreditStore } from './store.js';
 
 export type CreditBalance =
   | {
       readonly status: 'present';
       readonly organizationId: OrganizationId;
+      /** Every credit in the wallet: `included` + `purchased`. */
       readonly balance: number;
+      readonly included: number;
+      readonly purchased: number;
+      /** Held for operations still running (ADR-0123). */
+      readonly reserved: number;
+      /** What can be spent or held now: `balance` − `reserved`. */
+      readonly available: number;
       readonly updatedAt: IsoTimestamp;
     }
   | {
@@ -49,6 +64,27 @@ export interface CreditRequest {
   readonly reason: string;
 }
 
+/** A grant names its bucket (ADR-0123). Absent: `purchased`. */
+export interface CreditGrantRequest extends CreditRequest {
+  readonly bucket?: CreditBucket;
+}
+
+export interface CreditHoldRequest extends CreditRequest {
+  /** How long the hold lasts if it is never settled or released. Positive, at most 7 days. */
+  readonly ttlMs: number;
+}
+
+export interface CreditSettleRequest {
+  /** The `referenceId` of the hold. */
+  readonly holdOf: string;
+  /** Whole credits actually spent, 0 or more. It may exceed the hold if the balance covers it. */
+  readonly amount: number;
+  readonly reason: string;
+}
+
+/** The longest a hold may last. */
+export const MAX_HOLD_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
 /**
  * An organization's credits (ADR-0023). Every method works on the organization of a resolved
  * `TenantContext`, never on an id the caller passes, and records the tenant's user as the actor.
@@ -60,9 +96,28 @@ export interface CreditRequest {
 export interface CreditService {
   balanceOf(tenant: TenantContext): Promise<CreditBalance>;
   /** Adds credits. For internal, server-side flows only; no client route reaches it. */
-  grant(tenant: TenantContext, request: CreditRequest): Promise<CreditResult>;
-  /** Spends credits, or refuses with `credits_insufficient`. The balance never goes below 0. */
+  grant(tenant: TenantContext, request: CreditGrantRequest): Promise<CreditResult>;
+  /**
+   * Spends credits, or refuses with `credits_insufficient`. The balance never goes below 0, and
+   * credits held for other operations are never spent.
+   */
   consume(tenant: TenantContext, request: CreditRequest): Promise<CreditResult>;
+  /**
+   * Sets credits aside before an operation runs (ADR-0123), or refuses with
+   * `credits_insufficient`. The balance does not move. The same `referenceId` is the same hold.
+   */
+  hold(tenant: TenantContext, request: CreditHoldRequest): Promise<CreditResult>;
+  /**
+   * Closes a hold with what the operation really cost: it spends `amount` and frees the rest.
+   * A hold is closed once: asking again replays the first close, a different close is
+   * `credits_hold_closed`. An expired hold can still be settled if the balance covers it.
+   */
+  settle(tenant: TenantContext, request: CreditSettleRequest): Promise<CreditResult>;
+  /** Closes a hold without spending anything. Same once-only rule as `settle`. */
+  release(
+    tenant: TenantContext,
+    request: Omit<CreditSettleRequest, 'amount'>,
+  ): Promise<CreditResult>;
   /** Gives back credits for an earlier `consume` (by its `referenceId`), never more than it spent. */
   refund(
     tenant: TenantContext,
@@ -93,7 +148,20 @@ const ACTION: Record<Exclude<CreditEntryType, 'adjustment'>, AuditAction> = {
   grant: 'credits.grant',
   consume: 'credits.consume',
   refund: 'credits.refund',
+  hold: 'credits.hold',
+  release: 'credits.release',
 };
+
+type ServiceOperation = Exclude<CreditOperation, { type: 'adjustment' }>;
+
+/** The entry type an operation is recorded as: a settle is a consume, or a release for 0. */
+const entryTypeOf = (operation: ServiceOperation): Exclude<CreditEntryType, 'adjustment'> =>
+  operation.type === 'settle' ? (operation.amount === 0 ? 'release' : 'consume') : operation.type;
+
+const referenceOf = (operation: ServiceOperation): string =>
+  operation.type === 'settle'
+    ? closingReferenceOf(String(operation.holdOf))
+    : String(operation.referenceId);
 
 export function createCreditService({
   store,
@@ -109,32 +177,33 @@ export function createCreditService({
     return organization.id;
   }
 
-  async function post(
-    tenant: TenantContext,
-    operation: Exclude<CreditOperation, { type: 'adjustment' }>,
-  ): Promise<CreditResult> {
+  async function post(tenant: TenantContext, operation: ServiceOperation): Promise<CreditResult> {
     const organizationId = await organizationOf(tenant);
     return write(organizationId, operation, {
-      action: ACTION[operation.type],
+      action: ACTION[entryTypeOf(operation)],
       actor: actorOf(tenant),
     });
   }
 
   async function write(
     organizationId: OrganizationId,
-    operation: Exclude<CreditOperation, { type: 'adjustment' }>,
+    operation: ServiceOperation,
     by: Pick<AuditEventInput, 'action' | 'actor' | 'actorRole'>,
   ): Promise<CreditResult> {
     return store.transact(organizationId, async (tx) => {
-      const id = entryIdOf(organizationId, String(operation.referenceId));
+      const id = entryIdOf(organizationId, referenceOf(operation));
       const wallet = await tx.wallet();
       const existing = await tx.entry(id);
       let original: CreditLedgerEntry | undefined;
       let alreadyRefunded = 0;
+      let hold: CreditLedgerEntry | undefined;
       if (operation.type === 'refund' && existing === undefined) {
         const originalId = entryIdOf(organizationId, String(operation.refundOf));
         original = await tx.entry(originalId);
         alreadyRefunded = await tx.refundedFor(originalId);
+      }
+      if (operation.type === 'settle' && existing === undefined) {
+        hold = await tx.entry(entryIdOf(organizationId, String(operation.holdOf)));
       }
       // Strictly after the wallet's last movement, so the ledger has one order even within a
       // millisecond.
@@ -143,7 +212,7 @@ export function createCreditService({
       const posting = applyOperation(
         organizationId,
         operation,
-        { wallet, existing, original, alreadyRefunded },
+        { wallet, existing, original, alreadyRefunded, hold },
         at.toISOString() as IsoTimestamp,
       );
       if (posting.kind === 'replayed') {
@@ -186,15 +255,43 @@ export function createCreditService({
       if (wallet?.organizationId !== organizationId) {
         return { status: 'unavailable', reason: 'credits_wallet_missing' };
       }
+      const buckets = bucketsOf(wallet);
+      const available = availableOf(wallet, now().toISOString() as IsoTimestamp);
       return Object.freeze({
         status: 'present',
         organizationId,
         balance: wallet.balance,
+        included: buckets.included,
+        purchased: buckets.purchased,
+        reserved: wallet.balance - available,
+        available,
         updatedAt: wallet.updatedAt,
       });
     },
-    grant: (tenant, request) => post(tenant, { type: 'grant', ...pick(request) }),
+    grant: (tenant, request) =>
+      post(tenant, {
+        type: 'grant',
+        ...pick(request),
+        ...(request.bucket === undefined ? {} : { bucket: request.bucket }),
+      }),
     consume: (tenant, request) => post(tenant, { type: 'consume', ...pick(request) }),
+    hold: (tenant, request) => {
+      const { ttlMs } = request;
+      if (
+        typeof ttlMs !== 'number' ||
+        !Number.isSafeInteger(ttlMs) ||
+        ttlMs < 1 ||
+        ttlMs > MAX_HOLD_TTL_MS
+      ) {
+        return Promise.reject(new CreditsError('invalid_hold_expiry'));
+      }
+      const expiresAt = new Date(now().getTime() + ttlMs).toISOString() as IsoTimestamp;
+      return post(tenant, { type: 'hold', ...pick(request), expiresAt });
+    },
+    settle: (tenant, { holdOf, amount, reason }) =>
+      post(tenant, { type: 'settle', holdOf, amount, reason }),
+    release: (tenant, { holdOf, reason }) =>
+      post(tenant, { type: 'settle', holdOf, amount: 0, reason }),
     refund: (tenant, request) =>
       post(tenant, { type: 'refund', ...pick(request), refundOf: request.refundOf }),
     async grantAsPlatform(admin, organizationId, request) {

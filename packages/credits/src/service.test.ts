@@ -16,7 +16,7 @@ import {
 } from '@melonoffice/tenancy';
 import { describe, expect, it } from 'vitest';
 import { CreditsError } from './errors.js';
-import { entryIdOf, openWallet, verifyLedger } from './ledger.js';
+import { entryIdOf, MAX_OPEN_HOLDS, openWallet, verifyLedger } from './ledger.js';
 import { createCreditService, type CreditService } from './service.js';
 import { InMemoryCreditStore, type CreditStore } from './store.js';
 
@@ -418,7 +418,10 @@ describe('tenancy', () => {
       'consume',
       'grant',
       'grantAsPlatform',
+      'hold',
       'refund',
+      'release',
+      'settle',
     ]);
   });
 });
@@ -521,5 +524,208 @@ describe('manual grants by the platform administrator (ADR-0091)', () => {
       ),
     ).toThrow('platform_email_unverified');
     expect(resolvePlatformAdmin(as(BOB), admins)).toEqual({ userId: BOB, role: 'platform_admin' });
+  });
+});
+
+describe('buckets: included and purchased credits (ADR-0123)', () => {
+  it('spends included credits first, refunds bought ones first, and the ledger adds up', async () => {
+    const { service, credits, tenantA, a } = await world();
+    await service.grant(tenantA, { ...req(50, 'plan-1'), bucket: 'included' });
+    await service.grant(tenantA, req(30, 'pack-1'));
+    const spent = await service.consume(tenantA, req(60, 'c1'));
+    expect(spent.entry.split).toEqual({ included: 50, purchased: 10 });
+    expect(await service.balanceOf(tenantA)).toMatchObject({
+      balance: 20,
+      included: 0,
+      purchased: 20,
+      reserved: 0,
+      available: 20,
+    });
+    const back = await service.refund(tenantA, { ...req(15, 'r1'), refundOf: 'c1' });
+    expect(back.entry.split).toEqual({ included: 5, purchased: 10 });
+    const rest = await service.refund(tenantA, { ...req(45, 'r2'), refundOf: 'c1' });
+    expect(rest.entry.split).toEqual({ included: 45, purchased: 0 });
+    expect(await service.balanceOf(tenantA)).toMatchObject({ included: 50, purchased: 30 });
+    const wallet = must(await credits.findWallet(a.organization.id));
+    expect(verifyLedger(wallet, await credits.ledger(a.organization.id))).toEqual([]);
+  });
+
+  it('refuses an unknown bucket, and a grant replayed into another bucket', async () => {
+    const { service, tenantA } = await world();
+    expect(await codeOf(service.grant(tenantA, { ...req(5, 'g'), bucket: 'free' as never }))).toBe(
+      'invalid_bucket',
+    );
+    await service.grant(tenantA, { ...req(5, 'g1'), bucket: 'included' });
+    expect(await codeOf(service.grant(tenantA, req(5, 'g1')))).toBe('credits_reference_conflict');
+  });
+});
+
+describe('holds: reserve, settle, release (ADR-0123)', () => {
+  const hold = (amount: number, referenceId: string, ttlMs = 60_000) => ({
+    ...req(amount, referenceId),
+    ttlMs,
+  });
+
+  it('holds before running, then spends the real cost and frees the rest', async () => {
+    const { service, credits, tenantA, a, creditEvents } = await world();
+    await service.grant(tenantA, req(100, 'g1'));
+    const held = await service.hold(tenantA, hold(40, 'op-1'));
+    expect(held.entry).toMatchObject({ type: 'hold', amount: 0, held: 40, balanceAfter: 100 });
+    expect(await service.balanceOf(tenantA)).toMatchObject({
+      balance: 100,
+      reserved: 40,
+      available: 60,
+    });
+    // Held credits are never spent by another operation.
+    expect(await codeOf(service.consume(tenantA, req(61, 'c1')))).toBe('credits_insufficient');
+    expect(await codeOf(service.hold(tenantA, hold(61, 'op-2')))).toBe('credits_insufficient');
+    const settled = await service.settle(tenantA, { holdOf: 'op-1', amount: 25, reason: 'test' });
+    expect(settled.entry).toMatchObject({
+      type: 'consume',
+      amount: -25,
+      held: 40,
+      holdOf: entryIdOf(a.organization.id, 'op-1'),
+      referenceId: 'op-1:close',
+    });
+    expect(await service.balanceOf(tenantA)).toMatchObject({
+      balance: 75,
+      reserved: 0,
+      available: 75,
+    });
+    expect(creditEvents().map((e) => e.action)).toEqual([
+      'credits.grant',
+      'credits.hold',
+      'credits.consume',
+    ]);
+    const wallet = must(await credits.findWallet(a.organization.id));
+    expect(verifyLedger(wallet, await credits.ledger(a.organization.id))).toEqual([]);
+  });
+
+  it('closes a hold once: a retry replays it, a different close is refused', async () => {
+    const { service, credits, tenantA, a } = await world();
+    await service.grant(tenantA, req(100, 'g1'));
+    await service.hold(tenantA, hold(40, 'op-1'));
+    const first = await service.settle(tenantA, { holdOf: 'op-1', amount: 25, reason: 'test' });
+    const again = await service.settle(tenantA, { holdOf: 'op-1', amount: 25, reason: 'test' });
+    expect(again).toEqual({ ...first, replayed: true });
+    expect(
+      await codeOf(service.settle(tenantA, { holdOf: 'op-1', amount: 30, reason: 'test' })),
+    ).toBe('credits_hold_closed');
+    expect(await codeOf(service.release(tenantA, { holdOf: 'op-1', reason: 'test' }))).toBe(
+      'credits_hold_closed',
+    );
+    expect(await credits.ledger(a.organization.id)).toHaveLength(3);
+    expect(await balance(service, tenantA)).toBe(75);
+  });
+
+  it('releases a hold without spending, and replays the same hold once', async () => {
+    const { service, credits, tenantA, a } = await world();
+    await service.grant(tenantA, req(100, 'g1'));
+    const first = await service.hold(tenantA, hold(40, 'op-1'));
+    expect(await service.hold(tenantA, hold(40, 'op-1', 120_000))).toEqual({
+      ...first,
+      replayed: true,
+    });
+    expect(await codeOf(service.hold(tenantA, hold(41, 'op-1')))).toBe(
+      'credits_reference_conflict',
+    );
+    expect(await service.balanceOf(tenantA)).toMatchObject({ reserved: 40 });
+    const released = await service.release(tenantA, { holdOf: 'op-1', reason: 'test' });
+    expect(released.entry).toMatchObject({ type: 'release', amount: 0, held: 40 });
+    expect(await service.balanceOf(tenantA)).toMatchObject({
+      balance: 100,
+      reserved: 0,
+      available: 100,
+    });
+    expect(await service.release(tenantA, { holdOf: 'op-1', reason: 'test' })).toMatchObject({
+      replayed: true,
+    });
+    expect(await credits.ledger(a.organization.id)).toHaveLength(3);
+  });
+
+  it('may settle above the hold when the balance covers it, never below 0', async () => {
+    const { service, tenantA } = await world();
+    await service.grant(tenantA, req(50, 'g1'));
+    await service.hold(tenantA, hold(10, 'op-1'));
+    await service.hold(tenantA, hold(30, 'op-2'));
+    // op-1 may use its own 10 and the 10 nobody holds, never op-2's 30.
+    expect(
+      await codeOf(service.settle(tenantA, { holdOf: 'op-1', amount: 21, reason: 'test' })),
+    ).toBe('credits_insufficient');
+    await service.settle(tenantA, { holdOf: 'op-1', amount: 20, reason: 'test' });
+    expect(await service.balanceOf(tenantA)).toMatchObject({
+      balance: 30,
+      reserved: 30,
+      available: 0,
+    });
+  });
+
+  it('refuses to settle what is not a hold of this organization', async () => {
+    const { service, tenantA, tenantB } = await world();
+    await service.grant(tenantA, req(100, 'g1'));
+    await service.grant(tenantB, req(100, 'gb'));
+    await service.hold(tenantB, hold(10, 'op-b'));
+    const settle = (tenant: TenantContext, holdOf: string) =>
+      codeOf(service.settle(tenant, { holdOf, amount: 1, reason: 'test' }));
+    expect(await settle(tenantA, 'nothing')).toBe('credits_hold_invalid');
+    expect(await settle(tenantA, 'g1')).toBe('credits_hold_invalid');
+    expect(await settle(tenantA, 'op-b')).toBe('credits_hold_invalid');
+    expect(await service.balanceOf(tenantB)).toMatchObject({ balance: 100, reserved: 10 });
+  });
+
+  it('stops holding when a hold expires, and still settles it only if the balance covers it', async () => {
+    const { service, credits, tenancy, tenantA, a } = await world();
+    let clock = NOW;
+    const timed = createCreditService({ store: credits, organizations: tenancy, now: () => clock });
+    await timed.grant(tenantA, req(100, 'g1'));
+    await timed.hold(tenantA, hold(40, 'op-1', 60_000));
+    await timed.hold(tenantA, hold(10, 'op-2', 60_000));
+    clock = new Date(NOW.getTime() + 120_000);
+    expect(await timed.balanceOf(tenantA)).toMatchObject({ reserved: 0, available: 100 });
+    await timed.consume(tenantA, req(95, 'c1'));
+    expect(must(await credits.findWallet(a.organization.id)).holds).toEqual([]);
+    expect(
+      await codeOf(timed.settle(tenantA, { holdOf: 'op-1', amount: 10, reason: 'test' })),
+    ).toBe('credits_insufficient');
+    await timed.settle(tenantA, { holdOf: 'op-2', amount: 5, reason: 'test' });
+    expect(await balance(service, tenantA)).toBe(0);
+  });
+
+  it('refuses a hold with no valid lifetime, and too many open holds', async () => {
+    const { service, tenantA } = await world();
+    await service.grant(tenantA, req(1000, 'g1'));
+    for (const ttlMs of [0, -1, 1.5, Number.NaN, 8 * 24 * 60 * 60 * 1000]) {
+      expect(await codeOf(service.hold(tenantA, hold(1, `bad-${ttlMs}`, ttlMs)))).toBe(
+        'invalid_hold_expiry',
+      );
+    }
+    for (let i = 0; i < MAX_OPEN_HOLDS; i += 1) await service.hold(tenantA, hold(1, `op-${i}`));
+    expect(await codeOf(service.hold(tenantA, hold(1, 'one-more')))).toBe('credits_holds_limit');
+    await service.release(tenantA, { holdOf: 'op-0', reason: 'test' });
+    await service.hold(tenantA, hold(1, 'one-more'));
+  });
+
+  it('lets only as many concurrent holds as the balance covers', async () => {
+    const { service, tenantA } = await world();
+    await service.grant(tenantA, req(100, 'g1'));
+    const results = await Promise.allSettled(
+      Array.from({ length: 10 }, (_, i) => service.hold(tenantA, hold(20, `op-${i}`))),
+    );
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(5);
+    expect(await service.balanceOf(tenantA)).toMatchObject({ reserved: 100, available: 0 });
+  });
+
+  it('settles a concurrent duplicate close once', async () => {
+    const { service, credits, tenantA, a } = await world();
+    await service.grant(tenantA, req(100, 'g1'));
+    await service.hold(tenantA, hold(40, 'op-1'));
+    const closes = await Promise.all(
+      Array.from({ length: 5 }, () =>
+        service.settle(tenantA, { holdOf: 'op-1', amount: 25, reason: 'test' }),
+      ),
+    );
+    expect(closes.filter((c) => !c.replayed)).toHaveLength(1);
+    expect(await credits.ledger(a.organization.id)).toHaveLength(3);
+    expect(await balance(service, tenantA)).toBe(75);
   });
 });

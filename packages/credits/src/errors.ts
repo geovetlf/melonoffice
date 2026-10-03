@@ -13,7 +13,12 @@ export type CreditsErrorCode =
   | 'credits_insufficient'
   | 'credits_balance_limit'
   | 'credits_reference_conflict'
-  | 'credits_refund_invalid';
+  | 'credits_refund_invalid'
+  | 'invalid_bucket'
+  | 'credits_holds_limit'
+  | 'credits_hold_invalid'
+  | 'credits_hold_closed'
+  | 'invalid_hold_expiry';
 
 export class CreditsError extends Error {
   override readonly name = 'CreditsError';

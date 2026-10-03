@@ -7,6 +7,8 @@ import { Timestamp } from '@google-cloud/firestore';
 import type { AuditEvent } from '@melonoffice/audit';
 import type { CreditStore, CreditTransaction } from '@melonoffice/credits';
 import type {
+  CreditBucket,
+  CreditBuckets,
   CreditEntryId,
   CreditEntryType,
   CreditLedgerEntry,
@@ -28,9 +30,18 @@ import { AUDIT_LOGS, toAuditDocument } from './audit.js';
 export const CREDIT_WALLETS = 'creditWallets';
 export const CREDIT_LEDGER = 'creditLedger';
 
+interface HoldDocument {
+  readonly entryId: string;
+  readonly amount: number;
+  readonly expiresAt: FirestoreTimestamp;
+}
+
 interface WalletDocument {
   readonly walletId: string;
   readonly balance: number;
+  /** Absent on wallets written before D-12 (ADR-0123): all of the balance is `purchased`. */
+  readonly buckets?: CreditBuckets;
+  readonly holds?: readonly HoldDocument[];
   readonly createdAt: FirestoreTimestamp;
   readonly updatedAt: FirestoreTimestamp;
 }
@@ -44,19 +55,46 @@ interface EntryDocument {
   readonly referenceId: string;
   readonly reason: string;
   readonly refundOf: string | null;
+  // D-12 fields (ADR-0123), only on the entries that have them.
+  readonly bucket?: CreditBucket;
+  readonly split?: CreditBuckets;
+  readonly held?: number;
+  readonly expiresAt?: FirestoreTimestamp;
+  readonly holdOf?: string;
   readonly createdAt: FirestoreTimestamp;
 }
 
-const TYPES: readonly string[] = ['grant', 'consume', 'refund', 'adjustment'];
+const TYPES: readonly string[] = ['grant', 'consume', 'refund', 'adjustment', 'hold', 'release'];
+const BUCKETS: readonly string[] = ['included', 'purchased'];
 const at = (value: IsoTimestamp): FirestoreTimestamp => Timestamp.fromDate(new Date(value));
 const iso = (timestamp: FirestoreTimestamp): IsoTimestamp =>
   timestamp.toDate().toISOString() as IsoTimestamp;
 const whole = (value: unknown): value is number =>
   typeof value === 'number' && Number.isSafeInteger(value);
+const isBuckets = (value: unknown): value is CreditBuckets => {
+  const b = value as CreditBuckets | null | undefined;
+  return (
+    typeof b === 'object' &&
+    b !== null &&
+    whole(b.included) &&
+    whole(b.purchased) &&
+    b.included >= 0 &&
+    b.purchased >= 0
+  );
+};
+
+const holdsOf = (wallet: CreditWallet): HoldDocument[] =>
+  (wallet.holds ?? []).map((h) => ({
+    entryId: h.entryId,
+    amount: h.amount,
+    expiresAt: at(h.expiresAt),
+  }));
 
 export const toWalletDocument = (wallet: CreditWallet): WalletDocument => ({
   walletId: wallet.id,
   balance: wallet.balance,
+  ...(wallet.buckets === undefined ? {} : { buckets: { ...wallet.buckets } }),
+  ...(wallet.holds === undefined ? {} : { holds: holdsOf(wallet) }),
   createdAt: at(wallet.createdAt),
   updatedAt: at(wallet.updatedAt),
 });
@@ -70,6 +108,11 @@ const toEntryDocument = (entry: CreditLedgerEntry): EntryDocument => ({
   referenceId: entry.referenceId,
   reason: entry.reason,
   refundOf: entry.refundOf ?? null,
+  ...(entry.bucket === undefined ? {} : { bucket: entry.bucket }),
+  ...(entry.split === undefined ? {} : { split: { ...entry.split } }),
+  ...(entry.held === undefined ? {} : { held: entry.held }),
+  ...(entry.expiresAt === undefined ? {} : { expiresAt: at(entry.expiresAt) }),
+  ...(entry.holdOf === undefined ? {} : { holdOf: entry.holdOf }),
   createdAt: at(entry.createdAt),
 });
 
@@ -78,10 +121,35 @@ function toWallet(organizationId: OrganizationId, data: WalletDocument): CreditW
   if (!whole(data.balance) || data.balance < 0 || typeof data.walletId !== 'string') {
     throw new Error('invalid credit wallet record');
   }
+  if (
+    data.buckets !== undefined &&
+    (!isBuckets(data.buckets) || data.buckets.included + data.buckets.purchased !== data.balance)
+  ) {
+    throw new Error('invalid credit wallet record');
+  }
+  const holds = data.holds?.map((h) => {
+    if (typeof h.entryId !== 'string' || !whole(h.amount) || h.amount < 1) {
+      throw new Error('invalid credit wallet record');
+    }
+    return Object.freeze({
+      entryId: h.entryId as CreditEntryId,
+      amount: h.amount,
+      expiresAt: iso(h.expiresAt),
+    });
+  });
   return Object.freeze({
     id: data.walletId as CreditWalletId,
     organizationId,
     balance: data.balance,
+    ...(data.buckets === undefined
+      ? {}
+      : {
+          buckets: Object.freeze({
+            included: data.buckets.included,
+            purchased: data.buckets.purchased,
+          }),
+        }),
+    ...(holds === undefined ? {} : { holds: Object.freeze(holds) }),
     createdAt: iso(data.createdAt),
     updatedAt: iso(data.updatedAt),
   });
@@ -89,6 +157,13 @@ function toWallet(organizationId: OrganizationId, data: WalletDocument): CreditW
 
 function toEntry(id: string, data: EntryDocument): CreditLedgerEntry {
   if (!TYPES.includes(data.type) || !whole(data.amount) || !whole(data.balanceAfter)) {
+    throw new Error('invalid credit ledger record');
+  }
+  if (
+    (data.bucket !== undefined && !BUCKETS.includes(data.bucket)) ||
+    (data.split !== undefined && !isBuckets(data.split)) ||
+    (data.held !== undefined && (!whole(data.held) || data.held < 0))
+  ) {
     throw new Error('invalid credit ledger record');
   }
   return Object.freeze({
@@ -101,6 +176,15 @@ function toEntry(id: string, data: EntryDocument): CreditLedgerEntry {
     referenceId: data.referenceId,
     reason: data.reason,
     ...(data.refundOf === null ? {} : { refundOf: data.refundOf as CreditEntryId }),
+    ...(data.bucket === undefined ? {} : { bucket: data.bucket }),
+    ...(data.split === undefined
+      ? {}
+      : {
+          split: Object.freeze({ included: data.split.included, purchased: data.split.purchased }),
+        }),
+    ...(data.held === undefined ? {} : { held: data.held }),
+    ...(data.expiresAt === undefined ? {} : { expiresAt: iso(data.expiresAt) }),
+    ...(data.holdOf === undefined ? {} : { holdOf: data.holdOf as CreditEntryId }),
     createdAt: iso(data.createdAt),
   });
 }
@@ -166,6 +250,8 @@ export class FirestoreCreditStore implements CreditStore {
           committed = true;
           t.update(walletRef, {
             balance: wallet.balance,
+            buckets: { ...(wallet.buckets ?? { included: 0, purchased: wallet.balance }) },
+            holds: holdsOf(wallet),
             updatedAt: at(wallet.updatedAt),
           });
           t.create(ledger.doc(entry.id), toEntryDocument(entry));
