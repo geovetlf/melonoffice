@@ -1002,7 +1002,9 @@ export function createApp({
               departments: structure.departments,
               tools,
               authorization,
-              environment: undefined,
+              // A workflow's tool steps (ADR-0159, ADR-0164) are planned only where this server
+              // runs tools, as a person's own tools are. Unset: every tool step is refused.
+              environment: conversations?.toolEnvironment,
             }),
             organizations: tenancy,
             authorization,
@@ -1383,8 +1385,7 @@ export function createApp({
       app.all('/v1/organizations/:organizationId/approvals/*', unavailable);
     }
     // Plans are read and decided over HTTP, never made there: only the server-side planner and
-    // workflows propose them, so this validator is never reached from a route and fails closed
-    // on every tool (no environment). Approving one runs it (ADR-0070).
+    // workflows propose them. Approving one runs it (ADR-0070).
     if (
       sharedPlanService !== undefined &&
       tenancy !== undefined &&
