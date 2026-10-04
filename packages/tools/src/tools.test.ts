@@ -1,4 +1,4 @@
-import type { ToolDefinition, ToolSchema, ToolVersion } from '@melonoffice/domain';
+import type { ToolDefinition, ToolId, ToolSchema, ToolVersion } from '@melonoffice/domain';
 import { describe, expect, it } from 'vitest';
 import { canonicalJson, digestOf, sameDigest } from './canonical.js';
 import { ToolError } from './errors.js';
@@ -190,6 +190,13 @@ describe('tool registry', () => {
       'published_version_changed:web_search@1',
     );
     expect(codeOf(() => createToolRegistry([definition()], [version()]))).toBe('accepted');
+  });
+
+  it('refuses a tool that takes a reserved id: a plan step approval is never a tool (ADR-0146)', () => {
+    const reserved = definition([version({ toolId: 'plan_step' as ToolId })]);
+    expect(codeOf(() => createToolRegistry([{ ...reserved, id: 'plan_step' as ToolId }]))).toBe(
+      'reserved:plan_step',
+    );
   });
 
   it('ships message_send, conversation_handoff, follow_up_schedule and knowledge_search: real tools with executors, none invented', () => {

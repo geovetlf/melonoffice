@@ -57,10 +57,19 @@ interface PlanDocument {
   } | null;
   /** What each condition step did (WF-4). Absent in plans written before conditions ran. */
   readonly conditions?: readonly ConditionDocument[];
+  /** ADR-0146: absent on plans written before, and on plans no step asked approval for. */
+  readonly stepApprovals?: readonly StepApprovalDocument[];
   readonly revision: number;
   readonly createdAt: FirestoreTimestamp;
   readonly createdBy: string;
   readonly updatedAt: FirestoreTimestamp;
+}
+
+interface StepApprovalDocument {
+  readonly stepId: string;
+  readonly approvalId: string;
+  readonly requestedAt: FirestoreTimestamp;
+  readonly declined?: { readonly reason: string; readonly at: FirestoreTimestamp } | null;
 }
 
 interface ConditionDocument {
@@ -116,6 +125,19 @@ export function toPlanDocument(plan: Plan): PlanDocument {
             evaluatedAt: ts(c.evaluatedAt),
           })),
         }),
+    ...(plan.stepApprovals === undefined
+      ? {}
+      : {
+          stepApprovals: plan.stepApprovals.map((a) => ({
+            stepId: a.stepId,
+            approvalId: a.approvalId,
+            requestedAt: ts(a.requestedAt),
+            declined:
+              a.declined === undefined
+                ? null
+                : { reason: a.declined.reason, at: ts(a.declined.at) },
+          })),
+        }),
     revision: plan.revision,
     createdAt: ts(plan.createdAt),
     createdBy: plan.createdBy,
@@ -157,6 +179,18 @@ function toPlan(id: string, d: PlanDocument): Plan {
             ...(c.decision === null ? {} : { decision: { ...c.decision } }),
             ...(c.failure === null ? {} : { failure: c.failure }),
             evaluatedAt: iso(c.evaluatedAt),
+          })),
+        }),
+    ...(d.stepApprovals === undefined
+      ? {}
+      : {
+          stepApprovals: d.stepApprovals.map((a) => ({
+            stepId: a.stepId,
+            approvalId: a.approvalId,
+            requestedAt: iso(a.requestedAt),
+            ...(a.declined === null || a.declined === undefined
+              ? {}
+              : { declined: { reason: a.declined.reason, at: iso(a.declined.at) } }),
           })),
         }),
     revision: d.revision,

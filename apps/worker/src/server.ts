@@ -311,7 +311,11 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
         models: AI_MODEL_CATALOGUE,
         adapters: [],
       });
-  const { jobs: jobService, runtime: engine } = createWorkerRuntime({
+  const {
+    jobs: jobService,
+    runtime: engine,
+    advancePlan,
+  } = createWorkerRuntime({
     stores,
     environment: runtime.environment,
     leaseMs: runtime.leaseMs,
@@ -431,6 +435,15 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
     tenancy,
     runtime: engine,
     ledger: new FirestoreSweepLedger(firestore),
+    // A plan step waiting for a person is advanced, never abandoned (ADR-0146).
+    ...(advancePlan === undefined
+      ? {}
+      : {
+          plans: {
+            find: (organizationId, id) => plans.find(organizationId, id),
+            advance: advancePlan,
+          },
+        }),
     scheduler: createCloudTasksScheduler({
       queue: runtime.queue,
       targetUrl: `${runtime.workerUrl}${RUN_SWEEP_PATH}`,

@@ -18,6 +18,8 @@ import type {
   IsoTimestamp,
   JobId,
   Organization,
+  Plan,
+  PlanId,
   SubscriptionId,
   ToolDefinition,
   ToolVersion,
@@ -569,6 +571,67 @@ describe('the automatic sweep of abandoned agent work (ADR-0121)', () => {
     const record = await w.sweeper.sweep(sweepSlotOf(w.at()).id);
     expect(record.counts).toEqual({ closed: 1 });
     expect((await w.find(execution)).failure?.code).toBe('stale_execution');
+  });
+
+  it('never closes a plan step that has not started while its plan runs; one waiting for a person advances its plan (ADR-0146)', async () => {
+    const w = await world();
+    const { execution } = await w.task('a', AGENT);
+    const stored = await w.find(execution);
+    const planId = '00000000-0000-4000-8000-000000000146' as PlanId;
+    // A step's child that never started, its plan waiting on a person to approve it.
+    const unstarted: { -readonly [K in keyof Execution]?: Execution[K] } = { ...stored };
+    delete unstarted.startedAt;
+    w.stores.executions.put({
+      ...unstarted,
+      status: 'pending',
+      input: { type: 'plan_step', id: `${planId}:campaign` },
+      parentExecutionId: stored.id,
+    } as Execution);
+    let plan = {
+      id: planId,
+      status: 'executing',
+      stepApprovals: [{ stepId: 'campaign', approvalId: 'x', requestedAt: T0 }],
+    } as unknown as Plan;
+    const advanced: { actor: string; organizationId: string; planId: string }[] = [];
+    const sweeper = createExecutionSweeper({
+      executions: w.stores.executions,
+      jobs: w.stores.jobs,
+      approvals: w.stores.approvals,
+      tenancy: w.stores.tenancy,
+      runtime: w.runtime,
+      ledger: w.ledger,
+      plans: {
+        find: async (organizationId, id) =>
+          organizationId === stored.organizationId && id === planId ? plan : undefined,
+        advance: async (tenant, id) =>
+          void advanced.push({
+            actor: tenant.actor,
+            organizationId: tenant.organizationId,
+            planId: id,
+          }),
+      },
+      now: w.at,
+    });
+    w.advance(25 * HOUR);
+    const record = await sweeper.sweep(sweepSlotOf(w.at()).id);
+    expect(record.counts).toEqual({ awaiting_approval: 1 });
+    expect(record.closed).toEqual([]);
+    // Its plan was advanced as its person's runtime, in its own organization only.
+    expect(advanced).toEqual([{ actor: 'runtime', organizationId: stored.organizationId, planId }]);
+    expect((await w.find(execution)).status).toBe('pending');
+
+    // A step that only waits for the steps before it is left alone too, with nothing advanced.
+    plan = { ...plan, stepApprovals: [] } as unknown as Plan;
+    w.advance(25 * HOUR);
+    expect((await sweeper.sweep(sweepSlotOf(w.at()).id)).counts).toEqual({ waiting_in_plan: 1 });
+    expect(advanced).toHaveLength(1);
+
+    // Once the plan ended, a child left behind is swept as before.
+    plan = { ...plan, status: 'completed' } as Plan;
+    w.advance(25 * HOUR);
+    const later = await sweeper.sweep(sweepSlotOf(w.at()).id);
+    expect(later.closed).toEqual([expect.objectContaining({ executionId: execution.id })]);
+    expect(advanced).toHaveLength(1);
   });
 
   it('never closes work that is not an agent’s task or a plan’s step', async () => {

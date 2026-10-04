@@ -8,6 +8,9 @@ import {
   STEP_CHECK,
   unrunnableStepOf,
   type ConditionEvaluator,
+  type StepApprovalAsk,
+  type StepApprovals,
+  type StepApprovalState,
 } from './conductor.js';
 import { isPlanningError } from './errors.js';
 import { ALICE, must, proposal, specialistStep, toolStep, world, type World } from './testkit.js';
@@ -75,6 +78,7 @@ const decided = (result: 'continue' | 'stop' | 'await_approval', outcome = 'allo
 async function setup(
   steps?: (s: Awaited<ReturnType<World['seed']>>) => Record<string, unknown>[],
   conditions?: ConditionEvaluator,
+  approvals?: StepApprovals,
 ) {
   const w = await world();
   const owner = await w.seed(w.orgA, ALICE, { type: 'leadership', role: 'chief_of_staff' });
@@ -112,6 +116,7 @@ async function setup(
       },
     },
     ...(conditions === undefined ? {} : { conditions }),
+    ...(approvals === undefined ? {} : { approvals }),
     requestId: 'plan-conductor-test',
     now: () => new Date('2026-09-27T12:00:00Z'),
   });
@@ -530,5 +535,204 @@ describe('plan conditions (WF-4)', () => {
         specialistStep('research', researcher, { dependsOn: ['gate'] }),
       ]),
     ).rejects.toThrow('refused');
+  });
+});
+
+/** The approvals system stand-in: records what was asked, and answers what a test set. */
+function stepApprovals() {
+  const asked: { actor: string; ask: StepApprovalAsk; id: string }[] = [];
+  const states = new Map<string, StepApprovalState>();
+  const cancelled: { id: string; reason: string }[] = [];
+  const port: StepApprovals = {
+    async request(tenant, ask) {
+      const id = `00000000-0000-4000-8000-${String(asked.length + 1).padStart(12, '0')}`;
+      asked.push({ actor: tenant.actor, ask, id });
+      states.set(id, { status: 'pending' });
+      return id;
+    },
+    async state(_tenant, id) {
+      const found = states.get(id);
+      if (found === undefined) throw new Error('unknown approval');
+      return found;
+    },
+    async cancel(_tenant, id, reason) {
+      cancelled.push({ id, reason });
+      states.set(id, { status: 'declined', reason: 'cancelled' });
+    },
+  };
+  const idOf = (stepId: string): string => must(asked.find((a) => a.ask.stepId === stepId)).id;
+  const set = (stepId: string, state: StepApprovalState) => states.set(idOf(stepId), state);
+  return { port, asked, cancelled, set, idOf };
+}
+
+describe('step approvals inside a running plan (ADR-0146)', () => {
+  // research → offer (waits for a person) → send; research → summary; final waits on both.
+  const branches = (researcher: Awaited<ReturnType<World['seed']>>) => [
+    specialistStep('research', researcher),
+    specialistStep('offer', researcher, { dependsOn: ['research'], approvalRequired: true }),
+    specialistStep('send', researcher, { dependsOn: ['offer'] }),
+    specialistStep('summary', researcher, { dependsOn: ['research'] }),
+    specialistStep('final', researcher, { dependsOn: ['send', 'summary'] }),
+  ];
+
+  async function ready(a = stepApprovals()) {
+    const t = await setup(branches, undefined, a.port);
+    await t.approve();
+    await t.conductor.run(t.w.tenantA, t.planned.id);
+    await t.complete('research');
+    await t.conductor.advance(t.w.runtimeA, t.planned.id);
+    return { ...t, a };
+  }
+
+  it('1. asks once when the step is ready, waits, and the branch goes on once approved', async () => {
+    const t = await ready();
+    // The step waits; the independent branch started.
+    expect(await t.status(await t.childOf('offer'))).toBe('pending');
+    expect(t.started.slice(1).map((s) => s.id)).toEqual([await t.childOf('summary')]);
+    // Asked as the runtime of the plan's person, bound to this plan version, step and child.
+    const version = must(
+      await t.w.planRepository.findVersion(t.w.orgA, t.planned.id, t.planned.version),
+    );
+    expect(t.a.asked).toEqual([
+      {
+        actor: 'runtime',
+        id: t.a.idOf('offer'),
+        ask: expect.objectContaining({
+          organizationId: t.w.orgA,
+          planId: t.planned.id,
+          planVersion: version.version,
+          planDigest: version.digest,
+          executionId: t.planned.executionId,
+          stepId: 'offer',
+          childExecutionId: await t.childOf('offer'),
+          riskLevel: version.riskLevel,
+        }),
+      },
+    ]);
+    expect((await t.stored()).stepApprovals).toEqual([
+      { stepId: 'offer', approvalId: t.a.idOf('offer'), requestedAt: expect.any(String) },
+    ]);
+    expect(t.w.events('plan.step_approval_requested')).toEqual([
+      expect.objectContaining({
+        result: 'success',
+        nodeId: 'offer',
+        reference: t.a.idOf('offer'),
+        target: { type: 'plan', id: t.planned.id },
+      }),
+    ]);
+    // Advancing while it waits asks nothing again and starts nothing.
+    await t.conductor.advance(t.w.runtimeA, t.planned.id);
+    expect(t.a.asked).toHaveLength(1);
+    expect(await t.status(await t.childOf('offer'))).toBe('pending');
+
+    // 10. Once approved, the next advance resumes the plan where it waited.
+    t.a.set('offer', { status: 'approved' });
+    await t.conductor.advance(t.w.runtimeA, t.planned.id);
+    expect(await t.status(await t.childOf('offer'))).toBe('running');
+    await t.complete('offer');
+    await t.conductor.advance(t.w.runtimeA, t.planned.id);
+    await t.complete('summary');
+    await t.conductor.advance(t.w.runtimeA, t.planned.id);
+    await t.complete('send');
+    await t.conductor.advance(t.w.runtimeA, t.planned.id);
+    await t.complete('final');
+    const closed = await t.conductor.advance(t.w.runtimeA, t.planned.id);
+    expect(closed.status).toBe('completed');
+    expect(t.w.events('plan.step_declined')).toEqual([]);
+  });
+
+  it('2–3, 6. a rejection skips the step and every step after it; the other branch finishes', async () => {
+    const t = await ready();
+    t.a.set('offer', { status: 'declined', reason: 'rejected' });
+    await t.conductor.advance(t.w.runtimeA, t.planned.id);
+    // The decline is recorded once on the plan and in the audit log.
+    expect((await t.stored()).stepApprovals?.[0]?.declined).toEqual({
+      reason: 'rejected',
+      at: expect.any(String),
+    });
+    expect(t.w.events('plan.step_declined')).toEqual([
+      expect.objectContaining({ nodeId: 'offer', reason: 'rejected', result: 'success' }),
+    ]);
+    const parent = await t.w.executions.get(t.w.tenantA, t.planned.executionId);
+    // `final` depends on the declined branch and on `summary`: it is skipped too.
+    for (const id of ['offer', 'send', 'final']) {
+      expect(parent.nodes.find((n) => n.id === id)?.status, id).toBe('skipped');
+      expect(await t.status(await t.childOf(id)), id).toBe('pending');
+    }
+    // The independent branch goes on and the plan completes, not failed.
+    await t.complete('summary');
+    const closed = await t.conductor.advance(t.w.runtimeA, t.planned.id);
+    expect(closed.status).toBe('completed');
+    const done = await t.w.executions.get(t.w.tenantA, t.planned.executionId);
+    expect(done.status).toBe('completed');
+    expect(done.verification?.nodes.map((n) => n.nodeId)).toEqual(['research', 'summary']);
+    // Recorded once: advancing again changes nothing.
+    await t.conductor.advance(t.w.runtimeA, t.planned.id);
+    expect(t.w.events('plan.step_declined')).toHaveLength(1);
+  });
+
+  it('4. an expired approval is a decline: its branch is skipped, the rest goes on', async () => {
+    const t = await ready();
+    t.a.set('offer', { status: 'declined', reason: 'expired' });
+    await t.conductor.advance(t.w.runtimeA, t.planned.id);
+    expect(t.w.events('plan.step_declined')[0]).toMatchObject({ reason: 'expired' });
+    await t.complete('summary');
+    expect((await t.conductor.advance(t.w.runtimeA, t.planned.id)).status).toBe('completed');
+  });
+
+  it('5. several branches each wait for their own approval, decided apart', async () => {
+    const a = stepApprovals();
+    const t = await setup(
+      (r) => [
+        specialistStep('research', r),
+        specialistStep('left', r, { dependsOn: ['research'], approvalRequired: true }),
+        specialistStep('right', r, { dependsOn: ['research'], approvalRequired: true }),
+        specialistStep('after_left', r, { dependsOn: ['left'] }),
+      ],
+      undefined,
+      a.port,
+    );
+    await t.approve();
+    await t.conductor.run(t.w.tenantA, t.planned.id);
+    await t.complete('research');
+    await t.conductor.advance(t.w.runtimeA, t.planned.id);
+    expect(a.asked.map((x) => x.ask.stepId)).toEqual(['left', 'right']);
+    a.set('left', { status: 'approved' });
+    a.set('right', { status: 'declined', reason: 'rejected' });
+    await t.conductor.advance(t.w.runtimeA, t.planned.id);
+    expect(await t.status(await t.childOf('left'))).toBe('running');
+    expect(await t.status(await t.childOf('right'))).toBe('pending');
+    await t.complete('left');
+    await t.conductor.advance(t.w.runtimeA, t.planned.id);
+    await t.complete('after_left');
+    const closed = await t.conductor.advance(t.w.runtimeA, t.planned.id);
+    expect(closed.status).toBe('completed');
+  });
+
+  it('a first step is covered by the plan approval itself and asks nothing more', async () => {
+    const a = stepApprovals();
+    const t = await setup(undefined, undefined, a.port);
+    await t.approve();
+    await t.conductor.run(t.w.tenantA, t.planned.id);
+    expect(t.started.map((s) => s.id)).toEqual([await t.childOf('research')]);
+    expect(a.asked).toEqual([]);
+  });
+
+  it('never runs a step unapproved: without approvals it fails once ready, and a failed plan withdraws what waits', async () => {
+    const t = await setup(branches);
+    await t.approve();
+    await t.conductor.run(t.w.tenantA, t.planned.id);
+    await t.complete('research');
+    const stopped = await t.conductor.advance(t.w.runtimeA, t.planned.id);
+    expect(stopped.status).toBe('failed');
+    expect(await t.status(await t.childOf('offer'))).toBe('pending');
+    expect(t.w.events('plan.state_changed').at(-1)).toMatchObject({
+      reason: 'step_approval_not_configured',
+    });
+
+    const w = await ready();
+    await w.fail('summary');
+    expect((await w.conductor.advance(w.w.runtimeA, w.planned.id)).status).toBe('failed');
+    expect(w.a.cancelled).toEqual([{ id: w.a.idOf('offer'), reason: 'plan_ended' }]);
   });
 });

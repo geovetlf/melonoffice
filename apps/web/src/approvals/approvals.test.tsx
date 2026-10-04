@@ -68,6 +68,29 @@ describe('The approval center (ADR-0026)', () => {
     expect(within(sidebar).getByRole('link', { name: /Approvals/ })).toBeTruthy();
   });
 
+  it('lists a plan step that asked a person before it runs (ADR-0146)', async () => {
+    open('/approvals', (b) => {
+      b.options.approvals = {
+        org_1: [
+          approval('a3', 'pending', {
+            reason: 'plan_step_approval',
+            impact: 'starts_step',
+            estimatedCredits: null,
+            nodeId: 'campaign',
+            tool: { id: 'plan_step', version: 1 },
+            action: 'start_step',
+          }),
+        ],
+      };
+    });
+    expect(await screen.findByText('Start a step of a plan')).toBeTruthy();
+    expect(screen.getByText(/start the step/)).toBeTruthy();
+    expect(screen.getByText(/you asked to approve this step before it runs/)).toBeTruthy();
+    expect(screen.getByText(/if you reject it, this branch is skipped/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Approve' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Reject' })).toBeTruthy();
+  });
+
   it('approves one, says so, and moves it to the history', async () => {
     const backend = open('/approvals');
     fireEvent.click(await screen.findByRole('button', { name: 'Approve' }));

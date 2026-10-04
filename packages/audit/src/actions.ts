@@ -593,6 +593,18 @@ export const AUDIT_ACTIONS = {
       "One of a running plan's condition steps was decided by the Decision Engine (WF-4, ADR-0075); `nodeId` is the step, `reason` what it did (continue, stop, await_approval) or why it failed, `reference` the decision.",
     results: ['success'],
   },
+  'plan.step_approval_requested': {
+    category: 'planning',
+    description:
+      "A running plan's step, marked to wait for a person, became ready and asked for an approval bound to that exact plan version, step and child (ADR-0146); `nodeId` is the step, `reference` the approval.",
+    results: ['success'],
+  },
+  'plan.step_declined': {
+    category: 'planning',
+    description:
+      "A running plan's step approval was rejected, expired or withdrawn: the step never runs, its branch is skipped and the other branches go on (ADR-0146); `nodeId` is the step, `reason` why.",
+    results: ['success'],
+  },
   'delegation.created': {
     category: 'planning',
     description:

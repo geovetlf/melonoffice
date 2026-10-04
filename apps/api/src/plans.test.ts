@@ -1,15 +1,22 @@
 import { departmentIdOf } from '@melonoffice/departments';
 import type {
   DepartmentTypeId,
+  ExecutionId,
   IsoTimestamp,
   OrganizationId,
   PlanId,
   Specialist,
   UserId,
 } from '@melonoffice/domain';
-import { createExecutionService, executionIdFor } from '@melonoffice/execution';
+import { createApprovalService, createPlanStepApprovals } from '@melonoffice/approvals';
+import {
+  createExecutionService,
+  executionIdFor,
+  type ExecutionService,
+} from '@melonoffice/execution';
 import {
   createDelegation,
+  createPlanConductor,
   createPlanService,
   createPlanValidator,
   delegationKey,
@@ -22,13 +29,20 @@ import {
   createSpecialistService,
   newSpecialist,
 } from '@melonoffice/specialists';
-import { resolveTenant, type TenantContext } from '@melonoffice/tenancy';
+import { resolveRuntimeTenant, resolveTenant, type TenantContext } from '@melonoffice/tenancy';
 import { defaultToolRegistry } from '@melonoffice/tools';
 import { createWorkflowService } from '@melonoffice/workflows';
 import { describe, expect, it } from 'vitest';
 import { setupApp, STORES, type Stores } from './test-api.js';
 
 const AT = '2026-09-27T12:00:00.000Z' as IsoTimestamp;
+
+/** A passing check, as the runtime's verifier records one. */
+const PASSED = {
+  code: 'report_ready',
+  result: 'passed',
+  evidence: { type: 'x', id: 'y' },
+} as const;
 
 const must = <T>(value: T | undefined): T => {
   if (value === undefined) throw new Error('missing value');
@@ -208,7 +222,12 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
      * and with an approval step when asked.
      */
     async function proposeWork(
-      options: { readonly approvalRequired?: boolean; readonly gate?: boolean } = {},
+      options: {
+        readonly approvalRequired?: boolean;
+        readonly gate?: boolean;
+        /** ADR-0146: `campaign` asks a person before it runs; `brief` runs beside it. */
+        readonly askBeforeCampaign?: boolean;
+      } = {},
     ) {
       const execution = await planning(tenant);
       const step = (id: string, s: Specialist, dependsOn: string[] = []) => ({
@@ -218,7 +237,8 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
         dependsOn,
         specialistId: s.identity.id,
         verification: { policy: 'checks', expectedOutput: 'report', requiredChecks: [] },
-        ...(options.approvalRequired === true && id === 'research'
+        ...((options.approvalRequired === true && id === 'research') ||
+        (options.askBeforeCampaign === true && id === 'campaign')
           ? { approvalRequired: true }
           : {}),
       });
@@ -230,6 +250,9 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
           steps: [
             step('research', researcher),
             step('campaign', marketer, ['research']),
+            ...(options.askBeforeCampaign === true
+              ? [step('brief', researcher, ['research']), step('launch', marketer, ['campaign'])]
+              : []),
             ...(options.gate === true
               ? [{ id: 'sign_off', kind: 'approval', label: 'Sign off', dependsOn: ['campaign'] }]
               : []),
@@ -388,6 +411,7 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
           state: 'running',
           executionId: research,
           status: 'running',
+          approvalId: null,
           failure: null,
           outcome: null,
           answer: null,
@@ -400,6 +424,7 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
           state: 'waiting',
           executionId: campaign,
           status: 'pending',
+          approvalId: null,
           failure: null,
           outcome: null,
           answer: null,
@@ -769,6 +794,287 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
     });
   });
 
+  describe('ADR-0146: a step that asks a person before it runs', () => {
+    /**
+     * A running plan: research done, so `brief` started and `campaign` asks for its approval,
+     * with `launch` after it. The worker's side (its conductor) is played here.
+     */
+    async function waitingPlan(roles: Record<string, readonly string[]> = ROLES) {
+      const t = await setup(roles, { runPlans: true });
+      const authorization = createAuthorizationService(roles as never);
+      const approvals = createApprovalService({
+        repository: t.stores.approvals,
+        organizations: t.stores.tenancy,
+        authorization,
+        audit: t.stores.audit,
+      });
+      // The runtime's own execution service, as the worker has it.
+      const executions = createExecutionService({
+        repository: t.stores.executions,
+        organizations: t.stores.tenancy,
+        authorization,
+        audit: t.stores.audit,
+      });
+      const { plan, ids } = await t.proposeWork({
+        approvalRequired: true,
+        askBeforeCampaign: true,
+      });
+      const [research, campaign] = ids as [ExecutionId, ExecutionId];
+      const version = must(await t.stores.plans.findVersion(t.orgA, plan.id, plan.version));
+      const approved = await t.post('token-alice', `/plans/${plan.id}/approve`, {
+        version: 1,
+        digest: version.digest,
+      });
+      expect(approved.status).toBe(200);
+      // The first step is covered by the plan's own approval: it starts at once.
+      expect(t.kicked).toEqual([research]);
+
+      const runtime = await resolveRuntimeTenant(t.tenant.userId, t.orgA, t.stores.tenancy);
+      await executions.runtimeChangeNode(runtime, research, {
+        nodeId: 'research',
+        from: 'pending',
+        to: 'running',
+      });
+      await executions.runtimeChangeNode(runtime, research, {
+        nodeId: 'research',
+        from: 'running',
+        to: 'completed',
+        output: { type: 'agent_output', id: `${research}:research` },
+      });
+      await executions.runtimeChangeStatus(runtime, research, {
+        from: 'running',
+        to: 'verifying',
+      });
+      await executions.recordVerification(runtime, research, {
+        correlationId: 'v',
+        nodes: [{ nodeId: 'research', policy: 'checks', checks: [PASSED] }],
+      });
+      await executions.runtimeChangeStatus(runtime, research, {
+        from: 'verifying',
+        to: 'completed',
+      });
+      const worker = createPlanConductor({
+        plans: t.stores.plans,
+        executions,
+        starter: {
+          async start(tenant, executionId) {
+            await executions.runtimeStart(tenant, executionId);
+            t.kicked.push(executionId);
+          },
+        },
+        approvals: createPlanStepApprovals(approvals),
+      });
+      await worker.advance(runtime, plan.id);
+      const stored = must(await t.stores.plans.find(t.orgA, plan.id));
+      const approvalId = must(
+        stored.stepApprovals?.find((a) => a.stepId === 'campaign'),
+      ).approvalId;
+      const brief = must(stored.delegations.find((d) => d.stepId === 'brief')).executionId;
+      const launch = must(stored.delegations.find((d) => d.stepId === 'launch')).executionId;
+      const states = async () => {
+        const response = await t.get('token-alice', `/plans/${plan.id}/steps`);
+        expect(response.status).toBe(200);
+        const view = (await response.json()) as {
+          status: string;
+          steps: {
+            stepId: string;
+            state: string;
+            approvalId: string | null;
+            failure: string | null;
+          }[];
+        };
+        return {
+          status: view.status,
+          steps: Object.fromEntries(view.steps.map((s) => [s.stepId, s.state])),
+          of: (id: string) => must(view.steps.find((s) => s.stepId === id)),
+        };
+      };
+      return {
+        t,
+        executions,
+        plan,
+        approvals,
+        runtime,
+        worker,
+        research,
+        campaign,
+        brief,
+        launch,
+        approvalId,
+        states,
+      };
+    }
+
+    it('waits for a person, asks once, and shows it in the plan and the approvals inbox', async () => {
+      const w = await waitingPlan();
+      // The independent branch went on; the step that asked did not start.
+      expect(w.t.kicked).toEqual([w.research, w.brief]);
+      const seen = await w.states();
+      expect(seen.steps).toEqual({
+        research: 'completed',
+        campaign: 'awaiting_approval',
+        brief: 'running',
+        launch: 'waiting',
+      });
+      expect(seen.of('campaign').approvalId).toBe(w.approvalId);
+
+      const inbox = await w.t.get('token-alice', '/approvals');
+      const listed = ((await inbox.json()) as { approvals: Record<string, unknown>[] }).approvals;
+      expect(listed).toEqual([
+        expect.objectContaining({
+          id: w.approvalId,
+          status: 'pending',
+          reason: 'plan_step_approval',
+          impact: 'starts_step',
+          executionId: w.campaign,
+          nodeId: 'campaign',
+          tool: { id: 'plan_step', version: 1 },
+          action: 'start_step',
+        }),
+      ]);
+      // A second look asks nothing new.
+      await w.worker.advance(w.runtime, w.plan.id);
+      expect((await w.t.stores.approvals.list(w.t.orgA, 10)).length).toBe(1);
+    });
+
+    it('approval: the step starts at once and the plan goes on to the end', async () => {
+      const w = await waitingPlan();
+      const decided = await w.t.post('token-alice', `/approvals/${w.approvalId}/approve`);
+      expect(decided.status).toBe(200);
+      expect(w.t.kicked).toEqual([w.research, w.brief, w.campaign]);
+      expect((await w.states()).steps).toMatchObject({
+        campaign: 'running',
+        launch: 'waiting',
+      });
+      const events = (await w.t.stores.auditEvents()).map((e) => e.action);
+      expect(events).toEqual(
+        expect.arrayContaining([
+          'plan.step_approval_requested',
+          'tool.approval_requested',
+          'tool.approval_approved',
+        ]),
+      );
+      expect(events).not.toContain('plan.step_declined');
+    });
+
+    it('rejection: the step and the ones after it are skipped, the rest finish, the plan does not fail', async () => {
+      const w = await waitingPlan();
+      const decided = await w.t.post('token-alice', `/approvals/${w.approvalId}/reject`);
+      expect(decided.status).toBe(200);
+      // Nothing more starts; the brief is still running.
+      expect(w.t.kicked).toEqual([w.research, w.brief]);
+      let seen = await w.states();
+      expect(seen.status).toBe('executing');
+      expect(seen.steps).toEqual({
+        research: 'completed',
+        campaign: 'declined',
+        brief: 'running',
+        launch: 'skipped',
+      });
+      expect(seen.of('campaign').failure).toBe('rejected');
+      const declined = (await w.t.stores.auditEvents()).filter(
+        (e) => e.action === 'plan.step_declined',
+      );
+      expect(declined).toHaveLength(1);
+      expect(declined[0]).toMatchObject({
+        organizationId: w.t.orgA,
+        target: { type: 'plan', id: w.plan.id },
+        nodeId: 'campaign',
+        reason: 'rejected',
+      });
+
+      // The independent branch ends; the plan completes, recording what was skipped.
+      await finish(w, w.brief, 'brief');
+      await w.worker.advance(w.runtime, w.plan.id);
+      seen = await w.states();
+      expect(seen.status).toBe('completed');
+      expect(seen.steps).toEqual({
+        research: 'completed',
+        campaign: 'declined',
+        brief: 'completed',
+        launch: 'skipped',
+      });
+    });
+
+    it('expiry counts as a rejection for that branch', async () => {
+      const w = await waitingPlan();
+      const later = new Date(Date.now() + 2 * 86_400_000);
+      const worker = createPlanConductor({
+        plans: w.t.stores.plans,
+        executions: w.executions,
+        starter: { start: async (_t, id) => void w.t.kicked.push(id) },
+        approvals: createPlanStepApprovals(
+          createApprovalService({
+            repository: w.t.stores.approvals,
+            organizations: w.t.stores.tenancy,
+            authorization: createAuthorizationService(ROLES as never),
+            audit: w.t.stores.audit,
+            now: () => later,
+          }),
+          () => later,
+        ),
+        now: () => later,
+      });
+      await worker.advance(w.runtime, w.plan.id);
+      expect((await w.t.stores.approvals.find(w.t.orgA, w.approvalId as never))?.status).toBe(
+        'expired',
+      );
+      const seen = await w.states();
+      expect(seen.steps).toMatchObject({ campaign: 'declined', launch: 'skipped' });
+      expect(seen.of('campaign').failure).toBe('expired');
+      expect(w.t.kicked).toEqual([w.research, w.brief]);
+      // A person deciding afterwards changes nothing.
+      expect((await w.t.post('token-alice', `/approvals/${w.approvalId}/approve`)).status).toBe(
+        409,
+      );
+      expect(w.t.kicked).toEqual([w.research, w.brief]);
+    });
+
+    it('only a person with approval.approve decides: never the runtime, never without the permission', async () => {
+      const w = await waitingPlan();
+      // The runtime acts for Alice but is never Alice.
+      await expect(w.approvals.approve(w.runtime, w.approvalId)).rejects.toMatchObject({
+        code: 'approval_forbidden',
+      });
+      const withoutApprove = createApprovalService({
+        repository: w.t.stores.approvals,
+        organizations: w.t.stores.tenancy,
+        authorization: createAuthorizationService({
+          ...ROLES,
+          owner: ROLES.owner.filter((p) => p !== 'approval.approve'),
+        } as never),
+        audit: w.t.stores.audit,
+      });
+      await expect(withoutApprove.approve(w.t.tenant, w.approvalId)).rejects.toMatchObject({
+        code: 'approval_forbidden',
+      });
+      expect((await w.t.stores.approvals.find(w.t.orgA, w.approvalId as never))?.status).toBe(
+        'pending',
+      );
+      expect(w.t.kicked).toEqual([w.research, w.brief]);
+      expect((await w.states()).steps['campaign']).toBe('awaiting_approval');
+    });
+
+    it('keeps other organizations out: another org can neither see nor decide it', async () => {
+      const w = await waitingPlan();
+      const asBob = (path: string, method = 'GET') =>
+        w.t.app.request(`/v1/organizations/${w.t.orgB}${path}`, w.t.as('token-bob', { method }));
+      expect((await asBob(`/approvals/${w.approvalId}`)).status).toBe(404);
+      expect((await asBob(`/approvals/${w.approvalId}/approve`, 'POST')).status).toBe(404);
+      expect((await asBob(`/approvals/${w.approvalId}/reject`, 'POST')).status).toBe(404);
+      // Bob is not a member of Alice's organization at all.
+      const intrude = await w.t.app.request(
+        `/v1/organizations/${w.t.orgA}/approvals/${w.approvalId}/approve`,
+        w.t.as('token-bob', { method: 'POST' }),
+      );
+      expect([403, 404]).toContain(intrude.status);
+      expect((await w.t.stores.approvals.find(w.t.orgA, w.approvalId as never))?.status).toBe(
+        'pending',
+      );
+      expect(w.t.kicked).toEqual([w.research, w.brief]);
+    });
+  });
+
   describe('delegation', () => {
     /** One plan, one delegation set, one child per specialist step, recorded once. */
     async function expectDelegated(
@@ -909,3 +1215,25 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
     });
   });
 });
+
+/** The runtime finishes a started step: its node, verification and completion. */
+async function finish(
+  w: { readonly executions: ExecutionService; readonly runtime: TenantContext },
+  id: ExecutionId,
+  nodeId: string,
+): Promise<void> {
+  const { executions } = w;
+  await executions.runtimeChangeNode(w.runtime, id, { nodeId, from: 'pending', to: 'running' });
+  await executions.runtimeChangeNode(w.runtime, id, {
+    nodeId,
+    from: 'running',
+    to: 'completed',
+    output: { type: 'agent_output', id: `${id}:${nodeId}` },
+  });
+  await executions.runtimeChangeStatus(w.runtime, id, { from: 'running', to: 'verifying' });
+  await executions.recordVerification(w.runtime, id, {
+    correlationId: 'v',
+    nodes: [{ nodeId, policy: 'checks', checks: [PASSED] }],
+  });
+  await executions.runtimeChangeStatus(w.runtime, id, { from: 'verifying', to: 'completed' });
+}

@@ -3,6 +3,7 @@ import type { Execution, Plan, PlanEstimate, PlanStep, PlanVersion } from '@melo
 import type { AgentOutputStore, ExecutionService } from '@melonoffice/execution';
 import {
   conditionStepState,
+  gatedStepState,
   isPlanningError,
   PlanningError,
   planStepStates,
@@ -64,7 +65,8 @@ export function registerPlanRoutes(
 
   // Each step that runs, where it is by the conductor's own rule (ADR-0145): a specialist step
   // with its execution's state and, once it completed, its agent's answer; a check with what its
-  // decision said; and `skipped` for a step after a check that stopped its branch.
+  // decision said; `awaiting_approval` or `declined` for a step that asked a person (ADR-0146);
+  // and `skipped` for a step after a check or decline that ended its branch.
   if (steps !== undefined) {
     app.get(
       `${base}/:planId/steps`,
@@ -80,10 +82,16 @@ export function registerPlanRoutes(
             children.set(step.id, await steps.executions.get(tenant, executionId));
           }
           const conditionOf = (id: string) => plan.conditions?.find((c) => c.stepId === id);
+          const approvalOf = (id: string) => plan.stepApprovals?.find((a) => a.stepId === id);
           const states = planStepStates(version.steps, (step) => {
             if (step.kind === 'condition') return conditionStepState(conditionOf(step.id));
             const child = children.get(step.id);
-            return child === undefined ? 'waiting' : specialistStepState(child);
+            if (child === undefined) return 'waiting';
+            // A step that asked a person (ADR-0146): waiting for them, or declined.
+            const entry = approvalOf(step.id);
+            return entry === undefined
+              ? specialistStepState(child)
+              : gatedStepState(child, entry.declined === undefined ? 'awaiting' : 'declined');
           });
           const out = [];
           for (const step of version.steps) {
@@ -98,6 +106,7 @@ export function registerPlanRoutes(
                 state,
                 executionId: null,
                 status: null,
+                approvalId: null,
                 failure: decided?.failure ?? null,
                 // Only what the decision said; its reasons stay in the decision's own record.
                 outcome: decided?.decision?.outcome ?? null,
@@ -119,7 +128,10 @@ export function registerPlanRoutes(
               state,
               executionId: execution?.id ?? null,
               status: execution?.status ?? null,
-              failure: execution?.failure?.code ?? null,
+              // The approval a person decides it with, in the approvals inbox.
+              approvalId: approvalOf(step.id)?.approvalId ?? null,
+              // Why a declined step never ran: rejected, expired or withdrawn (ADR-0146).
+              failure: approvalOf(step.id)?.declined?.reason ?? execution?.failure?.code ?? null,
               outcome: null,
               answer: answered?.answer ?? null,
               missing: answered === undefined ? [] : [...answered.missing],
