@@ -1,6 +1,6 @@
 # ADR-0149: plan steps in the list of every agent's work
 
-- Status: Proposed
+- Status: Proposed. Its window of the newest 100 plans and the step order are changed by [ADR-0150](0150-every-plan-in-every-agents-work.md).
 - Date: 2026-10-04
 - Builds on:
   - [ADR-0148](0148-every-agents-tasks.md): every agent's tasks

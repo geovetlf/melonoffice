@@ -51,11 +51,7 @@ export function OrganizationTasksPage({ client }: { readonly client: Organizatio
   const [query, setQuery] = useState<OrganizationTasksQuery>({});
   const [tasks, setTasks] = useState<readonly OrganizationTaskView[] | undefined>();
   const [options, setOptions] = useState<
-    | Pick<
-        OrganizationTasksPageView,
-        'agents' | 'statuses' | 'origins' | 'sources' | 'planStepsWindowed'
-      >
-    | undefined
+    Pick<OrganizationTasksPageView, 'agents' | 'statuses' | 'origins' | 'sources'> | undefined
   >();
   const [next, setNext] = useState<string | null>(null);
   const [error, setError] = useState<string | undefined>();
@@ -73,7 +69,6 @@ export function OrganizationTasksPage({ client }: { readonly client: Organizatio
           statuses: page.statuses,
           origins: page.origins,
           sources: page.sources,
-          planStepsWindowed: page.planStepsWindowed,
         });
         setNext(page.nextCursor);
       },
@@ -204,11 +199,6 @@ export function OrganizationTasksPage({ client }: { readonly client: Organizatio
       {options?.sources.plan_step === 'not_permitted' ? (
         <p className="mo-hint">
           <FormattedMessage id="orgTasks.steps.notPermitted" />
-        </p>
-      ) : null}
-      {options?.planStepsWindowed === true ? (
-        <p className="mo-hint">
-          <FormattedMessage id="orgTasks.steps.windowed" />
         </p>
       ) : null}
       {error === undefined ? null : (

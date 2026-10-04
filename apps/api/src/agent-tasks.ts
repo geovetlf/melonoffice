@@ -630,12 +630,11 @@ export function registerAgentTaskRoutes(
           origins: [...ORIGINS],
           origin,
           // Whether plan steps were read: `not_permitted` without `plan.read`, `unavailable` if
-          // their source failed. The plan service lists the newest plans only (windowed).
+          // their source failed.
           sources: {
             task: tasks === undefined ? 'not_asked' : 'read',
             plan_step: stepSource,
           },
-          planStepsWindowed: steps?.windowed ?? false,
           period: period === undefined ? null : { from: period.fromDay, to: period.toDay },
           nextCursor:
             next === undefined ? null : encodeTaskCursor(organizationId, ALL_AGENTS, next),

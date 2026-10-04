@@ -2523,7 +2523,6 @@
   "orgTasks.stepInPlan": "In its plan: {state}",
   "orgTasks.steps.unavailable": "Plan steps can't be read right now: the list shows agent tasks only.",
   "orgTasks.steps.notPermitted": "Plan steps are shown to people who can read plans.",
-  "orgTasks.steps.windowed": "Plan steps are listed from the latest 100 plans.",
   "orgTasks.detail.stepState": "Step in its plan",
   "orgTasks.detail.dependsOn": "Waits on",
   "orgTasks.detail.approval": "Approval",

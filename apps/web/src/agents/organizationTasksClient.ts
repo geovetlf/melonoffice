@@ -67,8 +67,6 @@ export interface OrganizationTasksPageView {
   readonly origins: readonly string[];
   /** Whether plan steps were read: `not_permitted` without `plan.read`, `unavailable` on failure. */
   readonly sources: { readonly task: string; readonly plan_step: string };
-  /** Plan steps come from the newest plans only. */
-  readonly planStepsWindowed: boolean;
   readonly nextCursor: string | null;
 }
 
