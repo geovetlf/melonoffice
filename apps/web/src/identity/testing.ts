@@ -136,6 +136,8 @@ export interface FakeBackend {
     planSteps: Record<string, Record<string, unknown>[]>;
     /** Planning a workflow is refused with this reason (422), instead of making a plan. */
     planRefusal?: string;
+    /** More tools `GET tools` lists after `message_send`, as the API shows them (ADR-0165). */
+    moreTools?: Record<string, unknown>[];
     /** Records per page of Comercial's lists (ADR-0061), unless the request asks a `limit`. */
     pageSize: number;
     /** Every page after the first fails (ADR-0061). */
@@ -1286,6 +1288,7 @@ export function fakeBackend(): FakeBackend {
         riskLevel: 'medium',
         approvalPolicy,
         environments: ['dev'],
+        step: null,
       });
       return (
         needs('tool.read') ??
@@ -1296,6 +1299,7 @@ export function fakeBackend(): FakeBackend {
               status: 'active',
               versions: [version(1, 'auto'), version(2, 'approval_required')],
             },
+            ...(options.moreTools ?? []),
           ],
         })
       );

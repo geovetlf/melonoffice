@@ -70,6 +70,31 @@ const tool = (id: string, overrides: Partial<ToolVersion> = {}): ToolDefinition 
 const REGISTRY = createToolRegistry([
   tool('send_email'),
   tool('lookup', { riskLevel: 'low', approvalPolicy: 'auto', mutating: false }),
+  // Reads, inside MelonOffice, with no credential: a workflow's tool step may use it (ADR-0165).
+  tool('brief_read', {
+    action: 'read',
+    riskLevel: 'low',
+    approvalPolicy: 'auto',
+    mutating: false,
+    credentials: [],
+    inputSchema: {
+      type: 'object',
+      properties: {
+        topic: { type: 'string', minLength: 2, maxLength: 120 },
+        tone: { type: 'string', maxLength: 20, enum: ['short', 'long'] },
+        limit: { type: 'integer', minimum: 1, maximum: 5 },
+      },
+      required: ['topic'],
+    },
+    outputSchema: {
+      type: 'object',
+      properties: {
+        found: { type: 'boolean' },
+        names: { type: 'array', maxItems: 5, items: { type: 'string', maxLength: 50 } },
+      },
+      required: ['found'],
+    },
+  }),
 ]);
 
 describe.each(STORES)('tools and approvals with storage in %s', (_name, createStores) => {
@@ -256,6 +281,7 @@ describe.each(STORES)('tools and approvals with storage in %s', (_name, createSt
       expect((list.body.tools as { id: string }[]).map((t) => t.id)).toEqual([
         'send_email',
         'lookup',
+        'brief_read',
       ]);
       const one = await call('token-alice', `/v1/organizations/${orgA}/tools/send_email`);
       expect(one.body).toEqual({
@@ -272,6 +298,7 @@ describe.each(STORES)('tools and approvals with storage in %s', (_name, createSt
             riskLevel: 'high',
             approvalPolicy: 'approval_required',
             environments: ['dev'],
+            step: null,
           },
         ],
       });
@@ -279,6 +306,25 @@ describe.each(STORES)('tools and approvals with storage in %s', (_name, createSt
       expect((await call('token-alice', `/v1/organizations/${orgA}/tools/unknown`)).status).toBe(
         404,
       );
+    });
+
+    it('ADR-0165: shows the fields of a version a workflow tool step may use, and only those', async () => {
+      const { call, orgA } = await setup();
+      const read = await call('token-alice', `/v1/organizations/${orgA}/tools/brief_read`);
+      expect((read.body.versions as { step: unknown }[])[0]?.step).toEqual({
+        input: [
+          { name: 'topic', type: 'string', required: true, maxLength: 120, minLength: 2 },
+          { name: 'tone', type: 'string', required: false, maxLength: 20, enum: ['short', 'long'] },
+          { name: 'limit', type: 'integer', required: false, minimum: 1, maximum: 5 },
+        ],
+        output: [
+          { name: 'found', type: 'boolean', required: true },
+          { name: 'names', type: 'array', required: false },
+        ],
+      });
+      // A credential, or a change, keeps a version out of workflow tool steps.
+      const lookup = await call('token-alice', `/v1/organizations/${orgA}/tools/lookup`);
+      expect((lookup.body.versions as { step: unknown }[])[0]?.step).toBeNull();
     });
 
     it('needs tool.read and membership', async () => {

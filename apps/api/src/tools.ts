@@ -1,4 +1,4 @@
-import type { ToolDefinition } from '@melonoffice/domain';
+import type { ToolDefinition, ToolSchema, ToolVersion } from '@melonoffice/domain';
 import type { ToolRegistry } from '@melonoffice/tools';
 import type { Hono } from 'hono';
 import type { AuthEnv } from './auth.js';
@@ -32,9 +32,54 @@ export function registerToolRoutes(
   );
 }
 
+/** One top-level field of a tool's input or output, as the workflow editor fills or reads it. */
+export interface ToolStepField {
+  readonly name: string;
+  readonly type: ToolSchema['type'];
+  readonly required: boolean;
+  readonly maxLength?: number;
+  readonly minLength?: number;
+  readonly enum?: readonly string[];
+  readonly minimum?: number;
+  readonly maximum?: number;
+}
+
+const fieldsOf = (schema: ToolSchema): readonly ToolStepField[] =>
+  schema.type !== 'object'
+    ? []
+    : Object.entries(schema.properties).map(([name, field]) => ({
+        name,
+        type: field.type,
+        required: schema.required?.includes(name) ?? false,
+        ...(field.type === 'string'
+          ? {
+              maxLength: field.maxLength,
+              ...(field.minLength === undefined ? {} : { minLength: field.minLength }),
+              ...(field.enum === undefined ? {} : { enum: [...field.enum] }),
+            }
+          : {}),
+        ...(field.type === 'number' || field.type === 'integer'
+          ? {
+              ...(field.minimum === undefined ? {} : { minimum: field.minimum }),
+              ...(field.maximum === undefined ? {} : { maximum: field.maximum }),
+            }
+          : {}),
+      }));
+
 /**
- * The public view: what each version is and the policy it runs under. Its schemas, required
- * permissions, credential references and provider are execution detail and are not shown.
+ * What a workflow's tool step can do with a version (ADR-0165): the top-level fields of its input
+ * and output, only for a version a plan may run as a tool step (it reads, inside MelonOffice,
+ * with no credential: ADR-0159). Any other version shows none.
+ */
+function stepOf(v: ToolVersion) {
+  const readOnly = !v.mutating && v.provider.kind === 'internal' && v.credentials.length === 0;
+  return readOnly ? { input: fieldsOf(v.inputSchema), output: fieldsOf(v.outputSchema) } : null;
+}
+
+/**
+ * The public view: what each version is and the policy it runs under. Required permissions,
+ * credential references and the provider are execution detail and are not shown; the schemas
+ * only as the top-level fields a workflow's read-only tool step uses (ADR-0165).
  */
 export function toToolView(tool: ToolDefinition) {
   return {
@@ -50,6 +95,7 @@ export function toToolView(tool: ToolDefinition) {
       riskLevel: v.riskLevel,
       approvalPolicy: v.approvalPolicy,
       environments: [...v.environments],
+      step: stepOf(v),
     })),
   };
 }

@@ -1,7 +1,7 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
 import { Button, PageHeader, StateMessage } from '@melonoffice/ui';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { AgentTemplateView } from '../agents/agentsClient.js';
+import type { AgentTemplateView, ToolView } from '../agents/agentsClient.js';
 import { ExecutionRequestError } from '../executions/executionsClient.js';
 import { newRequestKey } from '../office/AgentTasks.js';
 import {
@@ -80,6 +80,7 @@ export function AutomationsPage({
   client,
   permissions,
   templates,
+  tools,
   stop,
 }: {
   readonly client: AutomationsClient;
@@ -91,6 +92,8 @@ export function AutomationsPage({
   readonly stop?: ((planId: string) => Promise<void>) | undefined;
   /** The agent catalogue, for who does each step; without it workflows are not written here. */
   readonly templates?: (() => Promise<readonly AgentTemplateView[]>) | undefined;
+  /** The tool catalogue (`tool.read`), for tool steps (ADR-0165); without it none is offered. */
+  readonly tools?: (() => Promise<readonly ToolView[]>) | undefined;
 }) {
   const [workflows, setWorkflows] = useState<Load<readonly WorkflowView[]>>({ status: 'loading' });
   const [plans, setPlans] = useState<Load<readonly PlanView[]>>({ status: 'loading' });
@@ -219,6 +222,7 @@ export function AutomationsPage({
           editing={editing.mode === 'create' ? undefined : editing}
           templates={templates}
           checkActions={checkActions}
+          tools={tools}
           save={save}
           onSaved={(saved) => {
             setEditing(undefined);

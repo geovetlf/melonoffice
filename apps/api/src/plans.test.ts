@@ -833,6 +833,37 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
       });
     });
 
+    it('ADR-0165: a workflow’s tool step is shown with its input and references for the editor', async () => {
+      const search = {
+        id: 'search',
+        kind: 'tool',
+        label: 'Search the Company Brain',
+        dependsOn: ['campaign'],
+        performedBy: 'campaign',
+        tool: { id: 'knowledge_search', version: 1 },
+        inputFrom: { query: { step: 'research' } },
+      };
+      const t = await setup();
+      const id = await activeWorkflow(t, [researchStep, campaignStep, search]);
+      const detail = (await (await t.get('token-alice', `/workflows/${id}`)).json()) as {
+        current: { steps: Record<string, unknown>[] };
+      };
+      expect(detail.current.steps[2]).toMatchObject({
+        kind: 'tool',
+        performedBy: 'campaign',
+        tool: { id: 'knowledge_search', version: 1 },
+        input: null,
+        inputFrom: { query: { step: 'research' } },
+      });
+      expect(detail.current.steps[0]).toMatchObject({ input: null, inputFrom: null });
+      const planned = await t.post('token-alice', `/workflows/${id}/plans`, { requestKey: 'r' });
+      const plan = (await planned.json()) as PlanDetail;
+      expect(planned.status, JSON.stringify(plan)).toBe(201);
+      expect(
+        (plan.current.steps as unknown as Record<string, unknown>[]).find((s) => s.id === 'search'),
+      ).toMatchObject({ inputFrom: { query: { step: 'research' } } });
+    });
+
     it('refuses bad bodies, wrong moves, inactive workflows and other organizations', async () => {
       const t = await setup();
       const bad = await t.post('token-alice', '/workflows', { name: 'X', steps: [], extra: 1 });

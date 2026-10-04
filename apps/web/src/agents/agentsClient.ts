@@ -264,7 +264,27 @@ export interface ToolView {
     readonly riskLevel: string;
     readonly approvalPolicy: string;
     readonly environments: readonly string[];
+    /**
+     * The top-level fields a workflow's tool step fills and reads (ADR-0165); null for a version
+     * a plan may not run as a tool step (it changes data, reaches a provider or needs a
+     * credential).
+     */
+    readonly step?: {
+      readonly input: readonly ToolStepField[];
+      readonly output: readonly ToolStepField[];
+    } | null;
   }[];
+}
+
+export interface ToolStepField {
+  readonly name: string;
+  readonly type: string;
+  readonly required: boolean;
+  readonly maxLength?: number;
+  readonly minLength?: number;
+  readonly enum?: readonly string[];
+  readonly minimum?: number;
+  readonly maximum?: number;
 }
 
 export interface AgentsClient {
