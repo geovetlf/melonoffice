@@ -78,6 +78,12 @@ export interface FakeBackend {
     activity: Record<string, Record<string, unknown>[]>;
     /** The activity read fails (for example, before the index exists). */
     activityFails?: boolean;
+    /** Each organization's agent tasks as its list shows them (ADR-0148), newest first. */
+    organizationTasks: Record<string, Record<string, unknown>[]>;
+    /** Tasks per page of that list (20 in the API). */
+    organizationTasksPageSize?: number;
+    /** Reading that list fails with this status and body. */
+    organizationTasksFails?: { readonly status: number; readonly body: Record<string, unknown> };
     /** Each organization's audit trail items (ADR-0147), newest first, as the API returns them. */
     auditTrail: Record<string, Record<string, unknown>[]>;
     /** Items per audit trail page (25 in the API). */
@@ -224,6 +230,7 @@ export function fakeBackend(): FakeBackend {
     businessProfiles: {},
     activity: {},
     auditTrail: {},
+    organizationTasks: {},
     gia: {
       answer: 'Hoy no hubo actividad en tu oficina.',
       department: null,
@@ -1029,6 +1036,37 @@ export function fakeBackend(): FakeBackend {
       }
       target.status = 'cancelled';
       return json(200, { id: cancel[1], status: 'cancelled' });
+    }
+    if (route === 'agent-tasks') {
+      // Every agent's tasks of the organization (ADR-0148), newest first, read only.
+      const denied = needs('specialist.read');
+      if (denied !== undefined) return denied;
+      const failing = options.organizationTasksFails;
+      if (failing !== undefined) return json(failing.status, failing.body);
+      const q = new URLSearchParams(query);
+      const all = (options.organizationTasks[organizationId] ?? []).filter(
+        (t) =>
+          (q.get('status') === null || t['status'] === q.get('status')) &&
+          (q.get('agent') === null ||
+            (t['agent'] as { id?: unknown } | undefined)?.id === q.get('agent')),
+      );
+      const size = options.organizationTasksPageSize ?? 20;
+      const start = Number(q.get('cursor') ?? '0');
+      const end = start + size;
+      return json(200, {
+        tasks: all.slice(start, end),
+        agents: (options.specialists[organizationId] ?? []).map((a) => ({
+          id: a.id,
+          name: a.name,
+          status: a.status,
+        })),
+        statuses: ['pending', 'running', 'waiting_approval', 'completed', 'failed', 'cancelled'],
+        period:
+          q.get('from') === null && q.get('to') === null
+            ? null
+            : { from: q.get('from'), to: q.get('to') },
+        nextCursor: end < all.length ? String(end) : null,
+      });
     }
     const oneTask = route?.match(/^agent-tasks\/([^/]+)$/);
     if (oneTask?.[1] !== undefined) {

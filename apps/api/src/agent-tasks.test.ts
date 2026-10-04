@@ -62,10 +62,10 @@ describe.each(STORES)('agent tasks with storage in %s', (_name, createStores) =>
     const orgA = await orgOf('token-alice', 'A');
     const orgB = await orgOf('token-bob', 'B');
     const base = (org: string) => `/v1/organizations/${org}`;
-    const agent = async (token = 'token-alice', org = orgA) => {
+    const agent = async (token = 'token-alice', org = orgA, displayName = 'Lucía') => {
       const created = await call(token, 'POST', `${base(org)}/specialists`, {
         templateId: 'commercial',
-        displayName: 'Lucía',
+        displayName,
       });
       const id = created.body.id as string;
       await call(token, 'POST', `${base(org)}/specialists/${id}/status`, {
@@ -372,6 +372,217 @@ describe.each(STORES)('agent tasks with storage in %s', (_name, createStores) =>
     }
   });
 
+  describe('every agent’s tasks, read only (ADR-0148)', () => {
+    interface Listed {
+      readonly id: string;
+      readonly agent: {
+        readonly id: string;
+        readonly name: string | null;
+        readonly status: string | null;
+      };
+      readonly request: string;
+      readonly status: string;
+      readonly failure: string | null;
+      readonly createdAt: string;
+      readonly updatedAt: string | null;
+      readonly progress: { readonly done: number; readonly total: number };
+      readonly steps: readonly { readonly type: string; readonly status: string }[];
+      readonly plan: { readonly id: string } | null;
+      readonly result: {
+        readonly summary: string;
+        readonly truncated: boolean;
+        readonly missing: number;
+      } | null;
+    }
+    interface ListBody {
+      readonly tasks: readonly Listed[];
+      readonly agents: readonly { readonly id: string; readonly name: string }[];
+      readonly statuses: readonly string[];
+      readonly period: { readonly from: string; readonly to: string } | null;
+      readonly nextCursor: string | null;
+      readonly error?: string;
+      readonly field?: string;
+    }
+    async function world() {
+      const t = await setup();
+      const lucia = await t.agent();
+      const mario = await t.agent('token-alice', t.orgA, 'Mario');
+      const bobs = await t.agent('token-bob', t.orgB, 'Beto');
+      const ask = async (id: string, request: string, token = 'token-alice', org = t.orgA) => {
+        const asked = await t.call(token, 'POST', `${t.base(org)}/specialists/${id}/tasks`, {
+          request,
+        });
+        // Newest first is by creation time: tasks of the same millisecond would tie.
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return asked.body.id as string;
+      };
+      const list = async (query = '', token = 'token-alice', org = t.orgA) => {
+        const got = await t.call(token, 'GET', `${t.base(org)}/agent-tasks${query}`);
+        return { status: got.status, body: got.body as unknown as ListBody };
+      };
+      return { ...t, lucia, mario, bobs, ask, list };
+    }
+
+    it('lists nothing for an organization where no agent was asked anything', async () => {
+      const t = await world();
+      const { status, body } = await t.list();
+      expect(status).toBe(200);
+      expect(body.tasks).toEqual([]);
+      expect(body.nextCursor).toBeNull();
+      expect(body.agents.map((a) => a.name)).toEqual(['Lucía', 'Mario']);
+      expect(body.statuses).toEqual(expect.arrayContaining(['running', 'completed', 'failed']));
+    });
+
+    it('shows one task with its agent, state, dates, progress and steps', async () => {
+      const t = await world();
+      const id = await t.ask(t.lucia, 'Resume las ventas');
+      const { body } = await t.list();
+      expect(body.tasks).toHaveLength(1);
+      expect(body.tasks[0]).toMatchObject({
+        id,
+        agent: { id: t.lucia, name: 'Lucía', status: 'active' },
+        request: 'Resume las ventas',
+        status: 'running',
+        failure: null,
+        plan: null,
+        result: null,
+      });
+      expect(body.tasks[0]?.updatedAt).not.toBeNull();
+      expect(body.tasks[0]?.progress.total).toBeGreaterThan(0);
+      expect(body.tasks[0]?.steps.length).toBe(body.tasks[0]?.progress.total);
+    });
+
+    it('lists every agent’s tasks newest first, a page at a time, never another organization’s', async () => {
+      const t = await world();
+      for (const [id, request] of [
+        [t.lucia, 'uno'],
+        [t.mario, 'dos'],
+        [t.lucia, 'tres'],
+        [t.mario, 'cuatro'],
+      ] as const) {
+        await t.ask(id, request);
+      }
+      await t.ask(t.bobs, 'ajena', 'token-bob', t.orgB);
+      const first = await t.list('?limit=3');
+      expect(first.body.tasks.map((x) => [x.request, x.agent.name])).toEqual([
+        ['cuatro', 'Mario'],
+        ['tres', 'Lucía'],
+        ['dos', 'Mario'],
+      ]);
+      const second = await t.list(
+        `?limit=3&cursor=${encodeURIComponent(first.body.nextCursor as string)}`,
+      );
+      expect(second.body.tasks.map((x) => x.request)).toEqual(['uno']);
+      expect(second.body.nextCursor).toBeNull();
+      expect(JSON.stringify((await t.list()).body)).not.toContain('ajena');
+      expect((await t.list('', 'token-bob', t.orgB)).body.tasks.map((x) => x.request)).toEqual([
+        'ajena',
+      ]);
+      // Naming another organization is refused.
+      expect((await t.list('', 'token-bob', t.orgA)).status).toBe(403);
+    });
+
+    it('narrows by agent, state and days on the server, and refuses what is not one', async () => {
+      const t = await world();
+      const one = await t.ask(t.lucia, 'uno');
+      await t.ask(t.mario, 'dos');
+      await t.stores.executions.update(t.orgA as never, one as never, (current) => ({
+        execution: { ...current, status: 'cancelled', revision: current.revision + 1 },
+        events: [],
+      }));
+      expect((await t.list(`?agent=${t.mario}`)).body.tasks.map((x) => x.request)).toEqual(['dos']);
+      // Another organization's agent narrows to nothing.
+      expect((await t.list(`?agent=${t.bobs}`)).body.tasks).toEqual([]);
+      const cancelled = (await t.list('?status=cancelled')).body.tasks;
+      expect(cancelled.map((x) => [x.request, x.status])).toEqual([['uno', 'cancelled']]);
+      const past = await t.list('?from=2020-01-01&to=2020-01-31');
+      expect(past.body.tasks).toEqual([]);
+      expect(past.body.period).toEqual({ from: '2020-01-01', to: '2020-01-31' });
+      for (const [query, field] of [
+        ['?status=stuck', 'status'],
+        ['?from=2026-02-30', 'period'],
+        ['?from=2024-01-01&to=2026-01-01', 'period'],
+        ['?limit=0', 'limit'],
+        ['?limit=51', 'limit'],
+        ['?cursor=zzz', 'cursor'],
+      ] as const) {
+        const got = await t.list(query);
+        expect([query, got.status, got.body.field]).toEqual([query, 400, field]);
+      }
+      // A cursor of one agent's own list is not one of this list.
+      await t.ask(t.lucia, 'tres');
+      const own = await t.call(
+        'token-alice',
+        'GET',
+        `${t.base(t.orgA)}/specialists/${t.lucia}/tasks?limit=1`,
+      );
+      const ownCursor = own.body.nextCursor as string;
+      expect((await t.list(`?cursor=${encodeURIComponent(ownCursor)}`)).status).toBe(400);
+    });
+
+    it('shows a summary of the verified answer only, and nothing internal', async () => {
+      const t = await world();
+      const id = await t.ask(t.lucia, 'Hola');
+      const long = `Tienes 3 oportunidades abiertas. ${'Detalle. '.repeat(60)}`;
+      await t.agentOutputs.save({
+        organizationId: t.orgA as never,
+        executionId: id as never,
+        nodeId: 'work' as never,
+        requestId: 'req-hidden-41',
+        output: { structured: { answer: long, missing: ['Margen'] } },
+        createdAt: new Date().toISOString() as never,
+      });
+      expect((await t.list()).body.tasks[0]?.result).toBeNull();
+      await t.stores.executions.update(t.orgA as never, id as never, (current) => ({
+        execution: {
+          ...current,
+          status: 'completed',
+          nodes: current.nodes.map((n) => ({ ...n, status: 'completed' as const })),
+          completedAt: new Date().toISOString() as never,
+          revision: current.revision + 1,
+        },
+        events: [],
+      }));
+      const { body } = await t.list();
+      const listed = body.tasks[0];
+      expect(listed?.status).toBe('completed');
+      expect(listed?.progress.done).toBe(listed?.progress.total);
+      expect(listed?.result).toMatchObject({ truncated: true, missing: 1 });
+      expect(listed?.result?.summary).toHaveLength(280);
+      const text = JSON.stringify(body);
+      for (const hidden of ['req-hidden-41', 'requestedBy', 'Margen', 'specialistVersion']) {
+        expect(text).not.toContain(hidden);
+      }
+      expect(Object.keys(listed ?? {}).sort()).toEqual([
+        'agent',
+        'completedAt',
+        'createdAt',
+        'failure',
+        'handedFrom',
+        'id',
+        'plan',
+        'progress',
+        'request',
+        'result',
+        'startedAt',
+        'status',
+        'steps',
+        'updatedAt',
+      ]);
+    });
+
+    it('offers no way to change a task from the list', async () => {
+      const t = await world();
+      for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+        const response = await t.app.request(
+          `${t.base(t.orgA)}/agent-tasks`,
+          t.as('token-alice', { method }),
+        );
+        expect([method, response.status]).toEqual([method, 404]);
+      }
+    });
+  });
+
   it('keeps every organization’s agents and tasks apart', async () => {
     const { call, orgA, orgB, base, agent } = await setup();
     const id = await agent();
@@ -415,5 +626,8 @@ describe.each(STORES)('agent tasks with storage in %s', (_name, createStores) =>
       `${noRead.base(noRead.orgA)}/specialists/${other}/tasks`,
     );
     expect(listed.status).toBe(403);
+    expect(
+      (await noRead.call('token-alice', 'GET', `${noRead.base(noRead.orgA)}/agent-tasks`)).status,
+    ).toBe(403);
   });
 });

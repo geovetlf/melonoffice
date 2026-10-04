@@ -22,6 +22,7 @@ export type Route =
   | { readonly kind: 'approvals' }
   | { readonly kind: 'auditTrail' }
   | { readonly kind: 'agents' }
+  | { readonly kind: 'agentTaskList' }
   | { readonly kind: 'automations' }
   | { readonly kind: 'partners' }
   | { readonly kind: 'brand' }
@@ -58,6 +59,8 @@ export function parseRoute(path: string): Route {
   if (trimmed === '/audit') return { kind: 'auditTrail' };
   // Agents and their lifecycle (ADR-0025, ADR-0062).
   if (trimmed === '/agents') return { kind: 'agents' };
+  // Every agent's tasks of the organization (ADR-0148), read only.
+  if (trimmed === '/agents/tasks') return { kind: 'agentTaskList' };
   // Automations (WF-3, ADR-0071): workflows and their plans.
   if (trimmed === '/automations') return { kind: 'automations' };
   // Partners and agencies the owner accepts, narrows or ends (ADR-0088).
@@ -105,6 +108,7 @@ export const paths = {
   approvals: () => '/approvals',
   auditTrail: () => '/audit',
   agents: () => '/agents',
+  agentTaskList: () => '/agents/tasks',
   automations: () => '/automations',
   partners: () => '/settings/partners',
   brand: () => '/settings/brand',

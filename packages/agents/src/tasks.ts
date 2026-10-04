@@ -3,6 +3,7 @@ import type {
   AgentTask,
   Execution,
   ExecutionId,
+  ExecutionStatus,
   IsoTimestamp,
   OrganizationId,
   Specialist,
@@ -58,6 +59,11 @@ export function checkTaskCredits(value: unknown): number {
   return value;
 }
 export const TASK_PAGE_SIZE = Object.freeze({ page: 20, max: 50 });
+
+/** How many agents' lists the organization-wide list reads at once (ADR-0148). */
+const ALL_AGENTS_READS = 10;
+/** How many merged reads fill one page narrowed by state, at most (ADR-0148). */
+const ALL_AGENTS_ROUNDS = 5;
 
 /**
  * How much work may be open at once (ADR-0119): our safety defaults, not a plan's limits (those
@@ -164,9 +170,12 @@ export class InMemoryAgentTaskRepository implements AgentTaskRepository {
  * grants nothing: every page is read for the caller's own organization, and a cursor made for
  * another organization or agent is refused.
  */
+/** The organization-wide list (ADR-0148): every agent's tasks, in one cursor's scope. */
+export const ALL_AGENTS = 'all';
+
 export function encodeTaskCursor(
   organizationId: OrganizationId,
-  specialistId: SpecialistId,
+  specialistId: SpecialistId | typeof ALL_AGENTS,
   position: TaskPosition,
 ): string {
   return Buffer.from(
@@ -177,7 +186,7 @@ export function encodeTaskCursor(
 export function decodeTaskCursor(
   cursor: string,
   organizationId: OrganizationId,
-  specialistId: SpecialistId,
+  specialistId: SpecialistId | typeof ALL_AGENTS,
 ): TaskPosition {
   const bad = () => new AgentTaskError('invalid_task', 'cursor');
   if (cursor.length > 400) throw bad();
@@ -205,6 +214,37 @@ export interface TaskWithExecution {
   readonly execution?: Execution;
 }
 
+export interface OrganizationTaskQuery {
+  readonly cursor?: string;
+  readonly limit?: number;
+  readonly specialistId?: string;
+  readonly status?: string;
+  /** ISO instants: created at or after `since`, before `before`. */
+  readonly since?: IsoTimestamp;
+  readonly before?: IsoTimestamp;
+}
+
+export interface OrganizationTaskPage {
+  readonly items: readonly TaskWithExecution[];
+  /** Every agent of the organization, in any status, by id: the names the list shows. */
+  readonly agents: Readonly<Record<string, { readonly name: string; readonly status: string }>>;
+  readonly nextCursor: string | null;
+}
+
+/** The states an execution can be in (ADR-0024): the only ones the list can be narrowed to. */
+export const EXECUTION_STATUSES: ReadonlySet<string> = new Set<ExecutionStatus>([
+  'pending',
+  'planning',
+  'waiting_approval',
+  'running',
+  'verifying',
+  'completed',
+  'failed',
+  'cancelled',
+  'paused',
+  'retrying',
+]);
+
 export interface AgentTaskService {
   /**
    * Asks an agent to do a task: `{ request, idempotencyKey?, maxCredits? }`. The same key for the same agent
@@ -226,6 +266,13 @@ export interface AgentTaskService {
     specialistId: string,
     page: { readonly cursor?: string; readonly limit?: number },
   ): Promise<{ readonly items: readonly TaskWithExecution[]; readonly nextCursor: string | null }>;
+  /**
+   * Every agent's tasks in the organization (ADR-0148), newest first, a page at a time: the
+   * agents' own lists merged, so it reads no other index than theirs. Read only. Narrowed to one
+   * agent, one state of its execution, and created at or after `since` and before `before`. A page
+   * narrowed by state may hold fewer than `limit` tasks and still have a next cursor.
+   */
+  listAll(tenant: TenantContext, query: OrganizationTaskQuery): Promise<OrganizationTaskPage>;
 }
 
 /** The part of the runtime that queues a started execution's first node. */
@@ -235,7 +282,9 @@ export interface TaskKickoff {
 
 export interface AgentTaskServiceOptions {
   readonly tasks: AgentTaskRepository;
-  readonly specialists: Pick<SpecialistRepository, 'find'>;
+  /** `list` serves the organization-wide list (ADR-0148); without it, that list is refused. */
+  readonly specialists: Pick<SpecialistRepository, 'find'> &
+    Partial<Pick<SpecialistRepository, 'list'>>;
   readonly executions: Pick<ExecutionService, 'create' | 'get' | 'start'>;
   readonly authorization: Pick<AuthorizationService, 'authorize'>;
   /** Queues the task's first job. Absent: a started task waits in the queue (fails closed). */
@@ -467,10 +516,7 @@ export function createAgentTaskService(options: AgentTaskServiceOptions): AgentT
     async list(tenant, specialistId, page) {
       const organizationId = organizationOf(tenant, 'specialist.read');
       const agent = await agentOf(organizationId, specialistId);
-      const limit = page.limit ?? TASK_PAGE_SIZE.page;
-      if (!Number.isSafeInteger(limit) || limit < 1 || limit > TASK_PAGE_SIZE.max) {
-        throw new AgentTaskError('invalid_task', 'limit');
-      }
+      const limit = limitOf(page.limit);
       const after =
         page.cursor === undefined
           ? undefined
@@ -479,20 +525,152 @@ export function createAgentTaskService(options: AgentTaskServiceOptions): AgentT
         ...(after === undefined ? {} : { after }),
         limit,
       });
-      const items = await Promise.all(
-        found.items.map(async (task) => {
-          const execution = await executionOf(tenant, task.id);
-          return Object.freeze({ task, ...(execution === undefined ? {} : { execution }) });
-        }),
+      return withExecutions(tenant, found, organizationId, agent.identity.id);
+    },
+
+    async listAll(tenant, query) {
+      const organizationId = organizationOf(tenant, 'specialist.read');
+      const limit = limitOf(query.limit);
+      if (specialists.list === undefined) throw new AgentTaskError('permission_denied');
+      if (query.status !== undefined && !EXECUTION_STATUSES.has(query.status)) {
+        throw new AgentTaskError('invalid_task', 'status');
+      }
+      const since = query.since;
+      const before = query.before;
+      for (const bound of [since, before]) {
+        if (bound !== undefined && Number.isNaN(Date.parse(bound))) {
+          throw new AgentTaskError('invalid_task', 'period');
+        }
+      }
+      const fromCursor =
+        query.cursor === undefined
+          ? undefined
+          : decodeTaskCursor(query.cursor, organizationId, ALL_AGENTS);
+      // The upper end of the period, as a position: the last millisecond before it, after any id
+      // (`~` sorts after every id), so everything created in that millisecond is read.
+      const bound: TaskPosition | undefined =
+        before === undefined
+          ? undefined
+          : {
+              at: new Date(Date.parse(before) - 1).toISOString() as IsoTimestamp,
+              id: '~' as ExecutionId,
+            };
+      // Whichever is further back: the cursor, or the end of the period.
+      let after =
+        fromCursor === undefined || bound === undefined
+          ? (fromCursor ?? bound)
+          : fromCursor.at < bound.at
+            ? fromCursor
+            : bound;
+      // Every agent, in any status: an archived agent's tasks stay in the organization's history.
+      // Narrowed to one agent, only its own list is read; another organization's agent is none.
+      const everyAgent = (await specialists.list(organizationId)).filter(
+        (a) => a.organizationId === organizationId,
       );
-      const last = found.items.at(-1);
+      const agents =
+        query.specialistId === undefined
+          ? everyAgent
+          : everyAgent.filter((a) => a.identity.id === query.specialistId);
+      const found: TaskWithExecution[] = [];
+      let more = true;
+      let scannedTo: AgentTask | undefined;
+      // A state is read from each task's execution, so a page is filled from at most a few reads.
+      for (let round = 0; round < ALL_AGENTS_ROUNDS && more && found.length < limit; round += 1) {
+        const page = await mergedPage(organizationId, agents, after, limit);
+        more = page.hasMore;
+        for (const [index, task] of page.items.entries()) {
+          if (since !== undefined && task.createdAt < since) {
+            more = false;
+            break;
+          }
+          scannedTo = task;
+          const execution = await executionOf(tenant, task.id);
+          if (query.status !== undefined && execution?.status !== query.status) continue;
+          found.push(Object.freeze({ task, ...(execution === undefined ? {} : { execution }) }));
+          if (found.length === limit) {
+            more ||= index < page.items.length - 1;
+            break;
+          }
+        }
+        if (scannedTo !== undefined) after = taskPosition(scannedTo);
+      }
+      // The next page starts after the last task read, shown or not.
+      const last = scannedTo;
+      const hasMore = more;
       return Object.freeze({
-        items: Object.freeze(items),
+        items: Object.freeze(found),
+        agents: Object.freeze(
+          Object.fromEntries(
+            everyAgent.map((a) => [
+              a.identity.id,
+              { name: a.identity.displayName, status: a.status },
+            ]),
+          ),
+        ),
         nextCursor:
-          found.hasMore && last !== undefined
-            ? encodeTaskCursor(organizationId, agent.identity.id, taskPosition(last))
+          hasMore && last !== undefined
+            ? encodeTaskCursor(organizationId, ALL_AGENTS, taskPosition(last))
             : null,
       });
     },
   } satisfies AgentTaskService);
+
+  /** The newest `limit` tasks of these agents after `after`: each agent's own list, merged. */
+  async function mergedPage(
+    organizationId: OrganizationId,
+    agents: readonly Specialist[],
+    after: TaskPosition | undefined,
+    limit: number,
+  ) {
+    // The newest `limit` of all are among each agent's newest `limit`: one indexed read each,
+    // a few at a time.
+    const pages: { readonly items: readonly AgentTask[]; readonly hasMore: boolean }[] = [];
+    for (let i = 0; i < agents.length; i += ALL_AGENTS_READS) {
+      pages.push(
+        ...(await Promise.all(
+          agents.slice(i, i + ALL_AGENTS_READS).map((a) =>
+            tasks.page(organizationId, a.identity.id, {
+              ...(after === undefined ? {} : { after }),
+              limit,
+            }),
+          ),
+        )),
+      );
+    }
+    const merged = pageOfTasks(
+      pages.flatMap((p) => p.items.filter((t) => t.organizationId === organizationId)),
+      { ...(after === undefined ? {} : { after }), limit },
+    );
+    return { items: merged.items, hasMore: merged.hasMore || pages.some((p) => p.hasMore) };
+  }
+
+  function limitOf(asked: number | undefined): number {
+    const limit = asked ?? TASK_PAGE_SIZE.page;
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > TASK_PAGE_SIZE.max) {
+      throw new AgentTaskError('invalid_task', 'limit');
+    }
+    return limit;
+  }
+
+  async function withExecutions(
+    tenant: TenantContext,
+    found: { readonly items: readonly AgentTask[]; readonly hasMore: boolean },
+    organizationId: OrganizationId,
+    scope: SpecialistId | typeof ALL_AGENTS,
+  ) {
+    const items = await Promise.all(
+      found.items.map(async (task) => {
+        const execution = await executionOf(tenant, task.id);
+        return Object.freeze({ task, ...(execution === undefined ? {} : { execution }) });
+      }),
+    );
+    const last = found.items.at(-1);
+    return Object.freeze({
+      items: Object.freeze(items),
+      nextCursor:
+        found.hasMore && last !== undefined
+          ? encodeTaskCursor(organizationId, scope, taskPosition(last))
+          : null,
+    });
+  }
 }

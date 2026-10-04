@@ -47,6 +47,8 @@ import { createAgentsClient } from '../agents/agentsClient.js';
 import { ApprovalsPage } from '../approvals/ApprovalsPage.js';
 import { AuditTrailPage } from '../audit/AuditTrailPage.js';
 import { createAuditTrailClient } from '../audit/auditTrailClient.js';
+import { createOrganizationTasksClient } from '../agents/organizationTasksClient.js';
+import { OrganizationTasksPage } from '../agents/OrganizationTasksPage.js';
 import { createApprovalsClient } from '../approvals/approvalsClient.js';
 import { createAIUsageClient } from '../aiUsage/aiUsageClient.js';
 import { PlatformPage } from '../platform/PlatformPage.js';
@@ -187,6 +189,7 @@ export function AppShell(locale: LocaleProps) {
             aiUsage: createAIUsageClient(services.api.request, organizationId),
             approvals: createApprovalsClient(services.api.request, organizationId),
             auditTrail: createAuditTrailClient(services.api.request, organizationId),
+            organizationTasks: createOrganizationTasksClient(services.api.request, organizationId),
             agents: createAgentsClient(services.api.request, organizationId),
             agentTasks: createAgentTasksClient(services.api.request, organizationId),
             agentNotices: createAgentNotificationsClient(services.api.request, organizationId),
@@ -410,6 +413,15 @@ export function AppShell(locale: LocaleProps) {
             canDecide={canDecidePlans}
             canReadPlans={canReadPlans}
           />
+        </div>
+      ) : (
+        <NotFound />
+      );
+      break;
+    case 'agentTaskList':
+      page = canReadAgents ? (
+        <div className="light-surface">
+          <OrganizationTasksPage client={clients.organizationTasks} />
         </div>
       ) : (
         <NotFound />

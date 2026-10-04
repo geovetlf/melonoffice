@@ -188,11 +188,16 @@ export function AgentsPage({
         title={<FormattedMessage id="agents.title" />}
         description={<FormattedMessage id="agents.lead" />}
         actions={
-          canManage && !creating ? (
-            <Button className="agents__create" onClick={() => setCreating(true)}>
-              <FormattedMessage id="agents.create" />
+          <>
+            <Button variant="secondary" onClick={() => navigate(paths.agentTaskList())}>
+              <FormattedMessage id="agents.allTasks" />
             </Button>
-          ) : null
+            {canManage && !creating ? (
+              <Button className="agents__create" onClick={() => setCreating(true)}>
+                <FormattedMessage id="agents.create" />
+              </Button>
+            ) : null}
+          </>
         }
       />
       {canManage && creating ? (
