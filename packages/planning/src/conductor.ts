@@ -10,13 +10,20 @@ import type {
   PlanId,
   PlanStep,
   PlanVersion,
+  ToolRiskLevel,
 } from '@melonoffice/domain';
 import { isExecutionError, isTerminal, type ExecutionService } from '@melonoffice/execution';
 import type { Logger } from '@melonoffice/observability';
 import { isResolvedTenant, type TenantContext } from '@melonoffice/tenancy';
 import type { Delegation } from './delegation.js';
 import { isPlanningError, PlanningError } from './errors.js';
-import { applyPlanStatus, isPlanId, recordCondition } from './model.js';
+import {
+  applyPlanStatus,
+  isPlanId,
+  recordCondition,
+  recordStepApproval,
+  recordStepDeclined,
+} from './model.js';
 import type { PlanRepository } from './repository.js';
 
 /**
@@ -40,6 +47,12 @@ import type { PlanRepository } from './repository.js';
 export interface PlanConductor {
   run(tenant: TenantContext, planId: string): Promise<Plan>;
   advance(tenant: TenantContext, planId: string): Promise<Plan>;
+  /**
+   * Runtime only, once a person decided a step's approval (ADR-0146): starts the approved step,
+   * or records the declined one and skips its branch, and closes the plan when nothing is left.
+   * It never decides a condition step: those stay with the worker's `advance`.
+   */
+  resume(tenant: TenantContext, planId: string): Promise<Plan>;
 }
 
 /**
@@ -118,6 +131,51 @@ function inOrder(steps: readonly PlanStep[]): readonly PlanStep[] {
   return out;
 }
 
+/**
+ * What a step's approval is bound to (ADR-0146): this plan version, step and child execution,
+ * exactly. Built by the conductor from the stored plan, never from a request.
+ */
+export interface StepApprovalAsk {
+  readonly organizationId: string;
+  readonly planId: string;
+  readonly planVersion: number;
+  readonly planDigest: string;
+  readonly executionId: string;
+  readonly stepId: string;
+  readonly specialistId: string;
+  readonly specialistVersion: number;
+  readonly childExecutionId: string;
+  readonly riskLevel: ToolRiskLevel;
+}
+
+export type StepApprovalState =
+  | { readonly status: 'pending' }
+  | { readonly status: 'approved' }
+  | { readonly status: 'declined'; readonly reason: string };
+
+/**
+ * Asks for and reads the approval a step waits for (ADR-0146). The app wires it to the approvals
+ * system (`createPlanStepApprovals` in `@melonoffice/approvals`): there is no second approval
+ * path, and only a person acting directly decides one.
+ */
+export interface StepApprovals {
+  request(tenant: TenantContext, ask: StepApprovalAsk): Promise<string>;
+  state(
+    tenant: TenantContext,
+    approvalId: string,
+    ask: StepApprovalAsk,
+  ): Promise<StepApprovalState>;
+  cancel(tenant: TenantContext, approvalId: string, reason: string): Promise<void>;
+}
+
+/**
+ * Whether a step waits for a person's approval once the steps before it are done (ADR-0146): a
+ * specialist step marked `approvalRequired` that depends on another step. A first step starts
+ * the moment the plan is approved, so that approval is already the one right before it.
+ */
+export const waitsForApproval = (step: PlanStep): boolean =>
+  step.kind === 'specialist' && step.approvalRequired && step.dependsOn.length > 0;
+
 export interface PlanConductorOptions {
   readonly plans: PlanRepository;
   /** Needed by `run` only: the worker advances plans, it never delegates one. */
@@ -132,6 +190,11 @@ export interface PlanConductorOptions {
    * `condition_not_configured` and the plan stops, never going on undecided.
    */
   readonly conditions?: ConditionEvaluator;
+  /**
+   * Asks for and reads step approvals (ADR-0146). Needed by `advance` only. Absent: a step that
+   * waits for an approval fails with `step_approval_not_configured`, never running unapproved.
+   */
+  readonly approvals?: StepApprovals;
   readonly now?: () => Date;
   readonly requestId?: string;
   readonly logger?: Logger;
@@ -148,10 +211,20 @@ export const CONDITION_CHECK = 'condition_decided';
  * - `running`: its child execution started;
  * - `completed`: its child completed, or its condition lets the plan go on;
  * - `stopped`: its condition was decided and the steps after it do not run;
- * - `skipped`: a step it depends on was stopped or skipped, so it never runs;
+ * - `awaiting_approval`: ready, waiting for a person to approve it (ADR-0146);
+ * - `declined`: its approval was rejected, expired or withdrawn: it never runs (ADR-0146);
+ * - `skipped`: a step it depends on was stopped, declined or skipped, so it never runs;
  * - `failed`: its child failed or was cancelled, or its condition could not go on.
  */
-export type PlanStepState = 'waiting' | 'running' | 'completed' | 'stopped' | 'skipped' | 'failed';
+export type PlanStepState =
+  | 'waiting'
+  | 'awaiting_approval'
+  | 'running'
+  | 'completed'
+  | 'stopped'
+  | 'declined'
+  | 'skipped'
+  | 'failed';
 type StepState = PlanStepState;
 
 interface StepView {
@@ -160,6 +233,10 @@ interface StepView {
   readonly child?: Execution;
   /** On condition steps, once decided. */
   readonly condition?: PlanConditionResult;
+  /** On a step that waits for an approval, once it is approved and may start (ADR-0146). */
+  readonly approved?: boolean;
+  /** Why it failed without a child failing, e.g. `step_approval_not_configured`. */
+  readonly failure?: string;
   readonly state: StepState;
 }
 
@@ -185,14 +262,39 @@ export const conditionStepState = (condition: PlanConditionResult | undefined): 
         ? 'stopped'
         : 'failed';
 
-/** A step that has not started, after a stopped or skipped step, never runs: it is skipped. */
+/** Ends a branch: the steps after it never run. */
+const endsBranch = (state: PlanStepState | undefined): boolean =>
+  state === 'stopped' || state === 'declined' || state === 'skipped';
+
+/**
+ * A step that has not started, after a stopped, declined or skipped step, never runs: it is
+ * skipped.
+ */
 const skippedAfter = (
   step: PlanStep,
   state: PlanStepState,
   states: ReadonlyMap<string, PlanStepState>,
 ): boolean =>
-  state === 'waiting' &&
-  step.dependsOn.some((d) => states.get(d) === 'stopped' || states.get(d) === 'skipped');
+  (state === 'waiting' || state === 'awaiting_approval') &&
+  step.dependsOn.some((d) => endsBranch(states.get(d)));
+
+/**
+ * Where a specialist step is, given its child and, when it waits for an approval, what was
+ * recorded (ADR-0146): declined, still awaited, or nothing yet. A started child is never
+ * held back by its approval.
+ */
+export function gatedStepState(
+  child: Pick<Execution, 'status' | 'startedAt'>,
+  approval: 'none' | 'awaiting' | 'approved' | 'declined',
+): PlanStepState {
+  const state = specialistStepState(child);
+  if (state !== 'waiting') return state;
+  return approval === 'declined'
+    ? 'declined'
+    : approval === 'awaiting'
+      ? 'awaiting_approval'
+      : 'waiting';
+}
 
 /**
  * Where every runnable step of a plan version is, by the conductor's own rule: each step's own
@@ -213,17 +315,19 @@ export function planStepStates(
 
 /** Why a plan stops at a failed step, as the plan and its execution record it. */
 const failureOf = (view: StepView): string =>
-  view.step.kind === 'specialist'
-    ? 'step_failed'
-    : view.condition?.result === 'await_approval'
-      ? 'condition_needs_approval'
-      : 'condition_failed';
+  view.failure !== undefined
+    ? view.failure
+    : view.step.kind === 'specialist'
+      ? 'step_failed'
+      : view.condition?.result === 'await_approval'
+        ? 'condition_needs_approval'
+        : 'condition_failed';
 
 /** A node of the planning execution that finished with work done: its evidence is checked. */
 const decided = (view: StepView): boolean => view.state === 'completed' || view.state === 'stopped';
 
 export function createPlanConductor(options: PlanConductorOptions): PlanConductor {
-  const { plans, delegation, executions, starter, conditions, requestId } = options;
+  const { plans, delegation, executions, starter, conditions, approvals, requestId } = options;
   const now = options.now ?? (() => new Date());
   const logger = options.logger;
 
@@ -263,7 +367,9 @@ export function createPlanConductor(options: PlanConductorOptions): PlanConducto
         const d = plan.delegations.find((x) => x.stepId === step.id);
         if (d === undefined) throw new PlanningError('delegation_conflict');
         const child = await executions.get(tenant, d.executionId);
-        view = { step, child, state: specialistStepState(child) };
+        view = waitsForApproval(step)
+          ? await gatedView(tenant, plan, version, step, child, states)
+          : { step, child, state: specialistStepState(child) };
       } else {
         const condition = plan.conditions?.find((c) => c.stepId === step.id);
         view = {
@@ -279,17 +385,169 @@ export function createPlanConductor(options: PlanConductorOptions): PlanConducto
     return out;
   }
 
+  /** What a step's approval is bound to, from the stored plan and version only. */
+  function askOf(plan: Plan, version: PlanVersion, step: PlanStep, childId: ExecutionId) {
+    if (step.specialist === undefined) throw new PlanningError('delegation_conflict');
+    return {
+      organizationId: plan.organizationId,
+      planId: plan.id,
+      planVersion: version.version,
+      planDigest: version.digest,
+      executionId: plan.executionId,
+      stepId: step.id,
+      specialistId: step.specialist.id,
+      specialistVersion: step.specialist.version,
+      childExecutionId: childId,
+      riskLevel: version.riskLevel,
+    };
+  }
+
+  /**
+   * A step that waits for a person (ADR-0146): declined once recorded so; otherwise what its
+   * approval says now. A decline not recorded yet carries its reason, for `advance` to record.
+   * Without the approvals port, a step that became ready fails rather than run unapproved.
+   */
+  async function gatedView(
+    tenant: TenantContext,
+    plan: Plan,
+    version: PlanVersion,
+    step: PlanStep,
+    child: Execution,
+    states: ReadonlyMap<string, StepState>,
+  ): Promise<StepView & { readonly declinedReason?: string }> {
+    if (specialistStepState(child) !== 'waiting') {
+      return { step, child, state: specialistStepState(child) };
+    }
+    const entry = plan.stepApprovals?.find((a) => a.stepId === step.id);
+    if (entry?.declined !== undefined) return { step, child, state: 'declined' };
+    if (approvals === undefined) {
+      const ready = step.dependsOn.every((d) => states.get(d) === 'completed');
+      return ready
+        ? { step, child, state: 'failed', failure: 'step_approval_not_configured' }
+        : { step, child, state: 'waiting' };
+    }
+    if (entry === undefined) return { step, child, state: 'waiting' };
+    const found = await approvals.state(
+      tenant,
+      entry.approvalId,
+      askOf(plan, version, step, child.id),
+    );
+    if (found.status === 'approved') return { step, child, approved: true, state: 'waiting' };
+    if (found.status === 'pending') return { step, child, state: 'awaiting_approval' };
+    return { step, child, state: 'declined', declinedReason: found.reason };
+  }
+
+  /**
+   * Asks for a ready step's approval and records which one it is on the plan, once, with its
+   * audit event. A request that lost to a concurrent one is withdrawn: one approval per step.
+   */
+  async function askApproval(
+    tenant: TenantContext,
+    organizationId: OrganizationId,
+    plan: Plan,
+    version: PlanVersion,
+    view: StepView,
+  ): Promise<void> {
+    if (approvals === undefined || view.child === undefined) return;
+    const { step } = view;
+    const approvalId = await approvals.request(tenant, askOf(plan, version, step, view.child.id));
+    const at = now();
+    try {
+      await plans.update(organizationId, plan.id, (current) => ({
+        plan: recordStepApproval(current, { stepId: step.id, approvalId }, iso(at)),
+        events: [
+          buildAuditEvent(
+            {
+              action: 'plan.step_approval_requested',
+              result: 'success',
+              actor: actorOf(tenant),
+              organizationId,
+              target: { type: 'plan', id: current.id },
+              nodeId: step.id,
+              reference: approvalId,
+              ...(requestId === undefined ? {} : { requestId }),
+              source: 'api',
+            },
+            at,
+          ),
+        ],
+      }));
+      logger?.info('plan step awaits approval', { planId: plan.id, stepId: step.id });
+    } catch (error) {
+      if (!isPlanningError(error)) throw error;
+      await approvals.cancel(tenant, approvalId, 'duplicate_request');
+    }
+  }
+
+  /**
+   * Records each step whose approval was declined since the last look, once, with its audit
+   * event: its branch is skipped and the other branches go on (ADR-0146).
+   */
+  async function recordDeclines(
+    tenant: TenantContext,
+    organizationId: OrganizationId,
+    plan: Plan,
+    views: readonly (StepView & { readonly declinedReason?: string })[],
+  ): Promise<Plan> {
+    let current = plan;
+    for (const view of views) {
+      const reason = view.declinedReason;
+      if (reason === undefined) continue;
+      const at = now();
+      try {
+        current = await plans.update(organizationId, plan.id, (stored) => ({
+          plan: recordStepDeclined(stored, view.step.id, reason, iso(at)),
+          events: [
+            buildAuditEvent(
+              {
+                action: 'plan.step_declined',
+                result: 'success',
+                actor: actorOf(tenant),
+                organizationId,
+                target: { type: 'plan', id: stored.id },
+                nodeId: view.step.id,
+                reason,
+                ...(requestId === undefined ? {} : { requestId }),
+                source: 'api',
+              },
+              at,
+            ),
+          ],
+        }));
+        logger?.info('plan step declined', { planId: plan.id, stepId: view.step.id, reason });
+      } catch (error) {
+        if (!isPlanningError(error)) throw error;
+        current = (await plans.find(organizationId, plan.id)) ?? current;
+      }
+    }
+    return current;
+  }
+
   /** Whether every step a step depends on completed. */
   function readyIn(views: readonly StepView[], view: StepView): boolean {
     const completed = new Set(views.filter((v) => v.state === 'completed').map((v) => v.step.id));
     return view.state === 'waiting' && view.step.dependsOn.every((d) => completed.has(d));
   }
 
-  /** Starts every specialist step that has not started and whose steps before it all completed. */
-  async function startReady(tenant: TenantContext, views: readonly StepView[]): Promise<void> {
+  /**
+   * Starts every specialist step that has not started and whose steps before it all completed.
+   * A step that waits for a person starts only once approved; until then, it asks (ADR-0146).
+   */
+  async function startReady(
+    tenant: TenantContext,
+    plan: Plan,
+    version: PlanVersion,
+    views: readonly StepView[],
+  ): Promise<void> {
     for (const view of views) {
       if (view.child === undefined || view.child.status !== 'pending') continue;
       if (!readyIn(views, view)) continue;
+      if (waitsForApproval(view.step) && view.approved !== true) {
+        if (!(plan.stepApprovals ?? []).some((a) => a.stepId === view.step.id)) {
+          await askApproval(tenant, plan.organizationId, plan, version, view);
+        }
+        continue;
+      }
       await starter.start(tenant, view.child.id);
     }
   }
@@ -421,7 +679,7 @@ export function createPlanConductor(options: PlanConductorOptions): PlanConducto
           : view.condition?.decision === undefined
             ? undefined
             : { type: 'decision', id: view.condition.decision.id };
-      if (view.state === 'skipped') {
+      if (view.state === 'skipped' || view.state === 'declined') {
         if (node.status === 'pending') {
           await settle(() =>
             executions.runtimePlanChangeNode(tenant, parentId, {
@@ -524,6 +782,66 @@ export function createPlanConductor(options: PlanConductorOptions): PlanConducto
     );
   }
 
+  /** `advance`, or `resume` when `withConditions` is false: see `PlanConductor`. */
+  async function proceed(tenant: TenantContext, planId: string, withConditions: boolean) {
+    const organizationId = organizationOf(tenant);
+    if (tenant.actor !== 'runtime') throw new PlanningError('permission_denied', 'runtime_only');
+    const loaded = await load(organizationId, planId);
+    const { version } = loaded;
+    let plan = loaded.plan;
+    if (plan.status !== 'executing' || plan.delegationState !== 'completed') return plan;
+    const current = await executions.get(tenant, plan.executionId);
+    if (current.status === 'cancelled') {
+      return (await plans.find(organizationId, plan.id)) ?? plan;
+    }
+    let views = await stepsOf(tenant, plan, version);
+    // A step whose approval was declined is recorded first: its branch is skipped.
+    if (views.some((v) => (v as { declinedReason?: string }).declinedReason !== undefined)) {
+      plan = await recordDeclines(tenant, organizationId, plan, views);
+      if (plan.status !== 'executing') return plan;
+      views = await stepsOf(tenant, plan, version);
+    }
+
+    // Conditions whose steps before them completed are decided one at a time, in order, until
+    // none is ready or one stops the plan: a decision may make the next condition ready. On a
+    // resume, they are left to the worker, which always advances after a step ends.
+    while (withConditions) {
+      if (views.some((v) => v.state === 'failed')) break;
+      const ready = views.find((v) => v.step.kind === 'condition' && readyIn(views, v));
+      if (ready === undefined) break;
+      plan = await decide(tenant, organizationId, plan, ready.step);
+      if (plan.status !== 'executing') return plan;
+      views = await stepsOf(tenant, plan, version);
+      logger?.info('plan condition decided', { planId: plan.id, stepId: ready.step.id });
+    }
+
+    const stopped = views.find((v) => v.state === 'failed');
+    if (stopped !== undefined) {
+      const code = failureOf(stopped);
+      // A step still waiting for a person never will: its approval is withdrawn.
+      for (const view of views) {
+        const entry = plan.stepApprovals?.find((a) => a.stepId === view.step.id);
+        if (view.state === 'awaiting_approval' && entry !== undefined && approvals !== undefined) {
+          await approvals.cancel(tenant, entry.approvalId, 'plan_ended');
+        }
+      }
+      await stop(tenant, await mirror(tenant, plan.executionId, views), code);
+      logger?.info('plan stopped', { planId: plan.id, stepId: stopped.step.id, code });
+      return finishPlan(tenant, organizationId, plan, 'failed', code);
+    }
+    if (views.every((v) => decided(v) || v.state === 'skipped' || v.state === 'declined')) {
+      await complete(tenant, await mirror(tenant, plan.executionId, views), views);
+      const closed = await executions.get(tenant, plan.executionId);
+      if (closed.status !== 'completed') return plan;
+      logger?.info('plan completed', { planId: plan.id });
+      return finishPlan(tenant, organizationId, plan, 'completed');
+    }
+    await startReady(tenant, plan, version, views);
+    // The graph shows what just started too.
+    await mirror(tenant, plan.executionId, await stepsOf(tenant, plan, version));
+    return plan;
+  }
+
   return Object.freeze({
     async run(tenant: TenantContext, planId: string) {
       const organizationId = organizationOf(tenant);
@@ -538,54 +856,13 @@ export function createPlanConductor(options: PlanConductorOptions): PlanConducto
       const { plan: delegated } = await delegation.delegate(tenant, plan.id);
       if (delegated.status !== 'executing') return delegated;
       // Conditions wait on at least one step, so none is ready yet: the runtime decides them.
-      await startReady(tenant, await stepsOf(tenant, delegated, version));
+      await startReady(tenant, delegated, version, await stepsOf(tenant, delegated, version));
       logger?.info('plan started', { planId: delegated.id });
       return delegated;
     },
 
-    async advance(tenant: TenantContext, planId: string) {
-      const organizationId = organizationOf(tenant);
-      if (tenant.actor !== 'runtime') throw new PlanningError('permission_denied', 'runtime_only');
-      const loaded = await load(organizationId, planId);
-      const { version } = loaded;
-      let plan = loaded.plan;
-      if (plan.status !== 'executing' || plan.delegationState !== 'completed') return plan;
-      const current = await executions.get(tenant, plan.executionId);
-      if (current.status === 'cancelled') {
-        return (await plans.find(organizationId, plan.id)) ?? plan;
-      }
-      let views = await stepsOf(tenant, plan, version);
+    advance: (tenant: TenantContext, planId: string) => proceed(tenant, planId, true),
 
-      // Conditions whose steps before them completed are decided one at a time, in order, until
-      // none is ready or one stops the plan: a decision may make the next condition ready.
-      for (;;) {
-        if (views.some((v) => v.state === 'failed')) break;
-        const ready = views.find((v) => v.step.kind === 'condition' && readyIn(views, v));
-        if (ready === undefined) break;
-        plan = await decide(tenant, organizationId, plan, ready.step);
-        if (plan.status !== 'executing') return plan;
-        views = await stepsOf(tenant, plan, version);
-        logger?.info('plan condition decided', { planId: plan.id, stepId: ready.step.id });
-      }
-
-      const stopped = views.find((v) => v.state === 'failed');
-      if (stopped !== undefined) {
-        const code = failureOf(stopped);
-        await stop(tenant, await mirror(tenant, plan.executionId, views), code);
-        logger?.info('plan stopped', { planId: plan.id, stepId: stopped.step.id, code });
-        return finishPlan(tenant, organizationId, plan, 'failed', code);
-      }
-      if (views.every((v) => decided(v) || v.state === 'skipped')) {
-        await complete(tenant, await mirror(tenant, plan.executionId, views), views);
-        const closed = await executions.get(tenant, plan.executionId);
-        if (closed.status !== 'completed') return plan;
-        logger?.info('plan completed', { planId: plan.id });
-        return finishPlan(tenant, organizationId, plan, 'completed');
-      }
-      await startReady(tenant, views);
-      // The graph shows what just started too.
-      await mirror(tenant, plan.executionId, await stepsOf(tenant, plan, version));
-      return plan;
-    },
+    resume: (tenant: TenantContext, planId: string) => proceed(tenant, planId, false),
   });
 }

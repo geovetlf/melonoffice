@@ -7,7 +7,14 @@ import {
   type SweptJob,
 } from '@melonoffice/agents';
 import type { ApprovalRepository } from '@melonoffice/approvals';
-import type { Execution, IsoTimestamp, OrganizationId, UserId } from '@melonoffice/domain';
+import type {
+  Execution,
+  IsoTimestamp,
+  OrganizationId,
+  Plan,
+  PlanId,
+  UserId,
+} from '@melonoffice/domain';
 import {
   MAX_NODE_ATTEMPTS,
   OPEN_STATUSES,
@@ -22,13 +29,15 @@ import { turnOf } from '@melonoffice/integrations';
 import type { Logger } from '@melonoffice/observability';
 import { planStepOf } from '@melonoffice/planning';
 import type { Runtime } from '@melonoffice/runtime';
-import { resolveRuntimeTenant, type TenancyStore } from '@melonoffice/tenancy';
+import { resolveRuntimeTenant, type TenancyStore, type TenantContext } from '@melonoffice/tenancy';
 
 /**
  * The automatic sweep of abandoned agent work (ADR-0121). Every 3 hours one Cloud Tasks task on
  * the execution jobs queue reaches this route, behind the same invoker check as every job. It
  * closes only agent tasks, plan steps and conversation turns (ADR-0122) that nothing moved for 24 hours and that no worker,
- * person or outside service is still holding. It never starts anything, calls no model or tool
+ * person or outside service is still holding. A plan step that has not started while its plan
+ * runs is never closed; one waiting for a person has its plan advanced, so an expired approval
+ * skips its branch (ADR-0146). It never starts anything, calls no model or tool
  * and charges no credits.
  */
 export const RUN_SWEEP_PATH = '/internal/sweeps/run';
@@ -87,6 +96,15 @@ export interface ExecutionSweeperOptions {
   /** Closes one execution as the runtime of its person (`Runtime.abandon`). */
   readonly runtime: Pick<Runtime, 'abandon'>;
   readonly ledger: SweepLedger;
+  /**
+   * The plans steps belong to (ADR-0146). A step that never started while its plan runs is
+   * never abandoned; when it waits for a person, its plan is advanced instead, so an approval
+   * nobody decided in time skips that branch rather than failing the plan.
+   */
+  readonly plans?: {
+    find(organizationId: OrganizationId, id: PlanId): Promise<Plan | undefined>;
+    advance(tenant: TenantContext, planId: PlanId): Promise<unknown>;
+  };
   /** Queues the next slot's task. Absent: the sweep runs only when its task is delivered. */
   readonly scheduler?: { schedule(body: object, at: Date): Promise<void> };
   readonly now?: () => Date;
@@ -120,7 +138,40 @@ function slotOf(request: unknown): string | undefined {
 
 export function createExecutionSweeper(options: ExecutionSweeperOptions): ExecutionSweeper {
   const now = options.now ?? (() => new Date());
-  const { executions, jobs, approvals, tenancy, runtime, ledger, scheduler, logger } = options;
+  const { executions, jobs, approvals, tenancy, runtime, ledger, scheduler, logger, plans } =
+    options;
+
+  /**
+   * A plan step that never started while its plan runs is not abandoned work: it waits for the
+   * steps before it, or for a person's approval (ADR-0146). It is left alone; when it waits for
+   * a person, its plan is advanced, which records an approval nobody decided in time as expired
+   * and skips that branch.
+   */
+  async function waitsInPlan(
+    execution: Execution,
+  ): Promise<'awaiting_approval' | 'waiting_in_plan' | 'no_context' | undefined> {
+    const step = planStepOf(execution);
+    if (plans === undefined || step === undefined || execution.startedAt !== undefined) {
+      return undefined;
+    }
+    const plan = await plans.find(execution.organizationId as OrganizationId, step.planId);
+    if (plan?.status !== 'executing') return undefined;
+    if (plan.stepApprovals?.some((a) => a.stepId === step.stepId) !== true) {
+      return 'waiting_in_plan';
+    }
+    let tenant;
+    try {
+      tenant = await resolveRuntimeTenant(
+        execution.userId as UserId,
+        execution.organizationId,
+        tenancy,
+      );
+    } catch {
+      return 'no_context';
+    }
+    await plans.advance(tenant, plan.id);
+    return 'awaiting_approval';
+  }
 
   /** Every job of the execution that exists (ids are fixed by node and attempt), its own only. */
   async function jobsOf(execution: Execution): Promise<SweptJob[]> {
@@ -155,7 +206,8 @@ export function createExecutionSweeper(options: ExecutionSweeperOptions): Execut
         ? 'approval_expired'
         : 'no_progress';
 
-  type Outcome = OpenWorkState | 'out_of_scope' | 'no_context' | 'moved' | 'error';
+  type Outcome =
+    OpenWorkState | 'waiting_in_plan' | 'out_of_scope' | 'no_context' | 'moved' | 'error';
 
   async function visit(
     slotId: string,
@@ -171,6 +223,8 @@ export function createExecutionSweeper(options: ExecutionSweeperOptions): Execut
     if (execution === undefined || execution.organizationId !== candidate.organizationId) {
       return 'moved';
     }
+    const inPlan = await waitsInPlan(execution);
+    if (inPlan !== undefined) return inPlan;
     const detectedAt = now();
     const [swept, waiting] = [await jobsOf(execution), await approvalsOf(execution)];
     const { state, lastProgressAt } = classifyOpenWork({

@@ -29,6 +29,13 @@ const deepFreeze = <T>(value: T): T => {
 };
 
 /**
+ * Tool ids that name something else in an approval's operation, never a tool: `plan_step` is a
+ * plan step waiting for a person (ADR-0146). No tool may take one, so a tool approval and a step
+ * approval can never be confused.
+ */
+export const RESERVED_TOOL_IDS: readonly string[] = Object.freeze(['plan_step']);
+
+/**
  * Builds a registry from tool definitions, checking each. Tools ship with the code that runs
  * them, so the catalogue lives in code, like plans (ADR-0021) and departments (ADR-0025).
  *
@@ -42,6 +49,9 @@ export function createToolRegistry(
   const byId = new Map<string, ToolDefinition>();
   for (const definition of definitions) {
     checkToolDefinition(definition);
+    if (RESERVED_TOOL_IDS.includes(definition.id)) {
+      throw new ToolError('invalid_tool', `reserved:${definition.id}`);
+    }
     if (byId.has(definition.id)) throw new ToolError('invalid_tool', `duplicate:${definition.id}`);
     byId.set(definition.id, deepFreeze(structuredClone(definition)));
   }

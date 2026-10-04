@@ -35,7 +35,12 @@ import {
   type ModelPolicyCatalogue,
   type ProviderRegistry,
 } from '@melonoffice/ai-gateway';
-import { createApprovalService, type ApprovalRepository } from '@melonoffice/approvals';
+import {
+  createApprovalService,
+  createPlanStepApprovals,
+  isPlanStepApproval,
+  type ApprovalRepository,
+} from '@melonoffice/approvals';
 import type { AuditHistoryReader, AuditReader, AuditService } from '@melonoffice/audit';
 import type { AuthDependencies } from '@melonoffice/auth';
 import {
@@ -102,7 +107,12 @@ import {
   createHarnessToolDirectory,
 } from '@melonoffice/harness';
 import { createGia, createGiaSummary } from '@melonoffice/gia';
-import type { AIDataPolicy, DeploymentEnvironment, OrganizationId } from '@melonoffice/domain';
+import type {
+  AIDataPolicy,
+  Approval,
+  DeploymentEnvironment,
+  OrganizationId,
+} from '@melonoffice/domain';
 import { createToolGate } from '@melonoffice/guardrails';
 import {
   createChannelConnectionService,
@@ -142,12 +152,18 @@ import {
   createPlanValidator,
   type PlanRepository,
 } from '@melonoffice/planning';
-import { resolveTenant, type CommercialRepository, type TenancyStore } from '@melonoffice/tenancy';
+import {
+  resolveTenant,
+  type CommercialRepository,
+  type TenancyStore,
+  type TenantContext,
+} from '@melonoffice/tenancy';
 import { defaultToolRegistry, type ToolRegistry } from '@melonoffice/tools';
 import { createWorkflowService, type WorkflowRepository } from '@melonoffice/workflows';
 import { Hono, type Context } from 'hono';
 import type { AgentTurns } from './agent-turns.js';
 import { registerApprovalRoutes } from './approvals.js';
+import { createPlanStepDecisions } from './plan-step-decisions.js';
 import { registerAuthRoutes, type AuthEnv } from './auth.js';
 import { registerCors } from './cors.js';
 import { registerBillingRoutes } from './billing.js';
@@ -1258,17 +1274,52 @@ export function createApp({
       registerToolRoutes(app, { store: tenancy, authorization, audit, tools });
     }
     if (tenancy !== undefined && approvals !== undefined) {
+      const approvalService = createApprovalService({
+        repository: approvals,
+        organizations: tenancy,
+        authorization,
+        audit,
+      });
+      // A decided plan step goes on at once (ADR-0146): started, or its branch skipped.
+      const planStepDecided =
+        plans === undefined ||
+        planRuntime === undefined ||
+        executions === undefined ||
+        executionService === undefined
+          ? undefined
+          : createPlanStepDecisions({
+              executions,
+              tenancy,
+              conductor: createPlanConductor({
+                plans,
+                executions: executionService,
+                starter: {
+                  async start(tenant, executionId) {
+                    await executionService.runtimeStart(tenant, executionId);
+                    await planRuntime.kickoff(tenant, executionId);
+                  },
+                },
+                approvals: createPlanStepApprovals(approvalService),
+                logger: logger.child({ component: 'plans' }),
+              }),
+              logger: logger.child({ component: 'plans' }),
+            });
       registerApprovalRoutes(app, {
         store: tenancy,
         authorization,
         audit,
-        approvals: createApprovalService({
-          repository: approvals,
-          organizations: tenancy,
-          authorization,
-          audit,
-        }),
-        ...(agentTurns === undefined ? {} : { afterDecision: agentTurns.afterDecision }),
+        approvals: approvalService,
+        ...(agentTurns === undefined && planStepDecided === undefined
+          ? {}
+          : {
+              async afterDecision(tenant: TenantContext, approval: Approval) {
+                if (planStepDecided !== undefined && isPlanStepApproval(approval)) {
+                  await planStepDecided(approval);
+                  return;
+                }
+                await agentTurns?.afterDecision(tenant, approval);
+              },
+            }),
       });
     } else if (tenancy !== undefined) {
       const unavailable = (c: Context<Env>) => c.json({ error: 'approvals_not_configured' }, 503);
@@ -1321,6 +1372,18 @@ export function createApp({
                   await planRuntime.kickoff(tenant, executionId);
                 },
               },
+              ...(approvals === undefined
+                ? {}
+                : {
+                    approvals: createPlanStepApprovals(
+                      createApprovalService({
+                        repository: approvals,
+                        organizations: tenancy,
+                        authorization,
+                        audit,
+                      }),
+                    ),
+                  }),
             });
       registerPlanRoutes(app, {
         ...dependencies,

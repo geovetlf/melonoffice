@@ -95,6 +95,22 @@ export interface PlanConditionResult {
   readonly evaluatedAt: IsoTimestamp;
 }
 
+/**
+ * The approval a specialist step with `approvalRequired` asked for when it became ready
+ * (ADR-0146), one per step. The approval itself lives in the approvals system (ADR-0026), bound
+ * to this plan version, step and child execution; the plan only records which one it is.
+ */
+export interface PlanStepApproval {
+  readonly stepId: string;
+  readonly approvalId: string;
+  readonly requestedAt: IsoTimestamp;
+  /**
+   * Set once the approval was rejected, expired or withdrawn: the step never runs and the steps
+   * after it are skipped, while the other branches go on. `reason` is a stable code.
+   */
+  readonly declined?: { readonly reason: string; readonly at: IsoTimestamp };
+}
+
 export interface PlanRetry {
   readonly maxAttempts: number;
   readonly backoffMs: number;
@@ -238,6 +254,8 @@ export interface Plan {
   readonly decision?: PlanDecision;
   /** What each condition step did, once evaluated (WF-4). */
   readonly conditions?: readonly PlanConditionResult[];
+  /** The approval each step that waits for a person asked for, once (ADR-0146). */
+  readonly stepApprovals?: readonly PlanStepApproval[];
   readonly revision: number;
   readonly createdAt: IsoTimestamp;
   readonly createdBy: UserId;

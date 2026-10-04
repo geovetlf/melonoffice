@@ -10,6 +10,7 @@ import type {
   PlanId,
   PlanSource,
   PlanStatus,
+  PlanStepApproval,
   PlanVersion,
   UserId,
 } from '@melonoffice/domain';
@@ -256,6 +257,13 @@ export function checkStoredPlan(plan: Plan): Plan {
       invalid('conditions');
     }
   }
+  if (plan.stepApprovals !== undefined) {
+    if (!Array.isArray(plan.stepApprovals)) invalid('stepApprovals');
+    for (const a of plan.stepApprovals) checkStepApproval(a);
+    if (new Set(plan.stepApprovals.map((a) => a.stepId)).size !== plan.stepApprovals.length) {
+      invalid('stepApprovals');
+    }
+  }
   const { decision } = plan;
   if (decision !== undefined) {
     if (decision.decision !== 'approved' && decision.decision !== 'rejected') invalid('decision');
@@ -374,6 +382,81 @@ export function recordCondition(
   return Object.freeze({
     ...next,
     conditions: Object.freeze([...(plan.conditions ?? []), recorded]),
+  });
+}
+
+/** A step's approval names its step and the approval, nothing else. */
+function checkStepApproval(entry: PlanStepApproval): void {
+  if (typeof entry.stepId !== 'string' || entry.stepId.length === 0) invalid('stepApprovals');
+  if (typeof entry.approvalId !== 'string' || !UUID.test(entry.approvalId)) {
+    invalid('stepApprovals');
+  }
+  if (typeof entry.requestedAt !== 'string' || Number.isNaN(Date.parse(entry.requestedAt))) {
+    invalid('stepApprovals');
+  }
+  const { declined } = entry;
+  if (
+    declined !== undefined &&
+    (!CODE.test(declined.reason) ||
+      typeof declined.at !== 'string' ||
+      Number.isNaN(Date.parse(declined.at)))
+  ) {
+    invalid('stepApprovals');
+  }
+}
+
+/**
+ * Records that a step's approval was declined (rejected, expired or withdrawn), once: the step
+ * never runs and its branch is skipped (ADR-0146).
+ */
+export function recordStepDeclined(
+  plan: Plan,
+  stepId: string,
+  reason: string,
+  at: IsoTimestamp,
+): Plan {
+  if (plan.status !== 'executing') throw new PlanningError('invalid_plan_transition');
+  const entry = (plan.stepApprovals ?? []).find((a) => a.stepId === stepId);
+  if (entry === undefined) throw new PlanningError('invalid_plan', 'stepApprovals');
+  if (entry.declined !== undefined) throw new PlanningError('plan_concurrency_conflict');
+  const next = nextRevision(plan, at);
+  const declined: PlanStepApproval = Object.freeze({
+    ...entry,
+    declined: Object.freeze({ reason, at: next.updatedAt }),
+  });
+  checkStepApproval(declined);
+  return Object.freeze({
+    ...next,
+    stepApprovals: Object.freeze(
+      (plan.stepApprovals ?? []).map((a) => (a.stepId === stepId ? declined : a)),
+    ),
+  });
+}
+
+/**
+ * Records the approval a step asked for (ADR-0146), once: one approval per step (ADR-0026, one
+ * per node). A plan that already holds one for that step is a concurrent request, and the one
+ * already recorded stands.
+ */
+export function recordStepApproval(
+  plan: Plan,
+  entry: { readonly stepId: string; readonly approvalId: string },
+  at: IsoTimestamp,
+): Plan {
+  if (plan.status !== 'executing') throw new PlanningError('invalid_plan_transition');
+  if ((plan.stepApprovals ?? []).some((a) => a.stepId === entry.stepId)) {
+    throw new PlanningError('plan_concurrency_conflict');
+  }
+  const next = nextRevision(plan, at);
+  const recorded: PlanStepApproval = Object.freeze({
+    stepId: entry.stepId,
+    approvalId: entry.approvalId,
+    requestedAt: next.updatedAt,
+  });
+  checkStepApproval(recorded);
+  return Object.freeze({
+    ...next,
+    stepApprovals: Object.freeze([...(plan.stepApprovals ?? []), recorded]),
   });
 }
 

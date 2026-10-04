@@ -8,10 +8,19 @@ import {
   type ModelPolicyCatalogue,
   type ProviderRegistry,
 } from '@melonoffice/ai-gateway';
-import { createApprovalService, type ApprovalRepository } from '@melonoffice/approvals';
+import {
+  createApprovalService,
+  createPlanStepApprovals,
+  type ApprovalRepository,
+} from '@melonoffice/approvals';
 import { createAuditService, type AuditStore } from '@melonoffice/audit';
 import type { DepartmentRepository } from '@melonoffice/departments';
-import type { AIDataPolicy, DeploymentEnvironment } from '@melonoffice/domain';
+import type {
+  AIDataPolicy,
+  DeploymentEnvironment,
+  OrganizationId,
+  PlanId,
+} from '@melonoffice/domain';
 import { createExecutionService, type ExecutionRepository } from '@melonoffice/execution';
 import { createToolGate } from '@melonoffice/guardrails';
 import { createJobService, type JobRepository, type JobService } from '@melonoffice/jobs';
@@ -37,7 +46,7 @@ import {
   type VerificationSource,
 } from '@melonoffice/runtime';
 import { createSpecialistService, type SpecialistRepository } from '@melonoffice/specialists';
-import type { TenancyStore } from '@melonoffice/tenancy';
+import type { TenancyStore, TenantContext } from '@melonoffice/tenancy';
 import type { SkillCatalogue } from '@melonoffice/specialists';
 import type { ToolExecutors, ToolRegistry } from '@melonoffice/tools';
 
@@ -129,6 +138,8 @@ const PLAN_EVENT_CODE = /^[a-z][a-z_]{0,63}$/;
 export function createWorkerRuntime(options: WorkerRuntimeOptions): {
   readonly jobs: JobService;
   readonly runtime: Runtime;
+  /** Advances one plan as its person's runtime (ADR-0070); absent without plans. */
+  readonly advancePlan?: (tenant: TenantContext, planId: PlanId) => Promise<unknown>;
 } {
   const { stores, environment, leaseMs, tools, ai, credits, logger, now } = options;
   const authorization = createAuthorizationService();
@@ -217,60 +228,85 @@ export function createWorkerRuntime(options: WorkerRuntimeOptions): {
   // The plan conductor (ADR-0070) starts a plan's next steps through this same runtime, as the
   // runtime of the person the plan runs for: their delegated start, then the step's first node.
   const plans = options.plans;
-  const conductor: ExecutionEndHook | undefined =
+  /**
+   * Advances one plan as the runtime of the person it runs for, and tells its end once. Called
+   * when one of its steps ends, and by the sweep for a step that waits for a person (ADR-0146).
+   */
+  const advancePlan =
     plans === undefined
+      ? undefined
+      : async (
+          tenant: TenantContext,
+          organizationId: OrganizationId,
+          planId: PlanId,
+          requestId: string,
+        ) => {
+          const executions = executionsFor(requestId);
+          const before =
+            options.events === undefined ? undefined : await plans.find(organizationId, planId);
+          const after = await createPlanConductor({
+            plans,
+            executions,
+            starter: {
+              async start(runtimeTenant, executionId) {
+                await executions.runtimeStart(runtimeTenant, executionId);
+                await runtime.kickoff(runtimeTenant, executionId);
+              },
+            },
+            ...(options.conditions === undefined ? {} : { conditions: options.conditions }),
+            // A step marked "ask me before this step" waits for a person (ADR-0146).
+            approvals: createPlanStepApprovals(
+              createApprovalService({
+                repository: stores.approvals,
+                organizations: stores.tenancy,
+                authorization,
+                audit,
+                requestId,
+                ...clock,
+              }),
+              now,
+            ),
+            requestId,
+            ...clock,
+            ...(logger === undefined ? {} : { logger: logger.child({ component: 'plans' }) }),
+          }).advance(tenant, planId);
+          // Told once, by the step end that closed the plan (the event's key repeats it at most).
+          if (
+            options.events === undefined ||
+            before?.status !== 'executing' ||
+            (after.status !== 'completed' && after.status !== 'failed')
+          ) {
+            return;
+          }
+          const code = after.delegationFailure;
+          try {
+            await options.events.publishRuntime(after.organizationId, after.createdBy, [
+              {
+                type: 'plan.finished',
+                subject: { type: 'plan', id: after.id },
+                data: {
+                  outcome: after.status,
+                  ...(code !== undefined && PLAN_EVENT_CODE.test(code) ? { code } : {}),
+                },
+                idempotencyKey: `${after.id}:finished`,
+              },
+            ]);
+          } catch (error) {
+            // The plan ended either way: a notice is never worth failing it for.
+            logger?.warn('plan.finished not published', {
+              planId: after.id,
+              code: (error as { code?: unknown }).code ?? 'error',
+            });
+          }
+        };
+  const conductor: ExecutionEndHook | undefined =
+    advancePlan === undefined
       ? undefined
       : {
           async ended(tenant, execution) {
             const step = planStepOf(execution);
             if (step === undefined) return;
-            const executions = executionsFor(execution.id);
-            const before =
-              options.events === undefined
-                ? undefined
-                : await plans.find(execution.organizationId, step.planId);
-            const after = await createPlanConductor({
-              plans,
-              executions,
-              starter: {
-                async start(runtimeTenant, executionId) {
-                  await executions.runtimeStart(runtimeTenant, executionId);
-                  await runtime.kickoff(runtimeTenant, executionId);
-                },
-              },
-              ...(options.conditions === undefined ? {} : { conditions: options.conditions }),
-              requestId: execution.id,
-              ...clock,
-              ...(logger === undefined ? {} : { logger: logger.child({ component: 'plans' }) }),
-            }).advance(tenant, step.planId);
-            // Told once, by the step end that closed the plan (the event's key repeats it at most).
-            if (
-              options.events === undefined ||
-              before?.status !== 'executing' ||
-              (after.status !== 'completed' && after.status !== 'failed')
-            ) {
-              return;
-            }
-            const code = after.delegationFailure;
-            try {
-              await options.events.publishRuntime(after.organizationId, after.createdBy, [
-                {
-                  type: 'plan.finished',
-                  subject: { type: 'plan', id: after.id },
-                  data: {
-                    outcome: after.status,
-                    ...(code !== undefined && PLAN_EVENT_CODE.test(code) ? { code } : {}),
-                  },
-                  idempotencyKey: `${after.id}:finished`,
-                },
-              ]);
-            } catch (error) {
-              // The plan ended either way: a notice is never worth failing it for.
-              logger?.warn('plan.finished not published', {
-                planId: after.id,
-                code: (error as { code?: unknown }).code ?? 'error',
-              });
-            }
+            await advancePlan(tenant, execution.organizationId, step.planId, execution.id);
           },
         };
   const extra = options.onEnded;
@@ -302,5 +338,14 @@ export function createWorkerRuntime(options: WorkerRuntimeOptions): {
     ...(onEnded === undefined ? {} : { onEnded }),
     ...log,
   });
-  return Object.freeze({ jobs, runtime });
+  return Object.freeze({
+    jobs,
+    runtime,
+    ...(advancePlan === undefined
+      ? {}
+      : {
+          advancePlan: (tenant: TenantContext, planId: PlanId) =>
+            advancePlan(tenant, tenant.organizationId, planId, `plan:${planId}`),
+        }),
+  });
 }

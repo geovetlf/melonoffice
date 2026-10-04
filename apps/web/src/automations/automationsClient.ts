@@ -154,7 +154,15 @@ export interface PlanStepView {
 }
 
 /** Where a step is, by the plan conductor's own rule (ADR-0145). */
-export type PlanStepState = 'waiting' | 'running' | 'completed' | 'stopped' | 'skipped' | 'failed';
+export type PlanStepState =
+  | 'waiting'
+  | 'awaiting_approval'
+  | 'running'
+  | 'completed'
+  | 'stopped'
+  | 'declined'
+  | 'skipped'
+  | 'failed';
 
 export interface PlanDetail extends PlanView {
   readonly current: {
@@ -189,6 +197,9 @@ export interface PlanStepProgress {
   readonly executionId: string | null;
   /** A specialist step's execution status; none on a check or before the step was delegated. */
   readonly status: string | null;
+  /** The approval a step waits for or was declined by (ADR-0146), decided in Approvals. */
+  readonly approvalId?: string | null;
+  /** Why it failed; on a declined step: `rejected`, `expired`, `cancelled` or `mismatch`. */
   readonly failure: string | null;
   readonly answer: string | null;
   readonly missing: readonly string[];

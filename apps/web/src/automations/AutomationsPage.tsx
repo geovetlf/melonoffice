@@ -19,6 +19,8 @@ import {
   type WorkflowStepDraft,
   type WorkflowView,
 } from './automationsClient.js';
+import { navigate } from '../identity/router.js';
+import { paths } from '../shell/routes.js';
 import { draftsOf, WorkflowEditor } from './WorkflowEditor.js';
 
 /**
@@ -652,6 +654,21 @@ function PlanCard({
                 <span className="automations__meta">
                   {' · '}
                   <FormattedMessage id={stepProgressKey(done)} />
+                  {done.state === 'awaiting_approval' ? (
+                    <>
+                      {' · '}
+                      <a
+                        className="mo-link"
+                        href={paths.approvals()}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          navigate(paths.approvals());
+                        }}
+                      >
+                        <FormattedMessage id="nav.approvals" />
+                      </a>
+                    </>
+                  ) : null}
                 </span>
               )}
               {done?.answer === null || done?.answer === undefined ? null : (
@@ -723,7 +740,8 @@ function checkActionOf(decision: PlanStepView['decision']): string | undefined {
 
 /**
  * What a step's progress says. A check says whether it let its branch go on; a step after a
- * check that stopped its branch is skipped, never "waiting" forever. An answer from an older
+ * check or a declined approval that ended its branch is skipped, never "waiting" forever; a step
+ * that asked a person says it waits for them, or that it was rejected or not approved in time. An answer from an older
  * API without `state` falls back to its execution's status.
  */
 function stepProgressKey(done: PlanStepProgress): string {
@@ -739,6 +757,13 @@ function stepProgressKey(done: PlanStepProgress): string {
             : 'automations.stepStatus.pending';
   }
   if (done.state === 'skipped') return 'automations.stepState.skipped';
+  // A step that asks a person before it runs (ADR-0146).
+  if (done.state === 'awaiting_approval') return 'automations.stepState.awaiting_approval';
+  if (done.state === 'declined') {
+    return done.failure === 'rejected' || done.failure === 'expired'
+      ? `automations.stepState.declined.${done.failure}`
+      : 'automations.stepState.declined.other';
+  }
   return `automations.stepStatus.${stepStatusOf(done.status)}`;
 }
 

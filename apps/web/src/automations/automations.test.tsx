@@ -212,10 +212,86 @@ describe('Automations (WF-3)', () => {
         /Not allowed without approval: the steps after it were skipped/,
       ),
     ).toBeTruthy();
-    expect(within(plan).getByText(/Skipped: a check stopped this branch/)).toBeTruthy();
+    expect(within(plan).getByText(/Skipped: an earlier step ended this branch/)).toBeTruthy();
     expect(within(plan).getAllByText(/Done/)).toHaveLength(2);
     // Once decided, no estimate is shown: it was only for deciding.
     expect(within(plan).queryByText(/Estimated cost/)).toBeNull();
+  });
+
+  it('ADR-0146: a step that asked a person waits for them, links to Approvals, and a rejection skips only its branch', async () => {
+    const plan = {
+      id: 'plan-6',
+      status: 'executing',
+      version: 1,
+      createdAt: '2026-09-29T09:00:00Z',
+      current: {
+        version: 1,
+        digest: 'd'.repeat(64),
+        request: { summary: 'Campaña', objective: 'Lanzar la campaña' },
+        steps: [
+          { id: 'research', kind: 'specialist', label: 'Research', dependsOn: [] },
+          { id: 'campaign', kind: 'specialist', label: 'Campaign', dependsOn: ['research'] },
+          { id: 'launch', kind: 'specialist', label: 'Launch', dependsOn: ['campaign'] },
+          { id: 'brief', kind: 'specialist', label: 'Brief', dependsOn: ['research'] },
+        ],
+        riskLevel: 'low',
+        estimate: { status: 'not_estimated' },
+        source: { kind: 'workflow', workflowId: 'wf-launch', workflowVersion: 2 },
+      },
+    };
+    const progress = (
+      stepId: string,
+      state: string,
+      status: string,
+      failure: string | null = null,
+    ) => ({
+      stepId,
+      kind: 'specialist',
+      label: stepId,
+      state,
+      outcome: null,
+      executionId: `exec-${stepId}`,
+      status,
+      approvalId: stepId === 'campaign' ? 'appr-1' : null,
+      failure,
+      answer: null,
+      missing: [],
+    });
+    open((b) => {
+      b.options.plans.org_1 = [plan];
+      b.options.planSteps['plan-6'] = [
+        progress('research', 'completed', 'completed'),
+        progress('campaign', 'awaiting_approval', 'pending'),
+        progress('launch', 'waiting', 'pending'),
+        progress('brief', 'running', 'running'),
+      ];
+    });
+    let plans = within(await screen.findByRole('region', { name: 'Plans' }));
+    fireEvent.click(await plans.findByRole('button', { name: /Running/ }));
+    let shown = await screen.findByRole('article', { name: 'Campaña' });
+    const campaign = within(shown).getByText('Campaign').closest('li') as HTMLElement;
+    expect(await within(campaign).findByText(/Waiting for your approval/)).toBeTruthy();
+    expect(within(campaign).getByRole('link', { name: 'Approvals' })).toBeTruthy();
+
+    cleanup();
+    open((b) => {
+      b.options.plans.org_1 = [{ ...plan, status: 'completed' }];
+      b.options.planSteps['plan-6'] = [
+        progress('research', 'completed', 'completed'),
+        progress('campaign', 'declined', 'pending', 'rejected'),
+        progress('launch', 'skipped', 'pending'),
+        progress('brief', 'completed', 'completed'),
+      ];
+    });
+    plans = within(await screen.findByRole('region', { name: 'Plans' }));
+    fireEvent.click(await plans.findByRole('button', { name: /Completed/ }));
+    shown = await screen.findByRole('article', { name: 'Campaña' });
+    expect(
+      await within(shown).findByText(/Rejected: this branch was skipped, the rest goes on/),
+    ).toBeTruthy();
+    expect(within(shown).getByText(/Skipped: an earlier step ended this branch/)).toBeTruthy();
+    expect(within(shown).getAllByText(/Done/)).toHaveLength(2);
+    expect(within(shown).queryByRole('link', { name: 'Approvals' })).toBeNull();
   });
 
   it('shows plans without the plan button or approval to a role that may only read', async () => {
