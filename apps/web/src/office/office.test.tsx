@@ -97,6 +97,7 @@ describe('routes (ADR-0040)', () => {
     ['/home', { kind: 'home' }],
     ['/conversations', { kind: 'conversations' }],
     ['/audit', { kind: 'auditTrail' }],
+    ['/agents/tasks', { kind: 'agentTaskList' }],
     ['/gia', { kind: 'gia' }],
     ['/settings/connections', { kind: 'connections' }],
     ['/settings', { kind: 'not_found' }],

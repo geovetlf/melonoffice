@@ -1129,6 +1129,12 @@ export function createApp({
         authorization,
         audit,
         tasksFor,
+        ...(businessProfiles === undefined
+          ? {}
+          : {
+              timeZoneOf: async (tenant: TenantContext) =>
+                (await businessProfiles.find(tenant.organizationId as OrganizationId))?.timeZone,
+            }),
         ...(handoffRepository === undefined
           ? {}
           : {

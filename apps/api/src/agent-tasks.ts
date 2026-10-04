@@ -1,5 +1,6 @@
+import { dayRange } from '@melonoffice/activity';
 import type { AuditHistoryReader } from '@melonoffice/audit';
-import type { AgentHandoff, AICallTrace } from '@melonoffice/domain';
+import type { AgentHandoff, AICallTrace, IsoTimestamp } from '@melonoffice/domain';
 import { callRefOf, handoffForTask } from '@melonoffice/harness';
 import {
   AGENT_TASK_NODE,
@@ -16,17 +17,21 @@ import {
   type AgentHandoffService,
   type AgentMemoryService,
   type AgentNotificationService,
-  type AgentTaskError,
   type AgentTaskService,
   type TaskWithExecution,
+  AgentTaskError,
+  EXECUTION_STATUSES,
+  type OrganizationTaskPage,
 } from '@melonoffice/agents';
 import type { DepartmentRepository } from '@melonoffice/departments';
 import { isExecutionError, type AgentOutputStore } from '@melonoffice/execution';
 import type { GiaAgentsPort } from '@melonoffice/gia';
+import { planStepOf } from '@melonoffice/planning';
 import type { SpecialistRepository } from '@melonoffice/specialists';
 import type { TenantContext } from '@melonoffice/tenancy';
 import type { Context, Hono } from 'hono';
 import type { AuthEnv } from './auth.js';
+import { DEFAULT_ACTIVITY_TIME_ZONE } from './activity.js';
 import { withPermission, type AuthorizationDependencies } from './authorization.js';
 
 /**
@@ -74,6 +79,23 @@ export function giaAgentsOf(structure: {
   };
 }
 
+/** Whether the task's answer passed its checks and may be shown (ADR-0063, ADR-0084). */
+function answerReadable(execution: TaskWithExecution['execution'], answerNode: string): boolean {
+  const work = execution?.nodes.find((n) => n.id === answerNode);
+  const code = execution?.failure?.code;
+  return (
+    execution !== undefined &&
+    work?.status === 'completed' &&
+    (execution.status === 'completed' ||
+      execution.status === 'waiting_approval' ||
+      execution.status === 'running' ||
+      (execution.status === 'failed' && code !== undefined && code.startsWith('approval_')))
+  );
+}
+
+/** The longest answer summary the organization's list shows (ADR-0148). */
+export const TASK_SUMMARY_LENGTH = 280;
+
 /**
  * Agent task routes (ADR-0063). A person asks one of the organization's agents for a task
  * (`specialist.task`, owner, a person directly) and reads its tasks and their answers
@@ -98,11 +120,21 @@ export function registerAgentTaskRoutes(
     readonly notifications?: AgentNotificationService;
     /** The audit trail of a task and its handoff, for its trace (ADR-0117). */
     readonly history?: AuditHistoryReader;
+    /** The business's time zone, for the days the organization's list is narrowed to. */
+    readonly timeZoneOf?: (tenant: TenantContext) => Promise<string | undefined>;
     readonly now?: () => Date;
   },
 ): void {
-  const { tasksFor, outputs, contacts, memoriesFor, handoffsFor, notifications, history } =
-    dependencies;
+  const {
+    tasksFor,
+    outputs,
+    contacts,
+    memoriesFor,
+    handoffsFor,
+    notifications,
+    history,
+    timeZoneOf,
+  } = dependencies;
   const now = dependencies.now ?? (() => new Date());
 
   /** A handoff as a person reads it: who asked whom, why, its state and what it spent. */
@@ -205,15 +237,7 @@ export function registerAgentTaskRoutes(
     let ai: AICallTrace | null = null;
     // The answering node: the agent's last turn, after any tools it used (ADR-0103).
     const answerNode = execution === undefined ? AGENT_TASK_NODE : answerNodeOf(execution);
-    const work = execution?.nodes.find((n) => n.id === answerNode);
-    const code = execution?.failure?.code;
-    const readable =
-      execution !== undefined &&
-      work?.status === 'completed' &&
-      (execution.status === 'completed' ||
-        execution.status === 'waiting_approval' ||
-        execution.status === 'running' ||
-        (execution.status === 'failed' && code !== undefined && code.startsWith('approval_')));
+    const readable = answerReadable(execution, answerNode);
     if (readable && execution !== undefined && outputs !== undefined) {
       const record = await outputs.find(tenant, task.id, answerNode);
       ai = record?.ai ?? null;
@@ -306,6 +330,109 @@ export function registerAgentTaskRoutes(
         );
         return c.json({
           tasks: await Promise.all(page.items.map((item) => view(tenant, item))),
+          nextCursor: page.nextCursor,
+        });
+      }),
+    ),
+  );
+
+  /**
+   * A task as the organization's list shows it (ADR-0148): only these fields, decided here.
+   * The verified answer is cut to a summary; the model, its cost, the contacts a follow-up names,
+   * approvals and handoffs stay on the agent's own page. Reading it calls no model.
+   */
+  async function listedView(
+    tenant: TenantContext,
+    found: TaskWithExecution,
+    agents: OrganizationTaskPage['agents'],
+  ) {
+    const { task, execution } = found;
+    const agent = agents[task.specialistId];
+    const answerNode = execution === undefined ? AGENT_TASK_NODE : answerNodeOf(execution);
+    let result: { summary: string; truncated: boolean; missing: number } | null = null;
+    if (answerReadable(execution, answerNode) && outputs !== undefined) {
+      const record = await outputs.find(tenant, task.id, answerNode);
+      const parsed = record === undefined ? undefined : parseAgentAnswer(record.output);
+      if (parsed !== undefined) {
+        result = {
+          summary: parsed.answer.slice(0, TASK_SUMMARY_LENGTH),
+          truncated: parsed.answer.length > TASK_SUMMARY_LENGTH,
+          missing: parsed.missing.length,
+        };
+      }
+    }
+    const nodes = execution?.nodes ?? [];
+    const step = execution === undefined ? undefined : planStepOf(execution);
+    return {
+      id: task.id,
+      agent: {
+        id: task.specialistId,
+        name: agent?.name ?? null,
+        status: agent?.status ?? null,
+      },
+      request: task.request,
+      status: execution?.status ?? 'unknown',
+      failure: execution?.failure?.code ?? null,
+      createdAt: task.createdAt,
+      updatedAt: execution?.updatedAt ?? null,
+      startedAt: execution?.startedAt ?? null,
+      completedAt: execution?.completedAt ?? null,
+      progress: {
+        done: nodes.filter((n) => n.status === 'completed' || n.status === 'skipped').length,
+        total: nodes.length,
+      },
+      steps: nodes.map((n) => ({
+        type: n.type,
+        status: n.status,
+        startedAt: n.startedAt ?? null,
+        completedAt: n.completedAt ?? null,
+        failure: n.error?.code ?? null,
+      })),
+      plan: step === undefined ? null : { id: step.planId },
+      handedFrom: task.parentTaskId ?? null,
+      result,
+    };
+  }
+
+  // Every agent's tasks in the organization (ADR-0148), newest first, read only, with
+  // `specialist.read`. Each filter is checked by the service; days are the business's.
+  app.get(
+    '/v1/organizations/:organizationId/agent-tasks',
+    withPermission('specialist.read', dependencies, async (c, tenant) =>
+      answer(c, async () => {
+        const q = (name: string) => c.req.query(name);
+        const limit = q('limit');
+        const asked = q('from') !== undefined || q('to') !== undefined;
+        const period = !asked
+          ? undefined
+          : dayRange(
+              {
+                ...(q('from') === undefined ? {} : { from: q('from') }),
+                ...(q('to') === undefined ? {} : { to: q('to') }),
+              },
+              (await timeZoneOf?.(tenant)) ?? DEFAULT_ACTIVITY_TIME_ZONE,
+              now(),
+            );
+        if (asked && period === undefined) throw new AgentTaskError('invalid_task', 'period');
+        const page = await tasksFor(c.get('requestId')).listAll(tenant, {
+          ...(q('cursor') === undefined ? {} : { cursor: q('cursor') as string }),
+          ...(limit === undefined ? {} : { limit: /^\d{1,3}$/.test(limit) ? Number(limit) : -1 }),
+          ...(q('agent') === undefined ? {} : { specialistId: q('agent') as string }),
+          ...(q('status') === undefined ? {} : { status: q('status') as string }),
+          ...(period === undefined
+            ? {}
+            : {
+                since: period.from.toISOString() as IsoTimestamp,
+                before: period.to.toISOString() as IsoTimestamp,
+              }),
+        });
+        return c.json({
+          tasks: await Promise.all(page.items.map((item) => listedView(tenant, item, page.agents))),
+          agents: Object.entries(page.agents)
+            .map(([id, a]) => ({ id, name: a.name, status: a.status }))
+            .sort((x, y) => x.name.localeCompare(y.name) || x.id.localeCompare(y.id)),
+          statuses: [...EXECUTION_STATUSES],
+          period: period === undefined ? null : { from: period.fromDay, to: period.toDay },
           nextCursor: page.nextCursor,
         });
       }),

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { createAuditService, InMemoryAuditStore } from '@melonoffice/audit';
 import type { AuthenticatedContext } from '@melonoffice/auth';
 import type { CompanyBrainService } from '@melonoffice/brain';
@@ -433,6 +434,105 @@ describe('Agent tasks: an agent’s list, one page at a time (ADR-0063)', () => 
         'invalid_task:limit',
       );
     }
+  });
+});
+
+describe('Agent tasks: every agent’s, one page at a time (ADR-0148)', () => {
+  it('merges the agents’ lists newest first without repeating or skipping a task', async () => {
+    const w = await world();
+    // More agents than are read at once.
+    const agents: Specialist[] = [];
+    for (let i = 0; i < 12; i += 1) agents.push(await w.agent());
+    const stored: { id: string; at: string }[] = [];
+    const store = async (agent: Specialist, minute: number) => {
+      const at = new Date(Date.UTC(2026, 9, 1, 8, minute)).toISOString();
+      const id = randomUUID();
+      stored.push({ id, at });
+      await w.tasks.create({
+        id: id as ExecutionId,
+        organizationId: w.orgA,
+        specialistId: agent.identity.id,
+        specialistVersion: agent.version,
+        request: `t${minute}`,
+        requestedBy: ALICE,
+        createdAt: at as never,
+      });
+    };
+    for (const [i, agent] of agents.entries()) await store(agent, i);
+    // One agent with more tasks than a page: its own list says there are more.
+    for (const minute of [20, 21, 22, 23, 24, 25]) await store(agents[0] as Specialist, minute);
+    // Another organization's agent, never in this list.
+    await store(await w.agent(w.bob), 59);
+
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    for (let pages = 0; pages < 10; pages += 1) {
+      const page = await w.service().listAll(w.alice, { limit: 5, ...(cursor ? { cursor } : {}) });
+      seen.push(...page.items.map((i) => i.task.id));
+      if (page.nextCursor === null) break;
+      cursor = page.nextCursor;
+    }
+    const expected = stored
+      .slice(0, -1)
+      .sort((x, y) => (x.at === y.at ? (x.id < y.id ? 1 : -1) : x.at < y.at ? 1 : -1))
+      .map((t) => t.id);
+    expect(seen).toEqual(expected);
+  });
+
+  it('narrows to one agent, one state and a period, read on the server', async () => {
+    const w = await world();
+    const lucia = await w.agent();
+    const mario = await w.agent();
+    const one = await w.service().assign(w.alice, lucia.identity.id, { request: 'uno' });
+    await w.service().assign(w.alice, mario.identity.id, { request: 'dos' });
+    await w.executions.cancel(w.alice, one.task.id, 'user_requested');
+
+    const all = await w.service().listAll(w.alice, {});
+    expect(all.items.map((i) => i.task.request).sort()).toEqual(['dos', 'uno']);
+    expect(all.agents[lucia.identity.id]).toEqual({ name: 'Lucía', status: 'active' });
+
+    const ofMario = await w.service().listAll(w.alice, { specialistId: mario.identity.id });
+    expect(ofMario.items.map((i) => i.task.request)).toEqual(['dos']);
+    // Another organization's agent, or one that is not, narrows to nothing.
+    expect((await w.service().listAll(w.bob, { specialistId: mario.identity.id })).items).toEqual(
+      [],
+    );
+
+    const cancelled = await w.service().listAll(w.alice, { status: 'cancelled' });
+    expect(cancelled.items.map((i) => [i.task.request, i.execution?.status])).toEqual([
+      ['uno', 'cancelled'],
+    ]);
+    expect((await w.service().listAll(w.alice, { status: 'failed' })).items).toEqual([]);
+
+    const createdAt = one.task.createdAt;
+    const later = new Date(Date.parse(createdAt) + 60_000).toISOString() as never;
+    expect((await w.service().listAll(w.alice, { since: later })).items).toEqual([]);
+    expect((await w.service().listAll(w.alice, { before: createdAt })).items).toEqual([]);
+    expect((await w.service().listAll(w.alice, { before: later })).items).toHaveLength(2);
+  });
+
+  it('reads only the caller’s organization, with specialist.read, and refuses a foreign cursor', async () => {
+    const w = await world();
+    const lucia = await w.agent();
+    await w.service().assign(w.alice, lucia.identity.id, { request: 'uno' });
+    await w.service().assign(w.alice, lucia.identity.id, { request: 'dos' });
+    expect((await w.service().listAll(w.bob, {})).items).toEqual([]);
+    const own = await w.service().list(w.alice, lucia.identity.id, { limit: 1 });
+    expect(await codeOf(w.service().listAll(w.alice, { cursor: own.nextCursor as string }))).toBe(
+      'invalid_task:cursor',
+    );
+    const all = await w.service().listAll(w.alice, { limit: 1 });
+    expect(await codeOf(w.service().listAll(w.bob, { cursor: all.nextCursor as string }))).toBe(
+      'invalid_task:cursor',
+    );
+    expect(await codeOf(w.service().listAll(w.alice, { status: 'stuck' }))).toBe(
+      'invalid_task:status',
+    );
+    expect(await codeOf(w.service().listAll(w.alice, { since: 'ayer' as never }))).toBe(
+      'invalid_task:period',
+    );
+    const blind = await world({ without: ['specialist.read'] });
+    expect(await codeOf(blind.service().listAll(blind.alice, {}))).toBe('permission_denied');
   });
 });
 
