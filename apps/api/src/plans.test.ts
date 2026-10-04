@@ -383,19 +383,25 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
       steps: [
         {
           stepId: 'research',
+          kind: 'specialist',
           label: 'Work research',
+          state: 'running',
           executionId: research,
           status: 'running',
           failure: null,
+          outcome: null,
           answer: null,
           missing: [],
         },
         {
           stepId: 'campaign',
+          kind: 'specialist',
           label: 'Work campaign',
+          state: 'waiting',
           executionId: campaign,
           status: 'pending',
           failure: null,
+          outcome: null,
           answer: null,
           missing: [],
         },
@@ -624,6 +630,56 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
       // A decided condition is a step the plan can run (WF-4), so the plan starts.
       expect(approved.status).toBe(200);
       expect(((await approved.json()) as { status: string }).status).toBe('executing');
+
+      // The plan shows the check's decision as it was fixed.
+      const detailed = (await (await t.get('token-alice', `/plans/${plan.id}`)).json()) as {
+        current: { steps: { id: string; decision: unknown }[] };
+      };
+      expect(detailed.current.steps.find((s) => s.id === 'policy')?.decision).toEqual(
+        check.decision,
+      );
+
+      // ADR-0145: the check said the discount needs approval, so its branch stops. The steps
+      // show it: the check stopped, the step after it skipped, the other branch still waiting.
+      await t.stores.plans.update(t.orgA, plan.id as never, (current) => ({
+        plan: {
+          ...current,
+          revision: current.revision + 1,
+          conditions: [
+            {
+              stepId: 'policy',
+              result: 'stop',
+              decision: {
+                id: `dec_${'a'.repeat(32)}`,
+                type: 'action.policy_check',
+                version: 1,
+                outcome: 'approval_required',
+              },
+              evaluatedAt: '2026-10-04T00:00:00.000Z' as never,
+            },
+          ],
+        },
+        events: [],
+      }));
+      const read = await t.get('token-alice', `/plans/${plan.id}/steps`);
+      const progress = (await read.json()) as {
+        steps: Record<string, unknown>[];
+      };
+      expect(read.status, JSON.stringify(progress)).toBe(200);
+      expect(progress.steps.map((s) => [s.stepId, s.kind, s.state, s.outcome])).toEqual([
+        ['research', 'specialist', 'running', null],
+        ['policy', 'condition', 'stopped', 'approval_required'],
+        ['campaign', 'specialist', 'skipped', null],
+        ['branch', 'specialist', 'waiting', null],
+      ]);
+      expect(progress.steps[1]).toMatchObject({ executionId: null, status: null, answer: null });
+
+      // Another organization reads none of it.
+      const other = await t.app.request(
+        `/v1/organizations/${t.orgB}/plans/${plan.id}/steps`,
+        t.as('token-alice'),
+      );
+      expect(other.status).toBe(403);
     });
 
     it('answers a refused plan with 422 and why, and keeps the answer for a repeat', async () => {

@@ -12,6 +12,7 @@ import {
   CHECK_DECISION,
   type PlanDetail,
   type PlanStepProgress,
+  type PlanStepView,
   type PlanView,
   type WorkflowDetail,
   type WorkflowStatus,
@@ -230,7 +231,11 @@ export function AutomationsPage({
       )}
       {refused === undefined ? null : (
         <StateMessage kind="error">
-          <FormattedMessage id="automations.refused" values={{ reason: refused }} />
+          {REFUSALS.has(refused) ? (
+            <FormattedMessage id={`automations.refusedBecause.${refused}`} />
+          ) : (
+            <FormattedMessage id="automations.refused" values={{ reason: refused }} />
+          )}
         </StateMessage>
       )}
       {permissions.readWorkflows ? (
@@ -617,16 +622,36 @@ function PlanCard({
           }
         />
       </p>
+      {detail.status === 'approval_required' &&
+      detail.current.estimate?.status === 'estimated' &&
+      detail.current.estimate.credits !== null ? (
+        <p className="automations__meta">
+          <FormattedMessage
+            id="automations.estimate"
+            values={{ credits: detail.current.estimate.credits }}
+          />
+        </p>
+      ) : null}
       <ol className="automations__steps">
         {detail.current.steps.map((step) => {
           const done = progress.get(step.id);
+          const action = checkActionOf(step.decision);
           return (
             <li key={step.id}>
               <span className="automations__name">{step.label}</span>
+              {action === undefined ? null : (
+                <span className="automations__meta">
+                  {' · '}
+                  <FormattedMessage
+                    id="automations.checks"
+                    values={{ action: actionLabel(intl, action) }}
+                  />
+                </span>
+              )}
               {done === undefined ? null : (
                 <span className="automations__meta">
                   {' · '}
-                  <FormattedMessage id={`automations.stepStatus.${stepStatusOf(done.status)}`} />
+                  <FormattedMessage id={stepProgressKey(done)} />
                 </span>
               )}
               {done?.answer === null || done?.answer === undefined ? null : (
@@ -682,8 +707,47 @@ function PlanCard({
   );
 }
 
+/** Why a plan was refused, said plainly for the reasons a workflow from the editor can meet. */
+const REFUSALS = new Set([
+  'specialist_not_eligible',
+  'permission_not_held',
+  'department_not_allowed',
+  'plan_denied_by_policy',
+]);
+
+/** The action a policy check names, when the step is one. */
+function checkActionOf(decision: PlanStepView['decision']): string | undefined {
+  const action = decision?.input.action;
+  return decision?.decision === CHECK_DECISION && typeof action === 'string' ? action : undefined;
+}
+
+/**
+ * What a step's progress says. A check says whether it let its branch go on; a step after a
+ * check that stopped its branch is skipped, never "waiting" forever. An answer from an older
+ * API without `state` falls back to its execution's status.
+ */
+function stepProgressKey(done: PlanStepProgress): string {
+  if (done.kind === 'condition') {
+    return done.state === 'completed'
+      ? 'automations.check.passed'
+      : done.state === 'stopped'
+        ? 'automations.check.stopped'
+        : done.state === 'failed'
+          ? 'automations.check.failed'
+          : done.state === 'skipped'
+            ? 'automations.stepState.skipped'
+            : 'automations.stepStatus.pending';
+  }
+  if (done.state === 'skipped') return 'automations.stepState.skipped';
+  return `automations.stepStatus.${stepStatusOf(done.status)}`;
+}
+
 const STEP_STATUSES = new Set(['pending', 'running', 'completed', 'failed', 'cancelled']);
 
 /** A step execution's state as the screen names it; any other in-between state is "working". */
-const stepStatusOf = (status: string): string =>
-  STEP_STATUSES.has(status) ? status : status === 'unknown' ? 'pending' : 'running';
+const stepStatusOf = (status: string | null): string =>
+  status === null || status === 'unknown'
+    ? 'pending'
+    : STEP_STATUSES.has(status)
+      ? status
+      : 'running';

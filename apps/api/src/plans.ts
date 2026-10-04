@@ -1,9 +1,12 @@
 import { parseAgentAnswer } from '@melonoffice/agents';
-import type { Plan, PlanEstimate, PlanStep, PlanVersion } from '@melonoffice/domain';
+import type { Execution, Plan, PlanEstimate, PlanStep, PlanVersion } from '@melonoffice/domain';
 import type { AgentOutputStore, ExecutionService } from '@melonoffice/execution';
 import {
+  conditionStepState,
   isPlanningError,
   PlanningError,
+  planStepStates,
+  specialistStepState,
   unrunnableStepOf,
   type PlanConductor,
   type PlanService,
@@ -59,7 +62,9 @@ export function registerPlanRoutes(
     ),
   );
 
-  // Each specialist step, its execution's state and, once it completed, its agent's answer.
+  // Each step that runs, where it is by the conductor's own rule (ADR-0145): a specialist step
+  // with its execution's state and, once it completed, its agent's answer; a check with what its
+  // decision said; and `skipped` for a step after a check that stopped its branch.
   if (steps !== undefined) {
     app.get(
       `${base}/:planId/steps`,
@@ -67,14 +72,41 @@ export function registerPlanRoutes(
         answer(c, async () => {
           const plan = await plans.get(tenant, c.req.param('planId') ?? '');
           const version = await plans.getVersion(tenant, plan.id, plan.version);
-          const out = [];
+          const children = new Map<string, Execution>();
           for (const step of version.steps) {
             if (step.kind !== 'specialist') continue;
             const executionId = plan.delegations.find((d) => d.stepId === step.id)?.executionId;
-            const execution =
-              executionId === undefined
-                ? undefined
-                : await steps.executions.get(tenant, executionId);
+            if (executionId === undefined) continue;
+            children.set(step.id, await steps.executions.get(tenant, executionId));
+          }
+          const conditionOf = (id: string) => plan.conditions?.find((c) => c.stepId === id);
+          const states = planStepStates(version.steps, (step) => {
+            if (step.kind === 'condition') return conditionStepState(conditionOf(step.id));
+            const child = children.get(step.id);
+            return child === undefined ? 'waiting' : specialistStepState(child);
+          });
+          const out = [];
+          for (const step of version.steps) {
+            const state = states.get(step.id);
+            if (state === undefined) continue;
+            if (step.kind === 'condition') {
+              const decided = conditionOf(step.id);
+              out.push({
+                stepId: step.id,
+                kind: 'condition',
+                label: step.label,
+                state,
+                executionId: null,
+                status: null,
+                failure: decided?.failure ?? null,
+                // Only what the decision said; its reasons stay in the decision's own record.
+                outcome: decided?.decision?.outcome ?? null,
+                answer: null,
+                missing: [],
+              });
+              continue;
+            }
+            const execution = children.get(step.id);
             const record =
               execution?.status === 'completed' && steps.outputs !== undefined
                 ? await steps.outputs.find(tenant, execution.id, step.id)
@@ -82,10 +114,13 @@ export function registerPlanRoutes(
             const answered = record === undefined ? undefined : parseAgentAnswer(record.output);
             out.push({
               stepId: step.id,
+              kind: 'specialist',
               label: step.label,
+              state,
               executionId: execution?.id ?? null,
               status: execution?.status ?? null,
               failure: execution?.failure?.code ?? null,
+              outcome: null,
               answer: answered?.answer ?? null,
               missing: answered === undefined ? [] : [...answered.missing],
             });
@@ -222,6 +257,15 @@ const stepView = (s: PlanStep) => ({
         },
   condition:
     s.condition === undefined ? null : { step: s.condition.step, outcome: s.condition.outcome },
+  // A check's decision (WF-4): short codes and numbers fixed when the plan was made.
+  decision:
+    s.decision === undefined
+      ? null
+      : {
+          decision: s.decision.decision,
+          continueOn: [...s.decision.continueOn],
+          input: { ...s.decision.input },
+        },
   retry:
     s.retry === undefined
       ? null

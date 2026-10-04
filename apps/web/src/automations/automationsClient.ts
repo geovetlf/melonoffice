@@ -149,7 +149,12 @@ export interface PlanStepView {
   readonly kind: string;
   readonly label: string;
   readonly dependsOn: readonly string[];
+  /** A check's decision (WF-4); none on other steps. */
+  readonly decision?: WorkflowDecisionView | null;
 }
+
+/** Where a step is, by the plan conductor's own rule (ADR-0145). */
+export type PlanStepState = 'waiting' | 'running' | 'completed' | 'stopped' | 'skipped' | 'failed';
 
 export interface PlanDetail extends PlanView {
   readonly current: {
@@ -158,6 +163,11 @@ export interface PlanDetail extends PlanView {
     readonly request: { readonly summary: string; readonly objective: string };
     readonly steps: readonly PlanStepView[];
     readonly riskLevel: string;
+    /** An estimate in credits, never a charge: `unknown` whenever a price or rate is missing. */
+    readonly estimate?: {
+      readonly status: 'estimated' | 'unknown';
+      readonly credits: number | null;
+    };
     readonly source:
       | { readonly kind: 'planner' }
       | {
@@ -170,9 +180,15 @@ export interface PlanDetail extends PlanView {
 
 export interface PlanStepProgress {
   readonly stepId: string;
+  /** `specialist` or `condition` (a check). */
+  readonly kind?: string;
   readonly label: string;
+  readonly state?: PlanStepState;
+  /** On a check, once decided: what the decision said, e.g. `allowed`. */
+  readonly outcome?: string | null;
   readonly executionId: string | null;
-  readonly status: string;
+  /** A specialist step's execution status; none on a check or before the step was delegated. */
+  readonly status: string | null;
   readonly failure: string | null;
   readonly answer: string | null;
   readonly missing: readonly string[];

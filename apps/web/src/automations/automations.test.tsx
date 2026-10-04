@@ -117,6 +117,107 @@ describe('Automations (WF-3)', () => {
     expect(posts(backend, '/approve')).toHaveLength(0);
   });
 
+  it('says plainly why a plan was refused when the reason is one a person can act on', async () => {
+    open((b) => {
+      b.options.planRefusal = 'specialist_not_eligible';
+    });
+    const workflows = within(await screen.findByRole('region', { name: 'Workflows' }));
+    fireEvent.click(await workflows.findByRole('button', { name: 'Prepare a plan' }));
+    expect(
+      await screen.findByText(
+        'No active agent has the role one of the steps needs. Create or activate one, then prepare the plan again.',
+      ),
+    ).toBeTruthy();
+  });
+
+  it('shows the estimate before approval, what each check decided, and the steps it skipped', async () => {
+    const check = {
+      decision: 'action.policy_check',
+      continueOn: ['allowed'],
+      input: { action: 'opportunity.offer_discount', discountPercent: 20 },
+    };
+    const planOf = (status: string) => ({
+      id: 'plan-5',
+      status,
+      version: 1,
+      createdAt: '2026-09-29T09:00:00Z',
+      current: {
+        version: 1,
+        digest: 'd'.repeat(64),
+        request: { summary: 'Descuentos', objective: 'Ofrecer un descuento' },
+        steps: [
+          { id: 'offer', kind: 'specialist', label: 'Offer', dependsOn: [] },
+          {
+            id: 'policy',
+            kind: 'condition',
+            label: 'Policy',
+            dependsOn: ['offer'],
+            decision: check,
+          },
+          { id: 'send', kind: 'specialist', label: 'Send', dependsOn: ['policy'] },
+          { id: 'log', kind: 'specialist', label: 'Log', dependsOn: ['offer'] },
+        ],
+        riskLevel: 'low',
+        estimate: { status: 'estimated', credits: 3 },
+        source: { kind: 'workflow', workflowId: 'wf-launch', workflowVersion: 2 },
+      },
+    });
+    const progress = (
+      stepId: string,
+      kind: string,
+      state: string,
+      status: string | null,
+      outcome: string | null = null,
+    ) => ({
+      stepId,
+      kind,
+      label: stepId,
+      state,
+      outcome,
+      executionId: status === null ? null : `exec-${stepId}`,
+      status,
+      failure: null,
+      answer: null,
+      missing: [],
+    });
+    open((b) => {
+      b.options.plans.org_1 = [planOf('approval_required')];
+    });
+    let plans = within(await screen.findByRole('region', { name: 'Plans' }));
+    fireEvent.click(await plans.findByRole('button', { name: /Waiting for your approval/ }));
+    let plan = await screen.findByRole('article', { name: 'Descuentos' });
+    expect(
+      within(plan).getByText('Estimated cost: 3 credits. An estimate, not a charge.'),
+    ).toBeTruthy();
+    expect(
+      within(plan).getByText(/checks company policy for a discount on an opportunity/),
+    ).toBeTruthy();
+
+    cleanup();
+    open((b) => {
+      b.options.plans.org_1 = [planOf('completed')];
+      b.options.planSteps['plan-5'] = [
+        progress('offer', 'specialist', 'completed', 'completed'),
+        progress('policy', 'condition', 'stopped', null, 'approval_required'),
+        // Its child was never started: without the skip it would read "Waiting" for ever.
+        progress('send', 'specialist', 'skipped', 'pending'),
+        progress('log', 'specialist', 'completed', 'completed'),
+      ];
+    });
+    plans = within(await screen.findByRole('region', { name: 'Plans' }));
+    fireEvent.click(await plans.findByRole('button', { name: /Completed/ }));
+    plan = await screen.findByRole('article', { name: 'Descuentos' });
+    expect(
+      await within(plan).findByText(
+        /Not allowed without approval: the steps after it were skipped/,
+      ),
+    ).toBeTruthy();
+    expect(within(plan).getByText(/Skipped: a check stopped this branch/)).toBeTruthy();
+    expect(within(plan).getAllByText(/Done/)).toHaveLength(2);
+    // Once decided, no estimate is shown: it was only for deciding.
+    expect(within(plan).queryByText(/Estimated cost/)).toBeNull();
+  });
+
   it('shows plans without the plan button or approval to a role that may only read', async () => {
     const backend = open(
       (b) => {
