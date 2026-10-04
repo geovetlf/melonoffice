@@ -77,6 +77,7 @@ describe('skills grant only what exists, and only to agents (SK-1)', () => {
       ['company_knowledge@3', ['knowledge_search@1']],
       ['customer_follow_up@2', ['follow_up_schedule@2']],
       ['customer_follow_up@3', ['follow_up_schedule@3']],
+      ['pipeline_analysis@2', ['customer_records_summary@1']],
     ]);
     expect(
       SKILL_CATALOGUE.filter((s) => s.actions.length > 0).map((s) => [
@@ -119,6 +120,7 @@ describe('skills grant only what exists, and only to agents (SK-1)', () => {
         "market_research@1": "973fa6cccfce",
         "operations_tracking@1": "0ef075e7f3f2",
         "pipeline_analysis@1": "0f3ee33c30a3",
+        "pipeline_analysis@2": "a62b6e19bddb",
       }
     `);
   });

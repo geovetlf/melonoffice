@@ -21,10 +21,14 @@ import type {
   AIModelDefinition,
   AIRoutingStrategy,
   Execution,
+  ExecutionId,
   ExecutionNode,
+  ExecutionNodeId,
   InitialBilling,
   Organization,
+  SpecialistId,
   SubscriptionId,
+  ToolId,
   ToolVersion,
   UserId,
 } from '@melonoffice/domain';
@@ -49,7 +53,13 @@ import {
   resolveTenant,
   type TenantContext,
 } from '@melonoffice/tenancy';
-import { createToolRegistry, TOOL_CATALOGUE } from '@melonoffice/tools';
+import {
+  createToolRegistry,
+  CUSTOMER_RECORDS_TOOL,
+  TOOL_CATALOGUE,
+  validate as validateInput,
+  type ToolExecutionContext,
+} from '@melonoffice/tools';
 import { describe, expect, it } from 'vitest';
 import {
   aiNeedOf,
@@ -61,6 +71,7 @@ import {
   contextPlanOf,
   createAgentHarness,
   createCrmContextSource,
+  createCustomerRecordsExecutor,
   createDecisionAgentRouter,
   crmContextText,
   agentStopOf,
@@ -1261,6 +1272,157 @@ describe('The CRM as context (ADR-0102)', () => {
       followUps: false,
     });
     expect(text).toBe('(the customer records are not available to this agent)');
+  });
+});
+
+describe('customer_records_summary@1 executor (TL-2, ADR-0160)', () => {
+  const insights = {
+    timeZone: 'America/Lima',
+    today: '2026-10-04',
+    contacts: {
+      counts: { lead: 3, customer: 5, inactive: 1 },
+      leadsWithoutNextAction: 2,
+      overdueNextAction: 1,
+      inactiveCustomers: 1,
+      newToday: 0,
+      newThisWeek: 2,
+    },
+    opportunities: {
+      counts: { open: 4, won: 2, lost: 1 },
+      openValue: [
+        { currency: 'PEN', amountMinor: 1_250_000, count: 3 },
+        { currency: 'bad', amountMinor: 1, count: 1 },
+      ],
+      closingSoon: 1,
+      closeDatePassed: 0,
+      quiet: 2,
+    },
+    followUps: { open: 3, overdue: 1, today: 1 },
+    lists: { highestValue: ['Ana Pérez'] },
+  } as never;
+  const AGENT = '55555555-5555-4555-8555-555555555555' as SpecialistId;
+
+  async function setup(permissions: readonly string[], read = async () => insights) {
+    const w = await world();
+    const versions: unknown[] = [];
+    const reads: TenantContext[] = [];
+    const executor = createCustomerRecordsExecutor({
+      insights: {
+        read: async (tenant) => {
+          reads.push(tenant);
+          return read();
+        },
+      },
+      organizations: w.tenancy,
+      specialists: {
+        findVersion: async (...args: unknown[]) => {
+          versions.push(args);
+          return { configuration: { permissions } } as never;
+        },
+      },
+    });
+    const context = (over: Partial<ToolExecutionContext> = {}): ToolExecutionContext => ({
+      organizationId: w.orgA,
+      executionId: '44444444-4444-4444-8444-444444444444' as ExecutionId,
+      nodeId: 'records' as ExecutionNodeId,
+      specialistId: AGENT,
+      specialistVersion: 2,
+      toolId: 'customer_records_summary' as ToolId,
+      toolVersion: 1,
+      action: 'read',
+      actor: { userId: ALICE, via: 'runtime' },
+      riskLevel: 'low',
+      environment: 'dev',
+      deadline: new Date(T0.getTime() + 60_000),
+      ...over,
+    });
+    return { w, executor, context, versions, reads };
+  }
+
+  it('gives a plan step the counts and totals its agent may read, as the runtime for the person', async () => {
+    const t = await setup(['contact.read', 'opportunity.read', 'follow_up.read']);
+    const result = await t.executor.execute(t.context(), {});
+    expect(result).toEqual({
+      status: 'success',
+      output: {
+        available: true,
+        today: '2026-10-04',
+        contacts: {
+          leads: 3,
+          customers: 5,
+          inactive: 1,
+          leadsWithoutNextAction: 2,
+          overdueNextAction: 1,
+          newThisWeek: 2,
+        },
+        opportunities: {
+          open: 4,
+          won: 2,
+          lost: 1,
+          closingSoon: 1,
+          closeDatePassed: 0,
+          quiet: 2,
+          openValue: [{ currency: 'PEN', amountMinor: 1_250_000 }],
+        },
+        followUps: { open: 3, overdue: 1, today: 1 },
+      },
+    });
+    // The output fits the tool's own schema, which the gate checks; no name reaches it.
+    expect(
+      validateInput(
+        (CUSTOMER_RECORDS_TOOL.versions[0] as ToolVersion).outputSchema,
+        'output' in result ? result.output : null,
+      ),
+    ).toEqual({ valid: true });
+    expect(JSON.stringify(result)).not.toContain('Ana');
+    // Read in the execution's organization, as the runtime for its person, from the agent's version.
+    expect(t.reads).toHaveLength(1);
+    expect(t.reads[0]).toMatchObject({ actor: 'runtime', organizationId: t.w.orgA, userId: ALICE });
+    expect(t.versions).toEqual([[t.w.orgA, AGENT, 2]]);
+  });
+
+  it('gives only the parts the agent’s configuration lists, and nothing when it lists none', async () => {
+    const some = await setup(['opportunity.read']);
+    const result = await some.executor.execute(some.context(), {});
+    expect(result.status).toBe('success');
+    const output = (result as { output: Record<string, unknown> }).output;
+    expect(Object.keys(output)).toEqual(['available', 'today', 'opportunities']);
+    const none = await setup(['knowledge.read']);
+    expect(await none.executor.execute(none.context(), {})).toEqual({
+      status: 'success',
+      output: { available: false },
+    });
+    expect(none.reads).toHaveLength(0);
+  });
+
+  it('refuses input, calls not from the runtime, unknown people and other organizations', async () => {
+    const t = await setup(['contact.read']);
+    expect(await t.executor.execute(t.context(), { organizationId: 'x' })).toEqual({
+      status: 'failure',
+      code: 'invalid_input',
+    });
+    expect(
+      await t.executor.execute(t.context({ actor: { userId: ALICE, via: 'human' } as never }), {}),
+    ).toEqual({ status: 'failure', code: 'tool_not_runtime_invokable' });
+    expect(await t.executor.execute(t.context({ toolVersion: 2 }), {})).toEqual({
+      status: 'failure',
+      code: 'tool_not_runtime_invokable',
+    });
+    // Bob is not a member of Alice's organization: nothing is read for him there.
+    expect(
+      await t.executor.execute(t.context({ actor: { userId: BOB, via: 'runtime' } }), {}),
+    ).toEqual({
+      status: 'failure',
+      code: 'permission_denied',
+    });
+    expect(t.reads).toHaveLength(0);
+    const down = await setup(['contact.read'], async () => {
+      throw new Error('down');
+    });
+    expect(await down.executor.execute(down.context(), {})).toEqual({
+      status: 'failure',
+      code: 'records_unavailable',
+    });
   });
 });
 

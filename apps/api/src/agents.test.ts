@@ -133,12 +133,13 @@ describe.each(STORES)('agents with storage in %s', (_name, createStores) => {
         ],
         missing: [],
       },
-      // The commercial template stays at company_knowledge@2 and customer_follow_up@2: their
-      // versions 3 (ADR-0130, ADR-0104), the tools the agent asks for mid-task, are offered, and a
-      // person decides whether to move to them.
+      // The commercial template stays at company_knowledge@2, customer_follow_up@2 and
+      // pipeline_analysis@1: their newer versions (ADR-0130, ADR-0104, ADR-0160), the tools the
+      // agent uses, are offered, and a person decides whether to move to them.
       upgrades: [
         { skillId: 'company_knowledge', from: 2, to: 3 },
         { skillId: 'customer_follow_up', from: 2, to: 3 },
+        { skillId: 'pipeline_analysis', from: 1, to: 2 },
       ],
     });
 

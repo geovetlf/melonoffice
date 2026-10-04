@@ -1364,15 +1364,16 @@ describe('the only send path is the tool gate (CV-2)', () => {
     expect(source).toContain('sender.send(');
     expect(source).toContain('createToolGate(');
     expect(source).not.toContain('graph.facebook.com');
-    // The agent's handoff (CV-6B, ADR-0043), a person's follow-up (TL-1, ADR-0068) and the
-    // company memory search (RT-1, ADR-0130) are internal: none reaches a channel. Only
-    // `message_send` has an external provider.
+    // The agent's handoff (CV-6B, ADR-0043), a person's follow-up (TL-1, ADR-0068), the
+    // company memory search (RT-1, ADR-0130) and the customer records summary (TL-2, ADR-0160)
+    // are internal: none reaches a channel. Only `message_send` has an external provider.
     const tools = defaultToolRegistry().list();
     expect(tools.map((t) => t.id)).toEqual([
       'message_send',
       'conversation_handoff',
       'follow_up_schedule',
       'knowledge_search',
+      'customer_records_summary',
     ]);
     expect(
       tools.filter((t) => t.versions.some((v) => v.provider.kind === 'external')).map((t) => t.id),

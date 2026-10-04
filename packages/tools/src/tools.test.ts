@@ -23,6 +23,7 @@ import {
   TOOL_CATALOGUE,
   KNOWLEDGE_SEARCH_LIMITS,
   KNOWLEDGE_SEARCH_TOOL,
+  CUSTOMER_RECORDS_TOOL,
 } from './registry.js';
 import { isForbiddenField, looksLikeCredential, schemaProblem, validate } from './schema.js';
 
@@ -199,18 +200,20 @@ describe('tool registry', () => {
     );
   });
 
-  it('ships message_send, conversation_handoff, follow_up_schedule and knowledge_search: real tools with executors, none invented', () => {
+  it('ships message_send, conversation_handoff, follow_up_schedule, knowledge_search and customer_records_summary: real tools with executors, none invented', () => {
     expect(TOOL_CATALOGUE.map((t) => t.id)).toEqual([
       'message_send',
       'conversation_handoff',
       'follow_up_schedule',
       'knowledge_search',
+      'customer_records_summary',
     ]);
     expect(defaultToolRegistry().list()).toEqual([
       MESSAGE_SEND_TOOL,
       CONVERSATION_HANDOFF_TOOL,
       FOLLOW_UP_SCHEDULE_TOOL,
       KNOWLEDGE_SEARCH_TOOL,
+      CUSTOMER_RECORDS_TOOL,
     ]);
     const v = defaultToolRegistry().resolve('message_send', 1)?.version;
     expect(v).toMatchObject({
@@ -312,6 +315,56 @@ describe('invocation modes (ADR-0034)', () => {
       tool.versions.filter(isModelInvocable).map((v) => `${v.toolId}@${v.version}`),
     );
     expect(modelTools).toEqual(['follow_up_schedule@3', 'knowledge_search@1']);
+  });
+
+  it('customer_records_summary@1 only reads, takes nothing and gives back counts and totals (ADR-0160)', () => {
+    const v = must(CUSTOMER_RECORDS_TOOL.versions[0]);
+    expect(checkToolVersion(v)).toBe(v);
+    expect(v).toMatchObject({
+      version: 1,
+      category: 'crm',
+      action: 'read',
+      mutating: false,
+      approvalPolicy: 'auto',
+      riskLevel: 'low',
+      provider: { kind: 'internal', id: 'crm' },
+      invocationModes: ['runtime'],
+      credentials: [],
+      environments: ['dev'],
+    });
+    expect(validate(v.inputSchema, {})).toEqual({ valid: true });
+    // Nothing can be sent with it: the organization, agent and person come from the execution.
+    for (const extra of ['organizationId', 'contactId', 'query', 'limit']) {
+      expect(validate(v.inputSchema, { [extra]: 'x' }).valid).toBe(false);
+    }
+    expect(validate(v.outputSchema, { available: false })).toEqual({ valid: true });
+    const full = {
+      available: true,
+      today: '2026-10-04',
+      contacts: {
+        leads: 3,
+        customers: 2,
+        inactive: 1,
+        leadsWithoutNextAction: 1,
+        overdueNextAction: 0,
+        newThisWeek: 2,
+      },
+      opportunities: {
+        open: 2,
+        won: 1,
+        lost: 0,
+        closingSoon: 1,
+        closeDatePassed: 0,
+        quiet: 0,
+        openValue: [{ currency: 'PEN', amountMinor: 125_000 }],
+      },
+      followUps: { open: 2, overdue: 1, today: 0 },
+    };
+    expect(validate(v.outputSchema, full)).toEqual({ valid: true });
+    // Counts and totals only: a name never fits in it.
+    expect(
+      validate(v.outputSchema, { ...full, contacts: { ...full.contacts, name: 'Ana' } }).valid,
+    ).toBe(false);
   });
 
   it('knowledge_search@1 only reads, takes words alone and gives back bounded facts (ADR-0130)', () => {
