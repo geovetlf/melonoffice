@@ -1,7 +1,7 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
 import { Button, StateMessage } from '@melonoffice/ui';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import type { AgentTemplateView } from '../agents/agentsClient.js';
+import type { AgentTemplateView, ToolView } from '../agents/agentsClient.js';
 import { readyList, useOfficeData } from '../office/OfficeData.js';
 import { departmentName } from '../office/departments.js';
 import {
@@ -10,19 +10,31 @@ import {
   CHECK_DECISION,
   WAIT_UNIT_SECONDS,
   waitSecondsOf,
+  type ToolValueDraft,
   type WaitUnit,
   type WorkflowAgentDraft,
   type WorkflowDecisionView,
   type WorkflowStepDraft,
+  type WorkflowStepView,
+  type WorkflowToolDraft,
   type WorkflowView,
 } from './automationsClient.js';
+import {
+  sourceKey,
+  sourcesFor,
+  tidy,
+  toolChoicesOf,
+  toolStepComplete,
+  type ToolChoice,
+} from './toolSteps.js';
 
 /**
  * Writing a workflow (ADR-0028, ADR-0144): a name and its steps. A step is done by an agent with
  * a role (from the agent catalogue), optionally after the person approves it, or is a company
  * policy check (WF-4, ADR-0075) that lets the steps after it run only when the policy allows the
- * action, or a set time to wait before the steps after it (ADR-0152, ADR-0158). Each step waits
- * for the earlier steps the person ticks, so a workflow can branch.
+ * action, or a set time to wait before the steps after it (ADR-0152, ADR-0158), or a tool that
+ * only reads, used by an earlier agent step's agent (ADR-0165). Each step waits for the earlier
+ * steps the person ticks, so a workflow can branch.
  * Saving a workflow that exists writes a new version; the versions before it never change. The
  * server checks everything again.
  */
@@ -105,6 +117,8 @@ export interface WorkflowEditorProps {
   readonly templates: () => Promise<readonly AgentTemplateView[]>;
   /** The actions a policy check may name. Absent or failing: only agent steps are offered. */
   readonly checkActions?: (() => Promise<readonly string[]>) | undefined;
+  /** The tool catalogue (`tool.read`). Absent or failing: no tool step is offered. */
+  readonly tools?: (() => Promise<readonly ToolView[]>) | undefined;
   readonly save: (
     name: string,
     steps: readonly WorkflowStepDraft[],
@@ -118,6 +132,7 @@ export function WorkflowEditor({
   editing,
   templates,
   checkActions,
+  tools,
   save,
   onSaved,
   onCancel,
@@ -131,6 +146,7 @@ export function WorkflowEditor({
     editing?.steps ?? [agentDraft('new_1', [])],
   );
   const [actions, setActions] = useState<readonly string[]>([]);
+  const [toolChoices, setToolChoices] = useState<readonly ToolChoice[]>([]);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string>();
   // New steps get keys no saved step has: saved ones are named `step_<n>` or by their id.
@@ -161,6 +177,18 @@ export function WorkflowEditor({
     };
   }, [checkActions]);
 
+  useEffect(() => {
+    let live = true;
+    // Without the catalogue no tool step is offered; a saved one keeps its tool and input.
+    tools?.().then(
+      (list) => live && setToolChoices(toolChoicesOf(list)),
+      () => undefined,
+    );
+    return () => {
+      live = false;
+    };
+  }, [tools]);
+
   const actionChoices = [
     ...actions,
     ...steps.flatMap((s) => (s.kind === 'check' && !actions.includes(s.action) ? [s.action] : [])),
@@ -170,11 +198,22 @@ export function WorkflowEditor({
     nextKey.current += 1;
     return `new_${nextKey.current}`;
   };
+  const update = (next: readonly WorkflowStepDraft[]) => setSteps(tidy(next, toolChoices));
   const change = (index: number, next: WorkflowStepDraft) =>
-    setSteps(steps.map((s, i) => (i === index ? next : s)));
+    update(steps.map((s, i) => (i === index ? next : s)));
   const changeAgent = (index: number, patch: Partial<WorkflowAgentDraft>) => {
     const step = steps[index];
     if (step?.kind === 'agent') change(index, { ...step, ...patch });
+  };
+  const changeTool = (index: number, patch: Partial<WorkflowToolDraft>) => {
+    const step = steps[index];
+    if (step?.kind === 'tool') change(index, { ...step, ...patch });
+  };
+  const setValue = (index: number, name: string, value: ToolValueDraft | undefined) => {
+    const step = steps[index];
+    if (step?.kind !== 'tool') return;
+    const rest = Object.fromEntries(Object.entries(step.values).filter(([k]) => k !== name));
+    changeTool(index, { values: value === undefined ? rest : { ...rest, [name]: value } });
   };
   const toggleAfter = (index: number, key: string, on: boolean) => {
     const step = steps[index];
@@ -183,19 +222,33 @@ export function WorkflowEditor({
     const after = on ? [...step.after, key] : step.after.filter((k) => k !== key);
     change(index, { ...step, after: earlier.filter((k) => after.includes(k)) });
   };
-  /** A step waits only for steps before it: anything else is dropped after a move or removal. */
-  const ordered = (next: readonly WorkflowStepDraft[]) =>
-    next.map((s, i) => {
-      const earlier = new Set(next.slice(0, i).map((e) => e.key));
-      return { ...s, after: s.after.filter((k) => earlier.has(k)) };
-    });
   const move = (index: number, by: -1 | 1) => {
     const next = [...steps];
     const [step] = next.splice(index, 1);
     if (step === undefined) return;
     next.splice(index + by, 0, step);
-    setSteps(ordered(next));
+    update(next);
   };
+  /** The nearest agent step before `index`: who a new tool step's tool is for. */
+  const performerBefore = (index: number): string =>
+    steps
+      .slice(0, index)
+      .filter((s) => s.kind === 'agent')
+      .at(-1)?.key ?? '';
+  // Tools are named as Approvals names them; else by their id.
+  const toolLabel = (c: { readonly id: string }): string => {
+    const key = `approvals.tool.${c.id}`;
+    return intl.messages[key] === undefined ? c.id : intl.formatMessage({ id: key });
+  };
+  const fieldLabel = (toolId: string, name: string): string => {
+    const key = `automations.editor.toolInput.${toolId}.${name}`;
+    return intl.messages[key] === undefined ? name : intl.formatMessage({ id: key });
+  };
+  const stepName = (index: number): string =>
+    intl.formatMessage(
+      { id: 'automations.editor.afterStep' },
+      { n: index + 1, label: steps[index]?.label.trim() ?? '' },
+    );
 
   const actionLabel = (a: string): string => {
     const key = `agents.action.${a}`;
@@ -216,9 +269,11 @@ export function WorkflowEditor({
         s.label.trim() !== '' &&
         (s.kind === 'agent'
           ? s.roleId !== ''
-          : // A check decides on, and a wait follows, what came before it: each waits for a step.
-            s.after.length > 0 &&
-            (s.kind === 'check' ? s.action !== '' : waitSecondsOf(s) !== undefined)),
+          : s.kind === 'tool'
+            ? toolStepComplete(s, toolChoices)
+            : // A check decides on, and a wait follows, what came before it: each waits for a step.
+              s.after.length > 0 &&
+              (s.kind === 'check' ? s.action !== '' : waitSecondsOf(s) !== undefined)),
     );
 
   const submit = async (event: FormEvent) => {
@@ -299,7 +354,9 @@ export function WorkflowEditor({
                             ? checkDraft(step.key, step.label, step.after)
                             : e.target.value === 'wait'
                               ? waitDraft(step.key, step.label, step.after)
-                              : { ...agentDraft(step.key, step.after), label: step.label },
+                              : e.target.value === 'tool'
+                                ? toolDraft(step.key, step.label, performerBefore(i))
+                                : { ...agentDraft(step.key, step.after), label: step.label },
                         )
                       }
                     >
@@ -314,6 +371,12 @@ export function WorkflowEditor({
                       <option value="wait">
                         {intl.formatMessage({ id: 'automations.editor.kind.wait' })}
                       </option>
+                      {step.kind === 'tool' ||
+                      (toolChoices.length > 0 && performerBefore(i) !== '') ? (
+                        <option value="tool">
+                          {intl.formatMessage({ id: 'automations.editor.kind.tool' })}
+                        </option>
+                      ) : null}
                     </select>
                   </label>
                 )}
@@ -353,6 +416,25 @@ export function WorkflowEditor({
                       <FormattedMessage id="automations.editor.approval" />
                     </label>
                   </>
+                ) : step.kind === 'tool' ? (
+                  <ToolStepFields
+                    step={step}
+                    index={i}
+                    steps={steps}
+                    choices={toolChoices}
+                    stepName={stepName}
+                    toolLabel={toolLabel}
+                    fieldLabel={fieldLabel}
+                    onPerformer={(performer) => changeTool(i, { performer })}
+                    onTool={(c) =>
+                      changeTool(i, {
+                        toolId: c?.id ?? '',
+                        toolVersion: c?.version ?? 0,
+                        values: {},
+                      })
+                    }
+                    onValue={(name, value) => setValue(i, name, value)}
+                  />
                 ) : step.kind === 'wait' ? (
                   <>
                     <label className="mo-field">
@@ -436,24 +518,27 @@ export function WorkflowEditor({
                     </p>
                   </>
                 )}
-                {i === 0 ? null : (
+                {i === 0 || step.kind === 'tool' ? null : (
                   <fieldset className="mo-field">
                     <legend className="mo-label">
                       <FormattedMessage id="automations.editor.after" />
                     </legend>
-                    {steps.slice(0, i).map((before, j) => (
-                      <label key={before.key} className="workflow-editor__check">
-                        <input
-                          type="checkbox"
-                          checked={step.after.includes(before.key)}
-                          onChange={(e) => toggleAfter(i, before.key, e.target.checked)}
-                        />
-                        <FormattedMessage
-                          id="automations.editor.afterStep"
-                          values={{ n: j + 1, label: before.label.trim() }}
-                        />
-                      </label>
-                    ))}
+                    {steps.slice(0, i).map((before, j) =>
+                      // A tool step ends with its agent step: steps wait for that one instead.
+                      before.kind === 'tool' ? null : (
+                        <label key={before.key} className="workflow-editor__check">
+                          <input
+                            type="checkbox"
+                            checked={step.after.includes(before.key)}
+                            onChange={(e) => toggleAfter(i, before.key, e.target.checked)}
+                          />
+                          <FormattedMessage
+                            id="automations.editor.afterStep"
+                            values={{ n: j + 1, label: before.label.trim() }}
+                          />
+                        </label>
+                      ),
+                    )}
                   </fieldset>
                 )}
                 <div className="mo-form__actions">
@@ -484,7 +569,7 @@ export function WorkflowEditor({
                     variant="danger"
                     size="sm"
                     disabled={steps.length === 1}
-                    onClick={() => setSteps(ordered(steps.filter((_, j) => j !== i)))}
+                    onClick={() => update(steps.filter((_, j) => j !== i))}
                   >
                     <FormattedMessage id="automations.editor.remove" values={{ n: i + 1 }} />
                   </Button>
@@ -502,7 +587,10 @@ export function WorkflowEditor({
                   ...steps,
                   agentDraft(
                     newKey(),
-                    steps.slice(-1).map((s) => s.key),
+                    steps
+                      .filter((s) => s.kind !== 'tool')
+                      .slice(-1)
+                      .map((s) => s.key),
                   ),
                 ])
               }
@@ -567,6 +655,222 @@ function waitOf(seconds: number): { readonly amount: number; readonly unit: Wait
   return { amount: seconds, unit: 'minutes' };
 }
 
+const toolDraft = (key: string, label: string, performer: string): WorkflowStepDraft => ({
+  kind: 'tool',
+  key,
+  label,
+  after: performer === '' ? [] : [performer],
+  performer,
+  toolId: '',
+  toolVersion: 0,
+  values: {},
+});
+
+/**
+ * A tool step's agent step, its tool, and where each input comes from (ADR-0165). Only the sources
+ * a plan would accept are offered (`sourcesFor`); a fixed value is typed by the field.
+ */
+function ToolStepFields({
+  step,
+  index,
+  steps,
+  choices,
+  stepName,
+  toolLabel,
+  fieldLabel,
+  onPerformer,
+  onTool,
+  onValue,
+}: {
+  readonly step: WorkflowToolDraft;
+  readonly index: number;
+  readonly steps: readonly WorkflowStepDraft[];
+  readonly choices: readonly ToolChoice[];
+  readonly stepName: (index: number) => string;
+  readonly toolLabel: (c: { readonly id: string }) => string;
+  readonly fieldLabel: (toolId: string, name: string) => string;
+  readonly onPerformer: (key: string) => void;
+  readonly onTool: (choice: ToolChoice | undefined) => void;
+  readonly onValue: (name: string, value: ToolValueDraft | undefined) => void;
+}) {
+  const intl = useIntl();
+  const tool = choices.find((c) => c.id === step.toolId && c.version === step.toolVersion);
+  const toolKey = (c: { readonly id: string; readonly version: number }) => `${c.id}@${c.version}`;
+  return (
+    <>
+      <label className="mo-field">
+        <span className="mo-label">
+          <FormattedMessage id="automations.editor.tool.performer" />
+        </span>
+        <select value={step.performer} onChange={(e) => onPerformer(e.target.value)} required>
+          <option value="">{intl.formatMessage({ id: 'agents.create.choose' })}</option>
+          {steps.slice(0, index).map((s, j) =>
+            s.kind === 'agent' ? (
+              <option key={s.key} value={s.key}>
+                {stepName(j)}
+              </option>
+            ) : null,
+          )}
+        </select>
+      </label>
+      <label className="mo-field">
+        <span className="mo-label">
+          <FormattedMessage id="automations.editor.tool.tool" />
+        </span>
+        <select
+          value={step.toolId === '' ? '' : toolKey({ id: step.toolId, version: step.toolVersion })}
+          onChange={(e) => onTool(choices.find((c) => toolKey(c) === e.target.value))}
+          required
+        >
+          <option value="">{intl.formatMessage({ id: 'agents.create.choose' })}</option>
+          {step.toolId !== '' && tool === undefined ? (
+            <option value={toolKey({ id: step.toolId, version: step.toolVersion })}>
+              {step.toolId}
+            </option>
+          ) : null}
+          {choices.map((c) => (
+            <option key={toolKey(c)} value={toolKey(c)}>
+              {toolLabel(c)}
+            </option>
+          ))}
+        </select>
+      </label>
+      {tool === undefined
+        ? null
+        : tool.input.map((field) => {
+            const value = step.values[field.name];
+            const sources = sourcesFor(steps, index, tool, field, choices);
+            const label = fieldLabel(tool.id, field.name);
+            const fixed = value === undefined || value.from === 'fixed' ? value : undefined;
+            return (
+              <fieldset key={field.name} className="mo-field">
+                <legend className="mo-label">
+                  {field.required ? (
+                    label
+                  ) : (
+                    <FormattedMessage id="automations.editor.tool.optional" values={{ label }} />
+                  )}
+                </legend>
+                {sources.length === 0 ? null : (
+                  <select
+                    aria-label={intl.formatMessage(
+                      { id: 'automations.editor.tool.source' },
+                      { label },
+                    )}
+                    value={value === undefined ? 'fixed' : sourceKey(value)}
+                    onChange={(e) =>
+                      onValue(
+                        field.name,
+                        sources.find((src) => sourceKey(src.value) === e.target.value)?.value,
+                      )
+                    }
+                  >
+                    <option value="fixed">
+                      {intl.formatMessage({ id: 'automations.editor.tool.fixed' })}
+                    </option>
+                    {sources.map((src) => (
+                      <option key={sourceKey(src.value)} value={sourceKey(src.value)}>
+                        {src.field === undefined
+                          ? intl.formatMessage(
+                              { id: 'automations.editor.tool.answer' },
+                              { step: stepName(src.index) },
+                            )
+                          : intl.formatMessage(
+                              { id: 'automations.editor.tool.result' },
+                              { step: stepName(src.index), field: src.field },
+                            )}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                {value !== undefined && value.from !== 'fixed' ? null : (
+                  <FixedValue
+                    field={field}
+                    label={label}
+                    value={fixed?.value}
+                    onChange={(v) =>
+                      onValue(field.name, v === undefined ? undefined : { from: 'fixed', value: v })
+                    }
+                  />
+                )}
+              </fieldset>
+            );
+          })}
+      <p className="mo-hint">
+        <FormattedMessage id="automations.editor.tool.hint" />
+      </p>
+    </>
+  );
+}
+
+/** A fixed input value, typed by its field: text, one of a list, a number or yes/no. */
+function FixedValue({
+  field,
+  label,
+  value,
+  onChange,
+}: {
+  readonly field: ToolChoice['input'][number];
+  readonly label: string;
+  readonly value: string | number | boolean | undefined;
+  readonly onChange: (value: string | number | boolean | undefined) => void;
+}) {
+  const intl = useIntl();
+  if (field.type === 'boolean') {
+    return (
+      <label className="workflow-editor__check">
+        <input
+          type="checkbox"
+          checked={value === true}
+          onChange={(e) => onChange(e.target.checked)}
+        />
+        {label}
+      </label>
+    );
+  }
+  if (field.enum !== undefined) {
+    return (
+      <select
+        aria-label={label}
+        value={typeof value === 'string' ? value : ''}
+        onChange={(e) => onChange(e.target.value === '' ? undefined : e.target.value)}
+        required={field.required}
+      >
+        <option value="">{intl.formatMessage({ id: 'agents.create.choose' })}</option>
+        {field.enum.map((option) => (
+          <option key={option} value={option}>
+            {option}
+          </option>
+        ))}
+      </select>
+    );
+  }
+  if (field.type === 'number' || field.type === 'integer') {
+    return (
+      <input
+        aria-label={label}
+        type="number"
+        step={field.type === 'integer' ? 1 : 'any'}
+        min={field.minimum}
+        max={field.maximum}
+        value={typeof value === 'number' ? value : ''}
+        onChange={(e) => onChange(e.target.value === '' ? undefined : Number(e.target.value))}
+        required={field.required}
+      />
+    );
+  }
+  return (
+    <input
+      aria-label={label}
+      value={typeof value === 'string' ? value : ''}
+      minLength={field.minLength}
+      maxLength={field.maxLength}
+      onChange={(e) => onChange(e.target.value === '' ? undefined : e.target.value)}
+      required={field.required}
+    />
+  );
+}
+
 const checkDraft = (key: string, label: string, after: readonly string[]): WorkflowStepDraft => ({
   kind: 'check',
   key,
@@ -592,16 +896,7 @@ function checkOf(
 
 /** A workflow's steps as the editor writes them, when every step is one it can write. */
 export function draftsOf(
-  steps: readonly {
-    readonly id: string;
-    readonly kind: string;
-    readonly label: string;
-    readonly dependsOn: readonly string[];
-    readonly assignee: { readonly departmentTypeId: string; readonly roleId: string } | null;
-    readonly decision?: WorkflowDecisionView | null;
-    readonly wait?: { readonly seconds: number } | null;
-    readonly approvalRequired: boolean;
-  }[],
+  steps: readonly WorkflowStepView[],
 ): readonly WorkflowStepDraft[] | undefined {
   const drafts: WorkflowStepDraft[] = [];
   for (const [i, s] of steps.entries()) {
@@ -609,6 +904,12 @@ export function draftsOf(
     const earlier = new Set(steps.slice(0, i).map((e) => e.id));
     if (!s.dependsOn.every((d) => earlier.has(d))) return undefined;
     const base = { key: s.id, label: s.label, after: [...s.dependsOn] };
+    if (s.kind === 'tool') {
+      const tool = toolOf(s, drafts);
+      if (tool === undefined) return undefined;
+      drafts.push({ ...base, kind: 'tool', ...tool });
+      continue;
+    }
     if (s.kind === 'specialist' && s.assignee !== null) {
       drafts.push({
         ...base,
@@ -633,4 +934,34 @@ export function draftsOf(
     drafts.push({ ...base, kind: 'check', ...check });
   }
   return drafts;
+}
+
+/**
+ * A tool step the editor wrote: it waits for its agent step alone, its fixed input is plain values
+ * and every reference names an earlier step. Any other shape would change by rewriting it.
+ */
+function toolOf(
+  s: WorkflowStepView,
+  earlier: readonly WorkflowStepDraft[],
+): Pick<WorkflowToolDraft, 'performer' | 'toolId' | 'toolVersion' | 'values'> | undefined {
+  const performer = s.performedBy ?? '';
+  const isAgent = (key: string) => earlier.some((d) => d.key === key && d.kind === 'agent');
+  if (s.tool == null || s.approvalRequired || !isAgent(performer)) return undefined;
+  if (s.dependsOn.length !== 1 || s.dependsOn[0] !== performer) return undefined;
+  const values: Record<string, ToolValueDraft> = {};
+  for (const [key, value] of Object.entries(s.input ?? {})) {
+    if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') {
+      return undefined;
+    }
+    values[key] = { from: 'fixed', value };
+  }
+  for (const [key, ref] of Object.entries(s.inputFrom ?? {})) {
+    const source = earlier.find((d) => d.key === ref.step);
+    if (source === undefined) return undefined;
+    values[key] =
+      ref.field === undefined
+        ? { from: 'answer', step: ref.step }
+        : { from: 'result', step: ref.step, field: ref.field };
+  }
+  return { performer, toolId: s.tool.id, toolVersion: s.tool.version, values };
 }

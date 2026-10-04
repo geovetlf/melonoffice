@@ -27,6 +27,13 @@ export interface WorkflowStepView {
   readonly decision?: WorkflowDecisionView | null;
   /** A wait's length (ADR-0152); none on other steps. */
   readonly wait?: { readonly seconds: number } | null;
+  /** A tool step's agent step, tool, fixed input and earlier results (ADR-0165). */
+  readonly performedBy?: string | null;
+  readonly tool?: { readonly id: string; readonly version: number } | null;
+  readonly input?: Readonly<Record<string, unknown>> | null;
+  readonly inputFrom?: Readonly<
+    Record<string, { readonly step: string; readonly field?: string }>
+  > | null;
   readonly approvalRequired: boolean;
 }
 
@@ -52,8 +59,10 @@ export interface WorkflowDetail extends WorkflowView {
  * - `check`: a company policy check (`action.policy_check`, WF-4): the steps after it run only
  *   when the policy allows the action; otherwise they are skipped and the rest goes on.
  * - `wait`: a set time, after the steps it waits for, before the steps after it (ADR-0152).
+ * - `tool`: a read-only tool an agent step's agent uses, in that step's work (ADR-0165).
  */
-export type WorkflowStepDraft = WorkflowAgentDraft | WorkflowCheckDraft | WorkflowWaitDraft;
+export type WorkflowStepDraft =
+  WorkflowAgentDraft | WorkflowCheckDraft | WorkflowWaitDraft | WorkflowToolDraft;
 
 interface WorkflowDraftBase {
   readonly key: string;
@@ -82,6 +91,26 @@ export interface WorkflowWaitDraft extends WorkflowDraftBase {
   readonly amount: number | null;
   readonly unit: WaitUnit;
 }
+
+/**
+ * A tool step (ADR-0159, ADR-0161): the agent of an earlier agent step (`performer`, its key) uses
+ * a tool that only reads, as part of that step's work. It waits for that step alone (`after` is
+ * that key), and no other step waits for it. Each input is a fixed value, the answer of an
+ * earlier agent step, or a field of an earlier tool step's result. The server checks each again.
+ */
+export interface WorkflowToolDraft extends WorkflowDraftBase {
+  readonly kind: 'tool';
+  readonly performer: string;
+  /** Empty while the person has not chosen. */
+  readonly toolId: string;
+  readonly toolVersion: number;
+  readonly values: Readonly<Record<string, ToolValueDraft>>;
+}
+
+export type ToolValueDraft =
+  | { readonly from: 'fixed'; readonly value: string | number | boolean }
+  | { readonly from: 'answer'; readonly step: string }
+  | { readonly from: 'result'; readonly step: string; readonly field: string };
 
 export type WaitUnit = 'minutes' | 'hours' | 'days';
 export const WAIT_UNIT_SECONDS: Readonly<Record<WaitUnit, number>> = {
@@ -131,6 +160,28 @@ export function workflowStepsOf(drafts: readonly WorkflowStepDraft[]): readonly 
     if (d.kind === 'wait') {
       return { ...base, kind: 'wait', wait: { seconds: waitSecondsOf(d) ?? 0 } };
     }
+    if (d.kind === 'tool') {
+      const input: Record<string, string | number | boolean> = {};
+      const inputFrom: Record<string, { step: string; field?: string }> = {};
+      for (const [key, v] of Object.entries(d.values)) {
+        if (v.from === 'fixed') {
+          if (v.value !== '') input[key] = v.value;
+          continue;
+        }
+        const step = ids.get(v.step);
+        if (step !== undefined) {
+          inputFrom[key] = v.from === 'result' ? { step, field: v.field } : { step };
+        }
+      }
+      return {
+        ...base,
+        kind: 'tool',
+        performedBy: ids.get(d.performer) ?? '',
+        tool: { id: d.toolId, version: d.toolVersion },
+        ...(Object.keys(input).length === 0 ? {} : { input }),
+        ...(Object.keys(inputFrom).length === 0 ? {} : { inputFrom }),
+      };
+    }
     if (d.kind === 'check') {
       return {
         ...base,
@@ -171,6 +222,19 @@ export interface PlanView {
   readonly status: PlanStatus;
   readonly version: number;
   readonly createdAt: string;
+  /**
+   * Each step the approved credit budget could not cover (ADR-0163): what the plan had used, what
+   * the step needed, and the budget. An older API sends none.
+   */
+  readonly budgetBlocks?: readonly PlanBudgetBlockView[];
+}
+
+export interface PlanBudgetBlockView {
+  readonly stepId: string;
+  readonly usedCredits: number;
+  readonly neededCredits: number;
+  readonly capCredits: number;
+  readonly blockedAt: string;
 }
 
 export interface PlanStepView {

@@ -513,6 +513,7 @@ export function AppShell(locale: LocaleProps) {
                 manageWorkflows: canManageWorkflows,
               }}
               templates={canReadAgents ? clients.agents.templates : undefined}
+              tools={canReadTools ? clients.agents.tools : undefined}
               stop={canCancelExecutions ? clients.executions.cancel : undefined}
             />
           </div>

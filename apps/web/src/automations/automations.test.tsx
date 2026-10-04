@@ -187,7 +187,9 @@ describe('Automations (WF-3)', () => {
     fireEvent.click(await plans.findByRole('button', { name: /Waiting for your approval/ }));
     let plan = await screen.findByRole('article', { name: 'Descuentos' });
     expect(
-      within(plan).getByText('Estimated cost: 3 credits. An estimate, not a charge.'),
+      within(plan).getByText(
+        "Estimated cost: 3 credits. An estimate, not a charge. Approving makes it this plan's credit limit: a step that would go over it does not run.",
+      ),
     ).toBeTruthy();
     expect(
       within(plan).getByText(/checks company policy for a discount on an opportunity/),
@@ -216,6 +218,87 @@ describe('Automations (WF-3)', () => {
     expect(within(plan).getAllByText(/Done/)).toHaveLength(2);
     // Once decided, no estimate is shown: it was only for deciding.
     expect(within(plan).queryByText(/Estimated cost/)).toBeNull();
+  });
+
+  it('ADR-0162, ADR-0163: says a plan without an estimate has no credit limit, which step the limit stopped and which branch failed', async () => {
+    const planOf = (status: string, credits: number | null) => ({
+      id: 'plan-6',
+      status,
+      version: 1,
+      createdAt: '2026-09-29T09:00:00Z',
+      ...(status === 'completed'
+        ? {
+            budgetBlocks: [
+              {
+                stepId: 'report',
+                usedCredits: 12,
+                neededCredits: 5,
+                capCredits: 15,
+                blockedAt: '2026-09-29T10:00:00Z',
+              },
+            ],
+          }
+        : {}),
+      current: {
+        version: 1,
+        digest: 'e'.repeat(64),
+        request: { summary: 'Informe', objective: 'Preparar el informe' },
+        steps: [
+          { id: 'research', kind: 'specialist', label: 'Research', dependsOn: [] },
+          { id: 'draft', kind: 'specialist', label: 'Draft', dependsOn: [] },
+          { id: 'report', kind: 'specialist', label: 'Report', dependsOn: ['research'] },
+        ],
+        riskLevel: 'low',
+        estimate:
+          credits === null
+            ? { status: 'unknown', credits: null }
+            : { status: 'estimated', credits },
+        source: { kind: 'planner' },
+      },
+    });
+    open((b) => {
+      b.options.plans.org_1 = [planOf('approval_required', null)];
+    });
+    let plans = within(await screen.findByRole('region', { name: 'Plans' }));
+    fireEvent.click(await plans.findByRole('button', { name: /Waiting for your approval/ }));
+    let plan = await screen.findByRole('article', { name: 'Informe' });
+    expect(
+      within(plan).getByText('No credit estimate for this plan, so it has no credit limit.'),
+    ).toBeTruthy();
+
+    cleanup();
+    const step = (stepId: string, state: string, failure: string | null) => ({
+      stepId,
+      kind: 'specialist',
+      label: stepId,
+      state,
+      executionId: `exec-${stepId}`,
+      status: state,
+      failure,
+      answer: null,
+      missing: [],
+    });
+    open((b) => {
+      b.options.plans.org_1 = [planOf('completed', 15)];
+      b.options.planSteps['plan-6'] = [
+        step('research', 'completed', null),
+        step('draft', 'failed', 'agent_failed'),
+        step('report', 'failed', 'budget_exceeded'),
+      ];
+    });
+    plans = within(await screen.findByRole('region', { name: 'Plans' }));
+    fireEvent.click(await plans.findByRole('button', { name: /Completed/ }));
+    plan = await screen.findByRole('article', { name: 'Informe' });
+    expect(
+      await within(plan).findByText(
+        /Not run: it needed 5 credits and the plan had used 12 of its 15-credit limit/,
+      ),
+    ).toBeTruthy();
+    expect(
+      within(plan).getByText(
+        /Failed: the steps that depend on it are skipped; other branches go on/,
+      ),
+    ).toBeTruthy();
   });
 
   it('ADR-0146: a step that asked a person waits for them, links to Approvals, and a rejection skips only its branch', async () => {
@@ -662,6 +745,217 @@ describe('Writing workflows (block 4)', () => {
       label: 'Pause',
       dependsOn: ['step_1'],
       wait: { seconds: 172_800 },
+    });
+  });
+
+  const READ_TOOLS = [
+    {
+      id: 'knowledge_search',
+      status: 'active',
+      versions: [
+        {
+          version: 1,
+          nameKey: 'tools.knowledge_search.name',
+          descriptionKey: 'tools.knowledge_search.description',
+          category: 'knowledge',
+          action: 'search',
+          mutating: false,
+          riskLevel: 'low',
+          approvalPolicy: 'auto',
+          environments: ['dev'],
+          step: {
+            input: [
+              { name: 'query', type: 'string', required: true, maxLength: 200, minLength: 2 },
+            ],
+            output: [
+              { name: 'available', type: 'boolean', required: true },
+              { name: 'facts', type: 'array', required: true },
+            ],
+          },
+        },
+      ],
+    },
+  ];
+  const withTools = (b: ReturnType<typeof fakeBackend>) => {
+    b.options.moreTools = READ_TOOLS;
+  };
+
+  it('ADR-0165: writes a tool step for an earlier agent step, from a fixed value or its answer', async () => {
+    const backend = open(withTools, [...WRITER, 'tool.read']);
+    fireEvent.click(await screen.findByRole('button', { name: 'New workflow' }));
+    const editor = within(await screen.findByRole('form', { name: 'New workflow' }));
+    const create = await editor.findByRole('button', { name: 'Create as draft' });
+    fireEvent.change(editor.getByLabelText('Name'), { target: { value: 'Estudio' } });
+    fireEvent.change(editor.getByLabelText('Step 1: what to do'), {
+      target: { value: 'Investigar' },
+    });
+    fireEvent.change(editor.getByLabelText('Who does it'), {
+      target: { value: 'sales/commercial_agent' },
+    });
+    fireEvent.click(editor.getByRole('button', { name: 'Add a step' }));
+    fireEvent.change(editor.getByLabelText('Step 2: what to do'), {
+      target: { value: 'Buscar en la memoria' },
+    });
+    const kinds = () => editor.getAllByLabelText('What this step is');
+    await vi.waitFor(() =>
+      expect(
+        within(kinds().at(-1) as HTMLElement).queryByRole('option', {
+          name: 'An agent uses a lookup tool',
+        }),
+      ).toBeTruthy(),
+    );
+    // The first step has no earlier agent step, so it is never offered a tool.
+    expect(
+      within(kinds()[0] as HTMLElement).queryByRole('option', {
+        name: 'An agent uses a lookup tool',
+      }),
+    ).toBeNull();
+    fireEvent.change(kinds().at(-1) as HTMLElement, { target: { value: 'tool' } });
+    expect((editor.getByLabelText('Used by the agent of') as HTMLSelectElement).value).toBe(
+      'new_1',
+    );
+    // Only tools a plan may run as a step: `message_send` changes data and is not offered.
+    const tool = editor.getByLabelText('Tool') as HTMLSelectElement;
+    expect([...tool.options].map((o) => o.textContent)).toEqual([
+      'Choose…',
+      'Search the company memory',
+    ]);
+    fireEvent.change(tool, { target: { value: 'knowledge_search@1' } });
+    expect((create as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(editor.getByLabelText('Words to search'), { target: { value: 'melón' } });
+    expect((create as HTMLButtonElement).disabled).toBe(false);
+
+    // A later step can wait for the agent step, never for the tool step that ends it.
+    fireEvent.click(editor.getByRole('button', { name: 'Add a step' }));
+    fireEvent.change(editor.getByLabelText('Step 3: what to do'), {
+      target: { value: 'Resumir' },
+    });
+    fireEvent.change(editor.getAllByLabelText('Who does it')[1] as HTMLElement, {
+      target: { value: 'sales/commercial_agent' },
+    });
+    const after = within(
+      editor.getAllByRole('group', { name: 'Runs after' }).at(-1) as HTMLElement,
+    );
+    expect(after.getByLabelText('Step 1: Investigar')).toBeTruthy();
+    expect(after.queryByLabelText('Step 2: Buscar en la memoria')).toBeNull();
+    // A new step waits for the last step that is not a tool step.
+    expect((after.getByLabelText('Step 1: Investigar') as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(create);
+    expect(
+      await screen.findByText('The workflow was created as a draft. Activate it when it is ready.'),
+    ).toBeTruthy();
+    let [sent] = posts(backend, '/org_1/workflows');
+    let steps = (JSON.parse(sent?.body ?? '{}') as { steps: Record<string, unknown>[] }).steps;
+    expect(steps[1]).toEqual({
+      id: 'step_2',
+      kind: 'tool',
+      label: 'Buscar en la memoria',
+      dependsOn: ['step_1'],
+      performedBy: 'step_1',
+      tool: { id: 'knowledge_search', version: 1 },
+      input: { query: 'melón' },
+    });
+    expect(steps[2]).toMatchObject({ id: 'step_3', dependsOn: ['step_1'] });
+
+    // The same words can come from the agent step's answer instead (ADR-0161).
+    fireEvent.click(await screen.findByRole('button', { name: 'New workflow' }));
+    const again = within(await screen.findByRole('form', { name: 'New workflow' }));
+    fireEvent.change(again.getByLabelText('Name'), { target: { value: 'Estudio 2' } });
+    fireEvent.change(again.getByLabelText('Step 1: what to do'), {
+      target: { value: 'Investigar' },
+    });
+    fireEvent.change(again.getByLabelText('Who does it'), {
+      target: { value: 'sales/commercial_agent' },
+    });
+    fireEvent.click(again.getByRole('button', { name: 'Add a step' }));
+    fireEvent.change(again.getByLabelText('Step 2: what to do'), {
+      target: { value: 'Buscar' },
+    });
+    await vi.waitFor(() =>
+      expect(
+        within(again.getAllByLabelText('What this step is').at(-1) as HTMLElement).queryByRole(
+          'option',
+          { name: 'An agent uses a lookup tool' },
+        ),
+      ).toBeTruthy(),
+    );
+    fireEvent.change(again.getAllByLabelText('What this step is').at(-1) as HTMLElement, {
+      target: { value: 'tool' },
+    });
+    fireEvent.change(again.getByLabelText('Tool'), { target: { value: 'knowledge_search@1' } });
+    fireEvent.change(again.getByLabelText('Where Words to search comes from'), {
+      target: { value: 'answer:new_1' },
+    });
+    expect(again.queryByLabelText('Words to search')).toBeNull();
+    fireEvent.click(again.getByRole('button', { name: 'Create as draft' }));
+    await vi.waitFor(() => expect(posts(backend, '/org_1/workflows')).toHaveLength(2));
+    [, sent] = posts(backend, '/org_1/workflows');
+    steps = (JSON.parse(sent?.body ?? '{}') as { steps: Record<string, unknown>[] }).steps;
+    expect(steps[1]).toEqual({
+      id: 'step_2',
+      kind: 'tool',
+      label: 'Buscar',
+      dependsOn: ['step_1'],
+      performedBy: 'step_1',
+      tool: { id: 'knowledge_search', version: 1 },
+      inputFrom: { query: { step: 'step_1' } },
+    });
+  });
+
+  it('ADR-0165: shows a saved tool step and saves it unchanged', async () => {
+    const backend = open(
+      (b) => {
+        withTools(b);
+        const launch = b.options.workflows.org_1?.find((w) => w.id === 'wf-launch');
+        if (launch === undefined) return;
+        launch.steps = [
+          {
+            id: 'offer',
+            kind: 'specialist',
+            label: 'Offer',
+            dependsOn: [],
+            assignee: { departmentTypeId: 'sales', roleId: 'commercial_agent' },
+          },
+          {
+            id: 'search',
+            kind: 'tool',
+            label: 'Search',
+            dependsOn: ['offer'],
+            assignee: null,
+            performedBy: 'offer',
+            tool: { id: 'knowledge_search', version: 1 },
+            input: null,
+            inputFrom: { query: { step: 'offer' } },
+          },
+        ];
+      },
+      [...WRITER, 'tool.read'],
+    );
+    const workflows = within(await screen.findByRole('region', { name: 'Workflows' }));
+    fireEvent.click((await workflows.findAllByRole('button', { name: 'Steps' }))[0] as HTMLElement);
+    expect(await workflows.findByText(/uses a tool/)).toBeTruthy();
+    fireEvent.click(workflows.getByRole('button', { name: 'Edit (new version)' }));
+    const editor = within(await screen.findByRole('form', { name: 'New version' }));
+    await vi.waitFor(() =>
+      expect((editor.getByLabelText('Tool') as HTMLSelectElement).value).toBe('knowledge_search@1'),
+    );
+    expect(
+      (editor.getByLabelText('Where Words to search comes from') as HTMLSelectElement).value,
+    ).toBe('answer:offer');
+    fireEvent.click(editor.getByRole('button', { name: 'Save new version' }));
+    expect(
+      await screen.findByText('The new version was saved. Plans already made keep their version.'),
+    ).toBeTruthy();
+    const [sent] = posts(backend, '/workflows/wf-launch/versions');
+    const steps = (JSON.parse(sent?.body ?? '{}') as { steps: Record<string, unknown>[] }).steps;
+    expect(steps[1]).toEqual({
+      id: 'step_2',
+      kind: 'tool',
+      label: 'Search',
+      dependsOn: ['step_1'],
+      performedBy: 'step_1',
+      tool: { id: 'knowledge_search', version: 1 },
+      inputFrom: { query: { step: 'step_1' } },
     });
   });
 
