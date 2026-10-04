@@ -136,6 +136,61 @@ describe('workflow lifecycle and versions', () => {
     }
   });
 
+  it('refuses a template every plan of it would be refused for (ADR-0156)', async () => {
+    const detailOf = (steps: unknown): string | undefined => {
+      try {
+        checkWorkflowSteps('Launch', steps);
+      } catch (error) {
+        if (isWorkflowError(error)) return error.detail;
+        throw error;
+      }
+      return undefined;
+    };
+    const [research, search, signOff, campaign] = STEPS as unknown as [
+      Record<string, unknown>,
+      Record<string, unknown>,
+      Record<string, unknown>,
+      Record<string, unknown>,
+    ];
+    const pause = { id: 'pause', kind: 'wait', label: 'Wait', dependsOn: ['research'] };
+    // A wait with no time, or that waits on nothing.
+    expect(detailOf([research, pause])).toBe('steps.1.wait');
+    expect(detailOf([research, { ...pause, dependsOn: [], wait: { seconds: 60 } }])).toBe(
+      'steps.1.dependsOn',
+    );
+    // A tool step waits only on its own specialist's work; nothing waits on a tool step.
+    expect(detailOf([research, search, { ...campaign, dependsOn: ['search'] }])).toBe(
+      'invalid_dependency',
+    );
+    expect(detailOf([research, campaign, { ...search, dependsOn: ['campaign'] }])).toBe(
+      'invalid_tool_dependency',
+    );
+    expect(
+      detailOf([
+        research,
+        { ...search, performedBy: 'sign_off', dependsOn: ['sign_off'] },
+        signOff,
+      ]),
+    ).toBe('invalid_performer');
+    // The graph: no cycle, no step it does not have.
+    expect(
+      detailOf([
+        { ...research, dependsOn: ['campaign'] },
+        { ...campaign, dependsOn: ['research'] },
+      ]),
+    ).toBe('plan_cycle');
+    expect(detailOf([research, { ...campaign, dependsOn: ['nowhere'] }])).toBe(
+      'unknown_dependency',
+    );
+    // A whole, valid template is kept as it was.
+    expect(detailOf(STEPS)).toBeUndefined();
+    expect(detailOf([research, { ...pause, wait: { seconds: 60 } }])).toBeUndefined();
+    const w = await setup();
+    expect(
+      await codeOf(w.workflows.create(w.tenantA, { name: 'Launch', steps: [research, pause] })),
+    ).toBe('invalid_workflow');
+  });
+
   it('writes each version once and keeps earlier versions unchanged', async () => {
     const w = await setup();
     const created = await w.workflows.create(w.tenantA, { name: 'Launch', steps: STEPS });

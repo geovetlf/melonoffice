@@ -11,7 +11,7 @@ import type {
   WorkflowStep,
   WorkflowVersion,
 } from '@melonoffice/domain';
-import { checkProposal } from '@melonoffice/planning';
+import { checkProposal, checkStepStructure } from '@melonoffice/planning';
 import { digestOf, isDigest, sameDigest } from '@melonoffice/tools';
 import { randomUUID } from 'node:crypto';
 import { WorkflowError } from './errors.js';
@@ -84,6 +84,14 @@ export function checkWorkflowSteps(name: string, value: unknown): readonly Workf
     return checked.reason === 'invalid_proposal'
       ? invalid(checked.detail)
       : invalid(checked.reason);
+  }
+  // What every plan of it would be refused for, wherever it is planned, is refused now
+  // (ADR-0156): each step's own fields and the dependencies between steps.
+  const structure = checkStepStructure(checked.proposal.steps, { boundLater: true });
+  if (!structure.ok) {
+    return structure.reason === 'invalid_proposal'
+      ? invalid(structure.detail ?? 'steps')
+      : invalid(structure.reason);
   }
   return checked.proposal.steps.map((step, i): WorkflowStep => {
     const assignee = assignees[i];
