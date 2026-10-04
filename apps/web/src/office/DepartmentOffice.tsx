@@ -8,7 +8,7 @@ import { AgentTasks } from './AgentTasks.js';
 import type { AgentTasksClient } from './agentTasksClient.js';
 import { agentsOf, departmentName, findBySlug, lookOf, officeSlug } from './departments.js';
 import { Icon } from './icons.js';
-import { readyList, useOfficeData } from './OfficeData.js';
+import { readyList, useOfficeData, useSpecialistSaved } from './OfficeData.js';
 import { agentsSummary, seatsSummary } from './OfficeScene.js';
 import { agentRole, WorkstationMap } from './WorkstationMap.js';
 import { agentAt, presenceOf, seatAgents } from './workstations.js';
@@ -159,6 +159,7 @@ export function AgentPlace({
 }) {
   const intl = useIntl();
   const { departments, specialists } = useOfficeData();
+  const saved = useSpecialistSaved();
   const department = findBySlug(readyList(departments), slug);
   const everyone = readyList(specialists);
   const agent = everyone.find((s) => s.id === agentId && s.departmentId === department?.id);
@@ -237,7 +238,21 @@ export function AgentPlace({
           </p>
         </section>
         {agents === undefined ? null : (
-          <AgentCapabilities client={agents} agentId={agent.id} canManage={canManageAgents} />
+          <AgentCapabilities
+            client={agents}
+            agentId={agent.id}
+            canManage={canManageAgents}
+            departments={readyList(departments).map((d) => ({
+              id: d.id,
+              name: departmentName(intl, d, 'name'),
+            }))}
+            onMoved={(moved) => {
+              // It now sits in another office: show it there (ADR-0141).
+              const to = readyList(departments).find((d) => d.id === moved.departmentId);
+              saved(moved);
+              if (to !== undefined) navigate(paths.agent(officeSlug(to), moved.id));
+            }}
+          />
         )}
         <section className="mo-panel mo-page-section" aria-labelledby="agent-work">
           <h2 id="agent-work" className="mo-section-title">

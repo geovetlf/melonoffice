@@ -1,5 +1,5 @@
-import { removalImpact, upgradeImpact } from '@melonoffice/agents';
-import type { DepartmentRepository } from '@melonoffice/departments';
+import { moveImpact, removalImpact, upgradeImpact } from '@melonoffice/agents';
+import { acceptsAssignments, type DepartmentRepository } from '@melonoffice/departments';
 import type { OrganizationId, Specialist, Workflow, WorkflowVersion } from '@melonoffice/domain';
 import { PERMISSIONS, type Permission } from '@melonoffice/rbac';
 import {
@@ -120,6 +120,16 @@ export function registerSpecialistRoutes(
     ),
   );
 
+  // Skills and department as one new version (ADR-0141): only what a person chooses.
+  app.post(
+    '/v1/organizations/:organizationId/specialists/:specialistId/changes',
+    withPermission('specialist.manage', dependencies, async (c, tenant) =>
+      answer(c, 200, async () =>
+        management.change(tenant, c.req.param('specialistId') ?? '', await bodyOf(c)),
+      ),
+    ),
+  );
+
   app.post(
     '/v1/organizations/:organizationId/specialists/:specialistId/skills/remove',
     withPermission('specialist.manage', dependencies, async (c, tenant) =>
@@ -221,14 +231,13 @@ export function registerSpecialistRoutes(
         const organizationId = specialist.organizationId as OrganizationId;
         const owned = specialist.configuration.skills;
         const flows =
-          (upgrades.length > 0 || owned.length > 1) &&
           dependencies.workflows !== undefined &&
           dependencies.departments !== undefined &&
           authorization.authorize(tenant, 'workflow.read').allowed
             ? await activeWorkflows(dependencies.workflows, organizationId)
             : undefined;
         const departments =
-          flows === undefined || dependencies.departments === undefined
+          dependencies.departments === undefined
             ? []
             : await dependencies.departments.list(organizationId);
         const warned = upgrades.map((u) => {
@@ -269,6 +278,26 @@ export function registerSpecialistRoutes(
                 return { skillId: id, removes: impact.removes, breaks: impact.breaks };
               })
             : [];
+        // Where a person may move it (ADR-0141): each other department that takes agents, with
+        // the skills it has that the department does not allow (they must go first), and the
+        // active workflows that use its kind of agent where it is now.
+        const moves = departments
+          .filter((d) => d.id !== specialist.configuration.departmentId && acceptsAssignments(d))
+          .map((d) => ({
+            departmentId: d.id,
+            blockedBy: owned
+              .filter((h) => {
+                const found = skills.resolve(h.id, h.version);
+                return found !== undefined && !skillAllowedIn(found, d.id);
+              })
+              .map((h) => h.id),
+          }));
+        const leaves = moveImpact({
+          agent: specialist,
+          skills,
+          departments,
+          ...(flows === undefined ? {} : { workflows: flows }),
+        });
         return c.json({
           id: specialist.identity.id,
           version: specialist.version,
@@ -282,6 +311,8 @@ export function registerSpecialistRoutes(
           upgrades: warned,
           addable,
           removals,
+          moves,
+          moveLeaves: leaves,
         });
       } catch (error) {
         if (isSpecialistError(error) && error.code === 'specialist_not_found') {

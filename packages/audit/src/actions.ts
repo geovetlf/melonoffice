@@ -304,7 +304,7 @@ export const AUDIT_ACTIONS = {
   'specialist.department_changed': {
     category: 'specialist',
     description:
-      'A specialist moved to another department of its organization by the catalogue migration (ADR-0047), as a new configuration version (`targetVersion`); earlier versions stay as they were.',
+      'A specialist moved to another department of its organization, by the catalogue migration (ADR-0047) or by a person with `specialist.manage` (ADR-0141), as a new configuration version (`targetVersion`); `reference` names the department. Earlier versions stay as they were.',
     results: ['success'],
   },
   'specialist.model_policy_changed': {

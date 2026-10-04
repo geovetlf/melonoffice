@@ -419,6 +419,35 @@ export function removalImpact(
   );
 }
 
+/**
+ * What moving an agent to another department would leave behind (ADR-0141): the active
+ * workflows with a step for its kind of agent (its role) in the department it is in now. A
+ * warning, never a refusal: the person decides.
+ */
+export function moveImpact(
+  facts: ImpactFacts,
+): readonly { readonly workflowId: string; readonly name: string }[] {
+  const { configuration } = facts.agent;
+  const department = facts.departments.find((d) => d.id === configuration.departmentId);
+  const typeId = department?.origin.kind === 'catalog' ? department.origin.typeId : undefined;
+  if (typeId === undefined) return Object.freeze([]);
+  return Object.freeze(
+    (facts.workflows ?? [])
+      .filter(
+        ({ workflow, version }) =>
+          workflow.status === 'active' &&
+          version.steps.some(
+            (s) =>
+              s.assignee?.departmentTypeId === typeId &&
+              s.assignee.roleId === configuration.mainRoleId,
+          ),
+      )
+      .map(({ workflow, version }) =>
+        Object.freeze({ workflowId: workflow.id, name: version.name }),
+      ),
+  );
+}
+
 interface ImpactFacts {
   readonly agent: Specialist;
   readonly skills: SkillCatalogue;

@@ -127,6 +127,13 @@ export interface AgentCapabilitiesView {
       readonly tool: string;
     }[];
   }[];
+  /** Departments it may move to (ADR-0141), each with the skills that must go first. */
+  readonly moves?: readonly {
+    readonly departmentId: string;
+    readonly blockedBy: readonly string[];
+  }[];
+  /** Active workflows that use its kind of agent in its current department (ADR-0141). */
+  readonly moveLeaves?: readonly { readonly workflowId: string; readonly name: string }[];
   /** A newer version of one of its skills, which a person may move it to (ADR-0084). */
   readonly upgrades?: readonly {
     readonly skillId: string;
@@ -247,6 +254,16 @@ export interface AgentsClient {
     id: string,
     input: { readonly fromVersion: number; readonly skillId: string; readonly version: number },
   ): Promise<AgentView>;
+  /** Needs `specialist.manage`: skills and department as one new version (ADR-0141). */
+  change?(
+    id: string,
+    input: {
+      readonly fromVersion: number;
+      readonly add?: readonly { readonly skillId: string; readonly version: number }[];
+      readonly remove?: readonly string[];
+      readonly departmentId?: string;
+    },
+  ): Promise<AgentView>;
   /** Needs `specialist.manage`: one skill fewer, as a new version (ADR-0141). */
   removeSkill?(
     id: string,
@@ -341,6 +358,7 @@ export function createAgentsClient(request: ReplyRequest, organizationId: string
       post<AgentView>(`/specialists/${encodeURIComponent(id)}/skills/upgrade`, input),
     addSkill: (id, input) =>
       post<AgentView>(`/specialists/${encodeURIComponent(id)}/skills/add`, input),
+    change: (id, input) => post<AgentView>(`/specialists/${encodeURIComponent(id)}/changes`, input),
     removeSkill: (id, input) =>
       post<AgentView>(`/specialists/${encodeURIComponent(id)}/skills/remove`, input),
     setAutonomy: (id, input) =>

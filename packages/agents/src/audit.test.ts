@@ -15,6 +15,7 @@ import { createToolRegistry, isModelInvocable, TOOL_CATALOGUE } from '@melonoffi
 import { describe, expect, it } from 'vitest';
 import {
   auditAgents,
+  moveImpact,
   removalImpact,
   upgradeImpact,
   type AgentAuditFacts,
@@ -447,6 +448,15 @@ describe('upgradeImpact (G-2, ADR-0132)', () => {
       }).breaks,
     ).toEqual([]);
     expect(upgradeImpact(base)).toEqual({ removes: ['follow_up_schedule@2'], breaks: [] });
+  });
+
+  it('names the workflows its kind of agent works in before it moves (ADR-0141)', () => {
+    expect(moveImpact({ ...base, workflows: [{ workflow, version }] })).toEqual([
+      { workflowId: 'w1', name: 'Seguimiento semanal' },
+    ]);
+    const paused = { ...workflow, status: 'paused' } as unknown as Workflow;
+    expect(moveImpact({ ...base, workflows: [{ workflow: paused, version }] })).toEqual([]);
+    expect(moveImpact(base)).toEqual([]);
   });
 
   it('warns the same way before a skill is removed (ADR-0141)', () => {

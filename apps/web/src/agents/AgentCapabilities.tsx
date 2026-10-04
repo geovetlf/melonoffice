@@ -5,6 +5,7 @@ import {
   AgentRequestError,
   type AgentCapabilitiesView,
   type AgentsClient,
+  type AgentView,
 } from './agentsClient.js';
 import { AgentAutonomy } from './AgentAutonomy.js';
 import { AgentProfile } from './AgentProfile.js';
@@ -25,19 +26,26 @@ export function AgentCapabilities({
   client,
   agentId,
   canManage = false,
+  departments = [],
+  onMoved,
 }: {
   readonly client: AgentsClient;
   readonly agentId: string;
   /** `specialist.manage`: only then can a skill be moved to its newer version. */
   readonly canManage?: boolean;
+  /** The organization's departments by id, with their names, for a move (ADR-0141). */
+  readonly departments?: readonly { readonly id: string; readonly name: string }[];
+  /** After the agent moved to another department: the page it now has. */
+  readonly onMoved?: (agent: AgentView) => void;
 }) {
   const intl = useIntl();
   const [found, setFound] = useState<AgentCapabilitiesView | 'error' | undefined>();
   const [upgrading, setUpgrading] = useState<string | undefined>();
   const [notice, setNotice] = useState<
-    'upgraded' | 'error' | 'added' | 'removed' | 'conflict' | undefined
+    'upgraded' | 'error' | 'added' | 'removed' | 'moved' | 'conflict' | undefined
   >();
   const [adding, setAdding] = useState('');
+  const [moving, setMoving] = useState('');
   const load = useCallback(
     (live: () => boolean) =>
       client.capabilities(agentId).then(
@@ -106,6 +114,48 @@ export function AgentCapabilities({
         await client.removeSkill(agentId, { fromVersion: view.version, skillId });
         setNotice('removed');
       }
+    } catch (error) {
+      setNotice(
+        error instanceof AgentRequestError && error.code === 'specialist_concurrency_conflict'
+          ? 'conflict'
+          : 'error',
+      );
+    } finally {
+      setUpgrading(undefined);
+      await load(() => true);
+    }
+  }
+  const departmentNameOf = (id: string) => departments.find((d) => d.id === id)?.name ?? id;
+  /** Another department (ADR-0141), after confirming what it leaves behind. */
+  async function move(view: AgentCapabilitiesView, departmentId: string) {
+    const change = client.change;
+    if (change === undefined) return;
+    const leaves = view.moveLeaves ?? [];
+    const ask = [
+      ...(leaves.length === 0
+        ? []
+        : [
+            intl.formatMessage(
+              { id: 'agents.move.leaves' },
+              { workflows: leaves.map((l) => l.name).join(', ') },
+            ),
+          ]),
+      intl.formatMessage(
+        { id: 'agents.move.confirm' },
+        { department: departmentNameOf(departmentId) },
+      ),
+    ].join('\n\n');
+    if (!globalThis.confirm(ask)) return;
+    setUpgrading('department');
+    setNotice(undefined);
+    try {
+      const moved = await change.call(client, agentId, {
+        fromVersion: view.version,
+        departmentId,
+      });
+      setMoving('');
+      setNotice('moved');
+      onMoved?.(moved);
     } catch (error) {
       setNotice(
         error instanceof AgentRequestError && error.code === 'specialist_concurrency_conflict'
@@ -224,6 +274,11 @@ export function AgentCapabilities({
           <h3 id="agent-capabilities-skills" className="mo-subsection-title">
             <FormattedMessage id="agents.capabilities.skills" />
           </h3>
+          {canManage ? (
+            <p className="mo-hint">
+              <FormattedMessage id="agents.capabilities.versionHint" />
+            </p>
+          ) : null}
           {found.skills.length === 0 ? (
             <StateMessage kind="empty">
               <FormattedMessage id="agents.capabilities.noSkills" />
@@ -365,6 +420,56 @@ export function AgentCapabilities({
                   disabled={adding === '' || upgrading !== undefined}
                 >
                   <FormattedMessage id="agents.skills.addAction" />
+                </Button>
+              </div>
+            </form>
+          ) : null}
+          {canManage && client.change !== undefined && (found.moves?.length ?? 0) > 0 ? (
+            <form
+              className="mo-form agent-move"
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (moving !== '') void move(found, moving);
+              }}
+            >
+              <label className="mo-field">
+                <span className="mo-label">
+                  <FormattedMessage id="agents.move.label" />
+                </span>
+                <select value={moving} onChange={(event) => setMoving(event.target.value)}>
+                  <option value="">{intl.formatMessage({ id: 'agents.move.choose' })}</option>
+                  {found.moves?.map((m) => (
+                    <option
+                      key={m.departmentId}
+                      value={m.departmentId}
+                      disabled={m.blockedBy.length > 0}
+                    >
+                      {m.blockedBy.length === 0
+                        ? departmentNameOf(m.departmentId)
+                        : intl.formatMessage(
+                            { id: 'agents.move.blocked' },
+                            {
+                              department: departmentNameOf(m.departmentId),
+                              skills: m.blockedBy
+                                .map((id) => message(`agents.skill.${id}.name`, id))
+                                .join(', '),
+                            },
+                          )}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <p className="mo-hint">
+                <FormattedMessage id="agents.move.hint" />
+              </p>
+              <div className="mo-form__actions">
+                <Button
+                  type="submit"
+                  size="sm"
+                  variant="secondary"
+                  disabled={moving === '' || upgrading !== undefined}
+                >
+                  <FormattedMessage id="agents.move.action" />
                 </Button>
               </div>
             </form>
