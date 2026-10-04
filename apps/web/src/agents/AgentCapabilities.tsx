@@ -8,6 +8,7 @@ import {
   type AgentView,
 } from './agentsClient.js';
 import { AgentAutonomy } from './AgentAutonomy.js';
+import { AgentHistory } from './AgentHistory.js';
 import { AgentProfile } from './AgentProfile.js';
 import { AgentMemory, AgentWorkSettings } from './AgentWork.js';
 import { ReadinessProblems } from './ReadinessProblems.js';
@@ -479,6 +480,12 @@ export function AgentCapabilities({
               <FormattedMessage id="agents.capabilities.noTools" />
             </StateMessage>
           ) : null}
+          <AgentHistory
+            client={client}
+            agentId={agentId}
+            version={found.version}
+            departments={departments}
+          />
         </>
       )}
     </section>

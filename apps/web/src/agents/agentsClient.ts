@@ -197,6 +197,46 @@ export class AgentRequestError extends Error {
   }
 }
 
+/** What one version of an agent changed (ADR-0142), as the API tells it. */
+export type AgentChangeView =
+  | { readonly kind: 'created' | 'other' }
+  | { readonly kind: 'department'; readonly before: string; readonly after: string }
+  | {
+      readonly kind: 'purpose' | 'description';
+      readonly before: string | null;
+      readonly after: string | null;
+    }
+  | {
+      readonly kind: 'skills';
+      readonly added: readonly { readonly id: string; readonly version: number }[];
+      readonly removed: readonly { readonly id: string; readonly version: number }[];
+      readonly updated: readonly {
+        readonly id: string;
+        readonly from: number;
+        readonly to: number;
+      }[];
+    }
+  | { readonly kind: 'autonomy'; readonly before: string; readonly after: string }
+  | {
+      readonly kind: 'work';
+      readonly before: Readonly<Record<string, boolean>>;
+      readonly after: Readonly<Record<string, boolean>>;
+    };
+
+/** One version in an agent's history (ADR-0142): who, when and what it changed. */
+export interface AgentHistoryEntryView {
+  readonly version: number;
+  readonly previousVersion: number | null;
+  readonly createdAt: string;
+  readonly actor: 'you' | 'another_person';
+  readonly changes: readonly AgentChangeView[];
+}
+
+export interface AgentHistoryPageView {
+  readonly entries: readonly AgentHistoryEntryView[];
+  readonly nextBefore: number | null;
+}
+
 /** A skill in the catalogue (ADR-0069): what it lets an agent do and read. */
 export interface SkillView {
   readonly id: string;
@@ -254,6 +294,8 @@ export interface AgentsClient {
     id: string,
     input: { readonly fromVersion: number; readonly skillId: string; readonly version: number },
   ): Promise<AgentView>;
+  /** A page of its history, newest first (ADR-0142); `before` continues it. */
+  history?(id: string, before?: number): Promise<AgentHistoryPageView>;
   /** Needs `specialist.manage`: skills and department as one new version (ADR-0141). */
   change?(
     id: string,
@@ -358,6 +400,13 @@ export function createAgentsClient(request: ReplyRequest, organizationId: string
       post<AgentView>(`/specialists/${encodeURIComponent(id)}/skills/upgrade`, input),
     addSkill: (id, input) =>
       post<AgentView>(`/specialists/${encodeURIComponent(id)}/skills/add`, input),
+    async history(id, before) {
+      const query = before === undefined ? '' : `?before=${before}`;
+      const body = await call<Partial<AgentHistoryPageView>>(
+        `/specialists/${encodeURIComponent(id)}/versions${query}`,
+      );
+      return { entries: body.entries ?? [], nextBefore: body.nextBefore ?? null };
+    },
     change: (id, input) => post<AgentView>(`/specialists/${encodeURIComponent(id)}/changes`, input),
     removeSkill: (id, input) =>
       post<AgentView>(`/specialists/${encodeURIComponent(id)}/skills/remove`, input),

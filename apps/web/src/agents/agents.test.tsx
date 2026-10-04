@@ -11,6 +11,7 @@ import {
   type AgentAuditView,
   type AgentCapabilitiesView,
   type AgentsClient,
+  type AgentHistoryEntryView,
 } from './agentsClient.js';
 import { TeamReview } from './TeamReview.js';
 
@@ -760,5 +761,105 @@ describe('moving an agent to another department (ADR-0141)', () => {
       ),
     ).toBeTruthy();
     expect(onMoved).not.toHaveBeenCalled();
+  });
+});
+
+describe("an agent's version history (ADR-0142)", () => {
+  const entry = (
+    version: number,
+    changes: AgentHistoryEntryView['changes'],
+    actor: AgentHistoryEntryView['actor'] = 'you',
+  ): AgentHistoryEntryView => ({
+    version,
+    previousVersion: version === 1 ? null : version - 1,
+    createdAt: '2026-10-03T20:30:00.000Z',
+    actor,
+    changes,
+  });
+  const page1 = [
+    entry(5, [{ kind: 'autonomy', before: 'propose', after: 'controlled' }], 'another_person'),
+    entry(4, [{ kind: 'department', before: 'org_1_sales', after: 'org_1_marketing' }]),
+    entry(3, [
+      {
+        kind: 'skills',
+        added: [{ id: 'finance_review', version: 1 }],
+        removed: [{ id: 'customer_follow_up', version: 2 }],
+        updated: [],
+      },
+    ]),
+  ];
+  const page2 = [
+    entry(2, [{ kind: 'purpose', before: 'Antes', after: 'Vender más' }]),
+    entry(1, [{ kind: 'created' }]),
+  ];
+  function show(history: AgentsClient['history']) {
+    const agents = {
+      capabilities: vi.fn(async () => ({
+        version: 5,
+        ready: true,
+        skills: [],
+        tools: [],
+        problems: [],
+      })),
+      history,
+    } as unknown as AgentsClient;
+    render(
+      <I18nProvider locale="en" messages={catalogs.en}>
+        <AgentCapabilities
+          client={agents}
+          agentId="spec_lucia"
+          departments={[
+            { id: 'org_1_sales', name: 'Sales' },
+            { id: 'org_1_marketing', name: 'Marketing' },
+          ]}
+        />
+      </I18nProvider>,
+    );
+  }
+
+  it('shows each version with who, when, the kind of change and a summary, newest first', async () => {
+    const history = vi.fn(async (_id: string, before?: number) =>
+      before === undefined
+        ? { entries: page1, nextBefore: 3 }
+        : { entries: page2, nextBefore: null },
+    );
+    show(history);
+    const list = await screen.findByRole('list', { name: 'Version history' });
+    const items = () =>
+      within(list)
+        .getAllByRole('listitem')
+        .filter((li) => li.parentElement === list);
+    expect(items().map((li) => li.querySelector('strong')?.textContent)).toEqual([
+      'v4 → v5',
+      'v3 → v4',
+      'v2 → v3',
+    ]);
+    expect(items()[0]?.textContent).toContain('Another person');
+    expect(items()[0]?.textContent).toContain('Autonomy');
+    expect(items()[0]?.textContent).toContain('Propose → Controlled (recommended)');
+    expect(items()[1]?.textContent).toContain('You');
+    expect(within(list).getByText('Sales → Marketing')).toBeTruthy();
+    expect(within(list).getByText('+ Finance review')).toBeTruthy();
+    expect(within(list).getByText('− Customer follow-up')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show older versions' }));
+    await waitFor(() => expect(history).toHaveBeenLastCalledWith('spec_lucia', 3));
+    expect(await within(list).findByText('Purpose updated')).toBeTruthy();
+    expect(within(list).getByText('Created from its template.')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Show older versions' })).toBeNull();
+
+    // The detail says what it was before and after; nothing can be changed from here.
+    fireEvent.click(screen.getByRole('button', { name: 'See what version 2 changed' }));
+    expect(within(list).getByText('Before: Antes. After: Vender más.')).toBeTruthy();
+    expect(within(list).queryByRole('textbox')).toBeNull();
+  });
+
+  it('says so when the history cannot be read', async () => {
+    show(
+      vi.fn(async () => {
+        throw new Error('down');
+      }),
+    );
+    expect(await screen.findByText('Its history could not be read. Try again.')).toBeTruthy();
   });
 });

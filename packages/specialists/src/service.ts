@@ -23,6 +23,9 @@ import type { SpecialistRepository } from './repository.js';
  * resolved `TenantContext`, never on an id the caller passes. It reads and decides; it runs
  * nothing, and there is no route that creates, changes or runs a specialist yet.
  */
+/** How many of an agent's versions its history shows (ADR-0142). */
+export const AGENT_HISTORY_LIMIT = 20;
+
 export interface SpecialistService {
   list(tenant: TenantContext): Promise<readonly Specialist[]>;
   /**
@@ -35,6 +38,20 @@ export interface SpecialistService {
   ): Promise<AgentListPage>;
   /** `specialist_not_found` for an unknown id or another organization's specialist alike. */
   get(tenant: TenantContext, id: string): Promise<Specialist>;
+  /**
+   * A page of its versions, newest first (ADR-0142): `limit` of them (at most
+   * `AGENT_HISTORY_LIMIT`) older than `before`, or the most recent ones, each as it was stored and
+   * never rewritten, with the version just before the oldest so its change can be told. Reads each
+   * version by number, so no index is needed.
+   */
+  history(
+    tenant: TenantContext,
+    id: string,
+    page?: { readonly before?: number; readonly limit?: number },
+  ): Promise<{
+    readonly versions: readonly SpecialistVersion[];
+    readonly previous?: SpecialistVersion;
+  }>;
   /** One stored version of a specialist, for rebuilding what an execution used. */
   getVersion(tenant: TenantContext, id: string, version: number): Promise<SpecialistVersion>;
   /** May this specialist take new work for this tenant? Deterministic; see `decideEligibility`. */
@@ -112,6 +129,29 @@ export function createSpecialistService({
       return pageOfAgents(repository, organizationId, checkAgentListQuery(params, organizationId));
     },
     get,
+    async history(tenant: TenantContext, id: string, page = {}) {
+      const specialist = await get(tenant, id);
+      const { before, limit } = page as { before?: number; limit?: number };
+      const from = Math.min(specialist.version, (before ?? specialist.version + 1) - 1);
+      const size = Math.max(1, Math.min(AGENT_HISTORY_LIMIT, limit ?? AGENT_HISTORY_LIMIT));
+      // One more than the page: the version before the oldest, to tell what that one changed.
+      const numbers = Array.from(
+        { length: Math.min(size + 1, Math.max(0, from)) },
+        (_, i) => from - i,
+      );
+      const found = await Promise.all(
+        numbers.map((n) =>
+          repository.findVersion(specialist.organizationId, specialist.identity.id, n),
+        ),
+      );
+      const read = found.filter((v): v is SpecialistVersion => v !== undefined);
+      const versions = read.slice(0, size);
+      const previous = read[size];
+      return Object.freeze({
+        versions: Object.freeze(versions),
+        ...(previous === undefined ? {} : { previous }),
+      });
+    },
     async getVersion(tenant: TenantContext, id: string, version: number) {
       const specialist = await get(tenant, id);
       const found = isVersionNumber(version)

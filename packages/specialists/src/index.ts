@@ -12,3 +12,4 @@ export * from './readiness.js';
 export * from './listing.js';
 export * from './action-policy.js';
 export * from './agent-policy.js';
+export * from './history.js';

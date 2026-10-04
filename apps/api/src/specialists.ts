@@ -5,6 +5,7 @@ import { PERMISSIONS, type Permission } from '@melonoffice/rbac';
 import {
   AGENT_TEMPLATES,
   agentCapabilities,
+  agentChanges,
   autonomyOf,
   isSpecialistError,
   skillAllowedIn,
@@ -201,6 +202,55 @@ export function registerSpecialistRoutes(
       ),
     );
   }
+
+  // Its history, newest first (AC-3, ADR-0142): who made each version, when, and what it
+  // changed from the one before, told from the stored versions. Never tools, permissions,
+  // policies or the conversation profile. `before` and `limit` page through it.
+  app.get(
+    '/v1/organizations/:organizationId/specialists/:specialistId/versions',
+    withPermission('specialist.read', dependencies, async (c, tenant) => {
+      const before = c.req.query('before');
+      const limit = c.req.query('limit');
+      const number = (value: string | undefined) =>
+        value === undefined ? undefined : /^[1-9][0-9]{0,8}$/.test(value) ? Number(value) : NaN;
+      const page = { before: number(before), limit: number(limit) };
+      if (Number.isNaN(page.before) || Number.isNaN(page.limit)) {
+        return c.json({ error: 'invalid_specialist', field: 'page' }, 400);
+      }
+      try {
+        const { versions, previous } = await specialists.history(
+          tenant,
+          c.req.param('specialistId') ?? '',
+          {
+            ...(page.before === undefined ? {} : { before: page.before }),
+            ...(page.limit === undefined ? {} : { limit: page.limit }),
+          },
+        );
+        const me = 'userId' in tenant ? tenant.userId : undefined;
+        const entries = versions.map((v, i) => {
+          const before = versions[i + 1] ?? previous;
+          return {
+            version: v.version,
+            previousVersion: before?.version ?? null,
+            createdAt: v.createdAt,
+            // Only the owner administers today (D-22): a person is "you" or another member.
+            actor: me !== undefined && v.createdBy === me ? 'you' : 'another_person',
+            changes: agentChanges(v.configuration, before?.configuration),
+          };
+        });
+        const oldest = versions.at(-1)?.version;
+        return c.json({
+          entries,
+          nextBefore: oldest !== undefined && oldest > 1 ? oldest : null,
+        });
+      } catch (error) {
+        if (isSpecialistError(error) && error.code === 'specialist_not_found') {
+          return c.json({ error: 'specialist_not_found' }, 404);
+        }
+        throw error;
+      }
+    }),
+  );
 
   app.get(
     '/v1/organizations/:organizationId/specialists/:specialistId/capabilities',
