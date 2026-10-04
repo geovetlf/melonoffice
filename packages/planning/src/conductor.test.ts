@@ -482,30 +482,54 @@ describe('plan conditions (WF-4)', () => {
     ]);
   });
 
-  it('stops the plan when a decision needs an approval, and starts nothing after it', async () => {
+  it('ADR-0162: a decision that needs an approval ends its branch; the others go on', async () => {
     const e = evaluator(decided('await_approval', 'approval_required'));
     const t = await setup(gated, e.conditions);
     await t.approve();
     await t.conductor.run(t.w.tenantA, t.planned.id);
     await t.complete('research');
-    const stopped = await t.conductor.advance(t.w.runtimeA, t.planned.id);
-    expect(stopped.status).toBe('failed');
-    expect(t.started).toHaveLength(1);
-    const parent = await t.w.executions.get(t.w.tenantA, t.planned.executionId);
-    expect(parent.failure?.code).toBe('condition_needs_approval');
-    expect(t.w.events('plan.state_changed').at(-1)).toMatchObject({
-      reason: 'condition_needs_approval',
-    });
+    const going = await t.conductor.advance(t.w.runtimeA, t.planned.id);
+    // Nothing after the check starts; the summary, which does not wait on it, does.
+    expect(going.status).toBe('executing');
+    expect(t.started.map((s) => s.id)).toEqual([
+      await t.childOf('research'),
+      await t.childOf('summary'),
+    ]);
     expect((await t.stored()).conditions?.[0]).toMatchObject({ result: 'await_approval' });
+    const nodes = async () =>
+      new Map(
+        (await t.w.executions.get(t.w.tenantA, t.planned.executionId)).nodes.map((n) => [
+          n.id as string,
+          [n.status, n.error?.code],
+        ]),
+      );
+    expect((await nodes()).get('gate')).toEqual(['failed', 'condition_needs_approval']);
+    expect((await nodes()).get('offer')).toEqual(['skipped', undefined]);
+    await t.complete('summary');
+    const done = await t.conductor.advance(t.w.runtimeA, t.planned.id);
+    // The plan completes, saying which branch failed; its execution records the failure.
+    expect(done.status).toBe('completed');
+    expect(t.w.events('plan.state_changed').at(-1)).toMatchObject({
+      reason: 'branch_failed',
+      nodeId: 'gate',
+      transition: { from: 'executing', to: 'completed' },
+    });
+    const parent = await t.w.executions.get(t.w.tenantA, t.planned.executionId);
+    expect(parent.status).toBe('failed');
+    expect(parent.failure?.code).toBe('branch_failed');
+    expect((await nodes()).get('summary')).toEqual(['completed', undefined]);
+    // Asked again, nothing changes.
+    expect((await t.conductor.advance(t.w.runtimeA, t.planned.id)).status).toBe('completed');
+    expect(t.started).toHaveLength(2);
   });
 
-  it('stops the plan when the decision cannot be made, and when nothing decides conditions', async () => {
+  it('ADR-0162: a decision that cannot be made fails its branch, and so does no decider', async () => {
     const refused = evaluator({ result: 'failed', failure: 'condition_permission_denied' });
     const t = await setup(gated, refused.conditions);
     await t.approve();
     await t.conductor.run(t.w.tenantA, t.planned.id);
     await t.complete('research');
-    expect((await t.conductor.advance(t.w.runtimeA, t.planned.id)).status).toBe('failed');
+    expect((await t.conductor.advance(t.w.runtimeA, t.planned.id)).status).toBe('executing');
     expect((await t.stored()).conditions?.[0]).toMatchObject({
       result: 'failed',
       failure: 'condition_permission_denied',
@@ -513,18 +537,86 @@ describe('plan conditions (WF-4)', () => {
     expect(t.w.events('plan.condition_evaluated')[0]).toMatchObject({
       reason: 'condition_permission_denied',
     });
-    expect((await t.w.executions.get(t.w.tenantA, t.planned.executionId)).failure?.code).toBe(
-      'condition_failed',
-    );
+    const gate = async () =>
+      (await t.w.executions.get(t.w.tenantA, t.planned.executionId)).nodes.find(
+        (n) => n.id === 'gate',
+      );
+    expect(await gate()).toMatchObject({ status: 'failed', error: { code: 'condition_failed' } });
+    await t.complete('summary');
+    expect((await t.conductor.advance(t.w.runtimeA, t.planned.id)).status).toBe('completed');
 
     const none = await setup(gated);
     await none.approve();
     await none.conductor.run(none.w.tenantA, none.planned.id);
     await none.complete('research');
-    expect((await none.conductor.advance(none.w.runtimeA, none.planned.id)).status).toBe('failed');
+    await none.conductor.advance(none.w.runtimeA, none.planned.id);
     expect((await none.stored()).conditions?.[0]).toMatchObject({
       failure: 'condition_not_configured',
     });
+    await none.complete('summary');
+    expect((await none.conductor.advance(none.w.runtimeA, none.planned.id)).status).toBe(
+      'completed',
+    );
+  });
+
+  it('ADR-0162: a failed step skips only what waits on it; an independent branch finishes', async () => {
+    const t = await setup((researcher) => [
+      // A first step asking for approval is covered by the plan's own approval (ADR-0146).
+      specialistStep('research', researcher, { approvalRequired: true }),
+      specialistStep('report', researcher, { dependsOn: ['research'] }),
+      specialistStep('summary', researcher),
+    ]);
+    await t.approve();
+    await t.conductor.run(t.w.tenantA, t.planned.id);
+    await t.fail('research');
+    expect((await t.conductor.advance(t.w.runtimeA, t.planned.id)).status).toBe('executing');
+    expect(await t.status(await t.childOf('report'))).toBe('pending');
+    await t.complete('summary');
+    const done = await t.conductor.advance(t.w.runtimeA, t.planned.id);
+    expect(done.status).toBe('completed');
+    expect(t.w.events('plan.state_changed').at(-1)).toMatchObject({
+      reason: 'branch_failed',
+      nodeId: 'research',
+      reference: 'input_unavailable',
+    });
+    const parent = await t.w.executions.get(t.w.tenantA, t.planned.executionId);
+    expect(Object.fromEntries(parent.nodes.map((n) => [n.id, n.status]))).toEqual({
+      research: 'failed',
+      report: 'skipped',
+      summary: 'completed',
+    });
+    expect(parent.nodes.find((n) => n.id === 'research')?.error?.code).toBe('input_unavailable');
+    expect(await t.status(await t.childOf('report'))).toBe('pending');
+  });
+
+  it('ADR-0162: the plan fails once every branch failed, and starts nothing more', async () => {
+    const e = evaluator(decided('continue'));
+    const t = await setup(gated, e.conditions);
+    await t.approve();
+    await t.conductor.run(t.w.tenantA, t.planned.id);
+    await t.fail('research');
+    // Both branches wait on the failed step: the plan stops at it.
+    const stopped = await t.conductor.advance(t.w.runtimeA, t.planned.id);
+    expect(stopped.status).toBe('failed');
+    expect(e.asked).toEqual([]);
+    expect(t.started).toHaveLength(1);
+    expect(t.w.events('plan.state_changed').at(-1)).toMatchObject({
+      reason: 'step_failed',
+      nodeId: 'research',
+      reference: 'input_unavailable',
+    });
+    const parent = await t.w.executions.get(t.w.tenantA, t.planned.executionId);
+    expect(parent.failure?.code).toBe('step_failed');
+    expect(
+      parent.nodes
+        .map((n) => [n.id, n.status])
+        .sort(([a], [b]) => String(a).localeCompare(String(b))),
+    ).toEqual([
+      ['gate', 'skipped'],
+      ['offer', 'skipped'],
+      ['research', 'failed'],
+      ['summary', 'skipped'],
+    ]);
   });
 
   it('leaves a condition undecided when its decision could not be read, to decide it next time', async () => {
