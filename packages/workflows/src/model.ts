@@ -19,6 +19,14 @@ import { canChangeWorkflowStatus, isWorkflowStatus } from './lifecycle.js';
 
 export const MAX_NAME_LENGTH = 100;
 
+/** The kinds of step a workflow holds (ADR-0159): agent, tool, policy check and wait. */
+export const WORKFLOW_STEP_KINDS: readonly WorkflowStep['kind'][] = [
+  'specialist',
+  'tool',
+  'condition',
+  'wait',
+];
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const ROLE_ID = /^[A-Za-z0-9._:-]{1,128}$/;
 // eslint-disable-next-line no-control-regex
@@ -84,6 +92,13 @@ export function checkWorkflowSteps(name: string, value: unknown): readonly Workf
     return checked.reason === 'invalid_proposal'
       ? invalid(checked.detail)
       : invalid(checked.reason);
+  }
+  // Only the kinds a plan runs (ADR-0159): an agent, a tool it uses, a policy check and a wait.
+  // Approval is a step's own setting (`approvalRequired`), never a step.
+  for (const [i, step] of checked.proposal.steps.entries()) {
+    if (!WORKFLOW_STEP_KINDS.includes(step.kind)) invalid(`steps.${i}.kind`);
+    // A check is a decision (WF-4); a condition on how another step ended never runs.
+    if (step.kind === 'condition' && step.condition !== undefined) invalid(`steps.${i}.condition`);
   }
   // What every plan of it would be refused for, wherever it is planned, is refused now
   // (ADR-0156): each step's own fields and the dependencies between steps.

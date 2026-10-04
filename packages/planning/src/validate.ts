@@ -313,6 +313,15 @@ export function createPlanValidator(options: PlanValidatorOptions): PlanValidato
     }
     const policy = effectivePolicy(tool, riskPolicy);
     if (policy === 'denied') refuse('policy', 'tool_denied_by_policy', field);
+    // Tool steps read only, inside MelonOffice (ADR-0159): no tool that changes anything, reaches
+    // an external provider or needs a credential is ever planned.
+    if (
+      tool.version.mutating ||
+      tool.version.provider.kind !== 'internal' ||
+      tool.version.credentials.length > 0
+    ) {
+      refuse('policy', 'tool_not_read_only', field);
+    }
     // The input is fixed now (ADR-0151): it must already satisfy the tool's own schema. The Tool
     // Gate checks it again, with everything else, when the step runs.
     if (!validateInput(tool.version.inputSchema, step.input ?? {}).valid) {

@@ -15,7 +15,7 @@ import {
 async function setup(options: WorldOptions = {}) {
   const w = await world(options);
   const owner = await w.seed(w.orgA, ALICE, { type: 'leadership', role: 'chief_of_staff' });
-  const researcher = await w.seed(w.orgA, ALICE, { toolIds: ['lookup', 'send_email'] });
+  const researcher = await w.seed(w.orgA, ALICE, { toolIds: ['lookup', 'private_records'] });
   const execution = await w.planning(w.tenantA, owner);
   const plan = (objective = 'Study the melon market.') =>
     w.planner.plan(w.tenantA, { executionId: execution.id, requestId: 'plan-1', objective });
@@ -77,7 +77,7 @@ describe('planner', () => {
       answer(
         proposal([
           specialistStep('research', w.researcher),
-          toolStep('notify', 'research', 'send_email', { approvalRequired: false }),
+          toolStep('notify', 'research', 'private_records', { approvalRequired: false }),
         ]),
       ),
     );

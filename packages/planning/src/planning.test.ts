@@ -37,6 +37,9 @@ async function setup(options: WorldOptions = {}) {
       'lookup',
       'send_email',
       'wipe_data',
+      'private_records',
+      'remote_lookup',
+      'keyed_lookup',
       'finance_report',
       'billing_lookup',
       'staging_only',
@@ -205,7 +208,7 @@ describe('plan validation pipeline', () => {
         specialistStep('research', w.researcher),
         toolStep('search', 'research', 'lookup'),
         // The model says no approval is needed; the tool's risk decides otherwise.
-        toolStep('notify', 'research', 'send_email', {
+        toolStep('notify', 'research', 'private_records', {
           dependsOn: ['search'],
           approvalRequired: false,
         }),
@@ -249,7 +252,7 @@ describe('plan validation pipeline', () => {
     expect(raised.ok && raised.plan.approvalRequired).toBe(true);
     const lowered = await validate(
       w,
-      proposal([...one, toolStep('notify', 'research', 'send_email')], { riskLevel: 'low' }),
+      proposal([...one, toolStep('notify', 'research', 'private_records')], { riskLevel: 'low' }),
     );
     expect(lowered.ok && lowered.plan.riskLevel).toBe('high');
     expect(await refusal(w, proposal(one, { riskLevel: 'critical' }))).toBe(
@@ -318,6 +321,10 @@ describe('plan validation pipeline', () => {
     expect(await refusal(w, withTool('no_such_tool'))).toBe('policy:tool_not_found');
     expect(await refusal(w, withTool('retired'))).toBe('policy:tool_not_active');
     expect(await refusal(w, withTool('wipe_data'))).toBe('policy:tool_denied_by_policy');
+    // ADR-0159: a tool step only reads, inside MelonOffice.
+    expect(await refusal(w, withTool('send_email'))).toBe('policy:tool_not_read_only');
+    expect(await refusal(w, withTool('remote_lookup'))).toBe('policy:tool_not_read_only');
+    expect(await refusal(w, withTool('keyed_lookup'))).toBe('policy:tool_not_read_only');
     expect(await refusal(w, withTool('finance_report'))).toBe('policy:department_not_allowed');
     expect(await refusal(w, withTool('staging_only'))).toBe('policy:environment_not_allowed');
     expect(await refusal(w, withTool('person_only'))).toBe('policy:tool_not_runtime_invocable');
@@ -552,7 +559,7 @@ describe('plans', () => {
     const w = await setup();
     const { plan, execution } = await propose(w, [
       specialistStep('research', w.researcher),
-      toolStep('notify', 'research', 'send_email'),
+      toolStep('notify', 'research', 'private_records'),
     ]);
     expect(plan.status).toBe('approval_required');
     expect((await w.executions.get(w.tenantA, execution.id)).status).toBe('waiting_approval');
@@ -657,7 +664,7 @@ describe('plan approval', () => {
     const w = await setup(options);
     const made = await propose(w, [
       specialistStep('research', w.researcher),
-      toolStep('notify', 'research', 'send_email'),
+      toolStep('notify', 'research', 'private_records'),
     ]);
     return { w, ...made, seen: { version: made.version.version, digest: made.version.digest } };
   };
@@ -825,7 +832,7 @@ describe('delegation', () => {
     const w = await setup();
     const { plan, version } = await propose(w, [
       specialistStep('research', w.researcher),
-      toolStep('notify', 'research', 'send_email'),
+      toolStep('notify', 'research', 'private_records'),
     ]);
     expect(await codeOf(w.delegation.delegate(w.tenantA, plan.id))).toBe('invalid_plan_transition');
     await w.plans.approve(w.tenantA, plan.id, { version: 1, digest: version.digest });

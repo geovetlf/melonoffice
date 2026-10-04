@@ -41,12 +41,18 @@ const STEPS = [
     performedBy: 'research',
     tool: { id: 'lookup', version: 1 },
   },
-  { id: 'sign_off', kind: 'approval', label: 'Director signs off', dependsOn: ['research'] },
+  {
+    id: 'cool_off',
+    kind: 'wait',
+    label: 'Give the market a day',
+    dependsOn: ['research'],
+    wait: { seconds: 86_400 },
+  },
   {
     id: 'campaign',
     kind: 'specialist',
     label: 'Plan the campaign',
-    dependsOn: ['sign_off'],
+    dependsOn: ['cool_off'],
     assignee: { departmentTypeId: 'marketing', roleId: 'campaign_manager' },
     verification,
     retry: { maxAttempts: 2, backoffMs: 1000 },
@@ -136,6 +142,58 @@ describe('workflow lifecycle and versions', () => {
     }
   });
 
+  it('ADR-0159: holds agent, tool, check and wait steps only; approval is a step’s setting', () => {
+    const detailOf = (steps: unknown): string | undefined => {
+      try {
+        checkWorkflowSteps('Launch', steps);
+      } catch (error) {
+        if (isWorkflowError(error)) return error.detail;
+        throw error;
+      }
+      return undefined;
+    };
+    const research = STEPS[0] as Record<string, unknown>;
+    expect(
+      detailOf([
+        research,
+        { id: 'sign_off', kind: 'approval', label: 'OK', dependsOn: ['research'] },
+      ]),
+    ).toBe('steps.1.kind');
+    expect(
+      detailOf([
+        research,
+        { id: 'both', kind: 'parallel', label: 'Both', dependsOn: ['research'] },
+      ]),
+    ).toBe('steps.1.kind');
+    expect(
+      detailOf([
+        research,
+        {
+          id: 'review',
+          kind: 'verification',
+          label: 'Review',
+          dependsOn: ['research'],
+          verification,
+        },
+      ]),
+    ).toBe('steps.1.kind');
+    // A check decides with the Decision Engine; one on how another step ended never runs.
+    expect(
+      detailOf([
+        research,
+        {
+          id: 'if_failed',
+          kind: 'condition',
+          label: 'If research failed',
+          dependsOn: ['research'],
+          condition: { step: 'research', outcome: 'failed' },
+        },
+      ]),
+    ).toBe('steps.1.condition');
+    // Asking a person first is a setting of the step itself.
+    expect(detailOf([{ ...research, approvalRequired: true }])).toBeUndefined();
+  });
+
   it('refuses a template every plan of it would be refused for (ADR-0156)', async () => {
     const detailOf = (steps: unknown): string | undefined => {
       try {
@@ -146,7 +204,7 @@ describe('workflow lifecycle and versions', () => {
       }
       return undefined;
     };
-    const [research, search, signOff, campaign] = STEPS as unknown as [
+    const [research, search, coolOff, campaign] = STEPS as unknown as [
       Record<string, unknown>,
       Record<string, unknown>,
       Record<string, unknown>,
@@ -168,8 +226,8 @@ describe('workflow lifecycle and versions', () => {
     expect(
       detailOf([
         research,
-        { ...search, performedBy: 'sign_off', dependsOn: ['sign_off'] },
-        signOff,
+        { ...search, performedBy: 'cool_off', dependsOn: ['cool_off'] },
+        coolOff,
       ]),
     ).toBe('invalid_performer');
     // The graph: no cycle, no step it does not have.
