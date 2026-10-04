@@ -468,7 +468,8 @@ export function registerAgentTaskRoutes(
               state:
                 entry.declined !== undefined
                   ? entry.declined.reason
-                  : read.state === 'awaiting_approval'
+                  : // A started step waits on its gate's approval, never on these (ADR-0155).
+                    read.state === 'awaiting_approval' && execution?.startedAt === undefined
                     ? 'pending'
                     : 'approved',
             },
