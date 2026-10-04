@@ -1,25 +1,37 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
 import { Button, StateMessage } from '@melonoffice/ui';
 import { useEffect, useState } from 'react';
-import type { AgentChangeView, AgentHistoryEntryView, AgentsClient } from './agentsClient.js';
+import {
+  AgentRequestError,
+  type AgentChangeView,
+  type AgentHistoryEntryView,
+  type AgentsClient,
+} from './agentsClient.js';
 
 /**
- * An agent's version history (AC-3, ADR-0142), on its page, read only: each version with who
- * made it, when, what kind of change it was and a summary, newest first; its detail shows the
- * state before and after. The server tells every change from the stored versions; nothing here
- * changes the agent, restores a version or deletes one.
+ * An agent's version history (AC-3, ADR-0142), on its page: each version with who made it, when,
+ * what kind of change it was and a summary, newest first; its detail shows the state before and
+ * after. The server tells every change from the stored versions. A person with
+ * `specialist.manage` may bring an earlier version back as a new one (ADR-0143), after
+ * confirming; nothing here edits or deletes a version.
  */
 export function AgentHistory({
   client,
   agentId,
   version,
   departments,
+  canManage = false,
+  onChanged,
 }: {
   readonly client: AgentsClient;
   readonly agentId: string;
   /** The version the page shows; a newer one reads the history again. */
   readonly version: number;
   readonly departments: readonly { readonly id: string; readonly name: string }[];
+  /** `specialist.manage`: may restore an earlier version. */
+  readonly canManage?: boolean;
+  /** After a restore: the page reads the agent again. */
+  readonly onChanged?: () => void;
 }) {
   const intl = useIntl();
   const [entries, setEntries] = useState<readonly AgentHistoryEntryView[]>();
@@ -27,6 +39,7 @@ export function AgentHistory({
   const [failed, setFailed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState<number>();
+  const [notice, setNotice] = useState<'restored' | 'conflict' | 'error'>();
   const read = client.history;
 
   useEffect(() => {
@@ -57,6 +70,27 @@ export function AgentHistory({
       setNext(page.nextBefore);
     } catch {
       setFailed(true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function restore(to: number) {
+    const bring = client.restore;
+    if (bring === undefined) return;
+    if (!globalThis.confirm(text('agents.history.restoreConfirm', { version: to }))) return;
+    setBusy(true);
+    setNotice(undefined);
+    try {
+      await bring.call(client, agentId, { fromVersion: version, version: to });
+      setNotice('restored');
+      onChanged?.();
+    } catch (error) {
+      setNotice(
+        error instanceof AgentRequestError && error.code === 'specialist_concurrency_conflict'
+          ? 'conflict'
+          : 'error',
+      );
     } finally {
       setBusy(false);
     }
@@ -155,6 +189,11 @@ export function AgentHistory({
                     {intl.formatDate(entry.createdAt, { dateStyle: 'short', timeStyle: 'short' })} ·{' '}
                     {kinds.join(', ')}
                   </span>
+                  {entry.restoredFrom === null || entry.restoredFrom === undefined ? null : (
+                    <span className="agent-skills__line">
+                      {text('agents.history.restoredFrom', { version: entry.restoredFrom })}
+                    </span>
+                  )}
                   <ul className="agent-history__summary">
                     {entry.changes
                       .flatMap((c) => summary(c))
@@ -171,6 +210,19 @@ export function AgentHistory({
                     >
                       <FormattedMessage
                         id={shown ? 'agents.history.hideDetail' : 'agents.history.showDetail'}
+                        values={{ version: entry.version }}
+                      />
+                    </Button>
+                  ) : null}
+                  {canManage && client.restore !== undefined && entry.version < version ? (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      disabled={busy}
+                      onClick={() => void restore(entry.version)}
+                    >
+                      <FormattedMessage
+                        id="agents.history.restore"
                         values={{ version: entry.version }}
                       />
                     </Button>
@@ -199,6 +251,13 @@ export function AgentHistory({
               );
             })}
           </ol>
+          {notice === undefined ? null : (
+            <StateMessage kind={notice === 'restored' ? 'success' : 'error'}>
+              <FormattedMessage
+                id={notice === 'error' ? 'agents.history.restoreError' : `agents.history.${notice}`}
+              />
+            </StateMessage>
+          )}
           {next === null ? null : (
             <Button size="sm" variant="secondary" disabled={busy} onClick={() => void more()}>
               <FormattedMessage id="agents.history.more" />

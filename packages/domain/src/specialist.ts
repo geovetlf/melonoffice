@@ -140,6 +140,8 @@ export interface SpecialistVersion {
   readonly configuration: SpecialistConfiguration;
   readonly createdAt: IsoTimestamp;
   readonly createdBy: UserId;
+  /** The earlier version this one brought back, when a person restored it (ADR-0143). */
+  readonly restoredFrom?: number;
 }
 
 /**

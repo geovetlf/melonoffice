@@ -111,6 +111,14 @@ export interface SpecialistManagement {
    */
   change(tenant: TenantContext, id: string, input: Record<string, unknown>): Promise<Specialist>;
   /**
+   * Brings back an earlier version as a new one: `{ fromVersion, version }` (ADR-0143). Its
+   * department, purpose, description and skills come back, with the tools that version had and
+   * only the permissions they need, checked against today's catalogues and departments. How far
+   * it acts on its own, its work settings and its conversation profile stay as they are now,
+   * because each has its own step. Nothing is deleted: every version stays.
+   */
+  restore(tenant: TenantContext, id: string, input: Record<string, unknown>): Promise<Specialist>;
+  /**
    * Changes what the agent is for, in a person's words, as a new version of the agent:
    * `{ fromVersion, purpose?, description? }`, each a text or `null` to clear it (ADR-0140). The
    * server keeps the rest of the configuration as it is, so a browser never sends or sees the
@@ -654,6 +662,98 @@ export function createSpecialistManagement(
         ...(input.add === undefined ? {} : { add: input.add as unknown[] }),
         ...(input.remove === undefined ? {} : { remove: input.remove as unknown[] }),
         ...(input.departmentId === undefined ? {} : { departmentId: input.departmentId }),
+      });
+    },
+
+    async restore(tenant, id, input) {
+      const organizationId = await managerOf(tenant);
+      const person = userOf(tenant);
+      if (!isRecord(input)) bad('body');
+      for (const key of Object.keys(input)) {
+        if (!['fromVersion', 'version'].includes(key)) bad(key);
+      }
+      if (!isVersionNumber(input.fromVersion)) bad('fromVersion');
+      if (!isVersionNumber(input.version)) bad('version');
+      if (!isSpecialistId(id)) throw new SpecialistError('specialist_not_found');
+      const read = await repository.find(organizationId, id);
+      if (read === undefined) throw new SpecialistError('specialist_not_found');
+      const earlier = await repository.findVersion(organizationId, id, input.version as number);
+      if (earlier === undefined || earlier.version >= read.version) return bad('version');
+      const target = earlier.configuration;
+      const department = await departments.find(organizationId, target.departmentId);
+      if (department === undefined) throw new SpecialistError('department_not_assignable');
+      return update(organizationId, id, (current, at) => {
+        const now = current.configuration;
+        // Only the tools its skills still grant, and only the permissions they all need.
+        const granted = grantsOf(target.skills, skills).tools;
+        const kept = target.tools.filter((t) => granted.has(toolKey(t.id, t.version)));
+        const needed = new Set<string>();
+        for (const ref of target.skills) {
+          for (const permission of skills.resolve(ref.id, ref.version)?.reads ?? []) {
+            needed.add(permission);
+          }
+        }
+        for (const t of kept) {
+          for (const permission of tools(t.id, t.version)?.permissions ?? [])
+            needed.add(permission);
+        }
+        const rest = Object.fromEntries(
+          Object.entries(target).filter(
+            ([key]) => !['autonomy', 'work', 'conversation'].includes(key),
+          ),
+        );
+        const next = checkConfiguration(
+          {
+            ...rest,
+            tools: kept,
+            permissions: [...needed].sort(),
+            ...(now.autonomy === undefined ? {} : { autonomy: now.autonomy }),
+            ...(now.work === undefined ? {} : { work: now.work }),
+            ...(now.conversation === undefined ? {} : { conversation: now.conversation }),
+          },
+          organizationId,
+        );
+        checkAgainstCatalogues(next);
+        const write = reviseSpecialist(
+          current,
+          {
+            fromVersion: input.fromVersion as number,
+            configuration: next,
+            department,
+            restoredFrom: earlier.version,
+          },
+          person.userId,
+          at.toISOString() as IsoTimestamp,
+        );
+        const moved = next.departmentId !== now.departmentId;
+        const audit = (
+          action: 'specialist.version_created' | 'specialist.department_changed',
+          reference: string,
+        ) =>
+          buildAuditEvent(
+            {
+              action,
+              result: 'success',
+              actor: actorOf(person),
+              organizationId: write.specialist.organizationId,
+              target: { type: 'specialist', id: write.specialist.identity.id },
+              targetVersion: write.specialist.version,
+              permission: 'specialist.manage',
+              reference,
+              ...(requestId === undefined ? {} : { requestId }),
+              source: 'api',
+            },
+            at,
+          );
+        return {
+          ...write,
+          events: [
+            audit('specialist.version_created', `restored_from:${earlier.version}`),
+            ...(moved
+              ? [audit('specialist.department_changed', `department:${next.departmentId}`)]
+              : []),
+          ],
+        };
       });
     },
 
