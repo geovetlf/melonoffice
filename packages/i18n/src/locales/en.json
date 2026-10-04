@@ -2097,5 +2097,7 @@
   "credits.panel.byFunction": "Credits by function this month",
   "credits.panel.history": "See usage history",
   "credits.out.buy": "Buy credits",
-  "credits.out.estimate": "This action would use about {count, plural, one {# credit} other {# credits}}."
+  "credits.out.estimate": "This action would use about {count, plural, one {# credit} other {# credits}}.",
+  "identity.signInAgain.message": "For your security, sign in again to make this change.",
+  "identity.signInAgain.action": "Sign in again"
 }

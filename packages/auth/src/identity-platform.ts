@@ -97,5 +97,6 @@ function toIdentity(payload: JWTPayload, now: Date): VerifiedIdentity {
     subject,
     ...(email === undefined ? {} : { email }),
     emailVerified: payload.email_verified === true,
+    authTime,
   };
 }

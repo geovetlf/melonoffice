@@ -11,6 +11,7 @@ import {
   type NewCommercialAccount,
   type PlatformClient,
 } from './platformClient.js';
+import { REAUTHENTICATION_REQUIRED, SignInAgain } from '../identity/SignInAgain.js';
 
 /**
  * The platform administrator's commercial tools (ADR-0088): create reseller and white-label accounts
@@ -341,7 +342,9 @@ function AccountRow({
           </div>
         </form>
       ) : null}
-      {failed === undefined ? null : (
+      {failed === undefined ? null : failed === REAUTHENTICATION_REQUIRED ? (
+        <SignInAgain />
+      ) : (
         <StateMessage kind="error" inline>
           <FormattedMessage id="platform.refused" values={{ reason: failed }} />
         </StateMessage>
@@ -494,7 +497,9 @@ function NewAccount({
           <FormattedMessage id="platform.commercial.create" />
         </Button>
       </div>
-      {failed === undefined ? null : (
+      {failed === undefined ? null : failed === REAUTHENTICATION_REQUIRED ? (
+        <SignInAgain />
+      ) : (
         <StateMessage kind="error">
           <FormattedMessage id="platform.refused" values={{ reason: failed }} />
         </StateMessage>
@@ -550,7 +555,9 @@ function DomainRow({
           </Button>
         ))}
       </div>
-      {failed === undefined ? null : (
+      {failed === undefined ? null : failed === REAUTHENTICATION_REQUIRED ? (
+        <SignInAgain />
+      ) : (
         <StateMessage kind="error" inline>
           <FormattedMessage id="platform.refused" values={{ reason: failed }} />
         </StateMessage>
@@ -670,7 +677,9 @@ function NewDomain({
           <FormattedMessage id="platform.domains.create" />
         </Button>
       </div>
-      {failed === undefined ? null : (
+      {failed === undefined ? null : failed === REAUTHENTICATION_REQUIRED ? (
+        <SignInAgain />
+      ) : (
         <StateMessage kind="error">
           <FormattedMessage id="platform.refused" values={{ reason: failed }} />
         </StateMessage>

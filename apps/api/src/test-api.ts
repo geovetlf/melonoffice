@@ -174,9 +174,13 @@ export const verifier: IdTokenVerifier = {
   async verify(token) {
     if (token === 'token-expired') throw new AuthError('token_expired');
     if (token === 'token-keys-down') throw new AuthError('verifier_unavailable');
-    const identity = IDENTITIES[token];
+    // `<token>-stale`: the same person, signed in two hours ago (ADR-0138).
+    const stale = token.endsWith('-stale');
+    const identity = IDENTITIES[stale ? token.slice(0, -'-stale'.length) : token];
     if (identity === undefined) throw new AuthError('invalid_token');
-    return identity;
+    // A sign-in a minute ago by default, as a fresh token says.
+    const authTime = Math.floor(Date.now() / 1000) - (stale ? 2 * 60 * 60 : 60);
+    return { ...identity, authTime };
   },
 };
 

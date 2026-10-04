@@ -56,7 +56,7 @@ import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import { recordOutcome, requestFields } from './audit.js';
 import type { AuthEnv } from './auth.js';
 import { withPermission } from './authorization.js';
-import { platformAdminOf } from './platform-admin.js';
+import { platformAdminOf, staleSignInRefusal } from './platform-admin.js';
 
 /**
  * The commercial layer's routes (ADR-0086), over ADR-0085's model:
@@ -170,7 +170,8 @@ export function createCommercialGuard({
   commercial,
   audit,
   commercialAuthorization,
-}: Pick<CommercialDependencies, 'commercial' | 'audit' | 'commercialAuthorization'>) {
+  now = () => new Date(),
+}: Pick<CommercialDependencies, 'commercial' | 'audit' | 'commercialAuthorization' | 'now'>) {
   /** Runs a write whose events it builds; tenancy's codes answer as themselves. */
   const guarded = async (c: Context<AuthEnv>, work: () => Promise<Response>): Promise<Response> => {
     try {
@@ -223,6 +224,14 @@ export function createCommercialGuard({
         });
         return c.json({ error: 'permission_denied' }, 403);
       }
+      // A white-label or reseller administrator's change needs a recent sign-in (ADR-0138).
+      const stale = await staleSignInRefusal(c, now(), {
+        audit,
+        action: 'commercial.access',
+        commercialAccountId: context.commercialAccountId,
+        permission,
+      });
+      if (stale) return stale;
       return guarded(c, () => handler(c, context));
     };
 
