@@ -222,6 +222,19 @@ export interface PlanView {
   readonly status: PlanStatus;
   readonly version: number;
   readonly createdAt: string;
+  /**
+   * Each step the approved credit budget could not cover (ADR-0163): what the plan had used, what
+   * the step needed, and the budget. An older API sends none.
+   */
+  readonly budgetBlocks?: readonly PlanBudgetBlockView[];
+}
+
+export interface PlanBudgetBlockView {
+  readonly stepId: string;
+  readonly usedCredits: number;
+  readonly neededCredits: number;
+  readonly capCredits: number;
+  readonly blockedAt: string;
 }
 
 export interface PlanStepView {

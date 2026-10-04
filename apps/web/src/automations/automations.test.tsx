@@ -187,7 +187,9 @@ describe('Automations (WF-3)', () => {
     fireEvent.click(await plans.findByRole('button', { name: /Waiting for your approval/ }));
     let plan = await screen.findByRole('article', { name: 'Descuentos' });
     expect(
-      within(plan).getByText('Estimated cost: 3 credits. An estimate, not a charge.'),
+      within(plan).getByText(
+        "Estimated cost: 3 credits. An estimate, not a charge. Approving makes it this plan's credit limit: a step that would go over it does not run.",
+      ),
     ).toBeTruthy();
     expect(
       within(plan).getByText(/checks company policy for a discount on an opportunity/),
@@ -216,6 +218,87 @@ describe('Automations (WF-3)', () => {
     expect(within(plan).getAllByText(/Done/)).toHaveLength(2);
     // Once decided, no estimate is shown: it was only for deciding.
     expect(within(plan).queryByText(/Estimated cost/)).toBeNull();
+  });
+
+  it('ADR-0162, ADR-0163: says a plan without an estimate has no credit limit, which step the limit stopped and which branch failed', async () => {
+    const planOf = (status: string, credits: number | null) => ({
+      id: 'plan-6',
+      status,
+      version: 1,
+      createdAt: '2026-09-29T09:00:00Z',
+      ...(status === 'completed'
+        ? {
+            budgetBlocks: [
+              {
+                stepId: 'report',
+                usedCredits: 12,
+                neededCredits: 5,
+                capCredits: 15,
+                blockedAt: '2026-09-29T10:00:00Z',
+              },
+            ],
+          }
+        : {}),
+      current: {
+        version: 1,
+        digest: 'e'.repeat(64),
+        request: { summary: 'Informe', objective: 'Preparar el informe' },
+        steps: [
+          { id: 'research', kind: 'specialist', label: 'Research', dependsOn: [] },
+          { id: 'draft', kind: 'specialist', label: 'Draft', dependsOn: [] },
+          { id: 'report', kind: 'specialist', label: 'Report', dependsOn: ['research'] },
+        ],
+        riskLevel: 'low',
+        estimate:
+          credits === null
+            ? { status: 'unknown', credits: null }
+            : { status: 'estimated', credits },
+        source: { kind: 'planner' },
+      },
+    });
+    open((b) => {
+      b.options.plans.org_1 = [planOf('approval_required', null)];
+    });
+    let plans = within(await screen.findByRole('region', { name: 'Plans' }));
+    fireEvent.click(await plans.findByRole('button', { name: /Waiting for your approval/ }));
+    let plan = await screen.findByRole('article', { name: 'Informe' });
+    expect(
+      within(plan).getByText('No credit estimate for this plan, so it has no credit limit.'),
+    ).toBeTruthy();
+
+    cleanup();
+    const step = (stepId: string, state: string, failure: string | null) => ({
+      stepId,
+      kind: 'specialist',
+      label: stepId,
+      state,
+      executionId: `exec-${stepId}`,
+      status: state,
+      failure,
+      answer: null,
+      missing: [],
+    });
+    open((b) => {
+      b.options.plans.org_1 = [planOf('completed', 15)];
+      b.options.planSteps['plan-6'] = [
+        step('research', 'completed', null),
+        step('draft', 'failed', 'agent_failed'),
+        step('report', 'failed', 'budget_exceeded'),
+      ];
+    });
+    plans = within(await screen.findByRole('region', { name: 'Plans' }));
+    fireEvent.click(await plans.findByRole('button', { name: /Completed/ }));
+    plan = await screen.findByRole('article', { name: 'Informe' });
+    expect(
+      await within(plan).findByText(
+        /Not run: it needed 5 credits and the plan had used 12 of its 15-credit limit/,
+      ),
+    ).toBeTruthy();
+    expect(
+      within(plan).getByText(
+        /Failed: the steps that depend on it are skipped; other branches go on/,
+      ),
+    ).toBeTruthy();
   });
 
   it('ADR-0146: a step that asked a person waits for them, links to Approvals, and a rejection skips only its branch', async () => {

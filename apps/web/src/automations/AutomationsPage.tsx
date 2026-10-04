@@ -638,10 +638,16 @@ function PlanCard({
             values={{ credits: detail.current.estimate.credits }}
           />
         </p>
+      ) : detail.status === 'approval_required' && detail.current.estimate?.status === 'unknown' ? (
+        // An unknown estimate sets no credit limit, and the plan says so (ADR-0163).
+        <p className="automations__meta">
+          <FormattedMessage id="automations.estimate.unknown" />
+        </p>
       ) : null}
       <ol className="automations__steps">
         {detail.current.steps.map((step) => {
           const done = progress.get(step.id);
+          const block = detail.budgetBlocks?.find((b) => b.stepId === step.id);
           const action = checkActionOf(step.decision);
           return (
             <li key={step.id}>
@@ -659,12 +665,15 @@ function PlanCard({
                 <span className="automations__meta">
                   {' · '}
                   <FormattedMessage
-                    id={stepProgressKey(done)}
+                    id={stepProgressKey(done, block !== undefined)}
                     values={{
                       until:
                         done.until == null
                           ? ''
                           : intl.formatDate(done.until, { dateStyle: 'short', timeStyle: 'short' }),
+                      used: block?.usedCredits ?? 0,
+                      needed: block?.neededCredits ?? 0,
+                      cap: block?.capCredits ?? 0,
                     }}
                   />
                   {done.attempt == null || done.attempt < 2 ? null : (
@@ -766,7 +775,7 @@ function checkActionOf(decision: PlanStepView['decision']): string | undefined {
  * that asked a person says it waits for them, or that it was rejected or not approved in time. An answer from an older
  * API without `state` falls back to its execution's status.
  */
-function stepProgressKey(done: PlanStepProgress): string {
+function stepProgressKey(done: PlanStepProgress, blocked = false): string {
   if (done.kind === 'condition') {
     return done.state === 'completed'
       ? 'automations.check.passed'
@@ -791,6 +800,15 @@ function stepProgressKey(done: PlanStepProgress): string {
   if (done.state === 'delayed') return 'automations.retry.delayed';
   // A step that asks a person before it runs (ADR-0146).
   if (done.state === 'awaiting_approval') return 'automations.stepState.awaiting_approval';
+  // A step the approved credit budget could not cover never ran (ADR-0163); a failed step ends only
+  // its own branch (ADR-0162).
+  if (done.state === 'failed') {
+    return done.failure === 'budget_exceeded'
+      ? blocked
+        ? 'automations.stepState.budget'
+        : 'automations.stepState.budget.plain'
+      : 'automations.stepState.failed';
+  }
   if (done.state === 'declined') {
     return done.failure === 'rejected' || done.failure === 'expired'
       ? `automations.stepState.declined.${done.failure}`
