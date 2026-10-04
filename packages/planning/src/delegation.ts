@@ -38,6 +38,7 @@ const NODE_TYPE: Readonly<Record<Exclude<PlanStep['kind'], 'tool'>, NodeInput['t
   verification: 'verification',
   condition: 'condition',
   parallel: 'parallel',
+  wait: 'delay',
 };
 
 const specialistRef = (step: PlanStep): VersionRef | undefined =>

@@ -6,6 +6,7 @@ import { RUN_EVENT_PATH, type EventHandler } from './events.js';
 import { RUN_FORECAST_PATH, type ForecastHandler } from './forecasts.js';
 import type { JobHandler } from './handler.js';
 import { registerHealth } from './health.js';
+import { RUN_PLAN_WAKE_PATH, type PlanWakeHandler } from './plan-wakeups.js';
 import { RUN_SWEEP_PATH, type ExecutionSweeper } from './sweeps.js';
 
 export const SERVICE_NAME = 'worker';
@@ -47,6 +48,11 @@ export interface AppOptions {
      * Absent: sweep deliveries are refused with 503.
      */
     readonly sweeps?: Pick<ExecutionSweeper, 'run'>;
+    /**
+     * Advances a plan whose wait ended (ADR-0152), behind the same invoker check. Absent: wake-up
+     * deliveries are refused with 503.
+     */
+    readonly planWakes?: PlanWakeHandler;
   };
 }
 
@@ -172,6 +178,15 @@ export function createApp({ logger, version, jobs }: AppOptions): Hono<Env> {
     const read = await delivery(c);
     if ('refused' in read) return read.refused;
     const result = await jobs.sweeps.run(read.body);
+    return c.json(result.body, result.status);
+  });
+
+  // A plan's wait ended (ADR-0152): same invoker, same checks, its own small body.
+  app.post(RUN_PLAN_WAKE_PATH, async (c) => {
+    if (jobs?.planWakes === undefined) return c.json({ error: 'plan_wakes_not_configured' }, 503);
+    const read = await delivery(c);
+    if ('refused' in read) return read.refused;
+    const result = await jobs.planWakes.run(read.body);
     return c.json(result.body, result.status);
   });
 

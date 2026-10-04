@@ -11,6 +11,7 @@ import {
   stepApprovalOf,
   specialistStepState,
   unrunnableStepOf,
+  waitStepState,
   type PlanConductor,
   type PlanService,
   type PlanStepState,
@@ -201,6 +202,10 @@ const stepView = (s: PlanStep) => ({
         },
   performedBy: s.performedBy ?? null,
   tool: s.tool === undefined ? null : { id: s.tool.id, version: s.tool.version },
+  // A tool step's input (ADR-0151): data fixed when the plan was made, what the person approves.
+  input: s.input === undefined ? null : structuredClone(s.input),
+  // A wait step's length (ADR-0152).
+  wait: s.wait === undefined ? null : { seconds: s.wait.seconds },
   verification:
     s.verification === undefined
       ? null
@@ -261,7 +266,7 @@ export function toVersionView(v: PlanVersion) {
 /** How the plan engine sees each step of one plan version, as `GET plans/:id/steps` shows it. */
 export interface PlanStepRead {
   readonly stepId: string;
-  readonly kind: 'condition' | 'specialist';
+  readonly kind: 'condition' | 'specialist' | 'wait';
   readonly label: string;
   readonly state: PlanStepState;
   readonly executionId: string | null;
@@ -271,6 +276,8 @@ export interface PlanStepRead {
   readonly outcome: string | null;
   readonly answer: string | null;
   readonly missing: string[];
+  /** On a wait step that started (ADR-0152): when the steps after it may start. */
+  readonly until: string | null;
 }
 
 /**
@@ -303,8 +310,11 @@ export async function readPlanSteps(
   };
   const declineOf = (id: string) =>
     stepApprovalEntriesOf(plan, id).find((a) => a.declined !== undefined)?.declined;
+  const waitOf = (id: string) => plan.waits?.find((w) => w.stepId === id);
+  const at = new Date();
   const states = planStepStates(version.steps, (step) => {
     if (step.kind === 'condition') return conditionStepState(conditionOf(step.id));
+    if (step.kind === 'wait') return waitStepState(waitOf(step.id), at);
     const child = children.get(step.id);
     if (child === undefined) return 'waiting';
     // A step that asked people (ADR-0146, ADR-0151): waiting for them, or declined.
@@ -330,6 +340,24 @@ export async function readPlanSteps(
         outcome: decided?.decision?.outcome ?? null,
         answer: null,
         missing: [],
+        until: null,
+      });
+      continue;
+    }
+    if (step.kind === 'wait') {
+      out.push({
+        stepId: step.id,
+        kind: 'wait',
+        label: step.label,
+        state,
+        executionId: null,
+        status: null,
+        approvalId: null,
+        failure: null,
+        outcome: null,
+        answer: null,
+        missing: [],
+        until: waitOf(step.id)?.until ?? null,
       });
       continue;
     }
@@ -353,6 +381,7 @@ export async function readPlanSteps(
       outcome: null,
       answer: answered?.answer ?? null,
       missing: answered === undefined ? [] : [...answered.missing],
+      until: null,
     });
   }
   return { views: out, children };

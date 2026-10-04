@@ -62,6 +62,12 @@ interface PlanDocument {
   readonly conditions?: readonly ConditionDocument[];
   /** ADR-0146: absent on plans written before, and on plans no step asked approval for. */
   readonly stepApprovals?: readonly StepApprovalDocument[];
+  /** ADR-0152: absent on plans written before, and on plans with no wait step started. */
+  readonly waits?: readonly {
+    readonly stepId: string;
+    readonly startedAt: FirestoreTimestamp;
+    readonly until: FirestoreTimestamp;
+  }[];
   readonly revision: number;
   readonly createdAt: FirestoreTimestamp;
   readonly createdBy: string;
@@ -130,6 +136,15 @@ export function toPlanDocument(plan: Plan): PlanDocument {
             evaluatedAt: ts(c.evaluatedAt),
           })),
         }),
+    ...(plan.waits === undefined
+      ? {}
+      : {
+          waits: plan.waits.map((w) => ({
+            stepId: w.stepId,
+            startedAt: ts(w.startedAt),
+            until: ts(w.until),
+          })),
+        }),
     ...(plan.stepApprovals === undefined
       ? {}
       : {
@@ -185,6 +200,15 @@ function toPlan(id: string, d: PlanDocument): Plan {
             ...(c.decision === null ? {} : { decision: { ...c.decision } }),
             ...(c.failure === null ? {} : { failure: c.failure }),
             evaluatedAt: iso(c.evaluatedAt),
+          })),
+        }),
+    ...(d.waits === undefined
+      ? {}
+      : {
+          waits: d.waits.map((w) => ({
+            stepId: w.stepId,
+            startedAt: iso(w.startedAt),
+            until: iso(w.until),
           })),
         }),
     ...(d.stepApprovals === undefined

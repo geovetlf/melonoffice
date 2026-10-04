@@ -149,16 +149,18 @@ export function createExecutionSweeper(options: ExecutionSweeperOptions): Execut
    */
   async function waitsInPlan(
     execution: Execution,
-  ): Promise<'awaiting_approval' | 'waiting_in_plan' | 'no_context' | undefined> {
+  ): Promise<'awaiting_approval' | 'wait_over' | 'waiting_in_plan' | 'no_context' | undefined> {
     const step = planStepOf(execution);
     if (plans === undefined || step === undefined || execution.startedAt !== undefined) {
       return undefined;
     }
     const plan = await plans.find(execution.organizationId as OrganizationId, step.planId);
     if (plan?.status !== 'executing') return undefined;
-    if (stepApprovalEntriesOf(plan, step.stepId).length === 0) {
-      return 'waiting_in_plan';
-    }
+    // Its plan is advanced when the step waits for a person, or when one of the plan's waits
+    // is over (ADR-0152): a wake-up that was lost never leaves the steps after it waiting.
+    const asked = stepApprovalEntriesOf(plan, step.stepId).length > 0;
+    const waitOver = (plan.waits ?? []).some((w) => Date.parse(w.until) <= now().getTime());
+    if (!asked && !waitOver) return 'waiting_in_plan';
     let tenant;
     try {
       tenant = await resolveRuntimeTenant(
@@ -170,7 +172,7 @@ export function createExecutionSweeper(options: ExecutionSweeperOptions): Execut
       return 'no_context';
     }
     await plans.advance(tenant, plan.id);
-    return 'awaiting_approval';
+    return asked ? 'awaiting_approval' : 'wait_over';
   }
 
   /** Every job of the execution that exists (ids are fixed by node and attempt), its own only. */
@@ -207,7 +209,13 @@ export function createExecutionSweeper(options: ExecutionSweeperOptions): Execut
         : 'no_progress';
 
   type Outcome =
-    OpenWorkState | 'waiting_in_plan' | 'out_of_scope' | 'no_context' | 'moved' | 'error';
+    | OpenWorkState
+    | 'waiting_in_plan'
+    | 'wait_over'
+    | 'out_of_scope'
+    | 'no_context'
+    | 'moved'
+    | 'error';
 
   async function visit(
     slotId: string,

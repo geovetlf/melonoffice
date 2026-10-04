@@ -12,6 +12,7 @@ import type {
   PlanStepApproval,
   PlanToolInput,
   PlanVersion,
+  PlanWait,
   ToolRiskLevel,
 } from '@melonoffice/domain';
 import { isExecutionError, isTerminal, type ExecutionService } from '@melonoffice/execution';
@@ -25,6 +26,7 @@ import {
   recordCondition,
   recordStepApproval,
   recordStepDeclined,
+  recordWait,
 } from './model.js';
 import type { PlanRepository } from './repository.js';
 
@@ -67,7 +69,7 @@ export interface StepStarter {
 }
 
 /** The step kinds a plan may have to run: specialist steps (WF-1) and condition steps (WF-4). */
-export const RUNNABLE_STEP_KINDS: readonly PlanStep['kind'][] = ['specialist', 'condition'];
+export const RUNNABLE_STEP_KINDS: readonly PlanStep['kind'][] = ['specialist', 'condition', 'wait'];
 
 /**
  * Why a plan version cannot run yet, or `undefined` when it can. Specialist steps run (WF-1),
@@ -75,7 +77,8 @@ export const RUNNABLE_STEP_KINDS: readonly PlanStep['kind'][] = ['specialist', '
  * steps run inside the child execution of the specialist step that uses them, through the Tool
  * Gate, with the input fixed in the plan (ADR-0151). An approval, verification or parallel step,
  * or a condition on how another step ended, has no defined behaviour in a plan yet (ADR-0031), so
- * such a plan is refused whole, never run in part.
+ * such a plan is refused whole, never run in part. A wait step (ADR-0152) waits on at least one
+ * step, like a decision.
  */
 export function unrunnableStepOf(version: PlanVersion): string | undefined {
   const performers = new Set(version.steps.filter((s) => s.kind === 'specialist').map((s) => s.id));
@@ -83,7 +86,8 @@ export function unrunnableStepOf(version: PlanVersion): string | undefined {
     s.kind === 'tool'
       ? s.tool === undefined || s.performedBy === undefined || !performers.has(s.performedBy)
       : !RUNNABLE_STEP_KINDS.includes(s.kind) ||
-        (s.kind === 'condition' && (s.decision === undefined || s.dependsOn.length === 0)),
+        (s.kind === 'condition' && (s.decision === undefined || s.dependsOn.length === 0)) ||
+        (s.kind === 'wait' && (s.wait === undefined || s.dependsOn.length === 0)),
   );
   return step === undefined ? undefined : step.kind;
 }
@@ -229,6 +233,22 @@ export function stepApprovalOf(
   return entries.length > 0 ? 'awaiting' : 'none';
 }
 
+/**
+ * Wakes a plan when one of its waits ends (ADR-0152). The worker wires it to a Cloud Tasks task
+ * on its own queue that advances the plan; a lost or early task changes nothing, since the plan
+ * is read again and its wait decides, and the sweep advances a plan whose wait is over.
+ */
+export interface PlanWakeups {
+  wake(
+    tenant: TenantContext,
+    plan: { readonly organizationId: string; readonly planId: string },
+    at: Date,
+  ): Promise<void>;
+}
+
+/** How long after a wait ends its plan is woken, so an early task never finds it still running. */
+export const WAKE_MARGIN_MS = 1_000;
+
 export interface PlanConductorOptions {
   readonly plans: PlanRepository;
   /** Needed by `run` only: the worker advances plans, it never delegates one. */
@@ -252,6 +272,11 @@ export interface PlanConductorOptions {
    * waits for an approval fails with `step_approval_not_configured`, never running unapproved.
    */
   readonly approvals?: StepApprovals;
+  /**
+   * Wakes the plan when a wait ends (ADR-0152). Needed by `advance` only. Absent: a wait step
+   * that became ready is left for the worker's next advance, never started without a wake-up.
+   */
+  readonly wakeups?: PlanWakeups;
   readonly now?: () => Date;
   readonly requestId?: string;
   readonly logger?: Logger;
@@ -261,6 +286,8 @@ export interface PlanConductorOptions {
 export const STEP_CHECK = 'step_execution_completed';
 /** The evidence that a condition step was decided: its decision. */
 export const CONDITION_CHECK = 'condition_decided';
+/** The evidence that a wait step ended: its recorded start and end (ADR-0152). */
+export const WAIT_CHECK = 'wait_elapsed';
 
 /**
  * Where one step is:
@@ -270,12 +297,14 @@ export const CONDITION_CHECK = 'condition_decided';
  * - `stopped`: its condition was decided and the steps after it do not run;
  * - `awaiting_approval`: ready, waiting for a person to approve it (ADR-0146);
  * - `declined`: its approval was rejected, expired or withdrawn: it never runs (ADR-0146);
+ * - `delayed`: a wait step that started and has not ended yet (ADR-0152);
  * - `skipped`: a step it depends on was stopped, declined or skipped, so it never runs;
  * - `failed`: its child failed or was cancelled, or its condition could not go on.
  */
 export type PlanStepState =
   | 'waiting'
   | 'awaiting_approval'
+  | 'delayed'
   | 'running'
   | 'completed'
   | 'stopped'
@@ -290,6 +319,8 @@ interface StepView {
   readonly child?: Execution;
   /** On condition steps, once decided. */
   readonly condition?: PlanConditionResult;
+  /** On wait steps, once started (ADR-0152). */
+  readonly wait?: PlanWait;
   /** On a step that waits for approvals, once all are given and it may start (ADR-0146). */
   readonly approved?: boolean;
   /** Approvals found declined and not recorded yet, for `advance` to record (ADR-0146). */
@@ -320,6 +351,10 @@ export const conditionStepState = (condition: PlanConditionResult | undefined): 
       : condition.result === 'stop'
         ? 'stopped'
         : 'failed';
+
+/** A wait step's state from its recorded start, if it started (ADR-0152). */
+export const waitStepState = (wait: PlanWait | undefined, now: Date): PlanStepState =>
+  wait === undefined ? 'waiting' : now.getTime() < Date.parse(wait.until) ? 'delayed' : 'completed';
 
 /** Ends a branch: the steps after it never run. */
 const endsBranch = (state: PlanStepState | undefined): boolean =>
@@ -391,8 +426,12 @@ const failureOf = (view: StepView): string =>
 /** A node of the planning execution that finished with work done: its evidence is checked. */
 const decided = (view: StepView): boolean => view.state === 'completed' || view.state === 'stopped';
 
+/** What a wait step's node points at once it ended: the step, whose start the plan records. */
+const waitRef = (view: StepView): string => view.step.id;
+
 export function createPlanConductor(options: PlanConductorOptions): PlanConductor {
-  const { plans, delegation, executions, starter, conditions, approvals, requestId } = options;
+  const { plans, delegation, executions, starter, conditions, approvals, wakeups, requestId } =
+    options;
   const now = options.now ?? (() => new Date());
   const logger = options.logger;
 
@@ -437,6 +476,9 @@ export function createPlanConductor(options: PlanConductorOptions): PlanConducto
           gates.length > 0
             ? await gatedView(tenant, plan, step, child, states, gates)
             : { step, child, state: specialistStepState(child) };
+      } else if (step.kind === 'wait') {
+        const wait = plan.waits?.find((w) => w.stepId === step.id);
+        view = { step, ...(wait === undefined ? {} : { wait }), state: waitStepState(wait, now()) };
       } else {
         const condition = plan.conditions?.find((c) => c.stepId === step.id);
         view = {
@@ -744,6 +786,73 @@ export function createPlanConductor(options: PlanConductorOptions): PlanConducto
     }
   }
 
+  /**
+   * Starts one ready wait step (ADR-0152): records its start and end on the plan, once, with its
+   * audit event, then asks for the plan to be woken when it ends. A start another call recorded
+   * first stands, and that call asked for the wake-up. A wake-up that could not be queued is
+   * logged: the sweep advances a plan whose wait is over.
+   */
+  async function startWait(
+    tenant: TenantContext,
+    organizationId: OrganizationId,
+    plan: Plan,
+    step: PlanStep,
+  ): Promise<Plan> {
+    if (wakeups === undefined || step.wait === undefined) return plan;
+    const seconds = step.wait.seconds;
+    const at = now();
+    let started: Plan;
+    try {
+      started = await plans.update(organizationId, plan.id, (current) => {
+        const next = recordWait(current, { stepId: step.id, seconds }, iso(at));
+        return {
+          plan: next,
+          events: [
+            buildAuditEvent(
+              {
+                action: 'plan.wait_started',
+                result: 'success',
+                actor: actorOf(tenant),
+                organizationId,
+                target: { type: 'plan', id: next.id },
+                nodeId: step.id,
+                reference: `${seconds}s`,
+                ...(requestId === undefined ? {} : { requestId }),
+                source: 'api',
+              },
+              at,
+            ),
+          ],
+        };
+      });
+    } catch (error) {
+      if (!isPlanningError(error)) throw error;
+      const fresh = await plans.find(organizationId, plan.id);
+      if (fresh?.waits?.some((w) => w.stepId === step.id) === true) return fresh;
+      if (fresh !== undefined && fresh.status !== 'executing') return fresh;
+      throw error;
+    }
+    const wait = started.waits?.find((w) => w.stepId === step.id);
+    if (wait !== undefined) {
+      try {
+        await wakeups.wake(
+          tenant,
+          { organizationId, planId: started.id },
+          new Date(Date.parse(wait.until) + WAKE_MARGIN_MS),
+        );
+      } catch (error) {
+        const code = (error as { code?: unknown }).code;
+        logger?.warn('plan wake-up not queued', {
+          planId: started.id,
+          stepId: step.id,
+          code: typeof code === 'string' ? code : 'error',
+        });
+      }
+    }
+    logger?.info('plan wait started', { planId: started.id, stepId: step.id });
+    return started;
+  }
+
   /** A plan status change and its event, once: a change another call made is read back. */
   async function finishPlan(
     tenant: TenantContext,
@@ -817,9 +926,11 @@ export function createPlanConductor(options: PlanConductorOptions): PlanConducto
       const output =
         view.child !== undefined
           ? { type: 'execution', id: view.child.id }
-          : view.condition?.decision === undefined
-            ? undefined
-            : { type: 'decision', id: view.condition.decision.id };
+          : view.wait !== undefined
+            ? { type: 'plan_wait', id: waitRef(view) }
+            : view.condition?.decision === undefined
+              ? undefined
+              : { type: 'decision', id: view.condition.decision.id };
       if (view.state === 'skipped' || view.state === 'declined') {
         if (node.status === 'pending') {
           await settle(() =>
@@ -830,7 +941,7 @@ export function createPlanConductor(options: PlanConductorOptions): PlanConducto
             }),
           );
         }
-      } else if (view.state === 'running' || decided(view)) {
+      } else if (view.state === 'running' || view.state === 'delayed' || decided(view)) {
         if (node.status === 'pending') {
           await settle(() =>
             executions.runtimePlanChangeNode(tenant, parentId, {
@@ -887,14 +998,20 @@ export function createPlanConductor(options: PlanConductorOptions): PlanConducto
                     result: view.child.status === 'completed' ? 'passed' : 'failed',
                     evidence: { type: 'execution', id: view.child.id },
                   }
-                : {
-                    code: CONDITION_CHECK,
-                    result: view.condition?.decision === undefined ? 'failed' : 'passed',
-                    evidence: {
-                      type: 'decision',
-                      id: view.condition?.decision?.id ?? view.step.id,
+                : view.step.kind === 'wait'
+                  ? {
+                      code: WAIT_CHECK,
+                      result: view.wait === undefined ? 'failed' : 'passed',
+                      evidence: { type: 'plan_wait', id: waitRef(view) },
+                    }
+                  : {
+                      code: CONDITION_CHECK,
+                      result: view.condition?.decision === undefined ? 'failed' : 'passed',
+                      evidence: {
+                        type: 'decision',
+                        id: view.condition?.decision?.id ?? view.step.id,
+                      },
                     },
-                  },
             ],
           })),
         }),
@@ -954,6 +1071,17 @@ export function createPlanConductor(options: PlanConductorOptions): PlanConducto
       if (plan.status !== 'executing') return plan;
       views = await stepsOf(tenant, plan, version);
       logger?.info('plan condition decided', { planId: plan.id, stepId: ready.step.id });
+    }
+
+    // Waits whose steps before them completed start, each once (ADR-0152). On a resume there is
+    // no wake-up: they are left to the worker, which always advances after a step ends.
+    if (wakeups !== undefined && !views.some((v) => v.state === 'failed')) {
+      const ready = views.filter((v) => v.step.kind === 'wait' && readyIn(views, v));
+      for (const view of ready) {
+        plan = await startWait(tenant, organizationId, plan, view.step);
+        if (plan.status !== 'executing') return plan;
+      }
+      if (ready.length > 0) views = await stepsOf(tenant, plan, version);
     }
 
     const stopped = views.find((v) => v.state === 'failed');

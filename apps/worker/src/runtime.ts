@@ -31,6 +31,7 @@ import {
   planStepOf,
   type ConditionEvaluator,
   type PlanRepository,
+  type PlanWakeups,
 } from '@melonoffice/planning';
 import { createAuthorizationService } from '@melonoffice/rbac';
 import {
@@ -119,6 +120,11 @@ export interface WorkerRuntimeOptions {
    * with `condition_not_configured` and its plan stops.
    */
   readonly conditions?: ConditionEvaluator;
+  /**
+   * Wakes those plans when one of their waits ends (ADR-0152). Absent: a wait step that became
+   * ready is not started, and the steps after it wait.
+   */
+  readonly wakeups?: PlanWakeups;
   /**
    * Where a plan's end is told (ADR-0119): `plan.finished`, once, for the person who made it, so
    * their bell says the result is ready. Absent: a plan ends quietly, as before.
@@ -254,6 +260,7 @@ export function createWorkerRuntime(options: WorkerRuntimeOptions): {
               },
             },
             ...(options.conditions === undefined ? {} : { conditions: options.conditions }),
+            ...(options.wakeups === undefined ? {} : { wakeups: options.wakeups }),
             // A step marked "ask me before this step" waits for a person (ADR-0146).
             approvals: createPlanStepApprovals(
               createApprovalService({

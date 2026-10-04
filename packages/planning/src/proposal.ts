@@ -7,6 +7,7 @@ import type {
   PlanToolInput,
   PlanToolValue,
   PlanVerification,
+  PlanWaitSpec,
   ToolRiskLevel,
   ToolSchema,
   VerificationPolicy,
@@ -31,6 +32,9 @@ export const MAX_DECISION_INPUT_TEXT = 100;
 /** A tool step's fixed input (ADR-0151): plain JSON, shallow and small. */
 export const MAX_TOOL_INPUT_DEPTH = 8;
 export const MAX_TOOL_INPUT_BYTES = 16_000;
+/** A wait step's limits (ADR-0152): one second to seven days. */
+export const MIN_WAIT_SECONDS = 1;
+export const MAX_WAIT_SECONDS = 7 * 86_400;
 
 export const PLAN_STEP_KINDS = [
   'specialist',
@@ -39,6 +43,7 @@ export const PLAN_STEP_KINDS = [
   'verification',
   'condition',
   'parallel',
+  'wait',
 ] as const satisfies readonly PlanStepKind[];
 
 export const VERIFICATION_POLICIES = [
@@ -76,6 +81,8 @@ export interface ProposalStep {
   readonly condition?: PlanCondition;
   /** On `condition` steps the Decision Engine decides (WF-4, ADR-0075). */
   readonly decision?: PlanDecisionCondition;
+  /** On `wait` steps (ADR-0152): how long, in seconds. */
+  readonly wait?: PlanWaitSpec;
   readonly retry?: PlanRetry;
   /** A proposal may ask for a human approval. It can never remove one the system requires. */
   readonly approvalRequired?: boolean;
@@ -117,6 +124,7 @@ const STEP_KEYS = new Set([
   'verification',
   'condition',
   'decision',
+  'wait',
   'retry',
   'approvalRequired',
   'budget',
@@ -353,6 +361,14 @@ function stepOf(value: unknown, index: number): ProposalStep {
       outcome: oneOf(['completed', 'failed'], condition.outcome, `${field}.condition.outcome`),
     };
   }
+  let waitOf: PlanWaitSpec | undefined;
+  if (value.wait !== undefined) {
+    if (!isRecord(value.wait)) return invalid(`${field}.wait`);
+    closed(value.wait, new Set(['seconds']), `${field}.wait`);
+    waitOf = {
+      seconds: int(value.wait.seconds, MIN_WAIT_SECONDS, MAX_WAIT_SECONDS, `${field}.wait.seconds`),
+    };
+  }
   let retryOf: PlanRetry | undefined;
   if (retry !== undefined) {
     if (!isRecord(retry)) return invalid(`${field}.retry`);
@@ -394,6 +410,7 @@ function stepOf(value: unknown, index: number): ProposalStep {
     ...(value.decision === undefined
       ? {}
       : { decision: decisionOf(value.decision, `${field}.decision`) }),
+    ...(waitOf === undefined ? {} : { wait: waitOf }),
     ...(retryOf === undefined ? {} : { retry: retryOf }),
     ...(approvalRequired === undefined ? {} : { approvalRequired: approvalRequired as boolean }),
     ...(budgetOf === undefined ? {} : { budget: budgetOf }),

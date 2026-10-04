@@ -7,7 +7,10 @@ import {
   planStepOf,
   STEP_CHECK,
   unrunnableStepOf,
+  WAIT_CHECK,
   type ConditionEvaluator,
+  type PlanConductorOptions,
+  type PlanWakeups,
   type StepApprovalAsk,
   type StepApprovals,
   type StepApprovalState,
@@ -79,6 +82,7 @@ async function setup(
   steps?: (s: Awaited<ReturnType<World['seed']>>) => Record<string, unknown>[],
   conditions?: ConditionEvaluator,
   approvals?: StepApprovals,
+  extra: Partial<PlanConductorOptions> = {},
 ) {
   const w = await world();
   const owner = await w.seed(w.orgA, ALICE, { type: 'leadership', role: 'chief_of_staff' });
@@ -119,6 +123,7 @@ async function setup(
     ...(approvals === undefined ? {} : { approvals }),
     requestId: 'plan-conductor-test',
     now: () => new Date('2026-09-27T12:00:00Z'),
+    ...extra,
   });
 
   const stored = async (): Promise<Plan> => must(await w.planRepository.find(w.orgA, planned.id));
@@ -869,5 +874,121 @@ describe('tool steps inside a running plan (ADR-0151)', () => {
     expect(parent.nodes.find((n) => n.id === 'research')?.status).toBe('skipped');
     expect(parent.nodes.find((n) => n.id === 'report')?.status).toBe('skipped');
     expect(t.started).toHaveLength(1);
+  });
+});
+
+describe('wait steps inside a running plan (ADR-0152)', () => {
+  const T0 = new Date('2026-09-27T12:00:00Z');
+  const wait = (id: string, dependsOn: string[], seconds = 3_600) => ({
+    id,
+    kind: 'wait',
+    label: `Wait ${id}`,
+    dependsOn,
+    wait: { seconds },
+  });
+  // research → pause (1 hour) → report; summary beside them.
+  const paused = (researcher: Awaited<ReturnType<World['seed']>>) => [
+    specialistStep('research', researcher, { approvalRequired: true }),
+    wait('pause', ['research']),
+    specialistStep('report', researcher, { dependsOn: ['pause'] }),
+    specialistStep('summary', researcher),
+  ];
+
+  async function ready(withWakeups = true) {
+    let clock = T0;
+    const woken: { organizationId: string; planId: string; at: string; actor: string }[] = [];
+    const wakeups: PlanWakeups = {
+      async wake(tenant, plan, at) {
+        woken.push({ ...plan, at: at.toISOString(), actor: tenant.actor });
+      },
+    };
+    const t = await setup(paused, undefined, undefined, {
+      now: () => clock,
+      ...(withWakeups ? { wakeups } : {}),
+    });
+    await t.approve();
+    await t.conductor.run(t.w.tenantA, t.planned.id);
+    await t.complete('research');
+    await t.conductor.advance(t.w.runtimeA, t.planned.id);
+    return { ...t, woken, setClock: (at: Date) => void (clock = at) };
+  }
+
+  it('waits once the steps before it completed, then the steps after it start', async () => {
+    const t = await ready();
+    const recorded = (await t.stored()).waits;
+    expect(recorded).toEqual([
+      { stepId: 'pause', startedAt: T0.toISOString(), until: '2026-09-27T13:00:00.000Z' },
+    ]);
+    // Woken just after it ends, as the runtime of the plan's person.
+    expect(t.woken).toEqual([
+      {
+        organizationId: t.w.orgA,
+        planId: t.planned.id,
+        at: '2026-09-27T13:00:01.000Z',
+        actor: 'runtime',
+      },
+    ]);
+    expect(t.w.events('plan.wait_started')).toEqual([
+      expect.objectContaining({ nodeId: 'pause', reference: '3600s' }),
+    ]);
+    const report = await t.childOf('report');
+    expect(await t.status(report)).toBe('pending');
+    let parent = await t.w.executions.get(t.w.tenantA, t.planned.executionId);
+    expect(parent.nodes.find((n) => n.id === 'pause')?.status).toBe('running');
+
+    // Looked at again before its time (a step ending, a repeated or early wake-up): nothing.
+    await t.conductor.advance(t.w.runtimeA, t.planned.id);
+    expect(t.woken).toHaveLength(1);
+    expect(t.w.events('plan.wait_started')).toHaveLength(1);
+    expect(await t.status(report)).toBe('pending');
+
+    t.setClock(new Date('2026-09-27T13:00:01Z'));
+    await t.conductor.advance(t.w.runtimeA, t.planned.id);
+    expect(await t.status(report)).toBe('running');
+    parent = await t.w.executions.get(t.w.tenantA, t.planned.executionId);
+    expect(parent.nodes.find((n) => n.id === 'pause')).toMatchObject({
+      status: 'completed',
+      output: { type: 'plan_wait', id: 'pause' },
+    });
+
+    await t.complete('report');
+    await t.complete('summary');
+    const closed = await t.conductor.advance(t.w.runtimeA, t.planned.id);
+    expect(closed.status).toBe('completed');
+    const done = await t.w.executions.get(t.w.tenantA, t.planned.executionId);
+    expect(done.verification?.nodes.find((n) => n.nodeId === 'pause')?.checks[0]).toMatchObject({
+      code: WAIT_CHECK,
+      result: 'passed',
+    });
+  });
+
+  it('starts no wait without a way to wake the plan, and never skips it', async () => {
+    const t = await ready(false);
+    expect((await t.stored()).waits).toBeUndefined();
+    t.setClock(new Date('2026-09-28T12:00:00Z'));
+    await t.conductor.advance(t.w.runtimeA, t.planned.id);
+    expect(await t.status(await t.childOf('report'))).toBe('pending');
+  });
+
+  it('refuses a wait that waits on nothing, too long or too short', async () => {
+    const t = await setup((researcher) => [specialistStep('research', researcher)]);
+    const refused = async (step: Record<string, unknown>) => {
+      const execution = await t.w.planning(t.w.tenantA, await t.w.seed(t.w.orgA, ALICE));
+      const outcome = await t.w.plans.propose(t.w.tenantA, {
+        executionId: execution.id,
+        proposal: proposal([specialistStep('research', await t.w.seed(t.w.orgA, ALICE)), step]),
+        source: {
+          kind: 'planner',
+          model: { provider: 'alpha', id: 'alpha-large', version: 'v' },
+          policy: { id: 'default_model', version: 1 },
+        },
+      });
+      return outcome.status === 'planned' ? 'planned' : outcome.reason;
+    };
+    expect(await refused(wait('pause', []))).not.toBe('planned');
+    expect(await refused(wait('pause', ['research'], 0))).not.toBe('planned');
+    expect(await refused(wait('pause', ['research'], 7 * 86_400 + 1))).not.toBe('planned');
+    expect(await refused({ ...wait('pause', ['research']), wait: undefined })).not.toBe('planned');
+    expect(await refused(wait('pause', ['research'], 60))).toBe('planned');
   });
 });

@@ -34,10 +34,25 @@ export type PlanStatus =
  * What a step stands for. `specialist` is work a specialist does; `tool` is one exact tool
  * version a specialist step uses; `approval` is a human checkpoint; `verification` checks
  * results; `condition` depends on how another step ended; `parallel` groups steps that may run
- * together.
+ * together; `wait` delays the steps after it (ADR-0152).
  */
 export type PlanStepKind =
-  'specialist' | 'tool' | 'approval' | 'verification' | 'condition' | 'parallel';
+  'specialist' | 'tool' | 'approval' | 'verification' | 'condition' | 'parallel' | 'wait';
+
+/** On `wait` steps (ADR-0152): how long the steps after it wait once the steps before it ended. */
+export interface PlanWaitSpec {
+  readonly seconds: number;
+}
+
+/**
+ * A wait step that started (ADR-0152): when, and until when. Recorded once, when the steps it
+ * depends on completed; the steps after it start once `until` passed.
+ */
+export interface PlanWait {
+  readonly stepId: string;
+  readonly startedAt: IsoTimestamp;
+  readonly until: IsoTimestamp;
+}
 
 /** How a step's result is checked before it counts as done (the Verification Engine is X6). */
 export type VerificationPolicy = 'output_schema' | 'human_review' | 'specialist_review' | 'checks';
@@ -179,6 +194,8 @@ export interface PlanStep {
   readonly condition?: PlanCondition;
   /** On `condition` steps the Decision Engine decides (WF-4). */
   readonly decision?: PlanDecisionCondition;
+  /** On `wait` steps (ADR-0152). */
+  readonly wait?: PlanWaitSpec;
   readonly retry?: PlanRetry;
   /** Whether a human must approve before this step runs. Decided by the system, never lowered by a model. */
   readonly approvalRequired: boolean;
@@ -277,6 +294,8 @@ export interface Plan {
   readonly conditions?: readonly PlanConditionResult[];
   /** The approval each step that waits for a person asked for, once (ADR-0146). */
   readonly stepApprovals?: readonly PlanStepApproval[];
+  /** Each wait step that started, once (ADR-0152). */
+  readonly waits?: readonly PlanWait[];
   readonly revision: number;
   readonly createdAt: IsoTimestamp;
   readonly createdBy: UserId;
