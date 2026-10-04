@@ -67,9 +67,10 @@ export interface NodeWorkSource {
   needed?(tenant: TenantContext, execution: Execution, node: ExecutionNode): Promise<boolean>;
   /**
    * Whether a `tool` node's output is kept, once it ran, for the work after it: a tool an agent's
-   * model asked for (ADR-0103), whose result the agent's next turn reads. Absent: none is kept.
+   * model asked for (ADR-0103), whose result the agent's next turn reads, or a plan's tool step,
+   * whose result the plan's later steps read (ADR-0154). Absent: none is kept.
    */
-  keepsToolOutput?(node: ExecutionNode): boolean;
+  keepsToolOutput?(node: ExecutionNode, execution: Execution): boolean;
   /**
    * Whether a ready `tool` node must not run because the task reached a limit (ADR-0103): the code
    * it stopped at, or `undefined`. The execution then fails with that code and nothing runs.

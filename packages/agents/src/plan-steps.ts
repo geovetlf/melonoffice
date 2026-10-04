@@ -31,8 +31,25 @@ import { AGENT_TASK_PROMPT } from './prompts.js';
  * Brain context and verification as a task (ADR-0063), so a plan adds no second way to call a
  * model. What a step adds is the answers of the steps it depends on, as data. The agent answers
  * and calls no tool itself; the tool steps the plan gave it (ADR-0151) run after its answer as the
- * child's tool nodes, through the Tool Gate, with the input fixed in the plan.
+ * child's tool nodes, through the Tool Gate, with the input fixed in the plan. Their results are
+ * kept, and the steps after it read them as data too (ADR-0154).
  */
+
+/** The most of one tool step's result a later step reads (ADR-0154), in characters. */
+export const MAX_TOOL_RESULT_CHARS = 4_000;
+
+/**
+ * A tool step's result as a later step reads it (ADR-0154): its JSON, cut to
+ * `MAX_TOOL_RESULT_CHARS`. Data, never an instruction: the agent's prompt says so of everything
+ * in its context, and credentials in it are cut out before any model reads it (G-7).
+ */
+export function toolResultText(label: string, structured: unknown): string {
+  if (structured === undefined) return `${label}: (its result is not available)`;
+  const json = JSON.stringify(structured) ?? 'null';
+  const shown =
+    json.length <= MAX_TOOL_RESULT_CHARS ? json : `${json.slice(0, MAX_TOOL_RESULT_CHARS)} […]`;
+  return `${label}: ${shown}`;
+}
 
 /** A step's work: exactly what the stored plan version says, or nothing. */
 interface StepFacts {
@@ -135,6 +152,10 @@ export function createPlanStepWork(options: PlanStepWorkOptions): AgentTaskWork 
     async needed() {
       return true;
     },
+    // A plan's tool step (ADR-0151) keeps its result for the steps after it (ADR-0154). A tool a
+    // model asked for is the Harness's to keep, never a plan's.
+    keepsToolOutput: (node: ExecutionNode, execution: Execution) =>
+      node.type === 'tool' && node.input === undefined && planStepOf(execution) !== undefined,
     async toolInput(tenant: TenantContext, execution: Execution, node: ExecutionNode) {
       // A tool step's input is the one fixed in the plan (ADR-0151), for exactly this tool node
       // of this specialist step's child; the Tool Gate checks it, and everything else, again.
@@ -176,6 +197,16 @@ export function createPlanStepWork(options: PlanStepWorkOptions): AgentTaskWork 
         const answer = record === undefined ? undefined : parseAgentAnswer(record.output);
         if (answer === undefined) return undefined;
         previous.push({ name: 'previous_step', text: `${before.label}: ${answer.answer}` });
+        // What its tool steps returned (ADR-0154), each in the plan's order. One the gate did not
+        // pass on is said to be missing, never guessed.
+        for (const tool of version.steps) {
+          if (tool.kind !== 'tool' || tool.performedBy !== id) continue;
+          const kept = await outputs.find(tenant, child, tool.id);
+          previous.push({
+            name: 'previous_step_tool',
+            text: toolResultText(tool.label, kept?.output.structured),
+          });
+        }
       }
 
       const { configuration } = agentVersion;

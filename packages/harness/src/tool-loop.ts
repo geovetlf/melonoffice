@@ -233,7 +233,7 @@ interface LoopWorkSource {
     execution: Execution,
     node: ExecutionNode,
   ): Promise<string | undefined>;
-  keepsToolOutput?(node: ExecutionNode): boolean;
+  keepsToolOutput?(node: ExecutionNode, execution: Execution): boolean;
 }
 
 interface LoopVerifier {
@@ -438,7 +438,9 @@ export function createHarnessToolLoop(options: HarnessToolLoopOptions): HarnessT
           if (call === undefined || call.name !== node.tool?.id) return undefined;
           return call.arguments;
         },
-        keepsToolOutput: (node: ExecutionNode) => isModelToolNode(node),
+        // The tools its model asked for, and whatever the work it wraps keeps (ADR-0154).
+        keepsToolOutput: (node: ExecutionNode, execution: Execution) =>
+          isModelToolNode(node) || inner.keepsToolOutput?.(node, execution) === true,
         async needed(
           tenant: TenantContext,
           execution: Execution,

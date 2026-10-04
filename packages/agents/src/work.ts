@@ -440,6 +440,8 @@ export interface AgentTaskWork {
     node: ExecutionNode,
   ): Promise<TaskAIWork | undefined>;
   needed(tenant: TenantContext, execution: Execution, node: ExecutionNode): Promise<boolean>;
+  /** Whether a tool node's result is kept for the work after it (ADR-0154). Absent: none. */
+  keepsToolOutput?(node: ExecutionNode, execution: Execution): boolean;
 }
 
 /**

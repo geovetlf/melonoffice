@@ -792,10 +792,8 @@ export function routeAgentWork(
         const source = partsOf(execution).work;
         return source.needed === undefined ? true : source.needed(tenant, execution, node);
       },
-      // Which execution a node is of is not known here: every source keeps only its own.
-      keepsToolOutput: (node) =>
-        tasks.work.keepsToolOutput?.(node) === true ||
-        conversation.work.keepsToolOutput?.(node) === true,
+      keepsToolOutput: (node, execution) =>
+        partsOf(execution).work.keepsToolOutput?.(node, execution) === true,
       toolStop: async (tenant, execution, node) => {
         const source = partsOf(execution).work;
         return source.toolStop === undefined ? undefined : source.toolStop(tenant, execution, node);
