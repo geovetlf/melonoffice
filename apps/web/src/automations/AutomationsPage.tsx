@@ -9,6 +9,7 @@ import {
   isRunningPlan,
   WORKFLOW_TRANSITIONS,
   type AutomationsClient,
+  CHECK_DECISION,
   type PlanDetail,
   type PlanStepProgress,
   type PlanView,
@@ -131,6 +132,7 @@ export function AutomationsPage({
     };
   }, [client, permissions.readWorkflows, loadPlans]);
 
+  const checkActions = useCallback(() => client.checkActions(), [client]);
   const save = useCallback(
     (name: string, steps: readonly WorkflowStepDraft[], workflowId?: string) =>
       workflowId === undefined
@@ -213,6 +215,7 @@ export function AutomationsPage({
           key={editing.mode === 'create' ? 'create' : editing.id}
           editing={editing.mode === 'create' ? undefined : editing}
           templates={templates}
+          checkActions={checkActions}
           save={save}
           onSaved={(saved) => {
             setEditing(undefined);
@@ -419,7 +422,13 @@ function WorkflowSteps({
             <span className="automations__name">{step.label}</span>
             <span className="automations__meta">
               {' · '}
-              {step.assignee === null ? (
+              {typeof step.decision?.input.action === 'string' &&
+              step.decision.decision === CHECK_DECISION ? (
+                <FormattedMessage
+                  id="automations.checks"
+                  values={{ action: actionLabel(intl, step.decision.input.action) }}
+                />
+              ) : step.assignee === null ? (
                 <FormattedMessage id={`automations.stepKind.${stepKindOf(step.kind)}`} />
               ) : (
                 <FormattedMessage
@@ -461,6 +470,12 @@ const STEP_KINDS = new Set([
   'parallel',
 ]);
 const stepKindOf = (kind: string): string => (STEP_KINDS.has(kind) ? kind : 'other');
+
+/** An action's name from the catalogue's messages; else its id. */
+function actionLabel(intl: ReturnType<typeof useIntl>, action: string): string {
+  const key = `agents.action.${action}`;
+  return intl.messages[key] === undefined ? action : intl.formatMessage({ id: key });
+}
 
 /** A role's name: a catalogue role is `<template>_agent`, named like its template; else its id. */
 function roleLabel(intl: ReturnType<typeof useIntl>, roleId: string): string {

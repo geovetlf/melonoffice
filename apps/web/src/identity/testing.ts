@@ -1033,6 +1033,17 @@ export function fakeBackend(): FakeBackend {
         (found === undefined ? json(404, { error: 'task_not_found' }) : json(200, found))
       );
     }
+    if (route === 'decisions/actions') {
+      return (
+        needs('gia.ask') ??
+        json(200, {
+          actions: ['follow_up.schedule', 'opportunity.offer_discount'].map((action) => ({
+            action,
+            outcome: 'available',
+          })),
+        })
+      );
+    }
     if (route === 'workflows' && method === 'POST') {
       const denied = needs('workflow.manage');
       if (denied !== undefined) return denied;

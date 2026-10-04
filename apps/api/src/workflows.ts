@@ -223,6 +223,16 @@ const toWorkflowVersionView = (v: WorkflowVersion) => ({
         : { departmentTypeId: s.assignee.departmentTypeId, roleId: s.assignee.roleId },
     performedBy: s.performedBy ?? null,
     tool: s.tool === undefined ? null : { id: s.tool.id, version: s.tool.version },
+    // A check's decision (WF-4): its type, the outcomes that go on and its fixed input, which
+    // holds only short codes and numbers, so the editor can show and rewrite it.
+    decision:
+      s.decision === undefined
+        ? null
+        : {
+            decision: s.decision.decision,
+            continueOn: [...s.decision.continueOn],
+            input: { ...s.decision.input },
+          },
     approvalRequired: s.approvalRequired ?? false,
   })),
   createdAt: v.createdAt,

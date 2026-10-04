@@ -585,6 +585,47 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
       expect(t.kicked).toEqual([research]);
     });
 
+    it('ADR-0144: a workflow with a policy check and a branch is shown, planned and approved', async () => {
+      const t = await setup(ROLES, { runPlans: true });
+      const check = {
+        id: 'policy',
+        kind: 'condition',
+        label: 'Discount within policy',
+        dependsOn: ['research'],
+        decision: {
+          decision: 'action.policy_check',
+          continueOn: ['allowed'],
+          input: { action: 'opportunity.offer_discount', discountPercent: 15 },
+        },
+      };
+      const after = { ...campaignStep, dependsOn: ['policy'] };
+      const branch = { ...campaignStep, id: 'branch', label: 'Branch', dependsOn: ['research'] };
+      const id = await activeWorkflow(t, [researchStep, check, after, branch]);
+
+      const detail = (await (await t.get('token-alice', `/workflows/${id}`)).json()) as {
+        current: { steps: Record<string, unknown>[] };
+      };
+      expect(detail.current.steps.map((s) => [s.id, s.kind, s.dependsOn])).toEqual([
+        ['research', 'specialist', []],
+        ['policy', 'condition', ['research']],
+        ['campaign', 'specialist', ['policy']],
+        ['branch', 'specialist', ['research']],
+      ]);
+      expect(detail.current.steps[1]).toMatchObject({ assignee: null, decision: check.decision });
+      expect(detail.current.steps[0]).toMatchObject({ decision: null });
+
+      const planned = await t.post('token-alice', `/workflows/${id}/plans`, { requestKey: 'r-c' });
+      expect(planned.status).toBe(201);
+      const plan = (await planned.json()) as PlanDetail;
+      const approved = await t.post('token-alice', `/plans/${plan.id}/approve`, {
+        version: plan.current.version,
+        digest: plan.current.digest,
+      });
+      // A decided condition is a step the plan can run (WF-4), so the plan starts.
+      expect(approved.status).toBe(200);
+      expect(((await approved.json()) as { status: string }).status).toBe('executing');
+    });
+
     it('answers a refused plan with 422 and why, and keeps the answer for a repeat', async () => {
       const t = await setup();
       const id = await activeWorkflow(t, [
