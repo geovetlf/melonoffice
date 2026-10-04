@@ -1,4 +1,5 @@
-import { parseAgentAnswer } from '@melonoffice/agents';
+import { parseAgentAnswer, readPlanTrace } from '@melonoffice/agents';
+import type { AuditHistoryReader } from '@melonoffice/audit';
 import type { Execution, Plan, PlanEstimate, PlanStep, PlanVersion } from '@melonoffice/domain';
 import type { AgentOutputStore, ExecutionService } from '@melonoffice/execution';
 import {
@@ -46,6 +47,8 @@ export function registerPlanRoutes(
     readonly steps?: {
       readonly executions: Pick<ExecutionService, 'get'>;
       readonly outputs?: Pick<AgentOutputStore, 'find'>;
+      /** The audit trail of the plan and its steps, for `GET plans/:id/trace` (ADR-0157). */
+      readonly history?: AuditHistoryReader;
     };
   },
 ): void {
@@ -83,6 +86,34 @@ export function registerPlanRoutes(
           const version = await plans.getVersion(tenant, plan.id, plan.version);
           const { views } = await readPlanSteps(tenant, plan, version, steps);
           return { planId: plan.id, status: plan.status, steps: views };
+        }),
+      ),
+    );
+  }
+
+  // Everything that happened in the plan (ADR-0157): each step's runs, nodes, tools, approvals,
+  // models, credits, times and errors, where it stopped, and its audit trail. Codes, ids, times
+  // and numbers only, with each step's state by the plan engine's own rule.
+  const outputs = steps?.outputs;
+  if (steps !== undefined && outputs !== undefined) {
+    app.get(
+      `${base}/:planId/trace`,
+      withPermission('plan.read', dependencies, async (c, tenant) =>
+        answer(c, async () => {
+          const plan = await plans.get(tenant, c.req.param('planId') ?? '');
+          const version = await plans.getVersion(tenant, plan.id, plan.version);
+          const trace = await readPlanTrace(tenant, plan.id, {
+            plans,
+            executions: steps.executions,
+            outputs,
+            ...(steps.history === undefined ? {} : { history: steps.history }),
+          });
+          const { views } = await readPlanSteps(tenant, plan, version, steps);
+          const states = new Map(views.map((v) => [v.stepId, v.state]));
+          return {
+            ...trace,
+            steps: trace.steps.map((s) => ({ ...s, state: states.get(s.stepId) ?? null })),
+          };
         }),
       ),
     );

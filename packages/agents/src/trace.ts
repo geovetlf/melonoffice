@@ -117,7 +117,7 @@ export interface AgentTaskTrace {
   }[];
 }
 
-const modelOf = (ai: AICallTrace | undefined): AgentTaskTraceModel | null =>
+export const modelOf = (ai: AICallTrace | undefined): AgentTaskTraceModel | null =>
   ai === undefined
     ? null
     : {
@@ -129,7 +129,7 @@ const modelOf = (ai: AICallTrace | undefined): AgentTaskTraceModel | null =>
       };
 
 /** The kept model calls of an execution's agent nodes and its review, by node. */
-async function callsOf(
+export async function callsOf(
   outputs: Pick<AgentOutputStore, 'find'>,
   tenant: TenantContext,
   execution: Pick<Execution, 'id' | 'nodes'>,
@@ -146,7 +146,7 @@ async function callsOf(
   return calls;
 }
 
-const sum = (calls: Iterable<AICallTrace>) =>
+export const creditsOf = (calls: Iterable<AICallTrace>) =>
   [...calls].reduce((total, c) => total + c.creditsConsumed, 0);
 
 const historyOf = (events: readonly AuditEvent[]) =>
@@ -211,12 +211,12 @@ export async function readAgentTaskTrace(
         taskId: child.task.id,
         specialistId: child.task.specialistId,
         status: child.execution?.status ?? 'unknown',
-        credits: sum(childCalls.values()),
+        credits: creditsOf(childCalls.values()),
       });
     }
   }
   const own = [...calls.entries()].filter(([id]) => id !== AI_REVIEW_NODE).map(([, c]) => c);
-  const taskCredits = sum(own);
+  const taskCredits = creditsOf(own);
   const reviewCredits = reviewCall?.creditsConsumed ?? 0;
   const subtaskCredits = subtasks.reduce((t, s) => t + s.credits, 0);
   const byModel = new Map<string, number>();

@@ -55,6 +55,7 @@ import {
   createPlanStepVerifier,
   TOOL_OUTPUT_CHECK,
   MAX_TOOL_RESULT_CHARS,
+  readPlanTrace,
   toolResultText,
   answeringSteps,
   createPlanStepWork,
@@ -1381,5 +1382,124 @@ describe('contact references (ADR-0084, ADR-0104)', () => {
     });
     // The display path reads the same rule: none shown when ambiguous.
     expect(resolveContactRef([juan, { id: TWIN, name: 'Gemelo' }], ref)).toBeUndefined();
+  });
+});
+
+describe('a plan’s trace (ADR-0157)', () => {
+  const PLAN = '5a1b7c9e-1111-4111-8111-000000000009';
+  const PARENT = '5a1b7c9e-2222-4222-8222-000000000009';
+  const FIRST = '5a1b7c9e-3333-4333-8333-000000000091';
+  const SECOND = '5a1b7c9e-3333-4333-8333-000000000092';
+
+  it('shows each run of a step, where the plan stopped, and what it cost', async () => {
+    const w = await world();
+    const version = {
+      planId: PLAN,
+      version: 1,
+      steps: [
+        {
+          id: 'research',
+          kind: 'specialist',
+          label: 'Investigar',
+          dependsOn: [],
+          specialist: { id: 's-1', version: 2, departmentId: 'd' },
+          approvalRequired: false,
+        },
+        { id: 'pause', kind: 'wait', label: 'Esperar', dependsOn: ['research'] },
+      ],
+    } as unknown as PlanVersion;
+    const plan = {
+      id: PLAN,
+      organizationId: w.orgA,
+      executionId: PARENT,
+      status: 'failed',
+      version: 1,
+      delegations: [{ stepId: 'research', executionId: FIRST }],
+      attempts: [{ stepId: 'research', attempt: 2, executionId: SECOND, after: FIRST }],
+      createdAt: '2026-10-04T12:00:00.000Z',
+      updatedAt: '2026-10-04T12:05:00.000Z',
+    } as unknown as Plan;
+    const child = (id: string, code: string) =>
+      ({
+        id,
+        status: 'failed',
+        failure: { code },
+        startedAt: '2026-10-04T12:00:00.000Z',
+        completedAt: '2026-10-04T12:00:02.000Z',
+        nodes: [
+          {
+            id: 'research',
+            type: 'agent',
+            label: 'Investigar',
+            status: 'failed',
+            dependsOn: [],
+            error: { code },
+          },
+        ],
+      }) as unknown as Execution;
+    const executions: Record<string, Execution> = {
+      [FIRST]: child(FIRST, 'unavailable'),
+      [SECOND]: child(SECOND, 'rate_limited'),
+      [PARENT]: {
+        id: PARENT,
+        status: 'failed',
+        failure: { code: 'step_failed', ref: { type: 'execution', id: SECOND } },
+        nodes: [],
+      } as unknown as Execution,
+    };
+    const outputs = createAgentOutputStore(new InMemoryAgentOutputRepository());
+    await outputs.record(w.runtime, {
+      executionId: FIRST as ExecutionId,
+      nodeId: 'research' as ExecutionNodeId,
+      requestId: 'req-1',
+      output: { text: 'never shown' },
+      ai: {
+        provider: 'vertex_ai',
+        model: 'gemini-2.5-flash-lite',
+        strategy: null,
+        fallbackFrom: null,
+        estimatedMicroUsd: null,
+        actualMicroUsd: null,
+        creditsEstimated: null,
+        creditsConsumed: 3,
+        maxCredits: null,
+        escalation: null,
+        attempts: 2,
+      },
+    });
+    const trace = await readPlanTrace(w.runtime, PLAN, {
+      plans: { get: async () => plan, getVersion: async () => version },
+      executions: {
+        get: async (_t, id) => {
+          const found = executions[id];
+          if (found === undefined) throw new Error('execution_not_found');
+          return found;
+        },
+      },
+      outputs,
+    });
+    expect(trace.failure).toEqual({
+      code: 'step_failed',
+      stepId: 'research',
+      cause: 'rate_limited',
+    });
+    const research = trace.steps.find((s) => s.stepId === 'research');
+    expect(research?.attempts.map((a) => [a.attempt, a.failure, a.credits, a.durationMs])).toEqual([
+      [1, 'unavailable', 3, 2_000],
+      [2, 'rate_limited', 0, 2_000],
+    ]);
+    expect(research?.attempts[0]?.nodes[0]?.model).toMatchObject({ credits: 3, attempts: 2 });
+    expect(trace.steps.find((s) => s.stepId === 'pause')).toMatchObject({
+      kind: 'wait',
+      attempts: [],
+      wait: null,
+      credits: 0,
+    });
+    expect(trace.credits).toEqual({
+      total: 3,
+      byStep: [{ stepId: 'research', credits: 3 }],
+      byModel: [{ model: 'vertex_ai/gemini-2.5-flash-lite', credits: 3 }],
+    });
+    expect(JSON.stringify(trace)).not.toContain('never shown');
   });
 });
