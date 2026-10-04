@@ -475,6 +475,7 @@ const STEP_KINDS = new Set([
   'verification',
   'condition',
   'parallel',
+  'wait',
 ]);
 const stepKindOf = (kind: string): string => (STEP_KINDS.has(kind) ? kind : 'other');
 
@@ -653,7 +654,15 @@ function PlanCard({
               {done === undefined ? null : (
                 <span className="automations__meta">
                   {' · '}
-                  <FormattedMessage id={stepProgressKey(done)} />
+                  <FormattedMessage
+                    id={stepProgressKey(done)}
+                    values={{
+                      until:
+                        done.until == null
+                          ? ''
+                          : intl.formatDate(done.until, { dateStyle: 'short', timeStyle: 'short' }),
+                    }}
+                  />
                   {done.state === 'awaiting_approval' ? (
                     <>
                       {' · '}
@@ -757,6 +766,14 @@ function stepProgressKey(done: PlanStepProgress): string {
             : 'automations.stepStatus.pending';
   }
   if (done.state === 'skipped') return 'automations.stepState.skipped';
+  // A wait step (ADR-0152): not started, waiting until a time, or over.
+  if (done.kind === 'wait') {
+    return done.state === 'delayed'
+      ? 'automations.wait.delayed'
+      : done.state === 'completed'
+        ? 'automations.wait.done'
+        : 'automations.stepStatus.pending';
+  }
   // A step that asks a person before it runs (ADR-0146).
   if (done.state === 'awaiting_approval') return 'automations.stepState.awaiting_approval';
   if (done.state === 'declined') {

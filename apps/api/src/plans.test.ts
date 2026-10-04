@@ -237,6 +237,8 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
         readonly askBeforeCampaign?: boolean;
         /** ADR-0151: `campaign` searches the Company Brain, with the person's approval. */
         readonly searchInCampaign?: boolean;
+        /** ADR-0152: an hour's wait between `research` and `campaign`. */
+        readonly pauseBeforeCampaign?: boolean;
       } = {},
     ) {
       const execution = await planning(tenant);
@@ -259,7 +261,20 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
           objective: 'Study the melon market.',
           steps: [
             step('research', researcher),
-            step('campaign', marketer, ['research']),
+            step('campaign', marketer, [
+              options.pauseBeforeCampaign === true ? 'pause' : 'research',
+            ]),
+            ...(options.pauseBeforeCampaign === true
+              ? [
+                  {
+                    id: 'pause',
+                    kind: 'wait',
+                    label: 'Wait an hour',
+                    dependsOn: ['research'],
+                    wait: { seconds: 3_600 },
+                  },
+                ]
+              : []),
             ...(options.askBeforeCampaign === true
               ? [step('brief', researcher, ['research']), step('launch', marketer, ['campaign'])]
               : []),
@@ -441,6 +456,7 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
           outcome: null,
           answer: null,
           missing: [],
+          until: null,
         },
         {
           stepId: 'campaign',
@@ -454,6 +470,7 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
           outcome: null,
           answer: null,
           missing: [],
+          until: null,
         },
       ],
     });
@@ -1579,6 +1596,58 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
       expect(closed.status).toBe('completed');
       expect(w.t.kicked).toEqual([w.research, w.brief]);
     });
+  });
+
+  it('ADR-0152: shows a wait step that started, and until when, and the steps after it waiting', async () => {
+    const t = await setup(ROLES, { runPlans: true });
+    const executions = createExecutionService({
+      repository: t.stores.executions,
+      organizations: t.stores.tenancy,
+      authorization: createAuthorizationService(ROLES as never),
+      audit: t.stores.audit,
+    });
+    const { plan, ids } = await t.proposeWork({
+      approvalRequired: true,
+      pauseBeforeCampaign: true,
+    });
+    const [research] = ids as [ExecutionId];
+    const version = must(await t.stores.plans.findVersion(t.orgA, plan.id, plan.version));
+    const detail = (await (await t.get('token-alice', `/plans/${plan.id}`)).json()) as {
+      current: { steps: { id: string; kind: string; wait: unknown }[] };
+    };
+    expect(detail.current.steps.find((s) => s.id === 'pause')).toMatchObject({
+      kind: 'wait',
+      wait: { seconds: 3_600 },
+    });
+    expect(
+      (
+        await t.post('token-alice', `/plans/${plan.id}/approve`, {
+          version: 1,
+          digest: version.digest,
+        })
+      ).status,
+    ).toBe(200);
+    const runtime = await resolveRuntimeTenant(t.tenant.userId, t.orgA, t.stores.tenancy);
+    await finish({ executions, runtime }, research, 'research');
+    const woken: Date[] = [];
+    await createPlanConductor({
+      plans: t.stores.plans,
+      executions,
+      starter: { start: async (_t, id) => void t.kicked.push(id) },
+      wakeups: { wake: async (_t, _p, at) => void woken.push(at) },
+    }).advance(runtime, plan.id);
+    expect(woken).toHaveLength(1);
+    const view = (await (await t.get('token-alice', `/plans/${plan.id}/steps`)).json()) as {
+      steps: { stepId: string; kind: string; state: string; until: string | null }[];
+    };
+    const until = must((await t.stores.plans.find(t.orgA, plan.id))?.waits?.[0]).until;
+    expect(view.steps.find((s) => s.stepId === 'pause')).toMatchObject({
+      kind: 'wait',
+      state: 'delayed',
+      until,
+    });
+    expect(view.steps.find((s) => s.stepId === 'campaign')?.state).toBe('waiting');
+    expect(t.kicked).toEqual([research]);
   });
 
   describe('delegation', () => {

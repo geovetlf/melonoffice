@@ -12,6 +12,7 @@ import type {
   PlanStatus,
   PlanStepApproval,
   PlanVersion,
+  PlanWait,
   UserId,
 } from '@melonoffice/domain';
 import { isExecutionId } from '@melonoffice/execution';
@@ -264,6 +265,11 @@ export function checkStoredPlan(plan: Plan): Plan {
       invalid('stepApprovals');
     }
   }
+  if (plan.waits !== undefined) {
+    if (!Array.isArray(plan.waits)) invalid('waits');
+    for (const w of plan.waits) checkWait(w);
+    if (new Set(plan.waits.map((w) => w.stepId)).size !== plan.waits.length) invalid('waits');
+  }
   const { decision } = plan;
   if (decision !== undefined) {
     if (decision.decision !== 'approved' && decision.decision !== 'rejected') invalid('decision');
@@ -383,6 +389,39 @@ export function recordCondition(
     ...next,
     conditions: Object.freeze([...(plan.conditions ?? []), recorded]),
   });
+}
+
+/** A started wait names its step and two instants, the second after the first. */
+function checkWait(wait: PlanWait): void {
+  if (typeof wait.stepId !== 'string' || wait.stepId.length === 0) invalid('waits');
+  const started = typeof wait.startedAt === 'string' ? Date.parse(wait.startedAt) : NaN;
+  const until = typeof wait.until === 'string' ? Date.parse(wait.until) : NaN;
+  if (Number.isNaN(started) || Number.isNaN(until) || until <= started) invalid('waits');
+}
+
+/**
+ * Records that a wait step started (ADR-0152), once: it lasts `seconds` from this write. A plan
+ * that already holds one for that step is a concurrent start, and the one recorded stands.
+ */
+export function recordWait(
+  plan: Plan,
+  entry: { readonly stepId: string; readonly seconds: number },
+  at: IsoTimestamp,
+): Plan {
+  if (plan.status !== 'executing') throw new PlanningError('invalid_plan_transition');
+  if ((plan.waits ?? []).some((w) => w.stepId === entry.stepId)) {
+    throw new PlanningError('plan_concurrency_conflict');
+  }
+  if (!Number.isSafeInteger(entry.seconds) || entry.seconds < 1) invalid('waits');
+  const next = nextRevision(plan, at);
+  const until = new Date(Date.parse(next.updatedAt) + entry.seconds * 1000).toISOString();
+  const recorded: PlanWait = Object.freeze({
+    stepId: entry.stepId,
+    startedAt: next.updatedAt,
+    until: until as IsoTimestamp,
+  });
+  checkWait(recorded);
+  return Object.freeze({ ...next, waits: Object.freeze([...(plan.waits ?? []), recorded]) });
 }
 
 /** A step's approval names its step and the approval, nothing else. */

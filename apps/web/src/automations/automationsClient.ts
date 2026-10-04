@@ -157,6 +157,7 @@ export interface PlanStepView {
 export type PlanStepState =
   | 'waiting'
   | 'awaiting_approval'
+  | 'delayed'
   | 'running'
   | 'completed'
   | 'stopped'
@@ -188,7 +189,7 @@ export interface PlanDetail extends PlanView {
 
 export interface PlanStepProgress {
   readonly stepId: string;
-  /** `specialist` or `condition` (a check). */
+  /** `specialist`, `condition` (a check) or `wait` (ADR-0152). */
   readonly kind?: string;
   readonly label: string;
   readonly state?: PlanStepState;
@@ -203,6 +204,8 @@ export interface PlanStepProgress {
   readonly failure: string | null;
   readonly answer: string | null;
   readonly missing: readonly string[];
+  /** On a wait step that started (ADR-0152): when the steps after it may start. */
+  readonly until?: string | null;
 }
 
 /** Planning a workflow gives its plan, or why the plan was refused. */

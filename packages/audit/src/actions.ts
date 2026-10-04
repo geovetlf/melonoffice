@@ -605,6 +605,12 @@ export const AUDIT_ACTIONS = {
       "A running plan's step, marked to wait for a person, became ready and asked for an approval bound to that exact plan version, step and child (ADR-0146); `nodeId` is the step, `reference` the approval.",
     results: ['success'],
   },
+  'plan.wait_started': {
+    category: 'planning',
+    description:
+      "One of a running plan's wait steps started once the steps before it completed (ADR-0152); `nodeId` is the step, `reference` how long it waits (`3600s`). The steps after it start once it ends.",
+    results: ['success'],
+  },
   'plan.step_declined': {
     category: 'planning',
     description:

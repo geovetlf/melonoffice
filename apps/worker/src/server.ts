@@ -102,6 +102,7 @@ import { createFollowUpHandler, RUN_FOLLOW_UP_PATH } from './follow-ups.js';
 import { createForecastHandler } from './forecasts.js';
 import { createJobHandler } from './handler.js';
 import { createWorkerRuntime } from './runtime.js';
+import { createPlanWakeHandler, createPlanWakeups, RUN_PLAN_WAKE_PATH } from './plan-wakeups.js';
 import { createExecutionSweeper, RUN_SWEEP_PATH } from './sweeps.js';
 
 const config = loadConfig(process.env);
@@ -382,6 +383,16 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
       },
       logger: logger.child({ component: 'plan-conditions' }),
     }),
+    // Plans' wait steps (ADR-0152): a task on the same queue wakes the plan when a wait ends.
+    wakeups: createPlanWakeups(
+      createCloudTasksScheduler({
+        queue: runtime.queue,
+        targetUrl: `${runtime.workerUrl}${RUN_PLAN_WAKE_PATH}`,
+        audience: runtime.workerUrl,
+        invokerEmail: runtime.invokerEmail,
+        dispatchDeadlineSeconds: Math.ceil(runtime.leaseMs / 1000),
+      }),
+    ),
     dispatcher: createCloudTasksDispatcher({
       queue: runtime.queue,
       targetUrl: `${runtime.workerUrl}${RUN_JOB_PATH}`,
@@ -475,6 +486,17 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
       logger: logger.child({ component: 'follow-ups' }),
     }),
     events: createEventHandler({ events, logger: logger.child({ component: 'events' }) }),
+    ...(advancePlan === undefined
+      ? {}
+      : {
+          planWakes: createPlanWakeHandler({
+            plans,
+            executions: stores.executions,
+            tenancy,
+            advance: advancePlan,
+            logger: logger.child({ component: 'plans' }),
+          }),
+        }),
     invoker: createServiceIdentityVerifier({
       audience: runtime.workerUrl,
       allowedEmails: [runtime.invokerEmail],
