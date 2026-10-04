@@ -431,7 +431,7 @@ export function createRuntime(options: RuntimeOptions): Runtime {
         case 'success':
           // A tool a model asked for (ADR-0103): its output is kept for the agent's next turn.
           // The gate already checked it against the tool's output schema.
-          if (outputs !== undefined && work?.keepsToolOutput?.(node) === true) {
+          if (outputs !== undefined && work?.keepsToolOutput?.(node, execution) === true) {
             try {
               await outputs.record(tenant, {
                 executionId: execution.id,

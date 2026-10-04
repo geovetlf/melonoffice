@@ -316,8 +316,12 @@ describe('Harness tool loop: the turns (ADR-0103)', () => {
     expect(await source.toolInput(TENANT, execution, node('schedule', { type: 'tool' }))).toEqual({
       fixed: true,
     });
-    expect(source.keepsToolOutput(tool('lookup'))).toBe(true);
-    expect(source.keepsToolOutput(node('schedule', { type: 'tool' }))).toBe(false);
+    expect(source.keepsToolOutput(tool('lookup'), execution)).toBe(true);
+    expect(source.keepsToolOutput(node('schedule', { type: 'tool' }), execution)).toBe(false);
+    // What the work it wraps keeps, it keeps too (ADR-0154).
+    const keeping = loop.work({ ...inner, keepsToolOutput: (n) => n.id === 'schedule' });
+    expect(keeping.keepsToolOutput(node('schedule', { type: 'tool' }), execution)).toBe(true);
+    expect(keeping.keepsToolOutput(node('other', { type: 'tool' }), execution)).toBe(false);
   });
 
   it('counts a task’s working time without the time it waited on a person', () => {
