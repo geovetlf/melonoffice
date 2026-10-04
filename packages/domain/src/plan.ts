@@ -71,6 +71,19 @@ export interface PlanStepAttempt {
   readonly notBefore: IsoTimestamp;
 }
 
+/**
+ * A step the plan's approved credit budget could not cover (ADR-0163): it never starts, and its
+ * branch ends. What the plan had used, what the step needed and the budget, in credits, as they
+ * were when it was blocked.
+ */
+export interface PlanBudgetBlock {
+  readonly stepId: string;
+  readonly usedCredits: number;
+  readonly neededCredits: number;
+  readonly capCredits: number;
+  readonly blockedAt: IsoTimestamp;
+}
+
 /** How a step's result is checked before it counts as done (the Verification Engine is X6). */
 export type VerificationPolicy = 'output_schema' | 'human_review' | 'specialist_review' | 'checks';
 
@@ -330,6 +343,8 @@ export interface Plan {
   readonly waits?: readonly PlanWait[];
   /** Each new run of a step that failed for a passing reason, in order (ADR-0153). */
   readonly attempts?: readonly PlanStepAttempt[];
+  /** Each step the approved credit budget could not cover, once (ADR-0163). */
+  readonly budgetBlocks?: readonly PlanBudgetBlock[];
   readonly revision: number;
   readonly createdAt: IsoTimestamp;
   readonly createdBy: UserId;

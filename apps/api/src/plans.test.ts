@@ -803,6 +803,36 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
       expect(await again.json()).toEqual(body);
     });
 
+    it('ADR-0164: plans a workflow’s read-only tool step where this server runs tools', async () => {
+      const steps = [
+        researchStep,
+        campaignStep,
+        {
+          id: 'search',
+          kind: 'tool',
+          label: 'Search the Company Brain',
+          dependsOn: ['campaign'],
+          performedBy: 'campaign',
+          tool: { id: 'knowledge_search', version: 1 },
+          input: { query: 'melon prices' },
+        },
+      ];
+      const t = await setup();
+      const id = await activeWorkflow(t, steps);
+      const planned = await t.post('token-alice', `/workflows/${id}/plans`, { requestKey: 'r' });
+      const plan = (await planned.json()) as PlanDetail;
+      expect(planned.status, JSON.stringify(plan)).toBe(201);
+      expect(
+        (plan.current.steps as unknown as Record<string, unknown>[]).find((s) => s.id === 'search'),
+      ).toMatchObject({
+        kind: 'tool',
+        performedBy: 'campaign',
+        tool: { id: 'knowledge_search', version: 1 },
+        input: { query: 'melon prices' },
+        inputFrom: null,
+      });
+    });
+
     it('refuses bad bodies, wrong moves, inactive workflows and other organizations', async () => {
       const t = await setup();
       const bad = await t.post('token-alice', '/workflows', { name: 'X', steps: [], extra: 1 });

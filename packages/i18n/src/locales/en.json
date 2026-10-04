@@ -2408,6 +2408,7 @@
   "audit.action.plan.wait_started": "A plan started waiting before its next steps",
   "audit.action.plan.step_retried": "A plan step failed for a passing reason and runs again",
   "audit.action.plan.step_declined": "A plan step was not approved: its branch was skipped",
+  "audit.action.plan.step_blocked": "A plan step did not start: it would pass the approved credit budget",
   "audit.action.delegation.created": "A plan's steps were handed to agents",
   "audit.action.workflow.version_created": "A new version of an automation was saved",
   "audit.action.workflow.state_changed": "An automation changed state",

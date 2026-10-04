@@ -4,6 +4,7 @@ import {
   inAppChannel,
 } from '@melonoffice/agents';
 import type { PlanId } from '@melonoffice/domain';
+import { createAgentOutputStore } from '@melonoffice/execution';
 import { createAIUsageLedger } from '@melonoffice/ai-usage';
 import { Firestore } from '@google-cloud/firestore';
 import { serve } from '@hono/node-server';
@@ -368,6 +369,8 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
     work: routed.work,
     verifier: routed.verifier,
     outputs: agents.outputs,
+    // What a plan's runs used, against the budget a person approved (ADR-0163).
+    planOutputs: createAgentOutputStore(agentOutputs),
     onStopped: routed.onStopped,
     toolLoop: routed.toolLoop,
     ...(taskParts.onEnded === undefined ? {} : { onEnded: taskParts.onEnded }),

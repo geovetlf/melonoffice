@@ -1,3 +1,4 @@
+import { createPlanSpending } from '@melonoffice/agents';
 import type { AIUsageSink } from '@melonoffice/ai-usage';
 import {
   createAIGateway,
@@ -21,7 +22,11 @@ import type {
   OrganizationId,
   PlanId,
 } from '@melonoffice/domain';
-import { createExecutionService, type ExecutionRepository } from '@melonoffice/execution';
+import {
+  createExecutionService,
+  type AgentOutputStore,
+  type ExecutionRepository,
+} from '@melonoffice/execution';
 import { createToolGate } from '@melonoffice/guardrails';
 import { createJobService, type JobRepository, type JobService } from '@melonoffice/jobs';
 import type { EventBus } from '@melonoffice/events';
@@ -126,6 +131,11 @@ export interface WorkerRuntimeOptions {
    * ready is not started, and the steps after it wait.
    */
   readonly wakeups?: PlanWakeups;
+  /**
+   * The agents' kept answers and model calls, read to measure what a plan's runs used against the
+   * budget a person approved (ADR-0163). Absent: a step of a plan with a known budget never starts.
+   */
+  readonly planOutputs?: Pick<AgentOutputStore, 'find'>;
   /**
    * Where a plan's end is told (ADR-0119): `plan.finished`, once, for the person who made it, so
    * their bell says the result is ready. Absent: a plan ends quietly, as before.
@@ -262,6 +272,12 @@ export function createWorkerRuntime(options: WorkerRuntimeOptions): {
             },
             ...(options.conditions === undefined ? {} : { conditions: options.conditions }),
             ...(options.wakeups === undefined ? {} : { wakeups: options.wakeups }),
+            // What its runs used, against the budget a person approved (ADR-0163).
+            ...(options.planOutputs === undefined
+              ? {}
+              : {
+                  spending: createPlanSpending({ executions, outputs: options.planOutputs }),
+                }),
             // A step that failed for a passing reason runs again, as its plan allows (ADR-0153).
             attempts: createPlanStepAttempts({ executions, specialists }),
             // A step marked "ask me before this step" waits for a person (ADR-0146).

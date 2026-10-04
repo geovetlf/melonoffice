@@ -13,6 +13,8 @@ import {
   WAIT_CHECK,
   type ConditionEvaluator,
   type PlanConductorOptions,
+  type PlanSpending,
+  creditBudgetOf,
   type PlanWakeups,
   type StepApprovalAsk,
   type StepApprovals,
@@ -21,7 +23,16 @@ import {
 import { createPlanStepAttempts } from './delegation.js';
 import { isPlanningError } from './errors.js';
 import { stepExecutionOf } from './model.js';
-import { ALICE, must, proposal, specialistStep, toolStep, world, type World } from './testkit.js';
+import {
+  ALICE,
+  must,
+  proposal,
+  specialistStep,
+  toolStep,
+  world,
+  type World,
+  type WorldOptions,
+} from './testkit.js';
 
 /**
  * The plan conductor (WF-1, ADR-0070): a plan a person approved runs its specialist steps in
@@ -88,8 +99,9 @@ async function setup(
   conditions?: ConditionEvaluator,
   approvals?: StepApprovals,
   extra: Partial<PlanConductorOptions> = {},
+  options: WorldOptions = {},
 ) {
-  const w = await world();
+  const w = await world(options);
   const owner = await w.seed(w.orgA, ALICE, { type: 'leadership', role: 'chief_of_staff' });
   const researcher = await w.seed(w.orgA, ALICE, { toolIds: ['lookup'] });
   const execution = await w.planning(w.tenantA, owner);
@@ -1374,5 +1386,133 @@ describe('a failed step runs again (ADR-0153)', () => {
         false,
       ),
     ).toBe(false);
+  });
+});
+
+describe('the approved credit budget (D5, ADR-0163)', () => {
+  // 1 000 input and 1 000 output tokens at the fixture's price: 5 credits per agent step.
+  const budget = { inputTokens: 1_000, outputTokens: 1_000 };
+  const steps = (researcher: Awaited<ReturnType<World['seed']>>) => [
+    specialistStep('research', researcher, { approvalRequired: true, budget }),
+    specialistStep('report', researcher, { dependsOn: ['research'], budget }),
+    specialistStep('summary', researcher, { dependsOn: ['research'], budget }),
+  ];
+
+  async function budgeted(meter = true) {
+    const charged = new Map<string, number>();
+    const asked: string[][] = [];
+    const spending: PlanSpending = {
+      async used(_tenant, ids) {
+        asked.push([...ids]);
+        return ids.reduce((total, id) => total + (charged.get(id) ?? 0), 0);
+      },
+    };
+    const t = await setup(steps, undefined, undefined, meter ? { spending } : {}, {
+      rate: 1_000,
+    });
+    const version = must(
+      await t.w.planRepository.findVersion(t.w.orgA, t.planned.id, t.planned.version),
+    );
+    expect(creditBudgetOf(version)).toBe(15);
+    await t.approve();
+    const charge = async (stepId: string, credits: number) =>
+      void charged.set(await t.childOf(stepId), credits);
+    return { ...t, charge, asked };
+  }
+
+  it('starts each step while what the plan used and committed fits the budget', async () => {
+    const t = await budgeted();
+    await t.conductor.run(t.w.tenantA, t.planned.id);
+    expect(t.started).toHaveLength(1);
+    await t.charge('research', 5);
+    await t.complete('research');
+    await t.conductor.advance(t.w.runtimeA, t.planned.id);
+    // 5 used, and 5 for each of the two steps after it: exactly the budget.
+    expect(t.started).toHaveLength(3);
+    for (const id of ['report', 'summary']) {
+      await t.charge(id, 5);
+      await t.complete(id);
+    }
+    expect((await t.conductor.advance(t.w.runtimeA, t.planned.id)).status).toBe('completed');
+    expect(t.w.events('plan.step_blocked')).toEqual([]);
+  });
+
+  it('waits while another step runs, and starts once what it used leaves room', async () => {
+    const t = await budgeted();
+    await t.conductor.run(t.w.tenantA, t.planned.id);
+    await t.charge('research', 8);
+    await t.complete('research');
+    await t.conductor.advance(t.w.runtimeA, t.planned.id);
+    // 8 used: one more step fits (13), two do not (18). The second waits for the first.
+    expect(t.started.map((s) => s.id)).toEqual([
+      await t.childOf('research'),
+      await t.childOf('report'),
+    ]);
+    expect(t.w.events('plan.step_blocked')).toEqual([]);
+    await t.charge('report', 1);
+    await t.complete('report');
+    await t.conductor.advance(t.w.runtimeA, t.planned.id);
+    // 9 used: the summary fits now (14).
+    expect(t.started.at(-1)?.id).toBe(await t.childOf('summary'));
+    await t.charge('summary', 5);
+    await t.complete('summary');
+    expect((await t.conductor.advance(t.w.runtimeA, t.planned.id)).status).toBe('completed');
+  });
+
+  it('blocks a step the budget cannot cover, records why, and never starts it', async () => {
+    const t = await budgeted();
+    await t.conductor.run(t.w.tenantA, t.planned.id);
+    await t.charge('research', 12);
+    await t.complete('research');
+    const ended = await t.conductor.advance(t.w.runtimeA, t.planned.id);
+    // Neither step after it fits (17): both are blocked, so every branch ended there.
+    expect(t.started).toHaveLength(1);
+    expect(ended.status).toBe('failed');
+    expect((await t.stored()).budgetBlocks).toEqual([
+      {
+        stepId: 'report',
+        usedCredits: 12,
+        neededCredits: 5,
+        capCredits: 15,
+        blockedAt: '2026-09-27T12:00:00.000Z',
+      },
+      {
+        stepId: 'summary',
+        usedCredits: 12,
+        neededCredits: 5,
+        capCredits: 15,
+        blockedAt: '2026-09-27T12:00:00.000Z',
+      },
+    ]);
+    expect(t.w.events('plan.step_blocked')).toEqual([
+      expect.objectContaining({
+        nodeId: 'report',
+        reason: 'budget_exceeded',
+        reference: 'used:12-needed:5-cap:15',
+      }),
+      expect.objectContaining({ nodeId: 'summary', reason: 'budget_exceeded' }),
+    ]);
+    expect(t.w.events('plan.state_changed').at(-1)).toMatchObject({
+      reason: 'budget_exceeded',
+      nodeId: 'report',
+    });
+    const parent = await t.w.executions.get(t.w.tenantA, t.planned.executionId);
+    expect(parent.nodes.find((n) => n.id === 'report')).toMatchObject({
+      status: 'failed',
+      error: { code: 'budget_exceeded' },
+    });
+    expect(await t.status(await t.childOf('report'))).toBe('pending');
+    // Every run the plan had was measured, its own organization's only.
+    expect(t.asked.at(-1)).toEqual([
+      await t.childOf('research'),
+      await t.childOf('report'),
+      await t.childOf('summary'),
+    ]);
+  });
+
+  it('starts no step of a plan with a budget when nothing measures what it used', async () => {
+    const t = await budgeted(false);
+    await t.conductor.run(t.w.tenantA, t.planned.id);
+    expect(t.started).toEqual([]);
   });
 });

@@ -2408,6 +2408,7 @@
   "audit.action.plan.wait_started": "Un plan empezó a esperar antes de sus siguientes pasos",
   "audit.action.plan.step_retried": "Un paso del plan falló por un motivo pasajero y se ejecuta de nuevo",
   "audit.action.plan.step_declined": "Un paso de un plan no se aprobó: su rama se saltó",
+  "audit.action.plan.step_blocked": "Un paso del plan no empezó: superaría el presupuesto de créditos aprobado",
   "audit.action.delegation.created": "Se asignaron los pasos de un plan a agentes",
   "audit.action.workflow.version_created": "Se guardó una nueva versión de una automatización",
   "audit.action.workflow.state_changed": "Una automatización cambió de estado",
