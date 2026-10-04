@@ -1,5 +1,5 @@
 import { I18nProvider } from '@melonoffice/i18n';
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../App.js';
 import { createServices } from '../identity/services.js';
@@ -7,7 +7,7 @@ import { REFRESH_KEY } from '../identity/session.js';
 import { API, KEY, fakeBackend, memoryStore } from '../identity/testing.js';
 
 /**
- * Every agent's tasks (ADR-0148): the API's tasks as it gives them, newest first, a page at a
+ * Every agent's work (ADR-0148): the API's tasks as it gives them, newest first, a page at a
  * time, with details on demand. Read only: the page offers nothing that changes a task.
  */
 
@@ -16,6 +16,9 @@ beforeEach(() => globalThis.history.replaceState(null, '', '/'));
 
 const task = (id: string, extra: Record<string, unknown> = {}) => ({
   id,
+  origin: 'task',
+  dependsOn: [],
+  approval: null,
   agent: { id: 'spec_ana', name: 'Sales agent', status: 'active' },
   request: `Pedido ${id}`,
   status: 'running',
@@ -42,6 +45,15 @@ const task = (id: string, extra: Record<string, unknown> = {}) => ({
   ...extra,
 });
 
+/** A step of a plan an agent runs (ADR-0149), as the API shows it. */
+const step = (id: string, extra: Record<string, unknown> = {}) =>
+  task(id, {
+    origin: 'plan_step',
+    request: `Paso ${id}`,
+    plan: { id: 'plan-1', status: 'executing', step: { state: 'running' } },
+    ...extra,
+  });
+
 const TASKS = [
   task('t3', {
     agent: { id: 'spec_leo', name: 'Paused agent', status: 'paused' },
@@ -51,7 +63,6 @@ const TASKS = [
     completedAt: '2026-10-04T12:02:00.000Z',
     progress: { done: 3, total: 3 },
     result: { summary: 'Quedan 12 pollos.', truncated: true, missing: 2 },
-    plan: { id: 'plan-1' },
   }),
   task('t2', {
     status: 'failed',
@@ -85,13 +96,13 @@ function open(configure?: (backend: ReturnType<typeof fakeBackend>) => void, at 
 const listCalls = (backend: ReturnType<typeof fakeBackend>) =>
   backend.apiCalls().filter((c) => c.url.includes('/agent-tasks'));
 
-describe("Every agent's tasks (ADR-0148)", () => {
+describe("Every agent's work (ADR-0148)", () => {
   it('lists the tasks newest first with agent, state, date and progress', async () => {
     open();
     expect(
-      await screen.findByRole('heading', { level: 1, name: "Every agent's tasks" }),
+      await screen.findByRole('heading', { level: 1, name: "Every agent's work" }),
     ).toBeTruthy();
-    const list = await screen.findByRole('list', { name: "Every agent's tasks" });
+    const list = await screen.findByRole('list', { name: "Every agent's work" });
     const rows = within(list).getAllByRole('listitem');
     expect(rows.map((r) => r.textContent?.split(/ (Completed|Failed|In progress)/)[0])).toEqual([
       'Revisa el stock',
@@ -113,7 +124,7 @@ describe("Every agent's tasks (ADR-0148)", () => {
     open((b) => {
       b.options.organizationTasks = { org_1: [task('t1')] };
     });
-    const list = await screen.findByRole('list', { name: "Every agent's tasks" });
+    const list = await screen.findByRole('list', { name: "Every agent's work" });
     expect(within(list).getAllByRole('listitem')).toHaveLength(1);
     cleanup();
     open((b) => {
@@ -124,14 +135,13 @@ describe("Every agent's tasks (ADR-0148)", () => {
 
   it('opens a task’s details on demand: state, dates, steps, plan and missing data', async () => {
     open();
-    const list = await screen.findByRole('list', { name: "Every agent's tasks" });
+    const list = await screen.findByRole('list', { name: "Every agent's work" });
     const row = within(within(list).getAllByRole('listitem')[0] as HTMLElement);
     expect(row.queryByText('Steps')).toBeNull();
     fireEvent.click(row.getByRole('button', { name: 'Details' }));
     expect(row.getByText('Steps')).toBeTruthy();
     expect(row.getByText(/Agent work: done/)).toBeTruthy();
     expect(row.getByText(/Verification: running/)).toBeTruthy();
-    expect(row.getByRole('link', { name: 'Open Automations' })).toBeTruthy();
     expect(row.getByText('2 items the agent asked for')).toBeTruthy();
     fireEvent.click(row.getByRole('button', { name: 'Hide details' }));
     expect(row.queryByText('Steps')).toBeNull();
@@ -141,7 +151,7 @@ describe("Every agent's tasks (ADR-0148)", () => {
     const backend = open((b) => {
       b.options.organizationTasksPageSize = 2;
     });
-    const list = await screen.findByRole('list', { name: "Every agent's tasks" });
+    const list = await screen.findByRole('list', { name: "Every agent's work" });
     expect(within(list).getAllByRole('listitem')).toHaveLength(2);
     fireEvent.click(screen.getByRole('button', { name: 'Show older tasks' }));
     expect(await screen.findByText('Resume las ventas')).toBeTruthy();
@@ -152,7 +162,7 @@ describe("Every agent's tasks (ADR-0148)", () => {
 
   it('offers the agents and states the API lists, and sends the filters for the server to check', async () => {
     const backend = open();
-    await screen.findByRole('list', { name: "Every agent's tasks" });
+    await screen.findByRole('list', { name: "Every agent's work" });
     const agent = screen.getByRole('combobox', { name: 'Agent' });
     expect(
       within(agent)
@@ -178,7 +188,7 @@ describe("Every agent's tasks (ADR-0148)", () => {
     const backend = open((b) => {
       b.options.permissions.push('execution.cancel', 'specialist.task', 'specialist.manage');
     });
-    const list = await screen.findByRole('list', { name: "Every agent's tasks" });
+    const list = await screen.findByRole('list', { name: "Every agent's work" });
     for (const row of within(list).getAllByRole('listitem')) {
       expect(
         within(row)
@@ -204,7 +214,7 @@ describe("Every agent's tasks (ADR-0148)", () => {
         ],
       };
     });
-    await screen.findByRole('list', { name: "Every agent's tasks" });
+    await screen.findByRole('list', { name: "Every agent's work" });
     fireEvent.click(screen.getByRole('button', { name: 'Details' }));
     const text = document.body.textContent ?? '';
     for (const hidden of ['gemini-secret-model', 'tok-abc-123', 'user_42']) {
@@ -214,9 +224,9 @@ describe("Every agent's tasks (ADR-0148)", () => {
 
   it('is linked from the Agents page, and not shown to a role that cannot read agents', async () => {
     open(undefined, '/agents');
-    fireEvent.click(await screen.findByRole('button', { name: "Every agent's tasks" }));
+    fireEvent.click(await screen.findByRole('button', { name: "Every agent's work" }));
     expect(
-      await screen.findByRole('heading', { level: 1, name: "Every agent's tasks" }),
+      await screen.findByRole('heading', { level: 1, name: "Every agent's work" }),
     ).toBeTruthy();
     expect(globalThis.location.pathname).toBe('/agents/tasks');
     cleanup();
@@ -224,8 +234,116 @@ describe("Every agent's tasks (ADR-0148)", () => {
       b.options.permissions = ['organization.read', 'department.read'];
     });
     await screen.findByRole('heading', { level: 1 });
-    expect(screen.queryByRole('list', { name: "Every agent's tasks" })).toBeNull();
+    expect(screen.queryByRole('list', { name: "Every agent's work" })).toBeNull();
     expect(listCalls(backend)).toHaveLength(0);
+  });
+
+  it('marks where each item comes from and lists plan steps beside tasks', async () => {
+    open((b) => {
+      b.options.organizationTasks = {
+        org_1: [
+          step('s2', { createdAt: '2026-10-04T13:00:00.000Z' }),
+          task('t1', { createdAt: '2026-10-04T12:00:00.000Z' }),
+          step('s1', {
+            createdAt: '2026-10-04T11:00:00.000Z',
+            status: 'pending',
+            plan: { id: 'plan-1', status: 'executing', step: { state: 'skipped' } },
+          }),
+        ],
+      };
+    });
+    const list = await screen.findByRole('list', { name: "Every agent's work" });
+    const rows = within(list).getAllByRole('listitem');
+    expect(
+      rows.map((r) => (within(r).queryByText(/^Plan step/) === null ? 'task' : 'plan_step')),
+    ).toEqual(['plan_step', 'task', 'plan_step']);
+    expect(within(rows[0] as HTMLElement).getByText('In its plan: Running')).toBeTruthy();
+    expect(
+      within(rows[2] as HTMLElement).getByText(
+        'In its plan: Skipped: an earlier step ended this branch',
+      ),
+    ).toBeTruthy();
+  });
+
+  it('opens a plan step with its plan, its state there, what it waits on and its approval', async () => {
+    open((b) => {
+      b.options.organizationTasks = {
+        org_1: [
+          step('s1', {
+            status: 'pending',
+            plan: { id: 'plan-1', status: 'executing', step: { state: 'declined' } },
+            dependsOn: [{ label: 'Investigar mercado', state: 'completed' }],
+            approval: { state: 'rejected' },
+            failure: 'rejected',
+          }),
+        ],
+      };
+    });
+    const list = await screen.findByRole('list', { name: "Every agent's work" });
+    const row = within(within(list).getAllByRole('listitem')[0] as HTMLElement);
+    expect(row.getByText('Ended because a person rejected it')).toBeTruthy();
+    fireEvent.click(row.getByRole('button', { name: 'Details' }));
+    expect(row.getByText(/Running ·/)).toBeTruthy();
+    expect(row.getByRole('link', { name: 'Open Automations' })).toBeTruthy();
+    expect(row.getAllByText('Not approved: its branch was skipped').length).toBeGreaterThan(0);
+    expect(row.getByText('Investigar mercado (Done)')).toBeTruthy();
+    expect(row.getByText('Rejected')).toBeTruthy();
+  });
+
+  it('shows approved and expired step approvals in words', async () => {
+    open((b) => {
+      b.options.organizationTasks = {
+        org_1: [
+          step('s2', { approval: { state: 'approved' } }),
+          step('s1', {
+            approval: { state: 'expired' },
+            plan: { id: 'plan-1', status: 'executing', step: { state: 'declined' } },
+          }),
+        ],
+      };
+    });
+    const list = await screen.findByRole('list', { name: "Every agent's work" });
+    const [first, second] = within(list).getAllByRole('listitem') as [HTMLElement, HTMLElement];
+    fireEvent.click(within(first).getByRole('button', { name: 'Details' }));
+    expect(within(first).getByText('Approved')).toBeTruthy();
+    fireEvent.click(within(second).getByRole('button', { name: 'Details' }));
+    expect(within(second).getByText('Not decided in time')).toBeTruthy();
+  });
+
+  it('filters by origin on the server', async () => {
+    const backend = open((b) => {
+      b.options.organizationTasks = { org_1: [step('s1'), task('t1')] };
+    });
+    await screen.findByRole('list', { name: "Every agent's work" });
+    const origin = screen.getByRole('combobox', { name: 'Origin' });
+    expect(
+      within(origin)
+        .getAllByRole('option')
+        .map((o) => o.textContent),
+    ).toEqual(['All', 'Agent tasks', 'Plan steps']);
+    fireEvent.change(origin, { target: { value: 'plan_step' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Show' }));
+    await waitFor(() => expect(screen.queryByText('Pedido t1')).toBeNull());
+    expect(screen.getByText('Paso s1')).toBeTruthy();
+    expect(listCalls(backend).at(-1)?.url).toContain('origin=plan_step');
+  });
+
+  it('says when plan steps could not be read, or are not the person’s to read', async () => {
+    open((b) => {
+      b.options.organizationTasksSources = { task: 'read', plan_step: 'unavailable' };
+    });
+    expect(
+      await screen.findByText(
+        "Plan steps can't be read right now: the list shows agent tasks only.",
+      ),
+    ).toBeTruthy();
+    cleanup();
+    open((b) => {
+      b.options.organizationTasksSources = { task: 'read', plan_step: 'not_permitted' };
+    });
+    expect(
+      await screen.findByText('Plan steps are shown to people who can read plans.'),
+    ).toBeTruthy();
   });
 
   it('says what went wrong when the API refuses or fails', async () => {

@@ -1073,6 +1073,293 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
       );
       expect(w.t.kicked).toEqual([w.research, w.brief]);
     });
+
+    describe('ADR-0149: plan steps in the list of every agent’s work', () => {
+      interface Item {
+        readonly id: string;
+        readonly origin: string;
+        readonly agent: { readonly id: string | null };
+        readonly request: string;
+        readonly status: string;
+        readonly failure: string | null;
+        readonly createdAt: string;
+        readonly plan: {
+          readonly id: string;
+          readonly status: string;
+          readonly step: { readonly state: string };
+        } | null;
+        readonly dependsOn: readonly { readonly label: string; readonly state: string }[];
+        readonly approval: { readonly state: string } | null;
+        readonly result: { readonly summary: string } | null;
+      }
+      interface Body {
+        readonly tasks: readonly Item[];
+        readonly nextCursor: string | null;
+        readonly sources: { readonly task: string; readonly plan_step: string };
+        readonly origins: readonly string[];
+        readonly error?: string;
+        readonly field?: string;
+      }
+      const list = async (
+        w: Awaited<ReturnType<typeof waitingPlan>>,
+        query = '',
+        token = 'token-alice',
+        org = w.t.orgA,
+      ) => {
+        const response = await w.t.app.request(
+          `/v1/organizations/${org}/agent-tasks${query}`,
+          w.t.as(token),
+        );
+        return { status: response.status, body: (await response.json()) as Body };
+      };
+      const byRequest = (body: Body) =>
+        Object.fromEntries(
+          body.tasks.filter((i) => i.origin === 'plan_step').map((i) => [i.request, i]),
+        );
+
+      it('lists the plan’s agent steps, each with the plan engine’s own state, branch and dependencies', async () => {
+        const w = await waitingPlan();
+        const { status, body } = await list(w);
+        expect(status).toBe(200);
+        expect(body.sources).toEqual({ task: 'read', plan_step: 'read' });
+        expect(body.origins).toEqual(['all', 'task', 'plan_step']);
+        const steps = byRequest(body);
+        expect(Object.keys(steps).sort()).toEqual([
+          'Work brief',
+          'Work campaign',
+          'Work launch',
+          'Work research',
+        ]);
+        expect(steps['Work research']).toMatchObject({
+          id: w.research,
+          origin: 'plan_step',
+          status: 'completed',
+          plan: { id: w.plan.id, status: 'executing', step: { state: 'completed' } },
+          dependsOn: [],
+          // The first step ran on the plan's own approval: no step approval of its own.
+          approval: null,
+        });
+        // Two branches after research: one running, one waiting for a person.
+        expect(steps['Work brief']).toMatchObject({
+          status: 'running',
+          plan: { step: { state: 'running' } },
+          dependsOn: [{ label: 'Work research', state: 'completed' }],
+          approval: null,
+        });
+        expect(steps['Work campaign']).toMatchObject({
+          id: w.campaign,
+          plan: { step: { state: 'awaiting_approval' } },
+          approval: { state: 'pending' },
+        });
+        expect(steps['Work launch']).toMatchObject({
+          plan: { step: { state: 'waiting' } },
+          dependsOn: [{ label: 'Work campaign', state: 'awaiting_approval' }],
+        });
+        // The same states the plan's own page gives: one reading of the plan, not a second one.
+        const own = await w.states();
+        for (const [label, item] of Object.entries(steps)) {
+          expect([label, item.plan?.step.state]).toEqual([
+            label,
+            own.steps[label.replace('Work ', '')],
+          ]);
+        }
+      });
+
+      it('merges a task people asked for with the steps, newest first, and filters by origin', async () => {
+        const w = await waitingPlan();
+        // A task asked of an agent now: newer than the plan's steps.
+        const agentId = (await list(w)).body.tasks.find((i) => i.request === 'Work research')?.agent
+          .id as string;
+        const asked = await w.t.app.request(
+          `/v1/organizations/${w.t.orgA}/specialists/${agentId}/tasks`,
+          w.t.as('token-alice', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ request: 'Resume las ventas' }),
+          }),
+        );
+        expect(asked.status).toBe(202);
+        const all = (await list(w)).body;
+        expect(all.tasks[0]).toMatchObject({ origin: 'task', request: 'Resume las ventas' });
+        expect(all.tasks.filter((i) => i.origin === 'plan_step')).toHaveLength(4);
+        const keys = all.tasks.map((i) => `${i.createdAt}|${i.id}`);
+        expect([...keys].sort().reverse()).toEqual(keys);
+        expect((await list(w, '?origin=task')).body.tasks.map((i) => i.origin)).toEqual(['task']);
+        const onlySteps = (await list(w, '?origin=plan_step')).body;
+        expect(new Set(onlySteps.tasks.map((i) => i.origin))).toEqual(new Set(['plan_step']));
+        expect(onlySteps.sources.task).toBe('not_asked');
+        const bad = await list(w, '?origin=everything');
+        expect([bad.status, bad.body.field]).toEqual([400, 'origin']);
+      });
+
+      it('pages through both sources with one cursor, without repeating or skipping', async () => {
+        const w = await waitingPlan();
+        const agentId = (await list(w)).body.tasks.find((i) => i.request === 'Work brief')?.agent
+          .id as string;
+        for (const request of ['uno', 'dos']) {
+          await w.t.app.request(
+            `/v1/organizations/${w.t.orgA}/specialists/${agentId}/tasks`,
+            w.t.as('token-alice', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ request }),
+            }),
+          );
+          await new Promise((resolve) => setTimeout(resolve, 5));
+        }
+        const whole = (await list(w)).body.tasks.map((i) => i.id);
+        expect(whole).toHaveLength(6);
+        const seen: string[] = [];
+        let cursor: string | null = null;
+        for (let page = 0; page < 10; page += 1) {
+          const got: Body = (
+            await list(
+              w,
+              `?limit=2${cursor === null ? '' : `&cursor=${encodeURIComponent(cursor)}`}`,
+            )
+          ).body;
+          seen.push(...got.tasks.map((i) => i.id));
+          cursor = got.nextCursor;
+          if (cursor === null) break;
+        }
+        expect(seen).toEqual(whole);
+      });
+
+      it('narrows steps by agent and state on the server', async () => {
+        const w = await waitingPlan();
+        const steps = byRequest((await list(w)).body);
+        const marketer = steps['Work campaign']?.agent.id as string;
+        const ofMarketer = (await list(w, `?origin=plan_step&agent=${marketer}`)).body.tasks;
+        expect(ofMarketer.map((i) => i.request).sort()).toEqual(['Work campaign', 'Work launch']);
+        const running = (await list(w, '?origin=plan_step&status=running')).body.tasks;
+        expect(running.map((i) => i.request)).toEqual(['Work brief']);
+        const past = (await list(w, '?from=2020-01-01&to=2020-01-31')).body.tasks;
+        expect(past).toEqual([]);
+      });
+
+      it('a rejected step is declined and the step after it skipped; the other branch goes on', async () => {
+        const w = await waitingPlan();
+        await w.t.post('token-alice', `/approvals/${w.approvalId}/reject`);
+        const steps = byRequest((await list(w)).body);
+        expect(steps['Work campaign']).toMatchObject({
+          plan: { step: { state: 'declined' } },
+          approval: { state: 'rejected' },
+          failure: 'rejected',
+        });
+        expect(steps['Work launch']?.plan?.step.state).toBe('skipped');
+        expect(steps['Work brief']?.plan?.step.state).toBe('running');
+      });
+
+      it('an approved step shows as approved and running', async () => {
+        const w = await waitingPlan();
+        await w.t.post('token-alice', `/approvals/${w.approvalId}/approve`);
+        expect(byRequest((await list(w)).body)['Work campaign']).toMatchObject({
+          status: 'running',
+          plan: { step: { state: 'running' } },
+          approval: { state: 'approved' },
+        });
+      });
+
+      it('an approval nobody decided in time shows as expired', async () => {
+        const w = await waitingPlan();
+        const later = new Date(Date.now() + 2 * 86_400_000);
+        await createPlanConductor({
+          plans: w.t.stores.plans,
+          executions: w.executions,
+          starter: { start: async (_t, id) => void w.t.kicked.push(id) },
+          approvals: createPlanStepApprovals(
+            createApprovalService({
+              repository: w.t.stores.approvals,
+              organizations: w.t.stores.tenancy,
+              authorization: createAuthorizationService(ROLES as never),
+              audit: w.t.stores.audit,
+              now: () => later,
+            }),
+            () => later,
+          ),
+          now: () => later,
+        }).advance(w.runtime, w.plan.id);
+        expect(byRequest((await list(w)).body)['Work campaign']).toMatchObject({
+          plan: { step: { state: 'declined' } },
+          approval: { state: 'expired' },
+        });
+      });
+
+      it('shows a completed step’s verified answer as a summary, and nothing internal', async () => {
+        const w = await waitingPlan();
+        await w.t.agentOutputs.save({
+          organizationId: w.t.orgA as never,
+          executionId: w.research as never,
+          nodeId: 'research' as never,
+          requestId: 'req-hidden-77',
+          output: { structured: { answer: 'El melón crece 4% al año.', missing: [] } },
+          createdAt: new Date().toISOString() as never,
+        });
+        const { body } = await list(w);
+        const research = byRequest(body)['Work research'];
+        expect(research?.result).toMatchObject({ summary: 'El melón crece 4% al año.' });
+        const text = JSON.stringify(body);
+        for (const hidden of [
+          'req-hidden-77',
+          'alpha-large',
+          w.approvalId,
+          'digest',
+          'requestedBy',
+          'decidedBy',
+        ]) {
+          expect(text).not.toContain(hidden);
+        }
+        expect(Object.keys(research ?? {}).sort()).toEqual([
+          'agent',
+          'approval',
+          'completedAt',
+          'createdAt',
+          'dependsOn',
+          'failure',
+          'handedFrom',
+          'id',
+          'origin',
+          'plan',
+          'progress',
+          'request',
+          'result',
+          'startedAt',
+          'status',
+          'steps',
+          'updatedAt',
+        ]);
+      });
+
+      it('without plan.read, the list shows tasks only and plan steps alone are refused', async () => {
+        const w = await waitingPlan({
+          ...ROLES,
+          owner: ROLES.owner.filter((p) => p !== 'plan.read'),
+        });
+        const { status, body } = await list(w);
+        expect(status).toBe(200);
+        expect(body.sources.plan_step).toBe('not_permitted');
+        expect(body.tasks.some((i) => i.origin === 'plan_step')).toBe(false);
+        expect((await list(w, '?origin=plan_step')).status).toBe(403);
+      });
+
+      it('keeps another organization’s steps out', async () => {
+        const w = await waitingPlan();
+        const theirs = await list(w, '', 'token-bob', w.t.orgB);
+        expect(theirs.body.tasks).toEqual([]);
+        expect((await list(w, '', 'token-bob', w.t.orgA)).status).toBe(403);
+      });
+
+      it('when plan steps cannot be read, tasks still show and the list says steps are missing', async () => {
+        const w = await waitingPlan();
+        w.t.stores.plans.list = async () => {
+          throw new Error('store down');
+        };
+        const { status, body } = await list(w);
+        expect(status).toBe(200);
+        expect(body.sources.plan_step).toBe('unavailable');
+        expect(body.tasks.some((i) => i.origin === 'plan_step')).toBe(false);
+      });
+    });
   });
 
   describe('delegation', () => {

@@ -150,6 +150,7 @@ import {
   createPlanner,
   createPlanService,
   createPlanValidator,
+  MAX_PLANS_LISTED,
   type PlanRepository,
 } from '@melonoffice/planning';
 import {
@@ -199,6 +200,7 @@ import {
 import { registerEntitlementRoutes } from './entitlements.js';
 import { registerExecutionRoutes } from './executions.js';
 import { registerHealth } from './health.js';
+import { createPlanStepSource } from './plan-step-work.js';
 import { registerPlanRoutes } from './plans.js';
 import { registerSpecialistRoutes, toolLookupOf } from './specialists.js';
 import { registerAgentAuditRoute } from './agent-audit.js';
@@ -984,6 +986,29 @@ export function createApp({
               : { cascade: createPlanCancellationCascade({ repository: plans }) }),
           })
         : undefined;
+    // The one plan service (ADR-0028): plan routes decide with it, and the list of every agent's
+    // work reads plan steps through it (ADR-0149), with the same `plan.read` check.
+    const sharedPlanService =
+      tenancy !== undefined &&
+      executionService !== undefined &&
+      specialists !== undefined &&
+      structure !== undefined &&
+      plans !== undefined
+        ? createPlanService({
+            repository: plans,
+            executions: executionService,
+            validator: createPlanValidator({
+              specialists,
+              departments: structure.departments,
+              tools,
+              authorization,
+              environment: undefined,
+            }),
+            organizations: tenancy,
+            authorization,
+            audit,
+          })
+        : undefined;
     if (tenancy !== undefined && structure !== undefined && specialists !== undefined) {
       const dependencies = { store: tenancy, authorization, audit };
       registerDepartmentRoutes(app, {
@@ -1129,6 +1154,18 @@ export function createApp({
         authorization,
         audit,
         tasksFor,
+        // Plan steps agents run, read through the plan service (ADR-0149).
+        ...(sharedPlanService === undefined || executionService === undefined
+          ? {}
+          : {
+              planSteps: createPlanStepSource({
+                plans: sharedPlanService,
+                authorization,
+                executions: executionService,
+                ...(taskOutputs === undefined ? {} : { outputs: taskOutputs }),
+                window: MAX_PLANS_LISTED,
+              }),
+            }),
         ...(businessProfiles === undefined
           ? {}
           : {
@@ -1341,6 +1378,7 @@ export function createApp({
     // workflows propose them, so this validator is never reached from a route and fails closed
     // on every tool (no environment). Approving one runs it (ADR-0070).
     if (
+      sharedPlanService !== undefined &&
       tenancy !== undefined &&
       executionService !== undefined &&
       specialists !== undefined &&
@@ -1348,20 +1386,7 @@ export function createApp({
       plans !== undefined
     ) {
       const dependencies = { store: tenancy, authorization, audit };
-      const planService = createPlanService({
-        repository: plans,
-        executions: executionService,
-        validator: createPlanValidator({
-          specialists,
-          departments: structure.departments,
-          tools,
-          authorization,
-          environment: undefined,
-        }),
-        organizations: tenancy,
-        authorization,
-        audit,
-      });
+      const planService = sharedPlanService;
       // An approved plan runs (ADR-0070): the person who approved delegates it and starts its
       // first steps, each queued for the worker; the worker's conductor starts the rest.
       const conductor =

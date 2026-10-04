@@ -1,6 +1,12 @@
 import { dayRange } from '@melonoffice/activity';
 import type { AuditHistoryReader } from '@melonoffice/audit';
-import type { AgentHandoff, AICallTrace, IsoTimestamp } from '@melonoffice/domain';
+import type {
+  AgentHandoff,
+  AICallTrace,
+  ExecutionId,
+  IsoTimestamp,
+  OrganizationId,
+} from '@melonoffice/domain';
 import { callRefOf, handoffForTask } from '@melonoffice/harness';
 import {
   AGENT_TASK_NODE,
@@ -20,8 +26,14 @@ import {
   type AgentTaskService,
   type TaskWithExecution,
   AgentTaskError,
+  ALL_AGENTS,
+  decodeTaskCursor,
+  encodeTaskCursor,
   EXECUTION_STATUSES,
+  TASK_PAGE_SIZE,
+  taskPosition,
   type OrganizationTaskPage,
+  type TaskPosition,
 } from '@melonoffice/agents';
 import type { DepartmentRepository } from '@melonoffice/departments';
 import { isExecutionError, type AgentOutputStore } from '@melonoffice/execution';
@@ -32,6 +44,12 @@ import type { TenantContext } from '@melonoffice/tenancy';
 import type { Context, Hono } from 'hono';
 import type { AuthEnv } from './auth.js';
 import { DEFAULT_ACTIVITY_TIME_ZONE } from './activity.js';
+import {
+  newerThan,
+  type createPlanStepSource,
+  type PlanStepItem,
+  type PlanStepPage,
+} from './plan-step-work.js';
 import { withPermission, type AuthorizationDependencies } from './authorization.js';
 
 /**
@@ -93,6 +111,9 @@ function answerReadable(execution: TaskWithExecution['execution'], answerNode: s
   );
 }
 
+/** Where an item of the list of every agent's work comes from (ADR-0149). */
+const ORIGINS: ReadonlySet<string> = new Set(['all', 'task', 'plan_step']);
+
 /** The longest answer summary the organization's list shows (ADR-0148). */
 export const TASK_SUMMARY_LENGTH = 280;
 
@@ -120,6 +141,8 @@ export function registerAgentTaskRoutes(
     readonly notifications?: AgentNotificationService;
     /** The audit trail of a task and its handoff, for its trace (ADR-0117). */
     readonly history?: AuditHistoryReader;
+    /** Plan steps agents run (ADR-0149), for the list of every agent's work. Absent: tasks only. */
+    readonly planSteps?: Pick<ReturnType<typeof createPlanStepSource>, 'page'>;
     /** The business's time zone, for the days the organization's list is narrowed to. */
     readonly timeZoneOf?: (tenant: TenantContext) => Promise<string | undefined>;
     readonly now?: () => Date;
@@ -134,6 +157,7 @@ export function registerAgentTaskRoutes(
     notifications,
     history,
     timeZoneOf,
+    planSteps,
   } = dependencies;
   const now = dependencies.now ?? (() => new Date());
 
@@ -394,14 +418,94 @@ export function registerAgentTaskRoutes(
     };
   }
 
-  // Every agent's tasks in the organization (ADR-0148), newest first, read only, with
-  // `specialist.read`. Each filter is checked by the service; days are the business's.
+  /**
+   * A plan step as the same list shows it (ADR-0149): the plan engine's own reading of the step
+   * (`readPlanSteps`), with only these fields. It stays a step of its plan, and the plan's page
+   * is where it is acted on.
+   */
+  function stepView(item: PlanStepItem, agents: OrganizationTaskPage['agents']) {
+    const { plan, step, read, execution } = item;
+    const agentId = step.specialist?.id ?? null;
+    const agent = agentId === null ? undefined : agents[agentId];
+    const nodes = execution?.nodes ?? [];
+    const entry = plan.stepApprovals?.find((a) => a.stepId === step.id);
+    const answered = read.answer;
+    return {
+      id: execution?.id ?? read.executionId,
+      origin: 'plan_step' as const,
+      agent: { id: agentId, name: agent?.name ?? null, status: agent?.status ?? null },
+      request: step.label,
+      status: execution?.status ?? 'unknown',
+      failure: read.failure,
+      createdAt: item.position.at,
+      updatedAt: execution?.updatedAt ?? null,
+      startedAt: execution?.startedAt ?? null,
+      completedAt: execution?.completedAt ?? null,
+      progress: {
+        done: nodes.filter((n) => n.status === 'completed' || n.status === 'skipped').length,
+        total: nodes.length,
+      },
+      steps: nodes.map((n) => ({
+        type: n.type,
+        status: n.status,
+        startedAt: n.startedAt ?? null,
+        completedAt: n.completedAt ?? null,
+        failure: n.error?.code ?? null,
+      })),
+      plan: { id: plan.id, status: plan.status, step: { state: read.state } },
+      // The steps it waits on, by their label and where each is.
+      dependsOn: step.dependsOn.flatMap((id) => {
+        const before = item.siblings.find((v) => v.stepId === id);
+        return before === undefined ? [] : [{ label: before.label, state: before.state }];
+      }),
+      // A step that asked a person (ADR-0146): waiting, approved, or why it was declined.
+      approval:
+        entry === undefined
+          ? null
+          : {
+              state:
+                entry.declined !== undefined
+                  ? entry.declined.reason
+                  : read.state === 'awaiting_approval'
+                    ? 'pending'
+                    : 'approved',
+            },
+      handedFrom: null,
+      result:
+        answered === null
+          ? null
+          : {
+              summary: answered.slice(0, TASK_SUMMARY_LENGTH),
+              truncated: answered.length > TASK_SUMMARY_LENGTH,
+              missing: read.missing.length,
+            },
+    };
+  }
+
+  // Every agent's work in the organization, newest first, read only (ADR-0148, ADR-0149): the
+  // tasks people asked agents for (`specialist.read`) and, for a person who may read plans
+  // (`plan.read`), the plan steps agents run. Two sources, each read through its own service and
+  // permission, merged by one position; nothing is copied. Days are the business's.
   app.get(
     '/v1/organizations/:organizationId/agent-tasks',
     withPermission('specialist.read', dependencies, async (c, tenant) =>
       answer(c, async () => {
         const q = (name: string) => c.req.query(name);
-        const limit = q('limit');
+        const origin = q('origin') ?? 'all';
+        if (!ORIGINS.has(origin)) throw new AgentTaskError('invalid_task', 'origin');
+        const rawLimit = q('limit');
+        const limit =
+          rawLimit === undefined
+            ? TASK_PAGE_SIZE.page
+            : /^\d{1,3}$/.test(rawLimit)
+              ? Number(rawLimit)
+              : -1;
+        if (limit < 1 || limit > TASK_PAGE_SIZE.max)
+          throw new AgentTaskError('invalid_task', 'limit');
+        const status = q('status');
+        if (status !== undefined && !EXECUTION_STATUSES.has(status)) {
+          throw new AgentTaskError('invalid_task', 'status');
+        }
         const asked = q('from') !== undefined || q('to') !== undefined;
         const period = !asked
           ? undefined
@@ -414,26 +518,127 @@ export function registerAgentTaskRoutes(
               now(),
             );
         if (asked && period === undefined) throw new AgentTaskError('invalid_task', 'period');
-        const page = await tasksFor(c.get('requestId')).listAll(tenant, {
-          ...(q('cursor') === undefined ? {} : { cursor: q('cursor') as string }),
-          ...(limit === undefined ? {} : { limit: /^\d{1,3}$/.test(limit) ? Number(limit) : -1 }),
-          ...(q('agent') === undefined ? {} : { specialistId: q('agent') as string }),
-          ...(q('status') === undefined ? {} : { status: q('status') as string }),
-          ...(period === undefined
-            ? {}
-            : {
-                since: period.from.toISOString() as IsoTimestamp,
-                before: period.to.toISOString() as IsoTimestamp,
-              }),
-        });
+        const since = period?.from.toISOString() as IsoTimestamp | undefined;
+        const before = period?.to.toISOString() as IsoTimestamp | undefined;
+        const cursor = q('cursor');
+        const organizationId = tenant.organizationId as OrganizationId;
+        const fromCursor =
+          cursor === undefined ? undefined : decodeTaskCursor(cursor, organizationId, ALL_AGENTS);
+        const agent = q('agent');
+        const service = tasksFor(c.get('requestId'));
+
+        // Tasks people asked agents for.
+        const tasks =
+          origin === 'plan_step'
+            ? undefined
+            : await service.listAll(tenant, {
+                ...(cursor === undefined ? {} : { cursor }),
+                limit,
+                ...(agent === undefined ? {} : { specialistId: agent }),
+                ...(status === undefined ? {} : { status }),
+                ...(since === undefined || before === undefined ? {} : { since, before }),
+              });
+        const agents = tasks?.agents ?? (await service.agentsOf(tenant));
+
+        // Plan steps agents run, with the plan's own permission.
+        let stepSource: 'read' | 'not_permitted' | 'unavailable' | 'not_asked' = 'not_asked';
+        let steps: PlanStepPage | undefined;
+        if (origin !== 'task' && planSteps !== undefined) {
+          // The end of the period, as a position: everything created before it is read.
+          const bound =
+            before === undefined
+              ? undefined
+              : {
+                  at: new Date(Date.parse(before) - 1).toISOString() as IsoTimestamp,
+                  id: '~' as ExecutionId,
+                };
+          const after =
+            fromCursor === undefined || bound === undefined
+              ? (fromCursor ?? bound)
+              : newerThan(bound, fromCursor)
+                ? fromCursor
+                : bound;
+          try {
+            steps = await planSteps.page(tenant, {
+              ...(after === undefined ? {} : { after }),
+              ...(since === undefined ? {} : { since }),
+              limit,
+              ...(agent === undefined ? {} : { specialistId: agent }),
+              ...(status === undefined ? {} : { status }),
+            });
+            stepSource = 'read';
+          } catch (error) {
+            const code = (error as { code?: unknown }).code;
+            if (code === 'permission_denied') {
+              // Asked for plan steps alone without `plan.read`: refused, as the plan routes do.
+              if (origin === 'plan_step') throw new AgentTaskError('permission_denied');
+              stepSource = 'not_permitted';
+            } else {
+              // One source failing never hides the other: the list says plan steps are missing.
+              c.get('logger').warn('plan steps not read for the agent work list', {
+                code: typeof code === 'string' ? code : 'unexpected',
+              });
+              stepSource = 'unavailable';
+            }
+          }
+        } else if (origin !== 'task') {
+          stepSource = 'unavailable';
+        }
+
+        // One order for both: newest first, then by id. A source with more left stops the page
+        // at the last item it read, so no item of either is ever skipped between pages.
+        const horizons = [
+          tasks?.nextCursor == null
+            ? undefined
+            : decodeTaskCursor(tasks.nextCursor, organizationId, ALL_AGENTS),
+          steps?.horizon,
+        ].filter((h): h is TaskPosition => h !== undefined);
+        const horizon = horizons.reduce<TaskPosition | undefined>(
+          (newest, h) => (newest === undefined || newerThan(h, newest) ? h : newest),
+          undefined,
+        );
+        const merged = [
+          ...(tasks?.items ?? []).map((item) => ({
+            position: taskPosition(item.task),
+            task: item,
+          })),
+          ...(steps?.items ?? []).map((item) => ({ position: item.position, step: item })),
+        ]
+          .filter((m) => horizon === undefined || !newerThan(horizon, m.position))
+          .sort((a, b) => (newerThan(a.position, b.position) ? -1 : 1));
+        const shown = merged.slice(0, limit);
+        const cut = merged.length > limit;
+        const last = shown.at(-1)?.position;
+        const next = cut ? last : horizon;
         return c.json({
-          tasks: await Promise.all(page.items.map((item) => listedView(tenant, item, page.agents))),
-          agents: Object.entries(page.agents)
+          tasks: await Promise.all(
+            shown.map(async (m) =>
+              'task' in m && m.task !== undefined
+                ? {
+                    ...(await listedView(tenant, m.task, agents)),
+                    origin: 'task' as const,
+                    dependsOn: [],
+                    approval: null,
+                  }
+                : stepView((m as { step: PlanStepItem }).step, agents),
+            ),
+          ),
+          agents: Object.entries(agents)
             .map(([id, a]) => ({ id, name: a.name, status: a.status }))
             .sort((x, y) => x.name.localeCompare(y.name) || x.id.localeCompare(y.id)),
           statuses: [...EXECUTION_STATUSES],
+          origins: [...ORIGINS],
+          origin,
+          // Whether plan steps were read: `not_permitted` without `plan.read`, `unavailable` if
+          // their source failed. The plan service lists the newest plans only (windowed).
+          sources: {
+            task: tasks === undefined ? 'not_asked' : 'read',
+            plan_step: stepSource,
+          },
+          planStepsWindowed: steps?.windowed ?? false,
           period: period === undefined ? null : { from: period.fromDay, to: period.toDay },
-          nextCursor: page.nextCursor,
+          nextCursor:
+            next === undefined ? null : encodeTaskCursor(organizationId, ALL_AGENTS, next),
         });
       }),
     ),

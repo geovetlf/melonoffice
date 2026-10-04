@@ -11,7 +11,9 @@ import {
   unrunnableStepOf,
   type PlanConductor,
   type PlanService,
+  type PlanStepState,
 } from '@melonoffice/planning';
+import type { TenantContext } from '@melonoffice/tenancy';
 import { withCorrelation } from '@melonoffice/observability';
 import type { Context, Hono } from 'hono';
 import type { AuthEnv } from './auth.js';
@@ -74,70 +76,8 @@ export function registerPlanRoutes(
         answer(c, async () => {
           const plan = await plans.get(tenant, c.req.param('planId') ?? '');
           const version = await plans.getVersion(tenant, plan.id, plan.version);
-          const children = new Map<string, Execution>();
-          for (const step of version.steps) {
-            if (step.kind !== 'specialist') continue;
-            const executionId = plan.delegations.find((d) => d.stepId === step.id)?.executionId;
-            if (executionId === undefined) continue;
-            children.set(step.id, await steps.executions.get(tenant, executionId));
-          }
-          const conditionOf = (id: string) => plan.conditions?.find((c) => c.stepId === id);
-          const approvalOf = (id: string) => plan.stepApprovals?.find((a) => a.stepId === id);
-          const states = planStepStates(version.steps, (step) => {
-            if (step.kind === 'condition') return conditionStepState(conditionOf(step.id));
-            const child = children.get(step.id);
-            if (child === undefined) return 'waiting';
-            // A step that asked a person (ADR-0146): waiting for them, or declined.
-            const entry = approvalOf(step.id);
-            return entry === undefined
-              ? specialistStepState(child)
-              : gatedStepState(child, entry.declined === undefined ? 'awaiting' : 'declined');
-          });
-          const out = [];
-          for (const step of version.steps) {
-            const state = states.get(step.id);
-            if (state === undefined) continue;
-            if (step.kind === 'condition') {
-              const decided = conditionOf(step.id);
-              out.push({
-                stepId: step.id,
-                kind: 'condition',
-                label: step.label,
-                state,
-                executionId: null,
-                status: null,
-                approvalId: null,
-                failure: decided?.failure ?? null,
-                // Only what the decision said; its reasons stay in the decision's own record.
-                outcome: decided?.decision?.outcome ?? null,
-                answer: null,
-                missing: [],
-              });
-              continue;
-            }
-            const execution = children.get(step.id);
-            const record =
-              execution?.status === 'completed' && steps.outputs !== undefined
-                ? await steps.outputs.find(tenant, execution.id, step.id)
-                : undefined;
-            const answered = record === undefined ? undefined : parseAgentAnswer(record.output);
-            out.push({
-              stepId: step.id,
-              kind: 'specialist',
-              label: step.label,
-              state,
-              executionId: execution?.id ?? null,
-              status: execution?.status ?? null,
-              // The approval a person decides it with, in the approvals inbox.
-              approvalId: approvalOf(step.id)?.approvalId ?? null,
-              // Why a declined step never ran: rejected, expired or withdrawn (ADR-0146).
-              failure: approvalOf(step.id)?.declined?.reason ?? execution?.failure?.code ?? null,
-              outcome: null,
-              answer: answered?.answer ?? null,
-              missing: answered === undefined ? [] : [...answered.missing],
-            });
-          }
-          return { planId: plan.id, status: plan.status, steps: out };
+          const { views } = await readPlanSteps(tenant, plan, version, steps);
+          return { planId: plan.id, status: plan.status, steps: views };
         }),
       ),
     );
@@ -314,4 +254,99 @@ export function toVersionView(v: PlanVersion) {
     createdAt: v.createdAt,
     createdBy: v.createdBy,
   };
+}
+
+/** How the plan engine sees each step of one plan version, as `GET plans/:id/steps` shows it. */
+export interface PlanStepRead {
+  readonly stepId: string;
+  readonly kind: 'condition' | 'specialist';
+  readonly label: string;
+  readonly state: PlanStepState;
+  readonly executionId: string | null;
+  readonly status: string | null;
+  readonly approvalId: string | null;
+  readonly failure: string | null;
+  readonly outcome: string | null;
+  readonly answer: string | null;
+  readonly missing: string[];
+}
+
+/**
+ * Each step of a plan with the state the plan engine gives it (ADR-0145, ADR-0146) and its
+ * child execution: the one reading of a plan's steps, for the plan's page and for the list of
+ * every agent's work (ADR-0149). Reads only; calls no model.
+ */
+export async function readPlanSteps(
+  tenant: TenantContext,
+  plan: Plan,
+  version: PlanVersion,
+  steps: {
+    readonly executions: Pick<ExecutionService, 'get'>;
+    readonly outputs?: Pick<AgentOutputStore, 'find'>;
+  },
+): Promise<{ readonly views: PlanStepRead[]; readonly children: ReadonlyMap<string, Execution> }> {
+  const children = new Map<string, Execution>();
+  for (const step of version.steps) {
+    if (step.kind !== 'specialist') continue;
+    const executionId = plan.delegations.find((d) => d.stepId === step.id)?.executionId;
+    if (executionId === undefined) continue;
+    children.set(step.id, await steps.executions.get(tenant, executionId));
+  }
+  const conditionOf = (id: string) => plan.conditions?.find((c) => c.stepId === id);
+  const approvalOf = (id: string) => plan.stepApprovals?.find((a) => a.stepId === id);
+  const states = planStepStates(version.steps, (step) => {
+    if (step.kind === 'condition') return conditionStepState(conditionOf(step.id));
+    const child = children.get(step.id);
+    if (child === undefined) return 'waiting';
+    // A step that asked a person (ADR-0146): waiting for them, or declined.
+    const entry = approvalOf(step.id);
+    return entry === undefined
+      ? specialistStepState(child)
+      : gatedStepState(child, entry.declined === undefined ? 'awaiting' : 'declined');
+  });
+  const out: PlanStepRead[] = [];
+  for (const step of version.steps) {
+    const state = states.get(step.id);
+    if (state === undefined) continue;
+    if (step.kind === 'condition') {
+      const decided = conditionOf(step.id);
+      out.push({
+        stepId: step.id,
+        kind: 'condition',
+        label: step.label,
+        state,
+        executionId: null,
+        status: null,
+        approvalId: null,
+        failure: decided?.failure ?? null,
+        // Only what the decision said; its reasons stay in the decision's own record.
+        outcome: decided?.decision?.outcome ?? null,
+        answer: null,
+        missing: [],
+      });
+      continue;
+    }
+    const execution = children.get(step.id);
+    const record =
+      execution?.status === 'completed' && steps.outputs !== undefined
+        ? await steps.outputs.find(tenant, execution.id, step.id)
+        : undefined;
+    const answered = record === undefined ? undefined : parseAgentAnswer(record.output);
+    out.push({
+      stepId: step.id,
+      kind: 'specialist',
+      label: step.label,
+      state,
+      executionId: execution?.id ?? null,
+      status: execution?.status ?? null,
+      // The approval a person decides it with, in the approvals inbox.
+      approvalId: approvalOf(step.id)?.approvalId ?? null,
+      // Why a declined step never ran: rejected, expired or withdrawn (ADR-0146).
+      failure: approvalOf(step.id)?.declined?.reason ?? execution?.failure?.code ?? null,
+      outcome: null,
+      answer: answered?.answer ?? null,
+      missing: answered === undefined ? [] : [...answered.missing],
+    });
+  }
+  return { views: out, children };
 }
