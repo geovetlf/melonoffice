@@ -114,6 +114,19 @@ export interface AgentCapabilitiesView {
     readonly approval: string | null;
   }[];
   readonly problems: readonly ReadinessProblemView[];
+  /** Skills it may be given (ADR-0141), at the version the server would add. */
+  readonly addable?: readonly { readonly skillId: string; readonly version: number }[];
+  /** What removing each skill would take away (ADR-0141); empty when it has only one. */
+  readonly removals?: readonly {
+    readonly skillId: string;
+    readonly removes: readonly string[];
+    readonly breaks: readonly {
+      readonly workflowId: string;
+      readonly name: string;
+      readonly step: string;
+      readonly tool: string;
+    }[];
+  }[];
   /** A newer version of one of its skills, which a person may move it to (ADR-0084). */
   readonly upgrades?: readonly {
     readonly skillId: string;
@@ -229,6 +242,16 @@ export interface AgentsClient {
     id: string,
     input: { readonly fromVersion: number; readonly skillId: string; readonly version: number },
   ): Promise<AgentView>;
+  /** Needs `specialist.manage`: one more skill, as a new version (ADR-0141). */
+  addSkill?(
+    id: string,
+    input: { readonly fromVersion: number; readonly skillId: string; readonly version: number },
+  ): Promise<AgentView>;
+  /** Needs `specialist.manage`: one skill fewer, as a new version (ADR-0141). */
+  removeSkill?(
+    id: string,
+    input: { readonly fromVersion: number; readonly skillId: string },
+  ): Promise<AgentView>;
   /** Needs `specialist.manage`: how far it acts on its own, as a new version (AE-4.4). */
   setAutonomy(
     id: string,
@@ -316,6 +339,10 @@ export function createAgentsClient(request: ReplyRequest, organizationId: string
       call<AgentCapabilitiesView>(`/specialists/${encodeURIComponent(id)}/capabilities`),
     upgradeSkill: (id, input) =>
       post<AgentView>(`/specialists/${encodeURIComponent(id)}/skills/upgrade`, input),
+    addSkill: (id, input) =>
+      post<AgentView>(`/specialists/${encodeURIComponent(id)}/skills/add`, input),
+    removeSkill: (id, input) =>
+      post<AgentView>(`/specialists/${encodeURIComponent(id)}/skills/remove`, input),
     setAutonomy: (id, input) =>
       post<AgentView>(`/specialists/${encodeURIComponent(id)}/autonomy`, input),
     setWorkSettings: (id, input) =>

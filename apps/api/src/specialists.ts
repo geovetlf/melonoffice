@@ -1,4 +1,4 @@
-import { upgradeImpact } from '@melonoffice/agents';
+import { removalImpact, upgradeImpact } from '@melonoffice/agents';
 import type { DepartmentRepository } from '@melonoffice/departments';
 import type { OrganizationId, Specialist, Workflow, WorkflowVersion } from '@melonoffice/domain';
 import { PERMISSIONS, type Permission } from '@melonoffice/rbac';
@@ -110,6 +110,25 @@ export function registerSpecialistRoutes(
     ),
   );
 
+  // One more skill from the catalogue, or one fewer (ADR-0141): the server derives the tools.
+  app.post(
+    '/v1/organizations/:organizationId/specialists/:specialistId/skills/add',
+    withPermission('specialist.manage', dependencies, async (c, tenant) =>
+      answer(c, 200, async () =>
+        management.addSkill(tenant, c.req.param('specialistId') ?? '', await bodyOf(c)),
+      ),
+    ),
+  );
+
+  app.post(
+    '/v1/organizations/:organizationId/specialists/:specialistId/skills/remove',
+    withPermission('specialist.manage', dependencies, async (c, tenant) =>
+      answer(c, 200, async () =>
+        management.removeSkill(tenant, c.req.param('specialistId') ?? '', await bodyOf(c)),
+      ),
+    ),
+  );
+
   app.post(
     '/v1/organizations/:organizationId/specialists/:specialistId/autonomy',
     withPermission('specialist.manage', dependencies, async (c, tenant) =>
@@ -200,8 +219,9 @@ export function registerSpecialistRoutes(
         });
         // What each upgrade would take away (G-2, ADR-0132): a warning before the person confirms.
         const organizationId = specialist.organizationId as OrganizationId;
+        const owned = specialist.configuration.skills;
         const flows =
-          upgrades.length > 0 &&
+          (upgrades.length > 0 || owned.length > 1) &&
           dependencies.workflows !== undefined &&
           dependencies.departments !== undefined &&
           authorization.authorize(tenant, 'workflow.read').allowed
@@ -222,6 +242,33 @@ export function registerSpecialistRoutes(
           });
           return { ...u, removes: impact.removes, breaks: impact.breaks };
         });
+        // What a person may add (ADR-0141): the newest version its department allows of each
+        // skill it lacks, when that version makes no choice between tool versions.
+        const newest = new Map<string, number>();
+        for (const s of skills.list()) {
+          if (owned.some((h) => h.id === s.id)) continue;
+          if (!skillAllowedIn(s, specialist.configuration.departmentId)) continue;
+          newest.set(s.id, Math.max(newest.get(s.id) ?? 0, s.version));
+        }
+        const addable = [...newest]
+          .filter(([id, version]) =>
+            (skills.resolve(id, version)?.tools ?? []).every((g) => g.versions.length === 1),
+          )
+          .map(([skillId, version]) => ({ skillId, version }));
+        // What removing each would take away (G-2 warning); its last skill is never removed.
+        const removals =
+          owned.length > 1
+            ? owned.map(({ id }) => {
+                const impact = removalImpact({
+                  agent: specialist,
+                  skillId: id,
+                  skills,
+                  departments,
+                  ...(flows === undefined ? {} : { workflows: flows }),
+                });
+                return { skillId: id, removes: impact.removes, breaks: impact.breaks };
+              })
+            : [];
         return c.json({
           id: specialist.identity.id,
           version: specialist.version,
@@ -233,6 +280,8 @@ export function registerSpecialistRoutes(
           description: specialist.configuration.description ?? null,
           ...found,
           upgrades: warned,
+          addable,
+          removals,
         });
       } catch (error) {
         if (isSpecialistError(error) && error.code === 'specialist_not_found') {
