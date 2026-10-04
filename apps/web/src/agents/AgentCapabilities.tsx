@@ -3,6 +3,7 @@ import { Button, StateMessage } from '@melonoffice/ui';
 import { useCallback, useEffect, useState } from 'react';
 import type { AgentCapabilitiesView, AgentsClient } from './agentsClient.js';
 import { AgentAutonomy } from './AgentAutonomy.js';
+import { AgentProfile } from './AgentProfile.js';
 import { AgentMemory, AgentWorkSettings } from './AgentWork.js';
 import { ReadinessProblems } from './ReadinessProblems.js';
 
@@ -133,6 +134,15 @@ export function AgentCapabilities({
             />
           </p>
           <ReadinessProblems problems={found.problems} />
+          <AgentProfile
+            client={client}
+            agentId={agentId}
+            version={found.version}
+            purpose={found.purpose ?? null}
+            description={found.description ?? null}
+            canManage={canManage}
+            onChanged={() => void load(() => true)}
+          />
           <AgentAutonomy
             key={`${found.version}`}
             client={client}

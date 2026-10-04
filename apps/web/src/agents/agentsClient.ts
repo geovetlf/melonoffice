@@ -89,6 +89,9 @@ export interface AgentMemoryNoteView {
 
 export interface AgentCapabilitiesView {
   readonly version: number;
+  /** What it is for, in a person's words (ADR-0140). Absent from an older server. */
+  readonly purpose?: string | null;
+  readonly description?: string | null;
   /** Its work settings (ADR-0117). Absent from an older server: all off. */
   readonly work?: AgentWorkSettingsView;
   /** How far it acts on its own (AE-4.4). Absent from an older server: the default. */
@@ -236,6 +239,15 @@ export interface AgentsClient {
     id: string,
     input: { readonly fromVersion: number } & Partial<AgentWorkSettingsView>,
   ): Promise<AgentView>;
+  /** Needs `specialist.manage`: its purpose and description, as a new version (ADR-0140). */
+  setProfile?(
+    id: string,
+    input: {
+      readonly fromVersion: number;
+      readonly purpose?: string | null;
+      readonly description?: string | null;
+    },
+  ): Promise<AgentView>;
   /** Its own memory (ADR-0117): whether it is on, and its notes. */
   memories?(
     id: string,
@@ -308,6 +320,8 @@ export function createAgentsClient(request: ReplyRequest, organizationId: string
       post<AgentView>(`/specialists/${encodeURIComponent(id)}/autonomy`, input),
     setWorkSettings: (id, input) =>
       post<AgentView>(`/specialists/${encodeURIComponent(id)}/settings`, input),
+    setProfile: (id, input) =>
+      post<AgentView>(`/specialists/${encodeURIComponent(id)}/profile`, input),
     memories: (id) =>
       call<{ enabled: boolean; items: AgentMemoryNoteView[] }>(
         `/specialists/${encodeURIComponent(id)}/memories`,

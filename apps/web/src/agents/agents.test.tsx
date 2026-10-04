@@ -6,7 +6,12 @@ import { createServices } from '../identity/services.js';
 import { REFRESH_KEY } from '../identity/session.js';
 import { API, KEY, fakeBackend, memoryStore } from '../identity/testing.js';
 import { AgentCapabilities } from './AgentCapabilities.js';
-import type { AgentAuditView, AgentCapabilitiesView, AgentsClient } from './agentsClient.js';
+import {
+  AgentRequestError,
+  type AgentAuditView,
+  type AgentCapabilitiesView,
+  type AgentsClient,
+} from './agentsClient.js';
 import { TeamReview } from './TeamReview.js';
 
 afterEach(() => {
@@ -255,7 +260,7 @@ describe('Agents (ADR-0025, ADR-0062)', () => {
     const section = await screen.findByRole('region', { name: 'What this agent can do' });
     expect(await within(section).findByText('Controlled (recommended)')).toBeTruthy();
     expect(within(section).queryByRole('radio')).toBeNull();
-    expect(within(section).queryByRole('button', { name: 'Save' })).toBeNull();
+    expect(within(section).queryByRole('button', { name: 'Save profile' })).toBeNull();
   });
 
   it('filters the agents by autonomy on the server', async () => {
@@ -486,5 +491,75 @@ describe('the team review (G-1, ADR-0131)', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: 'Review now' }));
     expect(await screen.findByText('All in order: nothing to fix was found.')).toBeTruthy();
+  });
+});
+
+describe('editing what an agent is for (ADR-0140)', () => {
+  const view = (version: number, purpose: string | null): AgentCapabilitiesView => ({
+    version,
+    purpose,
+    description: null,
+    ready: true,
+    skills: [],
+    tools: [],
+    problems: [],
+  });
+  const show = (agents: AgentsClient, canManage: boolean) =>
+    render(
+      <I18nProvider locale="en" messages={catalogs.en}>
+        <AgentCapabilities client={agents} agentId="spec_lucia" canManage={canManage} />
+      </I18nProvider>,
+    );
+
+  it('sends only what changed, with the version it read, and shows the new version', async () => {
+    let current = view(3, 'Vender');
+    const agents = {
+      capabilities: vi.fn(async () => current),
+      setProfile: vi.fn(async () => {
+        current = view(4, 'Vender más');
+        return {} as never;
+      }),
+    } as unknown as AgentsClient;
+    show(agents, true);
+    const purpose = await screen.findByRole('textbox', { name: 'Purpose' });
+    const save = screen.getByRole('button', { name: 'Save profile' });
+    expect((save as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(purpose, { target: { value: 'Vender más ' } });
+    fireEvent.click(save);
+    await waitFor(() =>
+      expect(agents.setProfile).toHaveBeenCalledWith('spec_lucia', {
+        fromVersion: 3,
+        purpose: 'Vender más',
+      }),
+    );
+    expect(await screen.findByText('Saved as a new version of the agent.')).toBeTruthy();
+    expect(await screen.findByText(/Version 4/)).toBeTruthy();
+  });
+
+  it('says so when someone else changed the agent meanwhile', async () => {
+    const agents = {
+      capabilities: vi.fn(async () => view(3, null)),
+      setProfile: vi.fn(async () => {
+        throw new AgentRequestError(409, 'specialist_concurrency_conflict');
+      }),
+    } as unknown as AgentsClient;
+    show(agents, true);
+    fireEvent.change(await screen.findByRole('textbox', { name: 'Description' }), {
+      target: { value: 'Atiende pedidos' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+    expect(
+      await screen.findByText(
+        'Someone changed this agent meanwhile. Reload the page and try again.',
+      ),
+    ).toBeTruthy();
+  });
+
+  it('without specialist.manage, only shows what it is for', async () => {
+    show({ capabilities: vi.fn(async () => view(3, 'Vender')) } as unknown as AgentsClient, false);
+    expect(await screen.findByText('Vender')).toBeTruthy();
+    expect(screen.getByText('Not written yet')).toBeTruthy();
+    expect(screen.queryByRole('textbox')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Save profile' })).toBeNull();
   });
 });

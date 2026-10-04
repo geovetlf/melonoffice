@@ -235,6 +235,10 @@ export function checkConfiguration(
   });
 }
 
+/** What a person writes about an agent (ADR-0140): its purpose and its description. */
+export const AGENT_PROFILE_FIELDS = Object.freeze(['purpose', 'description'] as const);
+export type AgentProfileField = (typeof AGENT_PROFILE_FIELDS)[number];
+
 /** An agent's work settings (ADR-0117), by name. */
 export const AGENT_WORK_SETTINGS = Object.freeze([
   'memory',
