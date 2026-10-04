@@ -151,7 +151,8 @@ export const CONDITION_CHECK = 'condition_decided';
  * - `skipped`: a step it depends on was stopped or skipped, so it never runs;
  * - `failed`: its child failed or was cancelled, or its condition could not go on.
  */
-type StepState = 'waiting' | 'running' | 'completed' | 'stopped' | 'skipped' | 'failed';
+export type PlanStepState = 'waiting' | 'running' | 'completed' | 'stopped' | 'skipped' | 'failed';
+type StepState = PlanStepState;
 
 interface StepView {
   readonly step: PlanStep;
@@ -162,7 +163,10 @@ interface StepView {
   readonly state: StepState;
 }
 
-const specialistState = (child: Execution): StepState =>
+/** A specialist step's state from its child execution. */
+export const specialistStepState = (
+  child: Pick<Execution, 'status' | 'startedAt'>,
+): PlanStepState =>
   child.status === 'completed'
     ? 'completed'
     : child.status === 'failed' || child.status === 'cancelled'
@@ -171,7 +175,8 @@ const specialistState = (child: Execution): StepState =>
         ? 'running'
         : 'waiting';
 
-const conditionState = (condition: PlanConditionResult | undefined): StepState =>
+/** A condition step's state from its recorded result, if it was decided. */
+export const conditionStepState = (condition: PlanConditionResult | undefined): PlanStepState =>
   condition === undefined
     ? 'waiting'
     : condition.result === 'continue'
@@ -179,6 +184,32 @@ const conditionState = (condition: PlanConditionResult | undefined): StepState =
       : condition.result === 'stop'
         ? 'stopped'
         : 'failed';
+
+/** A step that has not started, after a stopped or skipped step, never runs: it is skipped. */
+const skippedAfter = (
+  step: PlanStep,
+  state: PlanStepState,
+  states: ReadonlyMap<string, PlanStepState>,
+): boolean =>
+  state === 'waiting' &&
+  step.dependsOn.some((d) => states.get(d) === 'stopped' || states.get(d) === 'skipped');
+
+/**
+ * Where every runnable step of a plan version is, by the conductor's own rule: each step's own
+ * state (`own`), then skipped when a step it depends on was stopped or skipped. The plan screen
+ * reads it the same way the conductor runs it.
+ */
+export function planStepStates(
+  steps: readonly PlanStep[],
+  own: (step: PlanStep) => PlanStepState,
+): ReadonlyMap<string, PlanStepState> {
+  const states = new Map<string, PlanStepState>();
+  for (const step of inOrder(steps.filter((s) => RUNNABLE_STEP_KINDS.includes(s.kind)))) {
+    const state = own(step);
+    states.set(step.id, skippedAfter(step, state, states) ? 'skipped' : state);
+  }
+  return states;
+}
 
 /** Why a plan stops at a failed step, as the plan and its execution record it. */
 const failureOf = (view: StepView): string =>
@@ -232,21 +263,16 @@ export function createPlanConductor(options: PlanConductorOptions): PlanConducto
         const d = plan.delegations.find((x) => x.stepId === step.id);
         if (d === undefined) throw new PlanningError('delegation_conflict');
         const child = await executions.get(tenant, d.executionId);
-        view = { step, child, state: specialistState(child) };
+        view = { step, child, state: specialistStepState(child) };
       } else {
         const condition = plan.conditions?.find((c) => c.stepId === step.id);
         view = {
           step,
           ...(condition === undefined ? {} : { condition }),
-          state: conditionState(condition),
+          state: conditionStepState(condition),
         };
       }
-      if (
-        view.state === 'waiting' &&
-        step.dependsOn.some((d) => states.get(d) === 'stopped' || states.get(d) === 'skipped')
-      ) {
-        view = { ...view, state: 'skipped' };
-      }
+      if (skippedAfter(step, view.state, states)) view = { ...view, state: 'skipped' };
       states.set(step.id, view.state);
       out.push(view);
     }
