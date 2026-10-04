@@ -45,6 +45,8 @@ import { CommandCenterPage } from '../commandCenter/CommandCenterPage.js';
 import { AgentsPage } from '../agents/AgentsPage.js';
 import { createAgentsClient } from '../agents/agentsClient.js';
 import { ApprovalsPage } from '../approvals/ApprovalsPage.js';
+import { AuditTrailPage } from '../audit/AuditTrailPage.js';
+import { createAuditTrailClient } from '../audit/auditTrailClient.js';
 import { createApprovalsClient } from '../approvals/approvalsClient.js';
 import { createAIUsageClient } from '../aiUsage/aiUsageClient.js';
 import { PlatformPage } from '../platform/PlatformPage.js';
@@ -184,6 +186,7 @@ export function AppShell(locale: LocaleProps) {
             documents: createDocumentsClient(services.api.request, organizationId),
             aiUsage: createAIUsageClient(services.api.request, organizationId),
             approvals: createApprovalsClient(services.api.request, organizationId),
+            auditTrail: createAuditTrailClient(services.api.request, organizationId),
             agents: createAgentsClient(services.api.request, organizationId),
             agentTasks: createAgentTasksClient(services.api.request, organizationId),
             agentNotices: createAgentNotificationsClient(services.api.request, organizationId),
@@ -412,6 +415,15 @@ export function AppShell(locale: LocaleProps) {
         <NotFound />
       );
       break;
+    case 'auditTrail':
+      page = canReadActivity ? (
+        <div className="light-surface">
+          <AuditTrailPage client={clients.auditTrail} />
+        </div>
+      ) : (
+        <NotFound />
+      );
+      break;
     case 'commandCenter':
       page =
         canReadAIUsage || canReadApprovals || canReadAgents || canReadPlans ? (
@@ -575,6 +587,7 @@ export function AppShell(locale: LocaleProps) {
                   canReadAIUsage={canReadAIUsage}
                   platformAdmin={platformAdmin}
                   canReadApprovals={canReadApprovals}
+                  canReadAuditTrail={canReadActivity}
                   canReadAgents={canReadAgents}
                   canReadAutomations={canReadWorkflows || canReadPlans}
                   canReadCommandCenter={

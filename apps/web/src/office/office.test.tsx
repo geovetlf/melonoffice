@@ -96,6 +96,7 @@ describe('routes (ADR-0040)', () => {
     ['/', { kind: 'home' }],
     ['/home', { kind: 'home' }],
     ['/conversations', { kind: 'conversations' }],
+    ['/audit', { kind: 'auditTrail' }],
     ['/gia', { kind: 'gia' }],
     ['/settings/connections', { kind: 'connections' }],
     ['/settings', { kind: 'not_found' }],
@@ -189,13 +190,13 @@ describe('the Home (ADR-0040)', () => {
       'Finance',
       'Research',
     ]);
-    // The tools: Communications, the AI Command Center and Agents; the rest are coming. The business lives in the company
-    // memory, next to the rooms (ADR-0056).
+    // The tools: Communications, the AI Command Center, the audit history (ADR-0147) and Agents;
+    // the rest are coming. The business lives in the company memory, next to the rooms (ADR-0056).
     expect(
       within(screen.getByRole('navigation', { name: 'Tools' }))
         .getAllByRole('link')
         .map((link) => link.getAttribute('href')),
-    ).toEqual(['/conversations', '/command-center', '/agents']);
+    ).toEqual(['/conversations', '/command-center', '/audit', '/agents']);
   });
 
   it('makes the seven desks of the office the way into GIA and the six real departments, as the menu does', async () => {
