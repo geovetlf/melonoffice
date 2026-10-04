@@ -105,6 +105,14 @@ export const SKILL_CATALOGUE: readonly AgentSkill[] = Object.freeze([
     departments: ['sales'],
   }),
   skill('pipeline_analysis', { reads: ['opportunity.read', 'report.read'] }),
+  // Version 2 (TL-2, ADR-0160): a plan's tool step may read the organization's own customer
+  // records with `customer_records_summary@1`: counts and totals, never a record. Runtime only:
+  // no model asks for it. It reaches an agent only when a person upgrades it.
+  skill('pipeline_analysis', {
+    version: 2,
+    tools: { customer_records_summary: [1] },
+    reads: ['opportunity.read', 'report.read'],
+  }),
   skill('campaign_analysis', { reads: ['contact.read', 'report.read'] }),
   skill('content_drafting', { reads: ['knowledge.read'] }),
   skill('design_briefing', { reads: ['knowledge.read'] }),

@@ -83,11 +83,12 @@ function agent(
       skills: [
         { id: 'company_knowledge', version: 3 },
         { id: 'customer_follow_up', version: 3 },
-        { id: 'pipeline_analysis', version: 1 },
+        { id: 'pipeline_analysis', version: 2 },
       ] as never,
       tools: [
         { id: 'knowledge_search', version: 1 },
         { id: 'follow_up_schedule', version: 3 },
+        { id: 'customer_records_summary', version: 1 },
       ] as never,
       permissions: [
         'contact.read',
@@ -157,11 +158,12 @@ describe('auditAgents (G-1, ADR-0131)', () => {
         skills: [
           { id: 'company_knowledge', version: 3 },
           { id: 'customer_follow_up', version: 2 },
-          { id: 'pipeline_analysis', version: 1 },
+          { id: 'pipeline_analysis', version: 2 },
         ] as never,
         tools: [
           { id: 'follow_up_schedule', version: 2 },
           { id: 'knowledge_search', version: 1 },
+          { id: 'customer_records_summary', version: 1 },
         ] as never,
       },
     });

@@ -465,16 +465,123 @@ export const KNOWLEDGE_SEARCH_TOOL: ToolDefinition = {
   ],
 };
 
+const COUNT = { type: 'integer', minimum: 0 } as const;
+
+/** How many currencies an amount list holds at most. */
+export const CUSTOMER_RECORDS_LIMITS = Object.freeze({ currencies: 10 });
+
+/**
+ * `customer_records_summary` (TL-2, ADR-0160): the organization's own customer records, as a plan's
+ * tool step reads them. It changes nothing and reaches no provider. Counts and totals only, from
+ * the commercial insights (C4): no names, titles, phone numbers or records, as the context a task
+ * starts with (ADR-0102). Each part is there only when the agent's configuration lists its
+ * permission and the person the plan runs for may read it. It takes no input: the organization,
+ * the agent and the person come from the execution. Runtime only: no model asks for it.
+ */
+export const CUSTOMER_RECORDS_TOOL: ToolDefinition = {
+  id: 'customer_records_summary' as ToolDefinition['id'],
+  status: 'active',
+  versions: [
+    {
+      toolId: 'customer_records_summary' as ToolVersion['toolId'],
+      version: 1,
+      nameKey: 'tools.customer_records_summary.name' as ToolVersion['nameKey'],
+      descriptionKey: 'tools.customer_records_summary.description' as ToolVersion['descriptionKey'],
+      category: 'crm',
+      action: 'read',
+      mutating: false,
+      inputSchema: { type: 'object', properties: {} },
+      outputSchema: {
+        type: 'object',
+        properties: {
+          available: { type: 'boolean' },
+          today: { type: 'string', maxLength: 10 },
+          contacts: {
+            type: 'object',
+            properties: {
+              leads: COUNT,
+              customers: COUNT,
+              inactive: COUNT,
+              leadsWithoutNextAction: COUNT,
+              overdueNextAction: COUNT,
+              newThisWeek: COUNT,
+            },
+            required: [
+              'leads',
+              'customers',
+              'inactive',
+              'leadsWithoutNextAction',
+              'overdueNextAction',
+              'newThisWeek',
+            ],
+          },
+          opportunities: {
+            type: 'object',
+            properties: {
+              open: COUNT,
+              won: COUNT,
+              lost: COUNT,
+              closingSoon: COUNT,
+              closeDatePassed: COUNT,
+              quiet: COUNT,
+              openValue: {
+                type: 'array',
+                maxItems: CUSTOMER_RECORDS_LIMITS.currencies,
+                items: {
+                  type: 'object',
+                  properties: {
+                    currency: { type: 'string', minLength: 3, maxLength: 3 },
+                    amountMinor: COUNT,
+                  },
+                  required: ['currency', 'amountMinor'],
+                },
+              },
+            },
+            required: [
+              'open',
+              'won',
+              'lost',
+              'closingSoon',
+              'closeDatePassed',
+              'quiet',
+              'openValue',
+            ],
+          },
+          followUps: {
+            type: 'object',
+            properties: { open: COUNT, overdue: COUNT, today: COUNT },
+            required: ['open', 'overdue', 'today'],
+          },
+        },
+        required: ['available'],
+      },
+      permissions: [],
+      credentials: [],
+      riskLevel: 'low',
+      approvalPolicy: 'auto',
+      approvalTtlSeconds: 600,
+      timeoutMs: 10_000,
+      // Its failures (no permission, records unavailable) would fail the same way again.
+      retryPolicy: { maxAttempts: 1, backoffMs: 0 },
+      provider: { kind: 'internal', id: 'crm' },
+      environments: ['dev'],
+      invocationModes: ['runtime'],
+    },
+  ],
+};
+
 /**
  * MelonOffice's tool catalogue. Only what exists, with its executor: tools are never invented.
  * Today, `message_send` (CV-2: a person's send; CV-6B: an agent's reply),
- * `conversation_handoff` (CV-6B), `follow_up_schedule` (TL-1) and `knowledge_search` (RT-1).
+ * `conversation_handoff` (CV-6B), `follow_up_schedule` (TL-1), `knowledge_search` (RT-1) and
+ * `customer_records_summary` (TL-2).
  */
 export const TOOL_CATALOGUE: readonly ToolDefinition[] = Object.freeze([
   MESSAGE_SEND_TOOL,
   CONVERSATION_HANDOFF_TOOL,
   FOLLOW_UP_SCHEDULE_TOOL,
   KNOWLEDGE_SEARCH_TOOL,
+  CUSTOMER_RECORDS_TOOL,
 ]);
 
 export const defaultToolRegistry = (): ToolRegistry => createToolRegistry(TOOL_CATALOGUE);

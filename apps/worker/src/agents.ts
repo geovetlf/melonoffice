@@ -70,6 +70,7 @@ import {
 import type { EventBus, EventDraft } from '@melonoffice/events';
 import {
   createCrmContextSource,
+  createCustomerRecordsExecutor,
   handoffForTask,
   createHarnessAgentWork,
   createHarnessContextSource,
@@ -310,32 +311,31 @@ export function createAgentTaskParts(options: {
     );
     return item?.status === 'active' && item.value.type === 'text' ? item.value.text : undefined;
   };
-  const crm =
+  const insights =
     records === undefined
       ? undefined
-      : createCrmContextSource({
-          insights: createCommercialInsights({
-            customers: createCustomerService({
-              repository: records.conversations,
-              organizations: stores.tenancy,
-              authorization,
-              ...(now === undefined ? {} : { now }),
-            }),
-            opportunities: createOpportunityService({
-              repository: records.conversations,
-              organizations: stores.tenancy,
-              authorization,
-              businessType: (organizationId) => fact(organizationId, 'identity', 'business_type'),
-              currency: (organizationId) => fact(organizationId, 'finance', 'currency'),
-              ...(now === undefined ? {} : { now }),
-            }),
-            conversations: records.conversations,
+      : createCommercialInsights({
+          customers: createCustomerService({
+            repository: records.conversations,
+            organizations: stores.tenancy,
             authorization,
-            timeZone: records.timeZone,
+            ...(now === undefined ? {} : { now }),
+          }),
+          opportunities: createOpportunityService({
+            repository: records.conversations,
+            organizations: stores.tenancy,
+            authorization,
+            businessType: (organizationId) => fact(organizationId, 'identity', 'business_type'),
             currency: (organizationId) => fact(organizationId, 'finance', 'currency'),
             ...(now === undefined ? {} : { now }),
           }),
+          conversations: records.conversations,
+          authorization,
+          timeZone: records.timeZone,
+          currency: (organizationId) => fact(organizationId, 'finance', 'currency'),
+          ...(now === undefined ? {} : { now }),
         });
+  const crm = insights === undefined ? undefined : createCrmContextSource({ insights });
   // The Melon Agent Harness (ADR-0099): a task, or a step of a plan, reads only the context it
   // needs.
   const context = createHarnessContextSource({
@@ -475,6 +475,17 @@ export function createAgentTaskParts(options: {
       organizations: stores.tenancy,
       specialists: stores.specialists,
     }),
+    // The organization's own customer records, read by a plan's tool step (TL-2, ADR-0160):
+    // counts and totals, with the agent's permissions, as the person the plan runs for.
+    ...(insights === undefined
+      ? {}
+      : {
+          crm: createCustomerRecordsExecutor({
+            insights,
+            organizations: stores.tenancy,
+            specialists: stores.specialists,
+          }),
+        }),
     ...(records === undefined || taskContacts === undefined
       ? {}
       : {

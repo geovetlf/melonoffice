@@ -4,7 +4,16 @@ import type {
   CommercialInsightService,
   InsightAmount,
 } from '@melonoffice/conversations';
-import type { TenantContext } from '@melonoffice/tenancy';
+import type { OrganizationId, SpecialistId } from '@melonoffice/domain';
+import type { SpecialistRepository } from '@melonoffice/specialists';
+import { resolveRuntimeTenant, type TenancyStore, type TenantContext } from '@melonoffice/tenancy';
+import {
+  CUSTOMER_RECORDS_LIMITS,
+  CUSTOMER_RECORDS_TOOL,
+  type ToolExecutionContext,
+  type ToolExecutor,
+  type ToolExecutorOutcome,
+} from '@melonoffice/tools';
 
 const NAME = 'crm_context';
 
@@ -90,6 +99,122 @@ export function createCrmContextSource(options: {
       } catch {
         return [{ name: NAME, text: '(the customer records could not be read now)' }];
       }
+    },
+  });
+}
+
+const CURRENCY = /^[A-Z]{3}$/;
+
+/**
+ * The executor of `customer_records_summary@1` (provider `crm`, TL-2, ADR-0160), in the worker: a
+ * plan's tool step reads the organization's own customer records. The Tool Gate calls it only
+ * after its checks passed (the agent's skills grant this version, the call came from the runtime
+ * for this execution). It reads as the context a task starts with (ADR-0102): through the
+ * commercial insights, as the runtime for the person the plan runs for, in the execution's
+ * organization, with each part only when the agent's configuration lists its permission; the
+ * insights check the person again. Counts and totals only: no record, name or text.
+ */
+export function createCustomerRecordsExecutor(options: {
+  readonly insights: Pick<CommercialInsightService, 'read'>;
+  readonly organizations: TenancyStore;
+  readonly specialists: Pick<SpecialistRepository, 'findVersion'>;
+}): ToolExecutor {
+  const { insights, organizations, specialists } = options;
+  const [declared] = CUSTOMER_RECORDS_TOOL.versions;
+  return Object.freeze({
+    async execute(context: ToolExecutionContext, input: unknown): Promise<ToolExecutorOutcome> {
+      if (
+        context.toolId !== declared?.toolId ||
+        context.toolVersion !== declared.version ||
+        context.actor.via !== 'runtime' ||
+        context.specialistId === undefined ||
+        context.specialistVersion === undefined
+      ) {
+        return { status: 'failure', code: 'tool_not_runtime_invokable' };
+      }
+      if (
+        typeof input !== 'object' ||
+        input === null ||
+        Array.isArray(input) ||
+        Object.keys(input).length > 0
+      ) {
+        return { status: 'failure', code: 'invalid_input' };
+      }
+      let tenant: TenantContext;
+      try {
+        tenant = await resolveRuntimeTenant(
+          context.actor.userId,
+          context.organizationId,
+          organizations,
+        );
+      } catch {
+        return { status: 'failure', code: 'permission_denied' };
+      }
+      const agent = await specialists.findVersion(
+        context.organizationId as OrganizationId,
+        context.specialistId as SpecialistId,
+        context.specialistVersion,
+      );
+      if (agent === undefined) return { status: 'failure', code: 'specialist_not_found' };
+      const permissions = agent.configuration.permissions;
+      const parts = {
+        contacts: permissions.includes('contact.read'),
+        opportunities: permissions.includes('opportunity.read'),
+        followUps: permissions.includes('follow_up.read'),
+      };
+      if (!parts.contacts && !parts.opportunities && !parts.followUps) {
+        return { status: 'success', output: { available: false } };
+      }
+      let read: CommercialInsights;
+      try {
+        read = await insights.read(tenant);
+      } catch {
+        return { status: 'failure', code: 'records_unavailable' };
+      }
+      const c = parts.contacts ? read.contacts : null;
+      const o = parts.opportunities ? read.opportunities : null;
+      const f = parts.followUps ? read.followUps : null;
+      if (c === null && o === null && f === null) {
+        return { status: 'success', output: { available: false } };
+      }
+      return {
+        status: 'success',
+        output: {
+          available: true,
+          today: read.today,
+          ...(c === null
+            ? {}
+            : {
+                contacts: {
+                  leads: c.counts.lead,
+                  customers: c.counts.customer,
+                  inactive: c.counts.inactive,
+                  leadsWithoutNextAction: c.leadsWithoutNextAction,
+                  overdueNextAction: c.overdueNextAction,
+                  newThisWeek: c.newThisWeek,
+                },
+              }),
+          ...(o === null
+            ? {}
+            : {
+                opportunities: {
+                  open: o.counts.open,
+                  won: o.counts.won,
+                  lost: o.counts.lost,
+                  closingSoon: o.closingSoon,
+                  closeDatePassed: o.closeDatePassed,
+                  quiet: o.quiet,
+                  openValue: o.openValue
+                    .filter((a) => CURRENCY.test(a.currency))
+                    .slice(0, CUSTOMER_RECORDS_LIMITS.currencies)
+                    .map((a) => ({ currency: a.currency, amountMinor: a.amountMinor })),
+                },
+              }),
+          ...(f === null
+            ? {}
+            : { followUps: { open: f.open, overdue: f.overdue, today: f.today } }),
+        },
+      };
     },
   });
 }
