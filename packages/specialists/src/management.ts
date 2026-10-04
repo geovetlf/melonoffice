@@ -25,7 +25,9 @@ import {
   autonomyOf,
   checkConfiguration,
   checkStatusReason,
+  AGENT_PROFILE_FIELDS,
   AGENT_WORK_SETTINGS,
+  type AgentProfileField,
   isAgentAutonomy,
   isSpecialistId,
   isVersionNumber,
@@ -79,6 +81,17 @@ export interface SpecialistManagement {
    * `{ fromVersion, memory?, aiVerification?, collaboration? }` (ADR-0117). It grants nothing.
    */
   setWorkSettings(
+    tenant: TenantContext,
+    id: string,
+    input: Record<string, unknown>,
+  ): Promise<Specialist>;
+  /**
+   * Changes what the agent is for, in a person's words, as a new version of the agent:
+   * `{ fromVersion, purpose?, description? }`, each a text or `null` to clear it (ADR-0140). The
+   * server keeps the rest of the configuration as it is, so a browser never sends or sees the
+   * agent's tools, permissions, policies or conversation. It grants nothing.
+   */
+  setProfile(
     tenant: TenantContext,
     id: string,
     input: Record<string, unknown>,
@@ -452,6 +465,54 @@ export function createSpecialistManagement(
               to: level,
             }),
           ],
+        };
+      });
+    },
+
+    async setProfile(tenant, id, input) {
+      const organizationId = await managerOf(tenant);
+      const person = userOf(tenant);
+      if (!isRecord(input)) bad('body');
+      const changes: [AgentProfileField, string | null][] = [];
+      for (const [key, value] of Object.entries(input)) {
+        if (key === 'fromVersion') continue;
+        if (!(AGENT_PROFILE_FIELDS as readonly string[]).includes(key)) bad(key);
+        if (value !== null && typeof value !== 'string') bad(key);
+        // An empty text clears the field, like `null`.
+        const text = typeof value === 'string' && value.trim() !== '' ? value : null;
+        changes.push([key as AgentProfileField, text]);
+      }
+      if (!isVersionNumber(input.fromVersion)) bad('fromVersion');
+      if (changes.length === 0) bad('profile');
+      if (!isSpecialistId(id)) throw new SpecialistError('specialist_not_found');
+      const read = await repository.find(organizationId, id);
+      if (read === undefined) throw new SpecialistError('specialist_not_found');
+      const department = await departmentOf(organizationId, read.configuration);
+      return update(organizationId, id, (current, at) => {
+        const cleared = new Set(changes.filter(([, v]) => v === null).map(([k]) => k));
+        const rest = Object.fromEntries(
+          Object.entries(current.configuration).filter(
+            ([key]) => !cleared.has(key as AgentProfileField),
+          ),
+        );
+        // Only the profile changes; the same checks as any version (length, control characters).
+        const next = checkConfiguration(
+          {
+            ...rest,
+            ...Object.fromEntries(changes.filter(([, v]) => v !== null)),
+          },
+          organizationId,
+        );
+        if (next.departmentId !== read.configuration.departmentId) bad('departmentId');
+        const write = reviseSpecialist(
+          current,
+          { fromVersion: input.fromVersion as number, configuration: next, department },
+          person.userId,
+          at.toISOString() as IsoTimestamp,
+        );
+        return {
+          ...write,
+          events: [event(person, write.specialist, 'specialist.version_created', at)],
         };
       });
     },

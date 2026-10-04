@@ -129,6 +129,16 @@ export function registerSpecialistRoutes(
     ),
   );
 
+  // What it is for, in a person's words (ADR-0140): the server keeps everything else as it is.
+  app.post(
+    '/v1/organizations/:organizationId/specialists/:specialistId/profile',
+    withPermission('specialist.manage', dependencies, async (c, tenant) =>
+      answer(c, 200, async () =>
+        management.setProfile(tenant, c.req.param('specialistId') ?? '', await bodyOf(c)),
+      ),
+    ),
+  );
+
   // The organization's rules for its agents (AE-4.4, ADR-0116): what else it counts as
   // sensitive, and the furthest any of its agents acts on its own.
   if (agentPolicies !== undefined) {
@@ -218,6 +228,9 @@ export function registerSpecialistRoutes(
           // How far it acts on its own (AE-4.4): a person with specialist.manage changes it.
           autonomy: autonomyOf(specialist.configuration),
           work: workSettingsOf(specialist.configuration),
+          // What it is for (ADR-0140), which a person with specialist.manage may rewrite.
+          purpose: specialist.configuration.purpose ?? null,
+          description: specialist.configuration.description ?? null,
           ...found,
           upgrades: warned,
         });
