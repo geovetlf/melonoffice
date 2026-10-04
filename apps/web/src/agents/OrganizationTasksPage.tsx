@@ -12,7 +12,10 @@ import {
 } from './organizationTasksClient.js';
 
 /**
- * Every agent's tasks of the organization (ADR-0148), newest first, a page at a time. Read only:
+ * Every agent's work in the organization (ADR-0148, ADR-0149): tasks people asked agents for and
+ * plan steps agents run, each marked by where it comes from, newest first, a page at a time.
+ * A step stays a step of its plan: its details are the plan engine's, and its plan is acted on
+ * in Automations. Read only:
  * nothing here stops, retries, reassigns or changes a task or an agent. Filters are sent as asked
  * and checked again by the API, which reads only the person's own organization.
  */
@@ -44,11 +47,15 @@ function errorOf(error: unknown): string {
 
 export function OrganizationTasksPage({ client }: { readonly client: OrganizationTasksClient }) {
   const intl = useIntl();
-  const [draft, setDraft] = useState({ agent: '', status: '', from: '', to: '' });
+  const [draft, setDraft] = useState({ origin: '', agent: '', status: '', from: '', to: '' });
   const [query, setQuery] = useState<OrganizationTasksQuery>({});
   const [tasks, setTasks] = useState<readonly OrganizationTaskView[] | undefined>();
   const [options, setOptions] = useState<
-    Pick<OrganizationTasksPageView, 'agents' | 'statuses'> | undefined
+    | Pick<
+        OrganizationTasksPageView,
+        'agents' | 'statuses' | 'origins' | 'sources' | 'planStepsWindowed'
+      >
+    | undefined
   >();
   const [next, setNext] = useState<string | null>(null);
   const [error, setError] = useState<string | undefined>();
@@ -61,7 +68,13 @@ export function OrganizationTasksPage({ client }: { readonly client: Organizatio
       (page) => {
         if (!live) return;
         setTasks(page.tasks);
-        setOptions({ agents: page.agents, statuses: page.statuses });
+        setOptions({
+          agents: page.agents,
+          statuses: page.statuses,
+          origins: page.origins,
+          sources: page.sources,
+          planStepsWindowed: page.planStepsWindowed,
+        });
         setNext(page.nextCursor);
       },
       (failure: unknown) => live && setError(errorOf(failure)),
@@ -112,6 +125,21 @@ export function OrganizationTasksPage({ client }: { readonly client: Organizatio
         }
       />
       <Toolbar label={intl.formatMessage({ id: 'orgTasks.filters' })}>
+        <label className="mo-field">
+          <span className="mo-label">
+            <FormattedMessage id="orgTasks.filter.origin" />
+          </span>
+          <select
+            value={draft.origin}
+            onChange={(e) => setDraft({ ...draft, origin: e.target.value })}
+          >
+            {(options?.origins ?? ['all']).map((o) => (
+              <option key={o} value={o === 'all' ? '' : o}>
+                {intl.formatMessage({ id: `orgTasks.origin.filter.${o}` })}
+              </option>
+            ))}
+          </select>
+        </label>
         <label className="mo-field">
           <span className="mo-label">
             <FormattedMessage id="orgTasks.filter.agent" />
@@ -168,6 +196,21 @@ export function OrganizationTasksPage({ client }: { readonly client: Organizatio
           <FormattedMessage id="orgTasks.filter.apply" />
         </Button>
       </Toolbar>
+      {options?.sources.plan_step === 'unavailable' ? (
+        <StateMessage kind="warning">
+          <FormattedMessage id="orgTasks.steps.unavailable" />
+        </StateMessage>
+      ) : null}
+      {options?.sources.plan_step === 'not_permitted' ? (
+        <p className="mo-hint">
+          <FormattedMessage id="orgTasks.steps.notPermitted" />
+        </p>
+      ) : null}
+      {options?.planStepsWindowed === true ? (
+        <p className="mo-hint">
+          <FormattedMessage id="orgTasks.steps.windowed" />
+        </p>
+      ) : null}
       {error === undefined ? null : (
         <StateMessage kind="error">
           <FormattedMessage id={`orgTasks.error.${error}`} />
@@ -199,7 +242,7 @@ export function OrganizationTasksPage({ client }: { readonly client: Organizatio
                     </Badge>
                   </span>
                   <span className="mo-list-item__meta">
-                    {agentName(task)} ·{' '}
+                    <FormattedMessage id={`orgTasks.origin.${task.origin}`} /> · {agentName(task)} ·{' '}
                     <time dateTime={task.createdAt}>{time(task.createdAt)}</time>
                     {task.progress.total === 0 ? null : (
                       <>
@@ -211,6 +254,16 @@ export function OrganizationTasksPage({ client }: { readonly client: Organizatio
                       </>
                     )}
                   </span>
+                  {task.plan?.step === undefined ? null : (
+                    <span className="mo-list-item__meta">
+                      <FormattedMessage
+                        id="orgTasks.stepInPlan"
+                        values={{
+                          state: labelOf(intl, 'orgTasks.stepState', task.plan.step.state),
+                        }}
+                      />
+                    </span>
+                  )}
                   {task.result === null ? null : (
                     <p className="org-tasks__summary">
                       {task.result.summary}
@@ -291,6 +344,9 @@ function TaskDetail({
             <FormattedMessage id="orgTasks.detail.plan" />
           </dt>
           <dd>
+            {task.plan.status === undefined ? null : (
+              <>{labelOf(intl, 'orgTasks.planStatus', task.plan.status)} · </>
+            )}
             <a
               className="mo-link"
               href={paths.automations()}
@@ -302,6 +358,34 @@ function TaskDetail({
               <FormattedMessage id="orgTasks.detail.openPlan" />
             </a>
           </dd>
+        </>
+      )}
+      {task.plan?.step === undefined ? null : (
+        <>
+          <dt>
+            <FormattedMessage id="orgTasks.detail.stepState" />
+          </dt>
+          <dd>{labelOf(intl, 'orgTasks.stepState', task.plan.step.state)}</dd>
+        </>
+      )}
+      {task.dependsOn.length === 0 ? null : (
+        <>
+          <dt>
+            <FormattedMessage id="orgTasks.detail.dependsOn" />
+          </dt>
+          <dd>
+            {task.dependsOn
+              .map((d) => `${d.label} (${labelOf(intl, 'orgTasks.stepState', d.state)})`)
+              .join(', ')}
+          </dd>
+        </>
+      )}
+      {task.approval === null ? null : (
+        <>
+          <dt>
+            <FormattedMessage id="orgTasks.detail.approval" />
+          </dt>
+          <dd>{labelOf(intl, 'orgTasks.approval', task.approval.state)}</dd>
         </>
       )}
       {task.handedFrom === null ? null : (

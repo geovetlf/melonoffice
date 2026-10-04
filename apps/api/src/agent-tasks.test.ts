@@ -555,11 +555,14 @@ describe.each(STORES)('agent tasks with storage in %s', (_name, createStores) =>
       }
       expect(Object.keys(listed ?? {}).sort()).toEqual([
         'agent',
+        'approval',
         'completedAt',
         'createdAt',
+        'dependsOn',
         'failure',
         'handedFrom',
         'id',
+        'origin',
         'plan',
         'progress',
         'request',

@@ -1,15 +1,18 @@
 import type { ReplyRequest } from '../conversations/sendReply.js';
 
 /**
- * Every agent's tasks of the organization (ADR-0148), read through the API, read only. The
+ * Every agent's work in the organization (ADR-0148, ADR-0149): the tasks people asked agents for
+ * and the plan steps agents run, read through the API, read only. The
  * screen shows exactly the fields the API chose, a page at a time; every filter is checked again
  * on the server. Reading the list calls no model.
  */
 
 export interface OrganizationTaskView {
   readonly id: string;
+  /** A task a person asked an agent for, or a step of a plan an agent runs (ADR-0149). */
+  readonly origin: 'task' | 'plan_step';
   readonly agent: {
-    readonly id: string;
+    readonly id: string | null;
     readonly name: string | null;
     readonly status: string | null;
   };
@@ -29,7 +32,16 @@ export interface OrganizationTaskView {
     readonly completedAt: string | null;
     readonly failure: string | null;
   }[];
-  readonly plan: { readonly id: string } | null;
+  /** The plan a step belongs to, with the plan engine's own state for the step. */
+  readonly plan: {
+    readonly id: string;
+    readonly status?: string;
+    readonly step?: { readonly state: string };
+  } | null;
+  /** The steps of its plan it waits on, by label and where each is. */
+  readonly dependsOn: readonly { readonly label: string; readonly state: string }[];
+  /** A step that asks a person before it runs: pending, approved, or why it was declined. */
+  readonly approval: { readonly state: string } | null;
   /** The task it was handed from, when another agent proposed it (ADR-0117). */
   readonly handedFrom: string | null;
   /** The verified answer, cut to a summary, once it may be shown. */
@@ -51,10 +63,17 @@ export interface OrganizationTasksPageView {
   /** The states the list can be narrowed to, as the API lists them. */
   readonly statuses: readonly string[];
   readonly period: { readonly from: string; readonly to: string } | null;
+  /** Where items may come from, as the API lists them. */
+  readonly origins: readonly string[];
+  /** Whether plan steps were read: `not_permitted` without `plan.read`, `unavailable` on failure. */
+  readonly sources: { readonly task: string; readonly plan_step: string };
+  /** Plan steps come from the newest plans only. */
+  readonly planStepsWindowed: boolean;
   readonly nextCursor: string | null;
 }
 
 export interface OrganizationTasksQuery {
+  readonly origin?: string;
   readonly agent?: string;
   readonly status?: string;
   readonly from?: string;

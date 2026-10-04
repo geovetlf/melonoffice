@@ -273,6 +273,8 @@ export interface AgentTaskService {
    * narrowed by state may hold fewer than `limit` tasks and still have a next cursor.
    */
   listAll(tenant: TenantContext, query: OrganizationTaskQuery): Promise<OrganizationTaskPage>;
+  /** Every agent of the organization, in any status, by id (ADR-0148), with `specialist.read`. */
+  agentsOf(tenant: TenantContext): Promise<OrganizationTaskPage['agents']>;
 }
 
 /** The part of the runtime that queues a started execution's first node. */
@@ -531,7 +533,6 @@ export function createAgentTaskService(options: AgentTaskServiceOptions): AgentT
     async listAll(tenant, query) {
       const organizationId = organizationOf(tenant, 'specialist.read');
       const limit = limitOf(query.limit);
-      if (specialists.list === undefined) throw new AgentTaskError('permission_denied');
       if (query.status !== undefined && !EXECUTION_STATUSES.has(query.status)) {
         throw new AgentTaskError('invalid_task', 'status');
       }
@@ -564,9 +565,7 @@ export function createAgentTaskService(options: AgentTaskServiceOptions): AgentT
             : bound;
       // Every agent, in any status: an archived agent's tasks stay in the organization's history.
       // Narrowed to one agent, only its own list is read; another organization's agent is none.
-      const everyAgent = (await specialists.list(organizationId)).filter(
-        (a) => a.organizationId === organizationId,
-      );
+      const everyAgent = await rosterOf(organizationId);
       const agents =
         query.specialistId === undefined
           ? everyAgent
@@ -599,21 +598,34 @@ export function createAgentTaskService(options: AgentTaskServiceOptions): AgentT
       const hasMore = more;
       return Object.freeze({
         items: Object.freeze(found),
-        agents: Object.freeze(
-          Object.fromEntries(
-            everyAgent.map((a) => [
-              a.identity.id,
-              { name: a.identity.displayName, status: a.status },
-            ]),
-          ),
-        ),
+        agents: namesOf(everyAgent),
         nextCursor:
           hasMore && last !== undefined
             ? encodeTaskCursor(organizationId, ALL_AGENTS, taskPosition(last))
             : null,
       });
     },
+
+    async agentsOf(tenant) {
+      const organizationId = organizationOf(tenant, 'specialist.read');
+      return namesOf(await rosterOf(organizationId));
+    },
   } satisfies AgentTaskService);
+
+  async function rosterOf(organizationId: OrganizationId): Promise<readonly Specialist[]> {
+    if (specialists.list === undefined) throw new AgentTaskError('permission_denied');
+    return (await specialists.list(organizationId)).filter(
+      (a) => a.organizationId === organizationId,
+    );
+  }
+
+  function namesOf(agents: readonly Specialist[]): OrganizationTaskPage['agents'] {
+    return Object.freeze(
+      Object.fromEntries(
+        agents.map((a) => [a.identity.id, { name: a.identity.displayName, status: a.status }]),
+      ),
+    );
+  }
 
   /** The newest `limit` tasks of these agents after `after`: each agent's own list, merged. */
   async function mergedPage(

@@ -82,6 +82,8 @@ export interface FakeBackend {
     organizationTasks: Record<string, Record<string, unknown>[]>;
     /** Tasks per page of that list (20 in the API). */
     organizationTasksPageSize?: number;
+    /** Whether each source of that list was read (ADR-0149). */
+    organizationTasksSources?: { readonly task: string; readonly plan_step: string };
     /** Reading that list fails with this status and body. */
     organizationTasksFails?: { readonly status: number; readonly body: Record<string, unknown> };
     /** Each organization's audit trail items (ADR-0147), newest first, as the API returns them. */
@@ -1046,6 +1048,7 @@ export function fakeBackend(): FakeBackend {
       const q = new URLSearchParams(query);
       const all = (options.organizationTasks[organizationId] ?? []).filter(
         (t) =>
+          (q.get('origin') === null || t['origin'] === q.get('origin')) &&
           (q.get('status') === null || t['status'] === q.get('status')) &&
           (q.get('agent') === null ||
             (t['agent'] as { id?: unknown } | undefined)?.id === q.get('agent')),
@@ -1061,6 +1064,9 @@ export function fakeBackend(): FakeBackend {
           status: a.status,
         })),
         statuses: ['pending', 'running', 'waiting_approval', 'completed', 'failed', 'cancelled'],
+        origins: ['all', 'task', 'plan_step'],
+        sources: options.organizationTasksSources ?? { task: 'read', plan_step: 'read' },
+        planStepsWindowed: false,
         period:
           q.get('from') === null && q.get('to') === null
             ? null
