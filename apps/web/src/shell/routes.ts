@@ -20,6 +20,7 @@ export type Route =
   | { readonly kind: 'commandCenter' }
   | { readonly kind: 'platform' }
   | { readonly kind: 'approvals' }
+  | { readonly kind: 'auditTrail' }
   | { readonly kind: 'agents' }
   | { readonly kind: 'automations' }
   | { readonly kind: 'partners' }
@@ -53,6 +54,8 @@ export function parseRoute(path: string): Route {
   if (trimmed === '/platform') return { kind: 'platform' };
   // The approval center (ADR-0026).
   if (trimmed === '/approvals') return { kind: 'approvals' };
+  // The audit history (ADR-0147), read only.
+  if (trimmed === '/audit') return { kind: 'auditTrail' };
   // Agents and their lifecycle (ADR-0025, ADR-0062).
   if (trimmed === '/agents') return { kind: 'agents' };
   // Automations (WF-3, ADR-0071): workflows and their plans.
@@ -100,6 +103,7 @@ export const paths = {
   commandCenter: () => '/command-center',
   platform: () => '/platform',
   approvals: () => '/approvals',
+  auditTrail: () => '/audit',
   agents: () => '/agents',
   automations: () => '/automations',
   partners: () => '/settings/partners',

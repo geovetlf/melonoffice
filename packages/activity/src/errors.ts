@@ -1,6 +1,9 @@
 export type ActivityErrorCode =
   | 'invalid_period'
   | 'invalid_time_zone'
+  | 'invalid_filter'
+  | 'invalid_cursor'
+  | 'invalid_target'
   | 'permission_denied'
   | 'organization_inactive'
   | 'unresolved_tenant';

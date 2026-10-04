@@ -87,3 +87,59 @@ export function periodRange(period: ActivityPeriod, timeZone: string, now: Date)
   }
   return Object.freeze({ from: startOfLocalDay(start, timeZone), to: now });
 }
+
+const DAY = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/** A calendar day `YYYY-MM-DD` that exists, or undefined. */
+function localDateOf(value: unknown): LocalDate | undefined {
+  if (typeof value !== 'string') return undefined;
+  const m = DAY.exec(value);
+  if (m === null) return undefined;
+  const [year, month, day] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const check = new Date(Date.UTC(year, month - 1, day));
+  if (check.getUTCFullYear() !== year || check.getUTCMonth() !== month - 1) return undefined;
+  if (check.getUTCDate() !== day) return undefined;
+  return { year, month, day };
+}
+
+const shift = (date: LocalDate, days: number): LocalDate => {
+  const d = new Date(Date.UTC(date.year, date.month - 1, date.day + days));
+  return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, day: d.getUTCDate() };
+};
+
+const dayText = (date: LocalDate): string =>
+  `${String(date.year).padStart(4, '0')}-${String(date.month).padStart(2, '0')}-${String(date.day).padStart(2, '0')}`;
+
+/** The most days one range of the audit trail spans. */
+export const MAX_RANGE_DAYS = 366;
+
+/**
+ * The days `from` to `to`, both included, in the business's time zone (the audit trail viewer):
+ * from local midnight of `from` to local midnight after `to`, never past this instant. Absent days mean
+ * the last 30 days. Undefined when a day is not one, `from` is after `to`, or the range is longer
+ * than `MAX_RANGE_DAYS`.
+ */
+export function dayRange(
+  input: { readonly from?: unknown; readonly to?: unknown },
+  timeZone: string,
+  now: Date,
+): (PeriodRange & { readonly fromDay: string; readonly toDay: string }) | undefined {
+  const today = partsIn(now.getTime(), timeZone);
+  const todayDate: LocalDate = { year: today.year, month: today.month, day: today.day };
+  const to = input.to === undefined ? todayDate : localDateOf(input.to);
+  if (to === undefined) return undefined;
+  const from = input.from === undefined ? shift(to, -29) : localDateOf(input.from);
+  if (from === undefined) return undefined;
+  const span =
+    (Date.UTC(to.year, to.month - 1, to.day) - Date.UTC(from.year, from.month - 1, from.day)) /
+    86_400_000;
+  if (span < 0 || span >= MAX_RANGE_DAYS) return undefined;
+  const end = startOfLocalDay(shift(to, 1), timeZone);
+  return Object.freeze({
+    from: startOfLocalDay(from, timeZone),
+    // Exclusive: one millisecond past now, so what happened this very instant is in.
+    to: end.getTime() > now.getTime() ? new Date(now.getTime() + 1) : end,
+    fromDay: dayText(from),
+    toDay: dayText(to),
+  });
+}

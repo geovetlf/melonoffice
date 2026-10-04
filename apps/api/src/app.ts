@@ -1,5 +1,5 @@
 import { createAIUsageLedger, type AIUsageStore } from '@melonoffice/ai-usage';
-import { createActivityService } from '@melonoffice/activity';
+import { createActivityService, createAuditTrailService } from '@melonoffice/activity';
 import {
   createAgentHandoffService,
   createAgentMemoryService,
@@ -675,16 +675,21 @@ export function createApp({
       tenancy !== undefined && activity !== undefined
         ? createActivityService({ reader: activity, organizations: tenancy, authorization })
         : undefined;
-    if (tenancy !== undefined && activityService !== undefined) {
+    if (tenancy !== undefined && activity !== undefined && activityService !== undefined) {
       registerActivityRoutes(app, {
         store: tenancy,
         authorization,
         audit,
         activity: activityService,
+        // The audit trail viewer (ADR-0147): the same read side, a page at a time.
+        trail: createAuditTrailService({ reader: activity, organizations: tenancy, authorization }),
         ...(businessProfiles === undefined ? {} : { businessProfiles }),
       });
     } else if (tenancy !== undefined) {
       app.all('/v1/organizations/:organizationId/activity', (c) =>
+        c.json({ error: 'activity_not_configured' }, 503),
+      );
+      app.all('/v1/organizations/:organizationId/audit-trail', (c) =>
         c.json({ error: 'activity_not_configured' }, 503),
       );
     }

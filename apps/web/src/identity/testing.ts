@@ -78,6 +78,12 @@ export interface FakeBackend {
     activity: Record<string, Record<string, unknown>[]>;
     /** The activity read fails (for example, before the index exists). */
     activityFails?: boolean;
+    /** Each organization's audit trail items (ADR-0147), newest first, as the API returns them. */
+    auditTrail: Record<string, Record<string, unknown>[]>;
+    /** Items per audit trail page (25 in the API). */
+    auditTrailPageSize?: number;
+    /** The audit trail read fails with this status and code. */
+    auditTrailFails?: { readonly status: number; readonly error: string };
     /** What GIA's chat answers (ADR-0052): the API's body, or an error code with its status. */
     gia:
       | Record<string, unknown>
@@ -217,6 +223,7 @@ export function fakeBackend(): FakeBackend {
     },
     businessProfiles: {},
     activity: {},
+    auditTrail: {},
     gia: {
       answer: 'Hoy no hubo actividad en tu oficina.',
       department: null,
@@ -1455,6 +1462,31 @@ export function fakeBackend(): FakeBackend {
         to: '2026-09-28T15:00:00.000Z',
         items: options.activity[organizationId] ?? [],
         hasMore: false,
+      });
+    }
+    if (route === 'audit-trail') {
+      const denied = needs('activity.read');
+      if (denied !== undefined) return denied;
+      const failing = options.auditTrailFails;
+      if (failing !== undefined) return json(failing.status, { error: failing.error });
+      const q = new URLSearchParams(query);
+      const category = q.get('category');
+      const all = (options.auditTrail[organizationId] ?? []).filter(
+        (i) => category === null || i['category'] === category,
+      );
+      const size = options.auditTrailPageSize ?? 25;
+      const start = Number(q.get('cursor') ?? '0');
+      const end = start + size;
+      return json(200, {
+        from: '2026-09-04T05:00:00.000Z',
+        to: '2026-10-04T15:00:00.000Z',
+        fromDay: q.get('from') ?? '2026-09-04',
+        toDay: q.get('to') ?? '2026-10-04',
+        timeZone: 'America/Lima',
+        filter: category,
+        filters: ['specialist', 'planning', 'tool', 'technical'],
+        items: all.slice(start, end),
+        nextCursor: end < all.length ? String(end) : null,
       });
     }
     if (route === 'approvals' || route?.startsWith('approvals/') === true) {
