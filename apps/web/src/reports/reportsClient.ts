@@ -60,18 +60,88 @@ export class ReportRequestError extends Error {
   }
 }
 
+/** One projected period: the expected value and the range it likely falls in (10%…90%). */
+export interface ProjectedPoint {
+  readonly period: string;
+  readonly value: number;
+  readonly low: number;
+  readonly high: number;
+}
+
+/**
+ * A projection the Forecasting Engine made from the recorded history (ADR-0059), or why it made
+ * none. The screen only shows it; the engine decides, charges and keeps it.
+ */
+export type ProjectionView =
+  | {
+      readonly status: 'completed';
+      readonly points: readonly ProjectedPoint[];
+      /** The forecasting model, or the engine's simple fallback when the model could not run. */
+      readonly model: 'model' | 'fallback';
+      readonly creditsCharged: number;
+    }
+  | { readonly status: 'pending' }
+  | {
+      readonly status: 'not_possible';
+      readonly problem: string;
+      readonly have: number | null;
+      readonly need: number | null;
+    };
+
 export interface ReportsClient {
   metrics(): Promise<readonly MetricView[]>;
   history(
     metric: string,
     input: { readonly frequency: ReportFrequency; readonly periods?: number },
   ): Promise<MetricHistoryView>;
+  /** "Project this" (ADR-0139): a forecast of the next `horizon` periods, through the engine. */
+  project(
+    metric: string,
+    input: {
+      readonly frequency: ReportFrequency;
+      readonly entity: string;
+      readonly horizon: number;
+    },
+  ): Promise<ProjectionView>;
+}
+
+const isNumber = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+
+/** The engine's answer as the screen reads it; anything else is not a projection. */
+export function projectionOf(body: Record<string, unknown>): ProjectionView {
+  if (body.status === 'queued' || body.status === 'running') return { status: 'pending' };
+  if (body.status === 'completed' && Array.isArray(body.forecast)) {
+    const points = (body.forecast as unknown[]).flatMap((raw) => {
+      const p = raw as Record<string, unknown> | null;
+      return p !== null &&
+        typeof p.period === 'string' &&
+        isNumber(p.value) &&
+        isNumber(p.low) &&
+        isNumber(p.high)
+        ? [{ period: p.period, value: p.value, low: p.low, high: p.high }]
+        : [];
+    });
+    if (points.length > 0) {
+      return {
+        status: 'completed',
+        points,
+        model: body.model === 'model' ? 'model' : 'fallback',
+        creditsCharged: isNumber(body.creditsCharged) ? body.creditsCharged : 0,
+      };
+    }
+  }
+  return {
+    status: 'not_possible',
+    problem: typeof body.problem === 'string' ? body.problem : 'unavailable',
+    have: isNumber(body.have) ? body.have : null,
+    need: isNumber(body.need) ? body.need : null,
+  };
 }
 
 export function createReportsClient(request: ReplyRequest, organizationId: string): ReportsClient {
   const base = `/v1/organizations/${encodeURIComponent(organizationId)}/metrics`;
-  const read = async (path: string): Promise<unknown> => {
-    const response = await request(path, {});
+  const read = async (path: string, init: RequestInit = {}): Promise<unknown> => {
+    const response = await request(path, init);
     const body = (await response.json().catch(() => ({}))) as Record<string, unknown>;
     if (!response.ok) {
       throw new ReportRequestError(
@@ -93,6 +163,16 @@ export function createReportsClient(request: ReplyRequest, organizationId: strin
       return (await read(
         `${base}/${encodeURIComponent(metric)}?${query.toString()}`,
       )) as MetricHistoryView;
+    },
+    async project(metric, { frequency, entity, horizon }) {
+      const path = `/v1/organizations/${encodeURIComponent(organizationId)}/forecasts`;
+      const body = await read(path, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        // Waits a bounded time for the run; a run still going answers `pending`.
+        body: JSON.stringify({ metric, frequency, entity, horizon, wait: true }),
+      });
+      return projectionOf(body as Record<string, unknown>);
     },
   };
 }

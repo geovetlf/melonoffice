@@ -83,6 +83,7 @@ export function AppShell(locale: LocaleProps) {
   const canReadContacts = useCan('contact.read');
   const canManageContacts = useCan('contact.manage');
   const canReadOpportunities = useCan('opportunity.read');
+  const canProject = useCan('forecast.run');
   const canManageOpportunities = useCan('opportunity.manage');
   const canManagePipeline = useCan('pipeline.manage');
   const canReadFollowUps = useCan('follow_up.read');
@@ -289,7 +290,11 @@ export function AppShell(locale: LocaleProps) {
           {...(canReadReports
             ? {
                 reports: (typeId: string) => (
-                  <ReportsSection client={clients.reports} department={typeId} />
+                  <ReportsSection
+                    client={clients.reports}
+                    department={typeId}
+                    canProject={canProject}
+                  />
                 ),
               }
             : {})}
@@ -375,7 +380,11 @@ export function AppShell(locale: LocaleProps) {
       page = <GiaWorkplace />;
       break;
     case 'reports':
-      page = canReadReports ? <ReportsPage client={clients.reports} /> : <NotFound />;
+      page = canReadReports ? (
+        <ReportsPage client={clients.reports} canProject={canProject} />
+      ) : (
+        <NotFound />
+      );
       break;
     case 'documents':
       page = canReadDocuments ? (

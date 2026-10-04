@@ -2099,5 +2099,21 @@
   "credits.out.buy": "Comprar créditos",
   "credits.out.estimate": "Esta acción utilizaría aproximadamente {count, plural, one {# crédito} other {# créditos}}.",
   "identity.signInAgain.message": "Por tu seguridad, vuelve a iniciar sesión para hacer este cambio.",
-  "identity.signInAgain.action": "Volver a iniciar sesión"
+  "identity.signInAgain.action": "Volver a iniciar sesión",
+  "reports.project.action.day": "Proyectar los próximos {count} días",
+  "reports.project.action.week": "Proyectar las próximas {count} semanas",
+  "reports.project.action.month": "Proyectar los próximos {count} meses",
+  "reports.project.title.day": "Proyección de los próximos {count} días",
+  "reports.project.title.week": "Proyección de las próximas {count} semanas",
+  "reports.project.title.month": "Proyección de los próximos {count} meses",
+  "reports.project.point": "{period}: alrededor de {value} (probablemente entre {low} y {high})",
+  "reports.project.byModel": "Una proyección a partir del historial registrado, no un registro. Usó {credits, plural, one {# crédito} other {# créditos}}.",
+  "reports.project.byFallback": "Una proyección simple a partir del historial registrado, no un registro: el modelo de proyecciones no estaba disponible. Usó {credits, plural, one {# crédito} other {# créditos}}.",
+  "reports.project.pending": "La proyección todavía se está haciendo. Vuelve a intentarlo en un momento.",
+  "reports.project.notPossible": "Todavía no hay suficiente historial registrado para proyectar esto.",
+  "reports.project.error.generic": "No se pudo hacer la proyección. Inténtalo más tarde.",
+  "reports.project.error.forecast_credits_insufficient": "No hay créditos suficientes para hacer esta proyección.",
+  "reports.project.error.forecast_limit_reached": "Demasiadas proyecciones por ahora. Inténtalo más tarde.",
+  "reports.project.error.forecast_model_unavailable": "Las proyecciones no están disponibles en este momento.",
+  "reports.project.error.forecast_price_not_set": "Las proyecciones todavía no están disponibles."
 }
