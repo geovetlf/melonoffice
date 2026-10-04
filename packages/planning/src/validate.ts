@@ -21,6 +21,7 @@ import type { TenantContext } from '@melonoffice/tenancy';
 import {
   isRuntimeInvocable,
   toolCanRun,
+  validate as validateInput,
   type ResolvedTool,
   type ToolRegistry,
 } from '@melonoffice/tools';
@@ -96,7 +97,7 @@ const FIELDS: Readonly<Record<PlanStep['kind'], readonly (keyof ProposalStep)[]>
     'approvalRequired',
     'budget',
   ],
-  tool: ['performedBy', 'tool', 'retry', 'approvalRequired'],
+  tool: ['performedBy', 'tool', 'input', 'retry', 'approvalRequired'],
   approval: [],
   verification: ['verification', 'outputContract', 'approvalRequired'],
   condition: ['condition', 'decision', 'approvalRequired'],
@@ -218,6 +219,11 @@ export function createPlanValidator(options: PlanValidatorOptions): PlanValidato
     }
     const policy = effectivePolicy(tool, riskPolicy);
     if (policy === 'denied') refuse('policy', 'tool_denied_by_policy', field);
+    // The input is fixed now (ADR-0151): it must already satisfy the tool's own schema. The Tool
+    // Gate checks it again, with everything else, when the step runs.
+    if (!validateInput(tool.version.inputSchema, step.input ?? {}).valid) {
+      refuse('policy', 'invalid_tool_input', `${field}.input`);
+    }
     return { tool, approval: policy === 'approval_required' };
   }
 
@@ -389,6 +395,7 @@ export function createPlanValidator(options: PlanValidatorOptions): PlanValidato
                     id: found.tool.version.toolId as ToolId,
                     version: found.tool.version.version,
                   },
+                  input: structuredClone(step.input ?? {}),
                   inputContract: found.tool.version.inputSchema,
                   outputContract: found.tool.version.outputSchema,
                 }),

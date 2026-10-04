@@ -4,6 +4,8 @@ import type {
   PlanDecisionCondition,
   PlanRetry,
   PlanStepKind,
+  PlanToolInput,
+  PlanToolValue,
   PlanVerification,
   ToolRiskLevel,
   ToolSchema,
@@ -26,6 +28,9 @@ export const MAX_RETRY_BACKOFF_MS = 60_000;
 export const MAX_CONTINUE_ON = 10;
 export const MAX_DECISION_INPUT_KEYS = 10;
 export const MAX_DECISION_INPUT_TEXT = 100;
+/** A tool step's fixed input (ADR-0151): plain JSON, shallow and small. */
+export const MAX_TOOL_INPUT_DEPTH = 8;
+export const MAX_TOOL_INPUT_BYTES = 16_000;
 
 export const PLAN_STEP_KINDS = [
   'specialist',
@@ -63,6 +68,8 @@ export interface ProposalStep {
   readonly performedBy?: string;
   /** On `tool` steps. */
   readonly tool?: { readonly id: string; readonly version: number };
+  /** On `tool` steps (ADR-0151): the tool's input, checked against its schema by the validator. */
+  readonly input?: PlanToolInput;
   readonly inputContract?: ToolSchema;
   readonly outputContract?: ToolSchema;
   readonly verification?: PlanVerification;
@@ -104,6 +111,7 @@ const STEP_KEYS = new Set([
   'departmentId',
   'performedBy',
   'tool',
+  'input',
   'inputContract',
   'outputContract',
   'verification',
@@ -263,6 +271,31 @@ function decisionOf(value: unknown, field: string): PlanDecisionCondition {
   };
 }
 
+/** One value of a tool input: plain JSON only, no authority or credential names at any depth. */
+function toolValueOf(value: unknown, field: string, depth: number): PlanToolValue {
+  if (depth > MAX_TOOL_INPUT_DEPTH) return invalid(field);
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return value;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : invalid(field);
+  if (Array.isArray(value))
+    return value.map((item, i) => toolValueOf(item, `${field}.${i}`, depth + 1));
+  if (!isRecord(value)) return invalid(field);
+  const out: Record<string, PlanToolValue> = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (isForbiddenField(key)) refuse('authority_in_proposal', `${field}.${key}`);
+    out[key] = toolValueOf(item, `${field}.${key}`, depth + 1);
+  }
+  return out;
+}
+
+function toolInputOf(value: unknown, field: string): PlanToolInput {
+  if (!isRecord(value)) return invalid(field);
+  const input = toolValueOf(value, field, 0) as PlanToolInput;
+  if (new TextEncoder().encode(JSON.stringify(input)).length > MAX_TOOL_INPUT_BYTES) {
+    invalid(field);
+  }
+  return input;
+}
+
 function stepOf(value: unknown, index: number): ProposalStep {
   const field = `steps.${index}`;
   if (!isRecord(value)) return invalid(field);
@@ -347,6 +380,7 @@ function stepOf(value: unknown, index: number): ProposalStep {
     ...(value.departmentId === undefined ? {} : { departmentId: value.departmentId as string }),
     ...(value.performedBy === undefined ? {} : { performedBy: value.performedBy as string }),
     ...(toolRef === undefined ? {} : { tool: toolRef }),
+    ...(value.input === undefined ? {} : { input: toolInputOf(value.input, `${field}.input`) }),
     ...(value.inputContract === undefined
       ? {}
       : { inputContract: contract(value.inputContract, `${field}.inputContract`) }),

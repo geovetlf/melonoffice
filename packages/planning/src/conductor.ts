@@ -9,6 +9,8 @@ import type {
   PlanDecisionCondition,
   PlanId,
   PlanStep,
+  PlanStepApproval,
+  PlanToolInput,
   PlanVersion,
   ToolRiskLevel,
 } from '@melonoffice/domain';
@@ -68,16 +70,20 @@ export interface StepStarter {
 export const RUNNABLE_STEP_KINDS: readonly PlanStep['kind'][] = ['specialist', 'condition'];
 
 /**
- * Why a plan version cannot run yet, or `undefined` when it can. Specialist steps run (WF-1), and
- * condition steps the Decision Engine decides after at least one other step (WF-4). A tool,
- * approval, verification or parallel step, or a condition on how another step ended, has no
- * defined behaviour in a plan yet (ADR-0031), so such a plan is refused whole, never run in part.
+ * Why a plan version cannot run yet, or `undefined` when it can. Specialist steps run (WF-1),
+ * condition steps the Decision Engine decides after at least one other step (WF-4), and tool
+ * steps run inside the child execution of the specialist step that uses them, through the Tool
+ * Gate, with the input fixed in the plan (ADR-0151). An approval, verification or parallel step,
+ * or a condition on how another step ended, has no defined behaviour in a plan yet (ADR-0031), so
+ * such a plan is refused whole, never run in part.
  */
 export function unrunnableStepOf(version: PlanVersion): string | undefined {
-  const step = version.steps.find(
-    (s) =>
-      !RUNNABLE_STEP_KINDS.includes(s.kind) ||
-      (s.kind === 'condition' && (s.decision === undefined || s.dependsOn.length === 0)),
+  const performers = new Set(version.steps.filter((s) => s.kind === 'specialist').map((s) => s.id));
+  const step = version.steps.find((s) =>
+    s.kind === 'tool'
+      ? s.tool === undefined || s.performedBy === undefined || !performers.has(s.performedBy)
+      : !RUNNABLE_STEP_KINDS.includes(s.kind) ||
+        (s.kind === 'condition' && (s.decision === undefined || s.dependsOn.length === 0)),
   );
   return step === undefined ? undefined : step.kind;
 }
@@ -146,6 +152,16 @@ export interface StepApprovalAsk {
   readonly specialistVersion: number;
   readonly childExecutionId: string;
   readonly riskLevel: ToolRiskLevel;
+  /**
+   * On a tool step's approval (ADR-0151): the one tool call it covers, as the Tool Gate rebuilds
+   * it when the step runs (the tool step is the child's tool node, the input is the plan's).
+   */
+  readonly tool?: {
+    readonly stepId: string;
+    readonly id: string;
+    readonly version: number;
+    readonly input: PlanToolInput;
+  };
 }
 
 export type StepApprovalState =
@@ -176,13 +192,54 @@ export interface StepApprovals {
 export const waitsForApproval = (step: PlanStep): boolean =>
   step.kind === 'specialist' && step.approvalRequired && step.dependsOn.length > 0;
 
+/**
+ * The tool steps a specialist step uses that need a person's approval (ADR-0151): their tool's
+ * policy asks for one, or the plan does. Each is asked for once the specialist step is ready,
+ * first steps included (the plan's approval never covers a tool call), and the step starts only
+ * once all of them, and its own (ADR-0146), were given.
+ */
+export const approvedToolStepsOf = (version: PlanVersion, step: PlanStep): readonly PlanStep[] =>
+  step.kind !== 'specialist'
+    ? []
+    : version.steps.filter(
+        (s) =>
+          s.kind === 'tool' &&
+          s.performedBy === step.id &&
+          s.approvalRequired &&
+          s.tool !== undefined,
+      );
+
+/** Every approval a specialist step waits for, as recorded on the plan: its own and its tools'. */
+export const stepApprovalEntriesOf = (
+  plan: Pick<Plan, 'stepApprovals'>,
+  stepId: string,
+): readonly PlanStepApproval[] =>
+  (plan.stepApprovals ?? []).filter((a) => a.stepId === stepId || a.performedBy === stepId);
+
+/**
+ * What the approvals a step waits for say, from the plan alone (for screens): `declined` once
+ * one was recorded declined, `awaiting` while one was asked for, `none` otherwise.
+ */
+export function stepApprovalOf(
+  plan: Pick<Plan, 'stepApprovals'>,
+  stepId: string,
+): 'none' | 'awaiting' | 'declined' {
+  const entries = stepApprovalEntriesOf(plan, stepId);
+  if (entries.some((a) => a.declined !== undefined)) return 'declined';
+  return entries.length > 0 ? 'awaiting' : 'none';
+}
+
 export interface PlanConductorOptions {
   readonly plans: PlanRepository;
   /** Needed by `run` only: the worker advances plans, it never delegates one. */
   readonly delegation?: Pick<Delegation, 'delegate'>;
   readonly executions: Pick<
     ExecutionService,
-    'get' | 'runtimePlanChangeStatus' | 'runtimePlanChangeNode' | 'recordVerification'
+    | 'get'
+    | 'runtimePlanChangeStatus'
+    | 'runtimePlanChangeNode'
+    | 'recordVerification'
+    | 'attachPlanStepApproval'
   >;
   readonly starter: StepStarter;
   /**
@@ -233,8 +290,10 @@ interface StepView {
   readonly child?: Execution;
   /** On condition steps, once decided. */
   readonly condition?: PlanConditionResult;
-  /** On a step that waits for an approval, once it is approved and may start (ADR-0146). */
+  /** On a step that waits for approvals, once all are given and it may start (ADR-0146). */
   readonly approved?: boolean;
+  /** Approvals found declined and not recorded yet, for `advance` to record (ADR-0146). */
+  readonly declines?: readonly { readonly entry: string; readonly reason: string }[];
   /** Why it failed without a child failing, e.g. `step_approval_not_configured`. */
   readonly failure?: string;
   readonly state: StepState;
@@ -313,6 +372,12 @@ export function planStepStates(
   return states;
 }
 
+/** One approval a specialist step waits for, and the plan entry it is recorded under. */
+interface Gate {
+  readonly entry: string;
+  readonly ask: StepApprovalAsk;
+}
+
 /** Why a plan stops at a failed step, as the plan and its execution record it. */
 const failureOf = (view: StepView): string =>
   view.failure !== undefined
@@ -367,9 +432,11 @@ export function createPlanConductor(options: PlanConductorOptions): PlanConducto
         const d = plan.delegations.find((x) => x.stepId === step.id);
         if (d === undefined) throw new PlanningError('delegation_conflict');
         const child = await executions.get(tenant, d.executionId);
-        view = waitsForApproval(step)
-          ? await gatedView(tenant, plan, version, step, child, states)
-          : { step, child, state: specialistStepState(child) };
+        const gates = gatesOf(plan, version, step, child.id);
+        view =
+          gates.length > 0
+            ? await gatedView(tenant, plan, step, child, states, gates)
+            : { step, child, state: specialistStepState(child) };
       } else {
         const condition = plan.conditions?.find((c) => c.stepId === step.id);
         view = {
@@ -386,7 +453,12 @@ export function createPlanConductor(options: PlanConductorOptions): PlanConducto
   }
 
   /** What a step's approval is bound to, from the stored plan and version only. */
-  function askOf(plan: Plan, version: PlanVersion, step: PlanStep, childId: ExecutionId) {
+  function askOf(
+    plan: Plan,
+    version: PlanVersion,
+    step: PlanStep,
+    childId: ExecutionId,
+  ): StepApprovalAsk {
     if (step.specialist === undefined) throw new PlanningError('delegation_conflict');
     return {
       organizationId: plan.organizationId,
@@ -403,38 +475,73 @@ export function createPlanConductor(options: PlanConductorOptions): PlanConducto
   }
 
   /**
-   * A step that waits for a person (ADR-0146): declined once recorded so; otherwise what its
-   * approval says now. A decline not recorded yet carries its reason, for `advance` to record.
-   * Without the approvals port, a step that became ready fails rather than run unapproved.
+   * Every approval a specialist step waits for: its own (ADR-0146) and one per tool step it uses
+   * that needs one (ADR-0151), each keyed by the step it is recorded under.
+   */
+  function gatesOf(
+    plan: Plan,
+    version: PlanVersion,
+    step: PlanStep,
+    childId: ExecutionId,
+  ): readonly Gate[] {
+    const gates: Gate[] = [];
+    if (waitsForApproval(step))
+      gates.push({ entry: step.id, ask: askOf(plan, version, step, childId) });
+    for (const tool of approvedToolStepsOf(version, step)) {
+      const ref = tool.tool as NonNullable<PlanStep['tool']>;
+      gates.push({
+        entry: tool.id,
+        ask: {
+          ...askOf(plan, version, step, childId),
+          tool: { stepId: tool.id, id: ref.id, version: ref.version, input: tool.input ?? {} },
+        },
+      });
+    }
+    return gates;
+  }
+
+  /**
+   * A step that waits for people (ADR-0146, ADR-0151): declined once one of its approvals was
+   * recorded so; otherwise what its approvals say now. One not asked for yet leaves it `waiting`,
+   * so it is asked; a decline not recorded yet carries its reason, for `advance` to record. It
+   * may start only once every one was given. Without the approvals port, a step that became
+   * ready fails rather than run unapproved.
    */
   async function gatedView(
     tenant: TenantContext,
     plan: Plan,
-    version: PlanVersion,
     step: PlanStep,
     child: Execution,
     states: ReadonlyMap<string, StepState>,
-  ): Promise<StepView & { readonly declinedReason?: string }> {
+    gates: readonly Gate[],
+  ): Promise<StepView> {
     if (specialistStepState(child) !== 'waiting') {
       return { step, child, state: specialistStepState(child) };
     }
-    const entry = plan.stepApprovals?.find((a) => a.stepId === step.id);
-    if (entry?.declined !== undefined) return { step, child, state: 'declined' };
+    const entries = gates.map((gate) => ({
+      gate,
+      entry: plan.stepApprovals?.find((a) => a.stepId === gate.entry),
+    }));
+    if (entries.some(({ entry }) => entry?.declined !== undefined)) {
+      return { step, child, state: 'declined' };
+    }
     if (approvals === undefined) {
       const ready = step.dependsOn.every((d) => states.get(d) === 'completed');
       return ready
         ? { step, child, state: 'failed', failure: 'step_approval_not_configured' }
         : { step, child, state: 'waiting' };
     }
-    if (entry === undefined) return { step, child, state: 'waiting' };
-    const found = await approvals.state(
-      tenant,
-      entry.approvalId,
-      askOf(plan, version, step, child.id),
-    );
-    if (found.status === 'approved') return { step, child, approved: true, state: 'waiting' };
-    if (found.status === 'pending') return { step, child, state: 'awaiting_approval' };
-    return { step, child, state: 'declined', declinedReason: found.reason };
+    if (entries.some(({ entry }) => entry === undefined)) return { step, child, state: 'waiting' };
+    const declines: { entry: string; reason: string }[] = [];
+    let pending = false;
+    for (const { gate, entry } of entries) {
+      const found = await approvals.state(tenant, (entry as PlanStepApproval).approvalId, gate.ask);
+      if (found.status === 'pending') pending = true;
+      if (found.status === 'declined') declines.push({ entry: gate.entry, reason: found.reason });
+    }
+    if (declines.length > 0) return { step, child, state: 'declined', declines };
+    if (pending) return { step, child, state: 'awaiting_approval' };
+    return { step, child, approved: true, state: 'waiting' };
   }
 
   /**
@@ -445,16 +552,20 @@ export function createPlanConductor(options: PlanConductorOptions): PlanConducto
     tenant: TenantContext,
     organizationId: OrganizationId,
     plan: Plan,
-    version: PlanVersion,
-    view: StepView,
+    gate: Gate,
   ): Promise<void> {
-    if (approvals === undefined || view.child === undefined) return;
-    const { step } = view;
-    const approvalId = await approvals.request(tenant, askOf(plan, version, step, view.child.id));
+    if (approvals === undefined) return;
+    const step = { id: gate.entry };
+    const approvalId = await approvals.request(tenant, gate.ask);
+    const performedBy = gate.ask.tool === undefined ? undefined : gate.ask.stepId;
     const at = now();
     try {
       await plans.update(organizationId, plan.id, (current) => ({
-        plan: recordStepApproval(current, { stepId: step.id, approvalId }, iso(at)),
+        plan: recordStepApproval(
+          current,
+          { stepId: step.id, approvalId, ...(performedBy === undefined ? {} : { performedBy }) },
+          iso(at),
+        ),
         events: [
           buildAuditEvent(
             {
@@ -487,40 +598,59 @@ export function createPlanConductor(options: PlanConductorOptions): PlanConducto
     tenant: TenantContext,
     organizationId: OrganizationId,
     plan: Plan,
-    views: readonly (StepView & { readonly declinedReason?: string })[],
+    views: readonly StepView[],
   ): Promise<Plan> {
     let current = plan;
     for (const view of views) {
-      const reason = view.declinedReason;
-      if (reason === undefined) continue;
-      const at = now();
-      try {
-        current = await plans.update(organizationId, plan.id, (stored) => ({
-          plan: recordStepDeclined(stored, view.step.id, reason, iso(at)),
-          events: [
-            buildAuditEvent(
-              {
-                action: 'plan.step_declined',
-                result: 'success',
-                actor: actorOf(tenant),
-                organizationId,
-                target: { type: 'plan', id: stored.id },
-                nodeId: view.step.id,
-                reason,
-                ...(requestId === undefined ? {} : { requestId }),
-                source: 'api',
-              },
-              at,
-            ),
-          ],
-        }));
-        logger?.info('plan step declined', { planId: plan.id, stepId: view.step.id, reason });
-      } catch (error) {
-        if (!isPlanningError(error)) throw error;
-        current = (await plans.find(organizationId, plan.id)) ?? current;
+      for (const { entry, reason } of view.declines ?? []) {
+        current = await recordDecline(tenant, organizationId, current, entry, reason);
+      }
+      if ((view.declines ?? []).length === 0) continue;
+      // The step never runs: the approvals it still waits for are withdrawn.
+      for (const other of stepApprovalEntriesOf(current, view.step.id)) {
+        if (other.declined !== undefined || approvals === undefined) continue;
+        if (view.declines?.some((d) => d.entry === other.stepId) === true) continue;
+        await approvals.cancel(tenant, other.approvalId, 'step_declined');
       }
     }
     return current;
+  }
+
+  /** Records one declined approval, once, with its audit event. */
+  async function recordDecline(
+    tenant: TenantContext,
+    organizationId: OrganizationId,
+    plan: Plan,
+    entry: string,
+    reason: string,
+  ): Promise<Plan> {
+    const at = now();
+    try {
+      const recorded = await plans.update(organizationId, plan.id, (stored) => ({
+        plan: recordStepDeclined(stored, entry, reason, iso(at)),
+        events: [
+          buildAuditEvent(
+            {
+              action: 'plan.step_declined',
+              result: 'success',
+              actor: actorOf(tenant),
+              organizationId,
+              target: { type: 'plan', id: stored.id },
+              nodeId: entry,
+              reason,
+              ...(requestId === undefined ? {} : { requestId }),
+              source: 'api',
+            },
+            at,
+          ),
+        ],
+      }));
+      logger?.info('plan step declined', { planId: plan.id, stepId: entry, reason });
+      return recorded;
+    } catch (error) {
+      if (!isPlanningError(error)) throw error;
+      return (await plans.find(organizationId, plan.id)) ?? plan;
+    }
   }
 
   /** Whether every step a step depends on completed. */
@@ -531,7 +661,9 @@ export function createPlanConductor(options: PlanConductorOptions): PlanConducto
 
   /**
    * Starts every specialist step that has not started and whose steps before it all completed.
-   * A step that waits for a person starts only once approved; until then, it asks (ADR-0146).
+   * A step that waits for people starts only once every approval it waits for was given; until
+   * then, it asks for each one not asked for yet (ADR-0146, ADR-0151). Before it starts, each
+   * tool approval is attached to its tool node, where the Tool Gate checks it covers the call.
    */
   async function startReady(
     tenant: TenantContext,
@@ -540,15 +672,24 @@ export function createPlanConductor(options: PlanConductorOptions): PlanConducto
     views: readonly StepView[],
   ): Promise<void> {
     for (const view of views) {
-      if (view.child === undefined || view.child.status !== 'pending') continue;
+      const { child } = view;
+      if (child === undefined || child.status !== 'pending') continue;
       if (!readyIn(views, view)) continue;
-      if (waitsForApproval(view.step) && view.approved !== true) {
-        if (!(plan.stepApprovals ?? []).some((a) => a.stepId === view.step.id)) {
-          await askApproval(tenant, plan.organizationId, plan, version, view);
+      const gates = gatesOf(plan, version, view.step, child.id);
+      if (gates.length > 0 && view.approved !== true) {
+        for (const gate of gates) {
+          if (!(plan.stepApprovals ?? []).some((a) => a.stepId === gate.entry)) {
+            await askApproval(tenant, plan.organizationId, plan, gate);
+          }
         }
         continue;
       }
-      await starter.start(tenant, view.child.id);
+      for (const gate of gates) {
+        const entry = plan.stepApprovals?.find((a) => a.stepId === gate.entry);
+        if (gate.ask.tool === undefined || entry === undefined) continue;
+        await executions.attachPlanStepApproval(tenant, child.id, gate.entry, entry.approvalId);
+      }
+      await starter.start(tenant, child.id);
     }
   }
 
@@ -796,7 +937,7 @@ export function createPlanConductor(options: PlanConductorOptions): PlanConducto
     }
     let views = await stepsOf(tenant, plan, version);
     // A step whose approval was declined is recorded first: its branch is skipped.
-    if (views.some((v) => (v as { declinedReason?: string }).declinedReason !== undefined)) {
+    if (views.some((v) => (v.declines ?? []).length > 0)) {
       plan = await recordDeclines(tenant, organizationId, plan, views);
       if (plan.status !== 'executing') return plan;
       views = await stepsOf(tenant, plan, version);
@@ -820,9 +961,11 @@ export function createPlanConductor(options: PlanConductorOptions): PlanConducto
       const code = failureOf(stopped);
       // A step still waiting for a person never will: its approval is withdrawn.
       for (const view of views) {
-        const entry = plan.stepApprovals?.find((a) => a.stepId === view.step.id);
-        if (view.state === 'awaiting_approval' && entry !== undefined && approvals !== undefined) {
-          await approvals.cancel(tenant, entry.approvalId, 'plan_ended');
+        if (view.state !== 'awaiting_approval' && view.state !== 'waiting') continue;
+        for (const entry of stepApprovalEntriesOf(plan, view.step.id)) {
+          if (entry.declined === undefined && approvals !== undefined) {
+            await approvals.cancel(tenant, entry.approvalId, 'plan_ended');
+          }
         }
       }
       await stop(tenant, await mirror(tenant, plan.executionId, views), code);

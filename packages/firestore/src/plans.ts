@@ -72,6 +72,8 @@ interface StepApprovalDocument {
   readonly stepId: string;
   readonly approvalId: string;
   readonly requestedAt: FirestoreTimestamp;
+  /** ADR-0151: on a tool step's approval, the specialist step it holds back. */
+  readonly performedBy?: string;
   readonly declined?: { readonly reason: string; readonly at: FirestoreTimestamp } | null;
 }
 
@@ -135,6 +137,7 @@ export function toPlanDocument(plan: Plan): PlanDocument {
             stepId: a.stepId,
             approvalId: a.approvalId,
             requestedAt: ts(a.requestedAt),
+            ...(a.performedBy === undefined ? {} : { performedBy: a.performedBy }),
             declined:
               a.declined === undefined
                 ? null
@@ -191,6 +194,7 @@ function toPlan(id: string, d: PlanDocument): Plan {
             stepId: a.stepId,
             approvalId: a.approvalId,
             requestedAt: iso(a.requestedAt),
+            ...(typeof a.performedBy === 'string' ? { performedBy: a.performedBy } : {}),
             ...(a.declined === null || a.declined === undefined
               ? {}
               : { declined: { reason: a.declined.reason, at: iso(a.declined.at) } }),

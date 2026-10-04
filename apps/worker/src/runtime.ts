@@ -265,6 +265,7 @@ export function createWorkerRuntime(options: WorkerRuntimeOptions): {
                 ...clock,
               }),
               now,
+              tools.registry,
             ),
             requestId,
             ...clock,

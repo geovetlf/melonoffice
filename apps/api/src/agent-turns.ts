@@ -20,6 +20,7 @@ import {
 } from '@melonoffice/integrations';
 import { createJobService, type JobRepository } from '@melonoffice/jobs';
 import type { Logger } from '@melonoffice/observability';
+import { planStepOf } from '@melonoffice/planning';
 import { createAuthorizationService } from '@melonoffice/rbac';
 import { createRuntime, type JobDispatcher } from '@melonoffice/runtime';
 import { createSpecialistService, type SpecialistRepository } from '@melonoffice/specialists';
@@ -172,11 +173,14 @@ export function createAgentTurns(options: AgentTurnsOptions): AgentTurns {
           approval.organizationId,
           approval.operation.executionId,
         );
-        // An agent's turn, or an agent task's follow-up (ADR-0084), is handed back to the worker;
-        // other work has no delivery in the API yet.
+        // An agent's turn, an agent task's follow-up (ADR-0084), or a plan step already running
+        // whose tool asked for an approval (ADR-0151), is handed back to the worker; other work
+        // has no delivery in the API yet.
         if (
           execution === undefined ||
-          (turnOf(execution) === undefined && taskOf(execution) === undefined)
+          (turnOf(execution) === undefined &&
+            taskOf(execution) === undefined &&
+            (planStepOf(execution) === undefined || execution.startedAt === undefined))
         ) {
           return;
         }

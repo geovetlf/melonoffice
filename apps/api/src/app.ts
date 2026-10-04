@@ -1345,7 +1345,7 @@ export function createApp({
                     await planRuntime.kickoff(tenant, executionId);
                   },
                 },
-                approvals: createPlanStepApprovals(approvalService),
+                approvals: createPlanStepApprovals(approvalService, undefined, tools),
                 logger: logger.child({ component: 'plans' }),
               }),
               logger: logger.child({ component: 'plans' }),
@@ -1359,10 +1359,10 @@ export function createApp({
           ? {}
           : {
               async afterDecision(tenant: TenantContext, approval: Approval) {
-                if (planStepDecided !== undefined && isPlanStepApproval(approval)) {
-                  await planStepDecided(approval);
-                  return;
-                }
+                // A plan's own approvals, and a tool step's asked before its step started, go
+                // to the plan (ADR-0146, ADR-0151); the rest to the work waiting on them.
+                if (planStepDecided !== undefined && (await planStepDecided(approval))) return;
+                if (planStepDecided === undefined && isPlanStepApproval(approval)) return;
                 await agentTurns?.afterDecision(tenant, approval);
               },
             }),
@@ -1416,6 +1416,8 @@ export function createApp({
                         authorization,
                         audit,
                       }),
+                      undefined,
+                      tools,
                     ),
                   }),
             });

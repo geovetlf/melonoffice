@@ -289,12 +289,12 @@ describe('plan conductor (WF-1)', () => {
   it('refuses a plan with any step it cannot run yet, before anything is delegated', async () => {
     const t = await setup((researcher) => [
       specialistStep('research', researcher, { approvalRequired: true }),
-      toolStep('search', 'research', 'lookup'),
+      { id: 'sign_off', kind: 'approval', label: 'Sign off', dependsOn: ['research'] },
     ]);
     const version = must(
       await t.w.planRepository.findVersion(t.w.orgA, t.planned.id, t.planned.version),
     );
-    expect(unrunnableStepOf(version)).toBe('tool');
+    expect(unrunnableStepOf(version)).toBe('approval');
     await t.approve();
     expect(await codeOf(t.conductor.run(t.w.tenantA, t.planned.id))).toBe('plan_not_runnable');
     expect((await t.stored()).delegationState).toBeUndefined();
@@ -560,7 +560,8 @@ function stepApprovals() {
       states.set(id, { status: 'declined', reason: 'cancelled' });
     },
   };
-  const idOf = (stepId: string): string => must(asked.find((a) => a.ask.stepId === stepId)).id;
+  const idOf = (stepId: string): string =>
+    must(asked.find((a) => (a.ask.tool?.stepId ?? a.ask.stepId) === stepId)).id;
   const set = (stepId: string, state: StepApprovalState) => states.set(idOf(stepId), state);
   return { port, asked, cancelled, set, idOf };
 }
@@ -734,5 +735,139 @@ describe('step approvals inside a running plan (ADR-0146)', () => {
     await w.fail('summary');
     expect((await w.conductor.advance(w.w.runtimeA, w.planned.id)).status).toBe('failed');
     expect(w.a.cancelled).toEqual([{ id: w.a.idOf('offer'), reason: 'plan_ended' }]);
+  });
+});
+
+describe('tool steps inside a running plan (ADR-0151)', () => {
+  const INPUT = { query: 'melon prices' };
+
+  it('runs a tool step inside its specialist step, with the input fixed in the plan', async () => {
+    const a = stepApprovals();
+    const t = await setup(
+      (researcher) => [
+        // A first step asking for approval is covered by the plan's own approval (ADR-0146).
+        specialistStep('research', researcher, { approvalRequired: true }),
+        toolStep('search', 'research', 'lookup', { input: INPUT }),
+      ],
+      undefined,
+      a.port,
+    );
+    const version = must(
+      await t.w.planRepository.findVersion(t.w.orgA, t.planned.id, t.planned.version),
+    );
+    expect(unrunnableStepOf(version)).toBeUndefined();
+    expect(must(version.steps.find((s) => s.id === 'search')).input).toEqual(INPUT);
+    await t.approve();
+    await t.conductor.run(t.w.tenantA, t.planned.id);
+    // Its tool needs no approval: the step starts at once, and nobody is asked.
+    const research = await t.childOf('research');
+    expect(t.started).toEqual([{ actor: 'user', id: research }]);
+    expect(a.asked).toEqual([]);
+    const child = await t.w.executions.get(t.w.tenantA, research);
+    expect(child.nodes.map((n) => [n.id, n.type])).toEqual([
+      ['research', 'agent'],
+      ['search', 'tool'],
+    ]);
+    expect(child.nodes.find((n) => n.id === 'search')?.approvalId).toBeUndefined();
+  });
+
+  it('asks for a tool step’s approval before its step starts, then attaches it and starts', async () => {
+    const a = stepApprovals();
+    const t = await setup(
+      (researcher) => [
+        specialistStep('research', researcher),
+        toolStep('search', 'research', 'lookup', { input: INPUT, approvalRequired: true }),
+      ],
+      undefined,
+      a.port,
+    );
+    await t.approve();
+    await t.conductor.run(t.w.tenantA, t.planned.id);
+    const research = await t.childOf('research');
+    // Even a first step: the plan's approval never covers a tool call.
+    expect(t.started).toEqual([]);
+    expect(a.asked).toHaveLength(1);
+    expect(a.asked[0]?.ask).toMatchObject({
+      stepId: 'research',
+      childExecutionId: research,
+      tool: { stepId: 'search', id: 'lookup', version: 1, input: INPUT },
+    });
+    expect((await t.stored()).stepApprovals).toEqual([
+      expect.objectContaining({
+        stepId: 'search',
+        performedBy: 'research',
+        approvalId: a.idOf('search'),
+      }),
+    ]);
+    // Asking again asks nothing new.
+    await t.conductor.resume(t.w.runtimeA, t.planned.id);
+    expect(a.asked).toHaveLength(1);
+
+    a.set('search', { status: 'approved' });
+    await t.conductor.resume(t.w.runtimeA, t.planned.id);
+    expect(t.started).toEqual([{ actor: 'runtime', id: research }]);
+    const child = await t.w.executions.get(t.w.tenantA, research);
+    expect(child.nodes.find((n) => n.id === 'search')?.approvalId).toBe(a.idOf('search'));
+    expect(t.w.events('execution.approval_attached')).toEqual([
+      expect.objectContaining({ nodeId: 'search', reference: a.idOf('search') }),
+    ]);
+  });
+
+  it('waits for every approval a step needs: its own and each of its tools', async () => {
+    const a = stepApprovals();
+    const t = await setup(
+      (researcher) => [
+        specialistStep('research', researcher),
+        specialistStep('offer', researcher, { dependsOn: ['research'], approvalRequired: true }),
+        toolStep('search', 'offer', 'lookup', { input: INPUT, approvalRequired: true }),
+      ],
+      undefined,
+      a.port,
+    );
+    await t.approve();
+    await t.conductor.run(t.w.tenantA, t.planned.id);
+    await t.complete('research');
+    await t.conductor.advance(t.w.runtimeA, t.planned.id);
+    expect(a.asked.map((x) => x.ask.tool?.stepId ?? x.ask.stepId)).toEqual(['offer', 'search']);
+    a.set('offer', { status: 'approved' });
+    await t.conductor.resume(t.w.runtimeA, t.planned.id);
+    expect(t.started).toHaveLength(1);
+    a.set('search', { status: 'approved' });
+    await t.conductor.resume(t.w.runtimeA, t.planned.id);
+    expect(t.started.at(-1)).toEqual({ actor: 'runtime', id: await t.childOf('offer') });
+  });
+
+  it('skips the branch of a step whose tool approval was declined; the plan still completes', async () => {
+    const a = stepApprovals();
+    const t = await setup(
+      (researcher) => [
+        specialistStep('research', researcher),
+        toolStep('search', 'research', 'lookup', { input: INPUT, approvalRequired: true }),
+        specialistStep('report', researcher, { dependsOn: ['research'] }),
+        specialistStep('summary', researcher),
+      ],
+      undefined,
+      a.port,
+    );
+    await t.approve();
+    await t.conductor.run(t.w.tenantA, t.planned.id);
+    // The independent branch runs; the one with the tool waits for a person.
+    expect(t.started).toEqual([{ actor: 'user', id: await t.childOf('summary') }]);
+    a.set('search', { status: 'declined', reason: 'rejected' });
+    await t.conductor.resume(t.w.runtimeA, t.planned.id);
+    const entry = must((await t.stored()).stepApprovals?.find((x) => x.stepId === 'search'));
+    expect(entry.declined?.reason).toBe('rejected');
+    expect(t.w.events('plan.step_declined')).toEqual([
+      expect.objectContaining({ nodeId: 'search', reason: 'rejected' }),
+    ]);
+    expect(await t.status(await t.childOf('research'))).toBe('pending');
+    await t.complete('summary');
+    const closed = await t.conductor.advance(t.w.runtimeA, t.planned.id);
+    // A declined branch is never a failure of the whole plan.
+    expect(closed.status).toBe('completed');
+    const parent = await t.w.executions.get(t.w.tenantA, t.planned.executionId);
+    expect(parent.nodes.find((n) => n.id === 'research')?.status).toBe('skipped');
+    expect(parent.nodes.find((n) => n.id === 'report')?.status).toBe('skipped');
+    expect(t.started).toHaveLength(1);
   });
 });

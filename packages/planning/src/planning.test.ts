@@ -328,6 +328,56 @@ describe('plan validation pipeline', () => {
     expect(await refusal(w, version2)).toBe('policy:tool_not_found');
   });
 
+  it('fixes a tool step’s input in the plan, checked against the tool’s own schema (ADR-0151)', async () => {
+    const w = await setup();
+    const r = w.researcher;
+    const withInput = (input: unknown, kind = 'tool') =>
+      proposal([
+        specialistStep('work', r),
+        kind === 'tool'
+          ? toolStep('use', 'work', 'lookup', { input })
+          : specialistStep('use', r, { input }),
+      ]);
+    const result = await validate(w, withInput({ query: 'melon prices' }));
+    if (!result.ok) throw new Error(result.reason);
+    expect(must(result.plan.steps.find((s) => s.id === 'use')).input).toEqual({
+      query: 'melon prices',
+    });
+    // No input is an empty one, which the tool's schema decides about too.
+    const none = await validate(
+      w,
+      proposal([specialistStep('work', r), toolStep('use', 'work', 'lookup')]),
+    );
+    expect(none.ok && must(none.plan.steps.find((s) => s.id === 'use')).input).toEqual({});
+    // Not what the tool takes: refused before anything is planned.
+    expect(await refusal(w, withInput({ query: 7 }))).toBe('policy:invalid_tool_input');
+    expect(await refusal(w, withInput({ other: 'x' }))).toBe('policy:invalid_tool_input');
+    expect(await refusal(w, withInput({ query: 'x'.repeat(101) }))).toBe(
+      'policy:invalid_tool_input',
+    );
+    // Data, never authority or credentials, at any depth.
+    expect(await refusal(w, withInput({ organizationId: 'org_b' }))).toBe(
+      'schema:authority_in_proposal',
+    );
+    expect(await refusal(w, withInput({ nested: [{ apiKey: 'x' }] }))).toBe(
+      'schema:authority_in_proposal',
+    );
+    expect(await refusal(w, withInput({ query: 'Bearer abcdefghijklmnop' }))).toBe(
+      'schema:secret_in_proposal',
+    );
+    // Plain JSON only, small, and only on tool steps.
+    expect(await refusal(w, withInput('melons'))).toBe('schema:invalid_proposal');
+    expect(await refusal(w, withInput({ query: 'x'.repeat(16_001) }))).toBe(
+      'schema:invalid_proposal',
+    );
+    let deep: unknown = 'x';
+    for (let i = 0; i < 10; i += 1) deep = { a: deep };
+    expect(await refusal(w, withInput(deep))).toBe('schema:invalid_proposal');
+    expect(await refusal(w, withInput({ query: 'x' }, 'specialist'))).toBe(
+      'schema:invalid_proposal',
+    );
+  });
+
   it('refuses a tool whose permissions the user does not hold', async () => {
     const w = await setup({ roles: { owner: ROLES.owner.filter((p) => p !== 'billing.read') } });
     const withTool = proposal([

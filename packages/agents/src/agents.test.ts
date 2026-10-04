@@ -19,6 +19,7 @@ import type {
   PlanVersion,
   Specialist,
   SubscriptionId,
+  ToolId,
   UserId,
 } from '@melonoffice/domain';
 import {
@@ -52,6 +53,7 @@ import {
   createAgentTaskWork,
   createBrainContextSource,
   createPlanStepVerifier,
+  TOOL_OUTPUT_CHECK,
   answeringSteps,
   createPlanStepWork,
   InMemoryAgentTaskRepository,
@@ -880,6 +882,128 @@ describe('Plan steps: what a step’s agent is given (WF-1, ADR-0070)', () => {
     expect(
       await verifier.verify(t.w.runtime, { ...done, input: { type: 'agent_task', id: REPORT } }),
     ).toBeUndefined();
+  });
+});
+
+describe('Plan steps: tool steps (ADR-0151)', () => {
+  const PLAN = '5a1b7c9e-1111-4111-8111-000000000001';
+  const PARENT = '5a1b7c9e-2222-4222-8222-000000000001';
+  const REPORT = '5a1b7c9e-3333-4333-8333-000000000002';
+  const tool = { id: 'knowledge_search', version: 1 };
+  const INPUT = { query: 'melon prices' };
+
+  async function setup() {
+    const w = await world();
+    const lucia = await w.agent();
+    const version = {
+      planId: PLAN,
+      organizationId: w.orgA,
+      version: 1,
+      request: { summary: 'Estudio', objective: 'Estudiar' },
+      steps: [
+        {
+          id: 'report',
+          kind: 'specialist',
+          label: 'Escribir',
+          dependsOn: [],
+          specialist: { id: lucia.identity.id, version: lucia.version, departmentId: 'd' },
+          approvalRequired: false,
+        },
+        {
+          id: 'search',
+          kind: 'tool',
+          label: 'Buscar',
+          dependsOn: ['report'],
+          performedBy: 'report',
+          tool,
+          input: INPUT,
+          approvalRequired: false,
+        },
+      ],
+    } as unknown as PlanVersion;
+    const plan = {
+      id: PLAN,
+      organizationId: w.orgA,
+      executionId: PARENT,
+      status: 'executing',
+      version: 1,
+      delegations: [{ stepId: 'report', executionId: REPORT }],
+    } as unknown as Plan;
+    const plans = {
+      find: async (org: string, id: string) => (org === w.orgA && id === PLAN ? plan : undefined),
+      findVersion: async (org: string, id: string, v: number) =>
+        org === w.orgA && id === PLAN && v === 1 ? version : undefined,
+    };
+    const child = {
+      id: REPORT,
+      organizationId: w.orgA,
+      mode: 'execute',
+      status: 'running',
+      input: { type: 'plan_step', id: `${PLAN}:report` },
+      parentExecutionId: PARENT,
+      specialistId: lucia.identity.id,
+      specialistVersion: lucia.version,
+      versionSnapshot: { schemaVersion: 1, components: [{ kind: 'plan', id: PLAN, version: '1' }] },
+      nodes: [
+        { id: 'report', type: 'agent', label: 'Escribir', status: 'completed', dependsOn: [] },
+        {
+          id: 'search',
+          type: 'tool',
+          label: 'Buscar',
+          status: 'running',
+          dependsOn: ['report'],
+          tool,
+        },
+      ],
+    } as unknown as Execution;
+    const outputs = createAgentOutputStore(new InMemoryAgentOutputRepository());
+    const work = createPlanStepWork({
+      plans,
+      specialists: w.repository,
+      skills: createSkillCatalogue(),
+      context: { read: async () => [] },
+      outputs,
+    });
+    const search = child.nodes[1] as Execution['nodes'][number];
+    return { w, child, search, work, outputs };
+  }
+
+  it('gives a tool node the input fixed in the plan, and nothing for anything else', async () => {
+    const t = await setup();
+    const input = await t.work.toolInput(t.w.runtime, t.child, t.search);
+    expect(input).toEqual(INPUT);
+    // A copy: the plan's own record is never handed out.
+    (input as Record<string, unknown>).query = 'changed';
+    expect(await t.work.toolInput(t.w.runtime, t.child, t.search)).toEqual(INPUT);
+    const none = (node: Execution['nodes'][number], execution = t.child, tenant = t.w.runtime) =>
+      t.work.toolInput(tenant, execution, node);
+    expect(
+      await none({ ...t.search, tool: { id: 'knowledge_search' as ToolId, version: 2 } }),
+    ).toBeUndefined();
+    expect(await none({ ...t.search, id: 'other' as ExecutionNodeId })).toBeUndefined();
+    expect(await none(t.child.nodes[0] as Execution['nodes'][number])).toBeUndefined();
+    expect(await none(t.search, { ...t.child, specialistVersion: 99 })).toBeUndefined();
+    const bobRuntime = await resolveRuntimeTenant(BOB, t.w.orgB, t.w.tenancy);
+    expect(await none(t.search, t.child, bobRuntime)).toBeUndefined();
+  });
+
+  it('verifies each tool step it ran by the gate’s check of its output', async () => {
+    const t = await setup();
+    await t.outputs.record(t.w.runtime, {
+      executionId: REPORT as ExecutionId,
+      nodeId: 'report' as ExecutionNodeId,
+      requestId: 'req-1',
+      output: { structured: { answer: 'Informe', missing: [] } },
+    });
+    const done: Execution = {
+      ...t.child,
+      nodes: t.child.nodes.map((n) => ({ ...n, status: 'completed' as const })),
+    };
+    const verified = await createPlanStepVerifier({ outputs: t.outputs }).verify(t.w.runtime, done);
+    expect(verified?.verification.nodes.map((n) => [n.nodeId, n.checks[0]?.code])).toEqual([
+      ['report', 'agent_answer_valid'],
+      ['search', TOOL_OUTPUT_CHECK],
+    ]);
   });
 });
 

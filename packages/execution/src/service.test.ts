@@ -1019,6 +1019,67 @@ describe('X6c N1: only the runtime drives running work (ADR-0031)', () => {
     });
   });
 
+  it('attaches a tool step’s approval to a plan step that has not started, once (ADR-0151)', async () => {
+    const w = await world();
+    const parent = await w.service.create(w.tenantA, { ...REQUEST, mode: 'plan' });
+    const nodes = [
+      { id: 'work', type: 'agent', label: 'Work' },
+      {
+        id: 'look',
+        type: 'tool',
+        label: 'Look',
+        dependsOn: ['work'],
+        tool: { id: 'lookup', version: 1 },
+      },
+    ] as const;
+    const step = (id: string) =>
+      w.service.create(w.tenantA, {
+        ...REQUEST,
+        input: { type: 'plan_step', id },
+        parentExecutionId: parent.id,
+        nodes: [...nodes],
+      });
+    const child = await step('p:work');
+    const approval = '00000000-0000-4000-8000-000000000001';
+    const attached = await w.service.attachPlanStepApproval(w.runtimeA, child.id, 'look', approval);
+    expect(attached.nodes.find((n) => n.id === 'look')?.approvalId).toBe(approval);
+    expect(w.events().at(-1)).toMatchObject({
+      action: 'execution.approval_attached',
+      nodeId: 'look',
+      reference: approval,
+    });
+    // Again: nothing changes, nothing more is recorded.
+    const count = w.events().length;
+    expect(await w.service.attachPlanStepApproval(w.tenantA, child.id, 'look', approval)).toEqual(
+      attached,
+    );
+    expect(w.events()).toHaveLength(count);
+    // Another approval, an agent node, GIA, another organization: refused.
+    const other = '00000000-0000-4000-8000-000000000002';
+    expect(
+      await codeOf(w.service.attachPlanStepApproval(w.runtimeA, child.id, 'look', other)),
+    ).toBe('execution_concurrency_conflict');
+    const fresh = await step('p:other');
+    expect(
+      await codeOf(w.service.attachPlanStepApproval(w.runtimeA, fresh.id, 'work', other)),
+    ).toBe('invalid_execution');
+    expect(await codeOf(w.service.attachPlanStepApproval(w.giaA, fresh.id, 'look', other))).toBe(
+      'actor_not_allowed',
+    );
+    expect(await codeOf(w.service.attachPlanStepApproval(w.tenantB, fresh.id, 'look', other))).toBe(
+      'execution_not_found',
+    );
+    // Not a plan step, or one already started: refused.
+    const plain = await w.service.create(w.tenantA, { ...REQUEST, nodes: [...nodes] });
+    expect(
+      await codeOf(w.service.attachPlanStepApproval(w.runtimeA, plain.id, 'look', other)),
+    ).toBe('actor_not_allowed');
+    await w.service.start(w.tenantA, fresh.id);
+    expect(
+      await codeOf(w.service.attachPlanStepApproval(w.runtimeA, fresh.id, 'look', other)),
+    ).toBe('actor_not_allowed');
+  });
+
   it('lets a person withdraw work that never started, and nothing else', async () => {
     const w = await world();
     const { id } = await w.service.create(w.tenantA, REQUEST);

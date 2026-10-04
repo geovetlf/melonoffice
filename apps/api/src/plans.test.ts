@@ -122,7 +122,11 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
       authorization,
     });
 
-    async function seed(type: string, role: string): Promise<Specialist> {
+    async function seed(
+      type: string,
+      role: string,
+      tools: readonly { id: string; version: number }[] = [],
+    ): Promise<Specialist> {
       const department = must(
         await stores.departments.find(orgA, departmentIdOf(orgA, type as DepartmentTypeId)),
       );
@@ -136,7 +140,7 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
             roleVersion: 1,
             capabilities: [],
             skills: [],
-            tools: [],
+            tools,
             permissions: ['organization.read'],
             policies: {},
           } as never,
@@ -152,7 +156,10 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
     }
     const owner = await seed('leadership', 'chief_of_staff');
     const researcher = await seed('research', 'market_researcher');
-    const marketer = await seed('marketing', 'campaign_manager');
+    // ADR-0151: the marketer may search the Company Brain, the one runtime tool there is.
+    const marketer = await seed('marketing', 'campaign_manager', [
+      { id: 'knowledge_search', version: 1 },
+    ]);
     const delegationWith = (repository: PlanRepository = stores.plans) =>
       createDelegation({
         plans: repository,
@@ -228,6 +235,8 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
         readonly gate?: boolean;
         /** ADR-0146: `campaign` asks a person before it runs; `brief` runs beside it. */
         readonly askBeforeCampaign?: boolean;
+        /** ADR-0151: `campaign` searches the Company Brain, with the person's approval. */
+        readonly searchInCampaign?: boolean;
       } = {},
     ) {
       const execution = await planning(tenant);
@@ -256,6 +265,21 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
               : []),
             ...(options.gate === true
               ? [{ id: 'sign_off', kind: 'approval', label: 'Sign off', dependsOn: ['campaign'] }]
+              : []),
+            ...(options.searchInCampaign === true
+              ? [
+                  step('brief', researcher, ['research']),
+                  {
+                    id: 'search',
+                    kind: 'tool',
+                    label: 'Search the Company Brain',
+                    dependsOn: ['campaign'],
+                    performedBy: 'campaign',
+                    tool: { id: 'knowledge_search', version: 1 },
+                    input: { query: 'melon prices' },
+                    approvalRequired: true,
+                  },
+                ]
               : []),
           ],
         },
@@ -1440,6 +1464,120 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
         expect(body.sources.plan_step).toBe('unavailable');
         expect(body.tasks.some((i) => i.origin === 'plan_step')).toBe(false);
       });
+    });
+  });
+
+  describe('ADR-0151: a tool step that asks a person before its step runs', () => {
+    /** A running plan: research done, `brief` started, `campaign` waits for its search's approval. */
+    async function waitingTool() {
+      const t = await setup(ROLES, { runPlans: true });
+      const authorization = createAuthorizationService(ROLES as never);
+      const approvals = createApprovalService({
+        repository: t.stores.approvals,
+        organizations: t.stores.tenancy,
+        authorization,
+        audit: t.stores.audit,
+      });
+      const executions = createExecutionService({
+        repository: t.stores.executions,
+        organizations: t.stores.tenancy,
+        authorization,
+        audit: t.stores.audit,
+      });
+      const { plan, ids } = await t.proposeWork({ approvalRequired: true, searchInCampaign: true });
+      const [research, campaign] = ids as [ExecutionId, ExecutionId];
+      const version = must(await t.stores.plans.findVersion(t.orgA, plan.id, plan.version));
+      expect(must(version.steps.find((s) => s.id === 'search')).input).toEqual({
+        query: 'melon prices',
+      });
+      const approved = await t.post('token-alice', `/plans/${plan.id}/approve`, {
+        version: 1,
+        digest: version.digest,
+      });
+      expect(approved.status).toBe(200);
+      const runtime = await resolveRuntimeTenant(t.tenant.userId, t.orgA, t.stores.tenancy);
+      const w = { executions, runtime };
+      await finish(w, research, 'research');
+      const worker = createPlanConductor({
+        plans: t.stores.plans,
+        executions,
+        starter: {
+          async start(tenant, executionId) {
+            await executions.runtimeStart(tenant, executionId);
+            t.kicked.push(executionId);
+          },
+        },
+        approvals: createPlanStepApprovals(approvals, undefined, defaultToolRegistry()),
+      });
+      await worker.advance(runtime, plan.id);
+      const stored = must(await t.stores.plans.find(t.orgA, plan.id));
+      const entry = must(stored.stepApprovals?.find((a) => a.stepId === 'search'));
+      const brief = must(stored.delegations.find((d) => d.stepId === 'brief')).executionId;
+      return { t, plan, executions, runtime, research, campaign, brief, entry };
+    }
+
+    it('asks the Tool Gate’s own approval, and once approved attaches it and starts the step', async () => {
+      const w = await waitingTool();
+      expect(w.entry.performedBy).toBe('campaign');
+      expect(w.t.kicked).toEqual([w.research, w.brief]);
+      const pending = must(await w.t.stores.approvals.find(w.t.orgA, w.entry.approvalId as never));
+      // Exactly the call the gate will check: this child's tool node, version, action and input.
+      expect(pending.operation).toEqual({
+        organizationId: w.t.orgA,
+        executionId: w.campaign,
+        nodeId: 'search',
+        specialistId: expect.any(String),
+        specialistVersion: 1,
+        toolId: 'knowledge_search',
+        toolVersion: 1,
+        action: 'search',
+        inputDigest: digestOf({ query: 'melon prices' }),
+      });
+      expect(pending).toMatchObject({ reason: 'approval_required', impact: 'reads_data' });
+      const steps = async () =>
+        (
+          (await (await w.t.get('token-alice', `/plans/${w.plan.id}/steps`)).json()) as {
+            steps: {
+              stepId: string;
+              state: string;
+              approvalId: string | null;
+              failure: string | null;
+            }[];
+          }
+        ).steps;
+      expect(must((await steps()).find((s) => s.stepId === 'campaign'))).toMatchObject({
+        state: 'awaiting_approval',
+        approvalId: w.entry.approvalId,
+      });
+
+      const decided = await w.t.post('token-alice', `/approvals/${w.entry.approvalId}/approve`);
+      expect(decided.status).toBe(200);
+      expect(w.t.kicked).toEqual([w.research, w.brief, w.campaign]);
+      const child = await w.executions.get(w.runtime, w.campaign);
+      expect(child.nodes.find((n) => n.id === 'search')?.approvalId).toBe(w.entry.approvalId);
+      expect((await w.t.stores.auditEvents()).map((e) => e.action)).toContain(
+        'execution.approval_attached',
+      );
+    });
+
+    it('rejection skips that step’s branch and never fails the plan', async () => {
+      const w = await waitingTool();
+      const decided = await w.t.post('token-alice', `/approvals/${w.entry.approvalId}/reject`);
+      expect(decided.status).toBe(200);
+      expect(w.t.kicked).toEqual([w.research, w.brief]);
+      const declined = (await w.t.stores.auditEvents()).filter(
+        (e) => e.action === 'plan.step_declined',
+      );
+      expect(declined).toEqual([expect.objectContaining({ nodeId: 'search', reason: 'rejected' })]);
+      await finish(w, w.brief, 'brief');
+      const worker = createPlanConductor({
+        plans: w.t.stores.plans,
+        executions: w.executions,
+        starter: { start: async (_t, id) => void w.t.kicked.push(id) },
+      });
+      const closed = await worker.advance(w.runtime, w.plan.id);
+      expect(closed.status).toBe('completed');
+      expect(w.t.kicked).toEqual([w.research, w.brief]);
     });
   });
 

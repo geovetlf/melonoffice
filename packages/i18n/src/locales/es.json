@@ -2377,6 +2377,7 @@
   "audit.action.execution.job_leased": "Se tomó un trabajo",
   "audit.action.execution.job_finished": "Terminó un trabajo",
   "audit.action.execution.job_cancelled": "Se canceló un trabajo",
+  "audit.action.execution.approval_attached": "Se vinculó la aprobación de un paso de herramienta a su paso",
   "audit.action.execution.node_outcome_unknown": "No se pudo confirmar el resultado de un paso",
   "audit.action.tool.authorization_checked": "Se comprobó el uso de una herramienta",
   "audit.action.tool.execution_requested": "Se pidió usar una herramienta",

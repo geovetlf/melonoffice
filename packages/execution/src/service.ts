@@ -16,6 +16,7 @@ import {
   applyNodeChange,
   applyStatusChange,
   assignmentOf,
+  attachApproval,
   checkSnapshot,
   isExecutionId,
   markOutcomeUnknown,
@@ -100,6 +101,19 @@ export interface ExecutionService {
   ): Promise<Execution>;
   /** One node of a planning execution, by the plan conductor, audited as any node change. */
   runtimePlanChangeNode(tenant: TenantContext, id: string, change: NodeChange): Promise<Execution>;
+  /**
+   * The plan conductor attaches the approval a person gave for a tool step (ADR-0151) to that
+   * step's tool node, before the step's child starts: only a server-side caller (the runtime, or
+   * the person whose `run` starts the plan; never GIA), only a pending `plan_step` child that has
+   * not started, only a pending tool node. Attaching the same approval again changes nothing.
+   * It grants nothing: the Tool Gate still checks the approval covers the exact call.
+   */
+  attachPlanStepApproval(
+    tenant: TenantContext,
+    id: string,
+    nodeId: string,
+    approvalId: string,
+  ): Promise<Execution>;
   /**
    * A user's start (ADR-0029): `pending → running`. Only a user acting directly, with
    * `execution.start`; GIA, the planner, delegation and the runtime never start anything. A
@@ -220,7 +234,7 @@ export function createExecutionService({
   const event = (
     tenant: TenantContext,
     execution: Execution,
-    fields: Partial<Pick<AuditEvent, 'transition' | 'reason' | 'nodeId'>> & {
+    fields: Partial<Pick<AuditEvent, 'transition' | 'reason' | 'nodeId' | 'reference'>> & {
       action:
         | 'execution.created'
         | 'execution.state_changed'
@@ -228,6 +242,7 @@ export function createExecutionService({
         | 'execution.verification_recorded'
         | 'execution.node_retried'
         | 'execution.node_outcome_unknown'
+        | 'execution.approval_attached'
         | 'execution.abandoned';
     },
     at: Date,
@@ -242,6 +257,7 @@ export function createExecutionService({
         ...(fields.transition === undefined ? {} : { transition: fields.transition }),
         ...(fields.reason === undefined ? {} : { reason: fields.reason }),
         ...(fields.nodeId === undefined ? {} : { nodeId: fields.nodeId }),
+        ...(fields.reference === undefined ? {} : { reference: fields.reference }),
         ...(requestId === undefined ? {} : { requestId }),
         source: 'api',
       },
@@ -653,6 +669,40 @@ export function createExecutionService({
     runtimeChangeNode: (tenant, id, change) => runtimeNode(tenant, id, change, false),
 
     runtimePlanChangeNode: (tenant, id, change) => runtimeNode(tenant, id, change, true),
+
+    async attachPlanStepApproval(tenant, id, nodeId, approvalId) {
+      if (tenant.actor !== 'runtime' && tenant.actor !== 'user') {
+        throw new ExecutionError('actor_not_allowed', 'plan_only');
+      }
+      const organizationId = await organizationOf(tenant);
+      const executionId = idOf(id);
+      const found = await repository.find(organizationId, executionId);
+      if (found === undefined) throw new ExecutionError('execution_not_found');
+      if (found.nodes.find((n) => n.id === nodeId)?.approvalId === approvalId) return found;
+      const at = now();
+      return repository.update(organizationId, executionId, (current) => {
+        if (
+          current.input.type !== 'plan_step' ||
+          current.parentExecutionId === undefined ||
+          current.status !== 'pending' ||
+          current.startedAt !== undefined
+        ) {
+          throw new ExecutionError('actor_not_allowed', 'not_pending_plan_step');
+        }
+        const next = attachApproval(current, nodeId, approvalId, at.toISOString() as IsoTimestamp);
+        return {
+          execution: next,
+          events: [
+            event(
+              tenant,
+              next,
+              { action: 'execution.approval_attached', nodeId, reference: approvalId },
+              at,
+            ),
+          ],
+        };
+      });
+    },
 
     start: (tenant, id) => startOne(tenant, id, false),
 
