@@ -663,6 +663,15 @@ function PlanCard({
                           : intl.formatDate(done.until, { dateStyle: 'short', timeStyle: 'short' }),
                     }}
                   />
+                  {done.attempt == null || done.attempt < 2 ? null : (
+                    <>
+                      {' · '}
+                      <FormattedMessage
+                        id="automations.attempt"
+                        values={{ attempt: done.attempt }}
+                      />
+                    </>
+                  )}
                   {done.state === 'awaiting_approval' ? (
                     <>
                       {' · '}
@@ -774,6 +783,8 @@ function stepProgressKey(done: PlanStepProgress): string {
         ? 'automations.wait.done'
         : 'automations.stepStatus.pending';
   }
+  // A step that failed for a passing reason, waiting to run again (ADR-0153).
+  if (done.state === 'delayed') return 'automations.retry.delayed';
   // A step that asks a person before it runs (ADR-0146).
   if (done.state === 'awaiting_approval') return 'automations.stepState.awaiting_approval';
   if (done.state === 'declined') {

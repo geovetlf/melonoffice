@@ -637,12 +637,26 @@ describe('the automatic sweep of abandoned agent work (ADR-0121)', () => {
     expect(advanced).toHaveLength(2);
     plan = { ...plan, waits: [] } as unknown as Plan;
 
+    // This child is a step's next attempt (ADR-0153): its plan is advanced once its backoff is
+    // over, so a lost wake-up never leaves it unstarted.
+    const notBefore = new Date(w.at().getTime() + 26 * HOUR).toISOString();
+    plan = {
+      ...plan,
+      attempts: [{ stepId: 'pause', executionId: execution.id, notBefore }],
+    } as unknown as Plan;
+    w.advance(25 * HOUR);
+    expect((await sweeper.sweep(sweepSlotOf(w.at()).id)).counts).toEqual({ waiting_in_plan: 1 });
+    w.advance(2 * HOUR);
+    expect((await sweeper.sweep(sweepSlotOf(w.at()).id)).counts).toEqual({ wait_over: 1 });
+    expect(advanced).toHaveLength(3);
+    plan = { ...plan, attempts: [] } as unknown as Plan;
+
     // Once the plan ended, a child left behind is swept as before.
     plan = { ...plan, status: 'completed' } as Plan;
     w.advance(25 * HOUR);
     const later = await sweeper.sweep(sweepSlotOf(w.at()).id);
     expect(later.closed).toEqual([expect.objectContaining({ executionId: execution.id })]);
-    expect(advanced).toHaveLength(2);
+    expect(advanced).toHaveLength(3);
   });
 
   it('never closes work that is not an agent’s task or a plan’s step', async () => {

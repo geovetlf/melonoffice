@@ -611,6 +611,12 @@ export const AUDIT_ACTIONS = {
       "One of a running plan's wait steps started once the steps before it completed (ADR-0152); `nodeId` is the step, `reference` how long it waits (`3600s`). The steps after it start once it ends.",
     results: ['success'],
   },
+  'plan.step_retried': {
+    category: 'planning',
+    description:
+      "A running plan's step whose child failed for a passing reason runs again in a new child, as the plan allowed (ADR-0153); `target` is the new child, `nodeId` the step, `reason` why the last one failed, `reference` the attempt (`attempt:2`).",
+    results: ['success'],
+  },
   'plan.step_declined': {
     category: 'planning',
     description:

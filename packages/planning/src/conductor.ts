@@ -15,18 +15,26 @@ import type {
   PlanWait,
   ToolRiskLevel,
 } from '@melonoffice/domain';
-import { isExecutionError, isTerminal, type ExecutionService } from '@melonoffice/execution';
+import {
+  executionIdFor,
+  isExecutionError,
+  isTerminal,
+  type ExecutionService,
+} from '@melonoffice/execution';
 import type { Logger } from '@melonoffice/observability';
 import { isResolvedTenant, type TenantContext } from '@melonoffice/tenancy';
-import type { Delegation } from './delegation.js';
+import { attemptKey, type Delegation, type PlanStepAttempts } from './delegation.js';
 import { isPlanningError, PlanningError } from './errors.js';
 import {
   applyPlanStatus,
   isPlanId,
+  recordAttempt,
   recordCondition,
   recordStepApproval,
   recordStepDeclined,
   recordWait,
+  stepAttemptOf,
+  stepExecutionOf,
 } from './model.js';
 import type { PlanRepository } from './repository.js';
 
@@ -277,6 +285,11 @@ export interface PlanConductorOptions {
    * that became ready is left for the worker's next advance, never started without a wake-up.
    */
   readonly wakeups?: PlanWakeups;
+  /**
+   * Creates another run of a step that failed for a passing reason (ADR-0153). Needed by
+   * `advance` only, with `wakeups`. Absent: a failed step stops the plan, as before.
+   */
+  readonly attempts?: PlanStepAttempts;
   readonly now?: () => Date;
   readonly requestId?: string;
   readonly logger?: Logger;
@@ -290,6 +303,40 @@ export const CONDITION_CHECK = 'condition_decided';
 export const WAIT_CHECK = 'wait_elapsed';
 
 /**
+ * Why a step's child may fail and still be run again (ADR-0153): the model's provider did not
+ * answer this time (`network`, `rate_limited`, `server_error`, `unavailable`). Never a refusal,
+ * a lack of credits, a policy, an invalid answer or an outcome nobody knows.
+ */
+export const RETRYABLE_STEP_FAILURES: readonly string[] = [
+  'network',
+  'rate_limited',
+  'server_error',
+  'unavailable',
+];
+
+/**
+ * Whether a specialist step whose child failed runs again (ADR-0153): the plan asked for more
+ * attempts than it had, the step waits for no person, and its child failed on its own agent's
+ * call for a passing reason before anything else in it started, so no tool ran and nothing is
+ * done twice.
+ */
+export function stepRetryable(
+  plan: Pick<Plan, 'attempts'>,
+  step: PlanStep,
+  child: Pick<Execution, 'status' | 'failure' | 'nodes'>,
+  gated: boolean,
+): boolean {
+  if (step.kind !== 'specialist' || gated || step.retry === undefined) return false;
+  if (stepAttemptOf(plan, step.id) >= step.retry.maxAttempts) return false;
+  const code = child.failure?.code;
+  if (child.status !== 'failed' || code === undefined) return false;
+  if (!RETRYABLE_STEP_FAILURES.includes(code)) return false;
+  const agent = child.nodes.find((n) => n.id === step.id);
+  if (agent?.status !== 'failed' || agent.error?.code !== code) return false;
+  return child.nodes.every((n) => n.id === step.id || n.startedAt === undefined);
+}
+
+/**
  * Where one step is:
  * - `waiting`: not started or not decided yet;
  * - `running`: its child execution started;
@@ -297,7 +344,8 @@ export const WAIT_CHECK = 'wait_elapsed';
  * - `stopped`: its condition was decided and the steps after it do not run;
  * - `awaiting_approval`: ready, waiting for a person to approve it (ADR-0146);
  * - `declined`: its approval was rejected, expired or withdrawn: it never runs (ADR-0146);
- * - `delayed`: a wait step that started and has not ended yet (ADR-0152);
+ * - `delayed`: a wait step that started and has not ended yet (ADR-0152), or a step's next attempt
+ *   that may not start yet (ADR-0153);
  * - `skipped`: a step it depends on was stopped, declined or skipped, so it never runs;
  * - `failed`: its child failed or was cancelled, or its condition could not go on.
  */
@@ -327,6 +375,8 @@ interface StepView {
   readonly declines?: readonly { readonly entry: string; readonly reason: string }[];
   /** Why it failed without a child failing, e.g. `step_approval_not_configured`. */
   readonly failure?: string;
+  /** On a specialist step that failed and runs again (ADR-0153). */
+  readonly retry?: true;
   readonly state: StepState;
 }
 
@@ -430,8 +480,17 @@ const decided = (view: StepView): boolean => view.state === 'completed' || view.
 const waitRef = (view: StepView): string => view.step.id;
 
 export function createPlanConductor(options: PlanConductorOptions): PlanConductor {
-  const { plans, delegation, executions, starter, conditions, approvals, wakeups, requestId } =
-    options;
+  const {
+    plans,
+    delegation,
+    executions,
+    starter,
+    conditions,
+    approvals,
+    wakeups,
+    attempts,
+    requestId,
+  } = options;
   const now = options.now ?? (() => new Date());
   const logger = options.logger;
 
@@ -468,14 +527,7 @@ export function createPlanConductor(options: PlanConductorOptions): PlanConducto
     for (const step of inOrder(version.steps.filter((s) => RUNNABLE_STEP_KINDS.includes(s.kind)))) {
       let view: StepView;
       if (step.kind === 'specialist') {
-        const d = plan.delegations.find((x) => x.stepId === step.id);
-        if (d === undefined) throw new PlanningError('delegation_conflict');
-        const child = await executions.get(tenant, d.executionId);
-        const gates = gatesOf(plan, version, step, child.id);
-        view =
-          gates.length > 0
-            ? await gatedView(tenant, plan, step, child, states, gates)
-            : { step, child, state: specialistStepState(child) };
+        view = await specialistView(tenant, plan, version, step, states);
       } else if (step.kind === 'wait') {
         const wait = plan.waits?.find((w) => w.stepId === step.id);
         view = { step, ...(wait === undefined ? {} : { wait }), state: waitStepState(wait, now()) };
@@ -492,6 +544,143 @@ export function createPlanConductor(options: PlanConductorOptions): PlanConducto
       out.push(view);
     }
     return out;
+  }
+
+  /**
+   * A specialist step from its current child (ADR-0153): the latest attempt's, else the one its
+   * delegation gave it. An attempt whose child is not there yet is created now; one that may not
+   * start yet is `delayed`; one that can no longer be created fails the step.
+   */
+  async function specialistView(
+    tenant: TenantContext,
+    plan: Plan,
+    version: PlanVersion,
+    step: PlanStep,
+    states: ReadonlyMap<string, StepState>,
+  ): Promise<StepView> {
+    const childId = stepExecutionOf(plan, step.id);
+    if (childId === undefined) throw new PlanningError('delegation_conflict');
+    const attempt = (plan.attempts ?? []).filter((a) => a.stepId === step.id).at(-1);
+    let child: Execution | undefined;
+    if (attempt === undefined) {
+      child = await executions.get(tenant, childId);
+    } else {
+      try {
+        child = await executions.get(tenant, childId);
+      } catch (error) {
+        if (!isExecutionError(error) || error.code !== 'execution_not_found') throw error;
+        if (attempts === undefined) return { step, state: 'waiting' };
+        child = await attempts.ensure(tenant, plan, version, step, attempt.attempt);
+        if (child === undefined)
+          return { step, state: 'failed', failure: 'step_retry_unavailable' };
+      }
+    }
+    const gates = gatesOf(plan, version, step, child.id);
+    if (gates.length > 0) return gatedView(tenant, plan, step, child, states, gates);
+    const state = specialistStepState(child);
+    if (
+      state === 'waiting' &&
+      attempt !== undefined &&
+      Date.parse(attempt.notBefore) > now().getTime()
+    ) {
+      return { step, child, state: 'delayed' };
+    }
+    if (state === 'failed' && stepRetryable(plan, step, child, false)) {
+      return { step, child, state, retry: true };
+    }
+    return { step, child, state };
+  }
+
+  /**
+   * Runs a failed step again (ADR-0153): the attempt is recorded on the plan first, in one
+   * revision-checked write with `plan.step_retried`, so a cancellation reaches its child even
+   * before it exists; then its child is created and, after the step's backoff, the plan is woken
+   * to start it. A concurrent retry finds it recorded and changes nothing.
+   */
+  async function retryStep(
+    tenant: TenantContext,
+    organizationId: OrganizationId,
+    plan: Plan,
+    version: PlanVersion,
+    view: StepView,
+  ): Promise<Plan> {
+    const { step, child } = view;
+    if (attempts === undefined || child === undefined || step.retry === undefined) return plan;
+    const attempt = stepAttemptOf(plan, step.id) + 1;
+    const executionId = executionIdFor(organizationId, attemptKey(plan.id, step.id, attempt));
+    const failure = child.failure?.code ?? 'step_failed';
+    const at = now();
+    let retried: Plan;
+    try {
+      retried = await plans.update(organizationId, plan.id, (current) => {
+        const next = recordAttempt(
+          current,
+          {
+            stepId: step.id,
+            executionId,
+            after: child.id,
+            failure,
+            backoffMs: step.retry?.backoffMs ?? 0,
+          },
+          iso(at),
+        );
+        return {
+          plan: next,
+          events: [
+            buildAuditEvent(
+              {
+                action: 'plan.step_retried',
+                result: 'success',
+                actor: actorOf(tenant),
+                organizationId,
+                target: { type: 'execution', id: executionId },
+                nodeId: step.id,
+                reason: failure,
+                reference: `attempt:${attempt}`,
+                ...(requestId === undefined ? {} : { requestId }),
+                source: 'api',
+              },
+              at,
+            ),
+          ],
+        };
+      });
+    } catch (error) {
+      if (!isPlanningError(error)) throw error;
+      const fresh = await plans.find(organizationId, plan.id);
+      if (fresh !== undefined && stepExecutionOf(fresh, step.id) !== child.id) return fresh;
+      if (fresh !== undefined && fresh.status !== 'executing') return fresh;
+      throw error;
+    }
+    await attempts.ensure(tenant, retried, version, step, attempt);
+    const recorded = (retried.attempts ?? []).at(-1);
+    if (
+      wakeups !== undefined &&
+      recorded !== undefined &&
+      recorded.notBefore > recorded.recordedAt
+    ) {
+      try {
+        await wakeups.wake(
+          tenant,
+          { organizationId, planId: retried.id },
+          new Date(Date.parse(recorded.notBefore) + WAKE_MARGIN_MS),
+        );
+      } catch (error) {
+        const code = (error as { code?: unknown }).code;
+        logger?.warn('plan wake-up not queued', {
+          planId: retried.id,
+          stepId: step.id,
+          code: typeof code === 'string' ? code : 'error',
+        });
+      }
+    }
+    logger?.info('plan step retried', {
+      planId: retried.id,
+      stepId: step.id,
+      attempt,
+      code: failure,
+    });
+    return retried;
   }
 
   /** What a step's approval is bound to, from the stored plan and version only. */
@@ -1059,6 +1248,16 @@ export function createPlanConductor(options: PlanConductorOptions): PlanConducto
       if (plan.status !== 'executing') return plan;
       views = await stepsOf(tenant, plan, version);
     }
+
+    // A step that failed for a passing reason runs again, when the plan asked (ADR-0153).
+    const retrying = views.filter((v) => v.retry === true);
+    // Only the worker runs a step again; anywhere else the plan is left for it, never stopped.
+    if (retrying.length > 0 && (attempts === undefined || wakeups === undefined)) return plan;
+    for (const view of retrying) {
+      plan = await retryStep(tenant, organizationId, plan, version, view);
+      if (plan.status !== 'executing') return plan;
+    }
+    if (retrying.length > 0) views = await stepsOf(tenant, plan, version);
 
     // Conditions whose steps before them completed are decided one at a time, in order, until
     // none is ready or one stops the plan: a decision may make the next condition ready. On a

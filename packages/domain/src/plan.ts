@@ -54,6 +54,23 @@ export interface PlanWait {
   readonly until: IsoTimestamp;
 }
 
+/**
+ * Another run of a specialist step whose child failed for a passing reason (ADR-0153): a new
+ * child execution, under its own deterministic id, started no earlier than `notBefore`.
+ */
+export interface PlanStepAttempt {
+  readonly stepId: string;
+  /** 2 for the first retry, up to the step's `retry.maxAttempts`. */
+  readonly attempt: number;
+  readonly executionId: ExecutionId;
+  /** The child that failed before it, and why. */
+  readonly after: ExecutionId;
+  readonly failure: string;
+  readonly recordedAt: IsoTimestamp;
+  /** The step's backoff: its child starts no earlier. */
+  readonly notBefore: IsoTimestamp;
+}
+
 /** How a step's result is checked before it counts as done (the Verification Engine is X6). */
 export type VerificationPolicy = 'output_schema' | 'human_review' | 'specialist_review' | 'checks';
 
@@ -296,6 +313,8 @@ export interface Plan {
   readonly stepApprovals?: readonly PlanStepApproval[];
   /** Each wait step that started, once (ADR-0152). */
   readonly waits?: readonly PlanWait[];
+  /** Each new run of a step that failed for a passing reason, in order (ADR-0153). */
+  readonly attempts?: readonly PlanStepAttempt[];
   readonly revision: number;
   readonly createdAt: IsoTimestamp;
   readonly createdBy: UserId;

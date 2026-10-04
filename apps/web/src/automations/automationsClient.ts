@@ -204,8 +204,13 @@ export interface PlanStepProgress {
   readonly failure: string | null;
   readonly answer: string | null;
   readonly missing: readonly string[];
-  /** On a wait step that started (ADR-0152): when the steps after it may start. */
+  /**
+   * On a wait step that started (ADR-0152): when the steps after it may start. On a step's next
+   * attempt (ADR-0153): when it may start.
+   */
   readonly until?: string | null;
+  /** On a specialist step: which run of it its execution is, from 1 (ADR-0153). */
+  readonly attempt?: number | null;
 }
 
 /** Planning a workflow gives its plan, or why the plan was refused. */

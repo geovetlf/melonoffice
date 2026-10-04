@@ -68,6 +68,16 @@ interface PlanDocument {
     readonly startedAt: FirestoreTimestamp;
     readonly until: FirestoreTimestamp;
   }[];
+  /** ADR-0153: absent on plans written before, and on plans no step was retried in. */
+  readonly attempts?: readonly {
+    readonly stepId: string;
+    readonly attempt: number;
+    readonly executionId: string;
+    readonly after: string;
+    readonly failure: string;
+    readonly recordedAt: FirestoreTimestamp;
+    readonly notBefore: FirestoreTimestamp;
+  }[];
   readonly revision: number;
   readonly createdAt: FirestoreTimestamp;
   readonly createdBy: string;
@@ -145,6 +155,19 @@ export function toPlanDocument(plan: Plan): PlanDocument {
             until: ts(w.until),
           })),
         }),
+    ...(plan.attempts === undefined
+      ? {}
+      : {
+          attempts: plan.attempts.map((a) => ({
+            stepId: a.stepId,
+            attempt: a.attempt,
+            executionId: a.executionId,
+            after: a.after,
+            failure: a.failure,
+            recordedAt: ts(a.recordedAt),
+            notBefore: ts(a.notBefore),
+          })),
+        }),
     ...(plan.stepApprovals === undefined
       ? {}
       : {
@@ -209,6 +232,19 @@ function toPlan(id: string, d: PlanDocument): Plan {
             stepId: w.stepId,
             startedAt: iso(w.startedAt),
             until: iso(w.until),
+          })),
+        }),
+    ...(d.attempts === undefined
+      ? {}
+      : {
+          attempts: d.attempts.map((a) => ({
+            stepId: a.stepId,
+            attempt: a.attempt,
+            executionId: a.executionId,
+            after: a.after,
+            failure: a.failure,
+            recordedAt: iso(a.recordedAt),
+            notBefore: iso(a.notBefore),
           })),
         }),
     ...(d.stepApprovals === undefined

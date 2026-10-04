@@ -9,6 +9,8 @@ import {
   planStepStates,
   stepApprovalEntriesOf,
   stepApprovalOf,
+  stepAttemptOf,
+  stepExecutionOf,
   specialistStepState,
   unrunnableStepOf,
   waitStepState,
@@ -276,8 +278,13 @@ export interface PlanStepRead {
   readonly outcome: string | null;
   readonly answer: string | null;
   readonly missing: string[];
-  /** On a wait step that started (ADR-0152): when the steps after it may start. */
+  /**
+   * On a wait step that started (ADR-0152): when the steps after it may start. On a step's next
+   * attempt (ADR-0153): when it may start.
+   */
   readonly until: string | null;
+  /** On a specialist step: which run of it its child is, from 1 (ADR-0153). */
+  readonly attempt: number | null;
 }
 
 /**
@@ -297,10 +304,17 @@ export async function readPlanSteps(
   const children = new Map<string, Execution>();
   for (const step of version.steps) {
     if (step.kind !== 'specialist') continue;
-    const executionId = plan.delegations.find((d) => d.stepId === step.id)?.executionId;
+    // The step's current child: its latest attempt's, else its delegation's (ADR-0153).
+    const executionId = stepExecutionOf(plan, step.id);
     if (executionId === undefined) continue;
-    children.set(step.id, await steps.executions.get(tenant, executionId));
+    // An attempt whose child the worker has not created yet reads as not started.
+    const child = await steps.executions.get(tenant, executionId).catch((error: unknown) => {
+      if ((error as { code?: unknown }).code === 'execution_not_found') return undefined;
+      throw error;
+    });
+    if (child !== undefined) children.set(step.id, child);
   }
+  const attemptOf = (id: string) => (plan.attempts ?? []).filter((a) => a.stepId === id).at(-1);
   const conditionOf = (id: string) => plan.conditions?.find((c) => c.stepId === id);
   // Every approval a step waits for: its own (ADR-0146) and its tool steps' (ADR-0151). The one
   // shown is the first still open, else the declined one, which says why it never ran.
@@ -316,10 +330,14 @@ export async function readPlanSteps(
     if (step.kind === 'condition') return conditionStepState(conditionOf(step.id));
     if (step.kind === 'wait') return waitStepState(waitOf(step.id), at);
     const child = children.get(step.id);
-    if (child === undefined) return 'waiting';
+    const attempt = attemptOf(step.id);
+    // A step's next attempt waits out its backoff (ADR-0153).
+    const delayed = attempt !== undefined && Date.parse(attempt.notBefore) > at.getTime();
+    if (child === undefined) return delayed ? 'delayed' : 'waiting';
     // A step that asked people (ADR-0146, ADR-0151): waiting for them, or declined.
     const approval = stepApprovalOf(plan, step.id);
-    return approval === 'none' ? specialistStepState(child) : gatedStepState(child, approval);
+    const own = approval === 'none' ? specialistStepState(child) : gatedStepState(child, approval);
+    return own === 'waiting' && delayed ? 'delayed' : own;
   });
   const out: PlanStepRead[] = [];
   for (const step of version.steps) {
@@ -341,6 +359,7 @@ export async function readPlanSteps(
         answer: null,
         missing: [],
         until: null,
+        attempt: null,
       });
       continue;
     }
@@ -358,6 +377,7 @@ export async function readPlanSteps(
         answer: null,
         missing: [],
         until: waitOf(step.id)?.until ?? null,
+        attempt: null,
       });
       continue;
     }
@@ -381,7 +401,8 @@ export async function readPlanSteps(
       outcome: null,
       answer: answered?.answer ?? null,
       missing: answered === undefined ? [] : [...answered.missing],
-      until: null,
+      until: state === 'delayed' ? (attemptOf(step.id)?.notBefore ?? null) : null,
+      attempt: stepAttemptOf(plan, step.id),
     });
   }
   return { views: out, children };

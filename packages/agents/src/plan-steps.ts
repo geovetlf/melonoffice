@@ -8,7 +8,7 @@ import type {
   PlanVersion,
 } from '@melonoffice/domain';
 import type { AgentOutputStore, VerificationInput } from '@melonoffice/execution';
-import { planStepOf, type PlanRepository } from '@melonoffice/planning';
+import { planStepOf, stepExecutionsOf, type PlanRepository } from '@melonoffice/planning';
 import type { SkillCatalogue } from '@melonoffice/specialists';
 import { isResolvedTenant, type TenantContext } from '@melonoffice/tenancy';
 import {
@@ -82,7 +82,8 @@ async function factsOf(
   ) {
     return undefined;
   }
-  const children = new Map(plan.delegations.map((d) => [d.stepId, d.executionId as string]));
+  // Each step's current child: an earlier attempt that failed no longer speaks for it (ADR-0153).
+  const children: ReadonlyMap<string, string> = stepExecutionsOf(plan);
   if (children.get(step.id) !== execution.id) return undefined;
   return { organizationId, version, step, children };
 }
@@ -301,7 +302,7 @@ export async function readPlanResults(
 ): Promise<PlanResults> {
   const plan = await ports.plans.get(tenant, planId);
   const version = await ports.plans.getVersion(tenant, plan.id, plan.version);
-  const children = new Map(plan.delegations.map((d) => [d.stepId, d.executionId]));
+  const children = stepExecutionsOf(plan);
   const steps = await Promise.all(
     version.steps
       .filter((s) => s.kind === 'specialist')

@@ -11,6 +11,7 @@ import type {
   PlanSource,
   PlanStatus,
   PlanStepApproval,
+  PlanStepAttempt,
   PlanVersion,
   PlanWait,
   UserId,
@@ -19,7 +20,7 @@ import { isExecutionId } from '@melonoffice/execution';
 import { digestOf, isDigest, sameDigest } from '@melonoffice/tools';
 import { PlanningError } from './errors.js';
 import { canChangePlanStatus, isPlanStatus, isPlanTerminal } from './lifecycle.js';
-import { checkProposal } from './proposal.js';
+import { checkProposal, MAX_RETRY_ATTEMPTS } from './proposal.js';
 import type { ValidatedPlan } from './validate.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -270,6 +271,21 @@ export function checkStoredPlan(plan: Plan): Plan {
     for (const w of plan.waits) checkWait(w);
     if (new Set(plan.waits.map((w) => w.stepId)).size !== plan.waits.length) invalid('waits');
   }
+  if (plan.attempts !== undefined) {
+    if (!Array.isArray(plan.attempts)) invalid('attempts');
+    // Each step's attempts in order, from 2, each after the child that ran it before.
+    for (const [i, a] of plan.attempts.entries()) {
+      checkAttempt(a);
+      const before = { delegations: plan.delegations, attempts: plan.attempts.slice(0, i) };
+      if (a.attempt !== stepAttemptOf(before, a.stepId) + 1) invalid('attempts');
+      if (a.after !== stepExecutionOf(before, a.stepId)) invalid('attempts');
+    }
+    const ids = new Set([
+      ...plan.delegations.map((d) => d.executionId),
+      ...plan.attempts.map((a) => a.executionId),
+    ]);
+    if (ids.size !== plan.delegations.length + plan.attempts.length) invalid('attempts');
+  }
   const { decision } = plan;
   if (decision !== undefined) {
     if (decision.decision !== 'approved' && decision.decision !== 'rejected') invalid('decision');
@@ -422,6 +438,84 @@ export function recordWait(
   });
   checkWait(recorded);
   return Object.freeze({ ...next, waits: Object.freeze([...(plan.waits ?? []), recorded]) });
+}
+
+function checkAttempt(attempt: PlanStepAttempt): void {
+  if (typeof attempt.stepId !== 'string' || attempt.stepId.length === 0) invalid('attempts');
+  if (
+    !Number.isSafeInteger(attempt.attempt) ||
+    attempt.attempt < 2 ||
+    attempt.attempt > MAX_RETRY_ATTEMPTS
+  ) {
+    invalid('attempts');
+  }
+  if (!isExecutionId(attempt.executionId) || !isExecutionId(attempt.after)) invalid('attempts');
+  if (typeof attempt.failure !== 'string' || !CODE.test(attempt.failure)) invalid('attempts');
+  const recorded = typeof attempt.recordedAt === 'string' ? Date.parse(attempt.recordedAt) : NaN;
+  const notBefore = typeof attempt.notBefore === 'string' ? Date.parse(attempt.notBefore) : NaN;
+  if (Number.isNaN(recorded) || Number.isNaN(notBefore) || notBefore < recorded) {
+    invalid('attempts');
+  }
+}
+
+/**
+ * The child execution that runs a specialist step now (ADR-0153): its latest attempt's, else the
+ * one its delegation gave it. `undefined` for a step the plan did not delegate.
+ */
+export function stepExecutionOf(
+  plan: Pick<Plan, 'delegations' | 'attempts'>,
+  stepId: string,
+): ExecutionId | undefined {
+  const attempts = (plan.attempts ?? []).filter((a) => a.stepId === stepId);
+  return (
+    attempts.at(-1)?.executionId ?? plan.delegations.find((d) => d.stepId === stepId)?.executionId
+  );
+}
+
+/** Every delegated step's current child execution, by step (ADR-0153). */
+export const stepExecutionsOf = (
+  plan: Pick<Plan, 'delegations' | 'attempts'>,
+): ReadonlyMap<string, ExecutionId> =>
+  new Map(plan.delegations.map((d) => [d.stepId, stepExecutionOf(plan, d.stepId) as ExecutionId]));
+
+/** Which run of a step its current child is: 1, then each recorded attempt (ADR-0153). */
+export const stepAttemptOf = (plan: Pick<Plan, 'attempts'>, stepId: string): number =>
+  1 + (plan.attempts ?? []).filter((a) => a.stepId === stepId).length;
+
+/**
+ * Records another run of a step whose child failed (ADR-0153), once: a plan whose step already
+ * moved past `after` is a concurrent retry, and the one recorded stands.
+ */
+export function recordAttempt(
+  plan: Plan,
+  entry: {
+    readonly stepId: string;
+    readonly executionId: ExecutionId;
+    readonly after: ExecutionId;
+    readonly failure: string;
+    readonly backoffMs: number;
+  },
+  at: IsoTimestamp,
+): Plan {
+  if (plan.status !== 'executing') throw new PlanningError('invalid_plan_transition');
+  if (stepExecutionOf(plan, entry.stepId) !== entry.after) {
+    throw new PlanningError('plan_concurrency_conflict');
+  }
+  if (!Number.isSafeInteger(entry.backoffMs) || entry.backoffMs < 0) invalid('attempts');
+  const next = nextRevision(plan, at);
+  const recorded: PlanStepAttempt = Object.freeze({
+    stepId: entry.stepId,
+    attempt: stepAttemptOf(plan, entry.stepId) + 1,
+    executionId: entry.executionId,
+    after: entry.after,
+    failure: entry.failure,
+    recordedAt: next.updatedAt,
+    notBefore: new Date(Date.parse(next.updatedAt) + entry.backoffMs).toISOString() as IsoTimestamp,
+  });
+  checkAttempt(recorded);
+  const attempts = Object.freeze([...(plan.attempts ?? []), recorded]);
+  checkStoredPlan({ ...next, attempts });
+  return Object.freeze({ ...next, attempts });
 }
 
 /** A step's approval names its step and the approval, nothing else. */
