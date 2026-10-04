@@ -25,6 +25,7 @@ const TOOLS: readonly { readonly id: string; readonly icon: IconName }[] = [
   { id: 'reports', icon: 'reports' },
   { id: 'aiUsage', icon: 'coins' },
   { id: 'approvals', icon: 'check' },
+  { id: 'auditTrail', icon: 'clock' },
   { id: 'agents', icon: 'user' },
   { id: 'apps', icon: 'apps' },
   { id: 'settings', icon: 'settings' },
@@ -44,6 +45,7 @@ export function Sidebar({
   canReadAIUsage = false,
   platformAdmin = false,
   canReadApprovals = false,
+  canReadAuditTrail = false,
   canReadAgents = false,
   canReadAutomations = false,
   canReadCommandCenter = false,
@@ -72,6 +74,8 @@ export function Sidebar({
   readonly platformAdmin?: boolean;
   /** The approval center (ADR-0026), for a person with `approval.read`. */
   readonly canReadApprovals?: boolean;
+  /** The audit history (ADR-0147), for a person with `activity.read`. */
+  readonly canReadAuditTrail?: boolean;
   /** Agents (ADR-0062), for a person with `specialist.read`. */
   readonly canReadAgents?: boolean;
   /** Automations (WF-3), for a person who may read workflows or plans. */
@@ -199,6 +203,18 @@ export function Sidebar({
                   icon={tool.icon}
                   path={paths.approvals()}
                   current={route.kind === 'approvals'}
+                  go={go}
+                >
+                  <FormattedMessage id={`nav.${tool.id}`} />
+                </NavLink>
+              ) : null
+            ) : tool.id === 'auditTrail' ? (
+              canReadAuditTrail ? (
+                <NavLink
+                  key={tool.id}
+                  icon={tool.icon}
+                  path={paths.auditTrail()}
+                  current={route.kind === 'auditTrail'}
                   go={go}
                 >
                   <FormattedMessage id={`nav.${tool.id}`} />
