@@ -394,21 +394,51 @@ export interface UpgradeBreak {
  * and the steps of active workflows that this kind of agent performs and that need one of them.
  * A warning, never a refusal: the person decides.
  */
-export function upgradeImpact(facts: {
+export function upgradeImpact(
+  facts: ImpactFacts & { readonly skillId: string; readonly toVersion: number },
+): SkillChangeImpact {
+  return skillChangeImpact(
+    facts,
+    facts.agent.configuration.skills.map((s) =>
+      s.id === facts.skillId ? { id: s.id, version: facts.toVersion } : s,
+    ),
+  );
+}
+
+/**
+ * What removing one of an agent's skills would take away (ADR-0141), the same warning as an
+ * upgrade's (G-2): the tools no other skill of the agent grants, and the steps of active
+ * workflows that need them.
+ */
+export function removalImpact(
+  facts: ImpactFacts & { readonly skillId: string },
+): SkillChangeImpact {
+  return skillChangeImpact(
+    facts,
+    facts.agent.configuration.skills.filter((s) => s.id !== facts.skillId),
+  );
+}
+
+interface ImpactFacts {
   readonly agent: Specialist;
-  readonly skillId: string;
-  readonly toVersion: number;
   readonly skills: SkillCatalogue;
   readonly departments: readonly Department[];
   readonly workflows?: readonly {
     readonly workflow: Workflow;
     readonly version: WorkflowVersion;
   }[];
-}): { readonly removes: readonly string[]; readonly breaks: readonly UpgradeBreak[] } {
+}
+
+export interface SkillChangeImpact {
+  readonly removes: readonly string[];
+  readonly breaks: readonly UpgradeBreak[];
+}
+
+function skillChangeImpact(
+  facts: ImpactFacts,
+  nextSkills: Specialist['configuration']['skills'],
+): SkillChangeImpact {
   const { configuration } = facts.agent;
-  const nextSkills = configuration.skills.map((s) =>
-    s.id === facts.skillId ? { id: s.id, version: facts.toVersion } : s,
-  );
   const granted = grantsOf(nextSkills, facts.skills).tools;
   const removes = configuration.tools
     .map((t) => toolKey(t.id, t.version))

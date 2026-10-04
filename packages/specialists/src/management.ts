@@ -86,6 +86,23 @@ export interface SpecialistManagement {
     input: Record<string, unknown>,
   ): Promise<Specialist>;
   /**
+   * Gives the agent one more skill from the catalogue, as a new version: `{ fromVersion, skillId,
+   * version }` (ADR-0141). Its department must allow it. The tools it grants at one exact version
+   * are assigned and the permissions they need listed, as an upgrade does (ADR-0084). A skill that
+   * grants a tool at several versions (a supervised or autonomous choice) is never added here.
+   */
+  addSkill(tenant: TenantContext, id: string, input: Record<string, unknown>): Promise<Specialist>;
+  /**
+   * Takes one skill away from the agent, as a new version: `{ fromVersion, skillId }` (ADR-0141).
+   * The tools no other skill of the agent grants are removed, and only the permissions its skills
+   * and tools still need are kept. Its last skill is never removed.
+   */
+  removeSkill(
+    tenant: TenantContext,
+    id: string,
+    input: Record<string, unknown>,
+  ): Promise<Specialist>;
+  /**
    * Changes what the agent is for, in a person's words, as a new version of the agent:
    * `{ fromVersion, purpose?, description? }`, each a text or `null` to clear it (ADR-0140). The
    * server keeps the rest of the configuration as it is, so a browser never sends or sees the
@@ -465,6 +482,115 @@ export function createSpecialistManagement(
               to: level,
             }),
           ],
+        };
+      });
+    },
+
+    async addSkill(tenant, id, input) {
+      const organizationId = await managerOf(tenant);
+      const person = userOf(tenant);
+      if (!isRecord(input)) bad('body');
+      for (const key of Object.keys(input)) {
+        if (!['fromVersion', 'skillId', 'version'].includes(key)) bad(key);
+      }
+      if (!isVersionNumber(input.fromVersion)) bad('fromVersion');
+      if (typeof input.skillId !== 'string') bad('skillId');
+      if (!isVersionNumber(input.version)) bad('version');
+      const target = skills.resolve(input.skillId as string, input.version as number);
+      if (target === undefined) return bad('skillId');
+      // A choice between versions of a tool is a person's, never made here (ADR-0084).
+      if (target.tools.some((grant) => grant.versions.length !== 1)) bad('skills.choice');
+      if (!isSpecialistId(id)) throw new SpecialistError('specialist_not_found');
+      const read = await repository.find(organizationId, id);
+      if (read === undefined) throw new SpecialistError('specialist_not_found');
+      const department = await departmentOf(organizationId, read.configuration);
+      return update(organizationId, id, (current, at) => {
+        const { configuration } = current;
+        if (configuration.departmentId !== read.configuration.departmentId) bad('departmentId');
+        if (configuration.skills.some((s) => s.id === target.id)) bad('skillId');
+        const ref = { id: target.id, version: target.version };
+        const derived = derivedFrom([ref]);
+        const held = new Set(configuration.tools.map((t) => toolKey(t.id, t.version)));
+        const next = checkConfiguration(
+          {
+            ...configuration,
+            skills: [...configuration.skills, ref],
+            tools: [
+              ...configuration.tools,
+              ...derived.tools.filter((t) => !held.has(toolKey(t.id, t.version))),
+            ],
+            permissions: [
+              ...new Set([...configuration.permissions, ...derived.permissions]),
+            ].sort(),
+          },
+          organizationId,
+        );
+        // Its department must allow the skill (ADR-0104), like any version.
+        checkAgainstCatalogues(next);
+        const write = reviseSpecialist(
+          current,
+          { fromVersion: input.fromVersion as number, configuration: next, department },
+          person.userId,
+          at.toISOString() as IsoTimestamp,
+        );
+        return {
+          ...write,
+          events: [event(person, write.specialist, 'specialist.version_created', at)],
+        };
+      });
+    },
+
+    async removeSkill(tenant, id, input) {
+      const organizationId = await managerOf(tenant);
+      const person = userOf(tenant);
+      if (!isRecord(input)) bad('body');
+      for (const key of Object.keys(input)) {
+        if (!['fromVersion', 'skillId'].includes(key)) bad(key);
+      }
+      if (!isVersionNumber(input.fromVersion)) bad('fromVersion');
+      if (typeof input.skillId !== 'string') bad('skillId');
+      if (!isSpecialistId(id)) throw new SpecialistError('specialist_not_found');
+      const read = await repository.find(organizationId, id);
+      if (read === undefined) throw new SpecialistError('specialist_not_found');
+      const department = await departmentOf(organizationId, read.configuration);
+      return update(organizationId, id, (current, at) => {
+        const { configuration } = current;
+        if (configuration.departmentId !== read.configuration.departmentId) bad('departmentId');
+        if (!configuration.skills.some((s) => s.id === input.skillId)) bad('skillId');
+        const nextSkills = configuration.skills.filter((s) => s.id !== input.skillId);
+        if (nextSkills.length === 0) bad('skills.last');
+        // Only the tools another of its skills grants, and only the permissions still needed.
+        const granted = grantsOf(nextSkills, skills).tools;
+        const kept = configuration.tools.filter((t) => granted.has(toolKey(t.id, t.version)));
+        const needed = new Set<string>();
+        for (const ref of nextSkills) {
+          for (const permission of skills.resolve(ref.id, ref.version)?.reads ?? []) {
+            needed.add(permission);
+          }
+        }
+        for (const t of kept) {
+          for (const permission of tools(t.id, t.version)?.permissions ?? [])
+            needed.add(permission);
+        }
+        const next = checkConfiguration(
+          {
+            ...configuration,
+            skills: nextSkills,
+            tools: kept,
+            permissions: configuration.permissions.filter((p) => needed.has(p)),
+          },
+          organizationId,
+        );
+        checkAgainstCatalogues(next);
+        const write = reviseSpecialist(
+          current,
+          { fromVersion: input.fromVersion as number, configuration: next, department },
+          person.userId,
+          at.toISOString() as IsoTimestamp,
+        );
+        return {
+          ...write,
+          events: [event(person, write.specialist, 'specialist.version_created', at)],
         };
       });
     },

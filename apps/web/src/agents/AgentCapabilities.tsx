@@ -1,7 +1,11 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
 import { Button, StateMessage } from '@melonoffice/ui';
 import { useCallback, useEffect, useState } from 'react';
-import type { AgentCapabilitiesView, AgentsClient } from './agentsClient.js';
+import {
+  AgentRequestError,
+  type AgentCapabilitiesView,
+  type AgentsClient,
+} from './agentsClient.js';
 import { AgentAutonomy } from './AgentAutonomy.js';
 import { AgentProfile } from './AgentProfile.js';
 import { AgentMemory, AgentWorkSettings } from './AgentWork.js';
@@ -30,7 +34,10 @@ export function AgentCapabilities({
   const intl = useIntl();
   const [found, setFound] = useState<AgentCapabilitiesView | 'error' | undefined>();
   const [upgrading, setUpgrading] = useState<string | undefined>();
-  const [notice, setNotice] = useState<'upgraded' | 'error' | undefined>();
+  const [notice, setNotice] = useState<
+    'upgraded' | 'error' | 'added' | 'removed' | 'conflict' | undefined
+  >();
+  const [adding, setAdding] = useState('');
   const load = useCallback(
     (live: () => boolean) =>
       client.capabilities(agentId).then(
@@ -71,11 +78,52 @@ export function AgentCapabilities({
       await load(() => true);
     }
   }
+  /** One more skill, or one fewer (ADR-0141): the server derives the tools, after confirming. */
+  async function changeSkills(
+    view: AgentCapabilitiesView,
+    skillId: string,
+    change: 'add' | 'remove',
+  ) {
+    const name = message(`agents.skill.${skillId}.name`, skillId);
+    const warning =
+      change === 'remove' ? breaksOf(view.removals?.find((r) => r.skillId === skillId)) : undefined;
+    const ask = [
+      ...(warning === undefined ? [] : [warning]),
+      intl.formatMessage({ id: `agents.skills.${change}Confirm` }, { skill: name }),
+    ].join('\n\n');
+    if (!globalThis.confirm(ask)) return;
+    setUpgrading(skillId);
+    setNotice(undefined);
+    try {
+      if (change === 'add') {
+        const version = view.addable?.find((a) => a.skillId === skillId)?.version;
+        if (client.addSkill === undefined || version === undefined) return;
+        await client.addSkill(agentId, { fromVersion: view.version, skillId, version });
+        setAdding('');
+        setNotice('added');
+      } else {
+        if (client.removeSkill === undefined) return;
+        await client.removeSkill(agentId, { fromVersion: view.version, skillId });
+        setNotice('removed');
+      }
+    } catch (error) {
+      setNotice(
+        error instanceof AgentRequestError && error.code === 'specialist_concurrency_conflict'
+          ? 'conflict'
+          : 'error',
+      );
+    } finally {
+      setUpgrading(undefined);
+      await load(() => true);
+    }
+  }
   const message = (id: string, fallback: string) =>
     intl.messages[id] === undefined ? fallback : intl.formatMessage({ id });
   /** What an upgrade breaks, in words, or undefined when it breaks nothing. */
   function breaksOf(
-    upgrade: NonNullable<AgentCapabilitiesView['upgrades']>[number] | undefined,
+    upgrade:
+      | { readonly breaks?: NonNullable<AgentCapabilitiesView['upgrades']>[number]['breaks'] }
+      | undefined,
   ): string | undefined {
     const breaks = upgrade?.breaks ?? [];
     if (breaks.length === 0) return undefined;
@@ -164,7 +212,13 @@ export function AgentCapabilities({
           <AgentMemory client={client} agentId={agentId} canManage={canManage} />
           {notice === undefined ? null : (
             <StateMessage kind={notice === 'error' ? 'error' : 'success'}>
-              <FormattedMessage id={`agents.upgrade.${notice}`} />
+              <FormattedMessage
+                id={
+                  notice === 'upgraded' || notice === 'error'
+                    ? `agents.upgrade.${notice}`
+                    : `agents.skills.${notice}`
+                }
+              />
             </StateMessage>
           )}
           <h3 id="agent-capabilities-skills" className="mo-subsection-title">
@@ -189,6 +243,25 @@ export function AgentCapabilities({
                         values={{ version: s.version }}
                       />
                     </span>
+                    {canManage &&
+                    client.removeSkill !== undefined &&
+                    found.removals?.some((r) => r.skillId === s.id) === true ? (
+                      <>
+                        {' '}
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={upgrading !== undefined}
+                          aria-label={intl.formatMessage(
+                            { id: 'agents.skills.remove' },
+                            { skill: message(`agents.skill.${s.id}.name`, s.id) },
+                          )}
+                          onClick={() => void changeSkills(found, s.id, 'remove')}
+                        >
+                          <FormattedMessage id="agents.skills.removeShort" />
+                        </Button>
+                      </>
+                    ) : null}
                     {newer === undefined ? null : (
                       <span className="agent-skills__upgrade">
                         <span className="agent-skills__line">
@@ -263,6 +336,39 @@ export function AgentCapabilities({
               })}
             </ul>
           )}
+          {canManage && client.addSkill !== undefined && (found.addable?.length ?? 0) > 0 ? (
+            <form
+              className="mo-form agent-skills__add"
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (adding !== '') void changeSkills(found, adding, 'add');
+              }}
+            >
+              <label className="mo-field">
+                <span className="mo-label">
+                  <FormattedMessage id="agents.skills.add" />
+                </span>
+                <select value={adding} onChange={(event) => setAdding(event.target.value)}>
+                  <option value="">{intl.formatMessage({ id: 'agents.skills.choose' })}</option>
+                  {found.addable?.map((a) => (
+                    <option key={a.skillId} value={a.skillId}>
+                      {message(`agents.skill.${a.skillId}.name`, a.skillId)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="mo-form__actions">
+                <Button
+                  type="submit"
+                  size="sm"
+                  variant="secondary"
+                  disabled={adding === '' || upgrading !== undefined}
+                >
+                  <FormattedMessage id="agents.skills.addAction" />
+                </Button>
+              </div>
+            </form>
+          ) : null}
           {found.tools.length === 0 ? (
             <StateMessage kind="empty">
               <FormattedMessage id="agents.capabilities.noTools" />

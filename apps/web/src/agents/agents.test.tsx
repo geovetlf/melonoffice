@@ -563,3 +563,109 @@ describe('editing what an agent is for (ADR-0140)', () => {
     expect(screen.queryByRole('button', { name: 'Save profile' })).toBeNull();
   });
 });
+
+describe("adding and removing an agent's skills (ADR-0141)", () => {
+  const skill = (id: string) => ({
+    id,
+    version: 1,
+    known: true,
+    tools: [],
+    actions: [],
+    reads: ['report.read'],
+  });
+  const view = (version: number, held: string[]): AgentCapabilitiesView => ({
+    version,
+    ready: true,
+    skills: held.map(skill),
+    tools: [],
+    problems: [],
+    addable: held.includes('finance_review') ? [] : [{ skillId: 'finance_review', version: 1 }],
+    removals: held.map((skillId) => ({
+      skillId,
+      removes: skillId === 'pipeline_analysis' ? ['follow_up_schedule@2'] : [],
+      breaks:
+        skillId === 'pipeline_analysis'
+          ? [
+              {
+                workflowId: 'w1',
+                name: 'Weekly follow-up',
+                step: 's2',
+                tool: 'follow_up_schedule@2',
+              },
+            ]
+          : [],
+    })),
+  });
+  const show = (agents: AgentsClient, canManage: boolean) =>
+    render(
+      <I18nProvider locale="en" messages={catalogs.en}>
+        <AgentCapabilities client={agents} agentId="spec_lucia" canManage={canManage} />
+      </I18nProvider>,
+    );
+
+  it('adds a skill the server offers, only after confirming', async () => {
+    let current = view(1, ['company_knowledge', 'pipeline_analysis']);
+    const agents = {
+      capabilities: vi.fn(async () => current),
+      addSkill: vi.fn(async () => {
+        current = view(2, ['company_knowledge', 'pipeline_analysis', 'finance_review']);
+        return {} as never;
+      }),
+      removeSkill: vi.fn(),
+    } as unknown as AgentsClient;
+    const confirm = vi.spyOn(globalThis, 'confirm').mockReturnValue(true);
+    show(agents, true);
+    fireEvent.change(await screen.findByRole('combobox', { name: 'Add a skill' }), {
+      target: { value: 'finance_review' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Add skill' }));
+    await waitFor(() =>
+      expect(agents.addSkill).toHaveBeenCalledWith('spec_lucia', {
+        fromVersion: 1,
+        skillId: 'finance_review',
+        version: 1,
+      }),
+    );
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText('Skill added. The agent has a new version.')).toBeTruthy();
+    expect(screen.queryByRole('combobox', { name: 'Add a skill' })).toBeNull();
+  });
+
+  it('warns which workflow would lose a tool before removing, and does nothing on going back', async () => {
+    const agents = {
+      capabilities: vi.fn(async () => view(1, ['company_knowledge', 'pipeline_analysis'])),
+      addSkill: vi.fn(),
+      removeSkill: vi.fn(async () => ({}) as never),
+    } as unknown as AgentsClient;
+    const confirm = vi.spyOn(globalThis, 'confirm').mockReturnValueOnce(false);
+    show(agents, true);
+    const buttons = await screen.findAllByRole('button', { name: /^Remove / });
+    expect(buttons).toHaveLength(2);
+    fireEvent.click(buttons[1] as HTMLElement);
+    expect(confirm.mock.calls[0]?.[0]).toContain('Weekly follow-up');
+    expect(agents.removeSkill).not.toHaveBeenCalled();
+    confirm.mockReturnValueOnce(true);
+    fireEvent.click(buttons[1] as HTMLElement);
+    await waitFor(() =>
+      expect(agents.removeSkill).toHaveBeenCalledWith('spec_lucia', {
+        fromVersion: 1,
+        skillId: 'pipeline_analysis',
+      }),
+    );
+    expect(await screen.findByText('Skill removed. The agent has a new version.')).toBeTruthy();
+  });
+
+  it('without specialist.manage, neither adds nor removes', async () => {
+    show(
+      {
+        capabilities: vi.fn(async () => view(1, ['company_knowledge', 'pipeline_analysis'])),
+        addSkill: vi.fn(),
+        removeSkill: vi.fn(),
+      } as unknown as AgentsClient,
+      false,
+    );
+    expect(await screen.findByText(/Version 1/)).toBeTruthy();
+    expect(screen.queryByRole('combobox', { name: 'Add a skill' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Remove / })).toBeNull();
+  });
+});

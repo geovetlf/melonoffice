@@ -13,7 +13,13 @@ import type {
 import { createSkillCatalogue, type ToolLookup } from '@melonoffice/specialists';
 import { createToolRegistry, isModelInvocable, TOOL_CATALOGUE } from '@melonoffice/tools';
 import { describe, expect, it } from 'vitest';
-import { auditAgents, upgradeImpact, type AgentAuditFacts, type AuditFinding } from './index.js';
+import {
+  auditAgents,
+  removalImpact,
+  upgradeImpact,
+  type AgentAuditFacts,
+  type AuditFinding,
+} from './index.js';
 
 /** The review of an organization's agents (G-1, ADR-0131): pure, deterministic, read-only. */
 
@@ -441,5 +447,19 @@ describe('upgradeImpact (G-2, ADR-0132)', () => {
       }).breaks,
     ).toEqual([]);
     expect(upgradeImpact(base)).toEqual({ removes: ['follow_up_schedule@2'], breaks: [] });
+  });
+
+  it('warns the same way before a skill is removed (ADR-0141)', () => {
+    const workflows = [{ workflow, version }];
+    expect(removalImpact({ ...base, workflows })).toEqual({
+      removes: ['follow_up_schedule@2'],
+      breaks: [
+        { workflowId: 'w1', name: 'Seguimiento semanal', step: 's2', tool: 'follow_up_schedule@2' },
+      ],
+    });
+    expect(removalImpact({ ...base, skillId: 'company_knowledge', workflows })).toEqual({
+      removes: [],
+      breaks: [],
+    });
   });
 });
