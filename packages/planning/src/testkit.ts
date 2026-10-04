@@ -131,6 +131,10 @@ export const TOOLS: readonly ToolDefinition[] = [
   tool('lookup'),
   tool('send_email', { riskLevel: 'high', mutating: true, action: 'send' }),
   tool('wipe_data', { riskLevel: 'critical', mutating: true }),
+  // ADR-0159: a read that asks a person first, and reads that leave MelonOffice.
+  tool('private_records', { riskLevel: 'high', action: 'read' }),
+  tool('remote_lookup', { provider: { kind: 'external', id: 'remote' } }),
+  tool('keyed_lookup', { credentials: [{ provider: 'remote', scopes: ['read'] }] }),
   tool('finance_report', { departmentTypes: ['finance' as DepartmentTypeId] }),
   tool('billing_lookup', { permissions: ['billing.read'] }),
   tool('staging_only', { environments: ['staging'] }),
