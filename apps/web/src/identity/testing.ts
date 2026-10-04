@@ -157,6 +157,14 @@ export interface FakeBackend {
     documentUploadFails?: { readonly error: string; readonly status: number };
     /** The partner or agency accounts the person belongs to (ADR-0090), as the API lists them. */
     commercialAccounts: Record<string, unknown>[];
+    /**
+     * "Project this" (ADR-0139): the Forecasting Engine's answer to a projection, by
+     * `metric:frequency`, as the API's body or an error with its status. Absent: 404.
+     */
+    forecasts?: Record<
+      string,
+      Record<string, unknown> | { readonly error: string; readonly status: number }
+    >;
     metrics: Record<
       string,
       {
@@ -1527,6 +1535,16 @@ export function fakeBackend(): FakeBackend {
             ...(read.field === undefined ? {} : { field: read.field }),
           })
         : json(200, read);
+    }
+    if (route === 'forecasts' && method === 'POST') {
+      const denied = needs('forecast.run');
+      if (denied !== undefined) return denied;
+      const asked = JSON.parse(body ?? '{}') as { metric?: string; frequency?: string };
+      const answer = options.forecasts?.[`${asked.metric}:${asked.frequency}`];
+      if (answer === undefined) return json(404, { error: 'metric_not_found' });
+      return 'error' in answer && typeof answer.status === 'number'
+        ? json(answer.status, { error: answer.error })
+        : json(200, answer);
     }
     if (route === 'gia/messages' && method === 'POST') {
       const denied = needs('gia.ask');

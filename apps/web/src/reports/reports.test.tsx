@@ -192,3 +192,121 @@ describe('Reports (ADR-0060): what was recorded, never a projection', () => {
     expect(metricCalls(backend)).toHaveLength(0);
   });
 });
+
+/** The same sales history, with enough of it for the engine to project. */
+const READY_DAYS = {
+  ...SALES_DAYS,
+  readiness: { ready: true, have: 30, need: 28 },
+};
+
+const PROJECTED = {
+  id: 'f_1',
+  status: 'completed',
+  metric: 'sales.won_value',
+  entity: 'PEN',
+  frequency: 'day',
+  horizon: 7,
+  model: 'model',
+  creditsCharged: 2,
+  forecast: ['09-29', '09-30', '10-01', '10-02', '10-03', '10-04', '10-05'].map((day, i) => ({
+    period: `2026-${day}`,
+    value: 120 + i,
+    low: 80,
+    high: 160,
+  })),
+};
+
+describe('"Project this" in Reports (ADR-0139)', () => {
+  const ready = (b: ReturnType<typeof fakeBackend>) => {
+    const reports = b.options.metrics.org_1;
+    if (reports === undefined) throw new Error('no reports');
+    reports.histories['sales.won_value:day'] = READY_DAYS;
+    b.options.permissions.push('forecast.run');
+  };
+  const forecastCalls = (backend: ReturnType<typeof fakeBackend>) =>
+    backend.apiCalls().filter((c) => c.url.includes('/forecasts'));
+
+  it('asks the engine for the next periods only when asked, and labels them as a projection', async () => {
+    const backend = open('/reports', (b) => {
+      ready(b);
+      b.options.forecasts = { 'sales.won_value:day': PROJECTED };
+    });
+    const sales = await screen.findByRole('article', { name: 'Sales won (value)' });
+    const button = await within(sales).findByRole('button', { name: 'Project the next 7 days' });
+    expect(forecastCalls(backend)).toHaveLength(0);
+    fireEvent.click(button);
+    expect(
+      await within(sales).findByRole('heading', { name: 'Projection for the next 7 days' }),
+    ).toBeTruthy();
+    expect(within(sales).getAllByRole('listitem')).toHaveLength(7);
+    expect(
+      within(sales).getByText(
+        /about PEN\s?120\.00 \(likely between PEN\s?80\.00 and PEN\s?160\.00\)/,
+      ),
+    ).toBeTruthy();
+    expect(
+      within(sales).getByText(
+        'A projection from the recorded history, not a record. It used 2 credits.',
+      ),
+    ).toBeTruthy();
+    const [call] = forecastCalls(backend);
+    expect(call?.method).toBe('POST');
+    expect(JSON.parse(call?.body ?? '{}')).toEqual({
+      metric: 'sales.won_value',
+      frequency: 'day',
+      entity: 'PEN',
+      horizon: 7,
+      wait: true,
+    });
+  });
+
+  it('offers nothing without forecast.run, or before the history is enough', async () => {
+    const backend = open('/reports', (b) => {
+      const reports = b.options.metrics.org_1;
+      if (reports === undefined) throw new Error('no reports');
+      reports.histories['sales.won_value:day'] = READY_DAYS;
+    });
+    const sales = await screen.findByRole('article', { name: 'Sales won (value)' });
+    await within(sales).findByText(/PEN\s?3,000\.00/);
+    expect(within(sales).queryByRole('button', { name: /Project/ })).toBeNull();
+    cleanup();
+    const second = open('/reports', (b) => b.options.permissions.push('forecast.run'));
+    const notReady = await screen.findByRole('article', { name: 'Sales won (value)' });
+    await within(notReady).findByText(/PEN\s?3,000\.00/);
+    expect(within(notReady).queryByRole('button', { name: /Project/ })).toBeNull();
+    expect(forecastCalls(backend)).toHaveLength(0);
+    expect(forecastCalls(second)).toHaveLength(0);
+  });
+
+  it('says why when the engine refuses, and when it had too little history', async () => {
+    open('/reports', (b) => {
+      ready(b);
+      b.options.forecasts = {
+        'sales.won_value:day': { error: 'forecast_credits_insufficient', status: 409 },
+      };
+    });
+    const sales = await screen.findByRole('article', { name: 'Sales won (value)' });
+    fireEvent.click(await within(sales).findByRole('button', { name: 'Project the next 7 days' }));
+    expect(
+      await within(sales).findByText('There are not enough credits to make this projection.'),
+    ).toBeTruthy();
+    cleanup();
+    open('/reports', (b) => {
+      ready(b);
+      b.options.forecasts = {
+        'sales.won_value:day': {
+          status: 'insufficient_data',
+          problem: 'insufficient_data',
+          have: 20,
+          need: 28,
+          forecast: [],
+        },
+      };
+    });
+    const again = await screen.findByRole('article', { name: 'Sales won (value)' });
+    fireEvent.click(await within(again).findByRole('button', { name: 'Project the next 7 days' }));
+    expect(
+      await within(again).findByText('There is not enough recorded history to project this yet.'),
+    ).toBeTruthy();
+  });
+});

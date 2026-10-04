@@ -2099,5 +2099,21 @@
   "credits.out.buy": "Buy credits",
   "credits.out.estimate": "This action would use about {count, plural, one {# credit} other {# credits}}.",
   "identity.signInAgain.message": "For your security, sign in again to make this change.",
-  "identity.signInAgain.action": "Sign in again"
+  "identity.signInAgain.action": "Sign in again",
+  "reports.project.action.day": "Project the next {count} days",
+  "reports.project.action.week": "Project the next {count} weeks",
+  "reports.project.action.month": "Project the next {count} months",
+  "reports.project.title.day": "Projection for the next {count} days",
+  "reports.project.title.week": "Projection for the next {count} weeks",
+  "reports.project.title.month": "Projection for the next {count} months",
+  "reports.project.point": "{period}: about {value} (likely between {low} and {high})",
+  "reports.project.byModel": "A projection from the recorded history, not a record. It used {credits, plural, one {# credit} other {# credits}}.",
+  "reports.project.byFallback": "A simple projection from the recorded history, not a record: the forecasting model was not available. It used {credits, plural, one {# credit} other {# credits}}.",
+  "reports.project.pending": "The projection is still being made. Try again in a moment.",
+  "reports.project.notPossible": "There is not enough recorded history to project this yet.",
+  "reports.project.error.generic": "The projection could not be made. Try again later.",
+  "reports.project.error.forecast_credits_insufficient": "There are not enough credits to make this projection.",
+  "reports.project.error.forecast_limit_reached": "Too many projections for now. Try again later.",
+  "reports.project.error.forecast_model_unavailable": "Projections are not available right now.",
+  "reports.project.error.forecast_price_not_set": "Projections are not available yet."
 }

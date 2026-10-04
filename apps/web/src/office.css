@@ -2167,6 +2167,26 @@ a.sidebar__item:hover {
   border-top: 1px solid var(--mo-color-border);
 }
 
+/* "Project this" (ADR-0139): the engine's next periods, set apart from what was recorded. */
+.report-card__projection {
+  display: grid;
+  gap: var(--mo-space-1);
+  justify-items: start;
+}
+
+.report-card__projection-title {
+  margin: var(--mo-space-1) 0 0;
+  font-size: var(--mo-font-size-sm);
+  font-weight: 600;
+}
+
+.report-card__projection-list {
+  margin: 0;
+  padding-left: var(--mo-space-4);
+  font-size: var(--mo-font-size-xs);
+  overflow-wrap: anywhere;
+}
+
 .report-card__bars {
   width: 100%;
   height: 3.5rem;
