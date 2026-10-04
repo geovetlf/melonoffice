@@ -49,9 +49,10 @@ import type { PlanRepository } from './repository.js';
  * - `advance` (the runtime, after one of the plan's steps ended): decides every condition step
  *   whose steps before it completed (WF-4, through the Decision Engine), starts every specialist
  *   step whose steps before it completed, mirrors the children on the planning execution's
- *   graph, and closes the plan: `completed` once every step completed with passing evidence or
- *   was skipped by a condition, `failed` as soon as one step failed or was cancelled or a
- *   condition could not go on. A step never starts after the plan stopped.
+ *   graph, and closes the plan once no step is left to run. A step that failed (its child failed
+ *   or was cancelled, or its condition could not go on) ends only its own branch: the steps after
+ *   it are skipped and the other branches go on (BR-1, ADR-0162). The plan is `failed` when every
+ *   branch ended in a failure, else `completed`, with its failed and skipped steps shown.
  *
  * Both are idempotent and safe to call again at any point: every change names the state it
  * expects, and a change another call already made is read back, never made twice.
@@ -416,13 +417,13 @@ export const conditionStepState = (condition: PlanConditionResult | undefined): 
 export const waitStepState = (wait: PlanWait | undefined, now: Date): PlanStepState =>
   wait === undefined ? 'waiting' : now.getTime() < Date.parse(wait.until) ? 'delayed' : 'completed';
 
-/** Ends a branch: the steps after it never run. */
+/** Ends a branch: the steps after it never run. A failed step ends only its own (ADR-0162). */
 const endsBranch = (state: PlanStepState | undefined): boolean =>
-  state === 'stopped' || state === 'declined' || state === 'skipped';
+  state === 'stopped' || state === 'declined' || state === 'skipped' || state === 'failed';
 
 /**
- * A step that has not started, after a stopped, declined or skipped step, never runs: it is
- * skipped.
+ * A step that has not started, after a stopped, declined, failed or skipped step, never runs: it
+ * is skipped.
  */
 const skippedAfter = (
   step: PlanStep,
@@ -482,6 +483,34 @@ const failureOf = (view: StepView): string =>
       : view.condition?.result === 'await_approval'
         ? 'condition_needs_approval'
         : 'condition_failed';
+
+/** A step no longer runs: done, skipped, declined or failed for good. */
+const over = (view: StepView): boolean =>
+  decided(view) ||
+  view.state === 'skipped' ||
+  view.state === 'declined' ||
+  (view.state === 'failed' && view.retry !== true);
+
+/**
+ * Whether every branch of a finished plan ended in a failure (ADR-0162): each last step (one no
+ * other step waits on) failed, or was skipped because a step before it failed. Views are in
+ * dependency order.
+ */
+export function everyBranchFailed(
+  views: readonly { readonly step: PlanStep; readonly state: PlanStepState }[],
+): boolean {
+  const lost = new Set<string>();
+  for (const { step, state } of views) {
+    if (state === 'failed' || (state === 'skipped' && step.dependsOn.some((d) => lost.has(d)))) {
+      lost.add(step.id);
+    }
+  }
+  const waitedOn = new Set(views.flatMap((v) => v.step.dependsOn));
+  return views.filter((v) => !waitedOn.has(v.step.id)).every((v) => lost.has(v.step.id));
+}
+
+/** Why a plan's execution failed while the plan completed: a branch failed, others did not. */
+export const BRANCH_FAILED = 'branch_failed';
 
 /** A node of the planning execution that finished with work done: its evidence is checked. */
 const decided = (view: StepView): boolean => view.state === 'completed' || view.state === 'stopped';
@@ -1146,12 +1175,33 @@ export function createPlanConductor(options: PlanConductorOptions): PlanConducto
             }),
           );
         }
+      } else if (view.state === 'failed' && view.retry !== true) {
+        // A failed step's node fails with its child's own code, or why it failed (ADR-0155,
+        // ADR-0162): the graph shows which branch failed while the others go on.
+        if (node.status === 'pending') {
+          await settle(() =>
+            executions.runtimePlanChangeNode(tenant, parentId, {
+              nodeId: step.id,
+              from: 'pending',
+              to: 'running',
+            }),
+          );
+        }
+        if (node.status === 'pending' || node.status === 'running') {
+          await settle(() =>
+            executions.runtimePlanChangeNode(tenant, parentId, {
+              nodeId: step.id,
+              from: 'running',
+              to: 'failed',
+              error: { code: view.child?.failure?.code ?? failureOf(view) },
+            }),
+          );
+        }
       } else if (
         view.state === 'running' ||
         view.state === 'delayed' ||
-        // A started child shows as running, waiting on a person or failed alike (ADR-0155).
-        ((view.state === 'awaiting_approval' || view.state === 'failed') &&
-          view.child?.startedAt !== undefined) ||
+        // A started child shows as running or waiting on a person alike (ADR-0155).
+        (view.state === 'awaiting_approval' && view.child?.startedAt !== undefined) ||
         decided(view)
       ) {
         if (node.status === 'pending') {
@@ -1241,9 +1291,9 @@ export function createPlanConductor(options: PlanConductorOptions): PlanConducto
   }
 
   /**
-   * A step failed or was cancelled: the plan stops, and no other step starts. Its graph shows
-   * which step failed and why (ADR-0155): that step's node fails with its child's own code, and
-   * the planning execution's failure points at the child.
+   * The plan is over with a failed step (ADR-0162): the planning execution fails, pointing at the
+   * first failed step's child. Its graph shows which step failed and why (ADR-0155): that step's
+   * node fails with its child's own code.
    */
   async function stop(
     tenant: TenantContext,
@@ -1309,8 +1359,8 @@ export function createPlanConductor(options: PlanConductorOptions): PlanConducto
     // Conditions whose steps before them completed are decided one at a time, in order, until
     // none is ready or one stops the plan: a decision may make the next condition ready. On a
     // resume, they are left to the worker, which always advances after a step ends.
+    // A failed step ends only its own branch (ADR-0162): the others go on.
     while (withConditions) {
-      if (views.some((v) => v.state === 'failed')) break;
       const ready = views.find((v) => v.step.kind === 'condition' && readyIn(views, v));
       if (ready === undefined) break;
       plan = await decide(tenant, organizationId, plan, ready.step);
@@ -1321,7 +1371,7 @@ export function createPlanConductor(options: PlanConductorOptions): PlanConducto
 
     // Waits whose steps before them completed start, each once (ADR-0152). On a resume there is
     // no wake-up: they are left to the worker, which always advances after a step ends.
-    if (wakeups !== undefined && !views.some((v) => v.state === 'failed')) {
+    if (wakeups !== undefined) {
       const ready = views.filter((v) => v.step.kind === 'wait' && readyIn(views, v));
       for (const view of ready) {
         plan = await startWait(tenant, organizationId, plan, view.step);
@@ -1330,25 +1380,36 @@ export function createPlanConductor(options: PlanConductorOptions): PlanConducto
       if (ready.length > 0) views = await stepsOf(tenant, plan, version);
     }
 
-    const stopped = views.find((v) => v.state === 'failed');
-    if (stopped !== undefined) {
-      const code = failureOf(stopped);
-      // A step still waiting for a person never will: its approval is withdrawn.
-      for (const view of views) {
-        if (view.state !== 'awaiting_approval' && view.state !== 'waiting') continue;
-        // A started step's approval is the gate's own, on its child: not the plan's to withdraw.
-        if (view.child?.startedAt !== undefined) continue;
-        for (const entry of stepApprovalEntriesOf(plan, view.step.id)) {
-          if (entry.declined === undefined && approvals !== undefined) {
-            await approvals.cancel(tenant, entry.approvalId, 'plan_ended');
+    // A failed step ends its own branch (ADR-0162). The plan fails once every branch failed:
+    // nothing it could still run reaches a step that is not lost, so nothing else starts and what
+    // waits for a person is withdrawn. Once every step is over and a branch did not fail, it
+    // completes with its failed branch shown. Either way its execution records the failure, since
+    // a graph with a failed node never verifies (ADR-0029).
+    const failed = views.find((v) => v.state === 'failed' && v.retry !== true);
+    const whole = failed !== undefined && everyBranchFailed(views);
+    if (failed !== undefined && (whole || views.every(over))) {
+      const code = whole ? failureOf(failed) : BRANCH_FAILED;
+      if (whole) {
+        for (const view of views) {
+          if (view.state !== 'awaiting_approval' && view.state !== 'waiting') continue;
+          // A started step's approval is the gate's own, on its child: not the plan's to withdraw.
+          if (view.child?.startedAt !== undefined) continue;
+          for (const entry of stepApprovalEntriesOf(plan, view.step.id)) {
+            if (entry.declined === undefined && approvals !== undefined) {
+              await approvals.cancel(tenant, entry.approvalId, 'plan_ended');
+            }
           }
         }
       }
-      await stop(tenant, await mirror(tenant, plan.executionId, views), code, stopped);
-      logger?.info('plan stopped', { planId: plan.id, stepId: stopped.step.id, code });
-      return finishPlan(tenant, organizationId, plan, 'failed', code, {
-        stepId: stopped.step.id,
-        ...(stopped.child?.failure === undefined ? {} : { cause: stopped.child.failure.code }),
+      await stop(tenant, await mirror(tenant, plan.executionId, views), code, failed);
+      logger?.info(whole ? 'plan stopped' : 'plan completed with a failed branch', {
+        planId: plan.id,
+        stepId: failed.step.id,
+        code,
+      });
+      return finishPlan(tenant, organizationId, plan, whole ? 'failed' : 'completed', code, {
+        stepId: failed.step.id,
+        ...(failed.child?.failure === undefined ? {} : { cause: failed.child.failure.code }),
       });
     }
     if (views.every((v) => decided(v) || v.state === 'skipped' || v.state === 'declined')) {

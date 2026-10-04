@@ -76,7 +76,7 @@ export function registerPlanRoutes(
   // Each step that runs, where it is by the conductor's own rule (ADR-0145): a specialist step
   // with its execution's state and, once it completed, its agent's answer; a check with what its
   // decision said; `awaiting_approval` or `declined` for a step that asked a person (ADR-0146);
-  // and `skipped` for a step after a check or decline that ended its branch.
+  // and `skipped` for a step after a check, decline or failure that ended its branch (ADR-0162).
   if (steps !== undefined) {
     app.get(
       `${base}/:planId/steps`,
