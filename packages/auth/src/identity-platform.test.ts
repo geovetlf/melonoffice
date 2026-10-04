@@ -32,6 +32,7 @@ describe('Identity Platform ID token verification', () => {
       subject: 'uid-alice',
       email: 'alice@example.com',
       emailVerified: true,
+      authTime: nowSeconds - 60,
     });
   });
 
@@ -39,7 +40,12 @@ describe('Identity Platform ID token verification', () => {
     const { sign, verifier } = await setup();
     expect(
       await verifier.verify(await sign({ firebase: { sign_in_provider: 'google.com' } })),
-    ).toEqual({ subject: 'uid-alice', email: 'alice@example.com', emailVerified: true });
+    ).toEqual({
+      subject: 'uid-alice',
+      email: 'alice@example.com',
+      emailVerified: true,
+      authTime: nowSeconds - 60,
+    });
   });
 
   it('reports an unverified or missing email as such', async () => {
@@ -47,7 +53,11 @@ describe('Identity Platform ID token verification', () => {
     const identity = await verifier.verify(
       await sign({ email: undefined, email_verified: undefined }),
     );
-    expect(identity).toEqual({ subject: 'uid-alice', emailVerified: false });
+    expect(identity).toEqual({
+      subject: 'uid-alice',
+      emailVerified: false,
+      authTime: nowSeconds - 60,
+    });
   });
 
   it('rejects an expired token as expired', async () => {

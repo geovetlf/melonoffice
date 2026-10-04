@@ -1,10 +1,10 @@
 import type { UserId } from '@melonoffice/domain';
 import { describe, expect, it } from 'vitest';
 import { authenticate, type AuthDependencies } from './authenticate.js';
-import { actAsGia } from './context.js';
+import { actAsGia, SENSITIVE_SIGN_IN_MAX_AGE_SECONDS, signedInRecently } from './context.js';
 import { AuthError } from './errors.js';
 import { createIdentityPlatformVerifier } from './identity-platform.js';
-import { createSigner, NOW, PROJECT_ID } from './test-tokens.js';
+import { createSigner, NOW, nowSeconds, PROJECT_ID } from './test-tokens.js';
 import { InMemoryUserDirectory, type UserDirectory } from './users.js';
 
 const registerSubject = async (users: UserDirectory, subject: string) =>
@@ -44,6 +44,7 @@ describe('authenticate', () => {
       userId: alice.id,
       email: 'alice@example.com',
       emailVerified: true,
+      authTime: nowSeconds - 60,
     });
     expect(Object.isFrozen(context)).toBe(true);
   });
@@ -152,5 +153,28 @@ describe('InMemoryUserDirectory', () => {
     const results = await Promise.all(Array.from({ length: 10 }, () => users.recordSignIn(alice)));
     expect(new Set(results.map((r) => r.user.id)).size).toBe(1);
     expect(results.filter((r) => r.created)).toHaveLength(1);
+  });
+});
+
+describe('signedInRecently (ADR-0138)', () => {
+  const person = (authTime?: number) =>
+    Object.freeze({
+      actor: 'user' as const,
+      userId: 'u1' as UserId,
+      emailVerified: true,
+      ...(authTime === undefined ? {} : { authTime }),
+    });
+
+  it('counts a sign-in within the window as recent, and an older one as not', () => {
+    const limit = SENSITIVE_SIGN_IN_MAX_AGE_SECONDS;
+    expect(signedInRecently(person(nowSeconds - 60), NOW)).toBe(true);
+    expect(signedInRecently(person(nowSeconds - limit), NOW)).toBe(true);
+    expect(signedInRecently(person(nowSeconds - limit - 1), NOW)).toBe(false);
+    expect(signedInRecently(person(nowSeconds - 120), NOW, 60)).toBe(false);
+  });
+
+  it('never counts a context without a sign-in, or GIA acting for the person', () => {
+    expect(signedInRecently(person(), NOW)).toBe(false);
+    expect(signedInRecently(actAsGia(person(nowSeconds - 60)), NOW)).toBe(false);
   });
 });

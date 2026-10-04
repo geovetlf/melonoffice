@@ -10,6 +10,11 @@ export interface AuthenticatedContext {
   readonly userId: UserId;
   readonly email?: string;
   readonly emailVerified: boolean;
+  /**
+   * When the person last signed in, in seconds since 1970 (ADR-0138): sensitive administration
+   * asks for a recent sign-in. Absent for contexts no sign-in made (operator tools, tests).
+   */
+  readonly authTime?: number;
 }
 
 /**
@@ -18,4 +23,23 @@ export interface AuthenticatedContext {
  */
 export function actAsGia(context: AuthenticatedContext): AuthenticatedContext {
   return Object.freeze({ ...context, actor: 'gia' });
+}
+
+/**
+ * How recent a sign-in sensitive administration needs (ADR-0138): changes by platform, white-label
+ * and reseller administrators. A business owner working in their own office is never asked.
+ */
+export const SENSITIVE_SIGN_IN_MAX_AGE_SECONDS = 30 * 60;
+
+/**
+ * Whether the person signed in within `maxAgeSeconds` of `now`. A context with no sign-in time
+ * (an operator tool, GIA acting for someone) never counts as recent.
+ */
+export function signedInRecently(
+  context: AuthenticatedContext,
+  now: Date,
+  maxAgeSeconds: number = SENSITIVE_SIGN_IN_MAX_AGE_SECONDS,
+): boolean {
+  if (context.actor !== 'user' || context.authTime === undefined) return false;
+  return now.getTime() / 1000 - context.authTime <= maxAgeSeconds;
 }

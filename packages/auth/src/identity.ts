@@ -4,6 +4,11 @@ export interface VerifiedIdentity {
   readonly subject: string;
   readonly email?: string;
   readonly emailVerified: boolean;
+  /**
+   * When the person last signed in with their password or Google (the token's `auth_time`), in
+   * seconds since 1970. A refreshed token keeps it; only a new sign-in moves it (ADR-0138).
+   */
+  readonly authTime?: number;
 }
 
 /** Verifies an ID token and returns the identity in it, or throws an `AuthError`. */

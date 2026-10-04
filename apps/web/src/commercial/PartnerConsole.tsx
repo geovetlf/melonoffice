@@ -18,6 +18,7 @@ import {
   type CustomerUsage,
   type OwnBrand,
 } from './consoleClient.js';
+import { REAUTHENTICATION_REQUIRED, SignInAgain } from '../identity/SignInAgain.js';
 
 /**
  * The partner and agency console (ADR-0090): the caller's own accounts and, inside one, its
@@ -55,6 +56,9 @@ const ROLES: Readonly<Record<ConsoleAccount['type'], readonly string[]>> = {
   agency: ['agency.admin', 'agency.manager'],
 };
 
+/** A change refused after an old sign-in (ADR-0138): shown with a way to sign in again. */
+const SIGN_IN_AGAIN = 'identity.signInAgain.message';
+
 /** The API's refusals this console explains in words; any other shows its code. */
 const EXPLAINED: Readonly<Record<string, string>> = {
   invitation_exists: 'console.errors.invitation_exists',
@@ -68,6 +72,7 @@ const EXPLAINED: Readonly<Record<string, string>> = {
   cannot_revoke_self: 'console.errors.self',
   cannot_change_own_role: 'console.errors.self',
   member_not_found: 'console.errors.not_found',
+  [REAUTHENTICATION_REQUIRED]: SIGN_IN_AGAIN,
 };
 
 /** A refusal as the person reads it: a message id, and the code when there is no message. */
@@ -90,7 +95,9 @@ export function failureOf(error: unknown): Failure {
 }
 
 const Failed = ({ failure }: { readonly failure: Failure | undefined }) =>
-  failure === undefined ? null : (
+  failure === undefined ? null : failure.id === SIGN_IN_AGAIN ? (
+    <SignInAgain />
+  ) : (
     <StateMessage kind="error">
       <FormattedMessage id={failure.id} values={{ reason: failure.reason ?? '' }} />
     </StateMessage>

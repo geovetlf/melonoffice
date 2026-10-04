@@ -40,5 +40,6 @@ export async function authenticate(
     userId: user.id,
     ...(identity.email === undefined ? {} : { email: identity.email }),
     emailVerified: identity.emailVerified,
+    ...(identity.authTime === undefined ? {} : { authTime: identity.authTime }),
   });
 }
