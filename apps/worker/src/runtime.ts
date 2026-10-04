@@ -28,6 +28,7 @@ import type { EventBus } from '@melonoffice/events';
 import type { Logger } from '@melonoffice/observability';
 import {
   createPlanConductor,
+  createPlanStepAttempts,
   planStepOf,
   type ConditionEvaluator,
   type PlanRepository,
@@ -261,6 +262,8 @@ export function createWorkerRuntime(options: WorkerRuntimeOptions): {
             },
             ...(options.conditions === undefined ? {} : { conditions: options.conditions }),
             ...(options.wakeups === undefined ? {} : { wakeups: options.wakeups }),
+            // A step that failed for a passing reason runs again, as its plan allows (ADR-0153).
+            attempts: createPlanStepAttempts({ executions, specialists }),
             // A step marked "ask me before this step" waits for a person (ADR-0146).
             approvals: createPlanStepApprovals(
               createApprovalService({

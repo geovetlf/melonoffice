@@ -157,9 +157,14 @@ export function createExecutionSweeper(options: ExecutionSweeperOptions): Execut
     const plan = await plans.find(execution.organizationId as OrganizationId, step.planId);
     if (plan?.status !== 'executing') return undefined;
     // Its plan is advanced when the step waits for a person, or when one of the plan's waits
-    // is over (ADR-0152): a wake-up that was lost never leaves the steps after it waiting.
+    // is over (ADR-0152), or when this is a step's next attempt whose backoff is over (ADR-0153):
+    // a wake-up that was lost never leaves the steps after it waiting.
     const asked = stepApprovalEntriesOf(plan, step.stepId).length > 0;
-    const waitOver = (plan.waits ?? []).some((w) => Date.parse(w.until) <= now().getTime());
+    const waitOver =
+      (plan.waits ?? []).some((w) => Date.parse(w.until) <= now().getTime()) ||
+      (plan.attempts ?? []).some(
+        (a) => a.executionId === execution.id && Date.parse(a.notBefore) <= now().getTime(),
+      );
     if (!asked && !waitOver) return 'waiting_in_plan';
     let tenant;
     try {

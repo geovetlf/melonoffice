@@ -102,6 +102,146 @@ export function delegationsOf(
     }));
 }
 
+/** A child that exists must be exactly the one this step would create. */
+function checkChild(child: Execution, parent: Execution, plan: Plan, s: PlanStep): Execution {
+  const specialist = s.specialist;
+  if (
+    child.mode !== 'execute' ||
+    child.parentExecutionId !== parent.id ||
+    child.input.type !== 'plan_step' ||
+    child.input.id !== `${plan.id}:${s.id}` ||
+    child.specialistId !== specialist?.id ||
+    child.specialistVersion !== specialist?.version
+  ) {
+    throw new Permanent('delegation_conflict');
+  }
+  return child;
+}
+
+/**
+ * What a specialist step's child is created with: the step, its graph, the versions it runs
+ * under, and the key that fixes its id. Every attempt of the step is created the same way.
+ */
+function childRequestOf(
+  plan: Plan,
+  version: PlanVersion,
+  parent: Execution,
+  s: PlanStep,
+  components: readonly VersionRef[],
+  idempotencyKey: string,
+): Parameters<ExecutionService['create']>[1] {
+  const specialist = s.specialist as NonNullable<PlanStep['specialist']>;
+  const planRef: VersionRef = { kind: 'plan', id: plan.id, version: String(version.version) };
+  const workflowRef: VersionRef | undefined =
+    version.source.kind === 'workflow'
+      ? {
+          kind: 'workflow',
+          id: version.source.workflowId,
+          version: String(version.source.workflowVersion),
+        }
+      : undefined;
+  return {
+    mode: 'execute',
+    input: { type: 'plan_step', id: `${plan.id}:${s.id}` },
+    versionSnapshot: {
+      schemaVersion: 1,
+      components: [...components, planRef, ...(workflowRef === undefined ? [] : [workflowRef])],
+    },
+    nodes: childNodesOf(version, s),
+    parentExecutionId: parent.id,
+    ...(version.source.kind === 'workflow' ? { workflowId: version.source.workflowId } : {}),
+    specialistId: specialist.id,
+    specialistVersion: specialist.version,
+    departmentId: specialist.departmentId,
+    idempotencyKey,
+  };
+}
+
+/**
+ * The key, and so the id, of a step's attempt after its first (ADR-0153). The first attempt keeps
+ * the delegation's key, so plans delegated before retries existed read as they did.
+ */
+export const attemptKey = (planId: string, stepId: string, attempt: number): string =>
+  `${delegationKey(planId, stepId)}:attempt:${attempt}`;
+
+/** Creates another run of a delegated step, once (ADR-0153). */
+export interface PlanStepAttempts {
+  /**
+   * The child execution of attempt `attempt` of `step`, `pending`, created under its
+   * deterministic id unless it exists. `undefined` when it cannot be created: the specialist can
+   * no longer take the step, or the plan's own execution is no longer running.
+   */
+  ensure(
+    tenant: TenantContext,
+    plan: Plan,
+    version: PlanVersion,
+    step: PlanStep,
+    attempt: number,
+  ): Promise<Execution | undefined>;
+}
+
+export function createPlanStepAttempts(options: {
+  readonly executions: Pick<ExecutionService, 'get' | 'create'>;
+  readonly specialists: Pick<SpecialistService, 'eligibility'>;
+}): PlanStepAttempts {
+  const { executions, specialists } = options;
+  const find = async (tenant: TenantContext, id: ExecutionId) => {
+    try {
+      return await executions.get(tenant, id);
+    } catch (error) {
+      if (isExecutionError(error) && error.code === 'execution_not_found') return undefined;
+      throw error;
+    }
+  };
+  return Object.freeze({
+    async ensure(
+      tenant: TenantContext,
+      plan: Plan,
+      version: PlanVersion,
+      step: PlanStep,
+      attempt: number,
+    ) {
+      if (!isResolvedTenant(tenant) || tenant.organizationId !== plan.organizationId) {
+        throw new PlanningError('unresolved_tenant');
+      }
+      const ref = step.specialist;
+      if (step.kind !== 'specialist' || ref === undefined) return undefined;
+      const key = attemptKey(plan.id, step.id, attempt);
+      const id = executionIdFor(plan.organizationId, key);
+      const parent = await executions.get(tenant, plan.executionId);
+      const existing = await find(tenant, id);
+      try {
+        if (existing !== undefined) return checkChild(existing, parent, plan, step);
+        if (parent.status !== 'running') return undefined;
+        // The specialist must still take the step, at the version the plan names.
+        const decision = await specialists.eligibility(tenant, {
+          specialistId: ref.id,
+          departmentId: ref.departmentId,
+          version: ref.version,
+        });
+        if (!decision.eligible) return undefined;
+        try {
+          const child = await executions.create(
+            tenant,
+            childRequestOf(plan, version, parent, step, decision.components, key),
+          );
+          if (child.id !== id) throw new Permanent('delegation_conflict');
+          return child;
+        } catch (error) {
+          if (isExecutionError(error) && error.code === 'specialist_not_eligible') return undefined;
+          // Another attempt created it first: use it.
+          const raced = await find(tenant, id);
+          if (raced === undefined) throw error;
+          return checkChild(raced, parent, plan, step);
+        }
+      } catch (error) {
+        if (error instanceof Permanent) throw new PlanningError(error.code);
+        throw error;
+      }
+    },
+  });
+}
+
 export interface DelegationResult {
   readonly plan: Plan;
   /** One child execution per specialist step, `pending`: nothing has run. */
@@ -274,22 +414,6 @@ export function createDelegation({
     }
   }
 
-  /** A child that exists must be exactly the one this step would create. */
-  function checkChild(child: Execution, parent: Execution, plan: Plan, s: PlanStep): Execution {
-    const specialist = s.specialist;
-    if (
-      child.mode !== 'execute' ||
-      child.parentExecutionId !== parent.id ||
-      child.input.type !== 'plan_step' ||
-      child.input.id !== `${plan.id}:${s.id}` ||
-      child.specialistId !== specialist?.id ||
-      child.specialistVersion !== specialist?.version
-    ) {
-      throw new Permanent('delegation_conflict');
-    }
-    return child;
-  }
-
   /** Step 3: one child per specialist step, under its deterministic id, created at most once. */
   async function ensureChild(
     tenant: TenantContext,
@@ -302,32 +426,11 @@ export function createDelegation({
   ): Promise<Execution> {
     const existing = await findExecution(tenant, id);
     if (existing !== undefined) return checkChild(existing, parent, plan, s);
-    const specialist = s.specialist as NonNullable<PlanStep['specialist']>;
-    const planRef: VersionRef = { kind: 'plan', id: plan.id, version: String(version.version) };
-    const workflowRef: VersionRef | undefined =
-      version.source.kind === 'workflow'
-        ? {
-            kind: 'workflow',
-            id: version.source.workflowId,
-            version: String(version.source.workflowVersion),
-          }
-        : undefined;
     try {
-      const child = await executions.create(tenant, {
-        mode: 'execute',
-        input: { type: 'plan_step', id: `${plan.id}:${s.id}` },
-        versionSnapshot: {
-          schemaVersion: 1,
-          components: [...components, planRef, ...(workflowRef === undefined ? [] : [workflowRef])],
-        },
-        nodes: childNodesOf(version, s),
-        parentExecutionId: parent.id,
-        ...(version.source.kind === 'workflow' ? { workflowId: version.source.workflowId } : {}),
-        specialistId: specialist.id,
-        specialistVersion: specialist.version,
-        departmentId: specialist.departmentId,
-        idempotencyKey: delegationKey(plan.id, s.id),
-      });
+      const child = await executions.create(
+        tenant,
+        childRequestOf(plan, version, parent, s, components, delegationKey(plan.id, s.id)),
+      );
       if (child.id !== id) throw new Permanent('delegation_conflict');
       return child;
     } catch (error) {

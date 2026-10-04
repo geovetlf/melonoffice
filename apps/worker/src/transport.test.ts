@@ -211,8 +211,10 @@ describe('worker architecture', () => {
     // The worker never plans: from planning it takes only the plan conductor, which starts the
     // steps of a plan a person approved and closes it (ADR-0070), and the shape of the evaluator
     // that decides its condition steps through the Decision Engine (ADR-0075), and the reading of
-    // which approvals a step waits for (ADR-0151), and the shape of a plan's wake-up after a wait
-    // (ADR-0152). No planner, validator, delegation or plan decision is reachable from its code.
+    // which approvals a step waits for (ADR-0151), the shape of a plan's wake-up after a wait
+    // (ADR-0152), and the creation of a failed step's next attempt, under its fixed id, only for
+    // a step the plan already delegated (ADR-0153). No planner, validator, delegation of a new
+    // plan or plan decision is reachable from its code.
     const PLAN_RUNS = [
       'PlanRepository',
       'createPlanConductor',
@@ -221,6 +223,7 @@ describe('worker architecture', () => {
       'stepApprovalEntriesOf',
       'isPlanId',
       'PlanWakeups',
+      'createPlanStepAttempts',
     ];
     for (const file of sources) {
       // Providers are reached only through their @melonoffice adapter packages, never an SDK.

@@ -74,7 +74,13 @@ export function createPlanCancellationCascade({
             if (!isPlanningError(error)) throw error;
           });
       }
-      return plan.delegations.map((d) => d.executionId);
+      // Every child the plan ever had: its delegations and each step's later attempts (ADR-0153),
+      // read again once the plan ended, so an attempt recorded meanwhile is cancelled too.
+      const ended = (await repository.find(execution.organizationId, planId)) ?? plan;
+      return [
+        ...ended.delegations.map((d) => d.executionId),
+        ...(ended.attempts ?? []).map((a) => a.executionId),
+      ];
     },
   });
 }

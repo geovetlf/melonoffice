@@ -6,6 +6,7 @@ import {
   createPlanConductor,
   planStepOf,
   STEP_CHECK,
+  stepRetryable,
   unrunnableStepOf,
   WAIT_CHECK,
   type ConditionEvaluator,
@@ -15,7 +16,9 @@ import {
   type StepApprovals,
   type StepApprovalState,
 } from './conductor.js';
+import { createPlanStepAttempts } from './delegation.js';
 import { isPlanningError } from './errors.js';
+import { stepExecutionOf } from './model.js';
 import { ALICE, must, proposal, specialistStep, toolStep, world, type World } from './testkit.js';
 
 /**
@@ -990,5 +993,266 @@ describe('wait steps inside a running plan (ADR-0152)', () => {
     expect(await refused(wait('pause', ['research'], 7 * 86_400 + 1))).not.toBe('planned');
     expect(await refused({ ...wait('pause', ['research']), wait: undefined })).not.toBe('planned');
     expect(await refused(wait('pause', ['research'], 60))).toBe('planned');
+  });
+});
+
+describe('a failed step runs again (ADR-0153)', () => {
+  const T0 = new Date('2026-09-27T12:00:00Z');
+  // research (retried) → report.
+  const retried =
+    (retry: { maxAttempts: number; backoffMs: number }) =>
+    (researcher: Awaited<ReturnType<World['seed']>>) => [
+      specialistStep('research', researcher, { approvalRequired: true, retry }),
+      specialistStep('report', researcher, { dependsOn: ['research'] }),
+    ];
+
+  async function ready(
+    retry: { maxAttempts: number; backoffMs: number },
+    ports: { wakeups?: boolean; attempts?: boolean } = {},
+  ) {
+    let clock = T0;
+    const woken: { at: string; actor: string }[] = [];
+    const wakeups: PlanWakeups = {
+      async wake(tenant, _plan, at) {
+        woken.push({ at: at.toISOString(), actor: tenant.actor });
+      },
+    };
+    const late: { attempts?: ReturnType<typeof createPlanStepAttempts> } = {};
+    const t = await setup(retried(retry), undefined, undefined, {
+      now: () => clock,
+      ...(ports.wakeups === false ? {} : { wakeups }),
+      // The same port the worker gives it, made once the world exists.
+      ...(ports.attempts === false
+        ? {}
+        : { attempts: { ensure: (...args) => must(late.attempts).ensure(...args) } }),
+    });
+    late.attempts = createPlanStepAttempts({
+      executions: t.w.executions,
+      specialists: t.w.specialists,
+    });
+    await t.approve();
+    await t.conductor.run(t.w.tenantA, t.planned.id);
+
+    /** The step's current child: its latest attempt's, else its delegation's. */
+    const current = async (stepId: string) => must(stepExecutionOf(await t.stored(), stepId));
+
+    /** The runtime fails the step's current child on its agent's call, with `code`. */
+    async function failWith(stepId: string, code: string): Promise<ExecutionId> {
+      const id = await current(stepId);
+      const r = t.w.runtimeA;
+      await t.w.executions.runtimeChangeNode(r, id, {
+        nodeId: stepId,
+        from: 'pending',
+        to: 'running',
+      });
+      await t.w.executions.runtimeChangeNode(r, id, {
+        nodeId: stepId,
+        from: 'running',
+        to: 'failed',
+        error: { code },
+      });
+      await t.w.executions.runtimeChangeStatus(r, id, {
+        from: 'running',
+        to: 'failed',
+        failure: { code },
+      });
+      return id;
+    }
+
+    /** The runtime completes the step's current child. */
+    async function completeCurrent(stepId: string): Promise<void> {
+      const id = await current(stepId);
+      const r = t.w.runtimeA;
+      await t.w.executions.runtimeChangeNode(r, id, {
+        nodeId: stepId,
+        from: 'pending',
+        to: 'running',
+      });
+      await t.w.executions.runtimeChangeNode(r, id, {
+        nodeId: stepId,
+        from: 'running',
+        to: 'completed',
+        output: { type: 'agent_output', id: `${id}:${stepId}` },
+      });
+      await t.w.executions.runtimeChangeStatus(r, id, { from: 'running', to: 'verifying' });
+      await t.w.executions.recordVerification(r, id, {
+        correlationId: 'v',
+        nodes: [
+          {
+            nodeId: stepId,
+            policy: 'output_schema',
+            checks: [
+              { code: 'agent_answer_valid', result: 'passed', evidence: { type: 'x', id: 'y' } },
+            ],
+          },
+        ],
+      });
+      await t.w.executions.runtimeChangeStatus(r, id, { from: 'verifying', to: 'completed' });
+    }
+
+    return {
+      ...t,
+      woken,
+      current,
+      failWith,
+      completeCurrent,
+      setClock: (at: Date) => void (clock = at),
+    };
+  }
+
+  it('runs a step that failed for a passing reason again, after its backoff, and the plan goes on', async () => {
+    const t = await ready({ maxAttempts: 3, backoffMs: 30_000 });
+    const first = await t.failWith('research', 'unavailable');
+    const after = await t.conductor.advance(t.w.runtimeA, t.planned.id);
+    expect(after.status).toBe('executing');
+
+    const second = await t.current('research');
+    expect(second).not.toBe(first);
+    expect((await t.stored()).attempts).toEqual([
+      {
+        stepId: 'research',
+        attempt: 2,
+        executionId: second,
+        after: first,
+        failure: 'unavailable',
+        recordedAt: T0.toISOString(),
+        notBefore: '2026-09-27T12:00:30.000Z',
+      },
+    ]);
+    // A new child of the same step, with the same graph, not started before its backoff.
+    const child = await t.w.executions.get(t.w.tenantA, second);
+    expect(child).toMatchObject({
+      status: 'pending',
+      parentExecutionId: t.planned.executionId,
+      input: { type: 'plan_step', id: `${t.planned.id}:research` },
+    });
+    expect(planStepOf(child)).toEqual({ planId: t.planned.id, stepId: 'research' });
+    expect(t.started).toHaveLength(1);
+    expect(t.woken).toEqual([{ at: '2026-09-27T12:00:31.000Z', actor: 'runtime' }]);
+    expect(t.w.events('plan.step_retried')).toEqual([
+      expect.objectContaining({
+        target: { type: 'execution', id: second },
+        nodeId: 'research',
+        reason: 'unavailable',
+        reference: 'attempt:2',
+      }),
+    ]);
+
+    // Looked at again before its time: nothing more is recorded, created or started.
+    await t.conductor.advance(t.w.runtimeA, t.planned.id);
+    expect((await t.stored()).attempts).toHaveLength(1);
+    expect(t.started).toHaveLength(1);
+
+    t.setClock(new Date('2026-09-27T12:00:31Z'));
+    await t.conductor.advance(t.w.runtimeA, t.planned.id);
+    expect(t.started.at(-1)).toEqual({ actor: 'runtime', id: second });
+    await t.completeCurrent('research');
+    await t.conductor.advance(t.w.runtimeA, t.planned.id);
+    expect(t.started.at(-1)).toEqual({ actor: 'runtime', id: await t.childOf('report') });
+    await t.complete('report');
+    const closed = await t.conductor.advance(t.w.runtimeA, t.planned.id);
+    expect(closed.status).toBe('completed');
+    // The plan's graph and its evidence name the attempt that completed it.
+    const done = await t.w.executions.get(t.w.tenantA, t.planned.executionId);
+    expect(done.nodes.find((n) => n.id === 'research')?.output).toEqual({
+      type: 'execution',
+      id: second,
+    });
+    expect(done.verification?.result).toBe('passed');
+  });
+
+  it('stops the plan once the attempts the plan allowed are spent', async () => {
+    const t = await ready({ maxAttempts: 2, backoffMs: 0 });
+    await t.failWith('research', 'rate_limited');
+    await t.conductor.advance(t.w.runtimeA, t.planned.id);
+    // No backoff: the next attempt starts at once, with no wake-up.
+    const second = await t.current('research');
+    expect(t.started.at(-1)).toEqual({ actor: 'runtime', id: second });
+    expect(t.woken).toEqual([]);
+    await t.failWith('research', 'rate_limited');
+    const stopped = await t.conductor.advance(t.w.runtimeA, t.planned.id);
+    expect(stopped.status).toBe('failed');
+    expect((await t.stored()).attempts).toHaveLength(1);
+    const parent = await t.w.executions.get(t.w.tenantA, t.planned.executionId);
+    expect(parent.failure?.code).toBe('step_failed');
+  });
+
+  it('never runs again a step that failed for a lasting reason', async () => {
+    for (const code of ['credits_insufficient', 'content_policy', 'invalid_response']) {
+      const t = await ready({ maxAttempts: 3, backoffMs: 0 });
+      await t.failWith('research', code);
+      expect((await t.conductor.advance(t.w.runtimeA, t.planned.id)).status).toBe('failed');
+      expect((await t.stored()).attempts).toBeUndefined();
+    }
+  });
+
+  it('leaves the step to the worker where nothing can run it again, never stopping the plan', async () => {
+    for (const ports of [{ attempts: false }, { wakeups: false }]) {
+      const t = await ready({ maxAttempts: 3, backoffMs: 0 }, ports);
+      await t.failWith('research', 'server_error');
+      expect((await t.conductor.advance(t.w.runtimeA, t.planned.id)).status).toBe('executing');
+      expect((await t.stored()).attempts).toBeUndefined();
+    }
+  });
+
+  it('cancels the attempt with the plan', async () => {
+    const t = await ready({ maxAttempts: 3, backoffMs: 60_000 });
+    await t.failWith('research', 'network');
+    await t.conductor.advance(t.w.runtimeA, t.planned.id);
+    const second = await t.current('research');
+    await t.w.executions.cancel(t.w.tenantA, t.planned.executionId, 'director_request');
+    expect(await t.status(second)).toBe('cancelled');
+    t.setClock(new Date('2026-09-27T13:00:00Z'));
+    expect((await t.conductor.advance(t.w.runtimeA, t.planned.id)).status).toBe('cancelled');
+    expect(t.started).toHaveLength(1);
+  });
+
+  it('runs again only a child that failed on its own agent, before anything else in it started', () => {
+    const step = { kind: 'specialist', id: 's', retry: { maxAttempts: 2, backoffMs: 0 } } as const;
+    const node = (id: string, status: string, extra: Record<string, unknown> = {}) => ({
+      id,
+      status,
+      ...extra,
+    });
+    const child = (code: string, nodes: Record<string, unknown>[]) =>
+      ({ status: 'failed', failure: { code }, nodes }) as never;
+    const agentFailed = node('s', 'failed', { error: { code: 'unavailable' }, startedAt: 'x' });
+    const plan = {};
+    const s = step as never;
+    expect(stepRetryable(plan, s, child('unavailable', [agentFailed]), false)).toBe(true);
+    // A person approved this step: never again without them.
+    expect(stepRetryable(plan, s, child('unavailable', [agentFailed]), true)).toBe(false);
+    // A tool node started: it may have done something.
+    expect(
+      stepRetryable(
+        plan,
+        s,
+        child('unavailable', [agentFailed, node('t', 'cancelled', { startedAt: 'x' })]),
+        false,
+      ),
+    ).toBe(false);
+    // The failure came from somewhere else than its agent's call.
+    expect(stepRetryable(plan, s, child('unavailable', [node('s', 'completed')]), false)).toBe(
+      false,
+    );
+    // An outcome nobody knows, and attempts spent.
+    expect(stepRetryable(plan, s, child('timeout', [agentFailed]), false)).toBe(false);
+    expect(
+      stepRetryable(
+        { attempts: [{ stepId: 's' }] } as never,
+        s,
+        child('unavailable', [agentFailed]),
+        false,
+      ),
+    ).toBe(false);
+    // A step that asked for no retry.
+    expect(
+      stepRetryable(
+        plan,
+        { ...step, retry: undefined } as never,
+        child('unavailable', [agentFailed]),
+        false,
+      ),
+    ).toBe(false);
   });
 });

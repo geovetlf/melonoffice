@@ -19,6 +19,7 @@ import {
   createDelegation,
   createPlanConductor,
   createPlanService,
+  createPlanStepAttempts,
   createPlanValidator,
   delegationKey,
   type PlanRepository,
@@ -239,6 +240,8 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
         readonly searchInCampaign?: boolean;
         /** ADR-0152: an hour's wait between `research` and `campaign`. */
         readonly pauseBeforeCampaign?: boolean;
+        /** ADR-0153: `research` runs again once, a minute after a passing failure. */
+        readonly retryResearch?: boolean;
       } = {},
     ) {
       const execution = await planning(tenant);
@@ -252,6 +255,9 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
         ...((options.approvalRequired === true && id === 'research') ||
         (options.askBeforeCampaign === true && id === 'campaign')
           ? { approvalRequired: true }
+          : {}),
+        ...(options.retryResearch === true && id === 'research'
+          ? { retry: { maxAttempts: 2, backoffMs: 60_000 } }
           : {}),
       });
       const outcome = await plans.propose(tenant, {
@@ -319,6 +325,7 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
       tenant,
       workflows,
       executions,
+      specialists,
       propose,
       proposeWork,
       delegationWith,
@@ -457,6 +464,7 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
           answer: null,
           missing: [],
           until: null,
+          attempt: 1,
         },
         {
           stepId: 'campaign',
@@ -471,6 +479,7 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
           answer: null,
           missing: [],
           until: null,
+          attempt: 1,
         },
       ],
     });
@@ -1648,6 +1657,71 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
     });
     expect(view.steps.find((s) => s.stepId === 'campaign')?.state).toBe('waiting');
     expect(t.kicked).toEqual([research]);
+  });
+
+  it('ADR-0153: shows a failed step waiting to run again, its attempt and when', async () => {
+    const t = await setup(ROLES, { runPlans: true });
+    const { plan, ids } = await t.proposeWork({ approvalRequired: true, retryResearch: true });
+    const [first] = ids as [ExecutionId];
+    const version = must(await t.stores.plans.findVersion(t.orgA, plan.id, plan.version));
+    expect(
+      (
+        await t.post('token-alice', `/plans/${plan.id}/approve`, {
+          version: 1,
+          digest: version.digest,
+        })
+      ).status,
+    ).toBe(200);
+    const runtime = await resolveRuntimeTenant(t.tenant.userId, t.orgA, t.stores.tenancy);
+    // The provider did not answer research's agent.
+    await t.executions.runtimeChangeNode(runtime, first, {
+      nodeId: 'research',
+      from: 'pending',
+      to: 'running',
+    });
+    await t.executions.runtimeChangeNode(runtime, first, {
+      nodeId: 'research',
+      from: 'running',
+      to: 'failed',
+      error: { code: 'unavailable' },
+    });
+    await t.executions.runtimeChangeStatus(runtime, first, {
+      from: 'running',
+      to: 'failed',
+      failure: { code: 'unavailable' },
+    });
+    const woken: Date[] = [];
+    const advanced = await createPlanConductor({
+      plans: t.stores.plans,
+      executions: t.executions,
+      starter: { start: async (_t, id) => void t.kicked.push(id) },
+      wakeups: { wake: async (_t, _p, at) => void woken.push(at) },
+      attempts: createPlanStepAttempts({ executions: t.executions, specialists: t.specialists }),
+    }).advance(runtime, plan.id);
+    expect(advanced.status).toBe('executing');
+    expect(woken).toHaveLength(1);
+    const attempt = must((await t.stores.plans.find(t.orgA, plan.id))?.attempts?.[0]);
+    expect(attempt).toMatchObject({ stepId: 'research', attempt: 2, after: first });
+    const view = (await (await t.get('token-alice', `/plans/${plan.id}/steps`)).json()) as {
+      steps: {
+        stepId: string;
+        state: string;
+        executionId: string;
+        attempt: number | null;
+        until: string | null;
+      }[];
+    };
+    expect(view.steps.find((s) => s.stepId === 'research')).toMatchObject({
+      state: 'delayed',
+      executionId: attempt.executionId,
+      attempt: 2,
+      until: attempt.notBefore,
+    });
+    expect(view.steps.find((s) => s.stepId === 'campaign')).toMatchObject({
+      state: 'waiting',
+      attempt: 1,
+    });
+    expect(t.kicked).toEqual([first]);
   });
 
   describe('delegation', () => {
