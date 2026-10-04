@@ -89,6 +89,8 @@ export interface SpecialistVersionDocument {
   readonly configuration: ConfigurationDocument;
   readonly createdAt: FirestoreTimestamp;
   readonly createdBy: string;
+  /** Only on a version a person restored (ADR-0143); absent on every other one. */
+  readonly restoredFrom?: number;
 }
 
 const ts = (value: IsoTimestamp): FirestoreTimestamp => Timestamp.fromDate(new Date(value));
@@ -169,6 +171,7 @@ export function toSpecialistVersionDocument(v: SpecialistVersion): SpecialistVer
     configuration: toConfigurationDocument(v.configuration),
     createdAt: ts(v.createdAt),
     createdBy: v.createdBy,
+    ...(v.restoredFrom === undefined ? {} : { restoredFrom: v.restoredFrom }),
   };
 }
 
@@ -215,6 +218,7 @@ function toVersion(d: SpecialistVersionDocument): SpecialistVersion {
     configuration: toConfiguration(d.configuration),
     createdAt: iso(d.createdAt),
     createdBy: d.createdBy,
+    ...(d.restoredFrom === undefined ? {} : { restoredFrom: d.restoredFrom }),
   } as unknown as SpecialistVersion;
   try {
     return checkStoredVersion(version);

@@ -87,6 +87,7 @@ describe.each(STORES)('agent history with storage in %s', (_name, createStores) 
         previousVersion: null,
         createdAt: expect.any(String),
         actor: 'you',
+        restoredFrom: null,
         changes: [{ kind: 'created' }],
       },
     ]);

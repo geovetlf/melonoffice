@@ -203,6 +203,16 @@ export function registerSpecialistRoutes(
     );
   }
 
+  // An earlier version back, as a new one (ADR-0143): nothing is deleted.
+  app.post(
+    '/v1/organizations/:organizationId/specialists/:specialistId/restore',
+    withPermission('specialist.manage', dependencies, async (c, tenant) =>
+      answer(c, 200, async () =>
+        management.restore(tenant, c.req.param('specialistId') ?? '', await bodyOf(c)),
+      ),
+    ),
+  );
+
   // Its history, newest first (AC-3, ADR-0142): who made each version, when, and what it
   // changed from the one before, told from the stored versions. Never tools, permissions,
   // policies or the conversation profile. `before` and `limit` page through it.
@@ -235,6 +245,7 @@ export function registerSpecialistRoutes(
             createdAt: v.createdAt,
             // Only the owner administers today (D-22): a person is "you" or another member.
             actor: me !== undefined && v.createdBy === me ? 'you' : 'another_person',
+            restoredFrom: v.restoredFrom ?? null,
             changes: agentChanges(v.configuration, before?.configuration),
           };
         });

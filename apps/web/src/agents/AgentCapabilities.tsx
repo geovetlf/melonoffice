@@ -485,6 +485,8 @@ export function AgentCapabilities({
             agentId={agentId}
             version={found.version}
             departments={departments}
+            canManage={canManage}
+            onChanged={() => void load(() => true)}
           />
         </>
       )}

@@ -363,6 +363,8 @@ export interface ConfigurationChange {
   readonly configuration: unknown;
   /** The department the configuration moves to, as read by the caller. Needed only for a move. */
   readonly department?: Department;
+  /** The earlier version this one restores (ADR-0143), kept with the new version. */
+  readonly restoredFrom?: number;
 }
 
 /**
@@ -380,6 +382,12 @@ export function reviseSpecialist(
   if (current.status === 'archived') throw new SpecialistError('specialist_archived');
   if (current.version !== change.fromVersion) {
     throw new SpecialistError('specialist_concurrency_conflict');
+  }
+  if (
+    change.restoredFrom !== undefined &&
+    (!isVersionNumber(change.restoredFrom) || change.restoredFrom >= current.version)
+  ) {
+    invalid('version');
   }
   const configuration = checkConfiguration(change.configuration, current.organizationId);
   if (sameConfiguration(configuration, current.configuration)) invalid('configuration.unchanged');
@@ -404,6 +412,7 @@ export function reviseSpecialist(
       configuration,
       createdAt: at,
       createdBy: by,
+      ...(change.restoredFrom === undefined ? {} : { restoredFrom: change.restoredFrom }),
     }),
   };
 }
@@ -547,5 +556,11 @@ export function checkStoredVersion(version: SpecialistVersion): SpecialistVersio
   if (!isSpecialistId(version.specialistId)) invalid('specialistId');
   if (!isVersionNumber(version.version)) invalid('version');
   checkConfiguration(version.configuration, version.organizationId);
+  if (
+    version.restoredFrom !== undefined &&
+    (!isVersionNumber(version.restoredFrom) || version.restoredFrom >= version.version)
+  ) {
+    invalid('restoredFrom');
+  }
   return version;
 }

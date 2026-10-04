@@ -863,3 +863,90 @@ describe("an agent's version history (ADR-0142)", () => {
     expect(await screen.findByText('Its history could not be read. Try again.')).toBeTruthy();
   });
 });
+
+describe('restoring an earlier version (ADR-0143)', () => {
+  const entries: AgentHistoryEntryView[] = [
+    {
+      version: 3,
+      previousVersion: 2,
+      createdAt: '2026-10-04T10:00:00.000Z',
+      actor: 'you',
+      restoredFrom: 1,
+      changes: [{ kind: 'purpose', before: 'Vender', after: null }],
+    },
+    {
+      version: 2,
+      previousVersion: 1,
+      createdAt: '2026-10-04T09:00:00.000Z',
+      actor: 'you',
+      restoredFrom: null,
+      changes: [{ kind: 'purpose', before: null, after: 'Vender' }],
+    },
+    {
+      version: 1,
+      previousVersion: null,
+      createdAt: '2026-10-04T08:00:00.000Z',
+      actor: 'you',
+      restoredFrom: null,
+      changes: [{ kind: 'created' }],
+    },
+  ];
+  function show(agents: AgentsClient, canManage: boolean) {
+    render(
+      <I18nProvider locale="en" messages={catalogs.en}>
+        <AgentCapabilities client={agents} agentId="spec_lucia" canManage={canManage} />
+      </I18nProvider>,
+    );
+  }
+  const client = (restore: AgentsClient['restore']) =>
+    ({
+      capabilities: vi.fn(async () => ({
+        version: 3,
+        ready: true,
+        skills: [],
+        tools: [],
+        problems: [],
+      })),
+      history: vi.fn(async () => ({ entries, nextBefore: null })),
+      restore,
+    }) as unknown as AgentsClient;
+
+  it('restores an earlier version only after confirming, never the current one', async () => {
+    const restore = vi.fn(async () => ({}) as never);
+    const agents = client(restore);
+    const confirm = vi.spyOn(globalThis, 'confirm').mockReturnValueOnce(false);
+    show(agents, true);
+    expect(await screen.findByText('Restored from version 1.')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Restore version 3' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Restore version 1' }));
+    expect(restore).not.toHaveBeenCalled();
+    confirm.mockReturnValueOnce(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Restore version 1' }));
+    await waitFor(() =>
+      expect(restore).toHaveBeenCalledWith('spec_lucia', { fromVersion: 3, version: 1 }),
+    );
+    expect(await screen.findByText('Version restored as a new version of the agent.')).toBeTruthy();
+  });
+
+  it('says so on a conflict, and offers nothing without specialist.manage', async () => {
+    vi.spyOn(globalThis, 'confirm').mockReturnValue(true);
+    show(
+      client(
+        vi.fn(async () => {
+          throw new AgentRequestError(409, 'specialist_concurrency_conflict');
+        }),
+      ),
+      true,
+    );
+    fireEvent.click(await screen.findByRole('button', { name: 'Restore version 2' }));
+    expect(
+      await screen.findByText(
+        'Someone changed this agent meanwhile. Nothing was changed; try again.',
+      ),
+    ).toBeTruthy();
+    cleanup();
+    show(client(vi.fn()), false);
+    expect(await screen.findByText('Restored from version 1.')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /^Restore version/ })).toBeNull();
+  });
+});

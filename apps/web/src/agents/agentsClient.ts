@@ -229,6 +229,8 @@ export interface AgentHistoryEntryView {
   readonly previousVersion: number | null;
   readonly createdAt: string;
   readonly actor: 'you' | 'another_person';
+  /** The earlier version this one brought back (ADR-0143). Absent from an older server. */
+  readonly restoredFrom?: number | null;
   readonly changes: readonly AgentChangeView[];
 }
 
@@ -293,6 +295,11 @@ export interface AgentsClient {
   addSkill?(
     id: string,
     input: { readonly fromVersion: number; readonly skillId: string; readonly version: number },
+  ): Promise<AgentView>;
+  /** Needs `specialist.manage`: an earlier version back, as a new one (ADR-0143). */
+  restore?(
+    id: string,
+    input: { readonly fromVersion: number; readonly version: number },
   ): Promise<AgentView>;
   /** A page of its history, newest first (ADR-0142); `before` continues it. */
   history?(id: string, before?: number): Promise<AgentHistoryPageView>;
@@ -400,6 +407,8 @@ export function createAgentsClient(request: ReplyRequest, organizationId: string
       post<AgentView>(`/specialists/${encodeURIComponent(id)}/skills/upgrade`, input),
     addSkill: (id, input) =>
       post<AgentView>(`/specialists/${encodeURIComponent(id)}/skills/add`, input),
+    restore: (id, input) =>
+      post<AgentView>(`/specialists/${encodeURIComponent(id)}/restore`, input),
     async history(id, before) {
       const query = before === undefined ? '' : `?before=${before}`;
       const body = await call<Partial<AgentHistoryPageView>>(
