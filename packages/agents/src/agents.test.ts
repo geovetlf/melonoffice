@@ -971,7 +971,9 @@ describe('Plan steps: tool steps (ADR-0151)', () => {
   const tool = { id: 'knowledge_search', version: 1 };
   const INPUT = { query: 'melon prices' };
 
-  async function setup() {
+  const SCAN = '5a1b7c9e-3333-4333-8333-000000000003';
+
+  async function setup(options: { readonly search?: Record<string, unknown> } = {}) {
     const w = await world();
     const lucia = await w.agent();
     const version = {
@@ -997,6 +999,26 @@ describe('Plan steps: tool steps (ADR-0151)', () => {
           tool,
           input: INPUT,
           approvalRequired: false,
+          ...options.search,
+        },
+        // ADR-0161: an earlier step and its tool, whose results a tool step may read.
+        {
+          id: 'scan',
+          kind: 'specialist',
+          label: 'Explorar',
+          dependsOn: [],
+          specialist: { id: lucia.identity.id, version: lucia.version, departmentId: 'd' },
+          approvalRequired: false,
+        },
+        {
+          id: 'count',
+          kind: 'tool',
+          label: 'Contar',
+          dependsOn: ['scan'],
+          performedBy: 'scan',
+          tool,
+          input: INPUT,
+          approvalRequired: false,
         },
       ],
     } as unknown as PlanVersion;
@@ -1006,7 +1028,10 @@ describe('Plan steps: tool steps (ADR-0151)', () => {
       executionId: PARENT,
       status: 'executing',
       version: 1,
-      delegations: [{ stepId: 'report', executionId: REPORT }],
+      delegations: [
+        { stepId: 'report', executionId: REPORT },
+        { stepId: 'scan', executionId: SCAN },
+      ],
     } as unknown as Plan;
     const plans = {
       find: async (org: string, id: string) => (org === w.orgA && id === PLAN ? plan : undefined),
@@ -1064,6 +1089,61 @@ describe('Plan steps: tool steps (ADR-0151)', () => {
     expect(await none(t.search, { ...t.child, specialistVersion: 99 })).toBeUndefined();
     const bobRuntime = await resolveRuntimeTenant(BOB, t.w.orgB, t.w.tenancy);
     expect(await none(t.search, t.child, bobRuntime)).toBeUndefined();
+  });
+
+  it('ADR-0161: reads referenced input from the plan’s own earlier results, as data', async () => {
+    const t = await setup({
+      search: {
+        input: {},
+        inputFrom: { query: { step: 'count', field: 'topic' } },
+        inputContract: { type: 'object', properties: { query: { type: 'string', maxLength: 20 } } },
+      },
+    });
+    const input = () => t.work.toolInput(t.w.runtime, t.child, t.search);
+    const keep = (executionId: string, nodeId: string, structured: unknown) =>
+      t.outputs.record(t.w.runtime, {
+        executionId: executionId as ExecutionId,
+        nodeId: nodeId as ExecutionNodeId,
+        requestId: `req-${nodeId}-${JSON.stringify(structured).length}`,
+        output: { structured },
+      });
+    // Not kept yet: the tool does not run, nothing is guessed.
+    expect(await input()).toBeUndefined();
+    await keep(SCAN, 'count', { topic: 'melones', total: 3 });
+    expect(await input()).toEqual({ query: 'melones' });
+    // Only for this organization.
+    const bobRuntime = await resolveRuntimeTenant(BOB, t.w.orgB, t.w.tenancy);
+    expect(await t.work.toolInput(bobRuntime, t.child, t.search)).toBeUndefined();
+  });
+
+  it('ADR-0161: an agent’s answer is cut to the input’s length; a credential never passes', async () => {
+    const t = await setup({
+      search: {
+        input: {},
+        inputFrom: { query: { step: 'report' } },
+        inputContract: { type: 'object', properties: { query: { type: 'string', maxLength: 20 } } },
+      },
+    });
+    const input = () => t.work.toolInput(t.w.runtime, t.child, t.search);
+    expect(await input()).toBeUndefined();
+    await t.outputs.record(t.w.runtime, {
+      executionId: REPORT as ExecutionId,
+      nodeId: 'report' as ExecutionNodeId,
+      requestId: 'req-1',
+      output: { structured: { answer: 'precios del melón en Lima y Arequipa', missing: [] } },
+    });
+    expect(await input()).toEqual({ query: 'precios del melón en' });
+
+    const leaky = await setup({
+      search: { input: {}, inputFrom: { query: { step: 'count', field: 'topic' } } },
+    });
+    await leaky.outputs.record(leaky.w.runtime, {
+      executionId: SCAN as ExecutionId,
+      nodeId: 'count' as ExecutionNodeId,
+      requestId: 'req-2',
+      output: { structured: { topic: 'sk-live-abcdefghijklmnopqrstuvwx' } },
+    });
+    expect(await leaky.work.toolInput(leaky.w.runtime, leaky.child, leaky.search)).toBeUndefined();
   });
 
   it('verifies each tool step it ran by the gate’s check of its output', async () => {

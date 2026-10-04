@@ -158,6 +158,16 @@ export type PlanToolValue =
   | { readonly [key: string]: PlanToolValue };
 export type PlanToolInput = { readonly [key: string]: PlanToolValue };
 
+/**
+ * Where one value of a tool step's input comes from when the step runs (ADR-0161): the answer of
+ * an earlier specialist step (no `field`), or one field of an earlier tool step's result. Checked
+ * when the plan is made; read on the server, for the plan's own organization, as data.
+ */
+export interface PlanInputRef {
+  readonly step: string;
+  readonly field?: string;
+}
+
 export interface PlanRetry {
   readonly maxAttempts: number;
   readonly backoffMs: number;
@@ -203,6 +213,11 @@ export interface PlanStep {
    * authority: the organization, agent, approval and credentials always come from the server.
    */
   readonly input?: PlanToolInput;
+  /**
+   * On `tool` steps (ADR-0161): input values taken from earlier steps' results when it runs, by
+   * input key. Never a key of `input`; only on a tool step no person has to approve.
+   */
+  readonly inputFrom?: { readonly [key: string]: PlanInputRef };
   readonly inputContract?: ToolSchema;
   readonly outputContract?: ToolSchema;
   /** Required on `specialist` and `verification` steps. */

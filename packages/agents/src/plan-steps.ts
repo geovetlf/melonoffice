@@ -1,9 +1,10 @@
-import { promptLabel } from '@melonoffice/ai-gateway';
+import { looksLikeSecretText, promptLabel } from '@melonoffice/ai-gateway';
 import type {
   Execution,
   ExecutionNode,
   OrganizationId,
   Plan,
+  PlanInputRef,
   PlanStep,
   PlanVersion,
 } from '@melonoffice/domain';
@@ -114,6 +115,51 @@ export interface PlanStepWorkOptions {
   readonly describeSkill?: (id: string) => string;
 }
 
+/** Whether any text in a value looks like a credential (G-7): such a value is never passed on. */
+function carriesSecret(value: unknown): boolean {
+  if (typeof value === 'string') return looksLikeSecretText(value);
+  if (Array.isArray(value)) return value.some(carriesSecret);
+  if (value !== null && typeof value === 'object') return Object.values(value).some(carriesSecret);
+  return false;
+}
+
+/**
+ * One referenced input value (ADR-0161), read for this organization from the plan's own steps:
+ * an agent's answer, cut to the input's length, or one field of a tool step's kept result.
+ * `undefined` when it is not there.
+ */
+async function referencedValue(
+  outputs: Pick<AgentOutputStore, 'find'>,
+  tenant: TenantContext,
+  facts: StepFacts,
+  tool: PlanStep,
+  key: string,
+  ref: PlanInputRef,
+): Promise<unknown> {
+  const source = facts.version.steps.find((s) => s.id === ref.step);
+  if (source?.kind === 'specialist') {
+    const child = facts.children.get(source.id);
+    const record = child === undefined ? undefined : await outputs.find(tenant, child, source.id);
+    const answer = record === undefined ? undefined : parseAgentAnswer(record.output)?.answer;
+    const target =
+      tool.inputContract?.type === 'object' ? tool.inputContract.properties[key] : undefined;
+    if (answer === undefined || target?.type !== 'string') return undefined;
+    return answer.slice(0, target.maxLength);
+  }
+  if (source?.kind !== 'tool' || source.performedBy === undefined || ref.field === undefined) {
+    return undefined;
+  }
+  const child = facts.children.get(source.performedBy);
+  const kept = child === undefined ? undefined : await outputs.find(tenant, child, source.id);
+  const structured = kept?.output.structured;
+  if (structured === null || typeof structured !== 'object' || Array.isArray(structured)) {
+    return undefined;
+  }
+  return Object.hasOwn(structured, ref.field)
+    ? structuredClone((structured as Record<string, unknown>)[ref.field])
+    : undefined;
+}
+
 /** The request a step's agent answers: the plan's objective and its own step, as data. */
 export const planStepRequest = (version: PlanVersion, step: PlanStep): string =>
   `Plan objective: ${version.request.objective}\nYour step in this plan: ${step.label}`;
@@ -169,7 +215,16 @@ export function createPlanStepWork(options: PlanStepWorkOptions): AgentTaskWork 
           s.tool?.id === node.tool?.id &&
           s.tool?.version === node.tool?.version,
       );
-      return tool === undefined ? undefined : structuredClone(tool.input ?? {});
+      if (tool === undefined) return undefined;
+      // Values read from earlier steps' results (ADR-0161), as the plan names them. One missing,
+      // or one that looks like a credential: the tool does not run (`input_unavailable`).
+      const input: Record<string, unknown> = structuredClone(tool.input ?? {});
+      for (const [key, ref] of Object.entries(tool.inputFrom ?? {})) {
+        const value = await referencedValue(outputs, tenant, facts, tool, key, ref);
+        if (value === undefined || carriesSecret(value)) return undefined;
+        input[key] = value;
+      }
+      return input;
     },
     async agentWork(tenant: TenantContext, execution: Execution, node: ExecutionNode) {
       const facts = await factsOf(plans, tenant, execution);
