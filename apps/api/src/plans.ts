@@ -7,6 +7,7 @@ import {
   gatedStepState,
   isPlanningError,
   PlanningError,
+  BUDGET_EXCEEDED,
   planStepStates,
   stepApprovalEntriesOf,
   stepApprovalOf,
@@ -205,6 +206,15 @@ export function toPlanView(plan: Plan) {
     delegations: plan.delegations.map((d) => ({ stepId: d.stepId, executionId: d.executionId })),
     delegationState: plan.delegationState ?? null,
     delegationFailure: plan.delegationFailure ?? null,
+    // The credit budget a person approved, as each step it could not cover found it (ADR-0163):
+    // what the plan had used, what the step needed, and the budget.
+    budgetBlocks: (plan.budgetBlocks ?? []).map((b) => ({
+      stepId: b.stepId,
+      usedCredits: b.usedCredits,
+      neededCredits: b.neededCredits,
+      capCredits: b.capCredits,
+      blockedAt: b.blockedAt,
+    })),
     decision:
       plan.decision === undefined
         ? null
@@ -358,6 +368,7 @@ export async function readPlanSteps(
   const declineOf = (id: string) =>
     stepApprovalEntriesOf(plan, id).find((a) => a.declined !== undefined)?.declined;
   const waitOf = (id: string) => plan.waits?.find((w) => w.stepId === id);
+  const blockOf = (id: string) => plan.budgetBlocks?.find((b) => b.stepId === id);
   const at = new Date();
   const states = planStepStates(version.steps, (step) => {
     if (step.kind === 'condition') return conditionStepState(conditionOf(step.id));
@@ -367,6 +378,8 @@ export async function readPlanSteps(
     // A step's next attempt waits out its backoff (ADR-0153).
     const delayed = attempt !== undefined && Date.parse(attempt.notBefore) > at.getTime();
     if (child === undefined) return delayed ? 'delayed' : 'waiting';
+    // A step the approved budget could not cover never started (ADR-0163).
+    if (child.startedAt === undefined && blockOf(step.id) !== undefined) return 'failed';
     // A step that asked people (ADR-0146, ADR-0151): waiting for them, or declined.
     const approval = stepApprovalOf(plan, step.id);
     const own = approval === 'none' ? specialistStepState(child) : gatedStepState(child, approval);
@@ -437,7 +450,14 @@ export async function readPlanSteps(
         approvalOf(step.id)?.approvalId ??
         null,
       // Why a declined step never ran: rejected, expired or withdrawn (ADR-0146).
-      failure: declineOf(step.id)?.reason ?? execution?.failure?.code ?? null,
+      // or that the approved credit budget could not cover it (ADR-0163).
+      failure:
+        declineOf(step.id)?.reason ??
+        (execution?.startedAt === undefined && blockOf(step.id) !== undefined
+          ? BUDGET_EXCEEDED
+          : undefined) ??
+        execution?.failure?.code ??
+        null,
       outcome: null,
       answer: answered?.answer ?? null,
       missing: answered === undefined ? [] : [...answered.missing],

@@ -56,6 +56,7 @@ import {
   TOOL_OUTPUT_CHECK,
   MAX_TOOL_RESULT_CHARS,
   readPlanTrace,
+  createPlanSpending,
   toolResultText,
   answeringSteps,
   createPlanStepWork,
@@ -1581,5 +1582,26 @@ describe('a plan’s trace (ADR-0157)', () => {
       byModel: [{ model: 'vertex_ai/gemini-2.5-flash-lite', credits: 3 }],
     });
     expect(JSON.stringify(trace)).not.toContain('never shown');
+
+    // ADR-0163: what the plan's runs used, for its approved budget, from the same records. A run
+    // not created yet adds nothing; any other error is not hidden.
+    const spending = createPlanSpending({
+      executions: {
+        get: async (_t, id) => {
+          const found = executions[id];
+          if (found === undefined)
+            throw Object.assign(new Error('x'), { code: 'execution_not_found' });
+          return found;
+        },
+      },
+      outputs,
+    });
+    expect(await spending.used(w.runtime, [FIRST, SECOND, FIRST] as ExecutionId[])).toBe(3);
+    expect(await spending.used(w.runtime, ['missing' as ExecutionId])).toBe(0);
+    const broken = createPlanSpending({
+      executions: { get: async () => Promise.reject(new Error('unavailable')) },
+      outputs,
+    });
+    await expect(broken.used(w.runtime, [FIRST as ExecutionId])).rejects.toThrow('unavailable');
   });
 });

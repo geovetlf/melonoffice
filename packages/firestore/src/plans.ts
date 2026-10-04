@@ -68,6 +68,14 @@ interface PlanDocument {
     readonly startedAt: FirestoreTimestamp;
     readonly until: FirestoreTimestamp;
   }[];
+  /** ADR-0163: absent on plans written before, and on plans no step was blocked in. */
+  readonly budgetBlocks?: readonly {
+    readonly stepId: string;
+    readonly usedCredits: number;
+    readonly neededCredits: number;
+    readonly capCredits: number;
+    readonly blockedAt: FirestoreTimestamp;
+  }[];
   /** ADR-0153: absent on plans written before, and on plans no step was retried in. */
   readonly attempts?: readonly {
     readonly stepId: string;
@@ -155,6 +163,17 @@ export function toPlanDocument(plan: Plan): PlanDocument {
             until: ts(w.until),
           })),
         }),
+    ...(plan.budgetBlocks === undefined
+      ? {}
+      : {
+          budgetBlocks: plan.budgetBlocks.map((b) => ({
+            stepId: b.stepId,
+            usedCredits: b.usedCredits,
+            neededCredits: b.neededCredits,
+            capCredits: b.capCredits,
+            blockedAt: ts(b.blockedAt),
+          })),
+        }),
     ...(plan.attempts === undefined
       ? {}
       : {
@@ -232,6 +251,17 @@ function toPlan(id: string, d: PlanDocument): Plan {
             stepId: w.stepId,
             startedAt: iso(w.startedAt),
             until: iso(w.until),
+          })),
+        }),
+    ...(d.budgetBlocks === undefined
+      ? {}
+      : {
+          budgetBlocks: d.budgetBlocks.map((b) => ({
+            stepId: b.stepId,
+            usedCredits: b.usedCredits,
+            neededCredits: b.neededCredits,
+            capCredits: b.capCredits,
+            blockedAt: iso(b.blockedAt),
           })),
         }),
     ...(d.attempts === undefined

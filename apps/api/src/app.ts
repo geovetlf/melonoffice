@@ -11,6 +11,7 @@ import {
   createHandoffDirectory,
   creditsSpentBy,
   readPlanResults,
+  createPlanSpending,
   type AgentHandoffRepository,
   type AgentMemoryRepository,
   createAgentWorkStop,
@@ -1346,6 +1347,15 @@ export function createApp({
                   },
                 },
                 approvals: createPlanStepApprovals(approvalService, undefined, tools),
+                // What its runs used, against the budget a person approved (ADR-0163).
+                ...(agentTasks?.outputs === undefined
+                  ? {}
+                  : {
+                      spending: createPlanSpending({
+                        executions: executionService,
+                        outputs: createAgentOutputStore(agentTasks.outputs),
+                      }),
+                    }),
                 logger: logger.child({ component: 'plans' }),
               }),
               logger: logger.child({ component: 'plans' }),
@@ -1406,6 +1416,15 @@ export function createApp({
                   await planRuntime.kickoff(tenant, executionId);
                 },
               },
+              // What its runs used, against the budget a person approved (ADR-0163).
+              ...(agentTasks?.outputs === undefined
+                ? {}
+                : {
+                    spending: createPlanSpending({
+                      executions: executionService,
+                      outputs: createAgentOutputStore(agentTasks.outputs),
+                    }),
+                  }),
               ...(approvals === undefined
                 ? {}
                 : {

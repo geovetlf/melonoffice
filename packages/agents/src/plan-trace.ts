@@ -2,11 +2,13 @@ import type { AuditEvent, AuditHistoryReader } from '@melonoffice/audit';
 import type {
   AICallTrace,
   Execution,
+  ExecutionId,
   OrganizationId,
   Plan,
   PlanVersion,
 } from '@melonoffice/domain';
 import type { AgentOutputStore } from '@melonoffice/execution';
+import type { PlanSpending } from '@melonoffice/planning';
 import { isResolvedTenant, type TenantContext } from '@melonoffice/tenancy';
 import {
   callsOf,
@@ -272,5 +274,31 @@ export async function readPlanTrace(
       byModel: [...byModel.entries()].map(([model, credits]) => ({ model, credits })),
     },
     history,
+  });
+}
+
+/**
+ * What a plan's runs used (ADR-0163), for its approved credit budget: the credits the Credit
+ * Core charged for each child's AI calls, from the same records the trace reads. Read as the
+ * tenant the conductor acts for: another organization's run, or one not created yet, adds
+ * nothing.
+ */
+export function createPlanSpending(ports: {
+  readonly executions: { get(tenant: TenantContext, id: string): Promise<Execution> };
+  readonly outputs: Pick<AgentOutputStore, 'find'>;
+}): PlanSpending {
+  return Object.freeze({
+    async used(tenant: TenantContext, executionIds: readonly ExecutionId[]) {
+      let total = 0;
+      for (const id of new Set(executionIds)) {
+        const execution = await ports.executions.get(tenant, id).catch((error: unknown) => {
+          if ((error as { code?: unknown }).code === 'execution_not_found') return undefined;
+          throw error;
+        });
+        if (execution === undefined) continue;
+        total += creditsOf((await callsOf(ports.outputs, tenant, execution)).values());
+      }
+      return total;
+    },
   });
 }

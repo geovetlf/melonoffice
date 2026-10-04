@@ -32,6 +32,7 @@ import {
   recordCondition,
   recordStepApproval,
   recordStepDeclined,
+  recordBudgetBlock,
   recordWait,
   stepAttemptOf,
   stepExecutionOf,
@@ -291,10 +292,35 @@ export interface PlanConductorOptions {
    * `advance` only, with `wakeups`. Absent: a failed step stops the plan, as before.
    */
   readonly attempts?: PlanStepAttempts;
+  /**
+   * What the plan's runs used, in credits (ADR-0163). Needed wherever a step starts in a plan
+   * whose approved estimate is known. Absent there: no step starts, never past the budget.
+   */
+  readonly spending?: PlanSpending;
   readonly now?: () => Date;
   readonly requestId?: string;
   readonly logger?: Logger;
 }
+
+/**
+ * What a plan's runs used (ADR-0163): the credits the Credit Core charged for the AI calls of the
+ * given child executions, as their own records say. Reads only.
+ */
+export interface PlanSpending {
+  used(tenant: TenantContext, executionIds: readonly ExecutionId[]): Promise<number>;
+}
+
+/** Why a step never started: it would pass the plan's approved credit budget (ADR-0163). */
+export const BUDGET_EXCEEDED = 'budget_exceeded';
+
+/**
+ * The most a plan's execution may use, in credits (D5, ADR-0163): the estimate a person approved
+ * with this version. An unknown estimate sets no budget (ADR-0163: the plan says so instead).
+ */
+export const creditBudgetOf = (version: Pick<PlanVersion, 'estimate'>): number | undefined =>
+  version.estimate.status === 'estimated' && version.estimate.credits !== null
+    ? version.estimate.credits
+    : undefined;
 
 /** The planning execution's evidence that every step completed: its child execution. */
 export const STEP_CHECK = 'step_execution_completed';
@@ -527,6 +553,7 @@ export function createPlanConductor(options: PlanConductorOptions): PlanConducto
     conditions,
     approvals,
     wakeups,
+    spending,
     attempts,
     requestId,
   } = options;
@@ -613,6 +640,13 @@ export function createPlanConductor(options: PlanConductorOptions): PlanConducto
         if (child === undefined)
           return { step, state: 'failed', failure: 'step_retry_unavailable' };
       }
+    }
+    // A step the approved budget could not cover never starts (ADR-0163).
+    if (
+      child.startedAt === undefined &&
+      (plan.budgetBlocks ?? []).some((b) => b.stepId === step.id)
+    ) {
+      return { step, child, state: 'failed', failure: BUDGET_EXCEEDED };
     }
     const gates = gatesOf(plan, version, step, child.id);
     if (gates.length > 0) return gatedView(tenant, plan, step, child, states, gates);
@@ -930,6 +964,124 @@ export function createPlanConductor(options: PlanConductorOptions): PlanConducto
   }
 
   /**
+   * Which ready steps the plan's approved credit budget covers (ADR-0163), in order. What it has
+   * committed is what its runs used, plus the estimate of each step still running, plus each step
+   * this pass lets start: the budget is never passed, whatever finishes first. A step that does
+   * not fit waits while another runs, since a run may use less than its estimate; with nothing
+   * running, what was used is final and the step is `blocked`. `allowed` is absent when the plan
+   * has no budget (its estimate is unknown).
+   */
+  async function budgetFor(
+    tenant: TenantContext,
+    plan: Plan,
+    version: PlanVersion,
+    views: readonly StepView[],
+  ): Promise<{
+    readonly allowed?: ReadonlySet<string>;
+    readonly blocked: readonly { stepId: string; used: number; needed: number; cap: number }[];
+  }> {
+    const cap = creditBudgetOf(version);
+    if (cap === undefined) return { blocked: [] };
+    const ready = views.filter(
+      (v) => v.child?.status === 'pending' && v.child.startedAt === undefined && readyIn(views, v),
+    );
+    const allowed = new Set<string>();
+    if (ready.length === 0) return { allowed, blocked: [] };
+    if (spending === undefined) {
+      logger?.warn('plan step not started: no credit meter', { planId: plan.id });
+      return { allowed, blocked: [] };
+    }
+    const runs = [
+      ...plan.delegations.map((d) => d.executionId),
+      ...(plan.attempts ?? []).map((a) => a.executionId),
+    ];
+    const used = await spending.used(tenant, runs);
+    const running = views.filter(
+      (v) => v.child?.startedAt !== undefined && !isTerminal(v.child.status),
+    );
+    const estimateOf = (step: PlanStep) => step.estimate?.credits ?? undefined;
+    let committed = used + running.reduce((total, v) => total + (estimateOf(v.step) ?? 0), 0);
+    const blocked: { stepId: string; used: number; needed: number; cap: number }[] = [];
+    for (const view of ready) {
+      const needed = estimateOf(view.step);
+      // A plan with a budget has an estimate for each agent step (`totalEstimate`). One without
+      // cannot be measured: it never starts, and nothing is invented for it.
+      if (needed === undefined) continue;
+      if (committed + needed <= cap) {
+        allowed.add(view.step.id);
+        committed += needed;
+      } else if (running.length === 0 && allowed.size === 0) {
+        blocked.push({ stepId: view.step.id, used, needed, cap });
+      }
+    }
+    return { allowed, blocked };
+  }
+
+  /** Records each step the budget could not cover (ADR-0163), once, with its audit event. */
+  async function blockOverBudget(
+    tenant: TenantContext,
+    organizationId: OrganizationId,
+    plan: Plan,
+    blocks: readonly { stepId: string; used: number; needed: number; cap: number }[],
+  ): Promise<Plan> {
+    let current = plan;
+    for (const block of blocks) {
+      const at = now();
+      try {
+        current = await plans.update(organizationId, plan.id, (found) => {
+          const next = recordBudgetBlock(
+            found,
+            {
+              stepId: block.stepId,
+              usedCredits: block.used,
+              neededCredits: block.needed,
+              capCredits: block.cap,
+            },
+            iso(at),
+          );
+          return {
+            plan: next,
+            events: [
+              buildAuditEvent(
+                {
+                  action: 'plan.step_blocked',
+                  result: 'success',
+                  actor: actorOf(tenant),
+                  organizationId,
+                  target: { type: 'plan', id: next.id },
+                  nodeId: block.stepId,
+                  reason: BUDGET_EXCEEDED,
+                  reference: `used:${block.used}-needed:${block.needed}-cap:${block.cap}`,
+                  ...(requestId === undefined ? {} : { requestId }),
+                  source: 'api',
+                },
+                at,
+              ),
+            ],
+          };
+        });
+      } catch (error) {
+        if (!isPlanningError(error)) throw error;
+        const fresh = await plans.find(organizationId, plan.id);
+        if (fresh?.budgetBlocks?.some((b) => b.stepId === block.stepId) === true) {
+          current = fresh;
+          continue;
+        }
+        if (fresh !== undefined && fresh.status !== 'executing') return fresh;
+        throw error;
+      }
+      logger?.info('plan step blocked by its budget', {
+        planId: plan.id,
+        stepId: block.stepId,
+        used: block.used,
+        needed: block.needed,
+        cap: block.cap,
+      });
+    }
+    return current;
+  }
+
+  /**
    * Starts every specialist step that has not started and whose steps before it all completed.
    * A step that waits for people starts only once every approval it waits for was given; until
    * then, it asks for each one not asked for yet (ADR-0146, ADR-0151). Before it starts, each
@@ -941,10 +1093,13 @@ export function createPlanConductor(options: PlanConductorOptions): PlanConducto
     version: PlanVersion,
     views: readonly StepView[],
   ): Promise<void> {
+    const { allowed } = await budgetFor(tenant, plan, version, views);
     for (const view of views) {
       const { child } = view;
       if (child === undefined || child.status !== 'pending') continue;
       if (!readyIn(views, view)) continue;
+      // Within the approved budget only (ADR-0163); one that does not fit yet waits.
+      if (allowed !== undefined && !allowed.has(view.step.id)) continue;
       const gates = gatesOf(plan, version, view.step, child.id);
       if (gates.length > 0 && view.approved !== true) {
         for (const gate of gates) {
@@ -1378,6 +1533,15 @@ export function createPlanConductor(options: PlanConductorOptions): PlanConducto
         if (plan.status !== 'executing') return plan;
       }
       if (ready.length > 0) views = await stepsOf(tenant, plan, version);
+    }
+
+    // A ready step the approved budget cannot cover, with nothing left running, is blocked
+    // (ADR-0163): it never starts, and its branch ends as a failed one does.
+    const { blocked } = await budgetFor(tenant, plan, version, views);
+    if (blocked.length > 0) {
+      plan = await blockOverBudget(tenant, organizationId, plan, blocked);
+      if (plan.status !== 'executing') return plan;
+      views = await stepsOf(tenant, plan, version);
     }
 
     // A failed step ends its own branch (ADR-0162). The plan fails once every branch failed:

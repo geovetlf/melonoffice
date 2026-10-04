@@ -623,6 +623,12 @@ export const AUDIT_ACTIONS = {
       "A running plan's step approval was rejected, expired or withdrawn: the step never runs, its branch is skipped and the other branches go on (ADR-0146); `nodeId` is the step, `reason` why.",
     results: ['success'],
   },
+  'plan.step_blocked': {
+    category: 'planning',
+    description:
+      "A running plan's step did not start because the credits the plan had used and the step's estimate would pass the budget a person approved (ADR-0163): its branch ends and the other branches go on; `nodeId` is the step, `reason` `budget_exceeded`, `reference` used, needed and budget (`used:40-needed:30-cap:60`).",
+    results: ['success'],
+  },
   'delegation.created': {
     category: 'planning',
     description:

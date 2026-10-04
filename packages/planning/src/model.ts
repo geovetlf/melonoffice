@@ -14,6 +14,7 @@ import type {
   PlanStepAttempt,
   PlanVersion,
   PlanWait,
+  PlanBudgetBlock,
   UserId,
 } from '@melonoffice/domain';
 import { isExecutionId } from '@melonoffice/execution';
@@ -271,6 +272,13 @@ export function checkStoredPlan(plan: Plan): Plan {
     for (const w of plan.waits) checkWait(w);
     if (new Set(plan.waits.map((w) => w.stepId)).size !== plan.waits.length) invalid('waits');
   }
+  if (plan.budgetBlocks !== undefined) {
+    if (!Array.isArray(plan.budgetBlocks)) invalid('budgetBlocks');
+    for (const b of plan.budgetBlocks) checkBudgetBlock(b);
+    if (new Set(plan.budgetBlocks.map((b) => b.stepId)).size !== plan.budgetBlocks.length) {
+      invalid('budgetBlocks');
+    }
+  }
   if (plan.attempts !== undefined) {
     if (!Array.isArray(plan.attempts)) invalid('attempts');
     // Each step's attempts in order, from 2, each after the child that ran it before.
@@ -438,6 +446,55 @@ export function recordWait(
   });
   checkWait(recorded);
   return Object.freeze({ ...next, waits: Object.freeze([...(plan.waits ?? []), recorded]) });
+}
+
+const credits = (value: unknown): boolean =>
+  typeof value === 'number' && Number.isFinite(value) && value >= 0;
+
+/** A budget block names its step, three amounts of credits and when (ADR-0163). */
+function checkBudgetBlock(block: PlanBudgetBlock): void {
+  if (typeof block.stepId !== 'string' || block.stepId.length === 0) invalid('budgetBlocks');
+  if (!credits(block.usedCredits) || !credits(block.neededCredits) || !credits(block.capCredits)) {
+    invalid('budgetBlocks');
+  }
+  // A block is recorded only when the step does not fit: never a budget it would have fit in.
+  if (block.usedCredits + block.neededCredits <= block.capCredits) invalid('budgetBlocks');
+  if (typeof block.blockedAt !== 'string' || Number.isNaN(Date.parse(block.blockedAt))) {
+    invalid('budgetBlocks');
+  }
+}
+
+/**
+ * Records that a step does not fit in the plan's approved credit budget (ADR-0163), once. A plan
+ * that already holds one for that step is a concurrent block, and the one recorded stands.
+ */
+export function recordBudgetBlock(
+  plan: Plan,
+  entry: {
+    readonly stepId: string;
+    readonly usedCredits: number;
+    readonly neededCredits: number;
+    readonly capCredits: number;
+  },
+  at: IsoTimestamp,
+): Plan {
+  if (plan.status !== 'executing') throw new PlanningError('invalid_plan_transition');
+  if ((plan.budgetBlocks ?? []).some((b) => b.stepId === entry.stepId)) {
+    throw new PlanningError('plan_concurrency_conflict');
+  }
+  const next = nextRevision(plan, at);
+  const recorded: PlanBudgetBlock = Object.freeze({
+    stepId: entry.stepId,
+    usedCredits: entry.usedCredits,
+    neededCredits: entry.neededCredits,
+    capCredits: entry.capCredits,
+    blockedAt: next.updatedAt,
+  });
+  checkBudgetBlock(recorded);
+  return Object.freeze({
+    ...next,
+    budgetBlocks: Object.freeze([...(plan.budgetBlocks ?? []), recorded]),
+  });
 }
 
 function checkAttempt(attempt: PlanStepAttempt): void {
