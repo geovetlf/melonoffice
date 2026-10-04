@@ -667,6 +667,29 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
       expect(t.kicked).toEqual([research]);
     });
 
+    it('ADR-0158: a workflow’s wait is shown with its length for the editor', async () => {
+      const t = await setup(ROLES, { runPlans: true });
+      const pause = {
+        id: 'pause',
+        kind: 'wait',
+        label: 'Give the client time',
+        dependsOn: ['research'],
+        wait: { seconds: 7_200 },
+      };
+      const after = { ...campaignStep, dependsOn: ['pause'] };
+      const id = await activeWorkflow(t, [researchStep, pause, after]);
+      const detail = (await (await t.get('token-alice', `/workflows/${id}`)).json()) as {
+        current: { steps: Record<string, unknown>[] };
+      };
+      expect(detail.current.steps[1]).toMatchObject({
+        id: 'pause',
+        kind: 'wait',
+        assignee: null,
+        wait: { seconds: 7_200 },
+      });
+      expect(detail.current.steps[0]).toMatchObject({ wait: null });
+    });
+
     it('ADR-0144: a workflow with a policy check and a branch is shown, planned and approved', async () => {
       const t = await setup(ROLES, { runPlans: true });
       const check = {

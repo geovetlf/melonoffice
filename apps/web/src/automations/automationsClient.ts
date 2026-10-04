@@ -25,6 +25,8 @@ export interface WorkflowStepView {
   readonly assignee: { readonly departmentTypeId: string; readonly roleId: string } | null;
   /** A check's decision (WF-4, ADR-0075); none on other steps. */
   readonly decision?: WorkflowDecisionView | null;
+  /** A wait's length (ADR-0152); none on other steps. */
+  readonly wait?: { readonly seconds: number } | null;
   readonly approvalRequired: boolean;
 }
 
@@ -49,8 +51,9 @@ export interface WorkflowDetail extends WorkflowView {
  * - `agent`: an agent with this role does it, optionally after the person approves it.
  * - `check`: a company policy check (`action.policy_check`, WF-4): the steps after it run only
  *   when the policy allows the action; otherwise they are skipped and the rest goes on.
+ * - `wait`: a set time, after the steps it waits for, before the steps after it (ADR-0152).
  */
-export type WorkflowStepDraft = WorkflowAgentDraft | WorkflowCheckDraft;
+export type WorkflowStepDraft = WorkflowAgentDraft | WorkflowCheckDraft | WorkflowWaitDraft;
 
 interface WorkflowDraftBase {
   readonly key: string;
@@ -71,6 +74,29 @@ export interface WorkflowCheckDraft extends WorkflowDraftBase {
   readonly action: string;
   /** A discount to check against the company's discount policy, as a percentage. */
   readonly discountPercent: number | null;
+}
+
+export interface WorkflowWaitDraft extends WorkflowDraftBase {
+  readonly kind: 'wait';
+  /** How many `unit`s it waits; null while the person has not said. */
+  readonly amount: number | null;
+  readonly unit: WaitUnit;
+}
+
+export type WaitUnit = 'minutes' | 'hours' | 'days';
+export const WAIT_UNIT_SECONDS: Readonly<Record<WaitUnit, number>> = {
+  minutes: 60,
+  hours: 3_600,
+  days: 86_400,
+};
+/** The longest wait the engine takes (ADR-0152). */
+export const MAX_WAIT_SECONDS = 7 * 86_400;
+
+/** A wait's length in seconds, when it is a whole number the engine takes; otherwise undefined. */
+export function waitSecondsOf(d: Pick<WorkflowWaitDraft, 'amount' | 'unit'>): number | undefined {
+  if (d.amount === null || !Number.isInteger(d.amount) || d.amount < 1) return undefined;
+  const seconds = d.amount * WAIT_UNIT_SECONDS[d.unit];
+  return seconds <= MAX_WAIT_SECONDS ? seconds : undefined;
 }
 
 /** The only decision type the worker decides a check with (ADR-0075); any other stops the plan. */
@@ -102,6 +128,9 @@ export function workflowStepsOf(drafts: readonly WorkflowStepDraft[]): readonly 
         return id === undefined ? [] : [id];
       }),
     };
+    if (d.kind === 'wait') {
+      return { ...base, kind: 'wait', wait: { seconds: waitSecondsOf(d) ?? 0 } };
+    }
     if (d.kind === 'check') {
       return {
         ...base,

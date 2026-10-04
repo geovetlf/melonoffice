@@ -223,6 +223,8 @@ const toWorkflowVersionView = (v: WorkflowVersion) => ({
         : { departmentTypeId: s.assignee.departmentTypeId, roleId: s.assignee.roleId },
     performedBy: s.performedBy ?? null,
     tool: s.tool === undefined ? null : { id: s.tool.id, version: s.tool.version },
+    // A wait's length (ADR-0152), so the editor can show and rewrite it (ADR-0158).
+    wait: s.wait === undefined ? null : { seconds: s.wait.seconds },
     // A check's decision (WF-4): its type, the outcomes that go on and its fixed input, which
     // holds only short codes and numbers, so the editor can show and rewrite it.
     decision:

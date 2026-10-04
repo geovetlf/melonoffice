@@ -8,6 +8,9 @@ import {
   AutomationsError,
   CHECK_CONTINUE_ON,
   CHECK_DECISION,
+  WAIT_UNIT_SECONDS,
+  waitSecondsOf,
+  type WaitUnit,
   type WorkflowAgentDraft,
   type WorkflowDecisionView,
   type WorkflowStepDraft,
@@ -18,7 +21,8 @@ import {
  * Writing a workflow (ADR-0028, ADR-0144): a name and its steps. A step is done by an agent with
  * a role (from the agent catalogue), optionally after the person approves it, or is a company
  * policy check (WF-4, ADR-0075) that lets the steps after it run only when the policy allows the
- * action. Each step waits for the earlier steps the person ticks, so a workflow can branch.
+ * action, or a set time to wait before the steps after it (ADR-0152, ADR-0158). Each step waits
+ * for the earlier steps the person ticks, so a workflow can branch.
  * Saving a workflow that exists writes a new version; the versions before it never change. The
  * server checks everything again.
  */
@@ -212,8 +216,9 @@ export function WorkflowEditor({
         s.label.trim() !== '' &&
         (s.kind === 'agent'
           ? s.roleId !== ''
-          : // A check decides on what came before it, so it waits for at least one step.
-            s.action !== '' && s.after.length > 0),
+          : // A check decides on, and a wait follows, what came before it: each waits for a step.
+            s.after.length > 0 &&
+            (s.kind === 'check' ? s.action !== '' : waitSecondsOf(s) !== undefined)),
     );
 
   const submit = async (event: FormEvent) => {
@@ -280,7 +285,7 @@ export function WorkflowEditor({
                     required
                   />
                 </label>
-                {actionChoices.length === 0 && step.kind === 'agent' ? null : (
+                {i === 0 && actionChoices.length === 0 && step.kind === 'agent' ? null : (
                   <label className="mo-field">
                     <span className="mo-label">
                       <FormattedMessage id="automations.editor.kind" />
@@ -292,15 +297,22 @@ export function WorkflowEditor({
                           i,
                           e.target.value === 'check'
                             ? checkDraft(step.key, step.label, step.after)
-                            : { ...agentDraft(step.key, step.after), label: step.label },
+                            : e.target.value === 'wait'
+                              ? waitDraft(step.key, step.label, step.after)
+                              : { ...agentDraft(step.key, step.after), label: step.label },
                         )
                       }
                     >
                       <option value="agent">
                         {intl.formatMessage({ id: 'automations.editor.kind.agent' })}
                       </option>
-                      <option value="check">
-                        {intl.formatMessage({ id: 'automations.editor.kind.check' })}
+                      {actionChoices.length === 0 && step.kind !== 'check' ? null : (
+                        <option value="check">
+                          {intl.formatMessage({ id: 'automations.editor.kind.check' })}
+                        </option>
+                      )}
+                      <option value="wait">
+                        {intl.formatMessage({ id: 'automations.editor.kind.wait' })}
                       </option>
                     </select>
                   </label>
@@ -340,6 +352,45 @@ export function WorkflowEditor({
                       />
                       <FormattedMessage id="automations.editor.approval" />
                     </label>
+                  </>
+                ) : step.kind === 'wait' ? (
+                  <>
+                    <label className="mo-field">
+                      <span className="mo-label">
+                        <FormattedMessage id="automations.editor.wait.amount" />
+                      </span>
+                      <input
+                        type="number"
+                        min={1}
+                        step={1}
+                        value={step.amount ?? ''}
+                        onChange={(e) =>
+                          change(i, {
+                            ...step,
+                            amount: e.target.value === '' ? null : Number(e.target.value),
+                          })
+                        }
+                        required
+                      />
+                    </label>
+                    <label className="mo-field">
+                      <span className="mo-label">
+                        <FormattedMessage id="automations.editor.wait.unit" />
+                      </span>
+                      <select
+                        value={step.unit}
+                        onChange={(e) => change(i, { ...step, unit: e.target.value as WaitUnit })}
+                      >
+                        {(Object.keys(WAIT_UNIT_SECONDS) as WaitUnit[]).map((u) => (
+                          <option key={u} value={u}>
+                            {intl.formatMessage({ id: `automations.editor.wait.${u}` })}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <p className="mo-hint">
+                      <FormattedMessage id="automations.editor.wait.hint" />
+                    </p>
                   </>
                 ) : (
                   <>
@@ -496,6 +547,26 @@ const agentDraft = (key: string, after: readonly string[]): WorkflowStepDraft =>
   approvalRequired: false,
 });
 
+const waitDraft = (key: string, label: string, after: readonly string[]): WorkflowStepDraft => ({
+  kind: 'wait',
+  key,
+  label,
+  after,
+  amount: null,
+  unit: 'hours',
+});
+
+/** A wait in the largest unit it is a whole number of, as the editor shows it. */
+function waitOf(seconds: number): { readonly amount: number; readonly unit: WaitUnit } {
+  for (const unit of ['days', 'hours', 'minutes'] as const) {
+    if (seconds % WAIT_UNIT_SECONDS[unit] === 0) {
+      return { amount: seconds / WAIT_UNIT_SECONDS[unit], unit };
+    }
+  }
+  // Seconds the editor cannot show: not offered for rewriting (`draftsOf` refuses it).
+  return { amount: seconds, unit: 'minutes' };
+}
+
 const checkDraft = (key: string, label: string, after: readonly string[]): WorkflowStepDraft => ({
   kind: 'check',
   key,
@@ -528,6 +599,7 @@ export function draftsOf(
     readonly dependsOn: readonly string[];
     readonly assignee: { readonly departmentTypeId: string; readonly roleId: string } | null;
     readonly decision?: WorkflowDecisionView | null;
+    readonly wait?: { readonly seconds: number } | null;
     readonly approvalRequired: boolean;
   }[],
 ): readonly WorkflowStepDraft[] | undefined {
@@ -545,6 +617,12 @@ export function draftsOf(
         roleId: s.assignee.roleId,
         approvalRequired: s.approvalRequired,
       });
+      continue;
+    }
+    if (s.kind === 'wait') {
+      // A wait of whole minutes: anything else would change by rewriting it.
+      if (s.wait == null || s.wait.seconds % 60 !== 0) return undefined;
+      drafts.push({ ...base, kind: 'wait', ...waitOf(s.wait.seconds) });
       continue;
     }
     const check =
