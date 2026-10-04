@@ -27,7 +27,7 @@ import {
 import { jobIdFor, type JobRepository } from '@melonoffice/jobs';
 import { turnOf } from '@melonoffice/integrations';
 import type { Logger } from '@melonoffice/observability';
-import { planStepOf } from '@melonoffice/planning';
+import { planStepOf, stepApprovalEntriesOf } from '@melonoffice/planning';
 import type { Runtime } from '@melonoffice/runtime';
 import { resolveRuntimeTenant, type TenancyStore, type TenantContext } from '@melonoffice/tenancy';
 
@@ -156,7 +156,7 @@ export function createExecutionSweeper(options: ExecutionSweeperOptions): Execut
     }
     const plan = await plans.find(execution.organizationId as OrganizationId, step.planId);
     if (plan?.status !== 'executing') return undefined;
-    if (plan.stepApprovals?.some((a) => a.stepId === step.stepId) !== true) {
+    if (stepApprovalEntriesOf(plan, step.stepId).length === 0) {
       return 'waiting_in_plan';
     }
     let tenant;

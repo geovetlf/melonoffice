@@ -2377,6 +2377,7 @@
   "audit.action.execution.job_leased": "A job was picked up",
   "audit.action.execution.job_finished": "A job finished",
   "audit.action.execution.job_cancelled": "A job was cancelled",
+  "audit.action.execution.approval_attached": "A tool step's approval was attached to its step",
   "audit.action.execution.node_outcome_unknown": "A step's outcome could not be confirmed",
   "audit.action.tool.authorization_checked": "A tool use was checked",
   "audit.action.tool.execution_requested": "A tool was asked to run",

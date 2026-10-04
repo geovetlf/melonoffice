@@ -7,6 +7,8 @@ import {
   isPlanningError,
   PlanningError,
   planStepStates,
+  stepApprovalEntriesOf,
+  stepApprovalOf,
   specialistStepState,
   unrunnableStepOf,
   type PlanConductor,
@@ -293,16 +295,21 @@ export async function readPlanSteps(
     children.set(step.id, await steps.executions.get(tenant, executionId));
   }
   const conditionOf = (id: string) => plan.conditions?.find((c) => c.stepId === id);
-  const approvalOf = (id: string) => plan.stepApprovals?.find((a) => a.stepId === id);
+  // Every approval a step waits for: its own (ADR-0146) and its tool steps' (ADR-0151). The one
+  // shown is the first still open, else the declined one, which says why it never ran.
+  const approvalOf = (id: string) => {
+    const entries = stepApprovalEntriesOf(plan, id);
+    return entries.find((a) => a.declined === undefined) ?? entries[0];
+  };
+  const declineOf = (id: string) =>
+    stepApprovalEntriesOf(plan, id).find((a) => a.declined !== undefined)?.declined;
   const states = planStepStates(version.steps, (step) => {
     if (step.kind === 'condition') return conditionStepState(conditionOf(step.id));
     const child = children.get(step.id);
     if (child === undefined) return 'waiting';
-    // A step that asked a person (ADR-0146): waiting for them, or declined.
-    const entry = approvalOf(step.id);
-    return entry === undefined
-      ? specialistStepState(child)
-      : gatedStepState(child, entry.declined === undefined ? 'awaiting' : 'declined');
+    // A step that asked people (ADR-0146, ADR-0151): waiting for them, or declined.
+    const approval = stepApprovalOf(plan, step.id);
+    return approval === 'none' ? specialistStepState(child) : gatedStepState(child, approval);
   });
   const out: PlanStepRead[] = [];
   for (const step of version.steps) {
@@ -342,7 +349,7 @@ export async function readPlanSteps(
       // The approval a person decides it with, in the approvals inbox.
       approvalId: approvalOf(step.id)?.approvalId ?? null,
       // Why a declined step never ran: rejected, expired or withdrawn (ADR-0146).
-      failure: approvalOf(step.id)?.declined?.reason ?? execution?.failure?.code ?? null,
+      failure: declineOf(step.id)?.reason ?? execution?.failure?.code ?? null,
       outcome: null,
       answer: answered?.answer ?? null,
       missing: answered === undefined ? [] : [...answered.missing],

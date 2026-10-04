@@ -481,6 +481,12 @@ export const AUDIT_ACTIONS = {
     description: 'A job was cancelled because its execution ended (ADR-0030).',
     results: ['success'],
   },
+  'execution.approval_attached': {
+    category: 'execution',
+    description:
+      "A running plan attached the approval a person gave for one of its tool steps to that step's tool node, before the step started (ADR-0151); `nodeId` is the tool node, `reference` the approval. The Tool Gate still checks it covers the exact call.",
+    results: ['success'],
+  },
   'execution.node_outcome_unknown': {
     category: 'execution',
     description:

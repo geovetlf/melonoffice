@@ -394,6 +394,12 @@ function checkStepApproval(entry: PlanStepApproval): void {
   if (typeof entry.requestedAt !== 'string' || Number.isNaN(Date.parse(entry.requestedAt))) {
     invalid('stepApprovals');
   }
+  if (
+    entry.performedBy !== undefined &&
+    (typeof entry.performedBy !== 'string' || entry.performedBy.length === 0)
+  ) {
+    invalid('stepApprovals');
+  }
   const { declined } = entry;
   if (
     declined !== undefined &&
@@ -440,7 +446,7 @@ export function recordStepDeclined(
  */
 export function recordStepApproval(
   plan: Plan,
-  entry: { readonly stepId: string; readonly approvalId: string },
+  entry: { readonly stepId: string; readonly approvalId: string; readonly performedBy?: string },
   at: IsoTimestamp,
 ): Plan {
   if (plan.status !== 'executing') throw new PlanningError('invalid_plan_transition');
@@ -452,6 +458,7 @@ export function recordStepApproval(
     stepId: entry.stepId,
     approvalId: entry.approvalId,
     requestedAt: next.updatedAt,
+    ...(entry.performedBy === undefined ? {} : { performedBy: entry.performedBy }),
   });
   checkStepApproval(recorded);
   return Object.freeze({

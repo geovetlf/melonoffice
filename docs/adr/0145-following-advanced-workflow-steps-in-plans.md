@@ -22,7 +22,7 @@ An audit of the advanced steps found the following.
 | Conditions on company policy                         | Exist (WF-4). In the editor since ADR-0144.                                                                                                         |
 | Conditions on an earlier step's result or answer     | The runtime refuses the older `condition` form. Inputs from answers need a closed mapping (ADR-0075 Open).                                          |
 | Human approval                                       | The whole plan is approved before anything runs (every workflow plan waits). An approval node inside a running plan does not exist (ADR-0075 Open). |
-| Tool calls                                           | `tool` steps are validated but never run. Needs runtime work and decisions on tool risk, irreversible actions and credits.                          |
+| Tool calls                                           | `tool` steps are validated but never run. Needs runtime work and decisions on tool risk, irreversible actions and credits. Since ADR-0151 they run. |
 | Waits and delays                                     | Not in the engine. A new runtime capability (scheduling).                                                                                           |
 | Handoff                                              | Exists for conversations (AE-9), not in plans.                                                                                                      |
 | Retries                                              | `retry` is validated and stored, but the conductor does not use it. Provider retries and fallback happen in the AI Gateway.                         |

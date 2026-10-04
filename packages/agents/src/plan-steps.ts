@@ -29,8 +29,9 @@ import { AGENT_TASK_PROMPT } from './prompts.js';
  * How the runtime runs one step of an approved plan (WF-1, ADR-0070). A plan step is an agent
  * task whose request is the step itself: the same prompt, answer shape, model policy, Company
  * Brain context and verification as a task (ADR-0063), so a plan adds no second way to call a
- * model. What a step adds is the answers of the steps it depends on, as data. Nothing here acts:
- * a step answers, it calls no tool.
+ * model. What a step adds is the answers of the steps it depends on, as data. The agent answers
+ * and calls no tool itself; the tool steps the plan gave it (ADR-0151) run after its answer as the
+ * child's tool nodes, through the Tool Gate, with the input fixed in the plan.
  */
 
 /** A step's work: exactly what the stored plan version says, or nothing. */
@@ -133,9 +134,20 @@ export function createPlanStepWork(options: PlanStepWorkOptions): AgentTaskWork 
     async needed() {
       return true;
     },
-    async toolInput() {
-      // A plan step in WF-1 has no tool node: plans with tool steps are refused before approval.
-      return undefined;
+    async toolInput(tenant: TenantContext, execution: Execution, node: ExecutionNode) {
+      // A tool step's input is the one fixed in the plan (ADR-0151), for exactly this tool node
+      // of this specialist step's child; the Tool Gate checks it, and everything else, again.
+      const facts = await factsOf(plans, tenant, execution);
+      if (facts === undefined || node.type !== 'tool' || node.tool === undefined) return undefined;
+      const tool = facts.version.steps.find(
+        (s) =>
+          s.kind === 'tool' &&
+          s.id === node.id &&
+          s.performedBy === facts.step.id &&
+          s.tool?.id === node.tool?.id &&
+          s.tool?.version === node.tool?.version,
+      );
+      return tool === undefined ? undefined : structuredClone(tool.input ?? {});
     },
     async agentWork(tenant: TenantContext, execution: Execution, node: ExecutionNode) {
       const facts = await factsOf(plans, tenant, execution);
@@ -197,8 +209,12 @@ export function createPlanStepWork(options: PlanStepWorkOptions): AgentTaskWork 
 
 /**
  * Checks a finished plan step as a task is checked (`output_schema`): its answer is kept and has
- * the answer's shape. The result is that answer.
+ * the answer's shape. Each tool step it ran (ADR-0151) completed only once the Tool Gate checked
+ * its output against the tool's output schema, which is its evidence. The result is the answer.
  */
+/** A tool step's evidence: the Tool Gate checked its output against the tool's schema. */
+export const TOOL_OUTPUT_CHECK = 'tool_output_valid';
+
 export function createPlanStepVerifier(options: {
   readonly outputs: Pick<AgentOutputStore, 'find'>;
 }): AgentTaskVerifier {
@@ -225,6 +241,19 @@ export function createPlanStepVerifier(options: {
               },
             ],
           },
+          ...execution.nodes
+            .filter((n) => n.type === 'tool' && n.status === 'completed')
+            .map((n) => ({
+              nodeId: n.id,
+              policy: 'output_schema' as const,
+              checks: [
+                {
+                  code: TOOL_OUTPUT_CHECK,
+                  result: 'passed' as const,
+                  evidence: n.output ?? { type: 'execution_node', id: n.id },
+                },
+              ],
+            })),
         ],
       };
       return {

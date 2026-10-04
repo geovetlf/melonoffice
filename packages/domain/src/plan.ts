@@ -105,11 +105,26 @@ export interface PlanStepApproval {
   readonly approvalId: string;
   readonly requestedAt: IsoTimestamp;
   /**
+   * On a tool step's approval (ADR-0151), `stepId` is the tool step and this is the specialist
+   * step that uses it: that step starts only once every approval it waits for was given.
+   */
+  readonly performedBy?: string;
+  /**
    * Set once the approval was rejected, expired or withdrawn: the step never runs and the steps
    * after it are skipped, while the other branches go on. `reason` is a stable code.
    */
   readonly declined?: { readonly reason: string; readonly at: IsoTimestamp };
 }
+
+/** A tool step's fixed input: plain JSON values only. */
+export type PlanToolValue =
+  | string
+  | number
+  | boolean
+  | null
+  | readonly PlanToolValue[]
+  | { readonly [key: string]: PlanToolValue };
+export type PlanToolInput = { readonly [key: string]: PlanToolValue };
 
 export interface PlanRetry {
   readonly maxAttempts: number;
@@ -150,6 +165,12 @@ export interface PlanStep {
   readonly performedBy?: string;
   /** On `tool` steps: the exact tool version. */
   readonly tool?: { readonly id: ToolId; readonly version: number };
+  /**
+   * On `tool` steps (ADR-0151): the tool's input, fixed when the plan is made and checked against
+   * the tool's own input schema then and again by the Tool Gate when it runs. Data, never
+   * authority: the organization, agent, approval and credentials always come from the server.
+   */
+  readonly input?: PlanToolInput;
   readonly inputContract?: ToolSchema;
   readonly outputContract?: ToolSchema;
   /** Required on `specialist` and `verification` steps. */

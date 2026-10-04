@@ -38,7 +38,7 @@ import {
 import type { DepartmentRepository } from '@melonoffice/departments';
 import { isExecutionError, type AgentOutputStore } from '@melonoffice/execution';
 import type { GiaAgentsPort } from '@melonoffice/gia';
-import { planStepOf } from '@melonoffice/planning';
+import { planStepOf, stepApprovalEntriesOf } from '@melonoffice/planning';
 import type { SpecialistRepository } from '@melonoffice/specialists';
 import type { TenantContext } from '@melonoffice/tenancy';
 import type { Context, Hono } from 'hono';
@@ -428,7 +428,9 @@ export function registerAgentTaskRoutes(
     const agentId = step.specialist?.id ?? null;
     const agent = agentId === null ? undefined : agents[agentId];
     const nodes = execution?.nodes ?? [];
-    const entry = plan.stepApprovals?.find((a) => a.stepId === step.id);
+    // Its own approval (ADR-0146) and its tool steps' (ADR-0151): a declined one says why.
+    const entries = stepApprovalEntriesOf(plan, step.id);
+    const entry = entries.find((a) => a.declined !== undefined) ?? entries[0];
     const answered = read.answer;
     return {
       id: execution?.id ?? read.executionId,
@@ -458,7 +460,7 @@ export function registerAgentTaskRoutes(
         const before = item.siblings.find((v) => v.stepId === id);
         return before === undefined ? [] : [{ label: before.label, state: before.state }];
       }),
-      // A step that asked a person (ADR-0146): waiting, approved, or why it was declined.
+      // A step that asked people (ADR-0146, ADR-0151): waiting, approved, or why it was declined.
       approval:
         entry === undefined
           ? null
