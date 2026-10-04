@@ -394,8 +394,15 @@ export async function readPlanSteps(
       state,
       executionId: execution?.id ?? null,
       status: execution?.status ?? null,
-      // The approval a person decides it with, in the approvals inbox.
-      approvalId: approvalOf(step.id)?.approvalId ?? null,
+      // The approval a person decides it with, in the approvals inbox: once it started, the one
+      // its tool call waits on (ADR-0155).
+      approvalId:
+        (execution?.status === 'waiting_approval'
+          ? execution.nodes.find((n) => n.status === 'pending' && n.approvalId !== undefined)
+              ?.approvalId
+          : undefined) ??
+        approvalOf(step.id)?.approvalId ??
+        null,
       // Why a declined step never ran: rejected, expired or withdrawn (ADR-0146).
       failure: declineOf(step.id)?.reason ?? execution?.failure?.code ?? null,
       outcome: null,

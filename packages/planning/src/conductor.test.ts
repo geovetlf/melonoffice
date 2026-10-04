@@ -5,6 +5,8 @@ import {
   CONDITION_CHECK,
   createPlanConductor,
   planStepOf,
+  gatedStepState,
+  specialistStepState,
   STEP_CHECK,
   stepRetryable,
   unrunnableStepOf,
@@ -241,15 +243,41 @@ describe('plan conductor (WF-1)', () => {
     expect(t.started).toHaveLength(1);
     const parent = await t.w.executions.get(t.w.tenantA, t.planned.executionId);
     expect(parent.status).toBe('failed');
-    expect(parent.failure?.code).toBe('step_failed');
+    // Which step stopped it and why, on the graph and in the audit trail (ADR-0155).
+    const research = await t.childOf('research');
+    expect(parent.failure).toEqual({
+      code: 'step_failed',
+      ref: { type: 'execution', id: research },
+    });
+    expect(parent.nodes.find((n) => n.id === 'research')).toMatchObject({
+      status: 'failed',
+      error: { code: 'input_unavailable' },
+    });
     expect(t.w.events('plan.state_changed').at(-1)).toMatchObject({
       transition: { from: 'executing', to: 'failed' },
       reason: 'step_failed',
+      nodeId: 'research',
+      reference: 'input_unavailable',
     });
     // The steps that never started stay pending: nothing runs them.
     expect(await t.status(await t.childOf('report'))).toBe('pending');
     await t.conductor.advance(t.w.runtimeA, t.planned.id);
     expect(t.started).toHaveLength(1);
+  });
+
+  it('names one state for a step waiting on a person, started or not (ADR-0155)', () => {
+    const at = '2026-09-27T12:00:00.000Z' as never;
+    expect(specialistStepState({ status: 'pending' })).toBe('waiting');
+    expect(specialistStepState({ status: 'running', startedAt: at })).toBe('running');
+    expect(specialistStepState({ status: 'waiting_approval', startedAt: at })).toBe(
+      'awaiting_approval',
+    );
+    expect(specialistStepState({ status: 'verifying', startedAt: at })).toBe('running');
+    expect(specialistStepState({ status: 'cancelled', startedAt: at })).toBe('failed');
+    // A started step is never held back by the plan's own approvals.
+    expect(gatedStepState({ status: 'waiting_approval', startedAt: at }, 'approved')).toBe(
+      'awaiting_approval',
+    );
   });
 
   it('starts nothing after the person cancelled the plan', async () => {

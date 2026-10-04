@@ -106,8 +106,11 @@ const FIELDS: Readonly<Record<PlanStep['kind'], readonly (keyof ProposalStep)[]>
 };
 const OPTIONAL_FIELDS = new Set<keyof ProposalStep>(['id', 'kind', 'label', 'dependsOn']);
 
-/** Schema stage, second half: each kind carries exactly what it needs. */
-function checkShape(step: ProposalStep, field: string): void {
+/**
+ * Schema stage, second half: each kind carries exactly what it needs. A workflow's specialist step
+ * names who does it later, when the workflow is planned (`boundLater`), never a specialist now.
+ */
+function checkShape(step: ProposalStep, field: string, boundLater = false): void {
   const allowed = new Set<keyof ProposalStep>([...OPTIONAL_FIELDS, ...FIELDS[step.kind]]);
   for (const key of Object.keys(step) as (keyof ProposalStep)[]) {
     if (!allowed.has(key)) refuse('schema', 'invalid_proposal', `${field}.${key}`);
@@ -117,7 +120,7 @@ function checkShape(step: ProposalStep, field: string): void {
   };
   switch (step.kind) {
     case 'specialist':
-      need(step.specialistId !== undefined, 'specialistId');
+      if (!boundLater) need(step.specialistId !== undefined, 'specialistId');
       break;
     case 'tool':
       need(step.performedBy !== undefined, 'performedBy');
@@ -140,6 +143,91 @@ function checkShape(step: ProposalStep, field: string): void {
     case 'approval':
     case 'parallel':
       break;
+  }
+}
+
+/** Plan stage: dependencies, conditions and the graph, with X1's own graph check. */
+function checkPlanShape(steps: readonly ProposalStep[]): void {
+  const byId = new Map(steps.map((s) => [s.id, s]));
+  if (byId.size !== steps.length) refuse('plan', 'duplicate_step');
+  for (const [i, step] of steps.entries()) {
+    const field = `steps.${i}`;
+    for (const dependency of step.dependsOn) {
+      const target = byId.get(dependency);
+      if (target === undefined) continue; // the graph check names it
+      if (step.kind === 'tool') {
+        // A tool step lives in its specialist's own execution: it can only wait on that
+        // specialist's step or on the same specialist's other tool steps.
+        const sameWork =
+          dependency === step.performedBy ||
+          (target.kind === 'tool' && target.performedBy === step.performedBy);
+        if (!sameWork) refuse('plan', 'invalid_tool_dependency', field);
+      } else if (target.kind === 'tool') {
+        // Other steps wait on the specialist step that uses the tool, which ends with it.
+        refuse('plan', 'invalid_dependency', field);
+      }
+    }
+    if (step.kind === 'tool') {
+      const performer = byId.get(step.performedBy as string);
+      if (performer?.kind !== 'specialist') refuse('plan', 'invalid_performer', field);
+    }
+    if (step.condition !== undefined && !step.dependsOn.includes(step.condition.step)) {
+      refuse('plan', 'invalid_condition', field);
+    }
+  }
+  const nodes = steps.map(
+    (s): ExecutionNode =>
+      ({
+        id: s.id as ExecutionNodeId,
+        type: 'agent',
+        label: s.label,
+        status: 'pending',
+        dependsOn: s.dependsOn as ExecutionNodeId[],
+      }) satisfies ExecutionNode,
+  );
+  try {
+    checkGraph(nodes);
+  } catch (error) {
+    if (!isExecutionError(error)) throw error;
+    const problem = error.detail ?? '';
+    const reason =
+      problem === 'nodes.cycle'
+        ? 'plan_cycle'
+        : problem === 'nodes.self_dependency'
+          ? 'self_dependency'
+          : problem === 'nodes.too_many'
+            ? 'too_many_steps'
+            : problem === 'nodes.duplicate_id'
+              ? 'duplicate_step'
+              : 'unknown_dependency';
+    refuse('plan', reason);
+  }
+}
+
+/**
+ * The structure a plan must have whatever organization it is for (ADR-0156): each step carries
+ * exactly what its kind needs, tool steps wait only on their own specialist's work, and the
+ * dependencies form one graph with no cycle. A workflow is checked with it when a version is
+ * saved, so a template every plan would refuse is never stored. Reads nothing, decides nothing
+ * about specialists, tools or permissions: those stay with the validator, per organization.
+ */
+export function checkStepStructure(
+  steps: readonly ProposalStep[],
+  options: { readonly boundLater?: boolean } = {},
+):
+  | { readonly ok: true }
+  | { readonly ok: false; readonly reason: string; readonly detail?: string } {
+  try {
+    steps.forEach((step, i) => checkShape(step, `steps.${i}`, options.boundLater === true));
+    checkPlanShape(steps);
+    return { ok: true };
+  } catch (error) {
+    if (!(error instanceof Refusal)) throw error;
+    return {
+      ok: false,
+      reason: error.reason,
+      ...(error.detail === undefined ? {} : { detail: error.detail }),
+    };
   }
 }
 
@@ -249,64 +337,6 @@ export function createPlanValidator(options: PlanValidatorOptions): PlanValidato
       !tool.version.permissions.every((p) => permissions.has(p))
     ) {
       refuse('permission', 'permission_not_held', field);
-    }
-  }
-
-  /** Plan stage: dependencies, conditions and the graph, with X1's own graph check. */
-  function checkPlanShape(steps: readonly ProposalStep[]): void {
-    const byId = new Map(steps.map((s) => [s.id, s]));
-    if (byId.size !== steps.length) refuse('plan', 'duplicate_step');
-    for (const [i, step] of steps.entries()) {
-      const field = `steps.${i}`;
-      for (const dependency of step.dependsOn) {
-        const target = byId.get(dependency);
-        if (target === undefined) continue; // the graph check names it
-        if (step.kind === 'tool') {
-          // A tool step lives in its specialist's own execution: it can only wait on that
-          // specialist's step or on the same specialist's other tool steps.
-          const sameWork =
-            dependency === step.performedBy ||
-            (target.kind === 'tool' && target.performedBy === step.performedBy);
-          if (!sameWork) refuse('plan', 'invalid_tool_dependency', field);
-        } else if (target.kind === 'tool') {
-          // Other steps wait on the specialist step that uses the tool, which ends with it.
-          refuse('plan', 'invalid_dependency', field);
-        }
-      }
-      if (step.kind === 'tool') {
-        const performer = byId.get(step.performedBy as string);
-        if (performer?.kind !== 'specialist') refuse('plan', 'invalid_performer', field);
-      }
-      if (step.condition !== undefined && !step.dependsOn.includes(step.condition.step)) {
-        refuse('plan', 'invalid_condition', field);
-      }
-    }
-    const nodes = steps.map(
-      (s): ExecutionNode =>
-        ({
-          id: s.id as ExecutionNodeId,
-          type: 'agent',
-          label: s.label,
-          status: 'pending',
-          dependsOn: s.dependsOn as ExecutionNodeId[],
-        }) satisfies ExecutionNode,
-    );
-    try {
-      checkGraph(nodes);
-    } catch (error) {
-      if (!isExecutionError(error)) throw error;
-      const problem = error.detail ?? '';
-      const reason =
-        problem === 'nodes.cycle'
-          ? 'plan_cycle'
-          : problem === 'nodes.self_dependency'
-            ? 'self_dependency'
-            : problem === 'nodes.too_many'
-              ? 'too_many_steps'
-              : problem === 'nodes.duplicate_id'
-                ? 'duplicate_step'
-                : 'unknown_dependency';
-      refuse('plan', reason);
     }
   }
 

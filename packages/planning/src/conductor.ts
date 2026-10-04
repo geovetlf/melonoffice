@@ -299,6 +299,9 @@ export interface PlanConductorOptions {
 export const STEP_CHECK = 'step_execution_completed';
 /** The evidence that a condition step was decided: its decision. */
 export const CONDITION_CHECK = 'condition_decided';
+/** What an audit event's `reference` may hold. */
+const REFERENCE = /^[A-Za-z0-9._:-]{1,128}$/;
+
 /** The evidence that a wait step ended: its recorded start and end (ADR-0152). */
 export const WAIT_CHECK = 'wait_elapsed';
 
@@ -342,7 +345,8 @@ export function stepRetryable(
  * - `running`: its child execution started;
  * - `completed`: its child completed, or its condition lets the plan go on;
  * - `stopped`: its condition was decided and the steps after it do not run;
- * - `awaiting_approval`: ready, waiting for a person to approve it (ADR-0146);
+ * - `awaiting_approval`: ready, waiting for a person to approve it (ADR-0146), or started and
+ *   waiting for a person to approve one of its tool calls (ADR-0155);
  * - `declined`: its approval was rejected, expired or withdrawn: it never runs (ADR-0146);
  * - `delayed`: a wait step that started and has not ended yet (ADR-0152), or a step's next attempt
  *   that may not start yet (ADR-0153);
@@ -380,7 +384,11 @@ interface StepView {
   readonly state: StepState;
 }
 
-/** A specialist step's state from its child execution. */
+/**
+ * A specialist step's state from its child execution. A started child that waits for a person
+ * (a tool call the gate asked about, ADR-0026) is `awaiting_approval`, as a step that waits
+ * before it starts (ADR-0155): one state for waiting on a person, whatever asked.
+ */
 export const specialistStepState = (
   child: Pick<Execution, 'status' | 'startedAt'>,
 ): PlanStepState =>
@@ -388,9 +396,11 @@ export const specialistStepState = (
     ? 'completed'
     : child.status === 'failed' || child.status === 'cancelled'
       ? 'failed'
-      : child.startedAt !== undefined
-        ? 'running'
-        : 'waiting';
+      : child.startedAt === undefined
+        ? 'waiting'
+        : child.status === 'waiting_approval'
+          ? 'awaiting_approval'
+          : 'running';
 
 /** A condition step's state from its recorded result, if it was decided. */
 export const conditionStepState = (condition: PlanConditionResult | undefined): PlanStepState =>
@@ -1049,6 +1059,8 @@ export function createPlanConductor(options: PlanConductorOptions): PlanConducto
     plan: Plan,
     to: 'completed' | 'failed',
     reason?: string,
+    /** On a failure (ADR-0155): the step it stopped at, and its child's own code. */
+    failed?: { readonly stepId: string; readonly cause?: string },
   ): Promise<Plan> {
     const at = now();
     try {
@@ -1066,6 +1078,10 @@ export function createPlanConductor(options: PlanConductorOptions): PlanConducto
                 target: { type: 'plan', id: next.id },
                 transition: { from: current.status, to: next.status },
                 ...(reason === undefined ? {} : { reason }),
+                ...(failed === undefined ? {} : { nodeId: failed.stepId }),
+                ...(failed?.cause !== undefined && REFERENCE.test(failed.cause)
+                  ? { reference: failed.cause }
+                  : {}),
                 ...(requestId === undefined ? {} : { requestId }),
                 source: 'api',
               },
@@ -1130,7 +1146,14 @@ export function createPlanConductor(options: PlanConductorOptions): PlanConducto
             }),
           );
         }
-      } else if (view.state === 'running' || view.state === 'delayed' || decided(view)) {
+      } else if (
+        view.state === 'running' ||
+        view.state === 'delayed' ||
+        // A started child shows as running, waiting on a person or failed alike (ADR-0155).
+        ((view.state === 'awaiting_approval' || view.state === 'failed') &&
+          view.child?.startedAt !== undefined) ||
+        decided(view)
+      ) {
         if (node.status === 'pending') {
           await settle(() =>
             executions.runtimePlanChangeNode(tenant, parentId, {
@@ -1217,14 +1240,38 @@ export function createPlanConductor(options: PlanConductorOptions): PlanConducto
     }
   }
 
-  /** A step failed or was cancelled: the plan stops, and no other step starts. */
-  async function stop(tenant: TenantContext, parent: Execution, code: string): Promise<void> {
+  /**
+   * A step failed or was cancelled: the plan stops, and no other step starts. Its graph shows
+   * which step failed and why (ADR-0155): that step's node fails with its child's own code, and
+   * the planning execution's failure points at the child.
+   */
+  async function stop(
+    tenant: TenantContext,
+    parent: Execution,
+    code: string,
+    stopped: StepView,
+  ): Promise<void> {
     if (isTerminal(parent.status)) return;
+    const { child } = stopped;
+    const node = parent.nodes.find((n) => n.id === stopped.step.id);
+    if (node?.status === 'running') {
+      await settle(() =>
+        executions.runtimePlanChangeNode(tenant, parent.id, {
+          nodeId: stopped.step.id,
+          from: 'running',
+          to: 'failed',
+          error: { code: child?.failure?.code ?? code },
+        }),
+      );
+    }
     await settle(() =>
       executions.runtimePlanChangeStatus(tenant, parent.id, {
         from: parent.status,
         to: 'failed',
-        failure: { code },
+        failure: {
+          code,
+          ...(child === undefined ? {} : { ref: { type: 'execution', id: child.id } }),
+        },
       }),
     );
   }
@@ -1289,15 +1336,20 @@ export function createPlanConductor(options: PlanConductorOptions): PlanConducto
       // A step still waiting for a person never will: its approval is withdrawn.
       for (const view of views) {
         if (view.state !== 'awaiting_approval' && view.state !== 'waiting') continue;
+        // A started step's approval is the gate's own, on its child: not the plan's to withdraw.
+        if (view.child?.startedAt !== undefined) continue;
         for (const entry of stepApprovalEntriesOf(plan, view.step.id)) {
           if (entry.declined === undefined && approvals !== undefined) {
             await approvals.cancel(tenant, entry.approvalId, 'plan_ended');
           }
         }
       }
-      await stop(tenant, await mirror(tenant, plan.executionId, views), code);
+      await stop(tenant, await mirror(tenant, plan.executionId, views), code, stopped);
       logger?.info('plan stopped', { planId: plan.id, stepId: stopped.step.id, code });
-      return finishPlan(tenant, organizationId, plan, 'failed', code);
+      return finishPlan(tenant, organizationId, plan, 'failed', code, {
+        stepId: stopped.step.id,
+        ...(stopped.child?.failure === undefined ? {} : { cause: stopped.child.failure.code }),
+      });
     }
     if (views.every((v) => decided(v) || v.state === 'skipped' || v.state === 'declined')) {
       await complete(tenant, await mirror(tenant, plan.executionId, views), views);
