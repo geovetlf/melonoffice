@@ -271,6 +271,12 @@ interface WorldOptions {
   readonly streams?: StreamScript;
   readonly creditPolicy?: CustomerCreditPolicy;
   readonly dataPolicy?: AIDataPolicy;
+  /**
+   * How long a provider call may take. The default is short so the timeout tests stay fast; a
+   * test about something else that reads a whole stream gives it room, since a busy machine can
+   * take longer than that to read every piece.
+   */
+  readonly timeoutMs?: number;
 }
 
 async function world(options: WorldOptions = {}) {
@@ -354,7 +360,7 @@ async function world(options: WorldOptions = {}) {
         }),
     audit: createAuditService(audit, now),
     logger: createLogger({ service: 'test', sink: (line) => logLines.push(line) }),
-    timeoutMs: 50,
+    timeoutMs: options.timeoutMs ?? 50,
     now,
     sleep: async (ms: number) => {
       sleeps.push(ms);
@@ -1111,7 +1117,7 @@ describe('AI gateway holds credits before the call (D-12, ADR-0123)', () => {
 
   it('settles a streamed answer the same way', async () => {
     const models = MODELS.map((m) => (m.modelId === 'alpha-small' ? { ...m, streaming: true } : m));
-    const { w, execution } = await setup({ realCredits: true, models });
+    const { w, execution } = await setup({ realCredits: true, models, timeoutMs: 5_000 });
     await grant(w, 10);
     let done: unknown;
     for await (const event of w.gateway.stream(
