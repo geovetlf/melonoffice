@@ -144,7 +144,7 @@ run "staging_is_isolated_and_minimal" {
   }
 
   assert {
-    condition     = length(google_firestore_database.default) == 0 && length(google_firestore_index.audit_activity) == 0 && length(google_firestore_index.commercial) == 0 && length(google_firestore_index.agent_tasks) == 0 && length(google_firestore_index.ai_usage_events) == 0 && length(google_firestore_index.documents) == 0 && length(google_firestore_index.executions_sweep) == 0 && length(google_storage_bucket.documents) == 0 && length(google_identity_platform_config.default) == 0 && length(google_project_iam_member.api_firestore) == 0
+    condition     = length(google_firestore_database.default) == 0 && length(google_firestore_index.audit_activity) == 0 && length(google_firestore_index.commercial) == 0 && length(google_firestore_index.agent_tasks) == 0 && length(google_firestore_index.ai_usage_events) == 0 && length(google_firestore_index.documents) == 0 && length(google_firestore_index.plans) == 0 && length(google_firestore_index.executions_sweep) == 0 && length(google_storage_bucket.documents) == 0 && length(google_identity_platform_config.default) == 0 && length(google_project_iam_member.api_firestore) == 0
     error_message = "Firestore and Identity Platform are dev only."
   }
 
@@ -189,7 +189,7 @@ run "prod_is_isolated_and_minimal" {
   }
 
   assert {
-    condition     = length(google_firestore_database.default) == 0 && length(google_firestore_index.audit_activity) == 0 && length(google_firestore_index.commercial) == 0 && length(google_firestore_index.agent_tasks) == 0 && length(google_firestore_index.ai_usage_events) == 0 && length(google_firestore_index.documents) == 0 && length(google_firestore_index.executions_sweep) == 0 && length(google_storage_bucket.documents) == 0 && length(google_identity_platform_config.default) == 0 && length(google_project_iam_member.api_firestore) == 0
+    condition     = length(google_firestore_database.default) == 0 && length(google_firestore_index.audit_activity) == 0 && length(google_firestore_index.commercial) == 0 && length(google_firestore_index.agent_tasks) == 0 && length(google_firestore_index.ai_usage_events) == 0 && length(google_firestore_index.documents) == 0 && length(google_firestore_index.plans) == 0 && length(google_firestore_index.executions_sweep) == 0 && length(google_storage_bucket.documents) == 0 && length(google_identity_platform_config.default) == 0 && length(google_project_iam_member.api_firestore) == 0
     error_message = "Firestore and Identity Platform are dev only."
   }
 
@@ -275,6 +275,11 @@ run "dev_gets_firestore_and_auth" {
   assert {
     condition     = google_firestore_index.documents[0].collection == "documents" && [for f in google_firestore_index.documents[0].fields : "${f.field_path}:${f.order}"] == ["organizationId:ASCENDING", "createdAt:DESCENDING"]
     error_message = "Dev must have the documents index (ADR-0078): per organization, newest first."
+  }
+
+  assert {
+    condition     = google_firestore_index.plans[0].collection == "plans" && [for f in google_firestore_index.plans[0].fields : "${f.field_path}:${f.order}"] == ["organizationId:ASCENDING", "createdAt:DESCENDING"]
+    error_message = "Dev must have the plans index (ADR-0150): per organization, newest first."
   }
 
   assert {

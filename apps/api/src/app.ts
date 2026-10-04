@@ -150,7 +150,6 @@ import {
   createPlanner,
   createPlanService,
   createPlanValidator,
-  MAX_PLANS_LISTED,
   type PlanRepository,
 } from '@melonoffice/planning';
 import {
@@ -1163,7 +1162,6 @@ export function createApp({
                 authorization,
                 executions: executionService,
                 ...(taskOutputs === undefined ? {} : { outputs: taskOutputs }),
-                window: MAX_PLANS_LISTED,
               }),
             }),
         ...(businessProfiles === undefined

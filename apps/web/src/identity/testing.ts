@@ -1066,7 +1066,6 @@ export function fakeBackend(): FakeBackend {
         statuses: ['pending', 'running', 'waiting_approval', 'completed', 'failed', 'cancelled'],
         origins: ['all', 'task', 'plan_step'],
         sources: options.organizationTasksSources ?? { task: 'read', plan_step: 'read' },
-        planStepsWindowed: false,
         period:
           q.get('from') === null && q.get('to') === null
             ? null

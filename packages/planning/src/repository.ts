@@ -16,6 +16,18 @@ export interface PlanUpdate {
   readonly events: readonly AuditEvent[];
 }
 
+/** A place in the list of plans, newest first: when the plan was created, then its id. */
+export interface PlanPosition {
+  readonly at: string;
+  readonly id: string;
+}
+
+/** One page of an organization's plans, newest first (ADR-0150). */
+export interface PlanPage {
+  readonly items: readonly Plan[];
+  readonly hasMore: boolean;
+}
+
 /**
  * Where plans live: `plans/{planId}` and write-once `planVersions/{planId}_{version}` in
  * Firestore (ADR-0028), memory in tests. Every write stores the plan and its audit events
@@ -31,6 +43,14 @@ export interface PlanRepository {
   ): Promise<PlanVersion | undefined>;
   /** The organization's plans, newest first, at most `limit`. */
   list(organizationId: OrganizationId, limit: number): Promise<readonly Plan[]>;
+  /**
+   * The organization's plans newest first, by creation then id, strictly after `after`, at
+   * most `limit` (ADR-0150). Every plan is reachable a page at a time, without a window.
+   */
+  page(
+    organizationId: OrganizationId,
+    request: { readonly after?: PlanPosition; readonly limit: number },
+  ): Promise<PlanPage>;
   /** Stores a new plan and its first version. An id that already exists is `plan_concurrency_conflict`. */
   create(write: PlanCreate): Promise<void>;
   /**
@@ -43,6 +63,26 @@ export interface PlanRepository {
     id: PlanId,
     change: (current: Plan, version: PlanVersion) => PlanUpdate,
   ): Promise<Plan>;
+}
+
+/** Whether a plan comes after `position` in the list: older, or the same instant and a lower id. */
+export const isPlanAfter = (plan: Pick<Plan, 'createdAt' | 'id'>, position: PlanPosition) =>
+  plan.createdAt < position.at || (plan.createdAt === position.at && plan.id < position.id);
+
+/** Newest first, by creation then id: the order of `page`. */
+export const byNewestPlan = (a: Plan, b: Plan): number =>
+  a.createdAt === b.createdAt ? (a.id < b.id ? 1 : -1) : a.createdAt < b.createdAt ? 1 : -1;
+
+/** A page of plans out of all of them, for stores that hold them in memory. */
+export function pageOfPlans(
+  plans: readonly Plan[],
+  request: { readonly after?: PlanPosition; readonly limit: number },
+): PlanPage {
+  const { after } = request;
+  const listed = plans
+    .filter((p) => after === undefined || isPlanAfter(p, after))
+    .sort(byNewestPlan);
+  return { items: listed.slice(0, request.limit), hasMore: listed.length > request.limit };
 }
 
 export const planVersionKey = (id: PlanId, version: number): string => `${id}_${version}`;
@@ -87,6 +127,14 @@ export class InMemoryPlanRepository implements PlanRepository {
       .map(checkStoredPlan)
       .sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0))
       .slice(0, limit);
+  }
+
+  async page(
+    organizationId: OrganizationId,
+    request: { readonly after?: PlanPosition; readonly limit: number },
+  ): Promise<PlanPage> {
+    const mine = [...this.#plans.values()].filter((p) => p.organizationId === organizationId);
+    return pageOfPlans(mine.map(checkStoredPlan), request);
   }
 
   async create({ plan, version, events }: PlanCreate): Promise<void> {

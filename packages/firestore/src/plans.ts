@@ -3,7 +3,7 @@ import type {
   Timestamp as FirestoreTimestamp,
   Transaction,
 } from '@google-cloud/firestore';
-import { Timestamp } from '@google-cloud/firestore';
+import { FieldPath, Timestamp } from '@google-cloud/firestore';
 import type { AuditEvent } from '@melonoffice/audit';
 import type {
   IsoTimestamp,
@@ -19,9 +19,12 @@ import {
   checkStoredPlan,
   checkStoredPlanVersion,
   isPlanId,
+  pageOfPlans,
   PlanningError,
   planVersionKey,
   type PlanCreate,
+  type PlanPage,
+  type PlanPosition,
   type PlanRepository,
   type PlanUpdate,
 } from '@melonoffice/planning';
@@ -250,9 +253,20 @@ function toPlanVersion(d: PlanVersionDocument): PlanVersion {
   }
 }
 
+/** A query Firestore refuses until its composite index exists (gRPC FAILED_PRECONDITION). */
+const isMissingIndex = (error: unknown): boolean =>
+  typeof error === 'object' &&
+  error !== null &&
+  (error as { code?: unknown }).code === 9 &&
+  /index/i.test(String((error as { message?: unknown }).message));
+
 /** Plans in Firestore. Each write is one transaction with its audit events. */
 export class FirestorePlanRepository implements PlanRepository {
-  constructor(private readonly db: Firestore) {}
+  constructor(
+    private readonly db: Firestore,
+    /** Told when a page had to be read without its index (ADR-0061's fallback). */
+    private readonly options: { readonly onIndexMissing?: (query: string) => void } = {},
+  ) {}
 
   async find(organizationId: OrganizationId, id: PlanId): Promise<Plan | undefined> {
     if (!isOrganizationId(organizationId) || !isPlanId(id)) return undefined;
@@ -291,6 +305,36 @@ export class FirestorePlanRepository implements PlanRepository {
       .map((doc) => toPlan(doc.id, doc.data() as PlanDocument))
       .sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0))
       .slice(0, limit);
+  }
+
+  /**
+   * Uses the composite index `organizationId, createdAt desc` (ADR-0150). Until it exists, the
+   * organization's plans are read through the automatic index and paged here, as `list` reads
+   * them, and the missing index is logged.
+   */
+  async page(
+    organizationId: OrganizationId,
+    request: { readonly after?: PlanPosition; readonly limit: number },
+  ): Promise<PlanPage> {
+    if (!isOrganizationId(organizationId)) return { items: [], hasMore: false };
+    const mine = this.db.collection(PLANS).where('organizationId', '==', organizationId);
+    let query = mine.orderBy('createdAt', 'desc').orderBy(FieldPath.documentId(), 'desc');
+    if (request.after !== undefined) {
+      query = query.startAfter(Timestamp.fromDate(new Date(request.after.at)), request.after.id);
+    }
+    try {
+      const snapshot = await query.limit(request.limit + 1).get();
+      const items = snapshot.docs.map((doc) => toPlan(doc.id, doc.data() as PlanDocument));
+      return { items: items.slice(0, request.limit), hasMore: items.length > request.limit };
+    } catch (error) {
+      if (!isMissingIndex(error)) throw error;
+      this.options.onIndexMissing?.('plans');
+      const snapshot = await mine.get();
+      return pageOfPlans(
+        snapshot.docs.map((doc) => toPlan(doc.id, doc.data() as PlanDocument)),
+        request,
+      );
+    }
   }
 
   async create({ plan, version, events }: PlanCreate): Promise<void> {

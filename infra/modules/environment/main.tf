@@ -631,6 +631,27 @@ resource "google_firestore_index" "documents" {
   }
 }
 
+# An organization's plans, newest first, a page at a time (ADR-0150): the list of every agent's
+# work reads plan steps through it, with no window of newest plans. Until this index exists, the
+# API reads the organization's plans without it and logs it.
+resource "google_firestore_index" "plans" {
+  count = var.firestore_and_auth ? 1 : 0
+
+  project     = var.project_id
+  database    = google_firestore_database.default[0].name
+  collection  = "plans"
+  query_scope = "COLLECTION"
+
+  fields {
+    field_path = "organizationId"
+    order      = "ASCENDING"
+  }
+  fields {
+    field_path = "createdAt"
+    order      = "DESCENDING"
+  }
+}
+
 # The automatic sweep of abandoned agent work (ADR-0121): executions of one open status not
 # updated since a cutoff, oldest first, across organizations, read by the worker every 3 hours.
 # Until this index exists, the worker reads up to 500 per status without it and logs it.

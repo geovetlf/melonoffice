@@ -19,7 +19,7 @@ import type { AuthorizationService } from '@melonoffice/rbac';
 import { isResolvedTenant, type TenancyStore, type TenantContext } from '@melonoffice/tenancy';
 import { PlanningError } from './errors.js';
 import { applyPlanStatus, decidePlan, isPlanId, isPlanReason, newPlan } from './model.js';
-import type { PlanRepository } from './repository.js';
+import type { PlanPage, PlanPosition, PlanRepository } from './repository.js';
 import type { PlanValidator, ValidationStage } from './validate.js';
 
 export const MAX_PLANS_LISTED = 100;
@@ -57,6 +57,11 @@ export interface PlanDecisionInput {
  */
 export interface PlanService {
   list(tenant: TenantContext): Promise<readonly Plan[]>;
+  /** Every plan of the organization, newest first, a page at a time (ADR-0150). */
+  page(
+    tenant: TenantContext,
+    request: { readonly after?: PlanPosition; readonly limit: number },
+  ): Promise<PlanPage>;
   /** `plan_not_found` for an unknown id or another organization's plan alike. */
   get(tenant: TenantContext, id: string): Promise<Plan>;
   getVersion(tenant: TenantContext, id: string, version: number): Promise<PlanVersion>;
@@ -237,6 +242,10 @@ export function createPlanService({
   return Object.freeze({
     async list(tenant: TenantContext) {
       return repository.list(await organizationOf(tenant), MAX_PLANS_LISTED);
+    },
+
+    async page(tenant: TenantContext, request: { after?: PlanPosition; limit: number }) {
+      return repository.page(await organizationOf(tenant), request);
     },
 
     get,

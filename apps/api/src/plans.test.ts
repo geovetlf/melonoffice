@@ -4,6 +4,7 @@ import type {
   ExecutionId,
   IsoTimestamp,
   OrganizationId,
+  Plan,
   PlanId,
   Specialist,
   UserId,
@@ -30,7 +31,7 @@ import {
   newSpecialist,
 } from '@melonoffice/specialists';
 import { resolveRuntimeTenant, resolveTenant, type TenantContext } from '@melonoffice/tenancy';
-import { defaultToolRegistry } from '@melonoffice/tools';
+import { defaultToolRegistry, digestOf } from '@melonoffice/tools';
 import { createWorkflowService } from '@melonoffice/workflows';
 import { describe, expect, it } from 'vitest';
 import { setupApp, STORES, type Stores } from './test-api.js';
@@ -1349,9 +1350,89 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
         expect((await list(w, '', 'token-bob', w.t.orgA)).status).toBe(403);
       });
 
+      it('reaches the steps of plans older than the newest 100, a page of plans at a time (ADR-0150)', async () => {
+        const w = await waitingPlan();
+        const current = must(await w.t.stores.plans.find(w.t.orgA, w.plan.id));
+        const version = must(await w.t.stores.plans.findVersion(w.t.orgA, w.plan.id, 1));
+        // A plan with no steps, nothing decided and nothing run.
+        const omitted = new Set([
+          'delegationState',
+          'delegationFailure',
+          'decision',
+          'stepApprovals',
+          'conditions',
+        ]);
+        const bare = Object.fromEntries(Object.entries(current).filter(([k]) => !omitted.has(k)));
+        // 105 newer plans with no steps: before ADR-0150 they pushed this plan out of the list.
+        const start = Date.parse(current.createdAt);
+        for (let i = 1; i <= 105; i += 1) {
+          const id = crypto.randomUUID() as Plan['id'];
+          await w.t.stores.plans.create({
+            plan: {
+              ...bare,
+              id,
+              executionId: crypto.randomUUID() as Plan['executionId'],
+              status: 'ready',
+              delegations: [],
+              revision: 1,
+              createdAt: new Date(start + i * 1000).toISOString() as Plan['createdAt'],
+            } as unknown as Plan,
+            version: {
+              ...version,
+              planId: id,
+              // A version's digest covers its plan's id.
+              digest: digestOf({
+                planId: id,
+                organizationId: version.organizationId,
+                version: version.version,
+                request: version.request,
+                steps: version.steps,
+                riskLevel: version.riskLevel,
+                approvalRequired: version.approvalRequired,
+                estimate: version.estimate,
+                source: version.source,
+              }),
+            },
+            events: [],
+          });
+        }
+        // Plans page newest first, each once, and only the organization's own.
+        const seen: string[] = [];
+        let after: { at: string; id: string } | undefined;
+        for (;;) {
+          const page = await w.t.stores.plans.page(w.t.orgA, {
+            ...(after === undefined ? {} : { after }),
+            limit: 40,
+          });
+          seen.push(...page.items.map((p) => `${p.createdAt}|${p.id}`));
+          const last = page.items.at(-1);
+          if (!page.hasMore || last === undefined) break;
+          after = { at: last.createdAt, id: last.id };
+        }
+        expect(seen).toHaveLength(106);
+        expect(new Set(seen).size).toBe(106);
+        expect([...seen].sort().reverse()).toEqual(seen);
+        expect((await w.t.stores.plans.page(w.t.orgB, { limit: 200 })).items).toEqual([]);
+
+        // The plan's four steps are still listed, one page at a time, none repeated.
+        const ids: string[] = [];
+        let cursor: string | null = null;
+        do {
+          const { status, body } = await list(
+            w,
+            `?origin=plan_step&limit=3${cursor === null ? '' : `&cursor=${cursor}`}`,
+          );
+          expect(status).toBe(200);
+          ids.push(...body.tasks.map((i) => i.id));
+          cursor = body.nextCursor;
+        } while (cursor !== null);
+        expect(ids).toHaveLength(4);
+        expect(new Set(ids)).toEqual(new Set(current.delegations.map((d) => d.executionId)));
+      });
+
       it('when plan steps cannot be read, tasks still show and the list says steps are missing', async () => {
         const w = await waitingPlan();
-        w.t.stores.plans.list = async () => {
+        w.t.stores.plans.page = async () => {
           throw new Error('store down');
         };
         const { status, body } = await list(w);
@@ -1415,6 +1496,7 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
         find: (org, id) => t.stores.plans.find(org, id),
         findVersion: (org, id, v) => t.stores.plans.findVersion(org, id, v),
         list: (org, limit) => t.stores.plans.list(org, limit),
+        page: (org, request) => t.stores.plans.page(org, request),
         create: (write) => t.stores.plans.create(write),
         async update(org, id, change) {
           updates += 1;

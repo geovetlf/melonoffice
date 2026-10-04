@@ -190,7 +190,11 @@ function services(projectId: string) {
     aiUsage: new FirestoreAIUsageStore(firestore, {
       onIndexMissing: (query) => logger.warn('firestore.index_missing', { query }),
     }),
-    plans: new FirestorePlanRepository(firestore),
+    // Plans, a page at a time for the list of every agent's work (ADR-0150). Until their index
+    // exists, a page is read without it and the gap logged.
+    plans: new FirestorePlanRepository(firestore, {
+      onIndexMissing: (query) => logger.warn('firestore.index_missing', { query }),
+    }),
     // Approving a plan starts it (ADR-0070): its steps are queued through the same runtime.
     planRuntime: agentTurns,
     workflows: new FirestoreWorkflowRepository(firestore),
