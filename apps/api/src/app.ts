@@ -1430,6 +1430,7 @@ export function createApp({
           ...(agentTasks?.outputs === undefined
             ? {}
             : { outputs: createAgentOutputStore(agentTasks.outputs) }),
+          ...(activity === undefined ? {} : { history: activity }),
         },
       });
       // GIA summarizes what the agents of a plan answered (ADR-0117), read as the person.

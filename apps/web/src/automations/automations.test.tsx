@@ -567,6 +567,104 @@ describe('Writing workflows (block 4)', () => {
     expect((after.getByLabelText('Step 1: B') as HTMLInputElement).checked).toBe(false);
   });
 
+  it('ADR-0158: writes a wait between two steps, shows a saved one and keeps it on an edit', async () => {
+    const backend = open(undefined, WRITER);
+    fireEvent.click(await screen.findByRole('button', { name: 'New workflow' }));
+    const editor = within(await screen.findByRole('form', { name: 'New workflow' }));
+    const create = await editor.findByRole('button', { name: 'Create as draft' });
+    fireEvent.change(editor.getByLabelText('Name'), { target: { value: 'Seguimiento' } });
+    fireEvent.change(editor.getByLabelText('Step 1: what to do'), {
+      target: { value: 'Enviar la oferta' },
+    });
+    fireEvent.change(editor.getByLabelText('Who does it'), {
+      target: { value: 'sales/commercial_agent' },
+    });
+    fireEvent.click(editor.getByRole('button', { name: 'Add a step' }));
+    fireEvent.change(editor.getByLabelText('Step 2: what to do'), {
+      target: { value: 'Dar tiempo al cliente' },
+    });
+    fireEvent.change(editor.getAllByLabelText('What this step is').at(-1) as HTMLElement, {
+      target: { value: 'wait' },
+    });
+    fireEvent.click(editor.getByRole('button', { name: 'Add a step' }));
+    fireEvent.change(editor.getByLabelText('Step 3: what to do'), {
+      target: { value: 'Llamar al cliente' },
+    });
+    fireEvent.change(editor.getAllByLabelText('Who does it')[1] as HTMLElement, {
+      target: { value: 'sales/commercial_agent' },
+    });
+    // A wait with no length, or longer than the engine takes, is not saved.
+    expect((create as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(editor.getByLabelText('In'), { target: { value: 'days' } });
+    fireEvent.change(editor.getByLabelText('How long'), { target: { value: '8' } });
+    expect((create as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(editor.getByLabelText('In'), { target: { value: 'hours' } });
+    fireEvent.change(editor.getByLabelText('How long'), { target: { value: '2' } });
+    expect((create as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(create);
+
+    expect(
+      await screen.findByText('The workflow was created as a draft. Activate it when it is ready.'),
+    ).toBeTruthy();
+    const [sent] = posts(backend, '/org_1/workflows');
+    const steps = (JSON.parse(sent?.body ?? '{}') as { steps: Record<string, unknown>[] }).steps;
+    expect(steps.map((s) => [s.id, s.kind, s.dependsOn])).toEqual([
+      ['step_1', 'specialist', []],
+      ['step_2', 'wait', ['step_1']],
+      ['step_3', 'specialist', ['step_2']],
+    ]);
+    expect(steps[1]).toEqual({
+      id: 'step_2',
+      kind: 'wait',
+      label: 'Dar tiempo al cliente',
+      dependsOn: ['step_1'],
+      wait: { seconds: 7_200 },
+    });
+  });
+
+  it('ADR-0158: shows a saved wait in its largest whole unit and saves it unchanged', async () => {
+    const backend = open((b) => {
+      const launch = b.options.workflows.org_1?.find((w) => w.id === 'wf-launch');
+      if (launch === undefined) return;
+      launch.steps = [
+        {
+          id: 'offer',
+          kind: 'specialist',
+          label: 'Offer',
+          dependsOn: [],
+          assignee: { departmentTypeId: 'sales', roleId: 'commercial_agent' },
+        },
+        {
+          id: 'pause',
+          kind: 'wait',
+          label: 'Pause',
+          dependsOn: ['offer'],
+          wait: { seconds: 172_800 },
+        },
+      ];
+    }, WRITER);
+    const workflows = within(await screen.findByRole('region', { name: 'Workflows' }));
+    fireEvent.click((await workflows.findAllByRole('button', { name: 'Steps' }))[0] as HTMLElement);
+    expect(await workflows.findByText(/waits before the next steps/)).toBeTruthy();
+    fireEvent.click(workflows.getByRole('button', { name: 'Edit (new version)' }));
+    const editor = within(await screen.findByRole('form', { name: 'New version' }));
+    expect(((await editor.findByLabelText('How long')) as HTMLInputElement).value).toBe('2');
+    expect((editor.getByLabelText('In') as HTMLSelectElement).value).toBe('days');
+    fireEvent.click(editor.getByRole('button', { name: 'Save new version' }));
+    expect(
+      await screen.findByText('The new version was saved. Plans already made keep their version.'),
+    ).toBeTruthy();
+    const [sent] = posts(backend, '/workflows/wf-launch/versions');
+    const steps = (JSON.parse(sent?.body ?? '{}') as { steps: Record<string, unknown>[] }).steps;
+    expect(steps[1]).toEqual({
+      id: 'step_2',
+      kind: 'wait',
+      label: 'Pause',
+      dependsOn: ['step_1'],
+      wait: { seconds: 172_800 },
+    });
+  });
+
   it('shows a saved check and edits a branching workflow without changing its shape', async () => {
     const backend = open(
       (b) => {

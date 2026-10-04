@@ -667,6 +667,29 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
       expect(t.kicked).toEqual([research]);
     });
 
+    it('ADR-0158: a workflow’s wait is shown with its length for the editor', async () => {
+      const t = await setup(ROLES, { runPlans: true });
+      const pause = {
+        id: 'pause',
+        kind: 'wait',
+        label: 'Give the client time',
+        dependsOn: ['research'],
+        wait: { seconds: 7_200 },
+      };
+      const after = { ...campaignStep, dependsOn: ['pause'] };
+      const id = await activeWorkflow(t, [researchStep, pause, after]);
+      const detail = (await (await t.get('token-alice', `/workflows/${id}`)).json()) as {
+        current: { steps: Record<string, unknown>[] };
+      };
+      expect(detail.current.steps[1]).toMatchObject({
+        id: 'pause',
+        kind: 'wait',
+        assignee: null,
+        wait: { seconds: 7_200 },
+      });
+      expect(detail.current.steps[0]).toMatchObject({ wait: null });
+    });
+
     it('ADR-0144: a workflow with a policy check and a branch is shown, planned and approved', async () => {
       const t = await setup(ROLES, { runPlans: true });
       const check = {
@@ -1722,6 +1745,40 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
       attempt: 1,
     });
     expect(t.kicked).toEqual([first]);
+
+    // ADR-0157: the plan's trace shows both runs of the step, and the audit trail says why.
+    const trace = (await (await t.get('token-alice', `/plans/${plan.id}/trace`)).json()) as {
+      planId: string;
+      status: string;
+      failure: unknown;
+      steps: {
+        stepId: string;
+        state: string | null;
+        attempts: { attempt: number; executionId: string; status: string; failure: string }[];
+        approvals: unknown[];
+      }[];
+      credits: { total: number };
+      history: { action: string; nodeId: string | null; reference: string | null }[];
+    };
+    expect(trace).toMatchObject({ planId: plan.id, status: 'executing', failure: null });
+    const research = must(trace.steps.find((s) => s.stepId === 'research'));
+    expect(research.state).toBe('delayed');
+    expect(research.attempts).toMatchObject([
+      { attempt: 1, executionId: first, status: 'failed', failure: 'unavailable' },
+      { attempt: 2, executionId: attempt.executionId, status: 'pending', failure: null },
+    ]);
+    expect(trace.credits.total).toBe(0);
+    expect(trace.history).toContainEqual(
+      expect.objectContaining({
+        action: 'plan.step_retried',
+        nodeId: 'research',
+        reference: 'attempt:2',
+      }),
+    );
+    // Nothing of it for anyone the plan is not theirs to read.
+    expect((await t.get('token-bob', `/plans/${plan.id}/trace`)).status).not.toBe(200);
+    // Nothing internal, nothing written: codes, ids, times and numbers only.
+    expect(JSON.stringify(trace)).not.toMatch(/answer|prompt|input/i);
   });
 
   describe('delegation', () => {
