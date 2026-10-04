@@ -4,9 +4,11 @@ import {
   activeOrganizationOf,
   departmentIdOf,
   isDepartmentError,
+  organizationOfDepartmentId,
   type DepartmentRepository,
 } from '@melonoffice/departments';
 import type {
+  DepartmentId,
   DefinitionRef,
   IsoTimestamp,
   OrganizationId,
@@ -102,6 +104,12 @@ export interface SpecialistManagement {
     id: string,
     input: Record<string, unknown>,
   ): Promise<Specialist>;
+  /**
+   * Changes the agent's skills and department as one new version:
+   * `{ fromVersion, add?: [{ skillId, version }], remove?: [skillId], departmentId? }`
+   * (ADR-0141). The server derives the tools and permissions; nothing else is accepted.
+   */
+  change(tenant: TenantContext, id: string, input: Record<string, unknown>): Promise<Specialist>;
   /**
    * Changes what the agent is for, in a person's words, as a new version of the agent:
    * `{ fromVersion, purpose?, description? }`, each a text or `null` to clear it (ADR-0140). The
@@ -286,6 +294,134 @@ export function createSpecialistManagement(
     if (!isResolvedTenant(tenant)) throw new SpecialistError('unresolved_tenant');
     return tenant;
   };
+
+  /**
+   * A person's change to an agent's skills and department, as one new version (ADR-0141): the
+   * server derives the tools and permissions from the skills, as an upgrade does (ADR-0084).
+   * Adding grants a skill's tools at one exact version and what they read; removing keeps only
+   * the tools another of its skills grants; the permissions are exactly what its skills and tools
+   * still need. A move must be to an assignable department of the organization that allows every
+   * skill it keeps.
+   */
+  async function changeAgent(
+    tenant: TenantContext,
+    id: string,
+    input: {
+      readonly fromVersion: unknown;
+      readonly add?: readonly unknown[];
+      readonly remove?: readonly unknown[];
+      readonly departmentId?: unknown;
+    },
+  ): Promise<Specialist> {
+    const organizationId = await managerOf(tenant);
+    const person = userOf(tenant);
+    if (!isVersionNumber(input.fromVersion)) bad('fromVersion');
+    const added = (input.add ?? []).map((item) => {
+      if (!isRecord(item)) return bad('add');
+      for (const key of Object.keys(item)) if (!['skillId', 'version'].includes(key)) bad(key);
+      if (typeof item.skillId !== 'string') bad('skillId');
+      if (!isVersionNumber(item.version)) bad('version');
+      const target = skills.resolve(item.skillId as string, item.version as number);
+      if (target === undefined) return bad('skillId');
+      // A choice between versions of a tool is a person's, never made here (ADR-0084).
+      if (target.tools.some((grant) => grant.versions.length !== 1)) bad('skills.choice');
+      return { id: target.id, version: target.version };
+    });
+    const removed = (input.remove ?? []).map((item) =>
+      typeof item === 'string' ? item : bad('skillId'),
+    );
+    const named = [...added.map((r) => r.id as string), ...removed];
+    if (new Set(named).size !== named.length) bad('skillId');
+    if (input.departmentId !== undefined && typeof input.departmentId !== 'string') {
+      bad('departmentId');
+    }
+    if (named.length === 0 && input.departmentId === undefined) bad('change');
+    if (!isSpecialistId(id)) throw new SpecialistError('specialist_not_found');
+    const read = await repository.find(organizationId, id);
+    if (read === undefined) throw new SpecialistError('specialist_not_found');
+    const fromDepartmentId = read.configuration.departmentId;
+    let toDepartmentId = fromDepartmentId;
+    if (input.departmentId !== undefined) {
+      // Only a department of this organization, and never the one it is in.
+      if (organizationOfDepartmentId(input.departmentId) !== organizationId) bad('departmentId');
+      if (input.departmentId === fromDepartmentId) bad('departmentId');
+      toDepartmentId = input.departmentId as DepartmentId;
+    }
+    const department = await departments.find(organizationId, toDepartmentId);
+    if (department === undefined) return bad('departmentId');
+    return update(organizationId, id, (current, at) => {
+      const { configuration } = current;
+      if (configuration.departmentId !== fromDepartmentId) bad('departmentId');
+      for (const skillId of removed) {
+        if (!configuration.skills.some((s) => s.id === skillId)) bad('skillId');
+      }
+      for (const ref of added) {
+        if (configuration.skills.some((s) => s.id === ref.id)) bad('skillId');
+      }
+      const nextSkills = [...configuration.skills.filter((s) => !removed.includes(s.id)), ...added];
+      if (nextSkills.length === 0) bad('skills.last');
+      const granted = grantsOf(nextSkills, skills).tools;
+      const kept = configuration.tools.filter((t) => granted.has(toolKey(t.id, t.version)));
+      const keptKeys = new Set(kept.map((t) => toolKey(t.id, t.version)));
+      const nextTools = [
+        ...kept,
+        ...derivedFrom(added).tools.filter((t) => !keptKeys.has(toolKey(t.id, t.version))),
+      ];
+      const needed = new Set<string>();
+      for (const ref of nextSkills) {
+        for (const permission of skills.resolve(ref.id, ref.version)?.reads ?? []) {
+          needed.add(permission);
+        }
+      }
+      for (const t of nextTools) {
+        for (const permission of tools(t.id, t.version)?.permissions ?? []) needed.add(permission);
+      }
+      const next = checkConfiguration(
+        {
+          ...configuration,
+          departmentId: toDepartmentId,
+          skills: nextSkills,
+          tools: nextTools,
+          permissions: [...needed].sort(),
+        },
+        organizationId,
+      );
+      // Every skill must exist and be allowed in its department (ADR-0104), like any version.
+      checkAgainstCatalogues(next);
+      const write = reviseSpecialist(
+        current,
+        { fromVersion: input.fromVersion as number, configuration: next, department },
+        person.userId,
+        at.toISOString() as IsoTimestamp,
+      );
+      const moved = toDepartmentId !== fromDepartmentId;
+      return {
+        ...write,
+        events: [
+          event(person, write.specialist, 'specialist.version_created', at),
+          ...(moved
+            ? [
+                buildAuditEvent(
+                  {
+                    action: 'specialist.department_changed',
+                    result: 'success',
+                    actor: actorOf(person),
+                    organizationId: write.specialist.organizationId,
+                    target: { type: 'specialist', id: write.specialist.identity.id },
+                    targetVersion: write.specialist.version,
+                    permission: 'specialist.manage',
+                    reference: `department:${toDepartmentId}`,
+                    ...(requestId === undefined ? {} : { requestId }),
+                    source: 'api',
+                  },
+                  at,
+                ),
+              ]
+            : []),
+        ],
+      };
+    });
+  }
 
   async function update(
     organizationId: OrganizationId,
@@ -487,111 +623,37 @@ export function createSpecialistManagement(
     },
 
     async addSkill(tenant, id, input) {
-      const organizationId = await managerOf(tenant);
-      const person = userOf(tenant);
       if (!isRecord(input)) bad('body');
       for (const key of Object.keys(input)) {
         if (!['fromVersion', 'skillId', 'version'].includes(key)) bad(key);
       }
-      if (!isVersionNumber(input.fromVersion)) bad('fromVersion');
-      if (typeof input.skillId !== 'string') bad('skillId');
-      if (!isVersionNumber(input.version)) bad('version');
-      const target = skills.resolve(input.skillId as string, input.version as number);
-      if (target === undefined) return bad('skillId');
-      // A choice between versions of a tool is a person's, never made here (ADR-0084).
-      if (target.tools.some((grant) => grant.versions.length !== 1)) bad('skills.choice');
-      if (!isSpecialistId(id)) throw new SpecialistError('specialist_not_found');
-      const read = await repository.find(organizationId, id);
-      if (read === undefined) throw new SpecialistError('specialist_not_found');
-      const department = await departmentOf(organizationId, read.configuration);
-      return update(organizationId, id, (current, at) => {
-        const { configuration } = current;
-        if (configuration.departmentId !== read.configuration.departmentId) bad('departmentId');
-        if (configuration.skills.some((s) => s.id === target.id)) bad('skillId');
-        const ref = { id: target.id, version: target.version };
-        const derived = derivedFrom([ref]);
-        const held = new Set(configuration.tools.map((t) => toolKey(t.id, t.version)));
-        const next = checkConfiguration(
-          {
-            ...configuration,
-            skills: [...configuration.skills, ref],
-            tools: [
-              ...configuration.tools,
-              ...derived.tools.filter((t) => !held.has(toolKey(t.id, t.version))),
-            ],
-            permissions: [
-              ...new Set([...configuration.permissions, ...derived.permissions]),
-            ].sort(),
-          },
-          organizationId,
-        );
-        // Its department must allow the skill (ADR-0104), like any version.
-        checkAgainstCatalogues(next);
-        const write = reviseSpecialist(
-          current,
-          { fromVersion: input.fromVersion as number, configuration: next, department },
-          person.userId,
-          at.toISOString() as IsoTimestamp,
-        );
-        return {
-          ...write,
-          events: [event(person, write.specialist, 'specialist.version_created', at)],
-        };
+      return changeAgent(tenant, id, {
+        fromVersion: input.fromVersion,
+        add: [{ skillId: input.skillId, version: input.version }],
       });
     },
 
     async removeSkill(tenant, id, input) {
-      const organizationId = await managerOf(tenant);
-      const person = userOf(tenant);
       if (!isRecord(input)) bad('body');
       for (const key of Object.keys(input)) {
         if (!['fromVersion', 'skillId'].includes(key)) bad(key);
       }
-      if (!isVersionNumber(input.fromVersion)) bad('fromVersion');
-      if (typeof input.skillId !== 'string') bad('skillId');
-      if (!isSpecialistId(id)) throw new SpecialistError('specialist_not_found');
-      const read = await repository.find(organizationId, id);
-      if (read === undefined) throw new SpecialistError('specialist_not_found');
-      const department = await departmentOf(organizationId, read.configuration);
-      return update(organizationId, id, (current, at) => {
-        const { configuration } = current;
-        if (configuration.departmentId !== read.configuration.departmentId) bad('departmentId');
-        if (!configuration.skills.some((s) => s.id === input.skillId)) bad('skillId');
-        const nextSkills = configuration.skills.filter((s) => s.id !== input.skillId);
-        if (nextSkills.length === 0) bad('skills.last');
-        // Only the tools another of its skills grants, and only the permissions still needed.
-        const granted = grantsOf(nextSkills, skills).tools;
-        const kept = configuration.tools.filter((t) => granted.has(toolKey(t.id, t.version)));
-        const needed = new Set<string>();
-        for (const ref of nextSkills) {
-          for (const permission of skills.resolve(ref.id, ref.version)?.reads ?? []) {
-            needed.add(permission);
-          }
-        }
-        for (const t of kept) {
-          for (const permission of tools(t.id, t.version)?.permissions ?? [])
-            needed.add(permission);
-        }
-        const next = checkConfiguration(
-          {
-            ...configuration,
-            skills: nextSkills,
-            tools: kept,
-            permissions: configuration.permissions.filter((p) => needed.has(p)),
-          },
-          organizationId,
-        );
-        checkAgainstCatalogues(next);
-        const write = reviseSpecialist(
-          current,
-          { fromVersion: input.fromVersion as number, configuration: next, department },
-          person.userId,
-          at.toISOString() as IsoTimestamp,
-        );
-        return {
-          ...write,
-          events: [event(person, write.specialist, 'specialist.version_created', at)],
-        };
+      return changeAgent(tenant, id, { fromVersion: input.fromVersion, remove: [input.skillId] });
+    },
+
+    async change(tenant, id, input) {
+      if (!isRecord(input)) bad('body');
+      // Only what a person chooses: never tools, permissions, policies or other configuration.
+      for (const key of Object.keys(input)) {
+        if (!['fromVersion', 'add', 'remove', 'departmentId'].includes(key)) bad(key);
+      }
+      if (input.add !== undefined && !Array.isArray(input.add)) bad('add');
+      if (input.remove !== undefined && !Array.isArray(input.remove)) bad('remove');
+      return changeAgent(tenant, id, {
+        fromVersion: input.fromVersion,
+        ...(input.add === undefined ? {} : { add: input.add as unknown[] }),
+        ...(input.remove === undefined ? {} : { remove: input.remove as unknown[] }),
+        ...(input.departmentId === undefined ? {} : { departmentId: input.departmentId }),
       });
     },
 

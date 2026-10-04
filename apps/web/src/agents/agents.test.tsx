@@ -669,3 +669,96 @@ describe("adding and removing an agent's skills (ADR-0141)", () => {
     expect(screen.queryByRole('button', { name: /^Remove / })).toBeNull();
   });
 });
+
+describe('moving an agent to another department (ADR-0141)', () => {
+  const view = (version: number): AgentCapabilitiesView => ({
+    version,
+    ready: true,
+    skills: [],
+    tools: [],
+    problems: [],
+    moves: [
+      { departmentId: 'org_1_marketing', blockedBy: [] },
+      { departmentId: 'org_1_finance', blockedBy: ['customer_follow_up'] },
+    ],
+    moveLeaves: [{ workflowId: 'w1', name: 'Weekly follow-up' }],
+  });
+  const departments = [
+    { id: 'org_1_marketing', name: 'Marketing' },
+    { id: 'org_1_finance', name: 'Finance' },
+  ];
+
+  it('moves only to a department that allows its skills, after a warning, and goes there', async () => {
+    const moved = { id: 'spec_lucia', departmentId: 'org_1_marketing' };
+    const agents = {
+      capabilities: vi.fn(async () => view(4)),
+      change: vi.fn(async () => moved),
+    } as unknown as AgentsClient;
+    const onMoved = vi.fn();
+    const confirm = vi.spyOn(globalThis, 'confirm').mockReturnValue(true);
+    render(
+      <I18nProvider locale="en" messages={catalogs.en}>
+        <AgentCapabilities
+          client={agents}
+          agentId="spec_lucia"
+          canManage
+          departments={departments}
+          onMoved={onMoved}
+        />
+      </I18nProvider>,
+    );
+    const select = await screen.findByRole('combobox', { name: 'Move to another department' });
+    const finance = within(select).getByRole('option', {
+      name: 'Finance (first remove Customer follow-up)',
+    }) as HTMLOptionElement;
+    expect(finance.disabled).toBe(true);
+    expect(
+      screen.getByText(
+        'Each change here creates a new version of the agent; earlier versions are kept.',
+      ),
+    ).toBeTruthy();
+    fireEvent.change(select, { target: { value: 'org_1_marketing' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Move agent' }));
+    await waitFor(() =>
+      expect(agents.change).toHaveBeenCalledWith('spec_lucia', {
+        fromVersion: 4,
+        departmentId: 'org_1_marketing',
+      }),
+    );
+    expect(confirm.mock.calls[0]?.[0]).toContain('Weekly follow-up');
+    expect(confirm.mock.calls[0]?.[0]).toContain('Move the agent to Marketing?');
+    expect(onMoved).toHaveBeenCalledWith(moved);
+  });
+
+  it('says so when someone else changed the agent meanwhile, and changes nothing', async () => {
+    const agents = {
+      capabilities: vi.fn(async () => view(4)),
+      change: vi.fn(async () => {
+        throw new AgentRequestError(409, 'specialist_concurrency_conflict');
+      }),
+    } as unknown as AgentsClient;
+    const onMoved = vi.fn();
+    vi.spyOn(globalThis, 'confirm').mockReturnValue(true);
+    render(
+      <I18nProvider locale="en" messages={catalogs.en}>
+        <AgentCapabilities
+          client={agents}
+          agentId="spec_lucia"
+          canManage
+          departments={departments}
+          onMoved={onMoved}
+        />
+      </I18nProvider>,
+    );
+    fireEvent.change(await screen.findByRole('combobox', { name: 'Move to another department' }), {
+      target: { value: 'org_1_marketing' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Move agent' }));
+    expect(
+      await screen.findByText(
+        'Someone changed this agent meanwhile. Nothing was changed; try again.',
+      ),
+    ).toBeTruthy();
+    expect(onMoved).not.toHaveBeenCalled();
+  });
+});
