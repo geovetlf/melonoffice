@@ -141,6 +141,18 @@ export const TOOLS: readonly ToolDefinition[] = [
   tool('retired', {}, 'disabled'),
   // ADR-0034: a tool only a person may invoke is never planned for the runtime.
   tool('person_only', { invocationModes: ['human'] }),
+  // ADR-0161: a medium-risk read, and a read whose result has a number and a list.
+  tool('ranked_lookup', { riskLevel: 'medium' }),
+  tool('count_lookup', {
+    outputSchema: {
+      type: 'object',
+      properties: {
+        count: { type: 'integer' },
+        topic: { type: 'string', maxLength: 100 },
+        names: { type: 'array', items: { type: 'string', maxLength: 50 }, maxItems: 10 },
+      },
+    },
+  }),
 ];
 
 /** Model fixture only: MelonOffice's real catalogue is empty until the launch provider (D-7). */

@@ -237,6 +237,8 @@ const stepView = (s: PlanStep) => ({
   tool: s.tool === undefined ? null : { id: s.tool.id, version: s.tool.version },
   // A tool step's input (ADR-0151): data fixed when the plan was made, what the person approves.
   input: s.input === undefined ? null : structuredClone(s.input),
+  // Where the rest of its input comes from when it runs (ADR-0161): earlier steps, by name.
+  inputFrom: s.inputFrom === undefined ? null : structuredClone(s.inputFrom),
   // A wait step's length (ADR-0152).
   wait: s.wait === undefined ? null : { seconds: s.wait.seconds },
   verification:

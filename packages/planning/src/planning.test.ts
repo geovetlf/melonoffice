@@ -45,6 +45,8 @@ async function setup(options: WorldOptions = {}) {
       'staging_only',
       'retired',
       'person_only',
+      'ranked_lookup',
+      'count_lookup',
     ],
   });
   const marketer = await w.seed(w.orgA, ALICE, { type: 'marketing', role: 'campaign_manager' });
@@ -333,6 +335,148 @@ describe('plan validation pipeline', () => {
       toolStep('use', 'work', 'lookup', { tool: { id: 'lookup', version: 2 } }),
     ]);
     expect(await refusal(w, version2)).toBe('policy:tool_not_found');
+  });
+
+  it('ADR-0161: takes tool input from earlier results it names, checked when the plan is made', async () => {
+    const w = await setup();
+    const r = w.researcher;
+    const plan = (...steps: Record<string, unknown>[]) =>
+      proposal([
+        specialistStep('scan', r),
+        toolStep('count', 'scan', 'count_lookup'),
+        specialistStep('work', r, { dependsOn: ['scan'] }),
+        ...steps,
+      ]);
+    const ok = await validate(
+      w,
+      plan(
+        toolStep('use', 'work', 'lookup', {
+          inputFrom: { query: { step: 'count', field: 'topic' } },
+        }),
+      ),
+    );
+    if (!ok.ok) throw new Error(ok.reason);
+    const use = must(ok.plan.steps.find((s) => s.id === 'use'));
+    expect(use.inputFrom).toEqual({ query: { step: 'count', field: 'topic' } });
+    expect(use.input).toEqual({});
+    // Its own agent's answer, or an earlier one's, reaches a text input of a low-risk tool.
+    for (const step of ['work', 'scan']) {
+      const answer = await validate(
+        w,
+        plan(toolStep('use', 'work', 'lookup', { inputFrom: { query: { step } } })),
+      );
+      expect(answer.ok).toBe(true);
+    }
+    // A model never writes the arguments of a riskier tool (D3).
+    expect(
+      await refusal(
+        w,
+        plan(toolStep('use', 'work', 'ranked_lookup', { inputFrom: { query: { step: 'work' } } })),
+      ),
+    ).toBe('policy:tool_input_from_model');
+    // A tool's own result is fine for it: it is not model text.
+    expect(
+      (
+        await validate(
+          w,
+          plan(
+            toolStep('use', 'work', 'ranked_lookup', {
+              inputFrom: { query: { step: 'count', field: 'topic' } },
+            }),
+          ),
+        )
+      ).ok,
+    ).toBe(true);
+    // An input the tool has, of the type it reads; a field the result has.
+    const refused = async (inputFrom: unknown, extra: Record<string, unknown> = {}) =>
+      refusal(w, plan(toolStep('use', 'work', 'lookup', { inputFrom, ...extra })));
+    expect(await refused({ other: { step: 'count', field: 'topic' } })).toBe(
+      'policy:invalid_tool_input_ref',
+    );
+    expect(await refused({ query: { step: 'count', field: 'count' } })).toBe(
+      'policy:invalid_tool_input_ref',
+    );
+    expect(await refused({ query: { step: 'count', field: 'names' } })).toBe(
+      'policy:invalid_tool_input_ref',
+    );
+    expect(await refused({ query: { step: 'count', field: 'missing' } })).toBe(
+      'policy:invalid_tool_input_ref',
+    );
+    // Results that exist before it runs, never later ones or ones of a branch it does not wait on.
+    expect(await refused({ query: { step: 'later' } })).toBe('plan:invalid_input_ref');
+    expect(await refused({ query: { step: 'count' } })).toBe('plan:invalid_input_ref');
+    expect(
+      await refusal(
+        w,
+        proposal([
+          specialistStep('scan', r),
+          toolStep('count', 'scan', 'count_lookup'),
+          specialistStep('work', r),
+          toolStep('use', 'work', 'lookup', { inputFrom: { query: { step: 'scan' } } }),
+        ]),
+      ),
+    ).toBe('plan:invalid_input_ref');
+    expect(
+      await refusal(
+        w,
+        proposal([
+          specialistStep('work', r),
+          toolStep('count', 'work', 'count_lookup'),
+          toolStep('use', 'work', 'lookup', {
+            inputFrom: { query: { step: 'count', field: 'topic' } },
+          }),
+        ]),
+      ),
+    ).toBe('plan:invalid_input_ref');
+    expect(
+      (
+        await validate(
+          w,
+          proposal([
+            specialistStep('work', r),
+            toolStep('count', 'work', 'count_lookup'),
+            toolStep('use', 'work', 'lookup', {
+              dependsOn: ['count'],
+              inputFrom: { query: { step: 'count', field: 'topic' } },
+            }),
+          ]),
+        )
+      ).ok,
+    ).toBe(true);
+    // A key is fixed or referenced, never both.
+    expect(await refused({ query: { step: 'work' } }, { input: { query: 'melons' } })).toBe(
+      'plan:invalid_input_ref',
+    );
+    // A person approves a tool call with its exact input: such a step takes fixed input only.
+    expect(await refused({ query: { step: 'work' } }, { approvalRequired: true })).toBe(
+      'policy:input_ref_needs_fixed_input',
+    );
+    expect(
+      await refusal(
+        w,
+        plan(
+          toolStep('use', 'work', 'private_records', {
+            inputFrom: { query: { step: 'count', field: 'topic' } },
+          }),
+        ),
+      ),
+    ).toBe('policy:input_ref_needs_fixed_input');
+    // Names only: no authority, no values, nothing else.
+    expect(await refused({ organizationId: { step: 'work' } })).toBe(
+      'schema:authority_in_proposal',
+    );
+    expect(await refused({ query: { step: 'count', field: 'apiKey' } })).toBe(
+      'schema:authority_in_proposal',
+    );
+    expect(await refused({ query: { step: 'work', value: 'x' } })).toBe('schema:invalid_proposal');
+    expect(await refused({ query: 'work' })).toBe('schema:invalid_proposal');
+    expect(await refused({})).toBe('schema:invalid_proposal');
+    expect(
+      await refusal(
+        w,
+        proposal([specialistStep('work', r, { inputFrom: { query: { step: 'work' } } })]),
+      ),
+    ).toBe('schema:invalid_proposal');
   });
 
   it('fixes a tool step’s input in the plan, checked against the tool’s own schema (ADR-0151)', async () => {

@@ -2,6 +2,7 @@ import type {
   PlanBudget,
   PlanCondition,
   PlanDecisionCondition,
+  PlanInputRef,
   PlanRetry,
   PlanStepKind,
   PlanToolInput,
@@ -32,6 +33,8 @@ export const MAX_DECISION_INPUT_TEXT = 100;
 /** A tool step's fixed input (ADR-0151): plain JSON, shallow and small. */
 export const MAX_TOOL_INPUT_DEPTH = 8;
 export const MAX_TOOL_INPUT_BYTES = 16_000;
+/** A tool step's input taken from earlier steps (ADR-0161): a few named values. */
+export const MAX_TOOL_INPUT_REFS = 10;
 /** A wait step's limits (ADR-0152): one second to seven days. */
 export const MIN_WAIT_SECONDS = 1;
 export const MAX_WAIT_SECONDS = 7 * 86_400;
@@ -75,6 +78,8 @@ export interface ProposalStep {
   readonly tool?: { readonly id: string; readonly version: number };
   /** On `tool` steps (ADR-0151): the tool's input, checked against its schema by the validator. */
   readonly input?: PlanToolInput;
+  /** On `tool` steps (ADR-0161): input values read from earlier steps' results when it runs. */
+  readonly inputFrom?: { readonly [key: string]: PlanInputRef };
   readonly inputContract?: ToolSchema;
   readonly outputContract?: ToolSchema;
   readonly verification?: PlanVerification;
@@ -119,6 +124,7 @@ const STEP_KEYS = new Set([
   'performedBy',
   'tool',
   'input',
+  'inputFrom',
   'inputContract',
   'outputContract',
   'verification',
@@ -137,6 +143,8 @@ const CODE = /^[a-z][a-z0-9_]{0,63}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const REF_ID = /^[A-Za-z0-9._:-]{1,128}$/;
 const TOOL_ID = /^[a-z][a-z0-9_]{0,63}$/;
+/** An input key or result field a reference names (ADR-0161). */
+const FIELD_NAME = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
 /** A decision type, as the Decision Engine names them (`action.policy_check`). */
 const DECISION_TYPE = /^[a-z][a-z_]*(\.[a-z][a-z_]*)+$/;
 const INPUT_KEY = /^[a-z][A-Za-z0-9]{0,31}$/;
@@ -304,6 +312,28 @@ function toolInputOf(value: unknown, field: string): PlanToolInput {
   return input;
 }
 
+/** A tool step's references to earlier results (ADR-0161): names only, never a value. */
+function inputFromOf(value: unknown, field: string): { [key: string]: PlanInputRef } {
+  if (!isRecord(value)) return invalid(field);
+  const entries = Object.entries(value);
+  if (entries.length === 0 || entries.length > MAX_TOOL_INPUT_REFS) invalid(field);
+  const out: { [key: string]: PlanInputRef } = {};
+  for (const [key, ref] of entries) {
+    if (isForbiddenField(key)) refuse('authority_in_proposal', `${field}.${key}`);
+    if (!FIELD_NAME.test(key) || !isRecord(ref)) invalid(`${field}.${key}`);
+    closed(ref as Record<string, unknown>, new Set(['step', 'field']), `${field}.${key}`);
+    const { step, field: name } = ref as Record<string, unknown>;
+    if (typeof step !== 'string' || !STEP_ID.test(step)) invalid(`${field}.${key}.step`);
+    if (name !== undefined) {
+      if (typeof name !== 'string' || !FIELD_NAME.test(name)) invalid(`${field}.${key}.field`);
+      if (isForbiddenField(name as string))
+        refuse('authority_in_proposal', `${field}.${key}.field`);
+    }
+    out[key] = { step: step as string, ...(name === undefined ? {} : { field: name as string }) };
+  }
+  return out;
+}
+
 function stepOf(value: unknown, index: number): ProposalStep {
   const field = `steps.${index}`;
   if (!isRecord(value)) return invalid(field);
@@ -397,6 +427,9 @@ function stepOf(value: unknown, index: number): ProposalStep {
     ...(value.performedBy === undefined ? {} : { performedBy: value.performedBy as string }),
     ...(toolRef === undefined ? {} : { tool: toolRef }),
     ...(value.input === undefined ? {} : { input: toolInputOf(value.input, `${field}.input`) }),
+    ...(value.inputFrom === undefined
+      ? {}
+      : { inputFrom: inputFromOf(value.inputFrom, `${field}.inputFrom`) }),
     ...(value.inputContract === undefined
       ? {}
       : { inputContract: contract(value.inputContract, `${field}.inputContract`) }),

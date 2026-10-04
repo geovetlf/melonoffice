@@ -12,6 +12,7 @@ import type {
   SpecialistVersion,
   ToolId,
   ToolRiskLevel,
+  ToolSchema,
 } from '@melonoffice/domain';
 import { checkGraph, isExecutionError } from '@melonoffice/execution';
 import { DEFAULT_RISK_POLICY, effectivePolicy, type RiskPolicy } from '@melonoffice/guardrails';
@@ -97,7 +98,7 @@ const FIELDS: Readonly<Record<PlanStep['kind'], readonly (keyof ProposalStep)[]>
     'approvalRequired',
     'budget',
   ],
-  tool: ['performedBy', 'tool', 'input', 'retry', 'approvalRequired'],
+  tool: ['performedBy', 'tool', 'input', 'inputFrom', 'retry', 'approvalRequired'],
   approval: [],
   verification: ['verification', 'outputContract', 'approvalRequired'],
   condition: ['condition', 'decision', 'approvalRequired'],
@@ -202,6 +203,49 @@ function checkPlanShape(steps: readonly ProposalStep[]): void {
               : 'unknown_dependency';
     refuse('plan', reason);
   }
+  steps.forEach((step, i) => checkInputRefs(step, byId, `steps.${i}`));
+}
+
+/** Every step a step waits for, directly or through others. */
+function ancestorsOf(step: ProposalStep, byId: ReadonlyMap<string, ProposalStep>): Set<string> {
+  const seen = new Set<string>();
+  const visit = (id: string) => {
+    if (seen.has(id)) return;
+    seen.add(id);
+    byId.get(id)?.dependsOn.forEach(visit);
+  };
+  step.dependsOn.forEach(visit);
+  return seen;
+}
+
+/**
+ * A tool step's input references (ADR-0161) name results that exist before it runs: the answer
+ * of its own specialist step or of one it waits for, a field of a tool step it waits for in the
+ * same work, or a field of a tool step an earlier specialist step used (that work ended with it).
+ * A key is either fixed or referenced, never both.
+ */
+function checkInputRefs(
+  step: ProposalStep,
+  byId: ReadonlyMap<string, ProposalStep>,
+  field: string,
+): void {
+  if (step.inputFrom === undefined) return;
+  const before = ancestorsOf(step, byId);
+  for (const [key, ref] of Object.entries(step.inputFrom)) {
+    const at = `${field}.inputFrom.${key}`;
+    if (step.input !== undefined && Object.hasOwn(step.input, key)) {
+      refuse('plan', 'invalid_input_ref', at);
+    }
+    const source = byId.get(ref.step);
+    const ready =
+      source?.kind === 'specialist'
+        ? ref.field === undefined && before.has(source.id)
+        : source?.kind === 'tool' &&
+          ref.field !== undefined &&
+          (before.has(source.id) ||
+            (source.performedBy !== step.performedBy && before.has(source.performedBy as string)));
+    if (!ready) refuse('plan', 'invalid_input_ref', at);
+  }
 }
 
 /**
@@ -229,6 +273,25 @@ export function checkStepStructure(
       ...(error.detail === undefined ? {} : { detail: error.detail }),
     };
   }
+}
+
+/** A tool's input schema as the fixed input must satisfy it: the referenced keys come later. */
+function fixedPartOf(schema: ToolSchema, step: ProposalStep): ToolSchema {
+  if (step.inputFrom === undefined || schema.type !== 'object') return schema;
+  const later = new Set(Object.keys(step.inputFrom));
+  return {
+    ...schema,
+    ...(schema.required === undefined
+      ? {}
+      : { required: schema.required.filter((k) => !later.has(k)) }),
+  };
+}
+
+/** Two schemas hold the same kind of value: the same type, and for lists, the same items. */
+function sameShape(a: ToolSchema, b: ToolSchema): boolean {
+  if (a.type === 'array' && b.type === 'array') return sameShape(a.items, b.items);
+  if (a.type === 'integer' && b.type === 'number') return true;
+  return a.type === b.type;
 }
 
 interface ResolvedSpecialist {
@@ -322,12 +385,52 @@ export function createPlanValidator(options: PlanValidatorOptions): PlanValidato
     ) {
       refuse('policy', 'tool_not_read_only', field);
     }
-    // The input is fixed now (ADR-0151): it must already satisfy the tool's own schema. The Tool
-    // Gate checks it again, with everything else, when the step runs.
-    if (!validateInput(tool.version.inputSchema, step.input ?? {}).valid) {
+    // The input is fixed now (ADR-0151): it must already satisfy the tool's own schema, but for
+    // the keys read from earlier steps when it runs (ADR-0161). The Tool Gate checks the whole
+    // input again, with everything else, when the step runs.
+    if (!validateInput(fixedPartOf(tool.version.inputSchema, step), step.input ?? {}).valid) {
       refuse('policy', 'invalid_tool_input', `${field}.input`);
     }
-    return { tool, approval: policy === 'approval_required' };
+    const approval = policy === 'approval_required';
+    // A person approves a tool call with its exact input (ADR-0151): an input only known when the
+    // step runs is never put to them, so a tool step that needs an approval takes fixed input only.
+    if (step.inputFrom !== undefined && (approval || step.approvalRequired === true)) {
+      refuse('policy', 'input_ref_needs_fixed_input', `${field}.inputFrom`);
+    }
+    return { tool, approval };
+  }
+
+  /**
+   * Policy stage for a tool step's references (ADR-0161): each names an input the tool has, and
+   * what it reads has that input's type. An agent's answer is model text, so it reaches only a
+   * text input of a low-risk tool: a model never writes the arguments of a riskier one (D3).
+   */
+  function toolRefPolicy(
+    step: ProposalStep,
+    tool: ResolvedTool,
+    sources: ReadonlyMap<string, { tool: ResolvedTool }>,
+    byId: ReadonlyMap<string, ProposalStep>,
+    field: string,
+  ): void {
+    const schema = tool.version.inputSchema;
+    for (const [key, ref] of Object.entries(step.inputFrom ?? {})) {
+      const at = `${field}.inputFrom.${key}`;
+      const target = schema.type === 'object' ? schema.properties[key] : undefined;
+      if (target === undefined) return refuse('policy', 'invalid_tool_input_ref', at);
+      const source = byId.get(ref.step);
+      if (source?.kind === 'specialist') {
+        if (target.type !== 'string') refuse('policy', 'invalid_tool_input_ref', at);
+        if (tool.version.riskLevel !== 'low') refuse('policy', 'tool_input_from_model', at);
+        continue;
+      }
+      const from = sources.get(ref.step)?.tool.version.outputSchema;
+      // A missing source, or one named without its field, is the plan stage's to name.
+      if (from === undefined || ref.field === undefined) continue;
+      const read = from.type === 'object' ? from.properties[ref.field] : undefined;
+      if (read === undefined || !sameShape(read, target)) {
+        refuse('policy', 'invalid_tool_input_ref', at);
+      }
+    }
   }
 
   /** Permission stage for one tool step: the specialist version lists it, the user may use it. */
@@ -391,6 +494,11 @@ export function createPlanValidator(options: PlanValidatorOptions): PlanValidato
           toolsOf.set(step.id, found);
           riskLevel = higher(riskLevel, found.tool.version.riskLevel);
         }
+        const byId = new Map(proposal.steps.map((s) => [s.id, s]));
+        for (const [i, step] of proposal.steps.entries()) {
+          const found = toolsOf.get(step.id);
+          if (found !== undefined) toolRefPolicy(step, found.tool, toolsOf, byId, `steps.${i}`);
+        }
         if (riskPolicy[riskLevel] === 'denied') refuse('policy', 'plan_denied_by_policy');
 
         // 3. Permission: eligibility (already decided above), tool assignment, user permissions.
@@ -441,6 +549,9 @@ export function createPlanValidator(options: PlanValidatorOptions): PlanValidato
                     version: found.tool.version.version,
                   },
                   input: structuredClone(step.input ?? {}),
+                  ...(step.inputFrom === undefined
+                    ? {}
+                    : { inputFrom: structuredClone(step.inputFrom) }),
                   inputContract: found.tool.version.inputSchema,
                   outputContract: found.tool.version.outputSchema,
                 }),

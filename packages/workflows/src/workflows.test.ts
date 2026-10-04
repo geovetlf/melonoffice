@@ -194,6 +194,31 @@ describe('workflow lifecycle and versions', () => {
     expect(detailOf([{ ...research, approvalRequired: true }])).toBeUndefined();
   });
 
+  it('ADR-0161: keeps a tool step’s references to earlier results, and refuses later ones', () => {
+    const [research, search, coolOff, campaign] = STEPS as unknown as Record<string, unknown>[];
+    const reading = {
+      id: 'read_search',
+      kind: 'tool',
+      label: 'Read on',
+      dependsOn: ['campaign'],
+      performedBy: 'campaign',
+      tool: { id: 'lookup', version: 1 },
+      inputFrom: { query: { step: 'search', field: 'query' } },
+    };
+    const steps = checkWorkflowSteps('Launch', [research, search, coolOff, campaign, reading]);
+    expect(steps.at(-1)).toMatchObject({
+      inputFrom: { query: { step: 'search', field: 'query' } },
+    });
+    expect(() =>
+      checkWorkflowSteps('Launch', [
+        research,
+        { ...search, inputFrom: { query: { step: 'campaign' } } },
+        coolOff,
+        campaign,
+      ]),
+    ).toThrow(expect.objectContaining({ detail: 'invalid_input_ref' }));
+  });
+
   it('refuses a template every plan of it would be refused for (ADR-0156)', async () => {
     const detailOf = (steps: unknown): string | undefined => {
       try {
