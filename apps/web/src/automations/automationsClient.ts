@@ -23,7 +23,16 @@ export interface WorkflowStepView {
   readonly label: string;
   readonly dependsOn: readonly string[];
   readonly assignee: { readonly departmentTypeId: string; readonly roleId: string } | null;
+  /** A check's decision (WF-4, ADR-0075); none on other steps. */
+  readonly decision?: WorkflowDecisionView | null;
   readonly approvalRequired: boolean;
+}
+
+/** What a check step asks the Decision Engine, and the outcomes that let the steps after it run. */
+export interface WorkflowDecisionView {
+  readonly decision: string;
+  readonly continueOn: readonly string[];
+  readonly input: Readonly<Record<string, string | number | boolean>>;
 }
 
 export interface WorkflowDetail extends WorkflowView {
@@ -34,13 +43,40 @@ export interface WorkflowDetail extends WorkflowView {
   };
 }
 
-/** One step a person writes: an agent with this role does it, optionally after their approval. */
-export interface WorkflowStepDraft {
+/**
+ * One step a person writes. `key` names it while editing (it survives moving it), and `after` is
+ * the keys of the earlier steps it waits for; the first step waits for none.
+ * - `agent`: an agent with this role does it, optionally after the person approves it.
+ * - `check`: a company policy check (`action.policy_check`, WF-4): the steps after it run only
+ *   when the policy allows the action; otherwise they are skipped and the rest goes on.
+ */
+export type WorkflowStepDraft = WorkflowAgentDraft | WorkflowCheckDraft;
+
+interface WorkflowDraftBase {
+  readonly key: string;
   readonly label: string;
+  readonly after: readonly string[];
+}
+
+export interface WorkflowAgentDraft extends WorkflowDraftBase {
+  readonly kind: 'agent';
   readonly departmentTypeId: string;
   readonly roleId: string;
   readonly approvalRequired: boolean;
 }
+
+export interface WorkflowCheckDraft extends WorkflowDraftBase {
+  readonly kind: 'check';
+  /** The action whose policy is checked, from the Decision Engine's catalogue. */
+  readonly action: string;
+  /** A discount to check against the company's discount policy, as a percentage. */
+  readonly discountPercent: number | null;
+}
+
+/** The only decision type the worker decides a check with (ADR-0075); any other stops the plan. */
+export const CHECK_DECISION = 'action.policy_check';
+/** A check lets the steps after it run only when the policy allows the action outright. */
+export const CHECK_CONTINUE_ON: readonly string[] = ['allowed'];
 
 export const WORKFLOW_TRANSITIONS: Readonly<Record<WorkflowStatus, readonly WorkflowStatus[]>> = {
   draft: ['active', 'archived'],
@@ -50,19 +86,44 @@ export const WORKFLOW_TRANSITIONS: Readonly<Record<WorkflowStatus, readonly Work
 };
 
 /**
- * The steps as the API takes them: one after another, each done by an agent with the role, and
- * checked the way agent steps are checked (the agent's answer is kept and well formed).
+ * The steps as the API takes them. Each waits for the earlier steps the person chose. An agent
+ * step is checked the way agent steps are checked (the agent's answer is kept and well formed); a
+ * check is decided by the Decision Engine with the fixed input written here. The server checks
+ * everything again.
  */
 export function workflowStepsOf(drafts: readonly WorkflowStepDraft[]): readonly unknown[] {
-  return drafts.map((d, i) => ({
-    id: `step_${i + 1}`,
-    kind: 'specialist',
-    label: d.label.trim(),
-    dependsOn: i === 0 ? [] : [`step_${i}`],
-    assignee: { departmentTypeId: d.departmentTypeId, roleId: d.roleId },
-    verification: { policy: 'output_schema', expectedOutput: 'agent_answer', requiredChecks: [] },
-    ...(d.approvalRequired ? { approvalRequired: true } : {}),
-  }));
+  const ids = new Map(drafts.map((d, i) => [d.key, `step_${i + 1}`]));
+  return drafts.map((d, i) => {
+    const base = {
+      id: `step_${i + 1}`,
+      label: d.label.trim(),
+      dependsOn: d.after.flatMap((k) => {
+        const id = ids.get(k);
+        return id === undefined ? [] : [id];
+      }),
+    };
+    if (d.kind === 'check') {
+      return {
+        ...base,
+        kind: 'condition',
+        decision: {
+          decision: CHECK_DECISION,
+          continueOn: [...CHECK_CONTINUE_ON],
+          input: {
+            action: d.action,
+            ...(d.discountPercent === null ? {} : { discountPercent: d.discountPercent }),
+          },
+        },
+      };
+    }
+    return {
+      ...base,
+      kind: 'specialist',
+      assignee: { departmentTypeId: d.departmentTypeId, roleId: d.roleId },
+      verification: { policy: 'output_schema', expectedOutput: 'agent_answer', requiredChecks: [] },
+      ...(d.approvalRequired ? { approvalRequired: true } : {}),
+    };
+  });
 }
 
 export type PlanStatus =
@@ -133,6 +194,8 @@ export interface AutomationsClient {
     steps: readonly WorkflowStepDraft[],
   ): Promise<WorkflowView>;
   changeStatus(workflowId: string, from: WorkflowStatus, to: WorkflowStatus): Promise<WorkflowView>;
+  /** The actions a check step may name: the Decision Engine's catalogue, as the API lists it. */
+  checkActions(): Promise<readonly string[]>;
   /** The same `requestKey` is the same plan: a retry never plans twice. */
   planWorkflow(workflowId: string, requestKey: string): Promise<WorkflowPlanOutcome>;
   plans(): Promise<readonly PlanView[]>;
@@ -211,6 +274,12 @@ export function createAutomationsClient(
     },
     async changeStatus(id, from, to) {
       return (await (await post(`${workflow(id)}/status`, { from, to })).json()) as WorkflowView;
+    },
+    async checkActions() {
+      const body = (await (await call('/decisions/actions')).json()) as {
+        actions?: { action?: unknown }[];
+      };
+      return (body.actions ?? []).flatMap((a) => (typeof a.action === 'string' ? [a.action] : []));
     },
     async planWorkflow(workflowId, requestKey) {
       const response = await post(`/workflows/${encodeURIComponent(workflowId)}/plans`, {

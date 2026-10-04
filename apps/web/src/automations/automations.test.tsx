@@ -293,6 +293,199 @@ describe('Writing workflows (block 4)', () => {
     expect(body.steps.map((s) => s.label)).toEqual(['Investigar el mercado']);
   });
 
+  it('writes a policy check that the steps after it wait for, and a branch that does not', async () => {
+    const backend = open(undefined, [...WRITER, 'gia.ask']);
+    fireEvent.click(await screen.findByRole('button', { name: 'New workflow' }));
+    const editor = within(await screen.findByRole('form', { name: 'New workflow' }));
+    fireEvent.change(editor.getByLabelText('Name'), { target: { value: 'Descuentos' } });
+    fireEvent.change(editor.getByLabelText('Step 1: what to do'), {
+      target: { value: 'Preparar la oferta' },
+    });
+    fireEvent.change(editor.getByLabelText('Who does it'), {
+      target: { value: 'sales/commercial_agent' },
+    });
+    // Step 2: a policy check, once the catalogue's actions are there.
+    fireEvent.click(editor.getByRole('button', { name: 'Add a step' }));
+    fireEvent.change(editor.getByLabelText('Step 2: what to do'), {
+      target: { value: 'Comprobar el descuento' },
+    });
+    fireEvent.change((await editor.findAllByLabelText('What this step is'))[1] as HTMLElement, {
+      target: { value: 'check' },
+    });
+    fireEvent.change(editor.getByLabelText('Action to check'), {
+      target: { value: 'opportunity.offer_discount' },
+    });
+    fireEvent.change(editor.getByLabelText('Discount to check, in % (optional)'), {
+      target: { value: '15' },
+    });
+    // Step 3 waits for the check; step 4 waits only for step 1, so it runs whatever the check says.
+    for (const [n, label] of [
+      [3, 'Enviar la oferta'],
+      [4, 'Registrar la oportunidad'],
+    ] as const) {
+      fireEvent.click(editor.getByRole('button', { name: 'Add a step' }));
+      fireEvent.change(editor.getByLabelText(`Step ${n}: what to do`), {
+        target: { value: label },
+      });
+      fireEvent.change(editor.getAllByLabelText('Who does it')[n - 2] as HTMLElement, {
+        target: { value: 'sales/commercial_agent' },
+      });
+    }
+    const step4 = within(editor.getAllByRole('group', { name: 'Runs after' })[2] as HTMLElement);
+    fireEvent.click(step4.getByLabelText('Step 1: Preparar la oferta'));
+    fireEvent.click(step4.getByLabelText('Step 3: Enviar la oferta'));
+    fireEvent.click(editor.getByRole('button', { name: 'Create as draft' }));
+
+    expect(
+      await screen.findByText('The workflow was created as a draft. Activate it when it is ready.'),
+    ).toBeTruthy();
+    const [sent] = posts(backend, '/org_1/workflows');
+    const steps = (JSON.parse(sent?.body ?? '{}') as { steps: Record<string, unknown>[] }).steps;
+    expect(steps.map((s) => [s.id, s.kind, s.dependsOn])).toEqual([
+      ['step_1', 'specialist', []],
+      ['step_2', 'condition', ['step_1']],
+      ['step_3', 'specialist', ['step_2']],
+      ['step_4', 'specialist', ['step_1']],
+    ]);
+    // The check names only the decision, what lets the plan go on and its fixed input.
+    expect(steps[1]).toEqual({
+      id: 'step_2',
+      kind: 'condition',
+      label: 'Comprobar el descuento',
+      dependsOn: ['step_1'],
+      decision: {
+        decision: 'action.policy_check',
+        continueOn: ['allowed'],
+        input: { action: 'opportunity.offer_discount', discountPercent: 15 },
+      },
+    });
+  });
+
+  it('a check cannot be saved until it waits for a step, and moving a step drops waits on later ones', async () => {
+    open(undefined, [...WRITER, 'gia.ask']);
+    fireEvent.click(await screen.findByRole('button', { name: 'New workflow' }));
+    const editor = within(await screen.findByRole('form', { name: 'New workflow' }));
+    const create = editor.getByRole('button', { name: 'Create as draft' }) as HTMLButtonElement;
+    fireEvent.change(editor.getByLabelText('Name'), { target: { value: 'X' } });
+    fireEvent.change(editor.getByLabelText('Step 1: what to do'), { target: { value: 'A' } });
+    fireEvent.change(editor.getByLabelText('Who does it'), {
+      target: { value: 'sales/commercial_agent' },
+    });
+    fireEvent.click(editor.getByRole('button', { name: 'Add a step' }));
+    fireEvent.change(editor.getByLabelText('Step 2: what to do'), { target: { value: 'B' } });
+    fireEvent.change((await editor.findAllByLabelText('What this step is'))[1] as HTMLElement, {
+      target: { value: 'check' },
+    });
+    fireEvent.change(editor.getByLabelText('Action to check'), {
+      target: { value: 'follow_up.schedule' },
+    });
+    expect(create.disabled).toBe(false);
+    fireEvent.click(editor.getByLabelText('Step 1: A'));
+    expect(create.disabled).toBe(true);
+    fireEvent.click(editor.getByLabelText('Step 1: A'));
+    // Moved first, the check has nothing before it to wait for.
+    fireEvent.click(editor.getByRole('button', { name: 'Move step 2 up' }));
+    expect(create.disabled).toBe(true);
+    const after = within(editor.getByRole('group', { name: 'Runs after' }));
+    expect((after.getByLabelText('Step 1: B') as HTMLInputElement).checked).toBe(false);
+  });
+
+  it('shows a saved check and edits a branching workflow without changing its shape', async () => {
+    const backend = open(
+      (b) => {
+        const launch = b.options.workflows.org_1?.find((w) => w.id === 'wf-launch');
+        if (launch === undefined) return;
+        launch.steps = [
+          {
+            id: 'offer',
+            kind: 'specialist',
+            label: 'Offer',
+            dependsOn: [],
+            assignee: { departmentTypeId: 'sales', roleId: 'commercial_agent' },
+          },
+          {
+            id: 'policy',
+            kind: 'condition',
+            label: 'Policy',
+            dependsOn: ['offer'],
+            assignee: null,
+            decision: {
+              decision: 'action.policy_check',
+              continueOn: ['allowed'],
+              input: { action: 'opportunity.offer_discount', discountPercent: 20 },
+            },
+          },
+          {
+            id: 'send',
+            kind: 'specialist',
+            label: 'Send',
+            dependsOn: ['policy'],
+            assignee: { departmentTypeId: 'sales', roleId: 'commercial_agent' },
+          },
+        ];
+      },
+      [...WRITER, 'gia.ask'],
+    );
+    const workflows = within(await screen.findByRole('region', { name: 'Workflows' }));
+    fireEvent.click((await workflows.findAllByRole('button', { name: 'Steps' }))[0] as HTMLElement);
+    expect(
+      await workflows.findByText(/checks company policy for a discount on an opportunity/),
+    ).toBeTruthy();
+    fireEvent.click(workflows.getByRole('button', { name: 'Edit (new version)' }));
+    const editor = within(await screen.findByRole('form', { name: 'New version' }));
+    expect(
+      ((await editor.findByLabelText('Discount to check, in % (optional)')) as HTMLInputElement)
+        .value,
+    ).toBe('20');
+    fireEvent.click(editor.getByRole('button', { name: 'Save new version' }));
+    expect(
+      await screen.findByText('The new version was saved. Plans already made keep their version.'),
+    ).toBeTruthy();
+    const [sent] = posts(backend, '/workflows/wf-launch/versions');
+    const steps = (JSON.parse(sent?.body ?? '{}') as { steps: Record<string, unknown>[] }).steps;
+    expect(steps.map((s) => [s.id, s.kind, s.dependsOn])).toEqual([
+      ['step_1', 'specialist', []],
+      ['step_2', 'condition', ['step_1']],
+      ['step_3', 'specialist', ['step_2']],
+    ]);
+    expect(steps[1]?.decision).toEqual({
+      decision: 'action.policy_check',
+      continueOn: ['allowed'],
+      input: { action: 'opportunity.offer_discount', discountPercent: 20 },
+    });
+  });
+
+  it('leaves a workflow with steps the editor cannot write to the API', async () => {
+    open((b) => {
+      const launch = b.options.workflows.org_1?.find((w) => w.id === 'wf-launch');
+      if (launch === undefined) return;
+      launch.steps = [
+        {
+          id: 'offer',
+          kind: 'specialist',
+          label: 'Offer',
+          dependsOn: [],
+          assignee: { departmentTypeId: 'sales', roleId: 'commercial_agent' },
+        },
+        {
+          id: 'gate',
+          kind: 'condition',
+          label: 'Gate',
+          dependsOn: ['offer'],
+          assignee: null,
+          // Another decision type: the worker would not decide it, so the editor never rewrites it.
+          decision: { decision: 'commercial.priorities', continueOn: ['high'], input: {} },
+        },
+      ];
+    }, WRITER);
+    const workflows = within(await screen.findByRole('region', { name: 'Workflows' }));
+    fireEvent.click((await workflows.findAllByRole('button', { name: 'Steps' }))[0] as HTMLElement);
+    expect(await workflows.findByText(/a condition/)).toBeTruthy();
+    expect(
+      workflows.getByText('This workflow has steps that can only be changed through the API.'),
+    ).toBeTruthy();
+  });
+
   it('activates a draft and archives only after the person confirms', async () => {
     const backend = open(undefined, WRITER);
     const workflows = within(await screen.findByRole('region', { name: 'Workflows' }));
