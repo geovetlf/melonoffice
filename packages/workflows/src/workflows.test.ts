@@ -896,6 +896,55 @@ describe('workflow drafts from a person’s words (ADR-0171)', () => {
     expect(w.workflowEvents()).toEqual([]);
   });
 
+  it('ADR-0173: reads a tool written before its agent’s work as part of that agent’s step', async () => {
+    const toolFirst = (w: { researcher: Specialist; marketer: Specialist }) => ({
+      summary: 'Lanzamiento con investigación',
+      objective: 'Investigar y lanzar',
+      steps: [
+        {
+          id: 'search',
+          kind: 'tool',
+          label: 'Buscar',
+          dependsOn: [],
+          performedBy: w.researcher.identity.id,
+          tool: { id: 'lookup', version: 1 },
+          input: { query: 'melones' },
+        },
+        {
+          id: 'research',
+          kind: 'specialist',
+          label: 'Investigar el mercado',
+          dependsOn: ['search'],
+          specialistId: w.researcher.identity.id,
+        },
+        {
+          id: 'campaign',
+          kind: 'specialist',
+          label: 'Preparar la campaña',
+          dependsOn: ['research', 'search'],
+          specialistId: w.marketer.identity.id,
+        },
+      ],
+    });
+    const draft = await (await drafting(toolFirst)).draft();
+    if (draft.status !== 'ready') throw new Error(JSON.stringify(draft));
+    expect(draft.steps.map((s) => [s.id, s.dependsOn])).toEqual([
+      ['research', []],
+      ['search', ['research']],
+      ['campaign', ['research']],
+    ]);
+    expect(draft.steps[1]).toMatchObject({ performedBy: 'research', input: { query: 'melones' } });
+    // A reference to no agent it was shown is never guessed: the draft is refused, not repaired.
+    const unknown = (w: { researcher: Specialist; marketer: Specialist }) => {
+      const answer = toolFirst(w);
+      return {
+        ...answer,
+        steps: [{ ...answer.steps[0], performedBy: 'legal' }, ...answer.steps.slice(1)],
+      };
+    };
+    expect((await (await drafting(unknown)).draft()).status).toBe('invalid');
+  });
+
   it('never shows a draft planning would refuse as valid, and says why in codes', async () => {
     // A tool the agent's skills do not grant.
     const borrowed = await drafting(

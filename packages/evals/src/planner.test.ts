@@ -19,6 +19,16 @@ import {
   PLANNER_V1_INSTRUCTIONS,
   PLANNER_V2_EVAL,
   PLANNER_V2_INSTRUCTIONS,
+  PLANNER_V3_EVAL,
+  PLANNER_V3_INSTRUCTIONS,
+  PLANNER_V4_EVAL,
+  PLANNER_V4_INSTRUCTIONS,
+  PLANNER_V5_EVAL,
+  PLANNER_V5_INSTRUCTIONS,
+  PLANNER_V6_EVAL,
+  PLANNER_V6_INSTRUCTIONS,
+  PLANNER_V7_EVAL,
+  PLANNER_V7_INSTRUCTIONS,
   plannerRefusalOf,
   PLANNER_EVAL_CASES,
   keptPlan,
@@ -299,6 +309,67 @@ describe('the planner eval cases (ADR-0169)', () => {
     );
   });
 
+  it('ADR-0172: keeps @3 exactly as it was sent, to measure it beside @4', () => {
+    expect(createHash('sha256').update(PLANNER_V3_INSTRUCTIONS).digest('hex').slice(0, 16)).toBe(
+      'a38bf376f7de10e2',
+    );
+    // The planner went back to @3 (ADR-0176): the frozen copy is the text it sends today.
+    expect(PLANNER_V3_INSTRUCTIONS).toBe(PLANNER_INSTRUCTIONS);
+    const c = find('p01_research_then_campaign');
+    const [system] = PLANNER_V3_EVAL.messagesOf(c);
+    expect(system?.content[0]).toEqual({ type: 'text', text: PLANNER_V3_INSTRUCTIONS });
+    expect(system?.content[1]).toEqual(PLANNER_EVAL.messagesOf(c)[0]?.content[1]);
+    expect(PLANNER_V3_EVAL.prompt).toBe('plan_proposal@3');
+  });
+
+  it('ADR-0173: keeps @4 exactly as it was sent, to measure it beside @5', () => {
+    expect(createHash('sha256').update(PLANNER_V4_INSTRUCTIONS).digest('hex').slice(0, 16)).toBe(
+      'd64ba5b98ca1df85',
+    );
+    expect(PLANNER_V4_INSTRUCTIONS).not.toBe(PLANNER_INSTRUCTIONS);
+    const [system] = PLANNER_V4_EVAL.messagesOf(find('p06_parallel_then_join'));
+    expect(system?.content[0]).toEqual({ type: 'text', text: PLANNER_V4_INSTRUCTIONS });
+    expect(PLANNER_V4_EVAL.prompt).toBe('plan_proposal@4');
+  });
+
+  it('ADR-0174: keeps @5 exactly as it was sent, to measure it beside @6', () => {
+    expect(createHash('sha256').update(PLANNER_V5_INSTRUCTIONS).digest('hex').slice(0, 16)).toBe(
+      '4cef44b0c049977a',
+    );
+    expect(PLANNER_V5_INSTRUCTIONS).not.toBe(PLANNER_INSTRUCTIONS);
+    const [system] = PLANNER_V5_EVAL.messagesOf(find('p06_parallel_then_join'));
+    expect(system?.content[0]).toEqual({ type: 'text', text: PLANNER_V5_INSTRUCTIONS });
+    expect(PLANNER_V5_EVAL.prompt).toBe('plan_proposal@5');
+  });
+
+  it('ADR-0175: keeps @6 exactly as it was sent, to measure it beside @7', () => {
+    expect(createHash('sha256').update(PLANNER_V6_INSTRUCTIONS).digest('hex').slice(0, 16)).toBe(
+      '9f1941535f91b13b',
+    );
+    expect(PLANNER_V6_INSTRUCTIONS).not.toBe(PLANNER_INSTRUCTIONS);
+    const [system] = PLANNER_V6_EVAL.messagesOf(find('p06_parallel_then_join'));
+    expect(system?.content[0]).toEqual({ type: 'text', text: PLANNER_V6_INSTRUCTIONS });
+    expect(PLANNER_V6_EVAL.prompt).toBe('plan_proposal@6');
+  });
+
+  it('ADR-0176: keeps @7 exactly as it was sent, though the planner went back to @3', () => {
+    expect(createHash('sha256').update(PLANNER_V7_INSTRUCTIONS).digest('hex').slice(0, 16)).toBe(
+      '10120331ec22967d',
+    );
+    expect(PLANNER_V7_INSTRUCTIONS).not.toBe(PLANNER_INSTRUCTIONS);
+    const [system] = PLANNER_V7_EVAL.messagesOf(find('p06_parallel_then_join'));
+    expect(system?.content[0]).toEqual({ type: 'text', text: PLANNER_V7_INSTRUCTIONS });
+    expect(PLANNER_V7_EVAL.prompt).toBe('plan_proposal@7');
+  });
+
+  it('ADR-0172: the example in the instructions is a plan the validator accepts', async () => {
+    const example = PLANNER_INSTRUCTIONS.slice(PLANNER_INSTRUCTIONS.lastIndexOf('{"summary"'));
+    const idOf = (type: string) =>
+      PLANNER_EVAL_CANDIDATES.find((x) => x.departmentType === type)?.specialistId ?? '';
+    const filled = example.replaceAll('<A>', idOf('research')).replaceAll('<B>', idOf('sales'));
+    expect(await plannerRefusalOf({ text: filled })).toBeUndefined();
+  });
+
   it('ADR-0172: keeps why a plan was refused, as codes and paths only', async () => {
     const c = find('p02_search_company_memory');
     const plan = good(c.id).structured as { steps: Record<string, unknown>[] };
@@ -319,6 +390,61 @@ describe('the planner eval cases (ADR-0169)', () => {
 });
 
 describe('scoring a planner answer (ADR-0169)', () => {
+  it('ADR-0173: reads a tool written before its agent’s work as the product does (p02, p14)', async () => {
+    // As @3 and @4 answered p02 and p14 in the real runs: the tool first, naming the agent.
+    const p02 = plan('Buscar la política de descuentos y redactar la propuesta', 'Propuesta', [
+      {
+        id: 'buscar_politica',
+        kind: 'tool',
+        label: 'Buscar la política de descuentos',
+        dependsOn: [],
+        performedBy: SALES,
+        tool: { id: 'knowledge_search', version: 1 },
+        input: { query: 'política de descuentos' },
+      },
+      agent('redactar_propuesta', SALES, 'Redactar la propuesta para el cliente', [
+        'buscar_politica',
+      ]),
+    ]);
+    expect(await failed(find('p02_search_company_memory'), p02)).toEqual([]);
+    expect(await PLANNER_EVAL.keep(find('p02_search_company_memory'), p02)).toMatch(
+      /^tool steps: buscar_politica->redactar_propuesta \| /,
+    );
+    const p14 = plan('Analyze sales and plan to win back inactive customers', 'Win back', [
+      {
+        id: 'get_sales_data',
+        kind: 'tool',
+        label: 'Get the customer and pipeline figures',
+        dependsOn: [],
+        performedBy: 'sales',
+        tool: { id: 'customer_records_summary', version: 1 },
+        input: {},
+      },
+      agent('analyze_sales', SALES, 'Analyze the sales of the last month', ['get_sales_data']),
+      agent('plan_win_back', MARKETING, 'Plan how to win back inactive customers', [
+        'analyze_sales',
+      ]),
+    ]);
+    expect(await failed(find('p14_english_plan'), p14)).toEqual([]);
+    // A reference it cannot resolve is still refused, by the validator.
+    const [first, second] = (p02.structured as { steps: Step[] }).steps;
+    const unknown = plan('Buscar y redactar', 'Propuesta', [
+      { ...first, performedBy: 'legal' },
+      second as Step,
+    ]);
+    expect(await failed(find('p02_search_company_memory'), unknown)).toContain('valid_plan');
+    // The run keeps what the model named, so nobody has to guess it (ADR-0175).
+    expect(await PLANNER_EVAL.keep(find('p02_search_company_memory'), unknown)).toMatch(
+      /tool steps: buscar_politica:unknown_performer="legal" \| /,
+    );
+    // The role of exactly one agent names it too (ADR-0175).
+    const byRole = plan('Buscar y redactar', 'Propuesta', [
+      { ...first, performedBy: 'commercial_agent' },
+      second as Step,
+    ]);
+    expect(await failed(find('p02_search_company_memory'), byRole)).toEqual([]);
+  });
+
   it('passes a good answer to every case', async () => {
     for (const c of PLANNER_EVAL_CASES) {
       expect([c.id, await failed(c, good(c.id))]).toEqual([c.id, []]);

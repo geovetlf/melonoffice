@@ -202,7 +202,7 @@ export function createPlanner({
       if (response.status !== 'completed') return fail(response.code);
 
       // A question or a "cannot be done" is not a plan: the task goes back to a person (ADR-0171).
-      const answer = planningAnswerOf(response.output);
+      const answer = planningAnswerOf(response.output, candidates);
       if (answer.kind === 'question') return fail('needs_clarification');
       if (answer.kind === 'not_possible') return fail('not_possible');
       const outcome = await plans.propose(tenant, {

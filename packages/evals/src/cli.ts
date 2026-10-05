@@ -10,6 +10,11 @@ import {
   PLANNER_EVAL_CASES,
   PLANNER_V1_EVAL,
   PLANNER_V2_EVAL,
+  PLANNER_V3_EVAL,
+  PLANNER_V4_EVAL,
+  PLANNER_V5_EVAL,
+  PLANNER_V6_EVAL,
+  PLANNER_V7_EVAL,
   plannerComparisonText,
 } from './planner.js';
 import { MAX_EVAL_REPEAT, runEvals, type EvalCaseResult, type EvalRun } from './run.js';
@@ -23,8 +28,9 @@ import { MAX_EVAL_REPEAT, runEvals, type EvalCaseResult, type EvalRun } from './
  *   node dist/cli.js report run.json   (a run held to one model → docs/evals/reports/, G-5)
  *
  * `run` options: `--out <file>` (required), `--budget <credits>` (default and most: 70),
- * `--set planner` (the planner's cases, ADR-0169, instead of the agents'), `--prompt 1|2` with it
- * (`plan_proposal@1` or @2 again, to compare with @3 under the same scoring, ADR-0171, ADR-0172),
+ * `--set planner` (the planner's cases, ADR-0169, instead of the agents'), `--prompt 1` to `7`
+ * with it (one `plan_proposal` version again under the same scoring, ADR-0171 to ADR-0176; the
+ * default is the planner's own, @3),
  * `--suite <id>` (repeatable; default every suite), `--model <provider/model>` (a variant held
  * to one model), `--repeat <n>` (1 to 5, for consistency).
  */
@@ -90,9 +96,9 @@ async function run(args: readonly string[]): Promise<void> {
   }
   if (
     given.prompt !== undefined &&
-    (given.set !== 'planner' || !['1', '2', '3'].includes(given.prompt))
+    (given.set !== 'planner' || !['1', '2', '3', '4', '5', '6', '7'].includes(given.prompt))
   ) {
-    fail('--prompt is 1, 2 or 3 (the default), with --set planner');
+    fail('--prompt is 1, 2, 3, 4 or 5 (the default), with --set planner');
   }
   const cases =
     given.suites.length === 0
@@ -128,7 +134,17 @@ async function run(args: readonly string[]): Promise<void> {
             ? PLANNER_V1_EVAL
             : given.prompt === '2'
               ? PLANNER_V2_EVAL
-              : PLANNER_EVAL,
+              : given.prompt === '3'
+                ? PLANNER_V3_EVAL
+                : given.prompt === '4'
+                  ? PLANNER_V4_EVAL
+                  : given.prompt === '5'
+                    ? PLANNER_V5_EVAL
+                    : given.prompt === '6'
+                      ? PLANNER_V6_EVAL
+                      : given.prompt === '7'
+                        ? PLANNER_V7_EVAL
+                        : PLANNER_EVAL,
         )
       : await runEvals({ ...common, cases });
   writeFileSync(out, `${JSON.stringify(result, null, 2)}\n`);

@@ -116,6 +116,30 @@ node packages/evals/dist/cli.js compare ~/evals/PLANNER-V2-RERUN.json ~/evals/PL
 
 @3 is ready only if neither comparison lists a regression: no case that passes on @1 or @2 may fail on @3.
 
+`plan_proposal@4` (the update in ADR-0172) is now the default, and `--prompt 3` runs @3 again. @4 is compared with the stored @1, @2 and @3 runs, and is ready only if none of the comparisons lists a regression.
+
+`plan_proposal@5` (ADR-0173) is now the default, and `--prompt 4` runs @4 again. Every run reads tool steps as the product does: a tool written before its agent's work is resolved to that agent's step (`resolveToolSteps`). The run file records how each tool step was read (`tool steps: …`).
+
+`plan_proposal@6` (ADR-0174) is now the default, and `--prompt 5` runs @5 again. @6 is measured beside @3 with `--repeat 3`: a case passes only when all three scored repetitions pass, so one lucky or unlucky answer decides nothing.
+
+```sh
+EVAL_ACCESS_TOKEN=$(gcloud auth print-access-token) \
+  node packages/evals/dist/cli.js run --set planner --prompt 3 --repeat 3 --budget 10 --out ~/evals/PLANNER-V3-R3.json
+EVAL_ACCESS_TOKEN=$(gcloud auth print-access-token) \
+  node packages/evals/dist/cli.js run --set planner --repeat 3 --budget 10 --out ~/evals/PLANNER-V6-R3.json
+node packages/evals/dist/cli.js compare ~/evals/PLANNER-V3-R3.json ~/evals/PLANNER-V6-R3.json
+```
+
+`plan_proposal@7` (ADR-0175) is now the default, and `--prompt 6` runs @6 again. @7 is measured with `--repeat 3` against the stored @3 run:
+
+```sh
+EVAL_ACCESS_TOKEN=$(gcloud auth print-access-token) \
+  node packages/evals/dist/cli.js run --set planner --repeat 3 --budget 10 --out ~/evals/PLANNER-V7-R3.json
+node packages/evals/dist/cli.js compare ~/evals/PLANNER-V3-R3.json ~/evals/PLANNER-V7-R3.json
+```
+
+The planner went back to `plan_proposal@3` (ADR-0176), now the default again; `--prompt 4` to `--prompt 7` run the versions that were measured and not adopted. With three repetitions, @3 passed 34/48, @6 30/48 and @7 25/48.
+
 ## Model reports and the model gate
 
 A model may serve agents outside DEV only with a passing report in [reports/](reports/README.md). CI enforces this.
