@@ -37,6 +37,7 @@ const PINNED: Readonly<Record<string, string>> = {
   'plan_proposal@1': '650c44eda6d62802',
   'plan_proposal@2': '9370266c27166687',
   'plan_proposal@3': 'a86c344bb73205d5',
+  'plan_proposal@4': '93b66fbbd13bbf97',
   'knowledge_extract@1': 'ab0b59dc318b3411',
   'decision_routing@1': '9a5af5413a6a79ba',
   'document_transcription@1': 'a08544ea7764db64',

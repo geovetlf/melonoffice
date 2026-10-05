@@ -116,6 +116,8 @@ node packages/evals/dist/cli.js compare ~/evals/PLANNER-V2-RERUN.json ~/evals/PL
 
 @3 is ready only if neither comparison lists a regression: no case that passes on @1 or @2 may fail on @3.
 
+`plan_proposal@4` (the update in ADR-0172) is now the default, and `--prompt 3` runs @3 again. @4 is compared with the stored @1, @2 and @3 runs, and is ready only if none of the comparisons lists a regression.
+
 ## Model reports and the model gate
 
 A model may serve agents outside DEV only with a passing report in [reports/](reports/README.md). CI enforces this.
