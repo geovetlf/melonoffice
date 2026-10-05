@@ -1,4 +1,4 @@
-import { looksLikeSecretText, promptLabel } from '@melonoffice/ai-gateway';
+import { looksLikeSecretText, promptLabel, redactSecretText } from '@melonoffice/ai-gateway';
 import type {
   Execution,
   ExecutionNode,
@@ -46,7 +46,8 @@ export const MAX_TOOL_RESULT_CHARS = 4_000;
  */
 export function toolResultText(label: string, structured: unknown): string {
   if (structured === undefined) return `${label}: (its result is not available)`;
-  const json = JSON.stringify(structured) ?? 'null';
+  // Cut out before it is shortened: a credential cut in half no longer looks like one (G-7).
+  const json = redactSecretText(JSON.stringify(structured) ?? 'null');
   const shown =
     json.length <= MAX_TOOL_RESULT_CHARS ? json : `${json.slice(0, MAX_TOOL_RESULT_CHARS)} […]`;
   return `${label}: ${shown}`;
@@ -166,8 +167,8 @@ export const planStepRequest = (version: PlanVersion, step: PlanStep): string =>
 
 /**
  * The steps whose answers a step reads: the steps it depends on, looking through condition steps
- * (WF-4), which decide and have no answer of their own, to the steps they depend on. Each once, in
- * order. `undefined` when a step is missing from the version.
+ * (WF-4) and wait steps (ADR-0152), which decide or wait and have no answer of their own, to the
+ * steps they depend on. Each once, in order. `undefined` when a step is missing from the version.
  */
 export function answeringSteps(
   version: PlanVersion,
@@ -180,7 +181,9 @@ export function answeringSteps(
     seen.add(id);
     const before = version.steps.find((s) => s.id === id);
     if (before === undefined) return false;
-    if (before.kind === 'condition') return before.dependsOn.every(visit);
+    if (before.kind === 'condition' || before.kind === 'wait') {
+      return before.dependsOn.every(visit);
+    }
     out.push(id);
     return true;
   };

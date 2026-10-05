@@ -50,6 +50,7 @@
   "devDependencies": {
     "@melonoffice/config": "workspace:*",
     "@melonoffice/credits": "workspace:*",
+    "@melonoffice/workflows": "workspace:*",
     "jose": "6.2.12"
   }
 }

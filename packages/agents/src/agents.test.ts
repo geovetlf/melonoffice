@@ -917,6 +917,16 @@ describe('Plan steps: what a step’s agent is given (WF-1, ADR-0070)', () => {
     expect(toolResultText('Buscar', { n: 1 })).toBe('Buscar: {"n":1}');
   });
 
+  it('G-7: cuts a credential out of a tool result before shortening it, even one at the cut', () => {
+    const key = `sk-${'A1b2C3d4'.repeat(4)}`;
+    // The key straddles the limit: shortened first, its first half would no longer look like one.
+    const padding = 'a '.repeat((MAX_TOOL_RESULT_CHARS - 20) / 2);
+    const shown = toolResultText('Buscar', { text: `${padding}${key} y más` });
+    expect(shown).not.toContain('sk-A1b2');
+    expect(shown).not.toContain('A1b2C3d4');
+    expect(toolResultText('Buscar', { note: `clave: ${key}` })).not.toContain(key);
+  });
+
   it('asks nothing for anything that is not exactly this plan’s step for this agent', async () => {
     const t = await setup();
     await t.answer('Listo');
@@ -1182,6 +1192,19 @@ describe('plan steps after a condition (WF-4)', () => {
     } as unknown as PlanVersion;
     expect(answeringSteps(version, version.steps[4] as PlanStep)).toEqual(['a', 'b']);
     expect(answeringSteps(version, step('d', 'specialist', ['missing']))).toBeUndefined();
+  });
+
+  it('ADR-0178: a step after a wait reads the answers of the steps before the wait', () => {
+    const step = (id: string, kind: PlanStep['kind'], dependsOn: string[]) =>
+      ({ id, kind, label: id, dependsOn, approvalRequired: false }) as PlanStep;
+    const version = {
+      steps: [
+        step('research', 'specialist', []),
+        step('pause', 'wait', ['research']),
+        step('offer', 'specialist', ['pause']),
+      ],
+    } as unknown as PlanVersion;
+    expect(answeringSteps(version, version.steps[2] as PlanStep)).toEqual(['research']);
   });
 });
 
