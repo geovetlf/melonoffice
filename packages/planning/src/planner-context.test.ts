@@ -8,7 +8,7 @@ import {
   planningAnswerOf,
 } from './planner-context.js';
 
-/** The planner's context and answers (plan_proposal@2, ADR-0171). */
+/** The planner's context and answers (plan_proposal@2 and @3, ADR-0171, ADR-0172). */
 
 describe('the planner context (ADR-0171)', () => {
   const resolved = {

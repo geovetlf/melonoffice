@@ -179,7 +179,7 @@ export interface EvalTask<
   readonly outputSchema?: AIOutputSchema;
   readonly score: (c: C, output: AIOutput) => EvalScore | Promise<EvalScore>;
   /** The answer as the run file keeps it, with nothing secret. */
-  readonly keep: (c: C, output: AIOutput) => string | undefined;
+  readonly keep: (c: C, output: AIOutput) => string | undefined | Promise<string | undefined>;
   readonly digest: (cases: readonly C[]) => string;
 }
 
@@ -399,7 +399,7 @@ export async function runEvals<
             score: await task.score(c, outcome.output),
             delivered: checkProviderSuccess(outcome, undefined),
           };
-          const kept = task.keep(c, outcome.output);
+          const kept = await task.keep(c, outcome.output);
           if (kept !== undefined) result = { ...result, answer: kept };
           break;
         }
