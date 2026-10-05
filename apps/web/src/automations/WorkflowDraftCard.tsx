@@ -59,6 +59,7 @@ export function WorkflowDraftCard({
   intent,
   onAdjust,
   onSaved,
+  onOpen,
   onDone,
 }: {
   readonly client: DraftClient;
@@ -66,6 +67,11 @@ export function WorkflowDraftCard({
   readonly intent: string;
   readonly onAdjust: AdjustDraft;
   readonly onSaved?: ((workflow: WorkflowView) => void) | undefined;
+  /**
+   * Opens the saved workflow where it can be edited (ADR-0177). Absent: the link goes to
+   * Automations with that workflow opened.
+   */
+  readonly onOpen?: ((workflow: WorkflowView) => void) | undefined;
   /** The card has nothing left to do (discarded): its holder may close it. */
   readonly onDone?: (() => void) | undefined;
 }) {
@@ -132,10 +138,11 @@ export function WorkflowDraftCard({
           <FormattedMessage id="automations.draft.saved" values={{ name: phase.workflow.name }} />{' '}
           <a
             className="workflow-draft__go"
-            href={paths.automations()}
+            href={paths.automationsWorkflow(phase.workflow.id)}
             onClick={(event) => {
               event.preventDefault();
-              navigate(paths.automations());
+              if (onOpen === undefined) navigate(paths.automationsWorkflow(phase.workflow.id));
+              else onOpen(phase.workflow);
             }}
           >
             <FormattedMessage id="automations.draft.open" />
@@ -549,6 +556,11 @@ function ReadyDraft({
 
       <h4 className="workflow-draft__heading">
         <FormattedMessage id="automations.draft.what" />
+        {' · '}
+        <FormattedMessage
+          id="automations.draft.stepCount"
+          values={{ count: summary.steps.length }}
+        />
       </h4>
       <ol className="workflow-draft__steps">
         {summary.steps.map((s, i) => (
@@ -651,11 +663,13 @@ export function WorkflowFromWords({
   client,
   onAdjust,
   onSaved,
+  onOpen,
   onClose,
 }: {
   readonly client: DraftClient;
   readonly onAdjust: AdjustDraft;
   readonly onSaved: (workflow: WorkflowView) => void;
+  readonly onOpen?: ((workflow: WorkflowView) => void) | undefined;
   readonly onClose: () => void;
 }) {
   const intl = useIntl();
@@ -710,6 +724,7 @@ export function WorkflowFromWords({
           intent={request.intent}
           onAdjust={onAdjust}
           onSaved={onSaved}
+          onOpen={onOpen}
           onDone={() => setRequest(undefined)}
         />
       )}

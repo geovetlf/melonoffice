@@ -51,6 +51,7 @@ import {
 } from './catalogue.js';
 import { commercialLinks, type GiaLink } from './commercial.js';
 import { GiaError } from './errors.js';
+import { workflowIntentOf } from './intent.js';
 import {
   forecastSummaryOf,
   readForecast,
@@ -134,6 +135,12 @@ export interface GiaAnswer {
    * the Melon Agent Harness then plans it, and the plan waits for their approval.
    */
   readonly proposedTeamTask: GiaTeamTaskProposal | null;
+  /**
+   * Whether the person's words ask for work that could be an automation (ADR-0177), read
+   * deterministically from them, and they may draft one: the app then offers to prepare a
+   * workflow draft. Nothing is drafted, saved or activated until they ask.
+   */
+  readonly workflowIntent: boolean;
   /**
    * What needs attention first, as the Decision Engine ranked it (ADR-0065), when the answer is
    * about it: each item with its reason, its link and its next step. Nothing in it is run.
@@ -724,6 +731,9 @@ export function createGia(options: GiaOptions): GiaService {
       proposedFollowUp,
       proposedAgentTask,
       proposedTeamTask,
+      // Offered only to someone who may draft a workflow: the same permissions the draft asks.
+      workflowIntent:
+        can(tenant, 'workflow.manage') && can(tenant, 'plan.create') && workflowIntentOf(message),
       priorities: ranking !== undefined && parsed.priorities ? prioritiesOf(ranking) : null,
       forecast: projection === undefined ? null : forecastSummaryOf(projection),
       context: Object.freeze({

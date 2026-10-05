@@ -180,6 +180,7 @@ describe.each(STORES)('GIA chat with storage in %s (ADR-0052)', (_name, createSt
         proposedFollowUp: null,
         proposedTeamTask: null,
         proposedAgentTask: null,
+        workflowIntent: false,
         priorities: null,
         forecast: null,
         links: [],
@@ -293,6 +294,39 @@ describe.each(STORES)('GIA chat with storage in %s (ADR-0052)', (_name, createSt
     expect((await u.ask('token-alice', u.orgA, body())).status).toBe(403);
     expect(t.provider.calls).toHaveLength(0);
     expect(u.provider.calls).toHaveLength(0);
+  });
+
+  it('F3: offers an automation only for repeatable work, to someone who may draft one (ADR-0177)', async () => {
+    const t = await setup();
+    const repeat = await t.ask(
+      'token-alice',
+      t.orgA,
+      body('Cada lunes prepara un resumen de las ventas de la semana', 'click-0101'),
+    );
+    expect(repeat.body.workflowIntent).toBe(true);
+    // A question about the business, even with "cada mes", is not a request for work.
+    const question = await t.ask(
+      'token-alice',
+      t.orgA,
+      body('¿Cuánto vendí cada mes?', 'click-0102'),
+    );
+    expect(question.body.workflowIntent).toBe(false);
+    // Offering drafts nothing: one GIA call per message, and no planner call.
+    expect(t.provider.calls).toHaveLength(2);
+    expect(JSON.stringify(t.provider.calls)).not.toContain('You are the MelonOffice planner');
+    // Without the permissions to draft a workflow, GIA never offers one.
+    const u = await setup({
+      authorization: createAuthorizationService({
+        owner: ROLES.owner.filter((p) => p !== 'workflow.manage'),
+      }),
+    });
+    const offered = await u.ask(
+      'token-alice',
+      u.orgA,
+      body('Automatiza el seguimiento de clientes cada semana', 'click-0103'),
+    );
+    expect(offered.status).toBe(200);
+    expect(offered.body.workflowIntent).toBe(false);
   });
 
   it('keeps facts the person states as proposals to confirm', async () => {

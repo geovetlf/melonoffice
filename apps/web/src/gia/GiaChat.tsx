@@ -46,7 +46,13 @@ const HISTORY_TURNS = 6;
 
 export type GiaChatEntry =
   | { readonly id: string; readonly role: 'person'; readonly text: string }
-  | { readonly id: string; readonly role: 'gia'; readonly answer: GiaAnswerView }
+  | {
+      readonly id: string;
+      readonly role: 'gia';
+      readonly answer: GiaAnswerView;
+      /** The person's words it answers, for the automation offer (ADR-0177). */
+      readonly asked?: string;
+    }
   | {
       readonly id: string;
       readonly role: 'error';
@@ -72,7 +78,7 @@ export interface GiaChat {
    * Drafts a workflow from the person's words (ADR-0171): GIA proposes, the person reviews and
    * saves. Absent when the role may not write and plan workflows.
    */
-  readonly draftWorkflow?: (text: string) => void;
+  readonly draftWorkflow?: (text: string, options?: { readonly echo?: boolean }) => void;
   readonly workflows?: DraftClient;
 }
 
@@ -132,7 +138,7 @@ export function GiaChatProvider({
           setEntries((current) => [
             ...current,
             result.kind === 'answered'
-              ? { id: `${requestKey}-a`, role: 'gia', answer: result.answer }
+              ? { id: `${requestKey}-a`, role: 'gia', answer: result.answer, asked: message }
               : {
                   id: `${requestKey}-e`,
                   role: 'error',
@@ -149,14 +155,15 @@ export function GiaChatProvider({
   );
 
   // The card asks the server itself; the chat only keeps the person's words and the card.
-  const draftWorkflow = useCallback((raw: string) => {
+  // From GIA's offer (ADR-0177) the person's words are already in the chat: only the card is added.
+  const draftWorkflow = useCallback((raw: string, { echo = true } = {}) => {
     const intent = raw.trim();
     if (intent === '') return;
     const key = newKey();
     setEntries((current) => [
       ...current,
-      { id: key, role: 'person', text: intent },
-      { id: `${key}-w`, role: 'workflow', intent },
+      ...(echo ? [{ id: key, role: 'person' as const, text: intent }] : []),
+      { id: `${key}-w`, role: 'workflow' as const, intent },
     ]);
   }, []);
 
@@ -265,7 +272,7 @@ export function GiaConversation() {
                 <p className="gia-chat__text">{entry.text}</p>
               </>
             ) : entry.role === 'gia' ? (
-              <GiaReply answer={entry.answer} />
+              <GiaReply answer={entry.answer} asked={entry.asked} />
             ) : entry.role === 'workflow' ? (
               chat.workflows === undefined ? null : (
                 <>
@@ -874,7 +881,65 @@ function TeamTaskProposal({ answer }: { readonly answer: GiaAnswerView }) {
   );
 }
 
-function GiaReply({ answer }: { readonly answer: GiaAnswerView }) {
+/**
+ * GIA's offer to prepare an automation (ADR-0177), when the person's words read as repeatable
+ * work and they may draft one. Nothing is drafted until they ask: the draft card then calls the
+ * planner, and saving and activating stay theirs.
+ */
+function WorkflowOffer({
+  answer,
+  asked,
+}: {
+  readonly answer: GiaAnswerView;
+  readonly asked: string | undefined;
+}) {
+  const chat = useGiaChat();
+  const intl = useIntl();
+  const [state, setState] = useState<'open' | 'taken' | 'dismissed'>('open');
+  if (answer.workflowIntent !== true || asked === undefined || chat.draftWorkflow === undefined) {
+    return null;
+  }
+  if (state === 'dismissed') return null;
+  return (
+    <div
+      className="gia-chat__proposal"
+      role="group"
+      aria-label={intl.formatMessage({ id: 'gia.chat.workflowOffer.label' })}
+    >
+      <p className="gia-chat__meta">
+        <FormattedMessage id="gia.chat.workflowOffer" />
+      </p>
+      {state === 'taken' ? (
+        <p className="gia-chat__meta" role="status">
+          <FormattedMessage id="gia.chat.workflowOffer.taken" />
+        </p>
+      ) : (
+        <div className="mo-form__actions">
+          <Button
+            type="button"
+            onClick={() => {
+              setState('taken');
+              chat.draftWorkflow?.(asked, { echo: false });
+            }}
+          >
+            <FormattedMessage id="gia.chat.draftWorkflow" />
+          </Button>
+          <Button type="button" variant="secondary" onClick={() => setState('dismissed')}>
+            <FormattedMessage id="gia.chat.workflowOffer.dismiss" />
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function GiaReply({
+  answer,
+  asked,
+}: {
+  readonly answer: GiaAnswerView;
+  readonly asked?: string | undefined;
+}) {
   const intl = useIntl();
   const key = answer.department === null ? undefined : `department.${answer.department}.short`;
   const departmentName =
@@ -970,6 +1035,7 @@ function GiaReply({ answer }: { readonly answer: GiaAnswerView }) {
       <FollowUpProposal answer={answer} />
       <AgentTaskProposal answer={answer} />
       <TeamTaskProposal answer={answer} />
+      <WorkflowOffer answer={answer} asked={asked} />
       {place === undefined ? null : (
         <a
           className="gia-chat__go"

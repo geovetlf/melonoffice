@@ -22,7 +22,7 @@ import {
   type WorkflowView,
 } from './automationsClient.js';
 import { navigate } from '../identity/router.js';
-import { paths } from '../shell/routes.js';
+import { openedWith, paths } from '../shell/routes.js';
 import { readyList, useOfficeData } from '../office/OfficeData.js';
 import { draftsOf, WorkflowEditor } from './WorkflowEditor.js';
 import { draftClientOf, takeHandedOverDraft, WorkflowFromWords } from './WorkflowDraftCard.js';
@@ -143,7 +143,10 @@ export function AutomationsPage({
     return handed === undefined ? undefined : { mode: 'draft', ...handed };
   });
   const [asking, setAsking] = useState(false);
-  const [openWorkflow, setOpenWorkflow] = useState<string>();
+  // A workflow the page was opened with (`?workflow=`), e.g. one just saved from GIA (ADR-0177).
+  const [openWorkflow, setOpenWorkflow] = useState<string | undefined>(() =>
+    openedWith('workflow'),
+  );
   const [notice, setNotice] = useState<string>();
   const canWrite = permissions.manageWorkflows === true && templates !== undefined;
   const drafts = useMemo(
@@ -153,6 +156,14 @@ export function AutomationsPage({
         : undefined,
     [canWrite, permissions.draftWorkflows, permissions.planWorkflows, client],
   );
+  // The opened workflow is brought into view once the list has it (ADR-0177).
+  const listed = workflows.status === 'ready';
+  useEffect(() => {
+    if (!listed || openWorkflow === undefined) return;
+    globalThis.document
+      ?.getElementById(`workflow-${openWorkflow}`)
+      ?.scrollIntoView?.({ block: 'nearest' });
+  }, [listed, openWorkflow]);
   // One key per workflow and press: a retry after a network failure is the same plan.
   const keys = useRef(new Map<string, string>());
 
@@ -300,6 +311,10 @@ export function AutomationsPage({
             setNotice('automations.editor.created');
             loadWorkflows();
           }}
+          onOpen={(saved) => {
+            setAsking(false);
+            setOpenWorkflow(saved.id);
+          }}
           onClose={() => setAsking(false)}
         />
       ) : null}
@@ -338,7 +353,7 @@ export function AutomationsPage({
           ) : (
             <ul className="mo-list">
               {workflows.value.map((w) => (
-                <li key={w.id} className="mo-list-item">
+                <li key={w.id} id={`workflow-${w.id}`} className="mo-list-item">
                   <div className="mo-list-item__main">
                     <span className="mo-list-item__title">{w.name}</span>
                     <span className="mo-list-item__meta">
