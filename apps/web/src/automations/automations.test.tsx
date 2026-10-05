@@ -312,11 +312,17 @@ describe('Automations (WF-3)', () => {
         /Not run: it needed 5 credits and the plan had used 12 of its 15-credit limit/,
       ),
     ).toBeTruthy();
+    // Said once, in the failed step's own box (ADR-0167), never twice.
     expect(
       within(plan).getByText(
-        /Failed: the steps that depend on it are skipped; other branches go on/,
+        /The steps that depend on this one are skipped; the other branches go on/,
       ),
     ).toBeTruthy();
+    expect(
+      within(plan).queryByText(
+        /Failed: the steps that depend on it are skipped; other branches go on/,
+      ),
+    ).toBeNull();
   });
 
   it('ADR-0146: a step that asked a person waits for them, links to Approvals, and a rejection skips only its branch', async () => {
@@ -332,7 +338,13 @@ describe('Automations (WF-3)', () => {
         steps: [
           { id: 'research', kind: 'specialist', label: 'Research', dependsOn: [] },
           { id: 'campaign', kind: 'specialist', label: 'Campaign', dependsOn: ['research'] },
-          { id: 'launch', kind: 'specialist', label: 'Launch', dependsOn: ['campaign'] },
+          {
+            id: 'launch',
+            kind: 'specialist',
+            label: 'Launch',
+            dependsOn: ['campaign'],
+            approvalRequired: true,
+          },
           { id: 'brief', kind: 'specialist', label: 'Brief', dependsOn: ['research'] },
         ],
         riskLevel: 'low',
@@ -379,6 +391,10 @@ describe('Automations (WF-3)', () => {
     expect(ask.textContent).toContain('The company policy asks for a person');
     expect(within(ask).getByRole('link', { name: 'Decide in Approvals' })).toBeTruthy();
     expect(within(ask).queryByRole('button', { name: 'Approve' })).toBeNull();
+    // A step that will ask says so before its turn (ADR-0167).
+    const launch = within(shown).getByText('Launch').closest('li') as HTMLElement;
+    expect(launch.textContent).toContain('will ask for your approval before it starts');
+    expect(campaign.textContent).not.toContain('will ask for your approval');
 
     cleanup();
     open((b) => {
@@ -399,6 +415,7 @@ describe('Automations (WF-3)', () => {
     expect(within(shown).getByText(/Skipped: an earlier step ended this branch/)).toBeTruthy();
     expect(within(shown).getAllByText(/Done/)).toHaveLength(2);
     expect(within(shown).queryByRole('link', { name: 'Decide in Approvals' })).toBeNull();
+    expect(shown.textContent).not.toContain('will ask for your approval');
   });
 
   it('ADR-0167: a person decides a step waiting for them on the plan, through Approvals’ own call', async () => {
