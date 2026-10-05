@@ -60,10 +60,21 @@ describe('planner', () => {
     const context = JSON.stringify(call?.messages);
     expect(context).toContain(w.researcher.identity.id);
     const part = call?.messages[0]?.content[1];
-    const candidates = JSON.parse(part?.type === 'text' ? part.text : '{}').candidates;
-    expect(candidates).toContainEqual(
+    const { agents } = JSON.parse(part?.type === 'text' ? part.text : '{}');
+    expect(agents).toContainEqual(
       expect.objectContaining({ departmentType: 'research', roleId: 'market_researcher' }),
     );
+    // ADR-0171: each tool as the validator judges it, with its schemas and approval.
+    const researcher = agents.find(
+      (a: { specialistId: string }) => a.specialistId === w.researcher.identity.id,
+    );
+    expect(researcher.tools.find((t: { id: string }) => t.id === 'lookup')).toMatchObject({
+      version: 1,
+      usableAsStep: true,
+      approvalRequired: false,
+      inputFromAllowed: true,
+      input: expect.objectContaining({ type: 'object' }),
+    });
     expect(context).not.toContain(w.orgA);
     // The gateway charged the call once; creating the plan consumed nothing more.
     expect(w.consumed).toEqual([3]);
@@ -85,6 +96,25 @@ describe('planner', () => {
     expect(outcome.status === 'planned' && outcome.plan.status).toBe('approval_required');
     expect((await w.executions.get(w.tenantA, w.execution.id)).status).toBe('waiting_approval');
     expect(w.events('plan.approved')).toHaveLength(0);
+  });
+
+  it('ADR-0171: a question or a "cannot be done" is no plan, and the execution fails with it', async () => {
+    for (const [said, code] of [
+      [{ question: '¿Qué mercado quieres estudiar?' }, 'needs_clarification'],
+      [{ notPossible: 'No hay ninguna herramienta para enviar correos.' }, 'not_possible'],
+    ] as const) {
+      const w = await setup();
+      w.answers.push(() => ({
+        status: 'success',
+        output: { structured: said },
+        usage: { inputTokens: 10, outputTokens: 10 },
+        finishReason: 'stop',
+      }));
+      expect(await w.plan()).toEqual({ status: 'failed', reason: code });
+      const after = await w.executions.get(w.tenantA, w.execution.id);
+      expect(after.failure?.code).toBe(code);
+      expect(w.events('plan.created')).toHaveLength(0);
+    }
   });
 
   it('refuses a malformed model output and fails the planning execution', async () => {

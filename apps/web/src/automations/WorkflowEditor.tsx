@@ -140,10 +140,13 @@ function saveErrorOf(error: unknown): SaveError {
 }
 
 export interface WorkflowEditorProps {
-  /** A workflow to version, with its current name and steps; none to create one. */
+  /**
+   * A workflow to version, with its current name and steps; none to create one. Without an id,
+   * a new workflow that starts from these steps (a draft GIA proposed, ADR-0171).
+   */
   readonly editing?:
     | {
-        readonly id: string;
+        readonly id?: string | undefined;
         readonly name: string;
         readonly steps: readonly WorkflowStepDraft[];
       }
@@ -416,7 +419,7 @@ export function WorkflowEditor({
     >
       <h2 id={titleId} className="mo-section-title">
         <FormattedMessage
-          id={editing === undefined ? 'automations.editor.new' : 'automations.editor.version'}
+          id={editing?.id === undefined ? 'automations.editor.new' : 'automations.editor.version'}
         />
       </h2>
       {choices === undefined ? (
@@ -754,7 +757,7 @@ export function WorkflowEditor({
                 id={
                   sending
                     ? 'automations.editor.saving'
-                    : editing === undefined
+                    : editing?.id === undefined
                       ? 'automations.editor.create'
                       : 'automations.editor.publish'
                 }

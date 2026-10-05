@@ -7,15 +7,21 @@ import {
 } from '@melonoffice/ai-gateway';
 import type { AIModelDefinition, AIProviderDefinition } from '@melonoffice/domain';
 import { PLANNER_INSTRUCTIONS, PLANNER_MAX_OUTPUT_TOKENS } from '@melonoffice/planning';
+import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { compareRuns } from './compare.js';
 import { evalTaskPolicy } from './dev.js';
 import {
   PLANNER_EVAL,
+  PLANNER_EVAL_AGENTS,
   PLANNER_EVAL_CANDIDATES,
+  PLANNER_V1_EVAL,
+  PLANNER_V1_INSTRUCTIONS,
   PLANNER_EVAL_CASES,
   keptPlan,
   languageOf,
+  plannerBreakdown,
+  plannerComparisonText,
   scorePlannerAnswer,
   type PlannerEvalCase,
 } from './planner.js';
@@ -232,10 +238,47 @@ describe('the planner eval cases (ADR-0169)', () => {
     expect(system?.content[0]).toEqual({ type: 'text', text: PLANNER_INSTRUCTIONS });
     expect(system?.content[1]).toEqual({
       type: 'text',
+      text: JSON.stringify({ agents: PLANNER_EVAL_AGENTS }),
+    });
+    expect(user?.content[0]).toEqual({ type: 'text', text: c.request });
+    expect(PLANNER_EVAL.prompt).toBe('plan_proposal@2');
+  });
+
+  it('ADR-0171: describes each tool as the validator judges it under the Harness’s policy', () => {
+    const sales = PLANNER_EVAL_AGENTS.find((a) => a.departmentType === 'sales');
+    const search = sales?.tools.find((t) => t.id === 'knowledge_search');
+    // Every Harness tool step asks a person first, so its input is never read from a step.
+    expect(search).toMatchObject({
+      usableAsStep: true,
+      changesData: false,
+      approvalRequired: true,
+      inputFromAllowed: false,
+    });
+    expect(search?.input).toBeDefined();
+    const schedule = sales?.tools.find((t) => t.id === 'follow_up_schedule');
+    expect(schedule).toMatchObject({ changesData: true });
+    // Research and finance have no tool; no agent is given an id that names an organization.
+    expect(PLANNER_EVAL_AGENTS.find((a) => a.departmentType === 'research')?.tools).toEqual([]);
+    expect(JSON.stringify(PLANNER_EVAL_AGENTS)).not.toContain('eval_office');
+  });
+
+  it('ADR-0171: keeps @1 exactly as it was sent, to measure it again beside @2', () => {
+    // The digest pinned for plan_proposal@1 in the API's prompt catalogue (ADR-0133).
+    expect(createHash('sha256').update(PLANNER_V1_INSTRUCTIONS).digest('hex').slice(0, 16)).toBe(
+      '650c44eda6d62802',
+    );
+    const c = find('p01_research_then_campaign');
+    const [system, user] = PLANNER_V1_EVAL.messagesOf(c);
+    expect(system?.content[1]).toEqual({
+      type: 'text',
       text: JSON.stringify({ candidates: PLANNER_EVAL_CANDIDATES }),
     });
     expect(user?.content[0]).toEqual({ type: 'text', text: c.request });
-    expect(PLANNER_EVAL.prompt).toBe('plan_proposal@1');
+    expect(PLANNER_V1_EVAL.prompt).toBe('plan_proposal@1');
+    // The same cases, so the two runs compare.
+    expect(PLANNER_V1_EVAL.digest(PLANNER_EVAL_CASES)).toBe(
+      PLANNER_EVAL.digest(PLANNER_EVAL_CASES),
+    );
   });
 });
 
@@ -403,6 +446,24 @@ describe('scoring a planner answer (ADR-0169)', () => {
     expect(await failed(c, named)).toEqual([]);
   });
 
+  it('ADR-0171: scores a "cannot be done" as no invention, and never as a plan or a question', async () => {
+    const cannot: AIOutput = {
+      structured: { notPossible: 'No hay herramienta de WhatsApp ni de cobros.' },
+    };
+    expect(await scorePlannerAnswer(find('p08_impossible_es'), cannot)).toMatchObject({
+      passed: true,
+      checks: [
+        { check: 'says_not_possible', passed: true },
+        { check: 'no_invented_tools', passed: true },
+      ],
+    });
+    expect(await failed(find('p01_research_then_campaign'), cannot)).toEqual(['plan_shape']);
+    expect(await failed(find('p10_vague_es'), cannot)).toEqual(['asks_back']);
+    // @1 had no question form: a summary that asks, with no steps, still counts as one.
+    const old: AIOutput = { structured: { summary: '¿Qué tarea?', objective: 'x', steps: [] } };
+    expect(await failed(find('p10_vague_es'), old)).toEqual([]);
+  });
+
   it('tells the language of a plan by its commonest words', () => {
     expect(languageOf('Preparar la campaña con los resultados de la investigación')).toBe('es');
     expect(languageOf('Prepare the campaign with the results of the research')).toBe('en');
@@ -487,7 +548,11 @@ let tick = 0;
 const clock = () => (tick += 100);
 
 describe('running the planner evals (ADR-0169)', () => {
-  const runWith = (script: (c: PlannerEvalCase) => AIOutput, calls: ProviderCall[] = []) =>
+  const runWith = (
+    script: (c: PlannerEvalCase) => AIOutput,
+    calls: ProviderCall[] = [],
+    task = PLANNER_EVAL,
+  ) =>
     runEvals(
       {
         cases: PLANNER_EVAL_CASES,
@@ -502,13 +567,13 @@ describe('running the planner evals (ADR-0169)', () => {
         now: () => new Date('2026-10-05T09:00:00.000Z'),
         clock,
       },
-      PLANNER_EVAL,
+      task,
     );
 
   it('asks the planner as the Harness does, scores each case and records the cost', async () => {
     const calls: ProviderCall[] = [];
     const run = await runWith((c) => good(c.id), calls);
-    expect(run).toMatchObject({ prompt: 'plan_proposal@1', policy: 'agent_task@2' });
+    expect(run).toMatchObject({ prompt: 'plan_proposal@2', policy: 'agent_task@2' });
     expect(run.cases.map((c) => [c.suite, c.status, c.score?.passed])).toEqual(
       PLANNER_EVAL_CASES.map(() => ['planner', 'scored', true]),
     );
@@ -522,6 +587,29 @@ describe('running the planner evals (ADR-0169)', () => {
     });
     expect(calls[0]?.outputSchema).toBeUndefined();
     expect(run.cases[0]?.answer).toContain('research:specialist/research');
+  });
+
+  it('ADR-0171: runs @1 again under the same scoring, and compares it with @2 case by case', async () => {
+    const v1Calls: ProviderCall[] = [];
+    const v1 = await runWith((c) => good(c.id), v1Calls, PLANNER_V1_EVAL);
+    expect(v1.prompt).toBe('plan_proposal@1');
+    expect(JSON.stringify(v1Calls[0]?.messages)).toContain('candidates');
+    const v2 = await runWith((c) => good(c.id));
+    expect(v2.dataset).toBe(v1.dataset);
+    const comparison = compareRuns(v1, v2);
+    expect(comparison).toMatchObject({ sameDataset: true, verdict: 'accept', regressions: [] });
+    // The figures side by side: totals, each check, outcomes and languages, and each case.
+    const vague = await runWith(() => good('p10_vague_es'));
+    expect(plannerBreakdown(vague)).toMatchObject({
+      prompt: 'plan_proposal@2',
+      passed: 6,
+      scored: 16,
+      outcomes: { ask: { passed: 2, of: 2 }, no_invention: { passed: 4, of: 4 } },
+      languages: { es: { passed: 4, of: 10 }, en: { passed: 2, of: 6 } },
+    });
+    const text = plannerComparisonText(v2, vague);
+    expect(text).toContain('total                16/16              6/16');
+    expect(text).toMatch(/p01_research_then_campaign\s+PASS\s+FAIL plan_shape/);
   });
 
   it('shows a worse planner as a drop in planning against the baseline', async () => {

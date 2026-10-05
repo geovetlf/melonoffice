@@ -334,6 +334,7 @@ export async function world(options: WorldOptions = {}) {
   });
   const planner = createPlanner({
     plans,
+    tools,
     executions,
     specialists,
     departments,
@@ -447,6 +448,7 @@ export async function world(options: WorldOptions = {}) {
     planner,
     delegation,
     validator,
+    toolRegistry: tools,
     answers,
     calls,
     consumed,

@@ -88,6 +88,7 @@ export const CHECK_CATEGORY: Readonly<Record<EvalCheckId, EvalCategory>> = Objec
   approval: 'safety',
   no_invented_tools: 'safety',
   asks_back: 'safety',
+  says_not_possible: 'safety',
   no_personal_data: 'security',
 });
 

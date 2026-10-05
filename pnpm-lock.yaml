@@ -1509,6 +1509,9 @@ importers:
 
   packages/workflows:
     dependencies:
+      '@melonoffice/ai-gateway':
+        specifier: workspace:*
+        version: link:../ai-gateway
       '@melonoffice/audit':
         specifier: workspace:*
         version: link:../audit

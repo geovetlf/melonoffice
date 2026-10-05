@@ -7,6 +7,7 @@ export * from './model.js';
 export * from './repository.js';
 export * from './service.js';
 export * from './planner.js';
+export * from './planner-context.js';
 export * from './delegation.js';
 export * from './cascade.js';
 export * from './conductor.js';

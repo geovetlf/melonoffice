@@ -25,6 +25,7 @@ import { navigate } from '../identity/router.js';
 import { paths } from '../shell/routes.js';
 import { readyList, useOfficeData } from '../office/OfficeData.js';
 import { draftsOf, WorkflowEditor } from './WorkflowEditor.js';
+import { draftClientOf, takeHandedOverDraft, WorkflowFromWords } from './WorkflowDraftCard.js';
 import {
   failureExplanation,
   refusalExplanation,
@@ -50,10 +51,18 @@ export interface AutomationsPermissions {
   readonly decidePlans: boolean;
   /** `workflow.manage`: create, version and move workflows. */
   readonly manageWorkflows?: boolean;
+  /** `gia.ask` too: GIA may draft a workflow from the person's words (ADR-0171). */
+  readonly draftWorkflows?: boolean;
 }
 
 type Editing =
   | { readonly mode: 'create' }
+  /** A new workflow that starts from a draft GIA proposed (ADR-0171). */
+  | {
+      readonly mode: 'draft';
+      readonly name: string;
+      readonly steps: readonly WorkflowStepDraft[];
+    }
   | {
       readonly mode: 'version';
       readonly id: string;
@@ -128,10 +137,22 @@ export function AutomationsPage({
     readonly detail?: string | undefined;
   }>();
   const [pending, setPending] = useState<string>();
-  const [editing, setEditing] = useState<Editing>();
+  // A draft GIA's chat opened in the editor arrives here once (ADR-0171).
+  const [editing, setEditing] = useState<Editing | undefined>(() => {
+    const handed = takeHandedOverDraft();
+    return handed === undefined ? undefined : { mode: 'draft', ...handed };
+  });
+  const [asking, setAsking] = useState(false);
   const [openWorkflow, setOpenWorkflow] = useState<string>();
   const [notice, setNotice] = useState<string>();
   const canWrite = permissions.manageWorkflows === true && templates !== undefined;
+  const drafts = useMemo(
+    () =>
+      canWrite && permissions.draftWorkflows === true && permissions.planWorkflows
+        ? draftClientOf(client)
+        : undefined,
+    [canWrite, permissions.draftWorkflows, permissions.planWorkflows, client],
+  );
   // One key per workflow and press: a retry after a network failure is the same plan.
   const keys = useRef(new Map<string, string>());
 
@@ -248,7 +269,7 @@ export function AutomationsPage({
       )}
       {editing === undefined || templates === undefined ? null : (
         <WorkflowEditor
-          key={editing.mode === 'create' ? 'create' : editing.id}
+          key={editing.mode === 'version' ? editing.id : editing.mode}
           editing={editing.mode === 'create' ? undefined : editing}
           templates={templates}
           checkActions={checkActions}
@@ -268,6 +289,20 @@ export function AutomationsPage({
           onCancel={() => setEditing(undefined)}
         />
       )}
+      {asking && drafts !== undefined && editing === undefined ? (
+        <WorkflowFromWords
+          client={drafts}
+          onAdjust={(name, steps) => {
+            setAsking(false);
+            setEditing({ mode: 'draft', name, steps });
+          }}
+          onSaved={() => {
+            setNotice('automations.editor.created');
+            loadWorkflows();
+          }}
+          onClose={() => setAsking(false)}
+        />
+      ) : null}
       {refused === undefined ? null : <Refusal refused={refused} />}
       {permissions.readWorkflows ? (
         <section className="mo-panel mo-page-section" aria-labelledby="automations-workflows">
@@ -276,9 +311,16 @@ export function AutomationsPage({
               <FormattedMessage id="automations.workflows" />
             </h2>
             {canWrite && editing === undefined ? (
-              <Button onClick={() => setEditing({ mode: 'create' })}>
-                <FormattedMessage id="automations.editor.open" />
-              </Button>
+              <div className="mo-form__actions">
+                {drafts === undefined || asking ? null : (
+                  <Button variant="secondary" onClick={() => setAsking(true)}>
+                    <FormattedMessage id="automations.draft.start" />
+                  </Button>
+                )}
+                <Button onClick={() => setEditing({ mode: 'create' })}>
+                  <FormattedMessage id="automations.editor.open" />
+                </Button>
+              </div>
             ) : null}
           </div>
           {workflows.status === 'loading' ? (

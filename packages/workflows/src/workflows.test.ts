@@ -9,6 +9,7 @@ import { isWorkflowError } from './errors.js';
 import { canChangeWorkflowStatus, WORKFLOW_STATUSES } from './lifecycle.js';
 import { checkWorkflowSteps } from './model.js';
 import { InMemoryWorkflowRepository } from './repository.js';
+import { createWorkflowDrafter } from './drafts.js';
 import { createWorkflowService, WORKFLOW_PLAN_INPUT, WORKFLOW_PLAN_REFUSED } from './service.js';
 
 const codeOf = async (work: Promise<unknown>): Promise<string> => {
@@ -764,5 +765,229 @@ describe('a person plans a workflow (WF-2)', () => {
     // The plan is still there (cancelled by the cascade): a repeat reads it back.
     const again = await w.workflows.plan(w.tenantA, workflow.id, { requestKey: 'k' });
     expect(again.status).toBe('planned');
+  });
+});
+
+describe('workflow drafts from a person’s words (ADR-0171)', () => {
+  type Assisted = {
+    subject: { type: string; id: string };
+    messages: { content: { text?: string }[] }[];
+  } & Record<string, unknown>;
+  type Setup = Awaited<ReturnType<typeof setup>>;
+  /** A drafter whose model answers `said`, or what `said` gives for this world's agents. */
+  async function drafting(said: unknown, options: WorldOptions = {}) {
+    const w = await setup(options);
+    const answer = typeof said === 'function' ? (said as (w: Setup) => unknown)(w) : said;
+    const asked: Assisted[] = [];
+    const gateway = {
+      async assist(_tenant: TenantContext, request: unknown) {
+        asked.push(request as Assisted);
+        if (answer === 'denied') {
+          return { status: 'denied', code: 'insufficient_credits' } as never;
+        }
+        return {
+          status: 'completed',
+          output: typeof answer === 'string' ? { text: answer } : { structured: answer },
+        } as never;
+      },
+    };
+    const drafter = createWorkflowDrafter({
+      workflows: w.workflows,
+      gateway,
+      tools: w.toolRegistry,
+      authorization: createAuthorizationService((options.roles ?? ROLES) as never),
+    });
+    const draft = (
+      tenant: TenantContext = w.tenantA,
+      intent = 'Investiga el mercado y lanza una campaña',
+    ) => drafter.draft(tenant, { intent, requestId: 'draft-1' });
+    return { ...w, asked, draft };
+  }
+  const planOf =
+    (extra: unknown[] = []) =>
+    (w: { researcher: Specialist; marketer: Specialist }) => ({
+      summary: 'Lanzamiento con investigación',
+      objective: 'Investigar y lanzar',
+      steps: [
+        {
+          id: 'research',
+          kind: 'specialist',
+          label: 'Investigar el mercado',
+          dependsOn: [],
+          specialistId: w.researcher.identity.id,
+        },
+        {
+          id: 'search',
+          kind: 'tool',
+          label: 'Buscar',
+          dependsOn: ['research'],
+          performedBy: 'research',
+          tool: { id: 'lookup', version: 1 },
+          input: { query: 'melones' },
+        },
+        {
+          id: 'pause',
+          kind: 'wait',
+          label: 'Esperar un día',
+          dependsOn: ['research'],
+          wait: { seconds: 86_400 },
+        },
+        {
+          id: 'campaign',
+          kind: 'specialist',
+          label: 'Preparar la campaña',
+          dependsOn: ['pause'],
+          specialistId: w.marketer.identity.id,
+          approvalRequired: true,
+        },
+        ...extra,
+      ],
+    });
+
+  it('drafts a workflow by role from the planner’s answer, checks it as planning would, and stores nothing', async () => {
+    const w = await drafting(planOf());
+    const draft = await w.draft();
+    if (draft.status !== 'ready') throw new Error(JSON.stringify(draft));
+    expect(draft.name).toBe('Lanzamiento con investigación');
+    // A role, never an agent, and the one way agent work is checked.
+    expect(draft.steps[0]).toEqual({
+      id: 'research',
+      kind: 'specialist',
+      label: 'Investigar el mercado',
+      dependsOn: [],
+      assignee: { departmentTypeId: 'research', roleId: 'market_researcher' },
+      verification: { policy: 'output_schema', expectedOutput: 'agent_answer', requiredChecks: [] },
+    });
+    // The summary comes from the validated plan: who, which tool, what asks first, what it ends with.
+    const { summary } = draft;
+    expect(summary.schedule).toBe('manual');
+    expect(summary.results).toEqual(['search', 'campaign']);
+    expect(summary.steps.find((s) => s.id === 'campaign')).toMatchObject({
+      approvalRequired: true,
+      agent: {
+        id: w.marketer.identity.id,
+        departmentTypeId: 'marketing',
+        roleId: 'campaign_manager',
+      },
+    });
+    expect(summary.steps.find((s) => s.id === 'search')).toMatchObject({
+      agent: { id: w.researcher.identity.id },
+      tool: { id: 'lookup', version: 1, nameKey: 'tools.lookup.name', changesData: false },
+    });
+    expect(summary.steps.find((s) => s.id === 'pause')?.waitSeconds).toBe(86_400);
+    expect(summary.approvalRequired).toBe(true);
+    expect(summary.changesData).toBe(false);
+    // It asked once, in GIA's name, with the planner's own prompt and only the roles' agents.
+    expect(w.asked).toHaveLength(1);
+    expect(w.asked[0]).toMatchObject({
+      subject: { type: 'gia', id: w.orgA },
+      taskType: 'workflow_draft',
+      metadata: { prompt: 'plan_proposal@2' },
+    });
+    const context = JSON.parse(w.asked[0]?.messages[0]?.content[1]?.text ?? '{}');
+    expect(context.agents.map((a: { roleId: string }) => a.roleId).sort()).toEqual([
+      'campaign_manager',
+      'chief_of_staff',
+      'market_researcher',
+    ]);
+    expect(JSON.stringify(context)).not.toContain(w.orgA);
+    // Nothing stored or recorded: the person saves it, if they want.
+    expect(await w.workflows.list(w.tenantA)).toEqual([]);
+    expect(w.workflowEvents()).toEqual([]);
+  });
+
+  it('never shows a draft planning would refuse as valid, and says why in codes', async () => {
+    // A tool the agent's skills do not grant.
+    const borrowed = await drafting(
+      planOf([
+        {
+          id: 'records',
+          kind: 'tool',
+          label: 'Leer registros',
+          dependsOn: ['campaign'],
+          performedBy: 'campaign',
+          tool: { id: 'private_records', version: 1 },
+          input: {},
+        },
+      ]),
+    );
+    expect(await borrowed.draft()).toMatchObject({
+      status: 'invalid',
+      problem: { stage: 'permission', reason: 'tool_not_assigned' },
+    });
+    // An agent the context never named: its step has no role.
+    const ghost = await drafting({
+      summary: 'S',
+      objective: 'O',
+      steps: [
+        {
+          id: 'a',
+          kind: 'specialist',
+          label: 'A',
+          dependsOn: [],
+          specialistId: '33333333-3333-4333-8333-333333333333',
+        },
+      ],
+    });
+    expect(await ghost.draft()).toMatchObject({
+      status: 'invalid',
+      problem: { stage: 'workflow' },
+    });
+    // A kind the engine never runs.
+    const old = await drafting({
+      summary: 'S',
+      objective: 'O',
+      steps: [{ id: 'ok', kind: 'approval', label: 'OK', dependsOn: [] }],
+    });
+    expect(await old.draft()).toMatchObject({
+      status: 'invalid',
+      problem: { stage: 'workflow', reason: 'invalid_workflow', detail: 'steps.0.kind' },
+    });
+  });
+
+  it('passes on a question or a "cannot be done", and says when the call failed', async () => {
+    expect(await (await drafting({ question: '¿Qué mercado?' })).draft()).toEqual({
+      status: 'needs_clarification',
+      question: '¿Qué mercado?',
+    });
+    expect(
+      await (await drafting({ notPossible: 'No hay herramienta de correo.' })).draft(),
+    ).toEqual({
+      status: 'not_possible',
+      reason: 'No hay herramienta de correo.',
+    });
+    expect(await (await drafting('Sure, here is a plan')).draft()).toEqual({
+      status: 'failed',
+      code: 'invalid_proposal',
+    });
+    expect(await (await drafting('denied')).draft()).toEqual({
+      status: 'failed',
+      code: 'insufficient_credits',
+    });
+  });
+
+  it('is a person’s, with the permissions to save and plan it, and asks no model without agents', async () => {
+    const w = await drafting({ question: '?' });
+    for (const tenant of [w.giaA, w.runtimeA]) {
+      expect(await codeOf(w.draft(tenant))).toBe('permission_denied');
+    }
+    expect(await codeOf(w.draft(w.tenantA, '   '))).toBe('invalid_workflow');
+    expect(await codeOf(w.draft(w.tenantA, 'x'.repeat(1_001)))).toBe('invalid_workflow');
+    for (const missing of ['workflow.manage', 'plan.create', 'gia.ask']) {
+      const t = await drafting(
+        { question: '?' },
+        {
+          roles: { owner: ROLES.owner.filter((p) => p !== missing) },
+        },
+      );
+      expect(await codeOf(t.draft())).toBe('permission_denied');
+      expect(t.asked).toHaveLength(0);
+    }
+    expect(w.asked).toHaveLength(0);
+    // With every agent paused, there is nothing to draft for.
+    const none = await drafting({ question: '?' });
+    for (const s of [none.owner, none.researcher, none.marketer]) await none.pause(none.orgA, s);
+    expect(await none.draft()).toEqual({ status: 'no_agents' });
+    expect(none.asked).toHaveLength(0);
   });
 });

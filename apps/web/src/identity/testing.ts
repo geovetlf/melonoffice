@@ -148,6 +148,11 @@ export interface FakeBackend {
      * passes, as the API's would for a draft the editor allows.
      */
     workflowCheck?: Record<string, unknown>;
+    /**
+     * What `POST workflows/draft` answers (ADR-0171): GIA's draft from the person's words, one
+     * answer per call in order (the last repeats). None: the route answers 503.
+     */
+    workflowDrafts?: readonly Record<string, unknown>[];
     /** Records per page of Comercial's lists (ADR-0061), unless the request asks a `limit`. */
     pageSize: number;
     /** Every page after the first fails (ADR-0061). */
@@ -215,6 +220,8 @@ const json = (status: number, body: unknown) =>
 
 export function fakeBackend(): FakeBackend {
   let issued = 0;
+  // Workflow drafts asked so far (ADR-0171), to answer each in turn.
+  let draftCalls = 0;
   const calls: Call[] = [];
   const options: FakeBackend['options'] = {
     validTokens: new Set(),
@@ -1126,6 +1133,16 @@ export function fakeBackend(): FakeBackend {
       };
       list.push(created);
       return json(201, created);
+    }
+    if (route === 'workflows/draft' && method === 'POST') {
+      const denied = needs('workflow.manage');
+      if (denied !== undefined) return denied;
+      const answers = options.workflowDrafts;
+      if (answers === undefined || answers.length === 0) {
+        return json(503, { error: 'workflow_drafts_not_configured' });
+      }
+      draftCalls += 1;
+      return json(200, answers[Math.min(draftCalls, answers.length) - 1]);
     }
     if (route === 'workflows/check' && method === 'POST') {
       return (

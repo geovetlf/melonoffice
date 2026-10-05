@@ -1923,6 +1923,130 @@ a.sidebar__item:hover {
   outline-offset: 2px;
 }
 
+/*
+ * GIA's send and "prepare as an automation" sit beside the message, and go under it when the
+ * message would get too narrow (a phone).
+ */
+.gia-chat__composer:has(.gia-chat__send > :nth-child(2)) {
+  flex-wrap: wrap;
+}
+
+.gia-chat__composer:has(.gia-chat__send > :nth-child(2)) .gia-chat__input {
+  flex-basis: 16rem;
+}
+
+.gia-chat__send {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--mo-space-2);
+  justify-content: flex-end;
+  margin-left: auto;
+}
+
+/* A workflow GIA drafted (ADR-0171): what it does, who, with what, what asks first. */
+.gia-chat__turn--workflow {
+  width: 100%;
+}
+
+.workflow-draft {
+  display: grid;
+  gap: var(--mo-space-3);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.workflow-draft-panel .workflow-draft {
+  margin-top: var(--mo-space-3);
+  padding: var(--mo-space-3);
+  border: 1px solid var(--mo-color-border);
+  border-radius: var(--mo-radius-lg);
+}
+
+.workflow-draft__ask,
+.workflow-draft__question,
+.workflow-draft__ready {
+  display: grid;
+  gap: var(--mo-space-2);
+  min-width: 0;
+}
+
+.workflow-draft__header {
+  display: grid;
+  gap: var(--mo-space-1);
+}
+
+.workflow-draft__kicker,
+.workflow-draft__note {
+  margin: 0;
+  color: var(--mo-color-text-secondary);
+  font-size: var(--mo-font-size-sm);
+}
+
+.workflow-draft__title {
+  margin: 0;
+  font-size: var(--mo-font-size-lg);
+  font-weight: var(--mo-font-weight-semibold);
+}
+
+.workflow-draft__heading {
+  margin: var(--mo-space-2) 0 0;
+  font-size: var(--mo-font-size-sm);
+  font-weight: var(--mo-font-weight-semibold);
+}
+
+.workflow-draft__badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--mo-space-1);
+}
+
+.workflow-draft__gia {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.workflow-draft__steps {
+  display: grid;
+  gap: var(--mo-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.workflow-draft__step {
+  display: grid;
+  gap: var(--mo-space-1);
+  padding: var(--mo-space-2) var(--mo-space-3);
+  border: 1px solid var(--mo-color-border);
+  border-left: 3px solid var(--mo-color-accent);
+  border-radius: var(--mo-radius-md);
+  background: var(--mo-color-surface);
+}
+
+.workflow-draft__badge {
+  justify-self: start;
+}
+
+.workflow-draft__facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: var(--mo-space-2) var(--mo-space-4);
+  margin: 0;
+}
+
+.workflow-draft__facts dt {
+  color: var(--mo-color-text-secondary);
+  font-size: var(--mo-font-size-sm);
+}
+
+.workflow-draft__facts dd {
+  margin: 0;
+}
+
+.workflow-draft__go {
+  color: var(--mo-color-focus-ring);
+}
+
 /* Customers and leads in the Comercial office (C1, ADR-0053). */
 /* A contact or an opportunity in a list: the whole card opens it, its facts stacked. */
 .crm-record {

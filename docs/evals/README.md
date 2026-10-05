@@ -87,6 +87,20 @@ EVAL_ACCESS_TOKEN=$(gcloud auth print-access-token) \
 
 PLANNER-BASELINE-V1 is the planner's first run, on `plan_proposal@1`. A new planner prompt is compared with it as above, and the comparison has a `planning` category.
 
+### @1 against @2 (ADR-0171)
+
+`plan_proposal@2` reads the answer the way the product does: a plan, a question (`question`), or why it cannot be done (`notPossible`), which counts on the impossible cases. To compare like with like, `--prompt 1` runs @1 again, exactly as it was sent, under today's scoring. Both runs have the same cases, so they compare; `compare` then also prints each check, outcome, language and case side by side.
+
+```sh
+EVAL_ACCESS_TOKEN=$(gcloud auth print-access-token) \
+  node packages/evals/dist/cli.js run --set planner --prompt 1 --budget 10 --out ~/evals/PLANNER-V1-RESCORED.json
+EVAL_ACCESS_TOKEN=$(gcloud auth print-access-token) \
+  node packages/evals/dist/cli.js run --set planner --budget 10 --out ~/evals/PLANNER-V2.json
+node packages/evals/dist/cli.js compare ~/evals/PLANNER-V1-RESCORED.json ~/evals/PLANNER-V2.json
+```
+
+@2 is ready only if no case that passes on @1 fails on @2 (`revert` lists them) and its pass rate is not lower.
+
 ## Model reports and the model gate
 
 A model may serve agents outside DEV only with a passing report in [reports/](reports/README.md). CI enforces this.

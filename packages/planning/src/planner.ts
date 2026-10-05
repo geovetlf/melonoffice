@@ -1,10 +1,4 @@
-import {
-  promptLabel,
-  promptRef,
-  type AIGateway,
-  type AIMessage,
-  type AIRequest,
-} from '@melonoffice/ai-gateway';
+import { promptLabel, promptRef, type AIGateway, type AIRequest } from '@melonoffice/ai-gateway';
 import type { DepartmentRepository } from '@melonoffice/departments';
 import type { DataSensitivity, DefinitionRef, ToolId } from '@melonoffice/domain';
 import type { ExecutionService } from '@melonoffice/execution';
@@ -13,7 +7,15 @@ import type { AuthorizationService } from '@melonoffice/rbac';
 import type { SpecialistService } from '@melonoffice/specialists';
 import type { TenantContext } from '@melonoffice/tenancy';
 import { PlanningError } from './errors.js';
-import { MAX_OBJECTIVE_LENGTH, MAX_STEPS } from './proposal.js';
+import type { ToolRegistry } from '@melonoffice/tools';
+import {
+  plannerMessages,
+  plannerToolOf,
+  planningAnswerOf,
+  type PlannerAgentView,
+  type PlannerToolView,
+} from './planner-context.js';
+import { MAX_OBJECTIVE_LENGTH } from './proposal.js';
 import { isPlanningExecution, type PlanService, type ProposeOutcome } from './service.js';
 
 /** What the planner is asked: plan this objective in this planning execution. */
@@ -46,12 +48,29 @@ export interface PlanningCandidate {
   readonly tools: readonly DefinitionRef<ToolId>[];
 }
 
+/** A candidate as the planner sees it, with each of its tools described by `describe`. */
+export const plannerAgentOf = (
+  candidate: PlanningCandidate,
+  describe: (ref: DefinitionRef<ToolId>) => PlannerToolView,
+  skills?: readonly string[],
+): PlannerAgentView =>
+  Object.freeze({
+    specialistId: candidate.specialistId,
+    departmentType: candidate.departmentType,
+    roleId: candidate.roleId,
+    ...(skills === undefined || skills.length === 0 ? {} : { skills }),
+    tools: candidate.tools.map(describe),
+  });
+
 export interface Planner {
   plan(tenant: TenantContext, request: PlannerRequest): Promise<PlannerOutcome>;
 }
 
 export interface PlannerOptions {
-  readonly plans: Pick<PlanService, 'propose'>;
+  /** Proposes the plan, and says which tools its validator takes as steps (`toolUse`). */
+  readonly plans: Pick<PlanService, 'propose' | 'toolUse'>;
+  /** What each tool is: its action, risk and schemas, for the planner's context. */
+  readonly tools: Pick<ToolRegistry, 'resolve'>;
   readonly executions: Pick<ExecutionService, 'get' | 'changeStatus'>;
   readonly specialists: Pick<SpecialistService, 'list' | 'eligibility'>;
   readonly departments: Pick<DepartmentRepository, 'find'>;
@@ -62,39 +81,6 @@ export interface PlannerOptions {
   /** The most output the planning call may ask for. */
   readonly maxOutputTokens?: number;
 }
-
-/**
- * The fixed instructions. They describe the proposal format; they grant nothing. Whatever the
- * model answers goes through the whole validation pipeline, which alone decides.
- */
-export const PLANNER_INSTRUCTIONS = [
-  'You are the MelonOffice planner. Propose a plan as one JSON object with exactly the fields',
-  'summary, objective, optional riskLevel (low|medium|high|critical) and steps.',
-  `Use at most ${MAX_STEPS} steps. Each step has id (lowercase letters, digits, underscore),`,
-  'kind (specialist|tool|approval|verification|condition|parallel), label and dependsOn.',
-  'A specialist step names a specialistId from the candidates and a verification',
-  '{policy, expectedOutput, requiredChecks}. A tool step names performedBy (a specialist step)',
-  'and one tool {id, version} that specialist lists. Never include organizations, users,',
-  'permissions, approvals, credits, policies or credentials: they are refused.',
-].join(' ');
-
-/**
- * The planning call's messages (ADR-0028): the fixed instructions, the candidates as data, and
- * the person's objective. The planner's evals (ADR-0169) send exactly these.
- */
-export const plannerMessages = (
-  candidates: readonly PlanningCandidate[],
-  objective: string,
-): AIMessage[] => [
-  {
-    role: 'system',
-    content: [
-      { type: 'text', text: PLANNER_INSTRUCTIONS },
-      { type: 'text', text: JSON.stringify({ candidates }) },
-    ],
-  },
-  { role: 'user', content: [{ type: 'text', text: objective }] },
-];
 
 /** The most output the planning call asks for, unless its options say otherwise. */
 export const PLANNER_MAX_OUTPUT_TOKENS = 8_000;
@@ -111,10 +97,11 @@ const failureCode = (code: string): string => (CODE.test(code) ? code : 'plannin
  * answer is only a proposal: `PlanService.propose` validates it and stores the plan.
  */
 /** The planner's prompt version (G-3, ADR-0133): a new one whenever its text changes. */
-export const PLANNER_PROMPT = promptRef('plan_proposal', 1);
+export const PLANNER_PROMPT = promptRef('plan_proposal', 2);
 
 export function createPlanner({
   plans,
+  tools,
   executions,
   specialists,
   departments,
@@ -123,10 +110,13 @@ export function createPlanner({
   logger,
   maxOutputTokens = PLANNER_MAX_OUTPUT_TOKENS,
 }: PlannerOptions): Planner {
-  /** The organization's specialists that may take work now, from X2 eligibility. */
-  async function candidatesOf(tenant: TenantContext): Promise<readonly PlanningCandidate[]> {
+  /**
+   * The organization's specialists that may take work now, from X2 eligibility, each with the
+   * tools its skills grant as the plan validator judges them (ADR-0171).
+   */
+  async function candidatesOf(tenant: TenantContext): Promise<readonly PlannerAgentView[]> {
     const all = await specialists.list(tenant);
-    const found: PlanningCandidate[] = [];
+    const found: PlannerAgentView[] = [];
     for (const s of [...all].sort((a, b) => (a.identity.id < b.identity.id ? -1 : 1))) {
       const decision = await specialists.eligibility(tenant, {
         specialistId: s.identity.id,
@@ -135,13 +125,29 @@ export function createPlanner({
       });
       if (!decision.eligible) continue;
       const department = await departments.find(s.organizationId, s.configuration.departmentId);
-      found.push({
-        specialistId: s.identity.id,
-        departmentType: department?.origin.kind === 'catalog' ? department.origin.typeId : 'custom',
-        roleId: s.configuration.mainRoleId,
-        capabilities: s.configuration.capabilities,
-        tools: s.configuration.tools,
-      });
+      const departmentType =
+        department?.origin.kind === 'catalog' ? department.origin.typeId : 'custom';
+      found.push(
+        plannerAgentOf(
+          {
+            specialistId: s.identity.id,
+            departmentType,
+            roleId: s.configuration.mainRoleId,
+            capabilities: s.configuration.capabilities,
+            tools: s.configuration.tools,
+          },
+          (ref) =>
+            plannerToolOf(
+              ref,
+              tools.resolve(ref.id, ref.version),
+              plans.toolUse(
+                ref,
+                department?.origin.kind === 'catalog' ? departmentType : undefined,
+              ),
+            ),
+          s.configuration.skills.map((k) => `${k.id}@${k.version}`),
+        ),
+      );
     }
     return found;
   }
@@ -187,7 +193,7 @@ export function createPlanner({
         // call asks it: the providers' adapters take no `structured_output` call (ADR-0169).
         capability: PLANNER_CAPABILITY,
         requirements: { structuredOutput: true },
-        messages: plannerMessages(candidates, request.objective),
+        messages: plannerMessages({ agents: candidates }, request.objective),
         outputModality: 'text',
         maxOutputTokens,
         sensitivity: request.sensitivity ?? 'internal',
@@ -195,9 +201,13 @@ export function createPlanner({
       const response = await gateway.generate(tenant, aiRequest);
       if (response.status !== 'completed') return fail(response.code);
 
+      // A question or a "cannot be done" is not a plan: the task goes back to a person (ADR-0171).
+      const answer = planningAnswerOf(response.output);
+      if (answer.kind === 'question') return fail('needs_clarification');
+      if (answer.kind === 'not_possible') return fail('not_possible');
       const outcome = await plans.propose(tenant, {
         executionId: execution.id,
-        proposal: response.output.structured,
+        proposal: answer.kind === 'proposal' ? answer.proposal : response.output.structured,
         source: {
           kind: 'planner',
           model: {
