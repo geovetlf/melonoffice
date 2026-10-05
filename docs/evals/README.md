@@ -138,6 +138,8 @@ EVAL_ACCESS_TOKEN=$(gcloud auth print-access-token) \
 node packages/evals/dist/cli.js compare ~/evals/PLANNER-V3-R3.json ~/evals/PLANNER-V7-R3.json
 ```
 
+The planner went back to `plan_proposal@3` (ADR-0176), now the default again; `--prompt 4` to `--prompt 7` run the versions that were measured and not adopted. With three repetitions, @3 passed 34/48, @6 30/48 and @7 25/48.
+
 ## Model reports and the model gate
 
 A model may serve agents outside DEV only with a passing report in [reports/](reports/README.md). CI enforces this.

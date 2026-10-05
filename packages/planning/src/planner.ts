@@ -97,7 +97,7 @@ const failureCode = (code: string): string => (CODE.test(code) ? code : 'plannin
  * answer is only a proposal: `PlanService.propose` validates it and stores the plan.
  */
 /** The planner's prompt version (G-3, ADR-0133): a new one whenever its text changes. */
-export const PLANNER_PROMPT = promptRef('plan_proposal', 7);
+export const PLANNER_PROMPT = promptRef('plan_proposal', 3);
 
 export function createPlanner({
   plans,
