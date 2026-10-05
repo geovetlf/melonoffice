@@ -13,6 +13,7 @@ import {
   checkStepStructure,
   createPlanValidator,
   MAX_STEPS,
+  MAX_WAIT_SECONDS,
   PLANNER_MAX_OUTPUT_TOKENS,
   PLANNER_PROMPT,
   plannerAgentOf,
@@ -333,6 +334,56 @@ export const plannerV1EvalMessages = (c: PlannerEvalCase): AIMessage[] => [
   { role: 'user', content: [{ type: 'text', text: c.request }] },
 ];
 
+/**
+ * `plan_proposal@2` as it was sent (ADR-0171), kept only so a run can measure it again beside
+ * @3 (ADR-0172). Frozen: its digest is checked against the one pinned for @2's instructions.
+ */
+export const PLANNER_V2_PROMPT = promptRef('plan_proposal', 2);
+export const PLANNER_V2_INSTRUCTIONS = [
+  'You are the MelonOffice planner. You turn one request into a plan for the agents in the',
+  'context, or you ask, or you say it cannot be done. You never do the work yourself.',
+  'Answer with exactly one JSON object, one of:',
+  '(1) a plan: {"summary": a short title, "objective": one sentence, "steps": [...]};',
+  '(2) a question, when the request is too vague or essential information is missing:',
+  '{"question": "..."};',
+  '(3) when these agents and tools cannot do it: {"notPossible": "..."}, saying what cannot be',
+  'done and why. If part of it can be done, plan that part and say in the summary what is left out.',
+  'Write the summary, labels, question and notPossible in the language of the request.',
+  `A plan has at most ${MAX_STEPS} steps, as few as the request needs. Each step has id`,
+  '(lowercase letters, digits and underscores, starting with a letter), kind, label (what it',
+  'does, in a few words) and dependsOn (ids of earlier steps only; never a later step, never a',
+  'cycle). Steps that do not depend on each other run side by side. The only kinds are:',
+  '"specialist": an agent does the work; give its specialistId from the context. Add',
+  '"approvalRequired": true when the person asked to review or approve before what follows.',
+  '"tool": an agent uses one of its own tools marked usableAsStep; give performedBy (the id of',
+  'that agent\'s specialist step, also in dependsOn), tool {"id", "version"} exactly as listed,',
+  "and input, a JSON object valid for the tool's input schema with only values the request",
+  'gives. Use inputFrom {"<input key>": {"step": "<earlier step id>"}} only when the tool has',
+  'inputFromAllowed, and {"step", "field"} to read a field of an earlier tool step\'s output.',
+  `"wait": {"wait": {"seconds": 1 to ${MAX_WAIT_SECONDS}}} before what follows.`,
+  '"condition": only a policy check, and only when checkActions are listed:',
+  '{"decision": {"decision": "action.policy_check", "continueOn": ["allowed"], "input":',
+  '{"action": one listed action}}}.',
+  'There are no approval, verification or parallel steps. Use only the agents and tools in the',
+  'context: never invent an agent, department, tool or input. A tool with usableAsStep false',
+  'cannot be a step; if the request needs it, say so. If you cannot give a valid input, ask.',
+  'Do not copy phone numbers, email addresses or other personal data into the plan. Never include',
+  'organizations, users, permissions, credits, policies or credentials: they are refused.',
+].join(' ');
+
+/** A case's request as @2 sent it: its instructions, then the office and request as today. */
+export const plannerV2EvalMessages = (c: PlannerEvalCase): AIMessage[] =>
+  plannerMessages({ agents: PLANNER_EVAL_AGENTS }, c.request).map((m) =>
+    m.role !== 'system'
+      ? m
+      : {
+          ...m,
+          content: m.content.map((part, i) =>
+            i === 0 ? { type: 'text' as const, text: PLANNER_V2_INSTRUCTIONS } : part,
+          ),
+        },
+  );
+
 // ---------------------------------------------------------------------------------------------
 // Scoring
 
@@ -591,6 +642,28 @@ export function keptPlan(output: AIOutput | undefined): string | undefined {
   return redactSecretText(text).slice(0, 1500);
 }
 
+/**
+ * Why the pipeline refused a plan, as codes and paths only (ADR-0172): the schema's reason and
+ * field, or the validator's stage, reason and field. Undefined when it is not a plan or passes.
+ */
+export async function plannerRefusalOf(output: AIOutput | undefined): Promise<string | undefined> {
+  const { answer, asks, notPossible } = readingOf(output);
+  if (asks || notPossible) return undefined;
+  const checked = checkProposal(answer);
+  if (!checked.ok) return `${checked.reason}:${checked.detail}`;
+  const validation = await VALIDATOR.validate(TENANT, answer);
+  if (validation.ok) return undefined;
+  return `${validation.stage}/${validation.reason}${validation.detail === undefined ? '' : `:${validation.detail}`}`;
+}
+
+/** Why the plan was refused, if it was, then the kept plan. */
+async function keptPlanWithRefusal(output: AIOutput): Promise<string | undefined> {
+  const kept = keptPlan(output);
+  const refusal = await plannerRefusalOf(output);
+  if (refusal === undefined) return kept;
+  return `refused: ${redactSecretText(refusal).slice(0, 200)} | ${kept ?? ''}`.slice(0, 1500);
+}
+
 const plannerDigest = (cases: readonly PlannerEvalCase[]) =>
   createHash('sha256')
     .update(
@@ -602,15 +675,22 @@ const plannerDigest = (cases: readonly PlannerEvalCase[]) =>
 /**
  * The planner as an eval task (ADR-0169, ADR-0171): its own prompt version and messages, no
  * answer schema (the planner asks for JSON without one), its output limit, and the scoring above.
- * The dataset digest is the cases' and the office's only, so runs of @1 and @2 compare.
+ * The dataset digest is the cases' and the office's only, so runs of @1, @2 and @3 compare.
  */
 export const PLANNER_EVAL: EvalTask<PlannerEvalCase> = Object.freeze({
   prompt: promptLabel(PLANNER_PROMPT),
   messagesOf: plannerEvalMessages,
   maxOutputTokens: PLANNER_MAX_OUTPUT_TOKENS,
   score: scorePlannerAnswer,
-  keep: (_c: PlannerEvalCase, output: AIOutput) => keptPlan(output),
+  keep: (_c: PlannerEvalCase, output: AIOutput) => keptPlanWithRefusal(output),
   digest: plannerDigest,
+});
+
+/** `plan_proposal@2` measured again under today's scoring (`--prompt 2`), to compare with @3. */
+export const PLANNER_V2_EVAL: EvalTask<PlannerEvalCase> = Object.freeze({
+  ...PLANNER_EVAL,
+  prompt: promptLabel(PLANNER_V2_PROMPT),
+  messagesOf: plannerV2EvalMessages,
 });
 
 /** `plan_proposal@1` measured again under today's scoring (`--prompt 1`), to compare with @2. */

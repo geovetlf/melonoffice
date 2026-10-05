@@ -882,7 +882,7 @@ describe('workflow drafts from a person’s words (ADR-0171)', () => {
     expect(w.asked[0]).toMatchObject({
       subject: { type: 'gia', id: w.orgA },
       taskType: 'workflow_draft',
-      metadata: { prompt: 'plan_proposal@2' },
+      metadata: { prompt: 'plan_proposal@3' },
     });
     const context = JSON.parse(w.asked[0]?.messages[0]?.content[1]?.text ?? '{}');
     expect(context.agents.map((a: { roleId: string }) => a.roleId).sort()).toEqual([

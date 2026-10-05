@@ -9,6 +9,7 @@ import {
   PLANNER_EVAL,
   PLANNER_EVAL_CASES,
   PLANNER_V1_EVAL,
+  PLANNER_V2_EVAL,
   plannerComparisonText,
 } from './planner.js';
 import { MAX_EVAL_REPEAT, runEvals, type EvalCaseResult, type EvalRun } from './run.js';
@@ -22,8 +23,8 @@ import { MAX_EVAL_REPEAT, runEvals, type EvalCaseResult, type EvalRun } from './
  *   node dist/cli.js report run.json   (a run held to one model → docs/evals/reports/, G-5)
  *
  * `run` options: `--out <file>` (required), `--budget <credits>` (default and most: 70),
- * `--set planner` (the planner's cases, ADR-0169, instead of the agents'), `--prompt 1` with it
- * (`plan_proposal@1` again, to compare with @2 under the same scoring, ADR-0171),
+ * `--set planner` (the planner's cases, ADR-0169, instead of the agents'), `--prompt 1|2` with it
+ * (`plan_proposal@1` or @2 again, to compare with @3 under the same scoring, ADR-0171, ADR-0172),
  * `--suite <id>` (repeatable; default every suite), `--model <provider/model>` (a variant held
  * to one model), `--repeat <n>` (1 to 5, for consistency).
  */
@@ -89,9 +90,9 @@ async function run(args: readonly string[]): Promise<void> {
   }
   if (
     given.prompt !== undefined &&
-    (given.set !== 'planner' || !['1', '2'].includes(given.prompt))
+    (given.set !== 'planner' || !['1', '2', '3'].includes(given.prompt))
   ) {
-    fail('--prompt is 1 or 2 (the default), with --set planner');
+    fail('--prompt is 1, 2 or 3 (the default), with --set planner');
   }
   const cases =
     given.suites.length === 0
@@ -123,7 +124,11 @@ async function run(args: readonly string[]): Promise<void> {
     given.set === 'planner'
       ? await runEvals(
           { ...common, cases: PLANNER_EVAL_CASES },
-          given.prompt === '1' ? PLANNER_V1_EVAL : PLANNER_EVAL,
+          given.prompt === '1'
+            ? PLANNER_V1_EVAL
+            : given.prompt === '2'
+              ? PLANNER_V2_EVAL
+              : PLANNER_EVAL,
         )
       : await runEvals({ ...common, cases });
   writeFileSync(out, `${JSON.stringify(result, null, 2)}\n`);

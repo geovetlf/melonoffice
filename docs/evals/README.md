@@ -101,6 +101,21 @@ node packages/evals/dist/cli.js compare ~/evals/PLANNER-V1-RESCORED.json ~/evals
 
 @2 is ready only if no case that passes on @1 fails on @2 (`revert` lists them) and its pass rate is not lower.
 
+### @3 against @1 and @2 (ADR-0172)
+
+The real @1/@2 run (2026-10-05) turned @2 down: p13 passed on @1 and failed on @2. `plan_proposal@3` is now the default and `--prompt 2` runs @2 again as it was sent. For a plan the pipeline refuses, the run file keeps why first (`refused: <reason>:<field>`), as codes and paths only.
+
+```sh
+EVAL_ACCESS_TOKEN=$(gcloud auth print-access-token) \
+  node packages/evals/dist/cli.js run --set planner --prompt 2 --budget 10 --out ~/evals/PLANNER-V2-RERUN.json
+EVAL_ACCESS_TOKEN=$(gcloud auth print-access-token) \
+  node packages/evals/dist/cli.js run --set planner --budget 10 --out ~/evals/PLANNER-V3.json
+node packages/evals/dist/cli.js compare ~/evals/PLANNER-V1-RESCORED.json ~/evals/PLANNER-V3.json
+node packages/evals/dist/cli.js compare ~/evals/PLANNER-V2-RERUN.json ~/evals/PLANNER-V3.json
+```
+
+@3 is ready only if neither comparison lists a regression: no case that passes on @1 or @2 may fail on @3.
+
 ## Model reports and the model gate
 
 A model may serve agents outside DEV only with a passing report in [reports/](reports/README.md). CI enforces this.

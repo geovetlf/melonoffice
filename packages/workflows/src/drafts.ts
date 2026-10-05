@@ -20,7 +20,7 @@ import type { WorkflowAssignee, WorkflowService } from './service.js';
 
 /**
  * Workflow drafts from a person's words (Block 3 F2, ADR-0171). GIA proposes; the person reviews
- * and saves. A draft is the planner's own answer (`plan_proposal@2`, the same instructions,
+ * and saves. A draft is the planner's own answer (`plan_proposal`, the same instructions,
  * context and reading as the Harness's plans), asked of the model in GIA's name, over the roles
  * `assignees()` gives: so every agent and tool it may name is one a workflow could use now. Its
  * steps then go through `check`, the dry run a save and a plan would make. Nothing is stored,
