@@ -35,7 +35,7 @@ import type {
   PolicyId,
   SecretRef,
 } from '@melonoffice/domain';
-import { harnessDataPolicy } from '@melonoffice/harness';
+import { harnessDataPolicy, harnessRoute, harnessTaskPolicy } from '@melonoffice/harness';
 import {
   aiProviderKeysFromSecrets,
   createSecretManagerStore,
@@ -197,6 +197,9 @@ export function aiConfigurationOf(config: {
       DECISION_ASSIST_POLICY,
       // Reading a scanned PDF a person uploads (ADR-0079).
       DOCUMENT_READ_POLICY,
+      // The policy template agents name (`agent_task@2`), exactly as the worker routes it, so the
+      // Harness's planning call resolves it here too (ADR-0170).
+      harnessTaskPolicy(harnessRoute([NVIDIA_PROVIDER.id])),
     ]),
     creditRate: CREDIT_RATE,
   };

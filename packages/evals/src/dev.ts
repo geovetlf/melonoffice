@@ -1,8 +1,4 @@
-import {
-  CREDIT_RATE,
-  createProviderRegistry,
-  type ProviderRegistry,
-} from '@melonoffice/ai-gateway';
+import { createProviderRegistry, type ProviderRegistry } from '@melonoffice/ai-gateway';
 import {
   createVertexAIAdapter,
   METADATA_TOKEN_URL,
@@ -10,7 +6,7 @@ import {
   VERTEX_AI_PROVIDER,
 } from '@melonoffice/ai-vertex';
 import type { ModelPolicy } from '@melonoffice/domain';
-import { DEFAULT_HARNESS_LIMITS, harnessTaskPolicy } from '@melonoffice/harness';
+import { harnessRoute, harnessTaskPolicy } from '@melonoffice/harness';
 
 /**
  * Where a real eval run may go (ADR-0134): DEV only, never staging or production, and never more
@@ -25,13 +21,7 @@ export const EVAL_MAX_BUDGET_CREDITS = 70;
  * first where the data policy lets it take the call, then the task's strategy, at most one credit
  * per call. Only the providers the run registers are candidates.
  */
-export const evalTaskPolicy = (): ModelPolicy =>
-  harnessTaskPolicy({
-    preferredProviders: ['nvidia'],
-    environments: ['dev'],
-    maxCostMicroUsd: CREDIT_RATE.microUsdPerCredit,
-    maxModelCalls: DEFAULT_HARNESS_LIMITS.maxModelCalls,
-  });
+export const evalTaskPolicy = (): ModelPolicy => harnessTaskPolicy(harnessRoute(['nvidia']));
 
 /**
  * A fetch that answers the Vertex adapter's metadata-server token request with the person's own

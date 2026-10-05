@@ -1,3 +1,4 @@
+import { CREDIT_RATE } from '@melonoffice/ai-gateway';
 import type {
   AICapability,
   AIModality,
@@ -5,6 +6,7 @@ import type {
   ModelPolicy,
   PolicyId,
 } from '@melonoffice/domain';
+import { DEFAULT_HARNESS_LIMITS } from './limits.js';
 
 /**
  * The model policy of agent tasks as the Harness routes them (ADR-0100), version 2 of
@@ -43,6 +45,19 @@ export interface HarnessTaskPolicyConfig {
   /** The most provider calls one request may make, over every model (the task's limit). */
   readonly maxModelCalls?: number;
 }
+
+/**
+ * How every agent's calls are routed in DEV (ADR-0100, ADR-0170): the given providers first, at
+ * most one credit per call, and the task's limit of provider calls. The worker, the API and the
+ * evals all route with it, so `agent_task@2` is the same policy wherever it is resolved.
+ */
+export const harnessRoute = (preferredProviders: readonly string[]): HarnessTaskPolicyConfig =>
+  Object.freeze({
+    preferredProviders: Object.freeze([...preferredProviders]),
+    environments: Object.freeze(['dev'] as const),
+    maxCostMicroUsd: CREDIT_RATE.microUsdPerCredit,
+    maxModelCalls: DEFAULT_HARNESS_LIMITS.maxModelCalls,
+  });
 
 const agentPolicy = (
   ref: { readonly id: PolicyId; readonly version: number },
