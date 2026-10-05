@@ -1787,6 +1787,7 @@
   "automations.plan.branchFailing": "{n, plural, one {Un paso falló} other {# pasos fallaron}}. Se saltan los pasos que dependen de {n, plural, one {él} other {ellos}}; las otras ramas siguen.",
   "automations.plan.allFailed": "El plan falló: ninguna de sus ramas pudo terminar.",
   "automations.plan.usesTool": "{agent} usa «{tool}»",
+  "automations.plan.asksApproval": "pedirá tu aprobación antes de empezar",
   "automations.plan.doneBy": "Lo hace {agent}",
   "automations.anAgent": "un agente",
   "automations.state.pending": "Pendiente",

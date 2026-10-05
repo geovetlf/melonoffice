@@ -820,6 +820,13 @@ function PlanCard({
                 ) : (
                   <FormattedMessage id={`automations.stepKind.${stepKindOf(step.kind)}`} />
                 )}
+                {step.approvalRequired === true &&
+                (done === undefined || done.state === 'waiting') ? (
+                  <>
+                    {' · '}
+                    <FormattedMessage id="automations.plan.asksApproval" />
+                  </>
+                ) : null}
                 {done === undefined ? null : (
                   <>
                     {addsToState(done) ? (
@@ -1240,7 +1247,8 @@ function addsToState(done: PlanStepProgress): boolean {
   if (done.kind === 'wait') return done.state === 'delayed' || done.state === 'completed';
   return (
     done.state === 'skipped' ||
-    done.state === 'failed' ||
+    // A failed step says what it means in its own box, except a step the credit limit stopped.
+    (done.state === 'failed' && done.failure === 'budget_exceeded') ||
     done.state === 'declined' ||
     done.state === 'delayed' ||
     done.state === undefined

@@ -1787,6 +1787,7 @@
   "automations.plan.branchFailing": "{n, plural, one {One step failed} other {# steps failed}}. The steps that depend on {n, plural, one {it} other {them}} are skipped; the other branches go on.",
   "automations.plan.allFailed": "The plan failed: none of its branches could finish.",
   "automations.plan.usesTool": "{agent} uses “{tool}”",
+  "automations.plan.asksApproval": "will ask for your approval before it starts",
   "automations.plan.doneBy": "Done by {agent}",
   "automations.anAgent": "an agent",
   "automations.state.pending": "Pending",
