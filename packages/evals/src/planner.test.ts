@@ -390,9 +390,10 @@ describe('scoring a planner answer (ADR-0169)', () => {
     ]);
     expect(await failed(find('p14_english_plan'), p14)).toEqual([]);
     // A reference it cannot resolve is still refused, by the validator.
+    const [first, second] = (p02.structured as { steps: Step[] }).steps;
     const unknown = plan('Buscar y redactar', 'Propuesta', [
-      { ...(p02.structured?.steps as Step[])[0], performedBy: 'legal' },
-      (p02.structured?.steps as Step[])[1] as Step,
+      { ...first, performedBy: 'legal' },
+      second as Step,
     ]);
     expect(await failed(find('p02_search_company_memory'), unknown)).toContain('valid_plan');
   });
