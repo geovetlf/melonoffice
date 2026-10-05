@@ -160,7 +160,11 @@ import {
   type TenantContext,
 } from '@melonoffice/tenancy';
 import { defaultToolRegistry, type ToolRegistry } from '@melonoffice/tools';
-import { createWorkflowService, type WorkflowRepository } from '@melonoffice/workflows';
+import {
+  createWorkflowDrafter,
+  createWorkflowService,
+  type WorkflowRepository,
+} from '@melonoffice/workflows';
 import { Hono, type Context } from 'hono';
 import type { AgentTurns } from './agent-turns.js';
 import { registerApprovalRoutes } from './approvals.js';
@@ -1301,6 +1305,7 @@ export function createApp({
                     plans: harnessPlans,
                     planner: createPlanner({
                       plans: harnessPlans,
+                      tools,
                       executions: harnessExecutions,
                       specialists,
                       departments: structure.departments,
@@ -1478,17 +1483,30 @@ export function createApp({
             }),
       });
       if (workflows !== undefined) {
+        const workflowService = createWorkflowService({
+          repository: workflows,
+          plans: planService,
+          executions: executionService,
+          specialists,
+          departments: structure.departments,
+          organizations: tenancy,
+          authorization,
+        });
         registerWorkflowRoutes(app, {
           ...dependencies,
-          workflows: createWorkflowService({
-            repository: workflows,
-            plans: planService,
-            executions: executionService,
-            specialists,
-            departments: structure.departments,
-            organizations: tenancy,
-            authorization,
-          }),
+          workflows: workflowService,
+          // GIA drafts a workflow from a person's words (ADR-0171). Without a gateway, the
+          // route answers that no model serves it.
+          ...(aiGateway === undefined
+            ? {}
+            : {
+                drafter: createWorkflowDrafter({
+                  workflows: workflowService,
+                  gateway: aiGateway,
+                  tools,
+                  authorization,
+                }),
+              }),
         });
       }
     }

@@ -2,7 +2,13 @@ import type { Workflow, WorkflowStatus, WorkflowVersion } from '@melonoffice/dom
 import { isExecutionError } from '@melonoffice/execution';
 import { withCorrelation } from '@melonoffice/observability';
 import { isPlanningError } from '@melonoffice/planning';
-import { isWorkflowError, WORKFLOW_STATUSES, type WorkflowService } from '@melonoffice/workflows';
+import {
+  isWorkflowError,
+  WORKFLOW_STATUSES,
+  type WorkflowDraft,
+  type WorkflowDrafter,
+  type WorkflowService,
+} from '@melonoffice/workflows';
 import type { Context, Hono } from 'hono';
 import type { AuthEnv } from './auth.js';
 import { withPermission, type AuthorizationDependencies } from './authorization.js';
@@ -17,9 +23,13 @@ import { toPlanView, toVersionView } from './plans.js';
  */
 export function registerWorkflowRoutes(
   app: Hono<AuthEnv>,
-  dependencies: AuthorizationDependencies & { readonly workflows: WorkflowService },
+  dependencies: AuthorizationDependencies & {
+    readonly workflows: WorkflowService;
+    /** GIA's workflow drafts (ADR-0171). Absent: the draft route answers 503. */
+    readonly drafter?: WorkflowDrafter;
+  },
 ): void {
-  const { workflows } = dependencies;
+  const { workflows, drafter } = dependencies;
   const base = '/v1/organizations/:organizationId/workflows';
 
   app.get(
@@ -89,6 +99,28 @@ export function registerWorkflowRoutes(
           }),
           estimate: plan.estimate,
         });
+      } catch (error) {
+        return refusal(c, error);
+      }
+    }),
+  );
+
+  // GIA drafts a workflow from a person's words (ADR-0171): the planner's answer, by role, after
+  // the same dry run as `check`. It stores nothing: the person reviews it and saves it, or not.
+  // Every outcome but a refusal of the person is an answer, with its status.
+  app.post(
+    `${base}/draft`,
+    withPermission('workflow.manage', dependencies, async (c, tenant) => {
+      if (drafter === undefined) return c.json({ error: 'workflow_drafts_not_configured' }, 503);
+      const body = await bodyOf(c, ['intent'], ['intent']);
+      if (body === undefined || typeof body.intent !== 'string') return invalid(c);
+      try {
+        const draft = await drafter.draft(tenant, {
+          intent: body.intent,
+          requestId: c.get('requestId'),
+        });
+        c.get('logger').info('workflow drafted', { status: draft.status });
+        return c.json(toDraftView(draft));
       } catch (error) {
         return refusal(c, error);
       }
@@ -317,3 +349,21 @@ const toWorkflowVersionView = (v: WorkflowVersion) => ({
   })),
   createdAt: v.createdAt,
 });
+
+/** A draft as the web shows it: codes, labels and the person's own words, never a secret. */
+const toDraftView = (d: WorkflowDraft) => {
+  switch (d.status) {
+    case 'ready':
+      return { status: d.status, name: d.name, steps: d.steps, summary: d.summary };
+    case 'invalid':
+      return { status: d.status, name: d.name, steps: d.steps, problem: d.problem };
+    case 'needs_clarification':
+      return { status: d.status, question: d.question };
+    case 'not_possible':
+      return { status: d.status, reason: d.reason };
+    case 'failed':
+      return { status: d.status, code: d.code };
+    case 'no_agents':
+      return { status: d.status };
+  }
+};

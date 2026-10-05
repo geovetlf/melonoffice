@@ -368,6 +368,95 @@ export type WorkflowCheckView =
       readonly detail?: string;
     };
 
+/**
+ * What GIA drafted from a person's words (ADR-0171), checked by the server as planning would.
+ * Everything a summary shows comes from the validated steps, never from the model's prose; only
+ * GIA's question or its "cannot be done" are its own words. Nothing was stored.
+ */
+export type WorkflowDraftView =
+  | {
+      readonly status: 'ready';
+      readonly name: string;
+      /** The steps as the workflow routes take them: saved exactly as they were checked. */
+      readonly steps: readonly DraftStep[];
+      readonly summary: WorkflowDraftSummaryView;
+    }
+  | {
+      /** Planning would refuse these steps: they are never shown as valid, nor saved. */
+      readonly status: 'invalid';
+      readonly name: string;
+      readonly steps: readonly DraftStep[];
+      readonly problem: {
+        readonly stage: string;
+        readonly reason: string;
+        readonly detail?: string;
+      };
+    }
+  | { readonly status: 'needs_clarification'; readonly question: string }
+  | { readonly status: 'not_possible'; readonly reason: string }
+  | { readonly status: 'no_agents' }
+  | { readonly status: 'failed'; readonly code: string };
+
+/** A drafted step, as the API's workflow routes take it. */
+export type DraftStep = Readonly<Record<string, unknown>>;
+
+export interface WorkflowDraftStepSummaryView {
+  readonly id: string;
+  readonly kind: string;
+  readonly label: string;
+  readonly dependsOn: readonly string[];
+  readonly approvalRequired: boolean;
+  readonly agent?: {
+    readonly id: string;
+    readonly displayName: string;
+    readonly departmentTypeId: string;
+    readonly roleId: string;
+  };
+  readonly tool?: {
+    readonly id: string;
+    readonly version: number;
+    readonly changesData: boolean;
+    readonly riskLevel: string;
+  };
+  readonly waitSeconds?: number;
+}
+
+export interface WorkflowDraftSummaryView {
+  readonly steps: readonly WorkflowDraftStepSummaryView[];
+  readonly riskLevel: string;
+  readonly approvalRequired: boolean;
+  readonly changesData: boolean;
+  /** How it runs: a person starts it. There are no schedules yet. */
+  readonly schedule: 'manual';
+  /** The steps nothing waits for: what it ends with. */
+  readonly results: readonly string[];
+}
+
+/**
+ * A draft's steps as the editor's step views: the fields the API leaves out are none. The
+ * editor rewrites them only when it can do so without changing them (`draftsOf`).
+ */
+export function stepViewsOf(steps: readonly unknown[]): readonly WorkflowStepView[] {
+  return steps.map((raw) => {
+    const s = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>;
+    const assignee = s.assignee as WorkflowStepView['assignee'] | undefined;
+    return {
+      id: String(s.id ?? ''),
+      kind: String(s.kind ?? ''),
+      label: String(s.label ?? ''),
+      dependsOn: Array.isArray(s.dependsOn) ? s.dependsOn.map(String) : [],
+      assignee: assignee ?? null,
+      decision: (s.decision as WorkflowStepView['decision']) ?? null,
+      wait: (s.wait as WorkflowStepView['wait']) ?? null,
+      performedBy: typeof s.performedBy === 'string' ? s.performedBy : null,
+      tool: (s.tool as WorkflowStepView['tool']) ?? null,
+      input: (s.input as WorkflowStepView['input']) ?? null,
+      inputFrom: (s.inputFrom as WorkflowStepView['inputFrom']) ?? null,
+      approvalRequired: s.approvalRequired === true,
+    };
+  });
+}
+
 /** Planning a workflow gives its plan, or why the plan was refused. */
 export type WorkflowPlanOutcome =
   | { readonly status: 'planned'; readonly plan: PlanDetail }
@@ -444,6 +533,13 @@ export interface AutomationsClient {
   assignees?(): Promise<readonly WorkflowAssigneeView[]>;
   /** A dry run of a draft before it is saved (ADR-0168), `workflow.manage` and `plan.create`. */
   checkWorkflow?(name: string, steps: readonly WorkflowStepDraft[]): Promise<WorkflowCheckView>;
+  /**
+   * GIA drafts a workflow from the person's words (ADR-0171): `workflow.manage`, `plan.create`
+   * and `gia.ask`. Nothing is stored. Absent: no draft is offered.
+   */
+  draftWorkflow?(intent: string): Promise<WorkflowDraftView>;
+  /** Saves a draft GIA proposed, exactly as the server checked it, as a new workflow draft. */
+  saveDraft?(name: string, steps: readonly DraftStep[]): Promise<WorkflowView>;
   decide(
     planId: string,
     decision: 'approve' | 'reject',
@@ -564,6 +660,12 @@ export function createAutomationsClient(
     async checkWorkflow(name, steps) {
       const response = await post('/workflows/check', { name, steps: workflowStepsOf(steps) });
       return (await response.json()) as WorkflowCheckView;
+    },
+    async draftWorkflow(intent) {
+      return (await (await post('/workflows/draft', { intent })).json()) as WorkflowDraftView;
+    },
+    async saveDraft(name, steps) {
+      return (await (await post('/workflows', { name, steps })).json()) as WorkflowView;
     },
     async decide(id, decision, seen) {
       const response = await post(`${plan(id)}/${decision}`, {

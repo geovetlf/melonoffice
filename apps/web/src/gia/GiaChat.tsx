@@ -19,6 +19,11 @@ import { errorKey, MAX_REQUEST, newRequestKey } from '../office/AgentTasks.js';
 import type { AgentTaskView, AgentTasksClient } from '../office/agentTasksClient.js';
 import { formatMoney } from '../opportunities/OpportunitiesSection.js';
 import { paths } from '../shell/routes.js';
+import {
+  handOverDraft,
+  WorkflowDraftCard,
+  type DraftClient,
+} from '../automations/WorkflowDraftCard.js';
 import { GiaAvatar } from './GiaAvatar.js';
 import type { GiaTeamClient, TeamStart, TeamSummary } from './teamClient.js';
 import { giaEngagements } from './presence.js';
@@ -47,7 +52,9 @@ export type GiaChatEntry =
       readonly role: 'error';
       readonly reason: GiaFailure;
       readonly estimatedCredits?: number;
-    };
+    }
+  /** A workflow GIA drafts from the person's words (ADR-0171), for them to review and save. */
+  | { readonly id: string; readonly role: 'workflow'; readonly intent: string };
 
 export interface GiaChat {
   /** False when the role may not talk to GIA: no call is ever made. */
@@ -61,6 +68,12 @@ export interface GiaChat {
   readonly agentTasks?: AgentTasksClient;
   /** Where work GIA prepared for several departments is confirmed (ADR-0117). */
   readonly team?: GiaTeamClient;
+  /**
+   * Drafts a workflow from the person's words (ADR-0171): GIA proposes, the person reviews and
+   * saves. Absent when the role may not write and plan workflows.
+   */
+  readonly draftWorkflow?: (text: string) => void;
+  readonly workflows?: DraftClient;
 }
 
 const UNAVAILABLE: GiaChat = {
@@ -78,8 +91,11 @@ export function GiaChatProvider({
   followUps,
   agentTasks,
   team,
+  workflows,
   children,
 }: {
+  /** Workflow drafts (ADR-0171), for a role that may write and plan workflows. */
+  readonly workflows?: DraftClient | undefined;
   /** The Harness's work for several departments (ADR-0117), for a role that may give tasks. */
   readonly team?: GiaTeamClient;
   readonly client: GiaClient | undefined;
@@ -132,6 +148,18 @@ export function GiaChatProvider({
     [client, entries, pending, locale],
   );
 
+  // The card asks the server itself; the chat only keeps the person's words and the card.
+  const draftWorkflow = useCallback((raw: string) => {
+    const intent = raw.trim();
+    if (intent === '') return;
+    const key = newKey();
+    setEntries((current) => [
+      ...current,
+      { id: key, role: 'person', text: intent },
+      { id: `${key}-w`, role: 'workflow', intent },
+    ]);
+  }, []);
+
   const value = useMemo<GiaChat>(
     () =>
       client === undefined
@@ -144,8 +172,9 @@ export function GiaChatProvider({
             ...(followUps === undefined ? {} : { followUps }),
             ...(agentTasks === undefined ? {} : { agentTasks }),
             ...(team === undefined ? {} : { team }),
+            ...(workflows === undefined ? {} : { workflows, draftWorkflow }),
           },
-    [client, entries, pending, send, followUps, agentTasks, team],
+    [client, entries, pending, send, followUps, agentTasks, team, workflows, draftWorkflow],
   );
   return <GiaChatContext.Provider value={value}>{children}</GiaChatContext.Provider>;
 }
@@ -237,6 +266,20 @@ export function GiaConversation() {
               </>
             ) : entry.role === 'gia' ? (
               <GiaReply answer={entry.answer} />
+            ) : entry.role === 'workflow' ? (
+              chat.workflows === undefined ? null : (
+                <>
+                  <span className="gia-chat__who">
+                    <GiaAvatar size={24} decorative />
+                    <FormattedMessage id="gia.name" />
+                  </span>
+                  <WorkflowDraftCard
+                    client={chat.workflows}
+                    intent={entry.intent}
+                    onAdjust={handOverDraft}
+                  />
+                </>
+              )
             ) : (
               <p className="gia-chat__error" role="alert">
                 {entry.reason === 'credits' ? (
@@ -272,9 +315,24 @@ export function GiaConversation() {
           maxLength={2000}
           rows={2}
         />
-        <Button type="submit" disabled={chat.pending}>
-          <FormattedMessage id="gia.chat.send" />
-        </Button>
+        <div className="gia-chat__send">
+          <Button type="submit" disabled={chat.pending}>
+            <FormattedMessage id="gia.chat.send" />
+          </Button>
+          {chat.draftWorkflow === undefined ? null : (
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={text.trim() === ''}
+              onClick={() => {
+                chat.draftWorkflow?.(text);
+                setText('');
+              }}
+            >
+              <FormattedMessage id="gia.chat.draftWorkflow" />
+            </Button>
+          )}
+        </div>
       </form>
       <p className="gia-chat__note">
         <FormattedMessage id="gia.chat.cost" /> <FormattedMessage id="gia.chat.notStored" />

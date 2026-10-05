@@ -291,6 +291,7 @@ async function world(
           plans,
           planner: createPlanner({
             plans,
+            tools: createToolRegistry(TOOL_CATALOGUE),
             executions,
             specialists,
             departments,

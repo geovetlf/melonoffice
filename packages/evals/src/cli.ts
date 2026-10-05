@@ -5,7 +5,12 @@ import { EVAL_CASES, EVAL_SUITES, type EvalSuiteId } from './cases.js';
 import { compareRuns, comparisonText } from './compare.js';
 import { devVertexRegistry, EVAL_MAX_BUDGET_CREDITS, evalTaskPolicy } from './dev.js';
 import { reportFileOf, reportOf } from './gate.js';
-import { PLANNER_EVAL, PLANNER_EVAL_CASES } from './planner.js';
+import {
+  PLANNER_EVAL,
+  PLANNER_EVAL_CASES,
+  PLANNER_V1_EVAL,
+  plannerComparisonText,
+} from './planner.js';
 import { MAX_EVAL_REPEAT, runEvals, type EvalCaseResult, type EvalRun } from './run.js';
 
 /**
@@ -17,7 +22,8 @@ import { MAX_EVAL_REPEAT, runEvals, type EvalCaseResult, type EvalRun } from './
  *   node dist/cli.js report run.json   (a run held to one model → docs/evals/reports/, G-5)
  *
  * `run` options: `--out <file>` (required), `--budget <credits>` (default and most: 70),
- * `--set planner` (the planner's cases, ADR-0169, instead of the agents'),
+ * `--set planner` (the planner's cases, ADR-0169, instead of the agents'), `--prompt 1` with it
+ * (`plan_proposal@1` again, to compare with @2 under the same scoring, ADR-0171),
  * `--suite <id>` (repeatable; default every suite), `--model <provider/model>` (a variant held
  * to one model), `--repeat <n>` (1 to 5, for consistency).
  */
@@ -35,6 +41,7 @@ function flags(args: readonly string[]) {
     repeat?: number;
     dir?: string;
     set?: string;
+    prompt?: string;
     suites: EvalSuiteId[];
     rest: string[];
   } = {
@@ -50,6 +57,7 @@ function flags(args: readonly string[]) {
     else if (arg === '--repeat') out.repeat = Number(value());
     else if (arg === '--dir') out.dir = value();
     else if (arg === '--set') out.set = value();
+    else if (arg === '--prompt') out.prompt = value();
     else if (arg === '--suite') {
       const suite = value();
       if (!EVAL_SUITES.includes(suite as EvalSuiteId)) fail(`unknown suite ${suite}`);
@@ -79,6 +87,12 @@ async function run(args: readonly string[]): Promise<void> {
   if (given.set !== undefined && given.set !== 'agents' && given.set !== 'planner') {
     fail('--set must be agents (the default) or planner');
   }
+  if (
+    given.prompt !== undefined &&
+    (given.set !== 'planner' || !['1', '2'].includes(given.prompt))
+  ) {
+    fail('--prompt is 1 or 2 (the default), with --set planner');
+  }
   const cases =
     given.suites.length === 0
       ? EVAL_CASES
@@ -107,7 +121,10 @@ async function run(args: readonly string[]): Promise<void> {
   };
   const result =
     given.set === 'planner'
-      ? await runEvals({ ...common, cases: PLANNER_EVAL_CASES }, PLANNER_EVAL)
+      ? await runEvals(
+          { ...common, cases: PLANNER_EVAL_CASES },
+          given.prompt === '1' ? PLANNER_V1_EVAL : PLANNER_EVAL,
+        )
       : await runEvals({ ...common, cases });
   writeFileSync(out, `${JSON.stringify(result, null, 2)}\n`);
   const t = result.totals;
@@ -127,6 +144,11 @@ function compare(args: readonly string[]): void {
   const result = compareRuns(read(baseline as string), read(current as string));
   if (given.out !== undefined) writeFileSync(given.out, `${JSON.stringify(result, null, 2)}\n`);
   process.stdout.write(comparisonText(result));
+  // Two planner runs (ADR-0171): each check, outcome and language side by side, and each case.
+  const [before, after] = [read(baseline as string), read(current as string)];
+  if (before.prompt.startsWith('plan_proposal@') && after.prompt.startsWith('plan_proposal@')) {
+    process.stdout.write(`\n${plannerComparisonText(before, after)}`);
+  }
   process.exitCode = result.verdict === 'accept' ? 0 : 1;
 }
 

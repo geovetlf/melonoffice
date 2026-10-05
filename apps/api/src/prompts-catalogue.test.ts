@@ -15,7 +15,7 @@ import {
 import { ROUTING_INSTRUCTIONS, ROUTING_PROMPT } from '@melonoffice/decisions';
 import { DOCUMENT_TRANSCRIPTION_PROMPT, TRANSCRIPTION_PROMPT } from '@melonoffice/documents';
 import { GIA_PROMPT, GIA_SUMMARY_PROMPT, giaMessages, summaryMessages } from '@melonoffice/gia';
-import { PLANNER_INSTRUCTIONS, PLANNER_PROMPT } from '@melonoffice/planning';
+import { PLANNER_PROMPT, plannerMessages } from '@melonoffice/planning';
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 
@@ -35,6 +35,7 @@ const PINNED: Readonly<Record<string, string>> = {
   'gia_chat@1': 'e4ea7909751cc79a',
   'gia_summary@1': 'e126b5d20b20b7d2',
   'plan_proposal@1': '650c44eda6d62802',
+  'plan_proposal@2': '9370266c27166687',
   'knowledge_extract@1': 'ab0b59dc318b3411',
   'decision_routing@1': '9a5af5413a6a79ba',
   'document_transcription@1': 'a08544ea7764db64',
@@ -94,7 +95,38 @@ const PROMPTS: readonly (readonly [PromptRef, string])[] = [
       ]),
     ),
   ],
-  [PLANNER_PROMPT, PLANNER_INSTRUCTIONS],
+  [
+    PLANNER_PROMPT,
+    // From @2 (ADR-0171) the digest covers the whole call: instructions, context shape, request.
+    textOf(
+      plannerMessages(
+        {
+          agents: [
+            {
+              specialistId: 'agent-1',
+              departmentType: 'sales',
+              roleId: 'commercial_agent',
+              skills: ['company_knowledge@3'],
+              tools: [
+                {
+                  id: 'knowledge_search',
+                  version: 1,
+                  action: 'search',
+                  changesData: false,
+                  riskLevel: 'low',
+                  usableAsStep: true,
+                  approvalRequired: false,
+                  inputFromAllowed: true,
+                },
+              ],
+            },
+          ],
+          checkActions: ['discount'],
+        },
+        'Prepara una campaña',
+      ),
+    ),
+  ],
   [EXTRACTOR_PROMPT, EXTRACTOR_INSTRUCTIONS],
   [ROUTING_PROMPT, ROUTING_INSTRUCTIONS],
   [TRANSCRIPTION_PROMPT, DOCUMENT_TRANSCRIPTION_PROMPT],

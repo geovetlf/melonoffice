@@ -8,6 +8,7 @@ import {
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { ActivityProvider } from '../activity/ActivityFeed.js';
 import { createActivityClient } from '../activity/activityClient.js';
+import { draftClientOf } from '../automations/WorkflowDraftCard.js';
 import { AutomationsPage } from '../automations/AutomationsPage.js';
 import { createAutomationsClient } from '../automations/automationsClient.js';
 import { BusinessPage } from '../business/BusinessPage.js';
@@ -511,6 +512,7 @@ export function AppShell(locale: LocaleProps) {
                 planWorkflows: canPlanWorkflows,
                 decidePlans: canDecidePlans,
                 manageWorkflows: canManageWorkflows,
+                draftWorkflows: canAskGia,
               }}
               templates={canReadAgents ? clients.agents.templates : undefined}
               tools={canReadTools ? clients.agents.tools : undefined}
@@ -584,6 +586,12 @@ export function AppShell(locale: LocaleProps) {
               client={canAskGia ? clients.gia : undefined}
               {...(canManageFollowUps ? { followUps: clients.followUps } : {})}
               {...(canAskAgents ? { agentTasks: clients.agentTasks, team: clients.giaTeam } : {})}
+              // GIA drafts workflows only for a person who may write and plan them (ADR-0171).
+              workflows={
+                canManageWorkflows && canPlanWorkflows && canReadAgents
+                  ? draftClientOf(clients.automations)
+                  : undefined
+              }
             >
               {/* The Home is the office's picture, edge to edge: its menu is the drawer at any width. */}
               <div className={route.kind === 'home' ? 'app app--scene' : 'app'}>

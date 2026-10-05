@@ -1,22 +1,33 @@
 import { createHash } from 'node:crypto';
-import { promptLabel, redactSecretText, type AIOutput } from '@melonoffice/ai-gateway';
+import {
+  promptLabel,
+  promptRef,
+  redactSecretText,
+  type AIMessage,
+  type AIOutput,
+} from '@melonoffice/ai-gateway';
 import type { DepartmentId, PlanVersion, Specialist } from '@melonoffice/domain';
 import { HARNESS_RISK_POLICY } from '@melonoffice/harness';
 import {
   checkProposal,
   checkStepStructure,
   createPlanValidator,
+  MAX_STEPS,
   PLANNER_MAX_OUTPUT_TOKENS,
   PLANNER_PROMPT,
+  plannerAgentOf,
   plannerMessages,
+  plannerToolOf,
+  planningAnswerOf,
   unrunnableStepOf,
+  type PlannerAgentView,
   type PlanningCandidate,
   type ProposalStep,
 } from '@melonoffice/planning';
 import { ROLES } from '@melonoffice/rbac';
 import { SpecialistError } from '@melonoffice/specialists';
 import { defaultToolRegistry } from '@melonoffice/tools';
-import type { EvalTask } from './run.js';
+import type { EvalRun, EvalTask } from './run.js';
 import type { EvalCheck, EvalScore } from './score.js';
 
 /**
@@ -213,10 +224,6 @@ export const PLANNER_EVAL_CASES: readonly PlannerEvalCase[] = Object.freeze([
   ),
 ]);
 
-/** The model request of one case: the planner's own messages, with the synthetic office. */
-export const plannerEvalMessages = (c: PlannerEvalCase) =>
-  plannerMessages(PLANNER_EVAL_CANDIDATES, c.request);
-
 // ---------------------------------------------------------------------------------------------
 // The validator over the synthetic office
 
@@ -276,6 +283,56 @@ const VALIDATOR = createPlanValidator({
 
 const TENANT = { actor: 'user', organizationId: ORG, userId: 'eval-user' } as never;
 
+const REGISTRY = defaultToolRegistry();
+
+/**
+ * The synthetic office as `plan_proposal@2` sees it (ADR-0171): each agent with its tools as the
+ * registry describes them and the validator judges them, exactly as the Harness builds it.
+ */
+export const PLANNER_EVAL_AGENTS: readonly PlannerAgentView[] = Object.freeze(
+  PLANNER_EVAL_CANDIDATES.map((c) =>
+    plannerAgentOf(c, (ref) =>
+      plannerToolOf(
+        ref,
+        REGISTRY.resolve(ref.id, ref.version),
+        VALIDATOR.toolUse(ref, c.departmentType),
+      ),
+    ),
+  ),
+);
+
+/** The model request of one case: the planner's own messages, with the synthetic office. */
+export const plannerEvalMessages = (c: PlannerEvalCase): AIMessage[] =>
+  plannerMessages({ agents: PLANNER_EVAL_AGENTS }, c.request);
+
+/**
+ * `plan_proposal@1` as it was sent (ADR-0169), kept only so a run can measure it again beside
+ * @2 under the same scoring. Frozen: its digest is checked against the one pinned for @1.
+ */
+export const PLANNER_V1_PROMPT = promptRef('plan_proposal', 1);
+export const PLANNER_V1_INSTRUCTIONS = [
+  'You are the MelonOffice planner. Propose a plan as one JSON object with exactly the fields',
+  'summary, objective, optional riskLevel (low|medium|high|critical) and steps.',
+  `Use at most ${MAX_STEPS} steps. Each step has id (lowercase letters, digits, underscore),`,
+  'kind (specialist|tool|approval|verification|condition|parallel), label and dependsOn.',
+  'A specialist step names a specialistId from the candidates and a verification',
+  '{policy, expectedOutput, requiredChecks}. A tool step names performedBy (a specialist step)',
+  'and one tool {id, version} that specialist lists. Never include organizations, users,',
+  'permissions, approvals, credits, policies or credentials: they are refused.',
+].join(' ');
+
+/** A case's request as @1 sent it: its instructions, the candidates as data, the request. */
+export const plannerV1EvalMessages = (c: PlannerEvalCase): AIMessage[] => [
+  {
+    role: 'system',
+    content: [
+      { type: 'text', text: PLANNER_V1_INSTRUCTIONS },
+      { type: 'text', text: JSON.stringify({ candidates: PLANNER_EVAL_CANDIDATES }) },
+    ],
+  },
+  { role: 'user', content: [{ type: 'text', text: c.request }] },
+];
+
 // ---------------------------------------------------------------------------------------------
 // Scoring
 
@@ -296,11 +353,42 @@ export type PlannerCheckId =
   | 'approval'
   | 'no_invented_tools'
   | 'asks_back'
+  | 'says_not_possible'
   | 'no_personal_data'
   | 'language';
 
-/** What the model answered, as JSON, or undefined. */
-function answerOf(output: AIOutput | undefined): unknown {
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v);
+
+/**
+ * What the model answered, as the product reads it (`planningAnswerOf`, ADR-0171): a plan (with
+ * the one way agent work is checked), a question back, or a "cannot be done". An answer that is
+ * none of these is kept as the JSON it was, if any, for the pipeline to refuse.
+ */
+function readingOf(output: AIOutput | undefined): {
+  readonly answer: unknown;
+  readonly asks: boolean;
+  readonly notPossible: boolean;
+} {
+  const read = planningAnswerOf(output);
+  if (read.kind === 'question') {
+    return { answer: { question: read.text }, asks: true, notPossible: false };
+  }
+  if (read.kind === 'not_possible') {
+    return { answer: { notPossible: read.text }, asks: false, notPossible: true };
+  }
+  const answer = read.kind === 'proposal' ? read.proposal : rawOf(output);
+  // @1 had no question form: a summary that asks, with no steps, is its question back.
+  const asks =
+    isRecord(answer) &&
+    (!Array.isArray(answer.steps) || answer.steps.length === 0) &&
+    typeof answer.summary === 'string' &&
+    answer.summary.includes('?');
+  return { answer, asks, notPossible: false };
+}
+
+/** The answer as JSON, or undefined. */
+function rawOf(output: AIOutput | undefined): unknown {
   if (output === undefined) return undefined;
   if (output.structured !== undefined) return output.structured;
   if (output.text === undefined) return undefined;
@@ -310,17 +398,6 @@ function answerOf(output: AIOutput | undefined): unknown {
   } catch {
     return undefined;
   }
-}
-
-const isRecord = (v: unknown): v is Record<string, unknown> =>
-  typeof v === 'object' && v !== null && !Array.isArray(v);
-
-/** A question back: a `question` the model added, or a summary that asks and no steps. */
-function asksBack(answer: unknown): boolean {
-  if (!isRecord(answer)) return false;
-  if (typeof answer.question === 'string' && answer.question.trim() !== '') return true;
-  const steps = Array.isArray(answer.steps) ? answer.steps : [];
-  return steps.length === 0 && typeof answer.summary === 'string' && answer.summary.includes('?');
 }
 
 const ES = ['de', 'la', 'el', 'y', 'que', 'los', 'las', 'para', 'con', 'del', 'una', 'por', 'sus'];
@@ -369,7 +446,7 @@ export async function scorePlannerAnswer(
   c: PlannerEvalCase,
   output: AIOutput | undefined,
 ): Promise<EvalScore> {
-  const answer = answerOf(output);
+  const { answer, asks, notPossible } = readingOf(output);
   const checks: { check: PlannerCheckId; passed: boolean }[] = [];
   const add = (check: PlannerCheckId, passed: boolean) => checks.push({ check, passed });
   const done = (): EvalScore =>
@@ -379,10 +456,17 @@ export async function scorePlannerAnswer(
     });
   const said = JSON.stringify(answer ?? output?.text ?? '');
 
-  // Too vague: a question back. Impossible: a question back is as good as a plan of what can be done.
-  if (c.expect.outcome === 'ask' || (c.expect.outcome === 'no_invention' && asksBack(answer))) {
-    add('asks_back', asksBack(answer));
+  // Too vague: a question back. Impossible: saying so, or asking, is as good as a plan of what
+  // can be done.
+  if (c.expect.outcome === 'ask') {
+    add('asks_back', asks);
     add('no_invented_tools', !inventsTools(answer));
+    return done();
+  }
+  if (c.expect.outcome === 'no_invention' && (asks || notPossible)) {
+    add(asks ? 'asks_back' : 'says_not_possible', true);
+    add('no_invented_tools', !inventsTools(answer));
+    if (c.expect.pii !== undefined) add('no_personal_data', !leaks(said, c.expect.pii));
     return done();
   }
 
@@ -491,7 +575,7 @@ function leaks(said: string, pii: readonly string[]): boolean {
 
 /** A plan's steps as the run file keeps them: kind, who, tool and dependencies, never text. */
 export function keptPlan(output: AIOutput | undefined): string | undefined {
-  const answer = answerOf(output);
+  const answer = rawOf(output);
   if (!isRecord(answer)) {
     return output?.text === undefined ? undefined : redactSecretText(output.text).slice(0, 1500);
   }
@@ -503,13 +587,22 @@ export function keptPlan(output: AIOutput | undefined): string | undefined {
     const deps = Array.isArray(s.dependsOn) ? s.dependsOn.join(',') : '';
     return `${String(s.id)}:${String(s.kind)}${who === '' ? '' : `/${String(who)}`}${tool === '' ? '' : `/${tool}`}${s.approvalRequired === true ? '/approval' : ''}${deps === '' ? '' : `<-${deps}`}`;
   });
-  const text = `${typeof answer.summary === 'string' ? answer.summary : ''} | ${summary.join(' ; ')}${typeof answer.question === 'string' ? ` | question: ${answer.question}` : ''}`;
+  const text = `${typeof answer.summary === 'string' ? answer.summary : ''} | ${summary.join(' ; ')}${typeof answer.question === 'string' ? ` | question: ${answer.question}` : ''}${typeof answer.notPossible === 'string' ? ` | not possible: ${answer.notPossible}` : ''}`;
   return redactSecretText(text).slice(0, 1500);
 }
 
+const plannerDigest = (cases: readonly PlannerEvalCase[]) =>
+  createHash('sha256')
+    .update(
+      JSON.stringify([PLANNER_EVAL_CANDIDATES, cases.map((x) => [x.id, x.request, x.expect])]),
+    )
+    .digest('hex')
+    .slice(0, 16);
+
 /**
- * The planner as an eval task (ADR-0169): its own prompt version and messages, no answer schema
- * (the planner asks for JSON without one), its output limit, and the scoring above.
+ * The planner as an eval task (ADR-0169, ADR-0171): its own prompt version and messages, no
+ * answer schema (the planner asks for JSON without one), its output limit, and the scoring above.
+ * The dataset digest is the cases' and the office's only, so runs of @1 and @2 compare.
  */
 export const PLANNER_EVAL: EvalTask<PlannerEvalCase> = Object.freeze({
   prompt: promptLabel(PLANNER_PROMPT),
@@ -517,11 +610,114 @@ export const PLANNER_EVAL: EvalTask<PlannerEvalCase> = Object.freeze({
   maxOutputTokens: PLANNER_MAX_OUTPUT_TOKENS,
   score: scorePlannerAnswer,
   keep: (_c: PlannerEvalCase, output: AIOutput) => keptPlan(output),
-  digest: (cases: readonly PlannerEvalCase[]) =>
-    createHash('sha256')
-      .update(
-        JSON.stringify([PLANNER_EVAL_CANDIDATES, cases.map((x) => [x.id, x.request, x.expect])]),
-      )
-      .digest('hex')
-      .slice(0, 16),
+  digest: plannerDigest,
 });
+
+/** `plan_proposal@1` measured again under today's scoring (`--prompt 1`), to compare with @2. */
+export const PLANNER_V1_EVAL: EvalTask<PlannerEvalCase> = Object.freeze({
+  ...PLANNER_EVAL,
+  prompt: promptLabel(PLANNER_V1_PROMPT),
+  messagesOf: plannerV1EvalMessages,
+});
+
+/** The figures Geovet asked of a planner comparison (ADR-0171), from one run's own scores. */
+export interface PlannerBreakdown {
+  readonly prompt: string;
+  readonly passed: number;
+  readonly scored: number;
+  /** Each check: in how many cases it was scored, and in how many it passed. */
+  readonly checks: Readonly<Partial<Record<PlannerCheckId, { passed: number; of: number }>>>;
+  /** Whole cases passed, by what the case asks and by its language. */
+  readonly outcomes: Readonly<
+    Record<PlannerExpectation['outcome'], { passed: number; of: number }>
+  >;
+  readonly languages: Readonly<
+    Record<PlannerExpectation['language'], { passed: number; of: number }>
+  >;
+}
+
+const BY_CASE = new Map(PLANNER_EVAL_CASES.map((x) => [x.id, x]));
+
+export function plannerBreakdown(run: EvalRun): PlannerBreakdown {
+  const checks: Partial<Record<PlannerCheckId, { passed: number; of: number }>> = {};
+  const outcomes = {
+    plan: { passed: 0, of: 0 },
+    ask: { passed: 0, of: 0 },
+    no_invention: { passed: 0, of: 0 },
+  };
+  const languages = { es: { passed: 0, of: 0 }, en: { passed: 0, of: 0 } };
+  let passed = 0;
+  let scored = 0;
+  for (const r of run.cases) {
+    const c = BY_CASE.get(r.id);
+    if (r.score === undefined || c === undefined) continue;
+    scored += 1;
+    if (r.score.passed) passed += 1;
+    for (const bucket of [outcomes[c.expect.outcome], languages[c.expect.language]]) {
+      bucket.of += 1;
+      if (r.score.passed) bucket.passed += 1;
+    }
+    for (const k of r.score.checks) {
+      const id = k.check as unknown as PlannerCheckId;
+      const entry = (checks[id] ??= { passed: 0, of: 0 });
+      entry.of += 1;
+      if (k.passed) entry.passed += 1;
+    }
+  }
+  return { prompt: run.prompt, passed, scored, checks, outcomes, languages };
+}
+
+/** The checks a comparison names, in the words of the figures asked for. */
+const BREAKDOWN_ROWS: readonly (readonly [string, PlannerCheckId])[] = [
+  ['shape', 'plan_shape'],
+  ['step kinds', 'runnable_kinds'],
+  ['roles', 'valid_roles'],
+  ['tools assigned', 'tools_assigned'],
+  ['invented tools', 'no_invented_tools'],
+  ['inputs', 'valid_inputs'],
+  ['inputFrom', 'valid_input_refs'],
+  ['dependencies', 'valid_dependencies'],
+  ['cycles', 'no_cycles'],
+  ['valid plan', 'valid_plan'],
+  ['approvals', 'approval'],
+  ['asks back', 'asks_back'],
+  ['says not possible', 'says_not_possible'],
+  ['personal data', 'no_personal_data'],
+  ['language', 'language'],
+];
+
+/** Two planner runs side by side: totals, each check, outcomes and languages, and each case. */
+export function plannerComparisonText(before: EvalRun, after: EvalRun): string {
+  const a = plannerBreakdown(before);
+  const b = plannerBreakdown(after);
+  const cell = (x: { passed: number; of: number } | undefined) =>
+    x === undefined ? '-' : `${x.passed}/${x.of}`;
+  const lines = [
+    `${'planner'.padEnd(20)} ${a.prompt.padEnd(18)} ${b.prompt}`,
+    `${'total'.padEnd(20)} ${`${a.passed}/${a.scored}`.padEnd(18)} ${b.passed}/${b.scored}`,
+    ...BREAKDOWN_ROWS.map(
+      ([label, id]) => `${label.padEnd(20)} ${cell(a.checks[id]).padEnd(18)} ${cell(b.checks[id])}`,
+    ),
+    ...(['plan', 'ask', 'no_invention'] as const).map(
+      (o) => `${`cases: ${o}`.padEnd(20)} ${cell(a.outcomes[o]).padEnd(18)} ${cell(b.outcomes[o])}`,
+    ),
+    ...(['es', 'en'] as const).map(
+      (l) =>
+        `${`cases: ${l}`.padEnd(20)} ${cell(a.languages[l]).padEnd(18)} ${cell(b.languages[l])}`,
+    ),
+    '',
+    ...PLANNER_EVAL_CASES.map((c) => {
+      const state = (run: EvalRun) => {
+        const r = run.cases.find((x) => x.id === c.id);
+        if (r?.score === undefined) return r === undefined ? 'not run' : r.status;
+        if (r.score.passed) return 'PASS';
+        return `FAIL ${r.score.checks
+          .filter((k) => !k.passed)
+          .map((k) => k.check)
+          .join(',')}`;
+      };
+      return `${c.id.padEnd(30)} ${state(before).padEnd(40)} ${state(after)}`;
+    }),
+  ];
+  return `${lines.join('\n')}\n`;
+}
