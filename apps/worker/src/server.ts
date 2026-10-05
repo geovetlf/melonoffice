@@ -35,9 +35,9 @@ import {
   NVIDIA_TRIAL_DATA_POLICY,
 } from '@melonoffice/ai-nvidia';
 import {
-  DEFAULT_HARNESS_LIMITS,
   harnessConversationPolicy,
   harnessDataPolicy,
+  harnessRoute,
   harnessTaskPolicy,
 } from '@melonoffice/harness';
 import { createAuditService } from '@melonoffice/audit';
@@ -300,12 +300,7 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
   }
   const aiRegistered = aiProviders.length > 0;
   /** How every agent's calls are routed (ADR-0100): configuration, never a branch in code. */
-  const HARNESS_ROUTE = {
-    preferredProviders: [NVIDIA_PROVIDER.id],
-    environments: ['dev'],
-    maxCostMicroUsd: CREDIT_RATE.microUsdPerCredit,
-    maxModelCalls: DEFAULT_HARNESS_LIMITS.maxModelCalls,
-  } as const;
+  const HARNESS_ROUTE = harnessRoute([NVIDIA_PROVIDER.id]);
   const aiRegistry = aiRegistered
     ? createProviderRegistry({ providers: aiProviders, models: aiModels, adapters: aiAdapters })
     : createProviderRegistry({

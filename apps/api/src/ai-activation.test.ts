@@ -12,7 +12,11 @@ import type { TextExtractor } from '@melonoffice/documents';
 import { resolveTenant } from '@melonoffice/tenancy';
 import { describe, expect, it } from 'vitest';
 import { DOCUMENT_READ_POLICY } from '@melonoffice/ai-vertex';
-import { aiConfigurationOf, CONVERSATION_ASSIST_POLICY } from './ai.js';
+import { routeModel } from '@melonoffice/ai-gateway';
+import { harnessRoute, harnessTaskPolicy } from '@melonoffice/harness';
+import { PLANNER_MAX_OUTPUT_TOKENS } from '@melonoffice/planning';
+import { AGENT_TASK_POLICY_REF } from '@melonoffice/specialists';
+import { aiConfigurationOf, CONVERSATION_ASSIST_POLICY, GIA_ASSIST_POLICY } from './ai.js';
 import { loadConfig } from './config.js';
 import { DEV_TEST_GRANT, grantDevTestCredits } from './dev-credits.js';
 import { setupApp, STORES, type Stores } from './test-api.js';
@@ -710,6 +714,53 @@ describe('AI configuration (ADR-0038)', () => {
     expect(all.registry?.model('nvidia', 'nemotron-3-nano-30b-a3b')?.model.environments).toEqual([
       'dev',
     ]);
+  });
+
+  it('ADR-0170: resolves agent_task@2 exactly as the worker routes it, and plans go to Gemini', () => {
+    const keySecret = 'projects/melonoffice/secrets/ai-nvidia-api-key/versions/latest';
+    const all = aiConfigurationOf({
+      deploymentEnvironment: 'dev',
+      vertexAI: { projectId: 'melonoffice-dev-test', location: 'us-central1' },
+      nvidia: { keySecret: keySecret as SecretRef },
+    });
+    const policy = all.policies?.resolve(AGENT_TASK_POLICY_REF);
+    // The same policy as the worker's (and the evals'): no pinned provider or model, DEV only, at
+    // most one credit per call and three calls per request, NVIDIA tried first where it may.
+    expect(policy).toEqual(harnessTaskPolicy(harnessRoute(['nvidia'])));
+    expect(policy).toMatchObject({
+      environments: ['dev'],
+      maxSensitivity: 'confidential',
+      maxCostMicroUsd: 10_000,
+      maxCalls: 3,
+      fallback: 'compatible',
+    });
+    expect(policy?.allowedProviders).toBeUndefined();
+    expect(policy?.allowedModels).toBeUndefined();
+    // A planning call carries the company's internal data: NVIDIA's trial terms take public data
+    // only, so the call goes to Gemini on Vertex AI, and nothing else.
+    const route = routeModel(
+      all.registry as NonNullable<typeof all.registry>,
+      policy as NonNullable<typeof policy>,
+      'dev',
+      {
+        capability: 'text_generation',
+        inputModalities: ['text'],
+        outputModality: 'text',
+        sensitivity: 'internal',
+        estimatedInputTokens: 2_000,
+        maxOutputTokens: PLANNER_MAX_OUTPUT_TOKENS,
+        structuredOutput: true,
+      },
+      undefined,
+      undefined,
+      all.dataPolicy,
+    );
+    expect(
+      route.status === 'selected' ? route.candidates.map((c) => c.model.modelId) : route,
+    ).toEqual(['gemini-2.5-flash-lite']);
+    // Never outside DEV, and the other policies are untouched.
+    expect(aiConfigurationOf({ deploymentEnvironment: 'prod' }).policies).toBeUndefined();
+    expect(all.policies?.resolve({ id: 'gia_assist', version: 1 })).toEqual(GIA_ASSIST_POLICY);
   });
 
   it('reads the Vertex AI settings together and checks them', () => {
