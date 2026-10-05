@@ -64,6 +64,12 @@ export interface WorkflowService {
     change: { from: WorkflowStatus; to: WorkflowStatus },
   ): Promise<Workflow>;
   /**
+   * Who would do a step of each role today, for the editor (ADR-0167): for every department type
+   * and role an eligible agent has, the agent a plan would bind (`bind`'s own rule) and the tools
+   * its current version may use, which its skills grant. Reads only; needs `workflow.manage`.
+   */
+  assignees(tenant: TenantContext): Promise<readonly WorkflowAssignee[]>;
+  /**
    * Turns the workflow's current version into a plan for `executionId`, a planning execution
    * that recorded this workflow and version (`workflowId` and a `workflow` snapshot component).
    */
@@ -83,6 +89,13 @@ export interface WorkflowService {
     id: string,
     input: { requestKey: string },
   ): Promise<WorkflowPlanOutcome>;
+}
+
+/** The agent a step of one department type and role binds to now (ADR-0167). */
+export interface WorkflowAssignee {
+  readonly departmentTypeId: string;
+  readonly roleId: string;
+  readonly specialist: Specialist;
 }
 
 export interface WorkflowServiceOptions {
@@ -176,24 +189,45 @@ export function createWorkflowService({
   ): Promise<Specialist> {
     const assignee = step.assignee;
     if (assignee === undefined) throw new WorkflowError('invalid_workflow', 'assignee');
-    const sorted = [...all].sort((a, b) => (a.identity.id < b.identity.id ? -1 : 1));
-    for (const s of sorted) {
+    const found = await assigneeOf(tenant, all, assignee);
+    if (found === undefined) throw new WorkflowError('assignee_unavailable', step.id);
+    return found;
+  }
+
+  /**
+   * The one rule for who does a step of a department type and role (ADR-0028, ADR-0167): the
+   * eligible specialist with that main role in a department of that type, the first by id. Both
+   * planning (`bind`) and the editor's view of it (`assignees`) ask this, so they cannot differ.
+   */
+  async function assigneeOf(
+    tenant: TenantContext,
+    all: readonly Specialist[],
+    assignee: { readonly departmentTypeId: string; readonly roleId: string },
+  ): Promise<Specialist | undefined> {
+    for (const s of byId(all)) {
       if (s.configuration.mainRoleId !== assignee.roleId) continue;
-      const department = await departments.find(s.organizationId, s.configuration.departmentId);
-      if (
-        department?.origin.kind !== 'catalog' ||
-        department.origin.typeId !== assignee.departmentTypeId
-      ) {
-        continue;
-      }
-      const decision = await specialists.eligibility(tenant, {
-        specialistId: s.identity.id,
-        departmentId: s.configuration.departmentId,
-        version: s.version,
-      });
-      if (decision.eligible) return s;
+      if ((await typeOf(s)) !== assignee.departmentTypeId) continue;
+      if (await eligible(tenant, s)) return s;
     }
-    throw new WorkflowError('assignee_unavailable', step.id);
+    return undefined;
+  }
+
+  const byId = (all: readonly Specialist[]) =>
+    [...all].sort((a, b) => (a.identity.id < b.identity.id ? -1 : 1));
+
+  /** The type of a specialist's department, when it is a catalogue department. */
+  async function typeOf(s: Specialist): Promise<string | undefined> {
+    const department = await departments.find(s.organizationId, s.configuration.departmentId);
+    return department?.origin.kind === 'catalog' ? department.origin.typeId : undefined;
+  }
+
+  async function eligible(tenant: TenantContext, s: Specialist): Promise<boolean> {
+    const decision = await specialists.eligibility(tenant, {
+      specialistId: s.identity.id,
+      departmentId: s.configuration.departmentId,
+      version: s.version,
+    });
+    return decision.eligible;
   }
 
   async function activeVersionOf(
@@ -371,6 +405,25 @@ export function createWorkflowService({
           ],
         };
       });
+    },
+
+    async assignees(tenant: TenantContext) {
+      await organizationOf(tenant, 'workflow.manage');
+      const all = await specialists.list(tenant);
+      // Every type and role an agent of the organization has, each asked of planning's own rule.
+      const roles = new Map<string, { departmentTypeId: string; roleId: string }>();
+      for (const s of all) {
+        const departmentTypeId = await typeOf(s);
+        if (departmentTypeId === undefined) continue;
+        const roleId: string = s.configuration.mainRoleId;
+        roles.set(`${departmentTypeId}/${roleId}`, { departmentTypeId, roleId });
+      }
+      const found: WorkflowAssignee[] = [];
+      for (const role of roles.values()) {
+        const specialist = await assigneeOf(tenant, all, role);
+        if (specialist !== undefined) found.push({ ...role, specialist });
+      }
+      return found;
     },
 
     async instantiate(tenant: TenantContext, id: string, input: { executionId: string }) {

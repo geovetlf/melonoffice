@@ -35,6 +35,7 @@ import { resolveRuntimeTenant, resolveTenant, type TenantContext } from '@melono
 import { defaultToolRegistry, digestOf } from '@melonoffice/tools';
 import { createWorkflowService } from '@melonoffice/workflows';
 import { describe, expect, it } from 'vitest';
+import { toolResultSummary, toolStepState } from './plans.js';
 import { setupApp, STORES, type Stores } from './test-api.js';
 
 const AT = '2026-09-27T12:00:00.000Z' as IsoTimestamp;
@@ -465,6 +466,8 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
           missing: [],
           until: null,
           attempt: 1,
+          endedAt: null,
+          result: null,
         },
         {
           stepId: 'campaign',
@@ -480,6 +483,8 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
           missing: [],
           until: null,
           attempt: 1,
+          endedAt: null,
+          result: null,
         },
       ],
     });
@@ -779,6 +784,48 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
         t.as('token-alice'),
       );
       expect(other.status).toBe(403);
+    });
+
+    it('ADR-0167: names who would do each role and the tools its skills grant, as planning binds', async () => {
+      const t = await setup();
+      const read = await t.get('token-alice', '/workflows/assignees');
+      expect(read.status).toBe(200);
+      const { assignees } = (await read.json()) as {
+        assignees: {
+          departmentTypeId: string;
+          roleId: string;
+          agent: { id: string; displayName: string };
+          tools: { id: string; version: number }[];
+        }[];
+      };
+      const marketing = must(assignees.find((a) => a.roleId === 'campaign_manager'));
+      expect(Object.keys(marketing).sort()).toEqual([
+        'agent',
+        'departmentTypeId',
+        'roleId',
+        'tools',
+      ]);
+      expect(Object.keys(marketing.agent).sort()).toEqual(['displayName', 'id']);
+      // The same specialist a plan of this role's step is bound to.
+      const id = await activeWorkflow(t, [researchStep, campaignStep]);
+      const planned = await t.post('token-alice', `/workflows/${id}/plans`, { requestKey: 'r' });
+      const plan = (await planned.json()) as PlanDetail;
+      expect(planned.status, JSON.stringify(plan)).toBe(201);
+      for (const step of plan.current.steps as unknown as {
+        id: string;
+        specialist?: { id: string };
+      }[]) {
+        const role = step.id === 'campaign' ? 'campaign_manager' : 'market_researcher';
+        expect(must(assignees.find((a) => a.roleId === role)).agent.id).toBe(step.specialist?.id);
+      }
+      // Another organization's agents are never named.
+      const path = `/v1/organizations/${t.orgB}/workflows/assignees`;
+      expect((await t.app.request(path, t.as('token-alice'))).status).toBe(403);
+      const fromB = await t.app.request(path, t.as('token-bob'));
+      const named = ((await fromB.json()) as { assignees?: { agent: { id: string } }[] }).assignees;
+      for (const a of assignees) {
+        expect(named?.some((b) => b.agent.id === a.agent.id) ?? false).toBe(false);
+      }
     });
 
     it('answers a refused plan with 422 and why, and keeps the answer for a repeat', async () => {
@@ -1659,6 +1706,14 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
         state: 'awaiting_approval',
         approvalId: w.entry.approvalId,
       });
+      // The tool step itself is listed (ADR-0167), waiting in that agent step's child.
+      expect(must((await steps()).find((s) => s.stepId === 'search'))).toMatchObject({
+        kind: 'tool',
+        state: 'waiting',
+        executionId: w.campaign,
+        approvalId: null,
+        result: null,
+      });
 
       const decided = await w.t.post('token-alice', `/approvals/${w.entry.approvalId}/approve`);
       expect(decided.status).toBe(200);
@@ -2005,3 +2060,47 @@ async function finish(
   });
   await executions.runtimeChangeStatus(w.runtime, id, { from: 'verifying', to: 'completed' });
 }
+
+describe('a tool step on the plan page (ADR-0167)', () => {
+  it('sums up a result as counts and short values, never its content or anything secret', () => {
+    expect(
+      toolResultSummary({
+        available: true,
+        facts: ['a', 'b', 'c'],
+        total: 4,
+        topic: 'melons',
+        apiKey: 'x',
+        note: 'Bearer abcdefghijklmnop1234',
+        long: 'x'.repeat(81),
+        nested: { a: 1 },
+        nan: Number.NaN,
+      }),
+    ).toEqual([
+      { name: 'available', type: 'boolean', value: true },
+      { name: 'facts', type: 'count', value: 3 },
+      { name: 'total', type: 'number', value: 4 },
+      { name: 'topic', type: 'text', value: 'melons' },
+    ]);
+    expect(toolResultSummary(null)).toBeNull();
+    expect(toolResultSummary(['a'])).toBeNull();
+    const many = Object.fromEntries(Array.from({ length: 20 }, (_, i) => [`f${i}`, i]));
+    expect(toolResultSummary(many)).toHaveLength(12);
+  });
+
+  it('reads its state from its node, and is skipped when its agent step ended its branch', () => {
+    const node = (status: string, approvalId?: string) =>
+      ({ id: 'search', type: 'tool', status, approvalId }) as never;
+    expect(toolStepState(node('completed'), undefined, 'completed')).toBe('completed');
+    expect(toolStepState(node('failed'), undefined, 'failed')).toBe('failed');
+    expect(toolStepState(node('cancelled'), undefined, 'stopped')).toBe('failed');
+    expect(toolStepState(node('skipped'), undefined, 'completed')).toBe('skipped');
+    expect(toolStepState(node('running'), undefined, 'running')).toBe('running');
+    expect(
+      toolStepState(node('pending', 'appr-1'), { status: 'waiting_approval' }, 'running'),
+    ).toBe('awaiting_approval');
+    expect(toolStepState(undefined, undefined, 'waiting')).toBe('waiting');
+    for (const ended of ['skipped', 'declined', 'stopped', 'failed'] as const) {
+      expect(toolStepState(undefined, undefined, ended)).toBe('skipped');
+    }
+  });
+});

@@ -222,6 +222,8 @@ export interface PlanView {
   readonly status: PlanStatus;
   readonly version: number;
   readonly createdAt: string;
+  /** When it last changed: for an ended plan, when it ended. An older API sends none. */
+  readonly updatedAt?: string;
   /**
    * Each step the approved credit budget could not cover (ADR-0163): what the plan had used, what
    * the step needed, and the budget. An older API sends none.
@@ -244,6 +246,13 @@ export interface PlanStepView {
   readonly dependsOn: readonly string[];
   /** A check's decision (WF-4); none on other steps. */
   readonly decision?: WorkflowDecisionView | null;
+  /** Who does a specialist step: the agent and its version. */
+  readonly specialist?: { readonly id: string; readonly version: number } | null;
+  /** On a tool step: the agent step whose agent uses it, and the tool (ADR-0151). */
+  readonly performedBy?: string | null;
+  readonly tool?: { readonly id: string; readonly version: number } | null;
+  /** Whether a person approves it before it starts (ADR-0146). */
+  readonly approvalRequired?: boolean;
 }
 
 /** Where a step is, by the plan conductor's own rule (ADR-0145). */
@@ -282,7 +291,7 @@ export interface PlanDetail extends PlanView {
 
 export interface PlanStepProgress {
   readonly stepId: string;
-  /** `specialist`, `condition` (a check) or `wait` (ADR-0152). */
+  /** `specialist`, `condition` (a check), `wait` (ADR-0152) or `tool` (ADR-0167). */
   readonly kind?: string;
   readonly label: string;
   readonly state?: PlanStepState;
@@ -304,12 +313,77 @@ export interface PlanStepProgress {
   readonly until?: string | null;
   /** On a specialist step: which run of it its execution is, from 1 (ADR-0153). */
   readonly attempt?: number | null;
+  /** When it ended, on a step that ran and ended (ADR-0167). */
+  readonly endedAt?: string | null;
+  /**
+   * On a tool step that ran (ADR-0167): its result as a person reads it, each top-level field a
+   * count (a list), a yes/no, a number or a short text. Never the found content itself.
+   */
+  readonly result?: readonly ToolResultField[] | null;
+}
+
+export type ToolResultField =
+  | { readonly name: string; readonly type: 'count'; readonly value: number }
+  | { readonly name: string; readonly type: 'boolean'; readonly value: boolean }
+  | { readonly name: string; readonly type: 'number'; readonly value: number }
+  | { readonly name: string; readonly type: 'text'; readonly value: string };
+
+/** Who would do a step of one role today, and the tools its skills let it use (ADR-0167). */
+export interface WorkflowAssigneeView {
+  readonly departmentTypeId: string;
+  readonly roleId: string;
+  readonly agent: { readonly id: string; readonly displayName: string };
+  readonly tools: readonly { readonly id: string; readonly version: number }[];
 }
 
 /** Planning a workflow gives its plan, or why the plan was refused. */
 export type WorkflowPlanOutcome =
   | { readonly status: 'planned'; readonly plan: PlanDetail }
-  | { readonly status: 'refused'; readonly reason: string };
+  | {
+      readonly status: 'refused';
+      readonly reason: string;
+      /** The validation stage and the field it names: codes, for the technical detail. */
+      readonly stage?: string;
+      readonly detail?: string;
+    };
+
+/**
+ * Everything that happened in a plan (ADR-0157), as much as the plan screen shows of it: codes,
+ * ids, times and numbers only.
+ */
+export interface PlanTraceView {
+  readonly status: string;
+  readonly failure: {
+    readonly code: string;
+    readonly stepId: string | null;
+    readonly cause: string | null;
+  } | null;
+  readonly steps: readonly {
+    readonly stepId: string;
+    readonly label: string;
+    readonly attempts: readonly {
+      readonly attempt: number;
+      readonly status: string;
+      readonly failure: string | null;
+      readonly durationMs: number | null;
+      readonly credits: number;
+      readonly nodes: readonly {
+        readonly nodeId: string;
+        readonly type: string;
+        readonly status: string;
+        readonly error: string | null;
+      }[];
+    }[];
+    readonly credits: number;
+  }[];
+  readonly credits: { readonly total: number };
+  readonly history: readonly {
+    readonly action: string;
+    readonly result: string;
+    readonly at: string;
+    readonly reason: string | null;
+  }[];
+}
 
 export interface AutomationsClient {
   workflows(): Promise<readonly WorkflowView[]>;
@@ -329,6 +403,13 @@ export interface AutomationsClient {
   plans(): Promise<readonly PlanView[]>;
   plan(planId: string): Promise<PlanDetail>;
   steps(planId: string): Promise<readonly PlanStepProgress[]>;
+  /** The plan's trace (ADR-0157). Absent: the screen shows none. */
+  trace?(planId: string): Promise<PlanTraceView>;
+  /**
+   * Who would do each role's steps today and their tools (ADR-0167), `workflow.manage`. Absent or
+   * failing: the editor offers no tool as usable, since it cannot tell which one would run.
+   */
+  assignees?(): Promise<readonly WorkflowAssigneeView[]>;
   decide(
     planId: string,
     decision: 'approve' | 'reject',
@@ -418,6 +499,8 @@ export function createAutomationsClient(
         return {
           status: 'refused',
           reason: typeof body.reason === 'string' ? body.reason : 'unexpected',
+          ...(typeof body.stage === 'string' ? { stage: body.stage } : {}),
+          ...(typeof body.detail === 'string' ? { detail: body.detail } : {}),
         };
       }
       return { status: 'planned', plan: body as unknown as PlanDetail };
@@ -434,6 +517,15 @@ export function createAutomationsClient(
         steps?: PlanStepProgress[];
       };
       return body.steps ?? [];
+    },
+    async trace(id) {
+      return (await (await call(`${plan(id)}/trace`)).json()) as PlanTraceView;
+    },
+    async assignees() {
+      const body = (await (await call('/workflows/assignees')).json()) as {
+        assignees?: WorkflowAssigneeView[];
+      };
+      return body.assignees ?? [];
     },
     async decide(id, decision, seen) {
       const response = await post(`${plan(id)}/${decision}`, {

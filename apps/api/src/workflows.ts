@@ -29,6 +29,27 @@ export function registerWorkflowRoutes(
     ),
   );
 
+  // Who would do a step of each role today and the tools that agent's skills let it use
+  // (ADR-0167), so the editor offers only tool steps a plan would accept. Before `:workflowId`.
+  app.get(
+    `${base}/assignees`,
+    withPermission('workflow.manage', dependencies, async (c, tenant) => {
+      try {
+        const found = await workflows.assignees(tenant);
+        return c.json({
+          assignees: found.map((a) => ({
+            departmentTypeId: a.departmentTypeId,
+            roleId: a.roleId,
+            agent: { id: a.specialist.identity.id, displayName: a.specialist.identity.displayName },
+            tools: a.specialist.configuration.tools.map((t) => ({ id: t.id, version: t.version })),
+          })),
+        });
+      } catch (error) {
+        return refusal(c, error);
+      }
+    }),
+  );
+
   app.get(
     `${base}/:workflowId`,
     withPermission('workflow.read', dependencies, async (c, tenant) => {

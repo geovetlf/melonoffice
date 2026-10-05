@@ -1,13 +1,14 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
 import { Button, StateMessage } from '@melonoffice/ui';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import type { AgentTemplateView, ToolView } from '../agents/agentsClient.js';
+import type { AgentTemplateView, SkillView, ToolView } from '../agents/agentsClient.js';
 import { readyList, useOfficeData } from '../office/OfficeData.js';
 import { departmentName } from '../office/departments.js';
 import {
   AutomationsError,
   CHECK_CONTINUE_ON,
   CHECK_DECISION,
+  MAX_WAIT_SECONDS,
   WAIT_UNIT_SECONDS,
   waitSecondsOf,
   type ToolValueDraft,
@@ -19,12 +20,17 @@ import {
   type WorkflowToolDraft,
   type WorkflowView,
 } from './automationsClient.js';
+import { stepNumberOf, TechnicalDetail } from './explain.js';
 import {
+  roleAgentOf,
   sourceKey,
   sourcesFor,
   tidy,
+  toolAvailability,
   toolChoicesOf,
   toolStepComplete,
+  type RoleAgent,
+  type ToolAvailability,
   type ToolChoice,
 } from './toolSteps.js';
 
@@ -37,6 +43,9 @@ import {
  * steps the person ticks, so a workflow can branch.
  * Saving a workflow that exists writes a new version; the versions before it never change. The
  * server checks everything again.
+ * This is the advanced mode (ADR-0167): every step and its wiring. It offers a tool only when the
+ * agent that would do its agent step may use it (Agent → Skill → Tool, as the server reads it), and
+ * says what is still missing before it can be saved.
  */
 
 /** Who can do a step: one department type and role from the catalogue. */
@@ -87,21 +96,42 @@ function withSteps(
   return all;
 }
 
-/** Why saving failed, as one message. */
-function saveErrorKey(error: unknown): string {
-  if (!(error instanceof AutomationsError)) return 'automations.error.generic';
+/** Why saving failed, as one message, and the server's codes for the technical detail. */
+interface SaveError {
+  readonly key: string;
+  readonly values?: Readonly<Record<string, number>>;
+  readonly codes: readonly (string | undefined)[];
+}
+
+function saveErrorOf(error: unknown): SaveError {
+  if (!(error instanceof AutomationsError)) return { key: 'automations.error.generic', codes: [] };
+  const codes = [error.code, error.detail];
   switch (error.code) {
     case 'permission_denied':
-      return 'automations.error.permission';
-    case 'invalid_workflow':
-      return error.detail === 'name'
-        ? 'automations.editor.error.name'
-        : 'automations.editor.error.steps';
+      return { key: 'automations.error.permission', codes };
+    case 'invalid_workflow': {
+      if (error.detail === 'name') return { key: 'automations.editor.error.name', codes };
+      const n = stepNumberOf(error.detail);
+      if (n === undefined) return { key: 'automations.editor.error.steps', codes };
+      // Which step, and for a wait or a tool step what about it, as the server named it.
+      const part = /\.(wait|tool|input|inputFrom|performedBy|decision)\b/.exec(
+        error.detail ?? '',
+      )?.[1];
+      const key =
+        part === 'wait'
+          ? 'automations.editor.error.wait'
+          : part === 'decision'
+            ? 'automations.editor.error.check'
+            : part === undefined
+              ? 'automations.editor.error.step'
+              : 'automations.editor.error.tool';
+      return { key, values: { n }, codes };
+    }
     case 'workflow_concurrency_conflict':
     case 'invalid_workflow_transition':
-      return 'automations.editor.error.changed';
+      return { key: 'automations.editor.error.changed', codes };
     default:
-      return 'automations.error.generic';
+      return { key: 'automations.error.generic', codes };
   }
 }
 
@@ -119,6 +149,13 @@ export interface WorkflowEditorProps {
   readonly checkActions?: (() => Promise<readonly string[]>) | undefined;
   /** The tool catalogue (`tool.read`). Absent or failing: no tool step is offered. */
   readonly tools?: (() => Promise<readonly ToolView[]>) | undefined;
+  /**
+   * Who would do each role's steps today and the tools its skills let it use (ADR-0167). Absent
+   * or failing: no tool is offered as usable, since the editor cannot tell who would use it.
+   */
+  readonly assignees?: (() => Promise<readonly RoleAgent[]>) | undefined;
+  /** The skill catalogue, to name the skill that would let an agent use a tool. */
+  readonly skills?: (() => Promise<readonly SkillView[]>) | undefined;
   readonly save: (
     name: string,
     steps: readonly WorkflowStepDraft[],
@@ -133,6 +170,8 @@ export function WorkflowEditor({
   templates,
   checkActions,
   tools,
+  assignees,
+  skills,
   save,
   onSaved,
   onCancel,
@@ -147,8 +186,11 @@ export function WorkflowEditor({
   );
   const [actions, setActions] = useState<readonly string[]>([]);
   const [toolChoices, setToolChoices] = useState<readonly ToolChoice[]>([]);
+  // Undefined while loading or when it failed: then no tool is offered as usable.
+  const [agents, setAgents] = useState<readonly RoleAgent[]>();
+  const [skillList, setSkillList] = useState<readonly SkillView[]>([]);
   const [sending, setSending] = useState(false);
-  const [error, setError] = useState<string>();
+  const [error, setError] = useState<SaveError>();
   // New steps get keys no saved step has: saved ones are named `step_<n>` or by their id.
   const nextKey = useRef(1);
 
@@ -188,6 +230,21 @@ export function WorkflowEditor({
       live = false;
     };
   }, [tools]);
+
+  useEffect(() => {
+    let live = true;
+    assignees?.().then(
+      (list) => live && setAgents(list),
+      () => undefined,
+    );
+    skills?.().then(
+      (list) => live && setSkillList(list),
+      () => undefined,
+    );
+    return () => {
+      live = false;
+    };
+  }, [assignees, skills]);
 
   const actionChoices = [
     ...actions,
@@ -258,23 +315,60 @@ export function WorkflowEditor({
     const role =
       intl.messages[c.nameKey] === undefined ? c.roleId : intl.formatMessage({ id: c.nameKey });
     const dept = depts.find((d) => d.typeId === c.departmentTypeId);
-    return dept === undefined ? role : `${role} · ${departmentName(intl, dept, 'name')}`;
+    const named = dept === undefined ? role : `${role} · ${departmentName(intl, dept, 'name')}`;
+    // A role no active agent has: a plan of it would be refused, and the list says so.
+    return agents !== undefined && roleAgentOf(agents, c) === undefined
+      ? intl.formatMessage({ id: 'automations.editor.who.none' }, { role: named })
+      : named;
+  };
+  const availabilityOf = (step: WorkflowToolDraft, tool: { id: string; version: number }) =>
+    toolAvailability(steps, step.performer, tool, agents);
+  /** The skill that lets an agent use a tool version, by its name, when the catalogue has one. */
+  const grantingSkill = (tool: { id: string; version: number }) => {
+    const skill = skillList.find((k) =>
+      k.tools.some((t) => t.id === tool.id && t.versions.includes(tool.version)),
+    );
+    if (skill === undefined) return undefined;
+    const label =
+      intl.messages[skill.nameKey] === undefined
+        ? skill.id
+        : intl.formatMessage({ id: skill.nameKey });
+    return { name: label, version: skill.version };
   };
 
-  const complete =
-    name.trim() !== '' &&
-    steps.length > 0 &&
-    steps.every(
-      (s) =>
-        s.label.trim() !== '' &&
-        (s.kind === 'agent'
-          ? s.roleId !== ''
-          : s.kind === 'tool'
-            ? toolStepComplete(s, toolChoices)
-            : // A check decides on, and a wait follows, what came before it: each waits for a step.
-              s.after.length > 0 &&
-              (s.kind === 'check' ? s.action !== '' : waitSecondsOf(s) !== undefined)),
-    );
+  /** What still keeps the workflow from being saved, one message per thing. */
+  const problems: { readonly id: string; readonly values?: Record<string, string | number> }[] = [];
+  if (name.trim() === '') problems.push({ id: 'automations.editor.missing.name' });
+  steps.forEach((s, i) => {
+    const n = i + 1;
+    if (s.label.trim() === '')
+      problems.push({ id: 'automations.editor.missing.label', values: { n } });
+    if (s.kind === 'agent') {
+      if (s.roleId === '') problems.push({ id: 'automations.editor.missing.who', values: { n } });
+      return;
+    }
+    if (s.kind === 'tool') {
+      if (s.performer === '' || s.toolId === '') {
+        problems.push({ id: 'automations.editor.missing.tool', values: { n } });
+      } else if (!availabilityOf(s, { id: s.toolId, version: s.toolVersion }).ok) {
+        problems.push({ id: 'automations.editor.missing.toolUnavailable', values: { n } });
+      } else if (!toolStepComplete(s, toolChoices)) {
+        problems.push({ id: 'automations.editor.missing.toolInput', values: { n } });
+      }
+      return;
+    }
+    // A check decides on, and a wait follows, what came before it: each waits for a step.
+    if (s.after.length === 0) {
+      problems.push({ id: 'automations.editor.missing.after', values: { n } });
+    }
+    if (s.kind === 'check' && s.action === '') {
+      problems.push({ id: 'automations.editor.missing.action', values: { n } });
+    }
+    if (s.kind === 'wait' && waitSecondsOf(s) === undefined) {
+      problems.push({ id: 'automations.editor.missing.wait', values: { n } });
+    }
+  });
+  const complete = steps.length > 0 && problems.length === 0;
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -284,7 +378,7 @@ export function WorkflowEditor({
     try {
       onSaved(await save(name.trim(), steps, editing?.id));
     } catch (failure) {
-      setError(saveErrorKey(failure));
+      setError(saveErrorOf(failure));
     } finally {
       setSending(false);
     }
@@ -323,6 +417,12 @@ export function WorkflowEditor({
               required
             />
           </label>
+          <p className="mo-hint">
+            <strong>
+              <FormattedMessage id="automations.editor.advanced" />
+            </strong>{' '}
+            <FormattedMessage id="automations.editor.advancedHint" />
+          </p>
           <p className="mo-hint">
             <FormattedMessage id="automations.editor.hint" />
           </p>
@@ -407,6 +507,9 @@ export function WorkflowEditor({
                         ))}
                       </select>
                     </label>
+                    {step.roleId === '' || agents === undefined ? null : (
+                      <RoleAgentHint agent={roleAgentOf(agents, step)} />
+                    )}
                     <label className="workflow-editor__check">
                       <input
                         type="checkbox"
@@ -425,6 +528,8 @@ export function WorkflowEditor({
                     stepName={stepName}
                     toolLabel={toolLabel}
                     fieldLabel={fieldLabel}
+                    availability={(tool) => availabilityOf(step, tool)}
+                    grantingSkill={grantingSkill}
                     onPerformer={(performer) => changeTool(i, { performer })}
                     onTool={(c) =>
                       changeTool(i, {
@@ -444,6 +549,7 @@ export function WorkflowEditor({
                       <input
                         type="number"
                         min={1}
+                        max={MAX_WAIT_SECONDS / WAIT_UNIT_SECONDS[step.unit]}
                         step={1}
                         value={step.amount ?? ''}
                         onChange={(e) =>
@@ -600,8 +706,21 @@ export function WorkflowEditor({
           </div>
           {error === undefined ? null : (
             <StateMessage kind="error">
-              <FormattedMessage id={error} />
+              <FormattedMessage id={error.key} values={error.values ?? {}} />
+              <TechnicalDetail codes={error.codes} />
             </StateMessage>
+          )}
+          {complete ? null : (
+            <div className="mo-hint workflow-editor__missing" aria-live="polite">
+              <FormattedMessage id="automations.editor.missing" />
+              <ul>
+                {problems.map((p, i) => (
+                  <li key={i}>
+                    <FormattedMessage id={p.id} values={p.values ?? {}} />
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
           <div className="mo-form__actions">
             <Button type="submit" disabled={!complete || sending}>
@@ -678,6 +797,8 @@ function ToolStepFields({
   stepName,
   toolLabel,
   fieldLabel,
+  availability,
+  grantingSkill,
   onPerformer,
   onTool,
   onValue,
@@ -689,6 +810,14 @@ function ToolStepFields({
   readonly stepName: (index: number) => string;
   readonly toolLabel: (c: { readonly id: string }) => string;
   readonly fieldLabel: (toolId: string, name: string) => string;
+  readonly availability: (tool: {
+    readonly id: string;
+    readonly version: number;
+  }) => ToolAvailability;
+  readonly grantingSkill: (tool: {
+    readonly id: string;
+    readonly version: number;
+  }) => { readonly name: string; readonly version: number } | undefined;
   readonly onPerformer: (key: string) => void;
   readonly onTool: (choice: ToolChoice | undefined) => void;
   readonly onValue: (name: string, value: ToolValueDraft | undefined) => void;
@@ -728,13 +857,39 @@ function ToolStepFields({
               {step.toolId}
             </option>
           ) : null}
-          {choices.map((c) => (
-            <option key={toolKey(c)} value={toolKey(c)}>
-              {toolLabel(c)}
-            </option>
-          ))}
+          {choices.map((c) => {
+            // A tool the step's agent may not use is shown, never chosen (ADR-0167).
+            const usable = availability(c).ok;
+            return (
+              <option key={toolKey(c)} value={toolKey(c)} disabled={!usable}>
+                {usable
+                  ? toolLabel(c)
+                  : intl.formatMessage(
+                      { id: 'automations.editor.tool.unavailable' },
+                      { tool: toolLabel(c) },
+                    )}
+              </option>
+            );
+          })}
         </select>
       </label>
+      {step.toolId === '' ? (
+        choices.some((c) => !availability(c).ok) ? (
+          <UnavailableTools
+            why={choices.map(availability).find((a) => !a.ok)}
+            toolLabel={toolLabel}
+            choices={choices}
+            availability={availability}
+            grantingSkill={grantingSkill}
+          />
+        ) : null
+      ) : (
+        <ChosenToolNotice
+          availability={availability({ id: step.toolId, version: step.toolVersion })}
+          tool={toolLabel({ id: step.toolId })}
+          skill={grantingSkill({ id: step.toolId, version: step.toolVersion })}
+        />
+      )}
       {tool === undefined
         ? null
         : tool.input.map((field) => {
@@ -800,6 +955,121 @@ function ToolStepFields({
         <FormattedMessage id="automations.editor.tool.hint" />
       </p>
     </>
+  );
+}
+
+/** Who a role's step would go to today, or that no active agent has the role (ADR-0167). */
+function RoleAgentHint({ agent }: { readonly agent: RoleAgent | undefined }) {
+  return agent === undefined ? (
+    <StateMessage kind="warning" inline>
+      <FormattedMessage id="automations.editor.who.noAgent" />
+    </StateMessage>
+  ) : (
+    <p className="mo-hint">
+      <FormattedMessage
+        id="automations.editor.who.agent"
+        values={{ agent: agent.agent.displayName }}
+      />
+    </p>
+  );
+}
+
+/** Why a tool cannot be used by the agent that would do the step, and what would let it. */
+function unavailableMessage(
+  why: Extract<ToolAvailability, { ok: false }>,
+  tool: string,
+  skill: { readonly name: string; readonly version: number } | undefined,
+) {
+  const agent = why.agent?.displayName ?? '';
+  return (
+    <>
+      <FormattedMessage id={`automations.editor.tool.why.${why.why}`} values={{ tool, agent }} />
+      {why.why === 'not_granted' && skill !== undefined ? (
+        <>
+          {' '}
+          <FormattedMessage
+            id="automations.editor.tool.grantedBy"
+            values={{ skill: skill.name, version: skill.version, agent }}
+          />
+        </>
+      ) : null}
+    </>
+  );
+}
+
+/** The chosen tool, when the step's agent may not use it: never left to fail when planned. */
+function ChosenToolNotice({
+  availability,
+  tool,
+  skill,
+}: {
+  readonly availability: ToolAvailability;
+  readonly tool: string;
+  readonly skill: { readonly name: string; readonly version: number } | undefined;
+}) {
+  if (availability.ok) {
+    return (
+      <p className="mo-hint">
+        <FormattedMessage
+          id="automations.editor.tool.usedBy"
+          values={{ agent: availability.agent.displayName, tool }}
+        />
+      </p>
+    );
+  }
+  return (
+    <StateMessage kind="warning">
+      <strong>
+        <FormattedMessage id="automations.editor.tool.notAvailable" />
+      </strong>{' '}
+      {unavailableMessage(availability, tool, skill)}
+    </StateMessage>
+  );
+}
+
+/** Why some tools are listed but cannot be chosen for this step. */
+function UnavailableTools({
+  why,
+  choices,
+  toolLabel,
+  availability,
+  grantingSkill,
+}: {
+  readonly why: ToolAvailability | undefined;
+  readonly choices: readonly ToolChoice[];
+  readonly toolLabel: (c: { readonly id: string }) => string;
+  readonly availability: (tool: {
+    readonly id: string;
+    readonly version: number;
+  }) => ToolAvailability;
+  readonly grantingSkill: (tool: {
+    readonly id: string;
+    readonly version: number;
+  }) => { readonly name: string; readonly version: number } | undefined;
+}) {
+  if (why === undefined || why.ok) return null;
+  // No agent step, no agent or nothing known: one reason for all of them.
+  if (why.why !== 'not_granted') {
+    return (
+      <p className="mo-hint">
+        <FormattedMessage
+          id={`automations.editor.tool.why.${why.why}`}
+          values={{ tool: '', agent: '' }}
+        />
+      </p>
+    );
+  }
+  return (
+    <ul className="mo-hint workflow-editor__missing">
+      {choices.map((c) => {
+        const a = availability(c);
+        return a.ok ? null : (
+          <li key={`${c.id}@${c.version}`}>
+            {unavailableMessage(a, toolLabel(c), grantingSkill(c))}
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 

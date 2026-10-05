@@ -2325,6 +2325,96 @@ a.sidebar__item:hover {
   min-width: 0;
 }
 
+/* A plan in the person's words (ADR-0167): a step's state, approval, failure and result. */
+.automations__step {
+  display: grid;
+  gap: var(--mo-space-1);
+  min-width: 0;
+}
+
+.automations__step > .automations__name {
+  margin-right: var(--mo-space-2);
+}
+
+.automations__state {
+  justify-self: start;
+  padding: 0 var(--mo-space-2);
+  border-radius: var(--mo-radius-pill);
+  background: var(--mo-color-surface-muted);
+  color: var(--mo-color-text-primary);
+  font-size: var(--mo-font-size-sm);
+}
+
+.automations__state--running,
+.automations__state--delayed {
+  background: var(--mo-color-accent-soft);
+}
+
+.automations__state--completed {
+  background: var(--mo-color-success-soft);
+}
+
+.automations__state--awaiting_approval,
+.automations__state--blocked {
+  background: var(--mo-color-warning-soft);
+}
+
+.automations__state--failed,
+.automations__state--declined {
+  background: var(--mo-color-danger-soft);
+}
+
+.automations__approval,
+.automations__failure,
+.automations__result {
+  display: grid;
+  gap: var(--mo-space-1);
+  min-width: 0;
+  padding: var(--mo-space-2) var(--mo-space-3);
+  border: 1px solid var(--mo-color-border);
+  border-radius: var(--mo-radius-lg);
+  overflow-wrap: anywhere;
+}
+
+.automations__approval {
+  border-color: var(--mo-color-warning);
+  background: var(--mo-color-warning-soft);
+}
+
+.automations__failure {
+  border-color: var(--mo-color-danger);
+}
+
+.automations__approval > *,
+.automations__failure > *,
+.automations__result > * {
+  margin: 0;
+}
+
+.automations__technical {
+  font-size: var(--mo-font-size-sm);
+  color: var(--mo-color-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.automations__technical summary {
+  min-height: var(--mo-min-target-size);
+  cursor: pointer;
+}
+
+.automations__trace ul,
+.automations__trace ol,
+.automations__technical ul {
+  margin: var(--mo-space-1) 0 0;
+  padding-left: var(--mo-space-4);
+}
+
+.workflow-editor__missing ul,
+ul.workflow-editor__missing {
+  margin: var(--mo-space-1) 0 0;
+  padding-left: var(--mo-space-4);
+}
+
 /* Skills and tools catalogue (block 6). */
 .capabilities__versions {
   display: grid;
