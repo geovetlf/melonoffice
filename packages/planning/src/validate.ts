@@ -8,6 +8,7 @@ import type {
   PlanEstimate,
   PlanRequest,
   PlanStep,
+  PlanVersion,
   SpecialistId,
   SpecialistVersion,
   ToolId,
@@ -26,6 +27,7 @@ import {
   type ResolvedTool,
   type ToolRegistry,
 } from '@melonoffice/tools';
+import { unrunnableStepOf } from './conductor.js';
 import { totalEstimate, UNKNOWN_ESTIMATE, type PlanEstimator } from './estimate.js';
 import { checkProposal, type PlanProposal, type ProposalStep } from './proposal.js';
 
@@ -58,7 +60,27 @@ export type PlanValidation =
 
 export interface PlanValidator {
   validate(tenant: TenantContext, proposal: unknown): Promise<PlanValidation>;
+  /**
+   * Whether a tool may be a plan's tool step here, for an agent in a department of that type
+   * (ADR-0168): the policy stage's own rule for the tool alone, with this validator's environment
+   * and risk policy. What the agent's skills grant and what the person may do are asked of the
+   * agent and the person, and the input of the step itself; this reads only the tool.
+   */
+  toolUse(
+    tool: { readonly id: string; readonly version: number },
+    departmentTypeId?: string,
+  ): ToolStepUse;
 }
+
+/** What the policy stage decides about a tool on its own (ADR-0168). Codes only. */
+export type ToolStepUse =
+  | {
+      readonly usable: true;
+      readonly riskLevel: ToolRiskLevel;
+      /** A person approves the step before it runs: the tool's own policy or its risk's. */
+      readonly approvalRequired: boolean;
+    }
+  | { readonly usable: false; readonly reason: string; readonly riskLevel?: ToolRiskLevel };
 
 export interface PlanValidatorOptions {
   readonly specialists: Pick<SpecialistService, 'get' | 'getVersion' | 'eligibility'>;
@@ -144,6 +166,23 @@ function checkShape(step: ProposalStep, field: string, boundLater = false): void
     case 'approval':
     case 'parallel':
       break;
+  }
+}
+
+/**
+ * Schema stage, last part: only steps a plan can run are proposed (ADR-0168). The rule is the
+ * conductor's own `unrunnableStepOf`, asked one step at a time, so the validator never accepts a
+ * plan its approval would refuse with `plan_not_runnable`. A tool step's performer is the plan
+ * stage's to check (`invalid_performer`), which names it more precisely.
+ */
+function checkRunnable(steps: readonly ProposalStep[]): void {
+  for (const [i, step] of steps.entries()) {
+    if (step.kind === 'tool') continue;
+    // The rule reads only the step's kind and the fields that kind needs, never stored ones.
+    const version = { steps: [step] } as unknown as PlanVersion;
+    if (unrunnableStepOf(version) !== undefined) {
+      refuse('schema', 'step_not_runnable', `steps.${i}`);
+    }
   }
 }
 
@@ -348,34 +387,31 @@ export function createPlanValidator(options: PlanValidatorOptions): PlanValidato
     return { version, department };
   }
 
-  /** Policy stage for one tool step: what the tool is and whether it may be used at all. */
-  function toolPolicy(
-    step: ProposalStep,
-    performer: ResolvedSpecialist,
-    field: string,
-  ): { readonly tool: ResolvedTool; readonly approval: boolean } {
-    const ref = step.tool as { id: string; version: number };
-    const tool = tools.resolve(ref.id, ref.version);
-    if (tool === undefined) return refuse('policy', 'tool_not_found', field);
-    if (!toolCanRun(tool.definition.status)) refuse('policy', 'tool_not_active', field);
+  /**
+   * The policy stage's rule for a tool alone (ADR-0168), in its order. The validator and the
+   * editor's view of a tool (`toolUse`) both ask it, so they cannot differ.
+   */
+  function toolRule(
+    tool: ResolvedTool | undefined,
+    departmentTypeId: string | undefined,
+  ): { readonly tool: ResolvedTool; readonly approval: boolean } | { readonly reason: string } {
+    if (tool === undefined) return { reason: 'tool_not_found' };
+    if (!toolCanRun(tool.definition.status)) return { reason: 'tool_not_active' };
     // A plan's steps run on the runtime: a tool only a person may invoke is never planned (ADR-0034).
-    if (!isRuntimeInvocable(tool.version)) refuse('policy', 'tool_not_runtime_invocable', field);
+    if (!isRuntimeInvocable(tool.version)) return { reason: 'tool_not_runtime_invocable' };
     if (environment === undefined || !tool.version.environments.includes(environment)) {
-      refuse('policy', 'environment_not_allowed', field);
+      return { reason: 'environment_not_allowed' };
     }
     const { departmentTypes } = tool.version;
-    if (departmentTypes !== undefined) {
-      const { department } = performer;
-      if (
-        department === undefined ||
-        department.origin.kind !== 'catalog' ||
-        !departmentTypes.includes(department.origin.typeId)
-      ) {
-        refuse('policy', 'department_not_allowed', field);
-      }
+    if (
+      departmentTypes !== undefined &&
+      (departmentTypeId === undefined ||
+        !(departmentTypes as readonly string[]).includes(departmentTypeId))
+    ) {
+      return { reason: 'department_not_allowed' };
     }
     const policy = effectivePolicy(tool, riskPolicy);
-    if (policy === 'denied') refuse('policy', 'tool_denied_by_policy', field);
+    if (policy === 'denied') return { reason: 'tool_denied_by_policy' };
     // Tool steps read only, inside MelonOffice (ADR-0159): no tool that changes anything, reaches
     // an external provider or needs a credential is ever planned.
     if (
@@ -383,15 +419,31 @@ export function createPlanValidator(options: PlanValidatorOptions): PlanValidato
       tool.version.provider.kind !== 'internal' ||
       tool.version.credentials.length > 0
     ) {
-      refuse('policy', 'tool_not_read_only', field);
+      return { reason: 'tool_not_read_only' };
     }
+    return { tool, approval: policy === 'approval_required' };
+  }
+
+  /** Policy stage for one tool step: what the tool is and whether it may be used at all. */
+  function toolPolicy(
+    step: ProposalStep,
+    performer: ResolvedSpecialist,
+    field: string,
+  ): { readonly tool: ResolvedTool; readonly approval: boolean } {
+    const ref = step.tool as { id: string; version: number };
+    const { department } = performer;
+    const rule = toolRule(
+      tools.resolve(ref.id, ref.version),
+      department?.origin.kind === 'catalog' ? department.origin.typeId : undefined,
+    );
+    if ('reason' in rule) return refuse('policy', rule.reason, field);
+    const { tool, approval } = rule;
     // The input is fixed now (ADR-0151): it must already satisfy the tool's own schema, but for
     // the keys read from earlier steps when it runs (ADR-0161). The Tool Gate checks the whole
     // input again, with everything else, when the step runs.
     if (!validateInput(fixedPartOf(tool.version.inputSchema, step), step.input ?? {}).valid) {
       refuse('policy', 'invalid_tool_input', `${field}.input`);
     }
-    const approval = policy === 'approval_required';
     // A person approves a tool call with its exact input (ADR-0151): an input only known when the
     // step runs is never put to them, so a tool step that needs an approval takes fixed input only.
     if (step.inputFrom !== undefined && (approval || step.approvalRequired === true)) {
@@ -453,6 +505,21 @@ export function createPlanValidator(options: PlanValidatorOptions): PlanValidato
   }
 
   return Object.freeze({
+    toolUse(ref: { readonly id: string; readonly version: number }, departmentTypeId?: string) {
+      const tool = tools.resolve(ref.id, ref.version);
+      const rule = toolRule(tool, departmentTypeId);
+      if ('reason' in rule) {
+        return Object.freeze({
+          usable: false,
+          reason: rule.reason,
+          ...(tool === undefined ? {} : { riskLevel: tool.version.riskLevel }),
+        } as const);
+      }
+      // As the plan decides the step's own approval: the tool's policy, or its risk's.
+      const riskLevel = rule.tool.version.riskLevel;
+      return Object.freeze({ usable: true, riskLevel, approvalRequired: rule.approval } as const);
+    },
+
     async validate(tenant: TenantContext, value: unknown): Promise<PlanValidation> {
       try {
         // 1. Schema.
@@ -460,6 +527,7 @@ export function createPlanValidator(options: PlanValidatorOptions): PlanValidato
         if (!checked.ok) return refuse('schema', checked.reason, checked.detail);
         const proposal: PlanProposal = checked.proposal;
         proposal.steps.forEach((step, i) => checkShape(step, `steps.${i}`));
+        checkRunnable(proposal.steps);
 
         // Facts, read for this tenant only. Reading decides nothing.
         const resolved = new Map<string, ResolvedSpecialist>();

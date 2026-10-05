@@ -374,10 +374,29 @@ describe('workflow audit', () => {
     expect(JSON.stringify(w.workflowEvents())).not.toMatch(/Launch|Research the market/);
   });
 
-  it('records GIA as the channel and the user as the actor', async () => {
+  it('lets only a person create, change or switch a workflow, never GIA or the runtime (ADR-0168)', async () => {
     const w = await setup();
-    await w.workflows.create(w.giaA, { name: 'Launch', steps: STEPS });
-    expect(w.workflowEvents()[0]?.actor).toEqual({ type: 'user', userId: ALICE, via: 'gia' });
+    for (const tenant of [w.giaA, w.runtimeA]) {
+      expect(await codeOf(w.workflows.create(tenant, { name: 'Launch', steps: STEPS }))).toBe(
+        'permission_denied',
+      );
+    }
+    const workflow = await w.workflows.create(w.tenantA, { name: 'Launch', steps: STEPS });
+    for (const tenant of [w.giaA, w.runtimeA]) {
+      expect(await codeOf(w.workflows.publishVersion(tenant, workflow.id, { steps: STEPS }))).toBe(
+        'permission_denied',
+      );
+      expect(
+        await codeOf(
+          w.workflows.changeStatus(tenant, workflow.id, { from: 'draft', to: 'active' }),
+        ),
+      ).toBe('permission_denied');
+    }
+    // Nothing changed, and only the person's own act was recorded.
+    expect((await w.workflows.get(w.tenantA, workflow.id)).status).toBe('draft');
+    expect(w.workflowEvents().map((e) => e.actor)).toEqual([
+      { type: 'user', userId: ALICE, via: 'direct' },
+    ]);
   });
 
   it('applies nothing when the audit event cannot be stored', async () => {
@@ -560,6 +579,14 @@ describe('who would do each role (ADR-0167)', () => {
     const researcher = of('research', 'market_researcher');
     expect(researcher?.configuration.tools.map((t) => t.id)).toContain('lookup');
     expect(researcher?.configuration.tools).toEqual(w.researcher.configuration.tools);
+    // Each tool says whether a plan would take it as a step here, by the validator's own rule.
+    const research = found.find((a) => a.roleId === 'market_researcher');
+    expect(research?.tools.find((t) => t.id === 'lookup')).toEqual({
+      id: 'lookup',
+      version: 1,
+      use: w.validator.toolUse({ id: 'lookup', version: 1 }, 'research'),
+    });
+    expect(research?.tools.find((t) => t.id === 'lookup')?.use.usable).toBe(true);
     // A paused specialist would not be bound, so it is not named either.
     await w.pause(w.orgA, w.marketer);
     expect(
@@ -576,6 +603,65 @@ describe('who would do each role (ADR-0167)', () => {
       roles: { owner: ROLES.owner.filter((p) => p !== 'workflow.manage') },
     });
     expect(await codeOf(readOnly.workflows.assignees(readOnly.tenantA))).toBe('permission_denied');
+  });
+});
+
+describe('a dry run of a draft (ADR-0168)', () => {
+  it('decides what saving and planning it now would, and stores and records nothing', async () => {
+    const w = await setup();
+    const checked = await w.workflows.check(w.tenantA, { name: 'Launch', steps: STEPS });
+    if (!checked.ok) throw new Error(checked.reason);
+    // The same agents and decisions a plan of it would get.
+    expect(checked.agents.research?.identity.id).toBe(w.researcher.identity.id);
+    expect(checked.agents.campaign?.identity.id).toBe(w.marketer.identity.id);
+    expect(checked.plan.steps.map((s) => s.id)).toEqual(STEPS.map((s) => s.id));
+    expect(checked.plan.steps.find((s) => s.id === 'search')?.tool).toEqual({
+      id: 'lookup',
+      version: 1,
+    });
+    // Nothing stored, nothing audited, no execution, no model.
+    expect(await w.workflows.list(w.tenantA)).toEqual([]);
+    expect(w.workflowEvents()).toEqual([]);
+    expect(w.events()).toEqual([]);
+    expect(w.calls).toHaveLength(0);
+  });
+
+  it('says what a save, the roles or the plan validator would refuse', async () => {
+    const w = await setup();
+    // A save refuses it: an approval step is not a workflow step.
+    expect(
+      await w.workflows.check(w.tenantA, {
+        name: 'Launch',
+        steps: [...STEPS, { id: 'ok', kind: 'approval', label: 'OK', dependsOn: ['research'] }],
+      }),
+    ).toEqual({ ok: false, stage: 'workflow', reason: 'invalid_workflow', detail: 'steps.4.kind' });
+    // No agent has the role now.
+    await w.pause(w.orgA, w.marketer);
+    expect(await w.workflows.check(w.tenantA, { name: 'Launch', steps: STEPS })).toEqual({
+      ok: false,
+      stage: 'assignee',
+      reason: 'assignee_unavailable',
+      detail: 'campaign',
+    });
+    // The validator refuses it: the agent's skills do not grant the tool.
+    const other = [STEPS[0], { ...STEPS[1], tool: { id: 'private_records', version: 1 } }];
+    expect(await w.workflows.check(w.tenantA, { name: 'Launch', steps: other })).toEqual(
+      expect.objectContaining({ ok: false, stage: 'permission', reason: 'tool_not_assigned' }),
+    );
+  });
+
+  it('keeps tenants apart and needs workflow.manage and plan.create', async () => {
+    const w = await setup();
+    // Another organization's agents are never bound: B has no researcher.
+    expect(await w.workflows.check(w.tenantB, { name: 'Launch', steps: STEPS })).toEqual(
+      expect.objectContaining({ ok: false, stage: 'assignee' }),
+    );
+    for (const missing of ['workflow.manage', 'plan.create']) {
+      const t = await setup({ roles: { owner: ROLES.owner.filter((p) => p !== missing) } });
+      expect(await codeOf(t.workflows.check(t.tenantA, { name: 'Launch', steps: STEPS }))).toBe(
+        'permission_denied',
+      );
+    }
   });
 });
 

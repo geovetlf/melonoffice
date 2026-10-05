@@ -181,12 +181,28 @@ export function tidy(
   return out;
 }
 
+/**
+ * Whether a plan takes a tool as a step here, as the API's plan validator decides it for the tool
+ * alone (ADR-0168): usable, with whether a person approves it first, or why not, as a code.
+ */
+export interface ToolStepRule {
+  readonly usable: boolean;
+  readonly riskLevel?: string;
+  readonly approvalRequired?: boolean;
+  readonly reason?: string;
+}
+
 /** Who would do each role's steps today, and the tools its skills let it use (ADR-0167). */
 export interface RoleAgent {
   readonly departmentTypeId: string;
   readonly roleId: string;
   readonly agent: { readonly id: string; readonly displayName: string };
-  readonly tools: readonly { readonly id: string; readonly version: number }[];
+  readonly tools: readonly {
+    readonly id: string;
+    readonly version: number;
+    /** Absent from an older API: the plan validator still decides when it is planned. */
+    readonly step?: ToolStepRule;
+  }[];
 }
 
 /**
@@ -197,14 +213,21 @@ export interface RoleAgent {
  * - `no_performer`: the tool step has no agent step, or that step has no role yet;
  * - `no_agent`: no active, eligible agent has that role;
  * - `not_granted`: that agent's skills do not grant this tool version;
+ * - `not_a_step`: they do, but a plan takes no step with this tool here (ADR-0168), for `reason`;
  * - `unknown`: who would do it could not be read, so nothing is offered as usable.
+ * A usable tool says whether a person approves the step before it runs.
  */
 export type ToolAvailability =
-  | { readonly ok: true; readonly agent: RoleAgent['agent'] }
+  | {
+      readonly ok: true;
+      readonly agent: RoleAgent['agent'];
+      readonly approvalRequired: boolean;
+    }
   | {
       readonly ok: false;
-      readonly why: 'no_performer' | 'no_agent' | 'not_granted' | 'unknown';
+      readonly why: 'no_performer' | 'no_agent' | 'not_granted' | 'not_a_step' | 'unknown';
       readonly agent?: RoleAgent['agent'];
+      readonly reason?: string;
     };
 
 export function roleAgentOf(
@@ -227,8 +250,33 @@ export function toolAvailability(
   if (agents === undefined) return { ok: false, why: 'unknown' };
   const found = roleAgentOf(agents, step);
   if (found === undefined) return { ok: false, why: 'no_agent' };
-  const granted = found.tools.some((t) => t.id === tool.id && t.version === tool.version);
-  return granted
-    ? { ok: true, agent: found.agent }
-    : { ok: false, why: 'not_granted', agent: found.agent };
+  const granted = found.tools.find((t) => t.id === tool.id && t.version === tool.version);
+  if (granted === undefined) return { ok: false, why: 'not_granted', agent: found.agent };
+  if (granted.step?.usable === false) {
+    return {
+      ok: false,
+      why: 'not_a_step',
+      agent: found.agent,
+      ...(granted.step.reason === undefined ? {} : { reason: granted.step.reason }),
+    };
+  }
+  return {
+    ok: true,
+    agent: found.agent,
+    approvalRequired: granted.step?.approvalRequired === true,
+  };
+}
+
+/** Why a tool is not a step here, as one of the messages the editor has (ADR-0168). */
+export function notAStepGroup(reason: string | undefined): string {
+  switch (reason) {
+    case 'tool_not_read_only':
+      return 'writes';
+    case 'environment_not_allowed':
+      return 'environment';
+    case 'department_not_allowed':
+      return 'department';
+    default:
+      return 'policy';
+  }
 }

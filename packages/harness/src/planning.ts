@@ -157,7 +157,9 @@ export function createPlanningHarnessPlanner({
       }
       const outcome = await planner.plan(tenant, {
         executionId: execution.id,
-        requestId: `harness:${execution.id}`,
+        // A request id the AI Gateway accepts (letters, digits, `_` and `-`): with a colon,
+        // every plan failed with `invalid_request` before reaching a model (ADR-0168).
+        requestId: `harness-${execution.id}`,
         objective: input.request,
         // Agent tasks read company data: never a provider limited to public data.
         sensitivity: 'confidential',

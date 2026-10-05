@@ -1109,6 +1109,114 @@ describe('Writing workflows (block 4)', () => {
     expect(posts(backend, '/org_1/workflows')).toHaveLength(0);
   });
 
+  /** Opens the editor on a two-step draft: Lucía's step, then a tool step it uses. */
+  async function toolDraft() {
+    fireEvent.click(await screen.findByRole('button', { name: 'New workflow' }));
+    const editor = within(await screen.findByRole('form', { name: 'New workflow' }));
+    fireEvent.change(editor.getByLabelText('Name'), { target: { value: 'Estudio' } });
+    fireEvent.change(editor.getByLabelText('Step 1: what to do'), {
+      target: { value: 'Investigar' },
+    });
+    fireEvent.change(editor.getByLabelText('Who does it'), {
+      target: { value: 'sales/commercial_agent' },
+    });
+    expect(await editor.findByText('Lucía will do it.')).toBeTruthy();
+    fireEvent.click(editor.getByRole('button', { name: 'Add a step' }));
+    fireEvent.change(editor.getByLabelText('Step 2: what to do'), { target: { value: 'Buscar' } });
+    const kinds = () => editor.getAllByLabelText('What this step is');
+    await vi.waitFor(() =>
+      expect(
+        within(kinds().at(-1) as HTMLElement).queryByRole('option', {
+          name: 'An agent uses a lookup tool',
+        }),
+      ).toBeTruthy(),
+    );
+    fireEvent.change(kinds().at(-1) as HTMLElement, { target: { value: 'tool' } });
+    return editor;
+  }
+
+  it('ADR-0168: a tool the agent has but no plan takes as a step is shown unavailable, with why', async () => {
+    open(
+      (b) => {
+        withTools(b);
+        for (const a of b.options.assignees?.org_1 ?? []) {
+          a.tools = [
+            {
+              id: 'knowledge_search',
+              version: 1,
+              step: { usable: false, riskLevel: 'medium', reason: 'tool_not_read_only' },
+            },
+          ];
+        }
+      },
+      [...WRITER, 'tool.read'],
+    );
+    const editor = await toolDraft();
+    const tool = editor.getByLabelText('Tool') as HTMLSelectElement;
+    const option = [...tool.options].find((o) => o.value === 'knowledge_search@1');
+    expect(option?.textContent).toBe('Search the company memory: not available as a step');
+    expect(option?.disabled).toBe(true);
+    expect(
+      editor.getByText(
+        'Lucía has “Search the company memory”, but it can’t be used as an automation step: for now steps only read data, and this tool changes or sends something.',
+      ),
+    ).toBeTruthy();
+  });
+
+  it('ADR-0168: says before saving that a tool step will ask for approval', async () => {
+    open(
+      (b) => {
+        withTools(b);
+        for (const a of b.options.assignees?.org_1 ?? []) {
+          a.tools = [
+            {
+              id: 'knowledge_search',
+              version: 1,
+              step: { usable: true, riskLevel: 'medium', approvalRequired: true },
+            },
+          ];
+        }
+      },
+      [...WRITER, 'tool.read'],
+    );
+    const editor = await toolDraft();
+    fireEvent.change(editor.getByLabelText('Tool'), { target: { value: 'knowledge_search@1' } });
+    expect(
+      await editor.findByText(
+        'Lucía will use “Search the company memory”. It will ask for your approval before using it.',
+      ),
+    ).toBeTruthy();
+  });
+
+  it('ADR-0168: a draft the dry run refuses is not saved, and says why in words', async () => {
+    const backend = open(
+      (b) => {
+        withTools(b);
+        b.options.workflowCheck = {
+          ok: false,
+          stage: 'permission',
+          reason: 'tool_not_assigned',
+          detail: 'steps.1',
+        };
+      },
+      [...WRITER, 'tool.read'],
+    );
+    const editor = await toolDraft();
+    fireEvent.change(editor.getByLabelText('Tool'), { target: { value: 'knowledge_search@1' } });
+    fireEvent.change(editor.getByLabelText('Words to search'), { target: { value: 'melón' } });
+    fireEvent.click(editor.getByRole('button', { name: 'Create as draft' }));
+    expect(
+      await editor.findByText(
+        /Not saved: as it is, the automation would not pass the checks when its plan is prepared\./,
+      ),
+    ).toBeTruthy();
+    expect(editor.getByText(/It is in step 2\./)).toBeTruthy();
+    // The dry run was asked with the draft; nothing was saved.
+    const [checked] = posts(backend, '/org_1/workflows/check');
+    expect(JSON.parse(checked?.body ?? '{}')).toMatchObject({ name: 'Estudio' });
+    expect(posts(backend, '/org_1/workflows')).toHaveLength(0);
+  });
+
   it('shows a saved check and edits a branching workflow without changing its shape', async () => {
     const backend = open(
       (b) => {

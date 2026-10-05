@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { isPlanningError, PlanningError } from './errors.js';
 import { canChangePlanStatus, isPlanTerminal, PLAN_STATUSES } from './lifecycle.js';
 import { checkProposal, MAX_STEPS } from './proposal.js';
+import { checkStepStructure } from './validate.js';
 import {
   ALICE,
   BOB,
@@ -215,17 +216,6 @@ describe('plan validation pipeline', () => {
           approvalRequired: false,
         }),
         specialistStep('campaign', w.marketer, { dependsOn: ['research'] }),
-        {
-          id: 'review',
-          kind: 'verification',
-          label: 'Review',
-          dependsOn: ['campaign'],
-          verification: {
-            policy: 'human_review',
-            expectedOutput: 'campaign_plan',
-            requiredChecks: [],
-          },
-        },
       ]),
     );
     if (!result.ok) throw new Error(result.reason);
@@ -243,6 +233,50 @@ describe('plan validation pipeline', () => {
     });
     // Tool contracts are the tool's own schemas.
     expect(step('search').inputContract).toEqual(expect.objectContaining({ type: 'object' }));
+  });
+
+  it('refuses the steps no plan can run, as the conductor would (ADR-0168)', async () => {
+    const w = await setup();
+    const r = w.researcher;
+    const verification = { policy: 'human_review', expectedOutput: 'report', requiredChecks: [] };
+    for (const step of [
+      { id: 'x', kind: 'approval', label: 'OK', dependsOn: ['a'] },
+      { id: 'x', kind: 'verification', label: 'Check', dependsOn: ['a'], verification },
+      { id: 'x', kind: 'parallel', label: 'Both', dependsOn: ['a'] },
+      {
+        id: 'x',
+        kind: 'condition',
+        label: 'If',
+        dependsOn: ['a'],
+        condition: { step: 'a', outcome: 'completed' },
+      },
+    ]) {
+      const result = await validate(w, proposal([specialistStep('a', r), step]));
+      expect(result).toEqual({
+        ok: false,
+        stage: 'schema',
+        reason: 'step_not_runnable',
+        detail: 'steps.1',
+      });
+    }
+    // What the conductor runs is accepted: specialist, tool, decision and wait steps.
+    const runnable = await validate(
+      w,
+      proposal([
+        specialistStep('a', r),
+        toolStep('t', 'a', 'lookup'),
+        {
+          id: 'gate',
+          kind: 'condition',
+          label: 'Allowed?',
+          dependsOn: ['a'],
+          decision: { decision: 'action.policy_check', continueOn: ['allowed'] },
+        },
+        { id: 'pause', kind: 'wait', label: 'Wait', dependsOn: ['gate'], wait: { seconds: 60 } },
+        specialistStep('b', r, { dependsOn: ['pause'] }),
+      ]),
+    );
+    expect(runnable.ok).toBe(true);
   });
 
   it('lets the model raise risk, never lower it; critical is denied', async () => {
@@ -561,22 +595,27 @@ describe('plan validation pipeline', () => {
     const noCheck = { ...specialistStep('a', r) };
     delete noCheck.verification;
     expect(await refusal(w, proposal([noCheck]))).toBe('policy:verification_missing');
-    expect(
-      await refusal(
-        w,
-        proposal([
-          specialistStep('a', r),
-          specialistStep('b', r),
-          {
-            id: 'c',
-            kind: 'condition',
-            label: 'If',
-            dependsOn: ['a'],
-            condition: { step: 'b', outcome: 'completed' },
-          },
-        ]),
-      ),
-    ).toBe('plan:invalid_condition');
+    const onOutcome = [
+      specialistStep('a', r),
+      specialistStep('b', r),
+      {
+        id: 'c',
+        kind: 'condition',
+        label: 'If',
+        dependsOn: ['a'],
+        condition: { step: 'b', outcome: 'completed' },
+      },
+    ];
+    // The structure still refuses a condition on a step it does not wait for…
+    const checked = checkProposal(proposal(onOutcome));
+    if (!checked.ok) throw new Error(checked.reason);
+    expect(checkStepStructure(checked.proposal.steps)).toEqual({
+      ok: false,
+      reason: 'invalid_condition',
+      detail: 'steps.2',
+    });
+    // …and a plan never proposes one: no plan can run a condition on how a step ended yet.
+    expect(await refusal(w, proposal(onOutcome))).toBe('schema:step_not_runnable');
     // A condition is either how a step ended or a decision, never both nor neither, and a
     // decision waits on at least one step.
     const decision = { decision: 'action.policy_check', continueOn: ['allowed'] };
@@ -625,7 +664,7 @@ describe('plan validation pipeline', () => {
         w,
         proposal([
           specialistStep('a', r),
-          { id: 'x', kind: 'approval', label: 'OK', dependsOn: [] },
+          { id: 'x', kind: 'wait', label: 'Wait', dependsOn: ['a'], wait: { seconds: 60 } },
           toolStep('t', 'x', 'lookup'),
         ]),
       ),
@@ -915,17 +954,7 @@ describe('delegation', () => {
       specialistStep('research', w.researcher),
       toolStep('search', 'research', 'lookup'),
       specialistStep('campaign', w.marketer, { dependsOn: ['research'] }),
-      {
-        id: 'review',
-        kind: 'verification',
-        label: 'Review',
-        dependsOn: ['campaign'],
-        verification: {
-          policy: 'human_review',
-          expectedOutput: 'campaign_plan',
-          requiredChecks: [],
-        },
-      },
+      { id: 'pause', kind: 'wait', label: 'Wait', dependsOn: ['campaign'], wait: { seconds: 60 } },
     ]);
     const { plan: delegated, children } = await w.delegation.delegate(w.tenantA, plan.id);
     expect(delegated.status).toBe('executing');
@@ -957,7 +986,7 @@ describe('delegation', () => {
     ]);
     const parent = await w.executions.get(w.tenantA, execution.id);
     expect(parent.status).toBe('running');
-    expect(parent.nodes.map((n) => n.id)).toEqual(['research', 'campaign', 'review']);
+    expect(parent.nodes.map((n) => n.id)).toEqual(['research', 'campaign', 'pause']);
     expect(w.events('delegation.created')).toHaveLength(2);
     expect(w.events('plan.state_changed')).toEqual([
       expect.objectContaining({ transition: { from: 'ready', to: 'executing' } }),

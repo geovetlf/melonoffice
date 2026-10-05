@@ -11,17 +11,20 @@ import {
   MAX_WAIT_SECONDS,
   WAIT_UNIT_SECONDS,
   waitSecondsOf,
+  workflowStepsOf,
   type ToolValueDraft,
   type WaitUnit,
   type WorkflowAgentDraft,
+  type WorkflowCheckView,
   type WorkflowDecisionView,
   type WorkflowStepDraft,
   type WorkflowStepView,
   type WorkflowToolDraft,
   type WorkflowView,
 } from './automationsClient.js';
-import { stepNumberOf, TechnicalDetail } from './explain.js';
+import { refusalExplanation, stepNumberOf, TechnicalDetail } from './explain.js';
 import {
+  notAStepGroup,
   roleAgentOf,
   sourceKey,
   sourcesFor,
@@ -45,7 +48,8 @@ import {
  * server checks everything again.
  * This is the advanced mode (ADR-0167): every step and its wiring. It offers a tool only when the
  * agent that would do its agent step may use it (Agent → Skill → Tool, as the server reads it), and
- * says what is still missing before it can be saved.
+ * says what is still missing before it can be saved. Before saving, the server dry-runs the draft
+ * (ADR-0168): what planning it now would refuse is said here, and nothing is saved.
  */
 
 /** Who can do a step: one department type and role from the catalogue. */
@@ -161,6 +165,12 @@ export interface WorkflowEditorProps {
     steps: readonly WorkflowStepDraft[],
     workflowId?: string,
   ) => Promise<WorkflowView>;
+  /**
+   * The server's dry run of the draft (ADR-0168). Absent or failing: the draft is saved and the
+   * plan validator still decides when it is planned.
+   */
+  readonly check?:
+    ((name: string, steps: readonly WorkflowStepDraft[]) => Promise<WorkflowCheckView>) | undefined;
   readonly onSaved: (workflow: WorkflowView) => void;
   readonly onCancel: () => void;
 }
@@ -173,6 +183,7 @@ export function WorkflowEditor({
   assignees,
   skills,
   save,
+  check,
   onSaved,
   onCancel,
 }: WorkflowEditorProps) {
@@ -191,6 +202,8 @@ export function WorkflowEditor({
   const [skillList, setSkillList] = useState<readonly SkillView[]>([]);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<SaveError>();
+  // What the dry run said planning the draft now would refuse (ADR-0168).
+  const [refused, setRefused] = useState<Extract<WorkflowCheckView, { ok: false }>>();
   // New steps get keys no saved step has: saved ones are named `step_<n>` or by their id.
   const nextKey = useRef(1);
 
@@ -375,7 +388,17 @@ export function WorkflowEditor({
     if (!complete || sending) return;
     setSending(true);
     setError(undefined);
+    setRefused(undefined);
     try {
+      const checked = await check?.(name.trim(), steps).catch(() => undefined);
+      if (checked !== undefined && !checked.ok) {
+        if (checked.stage === 'workflow') {
+          setError(saveErrorOf(new AutomationsError(400, checked.reason, checked.detail)));
+        } else {
+          setRefused(checked);
+        }
+        return;
+      }
       onSaved(await save(name.trim(), steps, editing?.id));
     } catch (failure) {
       setError(saveErrorOf(failure));
@@ -710,6 +733,9 @@ export function WorkflowEditor({
               <TechnicalDetail codes={error.codes} />
             </StateMessage>
           )}
+          {refused === undefined ? null : (
+            <CheckRefusal refused={refused} ids={workflowStepsOf(steps)} />
+          )}
           {complete ? null : (
             <div className="mo-hint workflow-editor__missing" aria-live="polite">
               <FormattedMessage id="automations.editor.missing" />
@@ -859,13 +885,18 @@ function ToolStepFields({
           ) : null}
           {choices.map((c) => {
             // A tool the step's agent may not use is shown, never chosen (ADR-0167).
-            const usable = availability(c).ok;
+            const a = availability(c);
             return (
-              <option key={toolKey(c)} value={toolKey(c)} disabled={!usable}>
-                {usable
+              <option key={toolKey(c)} value={toolKey(c)} disabled={!a.ok}>
+                {a.ok
                   ? toolLabel(c)
                   : intl.formatMessage(
-                      { id: 'automations.editor.tool.unavailable' },
+                      {
+                        id:
+                          a.why === 'not_a_step'
+                            ? 'automations.editor.tool.notAStepOption'
+                            : 'automations.editor.tool.unavailable',
+                      },
                       { tool: toolLabel(c) },
                     )}
               </option>
@@ -984,6 +1015,12 @@ function unavailableMessage(
   return (
     <>
       <FormattedMessage id={`automations.editor.tool.why.${why.why}`} values={{ tool, agent }} />
+      {why.why === 'not_a_step' ? (
+        <>
+          {' '}
+          <FormattedMessage id={`automations.editor.tool.notAStep.${notAStepGroup(why.reason)}`} />
+        </>
+      ) : null}
       {why.why === 'not_granted' && skill !== undefined ? (
         <>
           {' '}
@@ -1014,6 +1051,12 @@ function ChosenToolNotice({
           id="automations.editor.tool.usedBy"
           values={{ agent: availability.agent.displayName, tool }}
         />
+        {availability.approvalRequired ? (
+          <>
+            {' '}
+            <FormattedMessage id="automations.editor.tool.asksApproval" />
+          </>
+        ) : null}
       </p>
     );
   }
@@ -1049,7 +1092,7 @@ function UnavailableTools({
 }) {
   if (why === undefined || why.ok) return null;
   // No agent step, no agent or nothing known: one reason for all of them.
-  if (why.why !== 'not_granted') {
+  if (why.why !== 'not_granted' && why.why !== 'not_a_step') {
     return (
       <p className="mo-hint">
         <FormattedMessage
@@ -1070,6 +1113,39 @@ function UnavailableTools({
         );
       })}
     </ul>
+  );
+}
+
+/**
+ * What the dry run said planning the draft now would refuse (ADR-0168), in the words a plan
+ * refusal uses, with the step and the codes folded away. Nothing was saved.
+ */
+function CheckRefusal({
+  refused,
+  ids,
+}: {
+  readonly refused: Extract<WorkflowCheckView, { ok: false }>;
+  readonly ids: readonly unknown[];
+}) {
+  const { what, todo } = refusalExplanation(refused.reason);
+  // The validator names a step by its place; a missing agent, by the step's id.
+  const at = ids.findIndex((s) => (s as { id?: unknown }).id === refused.detail);
+  const n = at >= 0 ? at + 1 : stepNumberOf(refused.detail);
+  return (
+    <StateMessage kind="error">
+      <strong>
+        <FormattedMessage id="automations.editor.check.title" />
+      </strong>{' '}
+      <FormattedMessage id={what} />
+      {n === undefined ? null : (
+        <>
+          {' '}
+          <FormattedMessage id="automations.refusal.step" values={{ n }} />
+        </>
+      )}{' '}
+      <FormattedMessage id={todo} />
+      <TechnicalDetail codes={[refused.stage, refused.reason, refused.detail]} />
+    </StateMessage>
   );
 }
 

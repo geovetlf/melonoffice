@@ -168,6 +168,7 @@ export function AutomationsPage({
   const checkActions = useCallback(() => client.checkActions(), [client]);
   // Who would do each role's steps, for the editor's tool steps (ADR-0167).
   const assignees = useMemo(() => client.assignees?.bind(client), [client]);
+  const check = useMemo(() => client.checkWorkflow?.bind(client), [client]);
   const save = useCallback(
     (name: string, steps: readonly WorkflowStepDraft[], workflowId?: string) =>
       workflowId === undefined
@@ -255,6 +256,7 @@ export function AutomationsPage({
           assignees={assignees}
           skills={skills}
           save={save}
+          check={check}
           onSaved={(saved) => {
             setEditing(undefined);
             setOpenWorkflow(undefined);

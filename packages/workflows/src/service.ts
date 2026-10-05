@@ -12,12 +12,25 @@ import type {
   WorkflowVersion,
 } from '@melonoffice/domain';
 import { executionIdFor, isExecutionError, type ExecutionService } from '@melonoffice/execution';
-import { isPlanningError, type PlanService, type ProposeOutcome } from '@melonoffice/planning';
+import {
+  isPlanningError,
+  type PlanService,
+  type ProposeOutcome,
+  type ToolStepUse,
+  type ValidatedPlan,
+  type ValidationStage,
+} from '@melonoffice/planning';
 import type { AuthorizationService } from '@melonoffice/rbac';
 import type { SpecialistService } from '@melonoffice/specialists';
 import { isResolvedTenant, type TenancyStore, type TenantContext } from '@melonoffice/tenancy';
-import { WorkflowError } from './errors.js';
-import { applyWorkflowStatus, isWorkflowId, newWorkflow, newWorkflowVersion } from './model.js';
+import { isWorkflowError, WorkflowError } from './errors.js';
+import {
+  applyWorkflowStatus,
+  checkWorkflowSteps,
+  isWorkflowId,
+  newWorkflow,
+  newWorkflowVersion,
+} from './model.js';
 import type { WorkflowRepository } from './repository.js';
 
 export const MAX_WORKFLOWS_LISTED = 100;
@@ -70,6 +83,13 @@ export interface WorkflowService {
    */
   assignees(tenant: TenantContext): Promise<readonly WorkflowAssignee[]>;
   /**
+   * A dry run of a draft (ADR-0168): what saving it and then planning it now would decide,
+   * without storing or recording anything. The steps are checked as a save checks them, each
+   * role is bound by `bind`'s own rule, and the result goes through the plan validator itself.
+   * Needs `workflow.manage` and `plan.create`.
+   */
+  check(tenant: TenantContext, input: { name: string; steps: unknown }): Promise<WorkflowCheck>;
+  /**
    * Turns the workflow's current version into a plan for `executionId`, a planning execution
    * that recorded this workflow and version (`workflowId` and a `workflow` snapshot component).
    */
@@ -91,16 +111,44 @@ export interface WorkflowService {
   ): Promise<WorkflowPlanOutcome>;
 }
 
+/** What a draft would give if saved and planned now (ADR-0168). Codes only, never user text. */
+export type WorkflowCheck =
+  | {
+      readonly ok: true;
+      /** The plan the validator would make, with every decision it took. */
+      readonly plan: ValidatedPlan;
+      /** Who would do each specialist step, by step id. */
+      readonly agents: Readonly<Record<string, Specialist>>;
+    }
+  | {
+      readonly ok: false;
+      /** `workflow`: a save would refuse it; `assignee`: no agent has a step's role now. */
+      readonly stage: 'workflow' | 'assignee' | ValidationStage;
+      readonly reason: string;
+      readonly detail?: string;
+    };
+
 /** The agent a step of one department type and role binds to now (ADR-0167). */
 export interface WorkflowAssignee {
   readonly departmentTypeId: string;
   readonly roleId: string;
   readonly specialist: Specialist;
+  /**
+   * Each tool the agent's skills grant (its `configuration.tools`) and whether a plan would take
+   * it as a tool step here, by the plan validator's own rule (ADR-0168).
+   */
+  readonly tools: readonly WorkflowAssigneeTool[];
+}
+
+export interface WorkflowAssigneeTool {
+  readonly id: string;
+  readonly version: number;
+  readonly use: ToolStepUse;
 }
 
 export interface WorkflowServiceOptions {
   readonly repository: WorkflowRepository;
-  readonly plans: Pick<PlanService, 'propose' | 'get' | 'getVersion'>;
+  readonly plans: Pick<PlanService, 'propose' | 'check' | 'toolUse' | 'get' | 'getVersion'>;
   /** Creates and moves the planning execution of `plan`. */
   readonly executions: Pick<ExecutionService, 'create' | 'get' | 'changeStatus'>;
   readonly specialists: Pick<SpecialistService, 'list' | 'eligibility'>;
@@ -339,6 +387,14 @@ export function createWorkflowService({
     });
   }
 
+  /**
+   * Creating, changing or switching a workflow is a person's own act (ADR-0168): never GIA's,
+   * never the runtime's, whatever permissions the call carries.
+   */
+  function personOnly(tenant: TenantContext): void {
+    if (tenant.actor !== 'user') throw new WorkflowError('permission_denied');
+  }
+
   return Object.freeze({
     async list(tenant: TenantContext) {
       return repository.list(await organizationOf(tenant, 'workflow.read'), MAX_WORKFLOWS_LISTED);
@@ -361,6 +417,7 @@ export function createWorkflowService({
 
     async create(tenant: TenantContext, input: { name: string; steps: unknown }) {
       const organizationId = await organizationOf(tenant, 'workflow.manage');
+      personOnly(tenant);
       const when = now();
       const write = newWorkflow({ organizationId, ...input }, tenant.userId, iso(when));
       await repository.create({
@@ -376,6 +433,7 @@ export function createWorkflowService({
       input: { name?: string; steps: unknown },
     ) {
       const organizationId = await organizationOf(tenant, 'workflow.manage');
+      personOnly(tenant);
       const when = now();
       return repository.update(organizationId, idOf(id), (current) => {
         const write = newWorkflowVersion(current, input, tenant.userId, iso(when));
@@ -392,6 +450,7 @@ export function createWorkflowService({
       change: { from: WorkflowStatus; to: WorkflowStatus },
     ) {
       const organizationId = await organizationOf(tenant, 'workflow.manage');
+      personOnly(tenant);
       const when = now();
       return repository.update(organizationId, idOf(id), (current) => {
         const workflow = applyWorkflowStatus(current, change.from, change.to, iso(when));
@@ -421,9 +480,63 @@ export function createWorkflowService({
       const found: WorkflowAssignee[] = [];
       for (const role of roles.values()) {
         const specialist = await assigneeOf(tenant, all, role);
-        if (specialist !== undefined) found.push({ ...role, specialist });
+        if (specialist === undefined) continue;
+        const tools = specialist.configuration.tools.map((t) => ({
+          id: t.id as string,
+          version: t.version,
+          use: plans.toolUse(t, role.departmentTypeId),
+        }));
+        found.push({ ...role, specialist, tools });
       }
       return found;
+    },
+
+    async check(tenant: TenantContext, input: { name: string; steps: unknown }) {
+      await organizationOf(tenant, 'workflow.manage');
+      let steps: readonly WorkflowStep[];
+      try {
+        steps = checkWorkflowSteps(input.name, input.steps);
+      } catch (error) {
+        if (!isWorkflowError(error)) throw error;
+        return Object.freeze({
+          ok: false,
+          stage: 'workflow',
+          reason: error.code,
+          ...(error.detail === undefined ? {} : { detail: error.detail }),
+        } as const);
+      }
+      const all = await specialists.list(tenant);
+      const agents: Record<string, Specialist> = {};
+      const proposed: Record<string, unknown>[] = [];
+      for (const step of steps) {
+        const { assignee, ...template } = step;
+        if (assignee === undefined) {
+          proposed.push({ ...template });
+          continue;
+        }
+        const specialist = await assigneeOf(tenant, all, assignee);
+        if (specialist === undefined) {
+          return Object.freeze({
+            ok: false,
+            stage: 'assignee',
+            reason: 'assignee_unavailable',
+            detail: step.id,
+          } as const);
+        }
+        agents[step.id] = specialist;
+        proposed.push({ ...template, specialistId: specialist.identity.id });
+      }
+      const validation = await plans.check(tenant, {
+        summary: input.name,
+        objective: input.name,
+        steps: proposed,
+      });
+      if (!validation.ok) return validation;
+      return Object.freeze({
+        ok: true,
+        plan: validation.plan,
+        agents: Object.freeze(agents),
+      } as const);
     },
 
     async instantiate(tenant: TenantContext, id: string, input: { executionId: string }) {

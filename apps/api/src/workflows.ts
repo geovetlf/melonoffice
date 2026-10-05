@@ -41,8 +41,53 @@ export function registerWorkflowRoutes(
             departmentTypeId: a.departmentTypeId,
             roleId: a.roleId,
             agent: { id: a.specialist.identity.id, displayName: a.specialist.identity.displayName },
-            tools: a.specialist.configuration.tools.map((t) => ({ id: t.id, version: t.version })),
+            // Each with whether a plan takes it as a step here (ADR-0168): the validator's rule.
+            tools: a.tools.map((t) => ({ id: t.id, version: t.version, step: t.use })),
           })),
+        });
+      } catch (error) {
+        return refusal(c, error);
+      }
+    }),
+  );
+
+  // A dry run of a draft (ADR-0168): what saving and planning it now would decide. Stores and
+  // records nothing. A refusal is an answer, not an error: `ok: false` with its codes.
+  app.post(
+    `${base}/check`,
+    withPermission('workflow.manage', dependencies, async (c, tenant) => {
+      const body = await bodyOf(c, ['name', 'steps'], ['name', 'steps']);
+      if (body === undefined || typeof body.name !== 'string') return invalid(c);
+      const { name, steps } = body;
+      try {
+        const checked = await workflows.check(tenant, { name, steps });
+        if (!checked.ok) {
+          return c.json({
+            ok: false,
+            stage: checked.stage,
+            reason: checked.reason,
+            ...(checked.detail === undefined ? {} : { detail: checked.detail }),
+          });
+        }
+        const { plan, agents } = checked;
+        return c.json({
+          ok: true,
+          riskLevel: plan.riskLevel,
+          approvalRequired: plan.approvalRequired,
+          steps: plan.steps.map((s) => {
+            const agent = agents[s.id];
+            return {
+              id: s.id,
+              kind: s.kind,
+              approvalRequired: s.approvalRequired,
+              ...(agent === undefined
+                ? {}
+                : { agent: { id: agent.identity.id, displayName: agent.identity.displayName } }),
+              ...(s.performedBy === undefined ? {} : { performedBy: s.performedBy }),
+              ...(s.tool === undefined ? {} : { tool: { id: s.tool.id, version: s.tool.version } }),
+            };
+          }),
+          estimate: plan.estimate,
         });
       } catch (error) {
         return refusal(c, error);

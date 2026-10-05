@@ -333,8 +333,40 @@ export interface WorkflowAssigneeView {
   readonly departmentTypeId: string;
   readonly roleId: string;
   readonly agent: { readonly id: string; readonly displayName: string };
-  readonly tools: readonly { readonly id: string; readonly version: number }[];
+  readonly tools: readonly {
+    readonly id: string;
+    readonly version: number;
+    /** Whether a plan takes it as a step here (ADR-0168). */
+    readonly step?: {
+      readonly usable: boolean;
+      readonly riskLevel?: string;
+      readonly approvalRequired?: boolean;
+      readonly reason?: string;
+    };
+  }[];
 }
+
+/**
+ * A dry run of a draft (ADR-0168): what saving and planning it now would decide, stored nowhere.
+ * Refused: the stage and codes, as a plan refusal names them.
+ */
+export type WorkflowCheckView =
+  | {
+      readonly ok: true;
+      readonly approvalRequired: boolean;
+      readonly steps: readonly {
+        readonly id: string;
+        readonly kind: string;
+        readonly approvalRequired: boolean;
+        readonly agent?: { readonly id: string; readonly displayName: string };
+      }[];
+    }
+  | {
+      readonly ok: false;
+      readonly stage: string;
+      readonly reason: string;
+      readonly detail?: string;
+    };
 
 /** Planning a workflow gives its plan, or why the plan was refused. */
 export type WorkflowPlanOutcome =
@@ -410,6 +442,8 @@ export interface AutomationsClient {
    * failing: the editor offers no tool as usable, since it cannot tell which one would run.
    */
   assignees?(): Promise<readonly WorkflowAssigneeView[]>;
+  /** A dry run of a draft before it is saved (ADR-0168), `workflow.manage` and `plan.create`. */
+  checkWorkflow?(name: string, steps: readonly WorkflowStepDraft[]): Promise<WorkflowCheckView>;
   decide(
     planId: string,
     decision: 'approve' | 'reject',
@@ -526,6 +560,10 @@ export function createAutomationsClient(
         assignees?: WorkflowAssigneeView[];
       };
       return body.assignees ?? [];
+    },
+    async checkWorkflow(name, steps) {
+      const response = await post('/workflows/check', { name, steps: workflowStepsOf(steps) });
+      return (await response.json()) as WorkflowCheckView;
     },
     async decide(id, decision, seen) {
       const response = await post(`${plan(id)}/${decision}`, {
