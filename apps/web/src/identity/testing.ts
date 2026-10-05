@@ -138,6 +138,11 @@ export interface FakeBackend {
     planRefusal?: string;
     /** More tools `GET tools` lists after `message_send`, as the API shows them (ADR-0165). */
     moreTools?: Record<string, unknown>[];
+    /**
+     * Who would do a step of each role and the tools its skills let it use, as
+     * `GET workflows/assignees` reads them (ADR-0167). None by default.
+     */
+    assignees?: Record<string, Record<string, unknown>[]>;
     /** Records per page of Comercial's lists (ADR-0061), unless the request asks a `limit`. */
     pageSize: number;
     /** Every page after the first fails (ADR-0061). */
@@ -1116,6 +1121,12 @@ export function fakeBackend(): FakeBackend {
       };
       list.push(created);
       return json(201, created);
+    }
+    if (route === 'workflows/assignees' && method === 'GET') {
+      return (
+        needs('workflow.manage') ??
+        json(200, { assignees: options.assignees?.[organizationId] ?? [] })
+      );
     }
     if (route === 'workflows') {
       return (

@@ -1,5 +1,10 @@
 import type { ToolStepField, ToolView } from '../agents/agentsClient.js';
-import type { ToolValueDraft, WorkflowStepDraft, WorkflowToolDraft } from './automationsClient.js';
+import type {
+  ToolValueDraft,
+  WorkflowAgentDraft,
+  WorkflowStepDraft,
+  WorkflowToolDraft,
+} from './automationsClient.js';
 
 /**
  * Tool steps in the workflow editor (ADR-0165). The editor offers only what a plan would run: a
@@ -174,4 +179,56 @@ export function tidy(
     out.push({ ...step, values });
   });
   return out;
+}
+
+/** Who would do each role's steps today, and the tools its skills let it use (ADR-0167). */
+export interface RoleAgent {
+  readonly departmentTypeId: string;
+  readonly roleId: string;
+  readonly agent: { readonly id: string; readonly displayName: string };
+  readonly tools: readonly { readonly id: string; readonly version: number }[];
+}
+
+/**
+ * Whether the agent that would do a tool step's agent step may use a tool (ADR-0167), as the plan
+ * validator will decide it (`tool_not_assigned`): the agent a plan binds for that step's role
+ * lists the exact tool version, which only its skills grant. Agent → Skill → Tool, read back from
+ * the server; the editor keeps no list of its own.
+ * - `no_performer`: the tool step has no agent step, or that step has no role yet;
+ * - `no_agent`: no active, eligible agent has that role;
+ * - `not_granted`: that agent's skills do not grant this tool version;
+ * - `unknown`: who would do it could not be read, so nothing is offered as usable.
+ */
+export type ToolAvailability =
+  | { readonly ok: true; readonly agent: RoleAgent['agent'] }
+  | {
+      readonly ok: false;
+      readonly why: 'no_performer' | 'no_agent' | 'not_granted' | 'unknown';
+      readonly agent?: RoleAgent['agent'];
+    };
+
+export function roleAgentOf(
+  agents: readonly RoleAgent[],
+  step: Pick<WorkflowAgentDraft, 'departmentTypeId' | 'roleId'>,
+): RoleAgent | undefined {
+  return agents.find(
+    (a) => a.departmentTypeId === step.departmentTypeId && a.roleId === step.roleId,
+  );
+}
+
+export function toolAvailability(
+  steps: readonly WorkflowStepDraft[],
+  performer: string,
+  tool: { readonly id: string; readonly version: number },
+  agents: readonly RoleAgent[] | undefined,
+): ToolAvailability {
+  const step = steps.find((s) => s.key === performer);
+  if (step?.kind !== 'agent' || step.roleId === '') return { ok: false, why: 'no_performer' };
+  if (agents === undefined) return { ok: false, why: 'unknown' };
+  const found = roleAgentOf(agents, step);
+  if (found === undefined) return { ok: false, why: 'no_agent' };
+  const granted = found.tools.some((t) => t.id === tool.id && t.version === tool.version);
+  return granted
+    ? { ok: true, agent: found.agent }
+    : { ok: false, why: 'not_granted', agent: found.agent };
 }

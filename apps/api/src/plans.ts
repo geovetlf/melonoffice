@@ -1,6 +1,14 @@
 import { parseAgentAnswer, readPlanTrace } from '@melonoffice/agents';
+import { looksLikeCredentialName, looksLikeSecretText } from '@melonoffice/ai-gateway';
 import type { AuditHistoryReader } from '@melonoffice/audit';
-import type { Execution, Plan, PlanEstimate, PlanStep, PlanVersion } from '@melonoffice/domain';
+import type {
+  Execution,
+  ExecutionNode,
+  Plan,
+  PlanEstimate,
+  PlanStep,
+  PlanVersion,
+} from '@melonoffice/domain';
 import type { AgentOutputStore, ExecutionService } from '@melonoffice/execution';
 import {
   conditionStepState,
@@ -311,7 +319,7 @@ export function toVersionView(v: PlanVersion) {
 /** How the plan engine sees each step of one plan version, as `GET plans/:id/steps` shows it. */
 export interface PlanStepRead {
   readonly stepId: string;
-  readonly kind: 'condition' | 'specialist' | 'wait';
+  readonly kind: 'condition' | 'specialist' | 'wait' | 'tool';
   readonly label: string;
   readonly state: PlanStepState;
   readonly executionId: string | null;
@@ -328,6 +336,85 @@ export interface PlanStepRead {
   readonly until: string | null;
   /** On a specialist step: which run of it its child is, from 1 (ADR-0153). */
   readonly attempt: number | null;
+  /** When it ended, on a step that ran and ended (ADR-0167). */
+  readonly endedAt: string | null;
+  /** On a tool step that ran (ADR-0167): its result as a person reads it (`toolResultSummary`). */
+  readonly result: ToolResultField[] | null;
+}
+
+/** One top-level field of a tool step's result, as the plan's page shows it (ADR-0167). */
+export type ToolResultField =
+  | { readonly name: string; readonly type: 'count'; readonly value: number }
+  | { readonly name: string; readonly type: 'boolean'; readonly value: boolean }
+  | { readonly name: string; readonly type: 'number'; readonly value: number }
+  | { readonly name: string; readonly type: 'text'; readonly value: string };
+
+/** The most fields, and the longest text, a tool step's result shows. */
+const MAX_RESULT_FIELDS = 12;
+const MAX_RESULT_TEXT = 80;
+
+/**
+ * A tool step's result for a person (ADR-0167): each top-level field a list's length, a yes/no, a
+ * number or a short text, so the page can say what it found without showing what it found. A
+ * field named like a credential, or text that looks like one, is left out (G-7); so are nested
+ * objects and long texts. The whole result stays where the plan keeps it, for the steps after.
+ */
+export function toolResultSummary(structured: unknown): ToolResultField[] | null {
+  if (typeof structured !== 'object' || structured === null || Array.isArray(structured)) {
+    return null;
+  }
+  const out: ToolResultField[] = [];
+  for (const [name, value] of Object.entries(structured)) {
+    if (out.length === MAX_RESULT_FIELDS) break;
+    // `apiKey` reads `api Key`, as the gateway reads `api_key`.
+    if (looksLikeCredentialName(name.replace(/(\p{Ll})(\p{Lu})/gu, '$1 $2'))) continue;
+    if (Array.isArray(value)) out.push({ name, type: 'count', value: value.length });
+    else if (typeof value === 'boolean') out.push({ name, type: 'boolean', value });
+    else if (typeof value === 'number' && Number.isFinite(value)) {
+      out.push({ name, type: 'number', value });
+    } else if (
+      typeof value === 'string' &&
+      value.length <= MAX_RESULT_TEXT &&
+      !looksLikeSecretText(value)
+    ) {
+      out.push({ name, type: 'text', value });
+    }
+  }
+  return out;
+}
+
+/**
+ * A tool step's state (ADR-0167) from its node in its agent step's child, where it runs (ADR-0151),
+ * and that agent step's own state: a tool that never got to run because its agent step ended its
+ * branch is skipped, as the steps after it are.
+ */
+export function toolStepState(
+  node: ExecutionNode | undefined,
+  child: Pick<Execution, 'status'> | undefined,
+  performer: PlanStepState | undefined,
+): PlanStepState {
+  switch (node?.status) {
+    case 'completed':
+      return 'completed';
+    case 'failed':
+    case 'cancelled':
+      return 'failed';
+    case 'skipped':
+      return 'skipped';
+    case 'running':
+      return 'running';
+    default:
+      break;
+  }
+  if (node?.approvalId !== undefined && child?.status === 'waiting_approval') {
+    return 'awaiting_approval';
+  }
+  return performer === 'skipped' ||
+    performer === 'declined' ||
+    performer === 'stopped' ||
+    performer === 'failed'
+    ? 'skipped'
+    : 'waiting';
 }
 
 /**
@@ -406,6 +493,8 @@ export async function readPlanSteps(
         missing: [],
         until: null,
         attempt: null,
+        endedAt: decided?.evaluatedAt ?? null,
+        result: null,
       });
       continue;
     }
@@ -424,6 +513,8 @@ export async function readPlanSteps(
         missing: [],
         until: waitOf(step.id)?.until ?? null,
         attempt: null,
+        endedAt: state === 'completed' ? (waitOf(step.id)?.until ?? null) : null,
+        result: null,
       });
       continue;
     }
@@ -463,6 +554,42 @@ export async function readPlanSteps(
       missing: answered === undefined ? [] : [...answered.missing],
       until: state === 'delayed' ? (attemptOf(step.id)?.notBefore ?? null) : null,
       attempt: stepAttemptOf(plan, step.id),
+      endedAt:
+        execution?.status === 'completed' ||
+        execution?.status === 'failed' ||
+        execution?.status === 'cancelled'
+          ? (execution.completedAt ?? null)
+          : null,
+      result: null,
+    });
+  }
+  // Each tool step (ADR-0151) runs as a node of its agent step's child: where it is, why it
+  // failed, and what it found as counts and short values (ADR-0167). Never the result itself.
+  for (const step of version.steps) {
+    if (step.kind !== 'tool' || step.performedBy === undefined) continue;
+    const child = children.get(step.performedBy);
+    const node = child?.nodes.find((n) => n.id === step.id && n.type === 'tool');
+    const state = toolStepState(node, child, states.get(step.performedBy));
+    const kept =
+      node?.status === 'completed' && child !== undefined && steps.outputs !== undefined
+        ? await steps.outputs.find(tenant, child.id, step.id)
+        : undefined;
+    out.push({
+      stepId: step.id,
+      kind: 'tool',
+      label: step.label,
+      state,
+      executionId: child?.id ?? null,
+      status: node?.status ?? null,
+      approvalId: state === 'awaiting_approval' ? (node?.approvalId ?? null) : null,
+      failure: node?.error?.code ?? null,
+      outcome: null,
+      answer: null,
+      missing: [],
+      until: null,
+      attempt: null,
+      endedAt: node?.completedAt ?? null,
+      result: kept === undefined ? null : toolResultSummary(kept.output.structured),
     });
   }
   return { views: out, children };

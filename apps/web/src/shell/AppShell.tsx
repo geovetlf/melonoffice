@@ -514,6 +514,14 @@ export function AppShell(locale: LocaleProps) {
               }}
               templates={canReadAgents ? clients.agents.templates : undefined}
               tools={canReadTools ? clients.agents.tools : undefined}
+              skills={canReadAgents ? clients.agents.skills : undefined}
+              decideStep={
+                canDecidePlans && canReadApprovals
+                  ? async (approvalId: string, decision: 'approve' | 'reject') => {
+                      await clients.approvals.decide(approvalId, decision);
+                    }
+                  : undefined
+              }
               stop={canCancelExecutions ? clients.executions.cancel : undefined}
             />
           </div>

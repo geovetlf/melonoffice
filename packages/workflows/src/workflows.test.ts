@@ -534,6 +534,51 @@ describe('workflow instantiation', () => {
   });
 });
 
+describe('who would do each role (ADR-0167)', () => {
+  it('names the specialist a plan binds for each role and the tools its skills grant', async () => {
+    const w = await setup();
+    const created = await w.workflows.create(w.tenantA, { name: 'Launch', steps: STEPS });
+    const active = await w.workflows.changeStatus(w.tenantA, created.id, {
+      from: 'draft',
+      to: 'active',
+    });
+    const found = await w.workflows.assignees(w.tenantA);
+    const of = (type: string, role: string) =>
+      found.find((a) => a.departmentTypeId === type && a.roleId === role)?.specialist;
+    const execution = await w.planningFor(w.tenantA, w.owner, active);
+    const outcome = await w.workflows.instantiate(w.tenantA, active.id, {
+      executionId: execution.id,
+    });
+    if (outcome.status !== 'planned') throw new Error(outcome.reason);
+    // The same rule as the plan: the very specialist each role's step is bound to.
+    for (const step of STEPS.filter((s) => s.kind === 'specialist')) {
+      const bound = outcome.version.steps.find((s) => s.id === step.id)?.specialist?.id;
+      const named = of(step.assignee?.departmentTypeId ?? '', step.assignee?.roleId ?? '');
+      expect(named?.identity.id).toBe(bound);
+    }
+    // Its tools are the ones the plan validator reads: its configuration, from its skills.
+    const researcher = of('research', 'market_researcher');
+    expect(researcher?.configuration.tools.map((t) => t.id)).toContain('lookup');
+    expect(researcher?.configuration.tools).toEqual(w.researcher.configuration.tools);
+    // A paused specialist would not be bound, so it is not named either.
+    await w.pause(w.orgA, w.marketer);
+    expect(
+      (await w.workflows.assignees(w.tenantA)).some((a) => a.roleId === 'campaign_manager'),
+    ).toBe(false);
+  });
+
+  it('keeps tenants apart and needs workflow.manage', async () => {
+    const w = await setup();
+    const ids = (await w.workflows.assignees(w.tenantB)).map((a) => a.specialist.identity.id);
+    expect(ids).not.toContain(w.researcher.identity.id);
+    expect(ids).not.toContain(w.marketer.identity.id);
+    const readOnly = await setup({
+      roles: { owner: ROLES.owner.filter((p) => p !== 'workflow.manage') },
+    });
+    expect(await codeOf(readOnly.workflows.assignees(readOnly.tenantA))).toBe('permission_denied');
+  });
+});
+
 describe('a person plans a workflow (WF-2)', () => {
   async function active(w: Awaited<ReturnType<typeof setup>>, steps: unknown = STEPS) {
     const created = await w.workflows.create(w.tenantA, { name: 'Launch', steps });

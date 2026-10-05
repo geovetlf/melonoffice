@@ -1,7 +1,7 @@
 import { FormattedMessage, useIntl } from '@melonoffice/i18n';
 import { Button, PageHeader, StateMessage } from '@melonoffice/ui';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import type { AgentTemplateView, ToolView } from '../agents/agentsClient.js';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import type { AgentTemplateView, SkillView, ToolView } from '../agents/agentsClient.js';
 import { ExecutionRequestError } from '../executions/executionsClient.js';
 import { newRequestKey } from '../office/AgentTasks.js';
 import {
@@ -13,7 +13,9 @@ import {
   type PlanDetail,
   type PlanStepProgress,
   type PlanStepView,
+  type PlanTraceView,
   type PlanView,
+  type ToolResultField,
   type WorkflowDetail,
   type WorkflowStatus,
   type WorkflowStepDraft,
@@ -21,13 +23,23 @@ import {
 } from './automationsClient.js';
 import { navigate } from '../identity/router.js';
 import { paths } from '../shell/routes.js';
+import { readyList, useOfficeData } from '../office/OfficeData.js';
 import { draftsOf, WorkflowEditor } from './WorkflowEditor.js';
+import {
+  failureExplanation,
+  refusalExplanation,
+  stepNumberOf,
+  TechnicalDetail,
+} from './explain.js';
 
 /**
  * Automations (WF-3, ADR-0071): the organization's workflows and the plans made from them or by
  * the planner. A person plans an active workflow, reads the plan it gave, and approves or rejects
  * that exact version; approving starts it on the server (ADR-0070), and each step's agent answer
  * is shown once the step completed. The screen runs nothing and shows only what the API gave.
+ * A plan reads in the person's words (ADR-0167): who does each step, where it is, what a tool
+ * found, what needs their approval, why a step failed and what they can do, and whether the other
+ * branches went on. The engine's codes stay folded away as the technical detail.
  */
 
 /** The permissions this page needs; the API checks each one again. */
@@ -81,6 +93,8 @@ export function AutomationsPage({
   permissions,
   templates,
   tools,
+  skills,
+  decideStep,
   stop,
 }: {
   readonly client: AutomationsClient;
@@ -94,12 +108,25 @@ export function AutomationsPage({
   readonly templates?: (() => Promise<readonly AgentTemplateView[]>) | undefined;
   /** The tool catalogue (`tool.read`), for tool steps (ADR-0165); without it none is offered. */
   readonly tools?: (() => Promise<readonly ToolView[]>) | undefined;
+  /** The skill catalogue, to name the skill that would let an agent use a tool (ADR-0167). */
+  readonly skills?: (() => Promise<readonly SkillView[]>) | undefined;
+  /**
+   * Decides one approval a step waits for (`approval.approve`), the same call as Approvals: the
+   * server binds the decision to what was asked, and GIA can never decide. Absent: the plan links
+   * to Approvals instead.
+   */
+  readonly decideStep?:
+    ((approvalId: string, decision: 'approve' | 'reject') => Promise<void>) | undefined;
 }) {
   const [workflows, setWorkflows] = useState<Load<readonly WorkflowView[]>>({ status: 'loading' });
   const [plans, setPlans] = useState<Load<readonly PlanView[]>>({ status: 'loading' });
   const [selected, setSelected] = useState<string>();
   const [error, setError] = useState<string>();
-  const [refused, setRefused] = useState<string>();
+  const [refused, setRefused] = useState<{
+    readonly reason: string;
+    readonly stage?: string | undefined;
+    readonly detail?: string | undefined;
+  }>();
   const [pending, setPending] = useState<string>();
   const [editing, setEditing] = useState<Editing>();
   const [openWorkflow, setOpenWorkflow] = useState<string>();
@@ -139,6 +166,8 @@ export function AutomationsPage({
   }, [client, permissions.readWorkflows, loadPlans]);
 
   const checkActions = useCallback(() => client.checkActions(), [client]);
+  // Who would do each role's steps, for the editor's tool steps (ADR-0167).
+  const assignees = useMemo(() => client.assignees?.bind(client), [client]);
   const save = useCallback(
     (name: string, steps: readonly WorkflowStepDraft[], workflowId?: string) =>
       workflowId === undefined
@@ -188,7 +217,7 @@ export function AutomationsPage({
       const outcome = await client.planWorkflow(workflow.id, key);
       keys.current.delete(workflow.id);
       if (outcome.status === 'refused') {
-        setRefused(outcome.reason);
+        setRefused({ reason: outcome.reason, stage: outcome.stage, detail: outcome.detail });
         return;
       }
       setSelected(outcome.plan.id);
@@ -223,6 +252,8 @@ export function AutomationsPage({
           templates={templates}
           checkActions={checkActions}
           tools={tools}
+          assignees={assignees}
+          skills={skills}
           save={save}
           onSaved={(saved) => {
             setEditing(undefined);
@@ -235,15 +266,7 @@ export function AutomationsPage({
           onCancel={() => setEditing(undefined)}
         />
       )}
-      {refused === undefined ? null : (
-        <StateMessage kind="error">
-          {REFUSALS.has(refused) ? (
-            <FormattedMessage id={`automations.refusedBecause.${refused}`} />
-          ) : (
-            <FormattedMessage id="automations.refused" values={{ reason: refused }} />
-          )}
-        </StateMessage>
-      )}
+      {refused === undefined ? null : <Refusal refused={refused} />}
       {permissions.readWorkflows ? (
         <section className="mo-panel mo-page-section" aria-labelledby="automations-workflows">
           <div className="mo-page-section__header">
@@ -376,6 +399,7 @@ export function AutomationsPage({
               planId={selected}
               canDecide={permissions.decidePlans}
               onDecided={loadPlans}
+              decideStep={permissions.decidePlans ? decideStep : undefined}
               stop={stop}
             />
           )}
@@ -524,20 +548,58 @@ function PlanRow({
   );
 }
 
+/** Why a workflow could not become a plan: what happened, what to do, and the codes, folded. */
+function Refusal({
+  refused,
+}: {
+  readonly refused: {
+    readonly reason: string;
+    readonly stage?: string | undefined;
+    readonly detail?: string | undefined;
+  };
+}) {
+  const { what, todo } = refusalExplanation(refused.reason);
+  const n = stepNumberOf(refused.detail);
+  return (
+    <StateMessage kind="error">
+      <strong>
+        <FormattedMessage id="automations.refusal.title" />
+      </strong>{' '}
+      <FormattedMessage id={what} />
+      {n === undefined ? null : (
+        <>
+          {' '}
+          <FormattedMessage id="automations.refusal.step" values={{ n }} />
+        </>
+      )}{' '}
+      <FormattedMessage id={todo} />
+      <TechnicalDetail codes={[refused.stage, refused.reason, refused.detail]} />
+    </StateMessage>
+  );
+}
+
+/** How often a running plan's screen reads it again, in milliseconds. */
+export const PLAN_REFRESH_MS = 10_000;
+
 function PlanCard({
   client,
   planId,
   canDecide,
   onDecided,
+  decideStep,
   stop,
 }: {
   readonly client: AutomationsClient;
   readonly planId: string;
   readonly canDecide: boolean;
   readonly onDecided: () => void;
+  readonly decideStep?:
+    ((approvalId: string, decision: 'approve' | 'reject') => Promise<void>) | undefined;
   readonly stop?: ((planId: string) => Promise<void>) | undefined;
 }) {
   const intl = useIntl();
+  const { specialists } = useOfficeData();
+  const agents = readyList(specialists);
   const [plan, setPlan] = useState<Load<PlanDetail>>({ status: 'loading' });
   const [steps, setSteps] = useState<readonly PlanStepProgress[]>([]);
   const [pending, setPending] = useState(false);
@@ -557,6 +619,14 @@ function PlanCard({
 
   useEffect(read, [read]);
 
+  // A running plan is read again on its own until it ends (ADR-0167): no button to remember.
+  const running = plan.status === 'ready' && isRunningPlan(plan.value);
+  useEffect(() => {
+    if (!running) return undefined;
+    const timer = setInterval(read, PLAN_REFRESH_MS);
+    return () => clearInterval(timer);
+  }, [running, read]);
+
   async function decide(decision: 'approve' | 'reject', detail: PlanDetail) {
     setPending(true);
     setError(undefined);
@@ -569,6 +639,21 @@ function PlanCard({
       read();
     } catch (failure) {
       setError(errorKey(failure));
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function decideApproval(approvalId: string, decision: 'approve' | 'reject') {
+    if (decideStep === undefined) return;
+    setPending(true);
+    setError(undefined);
+    try {
+      await decideStep(approvalId, decision);
+      onDecided();
+      read();
+    } catch {
+      setError('automations.approval.failed');
     } finally {
       setPending(false);
     }
@@ -612,12 +697,38 @@ function PlanCard({
   }
   const detail = plan.value;
   const progress = new Map(steps.map((s) => [s.stepId, s]));
+  const byId = new Map(detail.current.steps.map((s) => [s.id, s]));
+  const date = (iso: string) =>
+    intl.formatDate(new Date(iso), { dateStyle: 'short', timeStyle: 'short' });
+  /** Who does a step: its agent, by name when the office knows it. */
+  const agentOf = (step: PlanStepView | undefined): string | undefined => {
+    const doer = step?.kind === 'tool' ? byId.get(step.performedBy ?? '') : step;
+    const id = doer?.specialist?.id;
+    if (id === undefined) return undefined;
+    return (
+      agents.find((a) => a.id === id)?.displayName ??
+      intl.formatMessage({ id: 'automations.anAgent' })
+    );
+  };
+  const toolName = (id: string): string => {
+    const key = `approvals.tool.${id}`;
+    return intl.messages[key] === undefined ? id : intl.formatMessage({ id: key });
+  };
+  const failed = steps.filter((s) => s.state === 'failed');
+  const now = steps.filter((s) => s.state === 'running' || s.state === 'awaiting_approval');
+  const ended =
+    detail.status === 'completed' || detail.status === 'failed' || detail.status === 'cancelled';
   return (
     <article className="mo-card automations__plan" aria-labelledby="automations-plan-title">
       <h3 id="automations-plan-title" className="mo-subsection-title">
         {detail.current.request.summary}
       </h3>
-      <p className="automations__objective">{detail.current.request.objective}</p>
+      <p className="automations__objective">
+        <FormattedMessage
+          id="automations.plan.objective"
+          values={{ objective: detail.current.request.objective }}
+        />
+      </p>
       <p className="automations__meta">
         <FormattedMessage id={`automations.planStatus.${detail.status}`} />
         {' · '}
@@ -628,7 +739,35 @@ function PlanCard({
               : 'automations.fromPlanner'
           }
         />
+        {ended && detail.updatedAt !== undefined ? (
+          <>
+            {' · '}
+            <FormattedMessage id="automations.plan.ended" values={{ at: date(detail.updatedAt) }} />
+          </>
+        ) : null}
       </p>
+      {now.length === 0 || ended ? null : (
+        <p className="automations__meta">
+          <FormattedMessage
+            id="automations.plan.now"
+            values={{ steps: now.map((s) => `«${s.label}»`).join(', ') }}
+          />
+        </p>
+      )}
+      {failed.length === 0 ? null : detail.status === 'completed' ? (
+        // A failed branch ends only itself (BR-1, ADR-0162): the plan still completed.
+        <StateMessage kind="warning">
+          <FormattedMessage id="automations.plan.branchFailed" values={{ n: failed.length }} />
+        </StateMessage>
+      ) : detail.status === 'failed' ? (
+        <StateMessage kind="error">
+          <FormattedMessage id="automations.plan.allFailed" />
+        </StateMessage>
+      ) : isRunningPlan(detail) ? (
+        <StateMessage kind="warning">
+          <FormattedMessage id="automations.plan.branchFailing" values={{ n: failed.length }} />
+        </StateMessage>
+      ) : null}
       {detail.status === 'approval_required' &&
       detail.current.estimate?.status === 'estimated' &&
       detail.current.estimate.credits !== null ? (
@@ -649,58 +788,92 @@ function PlanCard({
           const done = progress.get(step.id);
           const block = detail.budgetBlocks?.find((b) => b.stepId === step.id);
           const action = checkActionOf(step.decision);
+          const agent = agentOf(step);
           return (
-            <li key={step.id}>
+            <li key={step.id} className="automations__step">
               <span className="automations__name">{step.label}</span>
-              {action === undefined ? null : (
-                <span className="automations__meta">
-                  {' · '}
+              {done === undefined ? null : (
+                <span
+                  className={`automations__state automations__state--${stateOf(done, block !== undefined)}`}
+                >
+                  <FormattedMessage
+                    id={`automations.state.${stateOf(done, block !== undefined)}`}
+                  />
+                </span>
+              )}
+              <p className="automations__meta">
+                {action !== undefined ? (
                   <FormattedMessage
                     id="automations.checks"
                     values={{ action: actionLabel(intl, action) }}
                   />
-                </span>
-              )}
-              {done === undefined ? null : (
-                <span className="automations__meta">
-                  {' · '}
+                ) : step.kind === 'tool' && step.tool != null ? (
                   <FormattedMessage
-                    id={stepProgressKey(done, block !== undefined)}
+                    id="automations.plan.usesTool"
                     values={{
-                      until:
-                        done.until == null
-                          ? ''
-                          : intl.formatDate(done.until, { dateStyle: 'short', timeStyle: 'short' }),
-                      used: block?.usedCredits ?? 0,
-                      needed: block?.neededCredits ?? 0,
-                      cap: block?.capCredits ?? 0,
+                      agent: agent ?? intl.formatMessage({ id: 'automations.anAgent' }),
+                      tool: toolName(step.tool.id),
                     }}
                   />
-                  {done.attempt == null || done.attempt < 2 ? null : (
-                    <>
-                      {' · '}
-                      <FormattedMessage
-                        id="automations.attempt"
-                        values={{ attempt: done.attempt }}
-                      />
-                    </>
-                  )}
-                  {done.state === 'awaiting_approval' ? (
-                    <>
-                      {' · '}
-                      <a
-                        className="mo-link"
-                        href={paths.approvals()}
-                        onClick={(event) => {
-                          event.preventDefault();
-                          navigate(paths.approvals());
-                        }}
-                      >
-                        <FormattedMessage id="nav.approvals" />
-                      </a>
-                    </>
-                  ) : null}
-                </span>
+                ) : agent !== undefined ? (
+                  <FormattedMessage id="automations.plan.doneBy" values={{ agent }} />
+                ) : (
+                  <FormattedMessage id={`automations.stepKind.${stepKindOf(step.kind)}`} />
+                )}
+                {done === undefined ? null : (
+                  <>
+                    {addsToState(done) ? (
+                      <>
+                        {' · '}
+                        <FormattedMessage
+                          id={stepProgressKey(done, block !== undefined)}
+                          values={{
+                            until: done.until == null ? '' : date(done.until),
+                            used: block?.usedCredits ?? 0,
+                            needed: block?.neededCredits ?? 0,
+                            cap: block?.capCredits ?? 0,
+                          }}
+                        />
+                      </>
+                    ) : null}
+                    {done.attempt == null || done.attempt < 2 ? null : (
+                      <>
+                        {' · '}
+                        <FormattedMessage
+                          id="automations.attempt"
+                          values={{ attempt: done.attempt }}
+                        />
+                      </>
+                    )}
+                    {done.endedAt == null || done.state === 'failed' ? null : (
+                      <>
+                        {' · '}
+                        <FormattedMessage
+                          id="automations.step.ended"
+                          values={{ at: date(done.endedAt) }}
+                        />
+                      </>
+                    )}
+                  </>
+                )}
+              </p>
+              {done?.state === 'awaiting_approval' ? (
+                <StepApproval
+                  step={step}
+                  agent={agent}
+                  tool={
+                    step.kind === 'tool' && step.tool != null ? toolName(step.tool.id) : undefined
+                  }
+                  approvalId={done.approvalId ?? undefined}
+                  pending={pending}
+                  decide={decideStep === undefined ? undefined : decideApproval}
+                />
+              ) : null}
+              {done?.state === 'failed' && done.failure !== 'budget_exceeded' ? (
+                <StepFailure done={done} agent={agent} />
+              ) : null}
+              {done?.result == null ? null : (
+                <ToolResult toolId={step.tool?.id ?? ''} fields={done.result} />
               )}
               {done?.answer === null || done?.answer === undefined ? null : (
                 <p className="automations__answer">{done.answer}</p>
@@ -751,22 +924,327 @@ function PlanCard({
           )}
         </div>
       ) : null}
+      {client.trace === undefined || detail.status === 'approval_required' ? null : (
+        <PlanTraceDetail load={() => client.trace?.(planId)} />
+      )}
     </article>
   );
 }
 
-/** Why a plan was refused, said plainly for the reasons a workflow from the editor can meet. */
-const REFUSALS = new Set([
-  'specialist_not_eligible',
-  'permission_not_held',
-  'department_not_allowed',
-  'plan_denied_by_policy',
-]);
+/** A step waiting for the person: what, who asks, why, and the decision itself. */
+function StepApproval({
+  step,
+  agent,
+  tool,
+  approvalId,
+  pending,
+  decide,
+}: {
+  readonly step: PlanStepView;
+  readonly agent: string | undefined;
+  readonly tool: string | undefined;
+  readonly approvalId: string | undefined;
+  readonly pending: boolean;
+  readonly decide:
+    ((approvalId: string, decision: 'approve' | 'reject') => Promise<void>) | undefined;
+}) {
+  const intl = useIntl();
+  return (
+    <div className="automations__approval" role="group" aria-label={step.label}>
+      <strong>
+        <FormattedMessage id="automations.approval.title" />
+      </strong>
+      <p>
+        <FormattedMessage
+          id="automations.approval.what"
+          values={{
+            step: step.label,
+            agent: agent ?? intl.formatMessage({ id: 'automations.anAgent' }),
+          }}
+        />{' '}
+        <FormattedMessage
+          id={
+            tool !== undefined
+              ? 'automations.approval.why.tool'
+              : step.approvalRequired === true
+                ? 'automations.approval.why.step'
+                : 'automations.approval.why.policy'
+          }
+          values={{ tool: tool ?? '' }}
+        />
+      </p>
+      {approvalId === undefined ? null : decide === undefined ? (
+        <a
+          className="mo-link"
+          href={paths.approvals()}
+          onClick={(event) => {
+            event.preventDefault();
+            navigate(paths.approvals());
+          }}
+        >
+          <FormattedMessage id="automations.approval.open" />
+        </a>
+      ) : (
+        <div className="mo-form__actions">
+          <Button size="sm" disabled={pending} onClick={() => void decide(approvalId, 'approve')}>
+            <FormattedMessage id="automations.approval.approve" />
+          </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={pending}
+            onClick={() => void decide(approvalId, 'reject')}
+          >
+            <FormattedMessage id="automations.approval.reject" />
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** A failed step: what happened, what it means for the plan, what to do, and the code folded. */
+function StepFailure({
+  done,
+  agent,
+}: {
+  readonly done: PlanStepProgress;
+  readonly agent: string | undefined;
+}) {
+  const intl = useIntl();
+  const { what, todo } = failureExplanation(done.failure);
+  return (
+    <div className="automations__failure">
+      <p>
+        <strong>
+          <FormattedMessage id="automations.failure.happened" />
+        </strong>{' '}
+        <FormattedMessage
+          id={what}
+          values={{
+            step: done.label,
+            agent: agent ?? intl.formatMessage({ id: 'automations.anAgent' }),
+          }}
+        />
+      </p>
+      <p>
+        <strong>
+          <FormattedMessage id="automations.failure.means" />
+        </strong>{' '}
+        <FormattedMessage id="automations.failure.meaning" />
+      </p>
+      <p>
+        <strong>
+          <FormattedMessage id="automations.failure.todo" />
+        </strong>{' '}
+        <FormattedMessage id={todo} />
+      </p>
+      <TechnicalDetail codes={[done.failure ?? undefined, done.stepId]} />
+    </div>
+  );
+}
+
+/** What a tool step found, said plainly; each field's value folded away for whoever needs it. */
+function ToolResult({
+  toolId,
+  fields,
+}: {
+  readonly toolId: string;
+  readonly fields: readonly ToolResultField[];
+}) {
+  const intl = useIntl();
+  const field = (name: string) => fields.find((f) => f.name === name);
+  const available = field('available');
+  let summary: ReactNode;
+  if (available?.type === 'boolean' && !available.value) {
+    summary = <FormattedMessage id="automations.result.unavailable" />;
+  } else if (toolId === 'knowledge_search' && field('facts')?.type === 'count') {
+    const truncated = field('truncated');
+    summary = (
+      <FormattedMessage
+        id={
+          truncated?.type === 'boolean' && truncated.value
+            ? 'automations.result.knowledge.more'
+            : 'automations.result.knowledge'
+        }
+        values={{ n: field('facts')?.value as number }}
+      />
+    );
+  } else {
+    summary = <FormattedMessage id="automations.result.done" />;
+  }
+  const valueOf = (f: ToolResultField): string =>
+    f.type === 'boolean'
+      ? intl.formatMessage({ id: f.value ? 'automations.result.yes' : 'automations.result.no' })
+      : f.type === 'count'
+        ? intl.formatMessage({ id: 'automations.result.count' }, { n: f.value })
+        : String(f.value);
+  return (
+    <div className="automations__result">
+      <p>{summary}</p>
+      {fields.length === 0 ? null : (
+        <details className="automations__technical">
+          <summary>
+            <FormattedMessage id="automations.result.detail" />
+          </summary>
+          <ul>
+            {fields.map((f) => (
+              <li key={f.name}>
+                <code>{f.name}</code>: {valueOf(f)}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </div>
+  );
+}
+
+/** The plan's trace (ADR-0157), read only when the person opens it: codes, times and credits. */
+function PlanTraceDetail({ load }: { readonly load: () => Promise<PlanTraceView> | undefined }) {
+  const intl = useIntl();
+  const [trace, setTrace] = useState<Load<PlanTraceView>>();
+  const open = () => {
+    if (trace !== undefined) return;
+    setTrace({ status: 'loading' });
+    const reading = load();
+    if (reading === undefined) {
+      setTrace({ status: 'error' });
+      return;
+    }
+    reading.then(
+      (value) => setTrace({ status: 'ready', value }),
+      () => setTrace({ status: 'error' }),
+    );
+  };
+  return (
+    <details
+      className="automations__technical"
+      onToggle={(e) => {
+        if ((e.currentTarget as HTMLDetailsElement).open) open();
+      }}
+    >
+      <summary>
+        <FormattedMessage id="automations.trace.title" />
+      </summary>
+      {trace === undefined || trace.status === 'loading' ? (
+        <StateMessage kind="loading" inline>
+          <FormattedMessage id="automations.loading" />
+        </StateMessage>
+      ) : trace.status === 'error' ? (
+        <StateMessage kind="error">
+          <FormattedMessage id="automations.error.generic" />
+        </StateMessage>
+      ) : (
+        <div className="automations__trace">
+          <p>
+            <FormattedMessage
+              id="automations.trace.credits"
+              values={{ credits: trace.value.credits.total }}
+            />
+            {trace.value.failure === null ? null : (
+              <>
+                {' · '}
+                <code>
+                  {[trace.value.failure.code, trace.value.failure.stepId, trace.value.failure.cause]
+                    .filter((c) => c !== null)
+                    .join(' · ')}
+                </code>
+              </>
+            )}
+          </p>
+          <ul>
+            {trace.value.steps.map((s) => (
+              <li key={s.stepId}>
+                {s.label}
+                {s.attempts.map((a) => (
+                  <span key={a.attempt} className="automations__meta">
+                    {' · '}
+                    <FormattedMessage
+                      id="automations.trace.attempt"
+                      values={{
+                        attempt: a.attempt,
+                        credits: a.credits,
+                        seconds: a.durationMs === null ? '–' : Math.round(a.durationMs / 1000),
+                      }}
+                    />{' '}
+                    <code>{[a.status, a.failure].filter((c) => c !== null).join(' · ')}</code>
+                  </span>
+                ))}
+              </li>
+            ))}
+          </ul>
+          {trace.value.history.length === 0 ? null : (
+            <ol className="automations__history">
+              {trace.value.history.map((h, i) => (
+                <li key={i}>
+                  {intl.formatDate(new Date(h.at), { dateStyle: 'short', timeStyle: 'medium' })}{' '}
+                  <code>
+                    {[h.action, h.result, h.reason].filter((c) => c !== null).join(' · ')}
+                  </code>
+                </li>
+              ))}
+            </ol>
+          )}
+        </div>
+      )}
+    </details>
+  );
+}
 
 /** The action a policy check names, when the step is one. */
 function checkActionOf(decision: PlanStepView['decision']): string | undefined {
   const action = decision?.input.action;
   return decision?.decision === CHECK_DECISION && typeof action === 'string' ? action : undefined;
+}
+
+/**
+ * Where a step is, in one word the person reads (ADR-0167): pending, running, waiting for them,
+ * waiting for a time, done, failed, skipped, blocked by the credit limit, rejected or stopped.
+ */
+function stateOf(done: PlanStepProgress, blocked: boolean): string {
+  switch (done.state) {
+    case 'waiting':
+      return 'pending';
+    case 'running':
+    case 'awaiting_approval':
+    case 'completed':
+    case 'skipped':
+    case 'declined':
+    case 'stopped':
+      return done.state;
+    case 'delayed':
+      return 'delayed';
+    case 'failed':
+      return done.failure === 'budget_exceeded' || blocked ? 'blocked' : 'failed';
+    default: {
+      // An older API without `state`: its execution's status.
+      const status = stepStatusOf(done.status);
+      return status === 'completed'
+        ? 'completed'
+        : status === 'failed' || status === 'cancelled'
+          ? 'failed'
+          : status === 'running'
+            ? 'running'
+            : 'pending';
+    }
+  }
+}
+
+/**
+ * Whether a step's progress says more than its state word: what a check decided, until when a
+ * wait or a retry waits, why a step was skipped, failed or declined. "Done" twice says nothing.
+ */
+function addsToState(done: PlanStepProgress): boolean {
+  if (done.kind === 'condition') return done.state !== 'waiting';
+  if (done.kind === 'wait') return done.state === 'delayed' || done.state === 'completed';
+  return (
+    done.state === 'skipped' ||
+    done.state === 'failed' ||
+    done.state === 'declined' ||
+    done.state === 'delayed' ||
+    done.state === undefined
+  );
 }
 
 /**

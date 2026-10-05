@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { ToolView } from '../agents/agentsClient.js';
-import type { WorkflowStepDraft } from './automationsClient.js';
-import { sourcesFor, tidy, toolChoicesOf, toolStepComplete } from './toolSteps.js';
+import type { WorkflowAgentDraft, WorkflowStepDraft } from './automationsClient.js';
+import {
+  sourcesFor,
+  tidy,
+  toolAvailability,
+  toolChoicesOf,
+  toolStepComplete,
+} from './toolSteps.js';
 
 /** Tool steps in the workflow editor (ADR-0165): only what a plan would accept is offered. */
 
@@ -140,5 +146,42 @@ describe('tool steps in the workflow editor (ADR-0165)', () => {
     expect(without[0]).toMatchObject({ performer: '', after: [] });
     expect(without[2]).toMatchObject({ values: { size: { from: 'fixed', value: 3 } } });
     expect(toolStepComplete(without[2] as never, choices)).toBe(false);
+  });
+});
+
+describe('toolAvailability (ADR-0167)', () => {
+  const search = { id: 'knowledge_search', version: 1 };
+  const lucia = { id: 'agent-sales', displayName: 'Lucía' };
+  const assignee = (tools: { id: string; version: number }[]) => ({
+    departmentTypeId: 'sales',
+    roleId: 'commercial_agent',
+    agent: lucia,
+    tools,
+  });
+  const steps = [agent('a'), tool('t', 'a', 'knowledge_search')];
+
+  it('is available only when the agent the plan would pick lists that exact version', () => {
+    expect(toolAvailability(steps, 'a', search, [assignee([search])])).toEqual({
+      ok: true,
+      agent: lucia,
+    });
+    expect(
+      toolAvailability(steps, 'a', search, [assignee([{ id: 'knowledge_search', version: 2 }])]),
+    ).toEqual({ ok: false, why: 'not_granted', agent: lucia });
+  });
+
+  it('says why when there is no agent step, no agent for its role, or nothing could be read', () => {
+    expect(toolAvailability(steps, 'missing', search, [assignee([search])])).toEqual({
+      ok: false,
+      why: 'no_performer',
+    });
+    expect(
+      toolAvailability([{ ...(agent('a') as WorkflowAgentDraft), roleId: '' }], 'a', search, []),
+    ).toEqual({
+      ok: false,
+      why: 'no_performer',
+    });
+    expect(toolAvailability(steps, 'a', search, [])).toEqual({ ok: false, why: 'no_agent' });
+    expect(toolAvailability(steps, 'a', search, undefined)).toEqual({ ok: false, why: 'unknown' });
   });
 });

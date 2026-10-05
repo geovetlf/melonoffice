@@ -108,11 +108,14 @@ describe('Automations (WF-3)', () => {
     });
     const workflows = within(await screen.findByRole('region', { name: 'Workflows' }));
     fireEvent.click(await workflows.findByRole('button', { name: 'Prepare a plan' }));
-    expect(
-      await screen.findByText(
-        'The plan did not pass validation (tool_not_available). Nothing was created to run.',
-      ),
-    ).toBeTruthy();
+    // A reason with no plain wording still says what to do; its code is folded away (ADR-0167).
+    const refusal = (await screen.findByText(/Something did not pass the checks\./)).closest(
+      '[role="alert"]',
+    ) as HTMLElement;
+    expect(refusal.textContent).toContain('The plan could not be prepared.');
+    expect(refusal.textContent).toContain('share the technical detail with support');
+    expect(within(refusal).getByText('Technical detail')).toBeTruthy();
+    expect(refusal.querySelector('code')?.textContent).toContain('tool_not_available');
     expect(screen.queryByRole('article')).toBeNull();
     expect(posts(backend, '/approve')).toHaveLength(0);
   });
@@ -123,11 +126,26 @@ describe('Automations (WF-3)', () => {
     });
     const workflows = within(await screen.findByRole('region', { name: 'Workflows' }));
     fireEvent.click(await workflows.findByRole('button', { name: 'Prepare a plan' }));
-    expect(
-      await screen.findByText(
-        'No active agent has the role one of the steps needs. Create or activate one, then prepare the plan again.',
-      ),
-    ).toBeTruthy();
+    const refusal = (
+      await screen.findByText(/No active agent has the role one of the steps needs\./)
+    ).closest('[role="alert"]') as HTMLElement;
+    expect(refusal.textContent).toContain(
+      'Create or activate one in Agents and prepare the plan again.',
+    );
+  });
+
+  it('ADR-0167: a tool the agent does not have is refused in words, with the step and what to do', async () => {
+    open((b) => {
+      b.options.planRefusal = 'tool_not_assigned';
+    });
+    const workflows = within(await screen.findByRole('region', { name: 'Workflows' }));
+    fireEvent.click(await workflows.findByRole('button', { name: 'Prepare a plan' }));
+    const refusal = (
+      await screen.findByText(/A step uses a tool the agent that would do it does not have\./)
+    ).closest('[role="alert"]') as HTMLElement;
+    expect(refusal.textContent).toContain('Give that agent the skill that allows it, in Agents');
+    // The code is there for support, folded away.
+    expect(refusal.querySelector('details code')?.textContent).toContain('tool_not_assigned');
   });
 
   it('shows the estimate before approval, what each check decided, and the steps it skipped', async () => {
@@ -353,8 +371,14 @@ describe('Automations (WF-3)', () => {
     fireEvent.click(await plans.findByRole('button', { name: /Running/ }));
     let shown = await screen.findByRole('article', { name: 'Campaña' });
     const campaign = within(shown).getByText('Campaign').closest('li') as HTMLElement;
-    expect(await within(campaign).findByText(/Waiting for your approval/)).toBeTruthy();
-    expect(within(campaign).getByRole('link', { name: 'Approvals' })).toBeTruthy();
+    expect(await within(campaign).findByText('Waiting for approval')).toBeTruthy();
+    // What, who and why, plainly (ADR-0167); without approval.read it is decided in Approvals.
+    const ask = within(campaign).getByRole('group', { name: 'Campaign' });
+    expect(within(ask).getByText('Needs your approval')).toBeTruthy();
+    expect(ask.textContent).toContain('“Campaign”, done by an agent.');
+    expect(ask.textContent).toContain('The company policy asks for a person');
+    expect(within(ask).getByRole('link', { name: 'Decide in Approvals' })).toBeTruthy();
+    expect(within(ask).queryByRole('button', { name: 'Approve' })).toBeNull();
 
     cleanup();
     open((b) => {
@@ -374,7 +398,62 @@ describe('Automations (WF-3)', () => {
     ).toBeTruthy();
     expect(within(shown).getByText(/Skipped: an earlier step ended this branch/)).toBeTruthy();
     expect(within(shown).getAllByText(/Done/)).toHaveLength(2);
-    expect(within(shown).queryByRole('link', { name: 'Approvals' })).toBeNull();
+    expect(within(shown).queryByRole('link', { name: 'Decide in Approvals' })).toBeNull();
+  });
+
+  it('ADR-0167: a person decides a step waiting for them on the plan, through Approvals’ own call', async () => {
+    const plan = {
+      id: 'plan-8',
+      status: 'executing',
+      version: 1,
+      createdAt: '2026-09-29T09:00:00Z',
+      current: {
+        version: 1,
+        digest: 'd'.repeat(64),
+        request: { summary: 'Envío', objective: 'Enviar el resumen' },
+        steps: [
+          {
+            id: 'send',
+            kind: 'specialist',
+            label: 'Send',
+            dependsOn: [],
+            approvalRequired: true,
+          },
+        ],
+        riskLevel: 'low',
+        estimate: { status: 'unknown', credits: null },
+        source: { kind: 'workflow', workflowId: 'wf-launch', workflowVersion: 2 },
+      },
+    };
+    const backend = open(
+      (b) => {
+        b.options.plans.org_1 = [plan];
+        b.options.approvals.org_1 = [{ id: 'appr-8', status: 'pending' }];
+        b.options.planSteps['plan-8'] = [
+          {
+            stepId: 'send',
+            kind: 'specialist',
+            label: 'Send',
+            state: 'awaiting_approval',
+            outcome: null,
+            executionId: 'exec-send',
+            status: 'pending',
+            approvalId: 'appr-8',
+            failure: null,
+            answer: null,
+            missing: [],
+          },
+        ];
+      },
+      [...OWNER, 'approval.read'],
+    );
+    const plans = within(await screen.findByRole('region', { name: 'Plans' }));
+    fireEvent.click(await plans.findByRole('button', { name: /Running/ }));
+    const shown = await screen.findByRole('article', { name: 'Envío' });
+    const ask = await within(shown).findByRole('group', { name: 'Send' });
+    expect(ask.textContent).toContain('You asked to approve this step before it is done.');
+    fireEvent.click(within(ask).getByRole('button', { name: 'Approve' }));
+    await vi.waitFor(() => expect(posts(backend, '/approvals/appr-8/approve')).toHaveLength(1));
   });
 
   it('shows plans without the plan button or approval to a role that may only read', async () => {
@@ -778,6 +857,16 @@ describe('Writing workflows (block 4)', () => {
   ];
   const withTools = (b: ReturnType<typeof fakeBackend>) => {
     b.options.moreTools = READ_TOOLS;
+    b.options.assignees = {
+      org_1: [
+        {
+          departmentTypeId: 'sales',
+          roleId: 'commercial_agent',
+          agent: { id: 'agent-sales', displayName: 'Lucía' },
+          tools: [{ id: 'knowledge_search', version: 1 }],
+        },
+      ],
+    };
   };
 
   it('ADR-0165: writes a tool step for an earlier agent step, from a fixed value or its answer', async () => {
@@ -957,6 +1046,50 @@ describe('Writing workflows (block 4)', () => {
       tool: { id: 'knowledge_search', version: 1 },
       inputFrom: { query: { step: 'step_1' } },
     });
+  });
+
+  it('ADR-0167: a tool the step’s agent has no skill for is shown unavailable, with why, and is not saved', async () => {
+    const backend = open(
+      (b) => {
+        withTools(b);
+        // The same agent the plan would pick, without the tool among its skills' tools.
+        for (const a of b.options.assignees?.org_1 ?? []) a.tools = [];
+      },
+      [...WRITER, 'tool.read'],
+    );
+    fireEvent.click(await screen.findByRole('button', { name: 'New workflow' }));
+    const editor = within(await screen.findByRole('form', { name: 'New workflow' }));
+    const create = await editor.findByRole('button', { name: 'Create as draft' });
+    fireEvent.change(editor.getByLabelText('Name'), { target: { value: 'Estudio' } });
+    fireEvent.change(editor.getByLabelText('Step 1: what to do'), {
+      target: { value: 'Investigar' },
+    });
+    fireEvent.change(editor.getByLabelText('Who does it'), {
+      target: { value: 'sales/commercial_agent' },
+    });
+    expect(await editor.findByText('Lucía will do it.')).toBeTruthy();
+    fireEvent.click(editor.getByRole('button', { name: 'Add a step' }));
+    fireEvent.change(editor.getByLabelText('Step 2: what to do'), {
+      target: { value: 'Buscar' },
+    });
+    const kinds = () => editor.getAllByLabelText('What this step is');
+    await vi.waitFor(() =>
+      expect(
+        within(kinds().at(-1) as HTMLElement).queryByRole('option', {
+          name: 'An agent uses a lookup tool',
+        }),
+      ).toBeTruthy(),
+    );
+    fireEvent.change(kinds().at(-1) as HTMLElement, { target: { value: 'tool' } });
+    const tool = editor.getByLabelText('Tool') as HTMLSelectElement;
+    const option = [...tool.options].find((o) => o.value === 'knowledge_search@1');
+    expect(option?.textContent).toBe('Search the company memory: not available to this agent');
+    expect(option?.disabled).toBe(true);
+    expect(
+      editor.getByText('Lucía has no skill that lets it use “Search the company memory”.'),
+    ).toBeTruthy();
+    expect((create as HTMLButtonElement).disabled).toBe(true);
+    expect(posts(backend, '/org_1/workflows')).toHaveLength(0);
   });
 
   it('shows a saved check and edits a branching workflow without changing its shape', async () => {
