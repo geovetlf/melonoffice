@@ -20,7 +20,7 @@ import { isResolvedTenant, type TenancyStore, type TenantContext } from '@melono
 import { PlanningError } from './errors.js';
 import { applyPlanStatus, decidePlan, isPlanId, isPlanReason, newPlan } from './model.js';
 import type { PlanPage, PlanPosition, PlanRepository } from './repository.js';
-import type { PlanValidator, ValidationStage } from './validate.js';
+import type { PlanValidation, PlanValidator, ValidationStage } from './validate.js';
 
 export const MAX_PLANS_LISTED = 100;
 
@@ -66,6 +66,14 @@ export interface PlanService {
   get(tenant: TenantContext, id: string): Promise<Plan>;
   getVersion(tenant: TenantContext, id: string, version: number): Promise<PlanVersion>;
   propose(tenant: TenantContext, input: ProposeInput): Promise<ProposeOutcome>;
+  /**
+   * A dry run (ADR-0168): what `propose` would decide about this proposal, through the same
+   * validator, now. Stores nothing, records nothing and needs no planning execution. Needs
+   * `plan.create`, like proposing.
+   */
+  check(tenant: TenantContext, proposal: unknown): Promise<PlanValidation>;
+  /** Whether a tool may be a tool step here, by the validator's own rule (ADR-0168). */
+  toolUse: PlanValidator['toolUse'];
   approve(tenant: TenantContext, id: string, seen: PlanDecisionInput): Promise<Plan>;
   reject(tenant: TenantContext, id: string, seen: PlanDecisionInput): Promise<Plan>;
   /** Server side only. `reason` is a stable code. */
@@ -258,6 +266,16 @@ export function createPlanService({
           : undefined;
       if (found === undefined) throw new PlanningError('plan_not_found');
       return found;
+    },
+
+    toolUse: validator.toolUse,
+
+    async check(tenant: TenantContext, proposal: unknown): Promise<PlanValidation> {
+      const organizationId = await organizationOf(tenant);
+      if (!authorization.authorize(tenant, 'plan.create', { organizationId }).allowed) {
+        throw new PlanningError('permission_denied');
+      }
+      return validator.validate(tenant, proposal);
     },
 
     async propose(tenant: TenantContext, input: ProposeInput): Promise<ProposeOutcome> {

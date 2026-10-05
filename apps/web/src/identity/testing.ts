@@ -143,6 +143,11 @@ export interface FakeBackend {
      * `GET workflows/assignees` reads them (ADR-0167). None by default.
      */
     assignees?: Record<string, Record<string, unknown>[]>;
+    /**
+     * What `POST workflows/check` answers (ADR-0168): the dry run of a draft. By default it
+     * passes, as the API's would for a draft the editor allows.
+     */
+    workflowCheck?: Record<string, unknown>;
     /** Records per page of Comercial's lists (ADR-0061), unless the request asks a `limit`. */
     pageSize: number;
     /** Every page after the first fails (ADR-0061). */
@@ -1121,6 +1126,12 @@ export function fakeBackend(): FakeBackend {
       };
       list.push(created);
       return json(201, created);
+    }
+    if (route === 'workflows/check' && method === 'POST') {
+      return (
+        needs('workflow.manage') ??
+        json(200, options.workflowCheck ?? { ok: true, approvalRequired: true, steps: [] })
+      );
     }
     if (route === 'workflows/assignees' && method === 'GET') {
       return (

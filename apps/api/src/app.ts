@@ -1264,7 +1264,7 @@ export function createApp({
                     departments: structure.departments,
                     tools,
                     authorization,
-                    environment: undefined,
+                    environment: conversations?.toolEnvironment,
                     riskPolicy: HARNESS_RISK_POLICY,
                   }),
                   organizations: tenancy,

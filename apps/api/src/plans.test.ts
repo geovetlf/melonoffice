@@ -22,6 +22,7 @@ import {
   createPlanStepAttempts,
   createPlanValidator,
   delegationKey,
+  newPlan,
   type PlanRepository,
 } from '@melonoffice/planning';
 import { buildAuditEvent } from '@melonoffice/audit';
@@ -285,9 +286,6 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
             ...(options.askBeforeCampaign === true
               ? [step('brief', researcher, ['research']), step('launch', marketer, ['campaign'])]
               : []),
-            ...(options.gate === true
-              ? [{ id: 'sign_off', kind: 'approval', label: 'Sign off', dependsOn: ['campaign'] }]
-              : []),
             ...(options.searchInCampaign === true
               ? [
                   step('brief', researcher, ['research']),
@@ -312,6 +310,40 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
         },
       });
       if (outcome.status !== 'planned') throw new Error(outcome.reason);
+      if (options.gate === true) {
+        // No plan proposes an approval step since ADR-0168; one saved before it can still exist.
+        const version = must(
+          await stores.plans.findVersion(orgA, outcome.plan.id, outcome.plan.version),
+        );
+        const legacy = await planning(tenant);
+        const write = newPlan(
+          {
+            organizationId: orgA,
+            executionId: legacy.id,
+            validated: {
+              request: version.request,
+              steps: [
+                ...version.steps,
+                {
+                  id: 'sign_off',
+                  kind: 'approval',
+                  label: 'Sign off',
+                  dependsOn: ['campaign'],
+                  approvalRequired: true,
+                },
+              ],
+              riskLevel: version.riskLevel,
+              approvalRequired: true,
+              estimate: version.estimate,
+            },
+            source: version.source,
+          },
+          aliceId,
+          version.createdAt,
+        );
+        await stores.plans.create({ ...write, events: [] });
+        return { execution: legacy, plan: write.plan, ids: [] };
+      }
       const ids = ['research', 'campaign'].map((stepId) =>
         executionIdFor(orgA, delegationKey(outcome.plan.id, stepId)),
       );
@@ -826,6 +858,77 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
       for (const a of assignees) {
         expect(named?.some((b) => b.agent.id === a.agent.id) ?? false).toBe(false);
       }
+    });
+
+    it('ADR-0168: says whether a plan takes each tool as a step, and dry-runs a draft', async () => {
+      const t = await setup();
+      const read = await t.get('token-alice', '/workflows/assignees');
+      const { assignees } = (await read.json()) as {
+        assignees: {
+          roleId: string;
+          agent: { id: string };
+          tools: { id: string; version: number; step: Record<string, unknown> }[];
+        }[];
+      };
+      const marketing = must(assignees.find((a) => a.roleId === 'campaign_manager'));
+      const search = must(marketing.tools.find((x) => x.id === 'knowledge_search'));
+      expect(search.step).toEqual({ usable: true, riskLevel: 'low', approvalRequired: false });
+      for (const tool of marketing.tools) expect(typeof tool.step.usable).toBe('boolean');
+
+      // A dry run: the same agents and decisions a plan would get, and nothing stored.
+      const steps = [
+        researchStep,
+        campaignStep,
+        {
+          id: 'search',
+          kind: 'tool',
+          label: 'Search the Company Brain',
+          dependsOn: ['campaign'],
+          performedBy: 'campaign',
+          tool: { id: 'knowledge_search', version: 1 },
+          input: { query: 'melon prices' },
+        },
+      ];
+      const checked = await t.post('token-alice', '/workflows/check', { name: 'Study', steps });
+      const body = (await checked.json()) as {
+        ok: boolean;
+        steps: { id: string; agent?: { id: string }; approvalRequired: boolean }[];
+      };
+      expect(checked.status, JSON.stringify(body)).toBe(200);
+      expect(body.ok).toBe(true);
+      expect(body.steps.map((s) => [s.id, s.agent?.id ?? null, s.approvalRequired])).toEqual([
+        ['research', must(assignees.find((a) => a.roleId === 'market_researcher')).agent.id, false],
+        ['campaign', marketing.agent.id, false],
+        ['search', null, false],
+      ]);
+      const listed = (await (await t.get('token-alice', '/workflows')).json()) as {
+        workflows: unknown[];
+      };
+      expect(listed.workflows).toEqual([]);
+
+      // A refusal is an answer with its codes.
+      const refused = await t.post('token-alice', '/workflows/check', {
+        name: 'Study',
+        steps: [researchStep, { ...steps[2], performedBy: 'research', dependsOn: ['research'] }],
+      });
+      expect(refused.status).toBe(200);
+      expect(await refused.json()).toEqual({
+        ok: false,
+        stage: 'permission',
+        reason: 'tool_not_assigned',
+        detail: 'steps.1',
+      });
+      // An exact body, and another organization's route is refused.
+      expect((await t.post('token-alice', '/workflows/check', { steps })).status).toBe(400);
+      const other = await t.app.request(
+        `/v1/organizations/${t.orgB}/workflows/check`,
+        t.as('token-alice', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ name: 'Study', steps }),
+        }),
+      );
+      expect(other.status).toBe(403);
     });
 
     it('answers a refused plan with 422 and why, and keeps the answer for a repeat', async () => {

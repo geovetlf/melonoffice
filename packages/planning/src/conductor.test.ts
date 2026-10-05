@@ -1,4 +1,4 @@
-import type { ExecutionId, Plan, PlanDecisionCondition } from '@melonoffice/domain';
+import type { ExecutionId, Plan, PlanDecisionCondition, PlanStep } from '@melonoffice/domain';
 import type { TenantContext } from '@melonoffice/tenancy';
 import { describe, expect, it } from 'vitest';
 import {
@@ -22,9 +22,10 @@ import {
 } from './conductor.js';
 import { createPlanStepAttempts } from './delegation.js';
 import { isPlanningError } from './errors.js';
-import { stepExecutionOf } from './model.js';
+import { newPlan, stepExecutionOf } from './model.js';
 import {
   ALICE,
+  T0,
   must,
   proposal,
   specialistStep,
@@ -100,28 +101,53 @@ async function setup(
   approvals?: StepApprovals,
   extra: Partial<PlanConductorOptions> = {},
   options: WorldOptions = {},
+  /** Steps no plan may propose since ADR-0168, stored as a plan saved before it could be. */
+  legacy?: (s: Awaited<ReturnType<World['seed']>>) => Record<string, unknown>[],
 ) {
   const w = await world(options);
   const owner = await w.seed(w.orgA, ALICE, { type: 'leadership', role: 'chief_of_staff' });
   const researcher = await w.seed(w.orgA, ALICE, { toolIds: ['lookup'] });
   const execution = await w.planning(w.tenantA, owner);
-  const outcome = await w.plans.propose(w.tenantA, {
-    executionId: execution.id,
-    proposal: proposal(
-      steps?.(researcher) ?? [
-        specialistStep('research', researcher, { approvalRequired: true }),
-        specialistStep('report', researcher, { dependsOn: ['research'] }),
-        specialistStep('summary', researcher, { dependsOn: ['research'] }),
-      ],
-    ),
-    source: {
-      kind: 'planner',
-      model: { provider: 'alpha', id: 'alpha-large', version: 'v' },
-      policy: { id: 'default_model', version: 1 },
-    },
-  });
-  if (outcome.status !== 'planned') throw new Error(`refused: ${outcome.reason}`);
-  const planned = outcome.plan;
+  const source = {
+    kind: 'planner',
+    model: { provider: 'alpha', id: 'alpha-large', version: 'v' },
+    policy: { id: 'default_model', version: 1 },
+  } as const;
+  const proposed = proposal(
+    steps?.(researcher) ?? [
+      specialistStep('research', researcher, { approvalRequired: true }),
+      specialistStep('report', researcher, { dependsOn: ['research'] }),
+      specialistStep('summary', researcher, { dependsOn: ['research'] }),
+    ],
+  );
+  let planned: Plan;
+  if (legacy === undefined) {
+    const outcome = await w.plans.propose(w.tenantA, {
+      executionId: execution.id,
+      proposal: proposed,
+      source,
+    });
+    if (outcome.status !== 'planned') throw new Error(`refused: ${outcome.reason}`);
+    planned = outcome.plan;
+  } else {
+    const validation = await w.validator.validate(w.tenantA, proposed);
+    if (!validation.ok) throw new Error(`refused: ${validation.reason}`);
+    const old = legacy(researcher).map(
+      (s) => ({ approvalRequired: false, ...s }) as unknown as PlanStep,
+    );
+    const write = newPlan(
+      {
+        organizationId: w.orgA,
+        executionId: execution.id,
+        validated: { ...validation.plan, steps: [...validation.plan.steps, ...old] },
+        source,
+      },
+      ALICE,
+      T0.toISOString() as Plan['createdAt'],
+    );
+    await w.planRepository.create({ ...write, events: [] });
+    planned = write.plan;
+  }
 
   /** What the starter was asked to start, and as whom. */
   const started: { actor: string; id: ExecutionId }[] = [];
@@ -335,10 +361,14 @@ describe('plan conductor (WF-1)', () => {
   });
 
   it('refuses a plan with any step it cannot run yet, before anything is delegated', async () => {
-    const t = await setup((researcher) => [
-      specialistStep('research', researcher, { approvalRequired: true }),
-      { id: 'sign_off', kind: 'approval', label: 'Sign off', dependsOn: ['research'] },
-    ]);
+    const t = await setup(
+      (researcher) => [specialistStep('research', researcher, { approvalRequired: true })],
+      undefined,
+      undefined,
+      {},
+      {},
+      () => [{ id: 'sign_off', kind: 'approval', label: 'Sign off', dependsOn: ['research'] }],
+    );
     const version = must(
       await t.w.planRepository.findVersion(t.w.orgA, t.planned.id, t.planned.version),
     );
@@ -646,16 +676,22 @@ describe('plan conditions (WF-4)', () => {
   });
 
   it('refuses a condition on how a step ended, and one that waits on no step', async () => {
-    const outcome = await setup((researcher) => [
-      specialistStep('research', researcher, { approvalRequired: true }),
-      {
-        id: 'gate',
-        kind: 'condition',
-        label: 'Check gate',
-        dependsOn: ['research'],
-        condition: { step: 'research', outcome: 'completed' },
-      },
-    ]);
+    const outcome = await setup(
+      (researcher) => [specialistStep('research', researcher, { approvalRequired: true })],
+      undefined,
+      undefined,
+      {},
+      {},
+      () => [
+        {
+          id: 'gate',
+          kind: 'condition',
+          label: 'Check gate',
+          dependsOn: ['research'],
+          condition: { step: 'research', outcome: 'completed' },
+        },
+      ],
+    );
     const version = must(
       await outcome.w.planRepository.findVersion(
         outcome.w.orgA,

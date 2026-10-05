@@ -39,6 +39,7 @@ const REFUSAL_GROUPS: Readonly<Record<string, string>> = {
   invalid_condition: 'structure',
   invalid_proposal: 'structure',
   verification_missing: 'structure',
+  step_not_runnable: 'structure',
 };
 
 /** Why a plan could not be prepared from a workflow. */

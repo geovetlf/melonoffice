@@ -4,6 +4,7 @@ import type { WorkflowAgentDraft, WorkflowStepDraft } from './automationsClient.
 import {
   sourcesFor,
   tidy,
+  notAStepGroup,
   toolAvailability,
   toolChoicesOf,
   toolStepComplete,
@@ -164,10 +165,26 @@ describe('toolAvailability (ADR-0167)', () => {
     expect(toolAvailability(steps, 'a', search, [assignee([search])])).toEqual({
       ok: true,
       agent: lucia,
+      approvalRequired: false,
     });
     expect(
       toolAvailability(steps, 'a', search, [assignee([{ id: 'knowledge_search', version: 2 }])]),
     ).toEqual({ ok: false, why: 'not_granted', agent: lucia });
+  });
+
+  it('ADR-0168: follows the server on whether a plan takes the tool as a step, and asks first', () => {
+    const rule = (step: Record<string, unknown>) => [assignee([{ ...search, step } as never])];
+    expect(
+      toolAvailability(steps, 'a', search, rule({ usable: false, reason: 'tool_not_read_only' })),
+    ).toEqual({ ok: false, why: 'not_a_step', agent: lucia, reason: 'tool_not_read_only' });
+    expect(
+      toolAvailability(steps, 'a', search, rule({ usable: true, approvalRequired: true })),
+    ).toEqual({ ok: true, agent: lucia, approvalRequired: true });
+    expect(notAStepGroup('tool_not_read_only')).toBe('writes');
+    expect(notAStepGroup('environment_not_allowed')).toBe('environment');
+    expect(notAStepGroup('department_not_allowed')).toBe('department');
+    expect(notAStepGroup('tool_denied_by_policy')).toBe('policy');
+    expect(notAStepGroup(undefined)).toBe('policy');
   });
 
   it('says why when there is no agent step, no agent for its role, or nothing could be read', () => {
