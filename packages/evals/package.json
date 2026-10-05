@@ -28,7 +28,10 @@
     "@melonoffice/brain": "workspace:*",
     "@melonoffice/domain": "workspace:*",
     "@melonoffice/harness": "workspace:*",
-    "@melonoffice/specialists": "workspace:*"
+    "@melonoffice/planning": "workspace:*",
+    "@melonoffice/rbac": "workspace:*",
+    "@melonoffice/specialists": "workspace:*",
+    "@melonoffice/tools": "workspace:*"
   },
   "devDependencies": {
     "@melonoffice/ai-deepseek": "workspace:*",

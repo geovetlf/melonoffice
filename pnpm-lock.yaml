@@ -855,9 +855,18 @@ importers:
       '@melonoffice/harness':
         specifier: workspace:*
         version: link:../harness
+      '@melonoffice/planning':
+        specifier: workspace:*
+        version: link:../planning
+      '@melonoffice/rbac':
+        specifier: workspace:*
+        version: link:../rbac
       '@melonoffice/specialists':
         specifier: workspace:*
         version: link:../specialists
+      '@melonoffice/tools':
+        specifier: workspace:*
+        version: link:../tools
     devDependencies:
       '@melonoffice/ai-deepseek':
         specifier: workspace:*

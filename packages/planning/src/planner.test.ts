@@ -55,7 +55,7 @@ describe('planner', () => {
     // One model call, asked for structured output, with ids and codes only as context.
     expect(w.calls).toHaveLength(1);
     const [call] = w.calls;
-    expect(call?.capability).toBe('structured_output');
+    expect(call?.capability).toBe('text_generation');
     expect(call?.structuredOutput).toBe(true);
     const context = JSON.stringify(call?.messages);
     expect(context).toContain(w.researcher.identity.id);

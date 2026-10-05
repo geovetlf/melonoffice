@@ -17,6 +17,9 @@ import {
   REDACTED,
   redactSecretText,
   routeModel,
+  type AIMessage,
+  type AIOutput,
+  type AIOutputSchema,
   type ProviderCall,
   type ProviderRegistry,
 } from '@melonoffice/ai-gateway';
@@ -43,7 +46,8 @@ import { scoreAnswer, type EvalScore } from './score.js';
 /** What the run records of one case. */
 export interface EvalCaseResult {
   readonly id: string;
-  readonly suite: EvalSuiteId;
+  /** The agent template's suite, or `planner` (ADR-0169). */
+  readonly suite: EvalSuiteId | 'planner';
   /** Which repetition of the case, from 1, when the run repeats cases. */
   readonly attempt?: number;
   /**
@@ -136,8 +140,8 @@ export interface EvalTotals {
   readonly consistency?: number;
 }
 
-export interface EvalRunOptions {
-  readonly cases: readonly EvalCase[];
+export interface EvalRunOptions<C = EvalCase> {
+  readonly cases: readonly C[];
   readonly registry: ProviderRegistry;
   readonly policy: ModelPolicy;
   readonly environment: DeploymentEnvironment;
@@ -160,6 +164,35 @@ export interface EvalRunOptions {
 }
 
 export const MAX_EVAL_REPEAT = 5;
+
+/**
+ * What a run asks of a model for one kind of case, and how it scores the answer (ADR-0169): the
+ * agent task (the default) or the planner. The loop, routing, budget and records are the same.
+ */
+export interface EvalTask<
+  C extends { readonly id: string; readonly suite: EvalCaseResult['suite'] },
+> {
+  /** The prompt version, `id@version`. */
+  readonly prompt: string;
+  readonly messagesOf: (c: C) => readonly AIMessage[];
+  readonly maxOutputTokens: number;
+  readonly outputSchema?: AIOutputSchema;
+  readonly score: (c: C, output: AIOutput) => EvalScore | Promise<EvalScore>;
+  /** The answer as the run file keeps it, with nothing secret. */
+  readonly keep: (c: C, output: AIOutput) => string | undefined;
+  readonly digest: (cases: readonly C[]) => string;
+}
+
+/** The agent task's eval (ADR-0134): its prompt, its answer shape and `scoreAnswer`. */
+export const AGENT_TASK_EVAL: EvalTask<EvalCase> = Object.freeze({
+  prompt: promptLabel(AGENT_TASK_PROMPT),
+  messagesOf: (c: EvalCase) => evalMessages(c),
+  maxOutputTokens: AGENT_TASK_MAX_OUTPUT_TOKENS,
+  outputSchema: AGENT_ANSWER_SCHEMA,
+  score: scoreAnswer,
+  keep: keptAnswer,
+  digest: (cases: readonly EvalCase[]) => datasetDigest(cases),
+});
 
 /** The digest of a set of cases: their ids, requests, facts and expectations. */
 export const datasetDigest = (cases: readonly EvalCase[]): string =>
@@ -275,7 +308,13 @@ export function totalsOf(cases: readonly EvalCaseResult[]): EvalTotals {
   });
 }
 
-export async function runEvals(options: EvalRunOptions): Promise<EvalRun> {
+export function runEvals(options: EvalRunOptions): Promise<EvalRun>;
+export function runEvals<
+  C extends { readonly id: string; readonly suite: EvalCaseResult['suite'] },
+>(options: EvalRunOptions<C>, task: EvalTask<C>): Promise<EvalRun>;
+export async function runEvals<
+  C extends { readonly id: string; readonly suite: EvalCaseResult['suite'] },
+>(options: EvalRunOptions<C>, task: EvalTask<C> = AGENT_TASK_EVAL as never): Promise<EvalRun> {
   const { policy, environment, dataPolicy } = options;
   const registry =
     options.pin === undefined ? options.registry : pinned(options.registry, options.pin);
@@ -293,7 +332,7 @@ export async function runEvals(options: EvalRunOptions): Promise<EvalRun> {
 
   for (const c of options.cases)
     for (let attempt = 1; attempt <= repeat; attempt++) {
-      const messages = evalMessages(c);
+      const messages = task.messagesOf(c);
       const route = routeModel(
         registry,
         policy,
@@ -304,7 +343,7 @@ export async function runEvals(options: EvalRunOptions): Promise<EvalRun> {
           outputModality: 'text',
           sensitivity: 'confidential',
           estimatedInputTokens: estimateInputTokens({ messages }),
-          maxOutputTokens: AGENT_TASK_MAX_OUTPUT_TOKENS,
+          maxOutputTokens: task.maxOutputTokens,
           structuredOutput: true,
         },
         undefined,
@@ -332,9 +371,9 @@ export async function runEvals(options: EvalRunOptions): Promise<EvalRun> {
             capability: 'text_generation',
             messages,
             outputModality: 'text',
-            maxOutputTokens: AGENT_TASK_MAX_OUTPUT_TOKENS,
+            maxOutputTokens: task.maxOutputTokens,
             structuredOutput: true,
-            outputSchema: AGENT_ANSWER_SCHEMA,
+            ...(task.outputSchema === undefined ? {} : { outputSchema: task.outputSchema }),
             credential: candidate.provider.credential,
             deadline: new Date(now().getTime() + timeoutMs),
           };
@@ -357,10 +396,10 @@ export async function runEvals(options: EvalRunOptions): Promise<EvalRun> {
             inputTokens: outcome.usage.inputTokens,
             outputTokens: outcome.usage.outputTokens,
             costMicroUsd: cost,
-            score: scoreAnswer(c, outcome.output),
+            score: await task.score(c, outcome.output),
             delivered: checkProviderSuccess(outcome, undefined),
           };
-          const kept = keptAnswer(c, outcome.output);
+          const kept = task.keep(c, outcome.output);
           if (kept !== undefined) result = { ...result, answer: kept };
           break;
         }
@@ -371,12 +410,12 @@ export async function runEvals(options: EvalRunOptions): Promise<EvalRun> {
 
   return Object.freeze({
     format: 1,
-    prompt: promptLabel(AGENT_TASK_PROMPT),
+    prompt: task.prompt,
     policy: `${policy.id}@${policy.version}`,
     environment,
     startedAt,
     budgetCredits: options.budgetCredits,
-    dataset: datasetDigest(options.cases),
+    dataset: task.digest(options.cases),
     ...(options.pin === undefined ? {} : { pinned: options.pin }),
     repeat,
     cases: Object.freeze(results),
