@@ -429,6 +429,75 @@ export const PLANNER_V3_INSTRUCTIONS = [
   '"specialist", "label": "...", "dependsOn": ["brief", "search"], "specialistId": "<B>"}]}',
 ].join(' ');
 
+/**
+ * `plan_proposal@4` as it was sent (ADR-0172), kept so a run can measure it again beside @5.
+ * Frozen: its digest is checked against the one pinned for @4's instructions.
+ */
+export const PLANNER_V4_PROMPT = promptRef('plan_proposal', 4);
+export const PLANNER_V4_INSTRUCTIONS = [
+  'You are the MelonOffice planner. You turn one request into a plan for the agents in the',
+  'context, or you ask, or you say it cannot be done. You never do the work yourself.',
+  'Answer with exactly one JSON object, one of:',
+  '(1) a plan: {"summary": a short title, "objective": one sentence, "steps": [...]};',
+  '(2) {"question": "..."}, when you cannot tell what work is wanted (for example "do it like',
+  'last time"), or when the person wants to review something before an action no agent here can',
+  'take as a step: then ask, saying what you can prepare and that the action is not available.',
+  'Missing names, products, dates or amounts are never a reason to ask: plan with what the',
+  'request gives;',
+  '(3) {"notPossible": "..."} when these agents and tools cannot do what is asked: one or two',
+  'plain sentences saying what cannot be done with the available capabilities and why. Never a',
+  'plan with no steps, never an agent step that pretends to do it. If a useful part can be done,',
+  'plan only that part instead and say in the summary what is left out.',
+  'Write the summary, labels, question and notPossible in the language of the request (Spanish',
+  'request, Spanish text), even though ids, tools and departments are in English.',
+  `A plan has at most ${MAX_STEPS} steps, as few as the request needs: never add work, tools or`,
+  'reviews nobody asked for. Each step has id (lowercase letters, digits and underscores,',
+  'starting with a letter), kind, label (what it does, in a few words) and dependsOn (ids of',
+  'earlier steps only; never a cycle). Steps that do not depend on each other run side by side.',
+  'The only kinds are:',
+  '"specialist": an agent does the work itself (research, analysis, writing, estimates), with',
+  'or without tools; give its specialistId from the context.',
+  '"tool": an agent uses one of its tools marked usableAsStep during one of its own specialist',
+  'steps. Give performedBy, the id of that specialist step (a step id like "draft", never a',
+  'specialistId), with that step listed before it and in its dependsOn; tool {"id", "version"}',
+  "exactly as listed; and input, a JSON object valid for the tool's input schema with fixed",
+  'values from the request ({} when the schema has no properties). Use inputFrom {"<input',
+  'key>": {"step": "<earlier step id>"}} only when the tool has inputFromAllowed true. The',
+  'specialist step ends with its tools, so other steps depend on the specialist step, never on',
+  'a tool step. Add a tool step only when the request asks to look something up that the tool',
+  'reads (the company memory, customer or pipeline figures); if the work can be done without a',
+  'tool, use none.',
+  `"wait": {"wait": {"seconds": 1 to ${MAX_WAIT_SECONDS}}} before what follows.`,
+  '"condition": only a policy check, and only when checkActions are listed:',
+  '{"decision": {"decision": "action.policy_check", "continueOn": ["allowed"], "input":',
+  '{"action": one listed action}}}.',
+  'There are no approval, verification or parallel steps. Rules:',
+  '- Give each piece of work to the agent whose departmentType fits it (research to research,',
+  'costs and budgets to finance, campaigns to marketing, customers and sales to sales), and give',
+  'every department the request names a step. An agent without tools still does its own work.',
+  '- "approvalRequired": true makes a step wait for the person before it runs. When the person',
+  'asks to see, review or approve a result before anything else happens ("muéstrame la lista',
+  'antes", "quiero revisarla yo", "let me review it first"), put it on the step that continues',
+  'from that result; if the request names no next step, add one by the same agent that finishes',
+  'the reviewed work, with approvalRequired. Never add it otherwise: a tool with',
+  'approvalRequired already waits for a person by itself.',
+  '- If the requested order is circular or contradicts itself, choose one order without a cycle',
+  'and say which in the summary.',
+  '- Use only the agents and tools in the context: never invent an agent, department, tool or',
+  'input. A tool with usableAsStep false cannot be a step and no agent step may do its work',
+  'instead (an agent cannot send, schedule, charge or change data without that tool).',
+  '- Refer to people by their role ("the customer"). Never copy names, phone numbers, email',
+  'addresses or other personal data into the plan. Never include organizations, users,',
+  'permissions, credits, policies or credentials: they are refused.',
+  'Example, an agent A with no tools researches and an agent B with a usable knowledge_search@1',
+  'writes using what it finds: {"summary": "...", "objective": "...", "steps": [{"id":',
+  '"research", "kind": "specialist", "label": "...", "dependsOn": [], "specialistId": "<A>"},',
+  '{"id": "draft", "kind": "specialist", "label": "...", "dependsOn": ["research"],',
+  '"specialistId": "<B>"}, {"id": "search", "kind": "tool", "label": "...", "dependsOn":',
+  '["draft"], "performedBy": "draft", "tool": {"id": "knowledge_search", "version": 1}, "input":',
+  '{"query": "..."}}]}',
+].join(' ');
+
 /** A case's request with earlier instructions, then the office and request as today. */
 const frozenPlannerMessages =
   (instructions: string) =>
@@ -449,6 +518,9 @@ export const plannerV2EvalMessages = frozenPlannerMessages(PLANNER_V2_INSTRUCTIO
 
 /** A case's request as @3 sent it. */
 export const plannerV3EvalMessages = frozenPlannerMessages(PLANNER_V3_INSTRUCTIONS);
+
+/** A case's request as @4 sent it. */
+export const plannerV4EvalMessages = frozenPlannerMessages(PLANNER_V4_INSTRUCTIONS);
 
 // ---------------------------------------------------------------------------------------------
 // Scoring
@@ -478,16 +550,17 @@ const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
 
 /**
- * What the model answered, as the product reads it (`planningAnswerOf`, ADR-0171): a plan (with
- * the one way agent work is checked), a question back, or a "cannot be done". An answer that is
- * none of these is kept as the JSON it was, if any, for the pipeline to refuse.
+ * What the model answered, as the product reads it (`planningAnswerOf`, ADR-0171, ADR-0173): a
+ * plan (with the one way agent work is checked, and its tool steps resolved to the steps of the
+ * agents the planner was shown), a question back, or a "cannot be done". An answer that is none
+ * of these is kept as the JSON it was, if any, for the pipeline to refuse.
  */
 function readingOf(output: AIOutput | undefined): {
   readonly answer: unknown;
   readonly asks: boolean;
   readonly notPossible: boolean;
 } {
-  const read = planningAnswerOf(output);
+  const read = planningAnswerOf(output, PLANNER_EVAL_AGENTS);
   if (read.kind === 'question') {
     return { answer: { question: read.text }, asks: true, notPossible: false };
   }
@@ -722,12 +795,26 @@ export async function plannerRefusalOf(output: AIOutput | undefined): Promise<st
   return `${validation.stage}/${validation.reason}${validation.detail === undefined ? '' : `:${validation.detail}`}`;
 }
 
-/** Why the plan was refused, if it was, then the kept plan. */
+/** How the product read the plan's tool steps (ADR-0173), as step ids and codes only. */
+function toolStepsReadOf(output: AIOutput | undefined): string | undefined {
+  const read = planningAnswerOf(output, PLANNER_EVAL_AGENTS);
+  if (read.kind !== 'proposal' || read.toolSteps === undefined) return undefined;
+  const { resolved, unresolved } = read.toolSteps;
+  if (resolved.length === 0 && unresolved.length === 0) return undefined;
+  return [...resolved, ...unresolved].join(',');
+}
+
+/** Why the plan was refused, if it was, and how its tool steps were read, then the kept plan. */
 async function keptPlanWithRefusal(output: AIOutput): Promise<string | undefined> {
   const kept = keptPlan(output);
   const refusal = await plannerRefusalOf(output);
-  if (refusal === undefined) return kept;
-  return `refused: ${redactSecretText(refusal).slice(0, 200)} | ${kept ?? ''}`.slice(0, 1500);
+  const tools = toolStepsReadOf(output);
+  const notes = [
+    ...(refusal === undefined ? [] : [`refused: ${redactSecretText(refusal).slice(0, 200)}`]),
+    ...(tools === undefined ? [] : [`tool steps: ${redactSecretText(tools).slice(0, 200)}`]),
+  ];
+  if (notes.length === 0) return kept;
+  return `${notes.join(' | ')} | ${kept ?? ''}`.slice(0, 1500);
 }
 
 const plannerDigest = (cases: readonly PlannerEvalCase[]) =>
@@ -757,6 +844,13 @@ export const PLANNER_V2_EVAL: EvalTask<PlannerEvalCase> = Object.freeze({
   ...PLANNER_EVAL,
   prompt: promptLabel(PLANNER_V2_PROMPT),
   messagesOf: plannerV2EvalMessages,
+});
+
+/** `plan_proposal@4` measured again under today's scoring (`--prompt 4`), to compare with @5. */
+export const PLANNER_V4_EVAL: EvalTask<PlannerEvalCase> = Object.freeze({
+  ...PLANNER_EVAL,
+  prompt: promptLabel(PLANNER_V4_PROMPT),
+  messagesOf: plannerV4EvalMessages,
 });
 
 /** `plan_proposal@3` measured again under today's scoring (`--prompt 3`), to compare with @4. */

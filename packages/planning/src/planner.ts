@@ -97,7 +97,7 @@ const failureCode = (code: string): string => (CODE.test(code) ? code : 'plannin
  * answer is only a proposal: `PlanService.propose` validates it and stores the plan.
  */
 /** The planner's prompt version (G-3, ADR-0133): a new one whenever its text changes. */
-export const PLANNER_PROMPT = promptRef('plan_proposal', 4);
+export const PLANNER_PROMPT = promptRef('plan_proposal', 5);
 
 export function createPlanner({
   plans,
@@ -202,7 +202,7 @@ export function createPlanner({
       if (response.status !== 'completed') return fail(response.code);
 
       // A question or a "cannot be done" is not a plan: the task goes back to a person (ADR-0171).
-      const answer = planningAnswerOf(response.output);
+      const answer = planningAnswerOf(response.output, candidates);
       if (answer.kind === 'question') return fail('needs_clarification');
       if (answer.kind === 'not_possible') return fail('not_possible');
       const outcome = await plans.propose(tenant, {

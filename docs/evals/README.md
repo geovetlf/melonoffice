@@ -118,6 +118,8 @@ node packages/evals/dist/cli.js compare ~/evals/PLANNER-V2-RERUN.json ~/evals/PL
 
 `plan_proposal@4` (the update in ADR-0172) is now the default, and `--prompt 3` runs @3 again. @4 is compared with the stored @1, @2 and @3 runs, and is ready only if none of the comparisons lists a regression.
 
+`plan_proposal@5` (ADR-0173) is now the default, and `--prompt 4` runs @4 again. Every run reads tool steps as the product does: a tool written before its agent's work is resolved to that agent's step (`resolveToolSteps`). The run file records how each tool step was read (`tool steps: …`).
+
 ## Model reports and the model gate
 
 A model may serve agents outside DEV only with a passing report in [reports/](reports/README.md). CI enforces this.

@@ -11,6 +11,7 @@ import {
   PLANNER_V1_EVAL,
   PLANNER_V2_EVAL,
   PLANNER_V3_EVAL,
+  PLANNER_V4_EVAL,
   plannerComparisonText,
 } from './planner.js';
 import { MAX_EVAL_REPEAT, runEvals, type EvalCaseResult, type EvalRun } from './run.js';
@@ -24,8 +25,8 @@ import { MAX_EVAL_REPEAT, runEvals, type EvalCaseResult, type EvalRun } from './
  *   node dist/cli.js report run.json   (a run held to one model → docs/evals/reports/, G-5)
  *
  * `run` options: `--out <file>` (required), `--budget <credits>` (default and most: 70),
- * `--set planner` (the planner's cases, ADR-0169, instead of the agents'), `--prompt 1|2|3` with it
- * (an earlier `plan_proposal` again, to compare with @4 under the same scoring, ADR-0171, ADR-0172),
+ * `--set planner` (the planner's cases, ADR-0169, instead of the agents'), `--prompt 1|2|3|4` with it
+ * (an earlier `plan_proposal` again, to compare with @5 under the same scoring, ADR-0171, ADR-0172),
  * `--suite <id>` (repeatable; default every suite), `--model <provider/model>` (a variant held
  * to one model), `--repeat <n>` (1 to 5, for consistency).
  */
@@ -91,9 +92,9 @@ async function run(args: readonly string[]): Promise<void> {
   }
   if (
     given.prompt !== undefined &&
-    (given.set !== 'planner' || !['1', '2', '3', '4'].includes(given.prompt))
+    (given.set !== 'planner' || !['1', '2', '3', '4', '5'].includes(given.prompt))
   ) {
-    fail('--prompt is 1, 2, 3 or 4 (the default), with --set planner');
+    fail('--prompt is 1, 2, 3, 4 or 5 (the default), with --set planner');
   }
   const cases =
     given.suites.length === 0
@@ -131,7 +132,9 @@ async function run(args: readonly string[]): Promise<void> {
               ? PLANNER_V2_EVAL
               : given.prompt === '3'
                 ? PLANNER_V3_EVAL
-                : PLANNER_EVAL,
+                : given.prompt === '4'
+                  ? PLANNER_V4_EVAL
+                  : PLANNER_EVAL,
         )
       : await runEvals({ ...common, cases });
   writeFileSync(out, `${JSON.stringify(result, null, 2)}\n`);

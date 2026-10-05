@@ -261,7 +261,7 @@ export function createWorkflowDrafter({
         return Object.freeze({ status: 'failed', code: response.code });
       }
 
-      const answer = planningAnswerOf(response.output);
+      const answer = planningAnswerOf(response.output, agents);
       if (answer.kind === 'question') {
         return Object.freeze({ status: 'needs_clarification', question: answer.text });
       }

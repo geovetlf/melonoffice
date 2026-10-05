@@ -2,6 +2,7 @@ import type { AIMessage, AIOutput } from '@melonoffice/ai-gateway';
 import type { DefinitionRef, ToolId, ToolSchema } from '@melonoffice/domain';
 import type { ResolvedTool } from '@melonoffice/tools';
 import { MAX_STEPS, MAX_WAIT_SECONDS } from './proposal.js';
+import { resolveToolSteps, type ToolStepResolution } from './tool-steps.js';
 import type { ToolStepUse } from './validate.js';
 
 /**
@@ -74,7 +75,7 @@ export function plannerToolOf(
 }
 
 /**
- * The planner's fixed instructions (plan_proposal@4, ADR-0172). They describe the answer format
+ * The planner's fixed instructions (plan_proposal@5, ADR-0173). They describe the answer format
  * and the step kinds the engine runs; they grant nothing. Whatever the model answers still goes
  * through the whole validation pipeline, which alone decides.
  */
@@ -92,8 +93,8 @@ export const PLANNER_INSTRUCTIONS = [
   'plain sentences saying what cannot be done with the available capabilities and why. Never a',
   'plan with no steps, never an agent step that pretends to do it. If a useful part can be done,',
   'plan only that part instead and say in the summary what is left out.',
-  'Write the summary, labels, question and notPossible in the language of the request (Spanish',
-  'request, Spanish text), even though ids, tools and departments are in English.',
+  'Write the summary, labels, question and notPossible in the same language as the request,',
+  'even though ids, tools and departments are in English.',
   `A plan has at most ${MAX_STEPS} steps, as few as the request needs: never add work, tools or`,
   'reviews nobody asked for. Each step has id (lowercase letters, digits and underscores,',
   'starting with a letter), kind, label (what it does, in a few words) and dependsOn (ids of',
@@ -177,7 +178,12 @@ export const AGENT_STEP_VERIFICATION = Object.freeze({
 export const MAX_PLANNER_MESSAGE = 500;
 
 export type PlanningAnswer =
-  | { readonly kind: 'proposal'; readonly proposal: Readonly<Record<string, unknown>> }
+  | {
+      readonly kind: 'proposal';
+      readonly proposal: Readonly<Record<string, unknown>>;
+      /** How its tool steps were read (ADR-0173), when the agents it was planned for are given. */
+      readonly toolSteps?: Pick<ToolStepResolution, 'resolved' | 'unresolved'>;
+    }
   | { readonly kind: 'question'; readonly text: string }
   | { readonly kind: 'not_possible'; readonly text: string }
   | { readonly kind: 'unreadable' };
@@ -209,10 +215,15 @@ function jsonOf(output: AIOutput | undefined): unknown {
 
 /**
  * Reads the planner's answer (ADR-0171): a plan, a question, or why it cannot be done. A plan's
- * agent steps get the one way agent work is checked: the model never chooses it. Nothing else is
- * changed; the plan still goes through `checkProposal` and the validator.
+ * agent steps get the one way agent work is checked: the model never chooses it. Given the agents
+ * the planner was shown, each tool step's reference to its agent is resolved to that agent's
+ * step (`resolveToolSteps`, ADR-0173). Nothing else is changed; the plan still goes through
+ * `checkProposal` and the validator.
  */
-export function planningAnswerOf(output: AIOutput | undefined): PlanningAnswer {
+export function planningAnswerOf(
+  output: AIOutput | undefined,
+  agents?: readonly PlannerAgentView[],
+): PlanningAnswer {
   const answer = jsonOf(output);
   if (!isRecord(answer)) return { kind: 'unreadable' };
   const steps = answer.steps;
@@ -227,15 +238,19 @@ export function planningAnswerOf(output: AIOutput | undefined): PlanningAnswer {
   const plan = Object.fromEntries(
     Object.entries(answer).filter(([key]) => key !== 'question' && key !== 'notPossible'),
   );
+  const proposal = {
+    ...plan,
+    steps: steps.map((step: unknown) =>
+      isRecord(step) && step.kind === 'specialist'
+        ? { ...step, verification: { ...AGENT_STEP_VERIFICATION, requiredChecks: [] } }
+        : step,
+    ),
+  };
+  if (agents === undefined) return { kind: 'proposal', proposal };
+  const read = resolveToolSteps(proposal, agents);
   return {
     kind: 'proposal',
-    proposal: {
-      ...plan,
-      steps: steps.map((step: unknown) =>
-        isRecord(step) && step.kind === 'specialist'
-          ? { ...step, verification: { ...AGENT_STEP_VERIFICATION, requiredChecks: [] } }
-          : step,
-      ),
-    },
+    proposal: read.proposal,
+    toolSteps: { resolved: read.resolved, unresolved: read.unresolved },
   };
 }
