@@ -70,51 +70,9 @@ export function resolveToolSteps(
   const unresolved: string[] = [];
   const moved = new Map<string, string>(); // tool step → agent step, for ordering
 
-  for (const t of steps) {
-    if (t.kind !== 'tool' || !isRecord(t.tool)) continue;
+  /** The tool step `t` runs inside `s`: it waits on `s`, and what it waited on, `s` waits on. */
+  const rewrite = (t: Step, s: Step, tDeps: readonly string[]) => {
     const id = t.id as string;
-    const by = t.performedBy;
-    if (typeof by === 'string' && isSpecialist(byId.get(by))) continue; // already a step
-
-    // The agent: named by specialistId or department, or the one agent holding the tool.
-    let agent: PlannerAgentView | undefined;
-    let why: ToolStepUnresolved | undefined;
-    if (typeof by === 'string') {
-      const named = agents.filter((a) => a.specialistId === by || a.departmentType === by);
-      if (named.length === 1) agent = named[0];
-      else why = named.length === 0 ? 'unknown_performer' : 'ambiguous_agent';
-    } else if (by === undefined) {
-      const holders = agents.filter((a) => holds(a, t.tool as Record<string, unknown>));
-      const inPlan = holders.filter((a) =>
-        steps.some((s) => isSpecialist(s) && s.specialistId === a.specialistId),
-      );
-      if (inPlan.length === 1) agent = inPlan[0];
-      else why = inPlan.length === 0 ? 'unknown_performer' : 'ambiguous_agent';
-    } else {
-      why = 'unknown_performer';
-    }
-    if (agent !== undefined && !holds(agent, t.tool)) why = 'tool_not_held';
-    if (agent === undefined || why !== undefined) {
-      unresolved.push(`${id}:${why ?? 'unknown_performer'}`);
-      continue;
-    }
-
-    // The agent's step: its only one, or the one tied to this tool step.
-    const own = steps.filter((s) => isSpecialist(s) && s.specialistId === agent.specialistId);
-    const tDeps = idsOf(t.dependsOn) as string[];
-    let step: Step | undefined;
-    if (own.length === 1) step = own[0];
-    else if (own.length > 1) {
-      const waiting = own.filter((s) => (idsOf(s.dependsOn) as string[]).includes(id));
-      const waited = own.filter((s) => tDeps.includes(s.id as string));
-      const tied = waiting.length === 1 ? waiting : waited.length === 1 ? waited : [];
-      step = tied[0];
-    }
-    if (step === undefined) {
-      unresolved.push(`${id}:${own.length === 0 ? 'no_agent_step' : 'ambiguous_step'}`);
-      continue;
-    }
-    const s = step;
     const sid = s.id as string;
 
     // What the tool step waited on, the agent's step now waits on; a tool step of another
@@ -144,6 +102,77 @@ export function resolveToolSteps(
     }
     moved.set(id, sid);
     resolved.push(`${id}->${sid}`);
+  };
+
+  for (const t of steps) {
+    if (t.kind !== 'tool' || !isRecord(t.tool)) continue;
+    const id = t.id as string;
+    const by = t.performedBy;
+    const tDeps = idsOf(t.dependsOn) as string[];
+
+    // performedBy already names a specialist step (p12). Read as written unless that step, or
+    // other work, waits on the tool step: then the step ends with its tool, as the engine runs
+    // it, when the step's agent is known and holds the tool. Otherwise it is left as written.
+    if (typeof by === 'string' && isSpecialist(byId.get(by))) {
+      const performer = byId.get(by) as Step;
+      const backwards =
+        (idsOf(performer.dependsOn) as string[]).includes(id) ||
+        steps.some(
+          (x) =>
+            x.kind !== 'tool' && x !== performer && (idsOf(x.dependsOn) as string[]).includes(id),
+        );
+      if (!backwards) continue;
+      const owner = agents.filter((a) => a.specialistId === performer.specialistId);
+      if (owner.length !== 1) {
+        unresolved.push(`${id}:${owner.length === 0 ? 'unknown_performer' : 'ambiguous_agent'}`);
+        continue;
+      }
+      if (!holds(owner[0] as PlannerAgentView, t.tool)) {
+        unresolved.push(`${id}:tool_not_held`);
+        continue;
+      }
+      rewrite(t, performer, tDeps);
+      continue;
+    }
+
+    // The agent: named by specialistId or department, or the one agent holding the tool.
+    let agent: PlannerAgentView | undefined;
+    let why: ToolStepUnresolved | undefined;
+    if (typeof by === 'string') {
+      const named = agents.filter((a) => a.specialistId === by || a.departmentType === by);
+      if (named.length === 1) agent = named[0];
+      else why = named.length === 0 ? 'unknown_performer' : 'ambiguous_agent';
+    } else if (by === undefined) {
+      const holders = agents.filter((a) => holds(a, t.tool as Record<string, unknown>));
+      const inPlan = holders.filter((a) =>
+        steps.some((s) => isSpecialist(s) && s.specialistId === a.specialistId),
+      );
+      if (inPlan.length === 1) agent = inPlan[0];
+      else why = inPlan.length === 0 ? 'unknown_performer' : 'ambiguous_agent';
+    } else {
+      why = 'unknown_performer';
+    }
+    if (agent !== undefined && !holds(agent, t.tool)) why = 'tool_not_held';
+    if (agent === undefined || why !== undefined) {
+      unresolved.push(`${id}:${why ?? 'unknown_performer'}`);
+      continue;
+    }
+
+    // The agent's step: its only one, or the one tied to this tool step.
+    const own = steps.filter((s) => isSpecialist(s) && s.specialistId === agent.specialistId);
+    let step: Step | undefined;
+    if (own.length === 1) step = own[0];
+    else if (own.length > 1) {
+      const waiting = own.filter((s) => (idsOf(s.dependsOn) as string[]).includes(id));
+      const waited = own.filter((s) => tDeps.includes(s.id as string));
+      const tied = waiting.length === 1 ? waiting : waited.length === 1 ? waited : [];
+      step = tied[0];
+    }
+    if (step === undefined) {
+      unresolved.push(`${id}:${own.length === 0 ? 'no_agent_step' : 'ambiguous_step'}`);
+      continue;
+    }
+    rewrite(t, step, tDeps);
   }
 
   if (resolved.length === 0) return { proposal, resolved, unresolved };

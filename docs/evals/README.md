@@ -120,6 +120,16 @@ node packages/evals/dist/cli.js compare ~/evals/PLANNER-V2-RERUN.json ~/evals/PL
 
 `plan_proposal@5` (ADR-0173) is now the default, and `--prompt 4` runs @4 again. Every run reads tool steps as the product does: a tool written before its agent's work is resolved to that agent's step (`resolveToolSteps`). The run file records how each tool step was read (`tool steps: …`).
 
+`plan_proposal@6` (ADR-0174) is now the default, and `--prompt 5` runs @5 again. @6 is measured beside @3 with `--repeat 3`: a case passes only when all three scored repetitions pass, so one lucky or unlucky answer decides nothing.
+
+```sh
+EVAL_ACCESS_TOKEN=$(gcloud auth print-access-token) \
+  node packages/evals/dist/cli.js run --set planner --prompt 3 --repeat 3 --budget 10 --out ~/evals/PLANNER-V3-R3.json
+EVAL_ACCESS_TOKEN=$(gcloud auth print-access-token) \
+  node packages/evals/dist/cli.js run --set planner --repeat 3 --budget 10 --out ~/evals/PLANNER-V6-R3.json
+node packages/evals/dist/cli.js compare ~/evals/PLANNER-V3-R3.json ~/evals/PLANNER-V6-R3.json
+```
+
 ## Model reports and the model gate
 
 A model may serve agents outside DEV only with a passing report in [reports/](reports/README.md). CI enforces this.

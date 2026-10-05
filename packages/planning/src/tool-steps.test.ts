@@ -120,6 +120,89 @@ describe('resolving tool steps to their agent’s step (ADR-0173)', () => {
     expect(read).toMatchObject({ resolved: [], unresolved: [] });
   });
 
+  it('p12: the agent’s own step, named as performer, waiting on its own tool, ends with it', () => {
+    // p12 as plan_proposal@5 answered it: performedBy right, the dependency backwards.
+    const answer = plan([
+      specialist('research', RESEARCH),
+      toolStep('get_customer_data', 'prepare_follow_up', 'customer_records_summary', ['research']),
+      { ...specialist('prepare_follow_up', SALES, ['get_customer_data']), approvalRequired: true },
+    ]);
+    expect(structure(answer)).toBe('invalid_tool_dependency');
+    const read = resolveToolSteps(answer, OFFICE);
+    expect(read.resolved).toEqual(['get_customer_data->prepare_follow_up']);
+    expect(read.unresolved).toEqual([]);
+    // Nothing invented or removed; the step keeps its approval and waits on what the tool did.
+    expect(stepsOf(read.proposal).map((s) => s.id)).toEqual([
+      'research',
+      'prepare_follow_up',
+      'get_customer_data',
+    ]);
+    expect(byId(read.proposal, 'prepare_follow_up')).toMatchObject({
+      dependsOn: ['research'],
+      approvalRequired: true,
+    });
+    expect(byId(read.proposal, 'get_customer_data')).toMatchObject({
+      dependsOn: ['prepare_follow_up'],
+      performedBy: 'prepare_follow_up',
+    });
+    expect(structure(read.proposal)).toBe('ok');
+  });
+
+  it('p12: later work waiting on a tool already in its agent’s step waits on that step', () => {
+    const answer = plan([
+      specialist('prepare', SALES),
+      toolStep('counts', 'prepare', 'customer_records_summary', ['prepare']),
+      specialist('campaign', MARKETING, ['counts', 'prepare']),
+    ]);
+    const read = resolveToolSteps(answer, OFFICE);
+    expect(read.resolved).toEqual(['counts->prepare']);
+    expect(byId(read.proposal, 'campaign')?.dependsOn).toEqual(['prepare']);
+    expect(byId(read.proposal, 'counts')?.dependsOn).toEqual(['prepare']);
+    expect(structure(read.proposal)).toBe('ok');
+  });
+
+  it('p12: keeps inputFrom, and the tool’s earlier tool of the same step, as they were', () => {
+    const answer = plan([
+      specialist('research', RESEARCH),
+      toolStep('first', 'prepare', 'knowledge_search', [], {}),
+      toolStep('counts', 'prepare', 'customer_records_summary', ['first'], {
+        inputFrom: { segment: { step: 'research' } },
+      }),
+      specialist('prepare', SALES, ['research', 'first', 'counts']),
+    ]);
+    const read = resolveToolSteps(answer, OFFICE);
+    expect(read.resolved).toEqual(['first->prepare', 'counts->prepare']);
+    expect(byId(read.proposal, 'prepare')?.dependsOn).toEqual(['research']);
+    expect(byId(read.proposal, 'counts')).toMatchObject({
+      dependsOn: ['prepare', 'first'],
+      inputFrom: { segment: { step: 'research' } },
+    });
+    expect(byId(read.proposal, 'first')?.dependsOn).toEqual(['prepare']);
+    expect(structure(read.proposal)).toBe('ok');
+  });
+
+  it('p12: never guesses: a step whose agent lacks the tool, or is unknown, stays refused', () => {
+    const notHeld = plan([
+      toolStep('counts', 'estimate', 'customer_records_summary'),
+      specialist('estimate', FINANCE, ['counts']),
+    ]);
+    const read = resolveToolSteps(notHeld, OFFICE);
+    expect(read.proposal).toBe(notHeld);
+    expect(read).toMatchObject({ resolved: [], unresolved: ['counts:tool_not_held'] });
+    expect(structure(read.proposal)).toBe('invalid_dependency');
+
+    const stranger = '7d0c1a52-3b8e-4f6a-9c21-5e4b7a9d0099';
+    const unknown = plan([
+      toolStep('counts', 'estimate', 'customer_records_summary'),
+      specialist('estimate', stranger, ['counts']),
+    ]);
+    expect(resolveToolSteps(unknown, OFFICE)).toMatchObject({
+      proposal: unknown,
+      resolved: [],
+      unresolved: ['counts:unknown_performer'],
+    });
+  });
+
   it('never guesses: an agent named twice, or by nothing it knows, is left for the validator', () => {
     const twoSales = [...OFFICE, agent(SALES_2, 'sales', [tool('knowledge_search')])];
     const byDepartment = plan([

@@ -23,6 +23,8 @@ import {
   PLANNER_V3_INSTRUCTIONS,
   PLANNER_V4_EVAL,
   PLANNER_V4_INSTRUCTIONS,
+  PLANNER_V5_EVAL,
+  PLANNER_V5_INSTRUCTIONS,
   plannerRefusalOf,
   PLANNER_EVAL_CASES,
   keptPlan,
@@ -248,7 +250,7 @@ describe('the planner eval cases (ADR-0169)', () => {
       text: JSON.stringify({ agents: PLANNER_EVAL_AGENTS }),
     });
     expect(user?.content[0]).toEqual({ type: 'text', text: c.request });
-    expect(PLANNER_EVAL.prompt).toBe('plan_proposal@5');
+    expect(PLANNER_EVAL.prompt).toBe('plan_proposal@6');
   });
 
   it('ADR-0171: describes each tool as the validator judges it under the Harness’s policy', () => {
@@ -323,6 +325,16 @@ describe('the planner eval cases (ADR-0169)', () => {
     const [system] = PLANNER_V4_EVAL.messagesOf(find('p06_parallel_then_join'));
     expect(system?.content[0]).toEqual({ type: 'text', text: PLANNER_V4_INSTRUCTIONS });
     expect(PLANNER_V4_EVAL.prompt).toBe('plan_proposal@4');
+  });
+
+  it('ADR-0174: keeps @5 exactly as it was sent, to measure it beside @6', () => {
+    expect(createHash('sha256').update(PLANNER_V5_INSTRUCTIONS).digest('hex').slice(0, 16)).toBe(
+      '4cef44b0c049977a',
+    );
+    expect(PLANNER_V5_INSTRUCTIONS).not.toBe(PLANNER_INSTRUCTIONS);
+    const [system] = PLANNER_V5_EVAL.messagesOf(find('p06_parallel_then_join'));
+    expect(system?.content[0]).toEqual({ type: 'text', text: PLANNER_V5_INSTRUCTIONS });
+    expect(PLANNER_V5_EVAL.prompt).toBe('plan_proposal@5');
   });
 
   it('ADR-0172: the example in the instructions is a plan the validator accepts', async () => {
@@ -688,7 +700,7 @@ describe('running the planner evals (ADR-0169)', () => {
   it('asks the planner as the Harness does, scores each case and records the cost', async () => {
     const calls: ProviderCall[] = [];
     const run = await runWith((c) => good(c.id), calls);
-    expect(run).toMatchObject({ prompt: 'plan_proposal@5', policy: 'agent_task@2' });
+    expect(run).toMatchObject({ prompt: 'plan_proposal@6', policy: 'agent_task@2' });
     expect(run.cases.map((c) => [c.suite, c.status, c.score?.passed])).toEqual(
       PLANNER_EVAL_CASES.map(() => ['planner', 'scored', true]),
     );
@@ -716,7 +728,7 @@ describe('running the planner evals (ADR-0169)', () => {
     // The figures side by side: totals, each check, outcomes and languages, and each case.
     const vague = await runWith(() => good('p10_vague_es'));
     expect(plannerBreakdown(vague)).toMatchObject({
-      prompt: 'plan_proposal@5',
+      prompt: 'plan_proposal@6',
       passed: 6,
       scored: 16,
       outcomes: { ask: { passed: 2, of: 2 }, no_invention: { passed: 4, of: 4 } },
