@@ -13,6 +13,7 @@ import {
   PLANNER_V3_EVAL,
   PLANNER_V4_EVAL,
   PLANNER_V5_EVAL,
+  PLANNER_V6_EVAL,
   plannerComparisonText,
 } from './planner.js';
 import { MAX_EVAL_REPEAT, runEvals, type EvalCaseResult, type EvalRun } from './run.js';
@@ -26,9 +27,9 @@ import { MAX_EVAL_REPEAT, runEvals, type EvalCaseResult, type EvalRun } from './
  *   node dist/cli.js report run.json   (a run held to one model → docs/evals/reports/, G-5)
  *
  * `run` options: `--out <file>` (required), `--budget <credits>` (default and most: 70),
- * `--set planner` (the planner's cases, ADR-0169, instead of the agents'), `--prompt 1|2|3|4|5`
- * with it (an earlier `plan_proposal` again, to compare with @6 under the same scoring, ADR-0171
- * to ADR-0174; `--prompt 6` is the default),
+ * `--set planner` (the planner's cases, ADR-0169, instead of the agents'), `--prompt 1` to `6`
+ * with it (an earlier `plan_proposal` again, to compare with @7 under the same scoring, ADR-0171
+ * to ADR-0175; `--prompt 7` is the default),
  * `--suite <id>` (repeatable; default every suite), `--model <provider/model>` (a variant held
  * to one model), `--repeat <n>` (1 to 5, for consistency).
  */
@@ -94,7 +95,7 @@ async function run(args: readonly string[]): Promise<void> {
   }
   if (
     given.prompt !== undefined &&
-    (given.set !== 'planner' || !['1', '2', '3', '4', '5', '6'].includes(given.prompt))
+    (given.set !== 'planner' || !['1', '2', '3', '4', '5', '6', '7'].includes(given.prompt))
   ) {
     fail('--prompt is 1, 2, 3, 4 or 5 (the default), with --set planner');
   }
@@ -138,7 +139,9 @@ async function run(args: readonly string[]): Promise<void> {
                   ? PLANNER_V4_EVAL
                   : given.prompt === '5'
                     ? PLANNER_V5_EVAL
-                    : PLANNER_EVAL,
+                    : given.prompt === '6'
+                      ? PLANNER_V6_EVAL
+                      : PLANNER_EVAL,
         )
       : await runEvals({ ...common, cases });
   writeFileSync(out, `${JSON.stringify(result, null, 2)}\n`);

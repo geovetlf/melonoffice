@@ -75,7 +75,7 @@ export function plannerToolOf(
 }
 
 /**
- * The planner's fixed instructions (plan_proposal@6, ADR-0174). They describe the answer format
+ * The planner's fixed instructions (plan_proposal@7, ADR-0175). They describe the answer format
  * and the step kinds the engine runs; they grant nothing. Whatever the model answers still goes
  * through the whole validation pipeline, which alone decides.
  */
@@ -93,9 +93,8 @@ export const PLANNER_INSTRUCTIONS = [
   'plain sentences saying what cannot be done with the available capabilities and why. Never a',
   'plan with no steps, never an agent step that pretends to do it. If a useful part can be done,',
   'plan only that part instead and say in the summary what is left out.',
-  "Answer in the same language as the person's request, unless the person explicitly asks for",
-  'another language. This applies to the summary, labels, question and notPossible, even though',
-  'ids, tools and departments are in English.',
+  'Write the summary, labels, question and notPossible in the language of the request, unless',
+  'the person explicitly asks for another language.',
   `A plan has at most ${MAX_STEPS} steps, as few as the request needs: never add work, tools or`,
   'reviews nobody asked for. Each step has id (lowercase letters, digits and underscores,',
   'starting with a letter), kind, label (what it does, in a few words) and dependsOn (ids of',

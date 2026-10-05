@@ -4,7 +4,7 @@ import type { PlannerAgentView } from './planner-context.js';
  * Reading a planner's tool steps (ADR-0173). The engine runs a tool step inside one specialist
  * step of the agent that holds the tool: `performedBy` names that step, and the others wait on
  * the specialist step, which ends with its tools. Models often write the same plan the other way
- * round: the tool first, `performedBy` naming the agent (its specialistId or department), and
+ * round: the tool first, `performedBy` naming the agent (its specialistId, department or role), and
  * the agent's work after it. This resolves that reference, deterministically, to the real step:
  *
  * AGENT → THE AGENT'S STEP → TOOL
@@ -135,11 +135,13 @@ export function resolveToolSteps(
       continue;
     }
 
-    // The agent: named by specialistId or department, or the one agent holding the tool.
+    // The agent: named by specialistId, department or role (ADR-0175), or the one agent holding the tool.
     let agent: PlannerAgentView | undefined;
     let why: ToolStepUnresolved | undefined;
     if (typeof by === 'string') {
-      const named = agents.filter((a) => a.specialistId === by || a.departmentType === by);
+      const named = agents.filter(
+        (a) => a.specialistId === by || a.departmentType === by || a.roleId === by,
+      );
       if (named.length === 1) agent = named[0];
       else why = named.length === 0 ? 'unknown_performer' : 'ambiguous_agent';
     } else if (by === undefined) {

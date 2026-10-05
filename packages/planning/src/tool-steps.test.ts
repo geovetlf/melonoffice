@@ -231,6 +231,24 @@ describe('resolving tool steps to their agent’s step (ADR-0173)', () => {
     expect(resolveToolSteps(both, OFFICE).unresolved).toEqual(['search:ambiguous_agent']);
   });
 
+  it('ADR-0175: p14: a tool performed by the role of exactly one agent; a shared role is refused', () => {
+    const answer = plan([
+      toolStep('get_sales_data', 'sales_agent', 'customer_records_summary'),
+      specialist('analyze_sales', SALES, ['get_sales_data']),
+      specialist('plan_win_back', MARKETING, ['analyze_sales']),
+    ]);
+    const read = resolveToolSteps(answer, OFFICE);
+    expect(read.resolved).toEqual(['get_sales_data->analyze_sales']);
+    expect(structure(read.proposal)).toBe('ok');
+    const twoSales = [...OFFICE, agent(SALES_2, 'sales', [tool('customer_records_summary')])];
+    const shared = resolveToolSteps(answer, twoSales);
+    expect(shared).toMatchObject({
+      proposal: answer,
+      resolved: [],
+      unresolved: ['get_sales_data:ambiguous_agent'],
+    });
+  });
+
   it('never invents a step or a tool: no agent step, or an agent without the tool, stays refused', () => {
     const noStep = plan([
       toolStep('counts', SALES, 'customer_records_summary'),
