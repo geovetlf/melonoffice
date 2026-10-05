@@ -271,9 +271,7 @@ describe('resolving tool steps to their agent’s step (ADR-0173)', () => {
     });
     const without = planningAnswerOf({ structured: answer });
     expect(without).not.toHaveProperty('toolSteps');
-    expect(
-      (without as { proposal: { steps: { performedBy?: string }[] } }).proposal.steps[0]
-        ?.performedBy,
-    ).toBe(SALES);
+    if (without.kind !== 'proposal') throw new Error(without.kind);
+    expect((without.proposal.steps as { performedBy?: string }[])[0]?.performedBy).toBe(SALES);
   });
 });
