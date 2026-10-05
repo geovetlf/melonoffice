@@ -5,7 +5,8 @@ import { EVAL_CASES, EVAL_SUITES, type EvalSuiteId } from './cases.js';
 import { compareRuns, comparisonText } from './compare.js';
 import { devVertexRegistry, EVAL_MAX_BUDGET_CREDITS, evalTaskPolicy } from './dev.js';
 import { reportFileOf, reportOf } from './gate.js';
-import { MAX_EVAL_REPEAT, runEvals, type EvalRun } from './run.js';
+import { PLANNER_EVAL, PLANNER_EVAL_CASES } from './planner.js';
+import { MAX_EVAL_REPEAT, runEvals, type EvalCaseResult, type EvalRun } from './run.js';
 
 /**
  * The eval command (ADR-0134), run by a person in Cloud Shell against DEV:
@@ -16,6 +17,7 @@ import { MAX_EVAL_REPEAT, runEvals, type EvalRun } from './run.js';
  *   node dist/cli.js report run.json   (a run held to one model → docs/evals/reports/, G-5)
  *
  * `run` options: `--out <file>` (required), `--budget <credits>` (default and most: 70),
+ * `--set planner` (the planner's cases, ADR-0169, instead of the agents'),
  * `--suite <id>` (repeatable; default every suite), `--model <provider/model>` (a variant held
  * to one model), `--repeat <n>` (1 to 5, for consistency).
  */
@@ -32,6 +34,7 @@ function flags(args: readonly string[]) {
     model?: string;
     repeat?: number;
     dir?: string;
+    set?: string;
     suites: EvalSuiteId[];
     rest: string[];
   } = {
@@ -46,6 +49,7 @@ function flags(args: readonly string[]) {
     else if (arg === '--model') out.model = value();
     else if (arg === '--repeat') out.repeat = Number(value());
     else if (arg === '--dir') out.dir = value();
+    else if (arg === '--set') out.set = value();
     else if (arg === '--suite') {
       const suite = value();
       if (!EVAL_SUITES.includes(suite as EvalSuiteId)) fail(`unknown suite ${suite}`);
@@ -72,19 +76,22 @@ async function run(args: readonly string[]): Promise<void> {
   ) {
     fail(`--repeat must be 1 to ${MAX_EVAL_REPEAT}`);
   }
+  if (given.set !== undefined && given.set !== 'agents' && given.set !== 'planner') {
+    fail('--set must be agents (the default) or planner');
+  }
   const cases =
     given.suites.length === 0
       ? EVAL_CASES
       : EVAL_CASES.filter((c) => given.suites.includes(c.suite));
-  const result = await runEvals({
-    cases,
+  const common = {
     registry: devVertexRegistry(token as string),
+    // The planner's call runs under the agent's own policy (agent_task@2), as the agent tasks do.
     policy: evalTaskPolicy(),
-    environment: 'dev',
+    environment: 'dev' as const,
     budgetCredits: budget,
     ...(given.model === undefined ? {} : { pin: given.model }),
     ...(given.repeat === undefined ? {} : { repeat: given.repeat }),
-    onCase: (c) =>
+    onCase: (c: EvalCaseResult) =>
       process.stderr.write(
         `${c.score?.passed === true ? 'PASS' : c.status === 'scored' ? 'FAIL' : c.status.toUpperCase()} ${c.id}` +
           `${c.model === undefined ? '' : ` ${c.model}`}${c.latencyMs === undefined ? '' : ` ${c.latencyMs}ms`}` +
@@ -97,7 +104,11 @@ async function run(args: readonly string[]): Promise<void> {
                   .join(',')}`
           }\n`,
       ),
-  });
+  };
+  const result =
+    given.set === 'planner'
+      ? await runEvals({ ...common, cases: PLANNER_EVAL_CASES }, PLANNER_EVAL)
+      : await runEvals({ ...common, cases });
   writeFileSync(out, `${JSON.stringify(result, null, 2)}\n`);
   const t = result.totals;
   process.stdout.write(

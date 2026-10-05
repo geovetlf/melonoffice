@@ -63,6 +63,30 @@ A run file keeps each answer, with secrets cut out, to find why a case failed:
 jq -r '.cases[] | select(.score.passed==false) | "\(.id): \(.answer)"' ~/evals/POST-HARDENING-V2.json
 ```
 
+## The planner's evals
+
+The planner (`plan_proposal`) has its own 16 cases ([ADR-0169](../adr/0169-planner-evals.md)), all about one synthetic office of four agents. The plan pipeline scores each answer, with no model:
+
+- the plan has the proposal's shape, and only step kinds a plan runs;
+- its agents are candidates, and its tools are ones their agents list;
+- its inputs fit the tool, its references and dependencies are valid, and it has no cycle;
+- the plan validator accepts it, under the Harness's risk policy, in DEV;
+- it uses the departments, tools, order and review the person asked for;
+- it invents no tool, asks back when the request is too vague, and copies no phone or email;
+- it answers in the person's language (Spanish or English).
+
+A run costs well under 1 credit on Gemini 2.5 Flash-Lite (16 calls).
+
+```sh
+cd ~/melonoffice && git pull
+pnpm install --frozen-lockfile
+pnpm turbo run build --filter=@melonoffice/evals...
+EVAL_ACCESS_TOKEN=$(gcloud auth print-access-token) \
+  node packages/evals/dist/cli.js run --set planner --budget 5 --out ~/evals/PLANNER-BASELINE-V1.json
+```
+
+PLANNER-BASELINE-V1 is the planner's first run, on `plan_proposal@1`. A new planner prompt is compared with it as above, and the comparison has a `planning` category.
+
 ## Model reports and the model gate
 
 A model may serve agents outside DEV only with a passing report in [reports/](reports/README.md). CI enforces this.

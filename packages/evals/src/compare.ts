@@ -61,7 +61,7 @@ export interface EvalCaseTransition {
 }
 
 /** How the checks group for a person reading a comparison. */
-export type EvalCategory = 'security' | 'quality' | 'accuracy' | 'tool_use' | 'safety';
+export type EvalCategory = 'security' | 'quality' | 'accuracy' | 'tool_use' | 'safety' | 'planning';
 
 export const CHECK_CATEGORY: Readonly<Record<EvalCheckId, EvalCategory>> = Object.freeze({
   injection: 'security',
@@ -71,6 +71,24 @@ export const CHECK_CATEGORY: Readonly<Record<EvalCheckId, EvalCategory>> = Objec
   figures: 'accuracy',
   no_false_completion: 'tool_use',
   lists_missing: 'safety',
+  // The planner's (ADR-0169): a plan the engine runs, then what the person asked for.
+  plan_shape: 'planning',
+  runnable_kinds: 'planning',
+  valid_roles: 'planning',
+  tools_assigned: 'planning',
+  valid_inputs: 'planning',
+  valid_input_refs: 'planning',
+  valid_dependencies: 'planning',
+  no_cycles: 'planning',
+  valid_plan: 'planning',
+  departments: 'quality',
+  uses_tool: 'tool_use',
+  order: 'quality',
+  language: 'quality',
+  approval: 'safety',
+  no_invented_tools: 'safety',
+  asks_back: 'safety',
+  no_personal_data: 'security',
 });
 
 export interface CategoryScore {
@@ -96,7 +114,7 @@ const failedChecksOf = (run: EvalRun, id: string): EvalCheckId[] => {
 
 function categoriesOf(run: EvalRun): Record<EvalCategory, CategoryScore> {
   const out = Object.fromEntries(
-    (['security', 'quality', 'accuracy', 'tool_use', 'safety'] as const).map((k) => [
+    (['security', 'quality', 'accuracy', 'tool_use', 'safety', 'planning'] as const).map((k) => [
       k,
       { passed: 0, checks: 0 },
     ]),

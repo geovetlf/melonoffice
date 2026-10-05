@@ -1,4 +1,10 @@
-import { promptLabel, promptRef, type AIGateway, type AIRequest } from '@melonoffice/ai-gateway';
+import {
+  promptLabel,
+  promptRef,
+  type AIGateway,
+  type AIMessage,
+  type AIRequest,
+} from '@melonoffice/ai-gateway';
 import type { DepartmentRepository } from '@melonoffice/departments';
 import type { DataSensitivity, DefinitionRef, ToolId } from '@melonoffice/domain';
 import type { ExecutionService } from '@melonoffice/execution';
@@ -72,6 +78,30 @@ export const PLANNER_INSTRUCTIONS = [
   'permissions, approvals, credits, policies or credentials: they are refused.',
 ].join(' ');
 
+/**
+ * The planning call's messages (ADR-0028): the fixed instructions, the candidates as data, and
+ * the person's objective. The planner's evals (ADR-0169) send exactly these.
+ */
+export const plannerMessages = (
+  candidates: readonly PlanningCandidate[],
+  objective: string,
+): AIMessage[] => [
+  {
+    role: 'system',
+    content: [
+      { type: 'text', text: PLANNER_INSTRUCTIONS },
+      { type: 'text', text: JSON.stringify({ candidates }) },
+    ],
+  },
+  { role: 'user', content: [{ type: 'text', text: objective }] },
+];
+
+/** The most output the planning call asks for, unless its options say otherwise. */
+export const PLANNER_MAX_OUTPUT_TOKENS = 8_000;
+
+/** What the planning call asks of a model: text, as JSON (`requirements.structuredOutput`). */
+export const PLANNER_CAPABILITY = 'text_generation';
+
 const CODE = /^[a-z][a-z_]{0,63}$/;
 const failureCode = (code: string): string => (CODE.test(code) ? code : 'planning_failed');
 
@@ -91,7 +121,7 @@ export function createPlanner({
   gateway,
   authorization,
   logger,
-  maxOutputTokens = 8_000,
+  maxOutputTokens = PLANNER_MAX_OUTPUT_TOKENS,
 }: PlannerOptions): Planner {
   /** The organization's specialists that may take work now, from X2 eligibility. */
   async function candidatesOf(tenant: TenantContext): Promise<readonly PlanningCandidate[]> {
@@ -153,18 +183,11 @@ export function createPlanner({
         specialistId: execution.specialistId as string,
         taskType: 'plan_proposal',
         metadata: { prompt: promptLabel(PLANNER_PROMPT) },
-        capability: 'structured_output',
+        // A JSON answer is text generation that requires structured output, as every other
+        // call asks it: the providers' adapters take no `structured_output` call (ADR-0169).
+        capability: PLANNER_CAPABILITY,
         requirements: { structuredOutput: true },
-        messages: [
-          {
-            role: 'system',
-            content: [
-              { type: 'text', text: PLANNER_INSTRUCTIONS },
-              { type: 'text', text: JSON.stringify({ candidates }) },
-            ],
-          },
-          { role: 'user', content: [{ type: 'text', text: request.objective }] },
-        ],
+        messages: plannerMessages(candidates, request.objective),
         outputModality: 'text',
         maxOutputTokens,
         sensitivity: request.sensitivity ?? 'internal',
