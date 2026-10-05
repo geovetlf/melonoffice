@@ -326,6 +326,9 @@ importers:
       '@melonoffice/config':
         specifier: workspace:*
         version: link:../../packages/config
+      '@melonoffice/workflows':
+        specifier: workspace:*
+        version: link:../../packages/workflows
       jose:
         specifier: 6.2.12
         version: 6.2.12

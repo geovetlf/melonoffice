@@ -2470,7 +2470,8 @@ a.sidebar__item:hover {
 }
 
 .automations__state--running,
-.automations__state--delayed {
+.automations__state--delayed,
+.automations__state--retrying {
   background: var(--mo-color-accent-soft);
 }
 
@@ -2484,7 +2485,8 @@ a.sidebar__item:hover {
 }
 
 .automations__state--failed,
-.automations__state--declined {
+.automations__state--declined,
+.automations__state--expired {
   background: var(--mo-color-danger-soft);
 }
 

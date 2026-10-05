@@ -789,7 +789,7 @@ function PlanCard({
         />
       </p>
       <p className="automations__meta">
-        <FormattedMessage id={`automations.planStatus.${detail.status}`} />
+        <FormattedMessage id={planPhaseKey(detail.status, steps)} />
         {' · '}
         <FormattedMessage
           id={
@@ -1264,6 +1264,27 @@ function checkActionOf(decision: PlanStepView['decision']): string | undefined {
   return decision?.decision === CHECK_DECISION && typeof action === 'string' ? action : undefined;
 }
 
+/** Whether a step waits to run again after a passing failure (ADR-0153), not for a time. */
+const isRetry = (done: PlanStepProgress): boolean =>
+  done.kind !== 'wait' && done.state === 'delayed';
+
+/**
+ * What a plan is doing, in the words of its steps (ADR-0178): a running plan that only waits for
+ * its person, for a time, or to try a step again says so, not just "running". Every other status
+ * is the plan's own.
+ */
+export function planPhaseKey(status: string, steps: readonly PlanStepProgress[]): string {
+  if (status !== 'executing' || steps.some((s) => s.state === 'running')) {
+    return `automations.planStatus.${status}`;
+  }
+  if (steps.some((s) => s.state === 'awaiting_approval')) {
+    return 'automations.planStatus.executing.approval';
+  }
+  if (steps.some(isRetry)) return 'automations.planStatus.executing.retrying';
+  if (steps.some((s) => s.state === 'delayed')) return 'automations.planStatus.executing.waiting';
+  return `automations.planStatus.${status}`;
+}
+
 /**
  * Where a step is, in one word the person reads (ADR-0167): pending, running, waiting for them,
  * waiting for a time, done, failed, skipped, blocked by the credit limit, rejected or stopped.
@@ -1276,11 +1297,14 @@ function stateOf(done: PlanStepProgress, blocked: boolean): string {
     case 'awaiting_approval':
     case 'completed':
     case 'skipped':
-    case 'declined':
     case 'stopped':
       return done.state;
+    case 'declined':
+      // Not approved in time is not the same as turned down (ADR-0178).
+      return done.failure === 'expired' ? 'expired' : 'declined';
     case 'delayed':
-      return 'delayed';
+      // A step's next attempt waits out its pause: it is being tried again (ADR-0153).
+      return isRetry(done) ? 'retrying' : 'delayed';
     case 'failed':
       return done.failure === 'budget_exceeded' || blocked ? 'blocked' : 'failed';
     default: {

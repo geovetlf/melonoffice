@@ -318,11 +318,7 @@ describe('Automations (WF-3)', () => {
         /The steps that depend on this one are skipped; the other branches go on/,
       ),
     ).toBeTruthy();
-    expect(
-      within(plan).queryByText(
-        /Failed: the steps that depend on it are skipped; other branches go on/,
-      ),
-    ).toBeNull();
+    expect(within(plan).queryByText(/Failed: the steps that depend on it are skipped/)).toBeNull();
   });
 
   it('ADR-0146: a step that asked a person waits for them, links to Approvals, and a rejection skips only its branch', async () => {
@@ -416,6 +412,87 @@ describe('Automations (WF-3)', () => {
     expect(within(shown).getAllByText(/Done/)).toHaveLength(2);
     expect(within(shown).queryByRole('link', { name: 'Decide in Approvals' })).toBeNull();
     expect(shown.textContent).not.toContain('will ask for your approval');
+  });
+
+  it('ADR-0178: a running plan says what it waits for, and a step says when it is tried again or was not approved in time', async () => {
+    const plan = {
+      id: 'plan-9',
+      status: 'executing',
+      version: 1,
+      createdAt: '2026-09-29T09:00:00Z',
+      current: {
+        version: 1,
+        digest: 'd'.repeat(64),
+        request: { summary: 'Oferta', objective: 'Preparar la oferta' },
+        steps: [
+          { id: 'research', kind: 'specialist', label: 'Research', dependsOn: [] },
+          {
+            id: 'offer',
+            kind: 'specialist',
+            label: 'Offer',
+            dependsOn: ['research'],
+            approvalRequired: true,
+          },
+        ],
+        riskLevel: 'low',
+        estimate: { status: 'not_estimated' },
+        source: { kind: 'workflow', workflowId: 'wf-launch', workflowVersion: 2 },
+      },
+    };
+    const progress = (
+      stepId: string,
+      state: string,
+      extra: { failure?: string; attempt?: number; until?: string } = {},
+    ) => ({
+      stepId,
+      kind: 'specialist',
+      label: stepId,
+      state,
+      outcome: null,
+      executionId: `exec-${stepId}`,
+      status: state === 'completed' ? 'completed' : 'pending',
+      approvalId: stepId === 'offer' ? 'appr-9' : null,
+      failure: extra.failure ?? null,
+      answer: null,
+      missing: [],
+      attempt: extra.attempt ?? 1,
+      until: extra.until ?? null,
+    });
+    const shown = async (planStatus: string, steps: unknown[]) => {
+      cleanup();
+      open((b) => {
+        b.options.plans.org_1 = [{ ...plan, status: planStatus }];
+        b.options.planSteps['plan-9'] = steps as never;
+      });
+      const plans = within(await screen.findByRole('region', { name: 'Plans' }));
+      fireEvent.click(await plans.findByRole('button', { name: /Running|Completed/ }));
+      return within(await screen.findByRole('article', { name: 'Oferta' }));
+    };
+
+    // Nothing runs: the plan waits for its person, and says so.
+    let card = await shown('executing', [
+      progress('research', 'completed'),
+      progress('offer', 'awaiting_approval'),
+    ]);
+    expect(await card.findByText(/Running: waiting for your approval/)).toBeTruthy();
+
+    // A step that failed for a passing reason waits to run again: "Retrying", not "Waiting".
+    card = await shown('executing', [
+      progress('research', 'delayed', { attempt: 2, until: '2026-09-29T09:05:00Z' }),
+      progress('offer', 'waiting'),
+    ]);
+    expect(await card.findByText(/Running: trying a step again/)).toBeTruthy();
+    const research = card.getByText('Research').closest('li') as HTMLElement;
+    expect(within(research).getByText('Retrying')).toBeTruthy();
+
+    // Not approved in time is not "Rejected"; the plan still completed.
+    card = await shown('completed', [
+      progress('research', 'completed'),
+      progress('offer', 'declined', { failure: 'expired' }),
+    ]);
+    const offer = (await card.findByText('Offer')).closest('li') as HTMLElement;
+    expect(within(offer).getByText('Not approved in time')).toBeTruthy();
+    expect(within(offer).queryByText('Rejected')).toBeNull();
   });
 
   it('ADR-0167: a person decides a step waiting for them on the plan, through Approvals’ own call', async () => {
