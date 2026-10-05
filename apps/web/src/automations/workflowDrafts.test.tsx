@@ -331,3 +331,121 @@ describe('GIA drafts a workflow in her chat (ADR-0171)', () => {
     expect(chat.queryByRole('button', { name: 'Prepare as an automation' })).toBeNull();
   });
 });
+
+describe('GIA offers an automation when the words repeat (Block 3 F3, ADR-0177)', () => {
+  const ANSWER = {
+    answer: 'Puedo ayudarte con eso.',
+    department: 'sales',
+    screen: null,
+    proposedAction: null,
+    proposedFacts: 0,
+    context: { facts: 0, activity: false, missing: [] },
+    replayed: false,
+    generatedBy: 'ai',
+  };
+  const WORDS = 'Cada lunes recupera a los clientes inactivos';
+
+  async function ask(chat: ReturnType<typeof within>) {
+    fireEvent.change(chat.getByRole('textbox', { name: 'Your message to GIA' }), {
+      target: { value: WORDS },
+    });
+    fireEvent.click(chat.getByRole('button', { name: 'Send' }));
+    await chat.findByText('Puedo ayudarte con eso.');
+  }
+
+  it('offers it, drafts only when asked, saves only when asked, and opens the saved workflow', async () => {
+    const backend = open('/gia', (b) => {
+      b.options.gia = { ...ANSWER, workflowIntent: true };
+      b.options.workflowDrafts = [READY];
+    });
+    const chat = within(await screen.findByRole('region', { name: 'Talk to GIA' }));
+    await ask(chat);
+    const offer = within(chat.getByRole('group', { name: 'GIA offers an automation' }));
+    expect(offer.getByText(/nothing is saved or activated without you/)).toBeTruthy();
+    // An offer only: nothing was drafted, saved or planned yet.
+    expect(posts(backend, '/workflows/draft')).toHaveLength(0);
+
+    fireEvent.click(offer.getByRole('button', { name: 'Prepare as an automation' }));
+    const card = within(await chat.findByRole('region', { name: 'Recuperar clientes inactivos' }));
+    expect(offer.getByRole('status').textContent).toBe('Preparing the draft below.');
+    expect(offer.queryByRole('button', { name: 'Prepare as an automation' })).toBeNull();
+    // Her words are in the chat once, and went to the planner as they were written.
+    expect(chat.getAllByText(WORDS)).toHaveLength(1);
+    expect(posts(backend, '/workflows/draft').map((c) => JSON.parse(c.body ?? '{}'))).toEqual([
+      { intent: WORDS },
+    ]);
+    expect(card.getByText(/What it will do · 4 steps/)).toBeTruthy();
+    expect(card.getByText('Asks for your approval first')).toBeTruthy();
+    expect(posts(backend, '/org_1/workflows')).toHaveLength(0);
+
+    fireEvent.click(card.getByRole('button', { name: 'Save draft' }));
+    const go = await chat.findByRole('link', { name: 'Open the automation' });
+    const [saved] = posts(backend, '/org_1/workflows');
+    expect(JSON.parse(saved?.body ?? '{}')).toEqual({ name: READY.name, steps: STEPS });
+    // Saved as a draft: never activated and never planned.
+    expect(backend.options.workflows['org_1']?.[0]?.status).toBe('draft');
+    expect(posts(backend, '/status')).toHaveLength(0);
+    expect(posts(backend, '/plans')).toHaveLength(0);
+    expect(go.getAttribute('href')).toBe('/automations?workflow=wf-1');
+
+    fireEvent.click(go);
+    const workflows = within(await screen.findByRole('region', { name: 'Workflows' }));
+    await workflows.findByText('Recuperar clientes inactivos');
+    expect(globalThis.location.search).toBe('?workflow=wf-1');
+    expect(workflows.getByRole('button', { name: 'Steps' }).getAttribute('aria-expanded')).toBe(
+      'true',
+    );
+  });
+
+  it('goes away when the person says not now, and drafts nothing', async () => {
+    const backend = open('/gia', (b) => {
+      b.options.gia = { ...ANSWER, workflowIntent: true };
+      b.options.workflowDrafts = [READY];
+    });
+    const chat = within(await screen.findByRole('region', { name: 'Talk to GIA' }));
+    await ask(chat);
+    const offer = within(chat.getByRole('group', { name: 'GIA offers an automation' }));
+    fireEvent.click(offer.getByRole('button', { name: 'Not now' }));
+    expect(chat.queryByRole('group', { name: 'GIA offers an automation' })).toBeNull();
+    expect(posts(backend, '/workflows/draft')).toHaveLength(0);
+  });
+
+  it('is not offered when the server did not read repeatable work, or to a role that may not draft', async () => {
+    open('/gia', (b) => {
+      b.options.gia = { ...ANSWER, workflowIntent: false };
+    });
+    let chat = within(await screen.findByRole('region', { name: 'Talk to GIA' }));
+    await ask(chat);
+    expect(chat.queryByRole('group', { name: 'GIA offers an automation' })).toBeNull();
+    cleanup();
+
+    // The browser never decides it: even if an answer said so, a role without drafting sees nothing.
+    open(
+      '/gia',
+      (b) => {
+        b.options.gia = { ...ANSWER, workflowIntent: true };
+      },
+      ['gia.ask'],
+    );
+    chat = within(await screen.findByRole('region', { name: 'Talk to GIA' }));
+    await ask(chat);
+    expect(chat.queryByRole('group', { name: 'GIA offers an automation' })).toBeNull();
+  });
+});
+
+describe('Automations opens the workflow it was asked for (ADR-0177)', () => {
+  it('opens the saved draft from the card, with its steps and the editor at hand', async () => {
+    open('/automations', (b) => {
+      b.options.workflowDrafts = [READY];
+    });
+    const panel = await askOnAutomations();
+    const card = within(await panel.findByRole('region', { name: 'Recuperar clientes inactivos' }));
+    fireEvent.click(card.getByRole('button', { name: 'Save draft' }));
+    fireEvent.click(await panel.findByRole('link', { name: 'Open the automation' }));
+    const workflows = within(screen.getByRole('region', { name: 'Workflows' }));
+    await workflows.findByText('Recuperar clientes inactivos');
+    expect(workflows.getByRole('button', { name: 'Steps' }).getAttribute('aria-expanded')).toBe(
+      'true',
+    );
+  });
+});

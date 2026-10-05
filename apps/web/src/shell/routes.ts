@@ -110,6 +110,9 @@ export const paths = {
   agents: () => '/agents',
   agentTaskList: () => '/agents/tasks',
   automations: () => '/automations',
+  /** Automations with one workflow opened, e.g. the one GIA's draft was just saved as (ADR-0177). */
+  automationsWorkflow: (workflowId: string) =>
+    `/automations?workflow=${encodeURIComponent(workflowId)}`,
   partners: () => '/settings/partners',
   brand: () => '/settings/brand',
   partnerConsole: () => '/partner',
@@ -120,10 +123,10 @@ export const paths = {
 
 /**
  * An id a page was opened with (`?c=`, `?contact=` (C3); `?opportunity=`, `?stage=`, `?view=`
- * (C4); `?followUp=` (C5); `?plan=` (ADR-0119)), when it looks like one.
+ * (C4); `?followUp=` (C5); `?plan=` (ADR-0119); `?workflow=` (ADR-0177)), when it looks like one.
  */
 export function openedWith(
-  name: 'c' | 'contact' | 'opportunity' | 'stage' | 'view' | 'followUp' | 'plan',
+  name: 'c' | 'contact' | 'opportunity' | 'stage' | 'view' | 'followUp' | 'plan' | 'workflow',
 ): string | undefined {
   const value = new URLSearchParams(globalThis.location.search).get(name);
   return value !== null && ID.test(value) ? value : undefined;

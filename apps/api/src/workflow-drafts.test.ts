@@ -180,7 +180,7 @@ describe.each(STORES)('workflow drafts with storage in %s (ADR-0171)', (_name, c
     });
     const draft = (body: unknown, token = 'token-alice', org = orgA) =>
       call(token, 'POST', `/v1/organizations/${org}/workflows/draft`, body);
-    return { draft, call, base, orgB, agentId, calls: fake.calls };
+    return { draft, call, base, orgB, agentId, calls: fake.calls, stores };
   }
 
   it('drafts a workflow by role, checked as planning would, and stores nothing', async () => {
@@ -249,5 +249,107 @@ describe.each(STORES)('workflow drafts with storage in %s (ADR-0171)', (_name, c
       detail: 'intent',
     });
     expect(asks.calls).toHaveLength(1);
+  });
+
+  // Block 3 F3 (ADR-0177): from GIA's draft to a saved draft, with the person deciding each step.
+  const CHAINED = (agent: string) => ({
+    summary: 'Cada lunes, recuperar clientes inactivos',
+    objective: 'Recuperar clientes inactivos.',
+    steps: [
+      {
+        id: 'research',
+        kind: 'specialist',
+        label: 'Revisar a quién escribir',
+        dependsOn: [],
+        specialistId: agent,
+      },
+      {
+        id: 'search',
+        kind: 'tool',
+        label: 'Buscar lo que sabemos',
+        dependsOn: ['research'],
+        performedBy: 'research',
+        tool: { id: 'knowledge_search', version: 1 },
+        inputFrom: { query: { step: 'research' } },
+      },
+      {
+        id: 'offer',
+        kind: 'specialist',
+        label: 'Preparar la oferta',
+        dependsOn: ['search'],
+        specialistId: agent,
+        approvalRequired: true,
+      },
+    ],
+  });
+
+  it('F3: keeps approvals and results between steps, saves only as the person, as a draft', async () => {
+    const t = await setup(CHAINED);
+    const drafted = await t.draft({ intent: 'Cada lunes recupera a los clientes inactivos' });
+    expect(drafted.status, JSON.stringify(drafted.body)).toBe(200);
+    expect(drafted.body.status).toBe('ready');
+    const steps = drafted.body.steps as Record<string, unknown>[];
+    expect(steps.find((s) => s.id === 'search')).toEqual(
+      expect.objectContaining({ inputFrom: { query: { step: 'research' } } }),
+    );
+    expect(steps.find((s) => s.id === 'offer')).toEqual(
+      // The tool is its agent's step's own work, so what waited on the tool waits on that step.
+      expect.objectContaining({ approvalRequired: true, dependsOn: ['research'] }),
+    );
+    // Drafting stored nothing and decided nothing: no workflow, plan, approval or audit event.
+    const before = (await t.stores.auditEvents()).filter((e) => e.action.startsWith('workflow.'));
+    expect(before).toEqual([]);
+    expect((await t.call('token-alice', 'GET', `${t.base}/workflows`)).body.workflows).toEqual([]);
+    expect((await t.call('token-alice', 'GET', `${t.base}/plans`)).body.plans).toEqual([]);
+
+    // The person saves it through the existing route: it stays a draft, in their name.
+    const saved = await t.call('token-alice', 'POST', `${t.base}/workflows`, {
+      name: drafted.body.name,
+      steps,
+    });
+    expect(saved.status, JSON.stringify(saved.body)).toBe(201);
+    expect(saved.body.status).toBe('draft');
+    const detail = await t.call(
+      'token-alice',
+      'GET',
+      `${t.base}/workflows/${saved.body.id as string}`,
+    );
+    const stored = (detail.body.current as { steps: Record<string, unknown>[] }).steps;
+    expect(stored.find((s) => s.id === 'offer')?.approvalRequired).toBe(true);
+    expect(stored.find((s) => s.id === 'search')?.inputFrom).toEqual({
+      query: { step: 'research' },
+    });
+    const events = (await t.stores.auditEvents()).filter((e) => e.action.startsWith('workflow.'));
+    expect(events.map((e) => [e.action, e.actor.type])).toEqual([['workflow.created', 'user']]);
+    expect((await t.call('token-alice', 'GET', `${t.base}/plans`)).body.plans).toEqual([]);
+    // Another organization cannot read or save into it.
+    expect(
+      (await t.call('token-bob', 'GET', `${t.base}/workflows/${saved.body.id as string}`)).status,
+    ).toBe(403);
+  });
+
+  it('F3: names no agent it was not shown, and hides internals when the model fails', async () => {
+    const invents = await setup((agent) => ({
+      ...PLAN(agent),
+      steps: [{ ...PLAN(agent).steps[0], specialistId: 'sales_agent' }, PLAN(agent).steps[1]],
+    }));
+    const invented = await invents.draft({ intent: 'Cada lunes revisa las ventas' });
+    expect(invented.body.status).toBe('invalid');
+    // Refused, with no agent shown as doing it, and the server refuses to save it as written.
+    expect(invented.body).not.toHaveProperty('summary');
+    expect(invented.body.problem).toEqual(expect.objectContaining({ reason: 'invalid_workflow' }));
+    const forced = await invents.call('token-alice', 'POST', `${invents.base}/workflows`, {
+      name: invented.body.name,
+      steps: invented.body.steps,
+    });
+    expect(forced.status).toBe(400);
+    expect(
+      (await invents.call('token-alice', 'GET', `${invents.base}/workflows`)).body.workflows,
+    ).toEqual([]);
+
+    const broken = await setup(() => 'not a plan');
+    const failed = await broken.draft({ intent: 'Cada lunes revisa las ventas' });
+    expect(failed.body).toEqual({ status: 'failed', code: expect.any(String) });
+    expect(JSON.stringify(failed.body)).not.toMatch(/planner|prompt|stack|alpha|token/i);
   });
 });

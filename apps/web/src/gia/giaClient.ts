@@ -96,6 +96,11 @@ export interface GiaAnswerView {
   readonly proposedAgentTask: GiaAgentTaskProposalView | null;
   /** Work for several departments she prepared (ADR-0117); the person confirms it. */
   readonly proposedTeamTask?: GiaTeamTaskProposalView | null;
+  /**
+   * The person's words read as repeatable work they may draft as an automation (ADR-0177): the
+   * chat then offers to prepare a draft. Nothing is drafted until they ask.
+   */
+  readonly workflowIntent?: boolean;
   /** The ranking the answer is about, when it is about one. */
   readonly priorities: readonly GiaPriorityView[];
   /** The answer carries a finished projection (ADR-0059): by the model or the simple fallback. */
@@ -327,6 +332,7 @@ export function createGiaClient(request: ReplyRequest, organizationId: string): 
           proposedFollowUp: proposalOf(body.proposedFollowUp),
           proposedAgentTask: agentTaskOf(body.proposedAgentTask),
           proposedTeamTask: teamTaskOf(body.proposedTeamTask),
+          workflowIntent: body.workflowIntent === true,
           priorities: prioritiesOf(body.priorities),
           forecast: forecastOf(body.forecast),
           forecastGap: forecastGapOf(body.forecast),
