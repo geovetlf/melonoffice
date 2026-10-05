@@ -75,14 +75,14 @@ The planner (`plan_proposal`) has its own 16 cases ([ADR-0169](../adr/0169-plann
 - it invents no tool, asks back when the request is too vague, and copies no phone or email;
 - it answers in the person's language (Spanish or English).
 
-A run costs well under 1 credit on Gemini 2.5 Flash-Lite (16 calls).
+A run costs well under 1 credit on Gemini 2.5 Flash-Lite (16 calls). The budget is 10 because the runner sets aside each call's worst case (8,000 output tokens) before making it.
 
 ```sh
 cd ~/melonoffice && git pull
 pnpm install --frozen-lockfile
 pnpm turbo run build --filter=@melonoffice/evals...
 EVAL_ACCESS_TOKEN=$(gcloud auth print-access-token) \
-  node packages/evals/dist/cli.js run --set planner --budget 5 --out ~/evals/PLANNER-BASELINE-V1.json
+  node packages/evals/dist/cli.js run --set planner --budget 10 --out ~/evals/PLANNER-BASELINE-V1.json
 ```
 
 PLANNER-BASELINE-V1 is the planner's first run, on `plan_proposal@1`. A new planner prompt is compared with it as above, and the comparison has a `planning` category.
