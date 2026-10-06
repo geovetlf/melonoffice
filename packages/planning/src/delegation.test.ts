@@ -86,6 +86,7 @@ async function setup() {
       find: (org, id) => w.planRepository.find(org, id),
       findVersion: (org, id, v) => w.planRepository.findVersion(org, id, v),
       list: (org, limit) => w.planRepository.list(org, limit),
+      listForWorkflow: (org, id, limit) => w.planRepository.listForWorkflow(org, id, limit),
       page: (org, request) => w.planRepository.page(org, request),
       create: (write) => w.planRepository.create(write),
       update: async (org, id, change) => {

@@ -1,5 +1,5 @@
 import type { AuditEvent, InMemoryAuditStore } from '@melonoffice/audit';
-import type { OrganizationId, Plan, PlanId, PlanVersion } from '@melonoffice/domain';
+import type { OrganizationId, Plan, PlanId, PlanVersion, WorkflowId } from '@melonoffice/domain';
 import { PlanningError } from './errors.js';
 import { checkStoredPlan, checkStoredPlanVersion } from './model.js';
 
@@ -43,6 +43,15 @@ export interface PlanRepository {
   ): Promise<PlanVersion | undefined>;
   /** The organization's plans, newest first, at most `limit`. */
   list(organizationId: OrganizationId, limit: number): Promise<readonly Plan[]>;
+  /**
+   * The organization's plans made from one workflow (ADR-0180), newest first, at most `limit`.
+   * Another organization's plans are never returned, whatever the workflow id.
+   */
+  listForWorkflow(
+    organizationId: OrganizationId,
+    workflowId: WorkflowId,
+    limit: number,
+  ): Promise<readonly Plan[]>;
   /**
    * The organization's plans newest first, by creation then id, strictly after `after`, at
    * most `limit` (ADR-0150). Every plan is reachable a page at a time, without a window.
@@ -94,7 +103,10 @@ export function checkNextPlan(current: Plan, next: Plan): void {
     next.organizationId !== current.organizationId ||
     next.executionId !== current.executionId ||
     next.version !== current.version ||
-    next.revision !== current.revision + 1
+    next.revision !== current.revision + 1 ||
+    // Which workflow made it never changes (ADR-0180).
+    next.workflow?.id !== current.workflow?.id ||
+    next.workflow?.version !== current.workflow?.version
   ) {
     throw new PlanningError('plan_concurrency_conflict');
   }
@@ -126,6 +138,16 @@ export class InMemoryPlanRepository implements PlanRepository {
       .filter((p) => p.organizationId === organizationId)
       .map(checkStoredPlan)
       .sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0))
+      .slice(0, limit);
+  }
+
+  async listForWorkflow(
+    organizationId: OrganizationId,
+    workflowId: WorkflowId,
+    limit: number,
+  ): Promise<readonly Plan[]> {
+    return (await this.list(organizationId, Number.MAX_SAFE_INTEGER))
+      .filter((p) => p.workflow?.id === workflowId)
       .slice(0, limit);
   }
 

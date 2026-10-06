@@ -107,6 +107,15 @@ export function newPlan(request: NewPlan, by: UserId, at: IsoTimestamp): PlanWri
     status: approvalRequired ? 'approval_required' : 'ready',
     version: 1,
     delegations: Object.freeze([]),
+    // Which workflow made it, where lists can read it (ADR-0180).
+    ...(request.source.kind === 'workflow'
+      ? {
+          workflow: Object.freeze({
+            id: request.source.workflowId,
+            version: request.source.workflowVersion,
+          }),
+        }
+      : {}),
     revision: 1,
     createdAt: at,
     createdBy: by,
@@ -253,6 +262,15 @@ export function checkStoredPlan(plan: Plan): Plan {
     invalid('delegations');
   }
   checkDelegationState(plan);
+  if (
+    plan.workflow !== undefined &&
+    (typeof plan.workflow.id !== 'string' ||
+      plan.workflow.id.length === 0 ||
+      !Number.isSafeInteger(plan.workflow.version) ||
+      plan.workflow.version < 1)
+  ) {
+    invalid('workflow');
+  }
   if (plan.conditions !== undefined) {
     if (!Array.isArray(plan.conditions)) invalid('conditions');
     for (const c of plan.conditions) checkConditionResult(c);
