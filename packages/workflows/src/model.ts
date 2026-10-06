@@ -224,14 +224,18 @@ export function applyWorkflowStatus(
   from: WorkflowStatus,
   to: WorkflowStatus,
   at: IsoTimestamp,
+  by: UserId,
 ): Workflow {
   if (workflow.status !== from) throw new WorkflowError('workflow_concurrency_conflict');
   if (!canChangeWorkflowStatus(from, to)) throw new WorkflowError('invalid_workflow_transition');
+  const when = later(workflow, at);
   return Object.freeze({
     ...workflow,
     status: to,
     revision: workflow.revision + 1,
-    updatedAt: later(workflow, at),
+    updatedAt: when,
+    // Who switched it, and when, kept on the workflow itself (ADR-0179); the audit keeps them all.
+    lastStatusChange: Object.freeze({ from, to, at: when, by }),
   });
 }
 
@@ -240,6 +244,13 @@ export function checkStoredWorkflow(workflow: Workflow): Workflow {
   if (!isWorkflowStatus(workflow.status)) invalid('status');
   if (!Number.isSafeInteger(workflow.version) || workflow.version < 1) invalid('version');
   if (!Number.isSafeInteger(workflow.revision) || workflow.revision < 1) invalid('revision');
+  const change = workflow.lastStatusChange;
+  if (
+    change !== undefined &&
+    (!isWorkflowStatus(change.from) || change.to !== workflow.status || change.by.length === 0)
+  ) {
+    invalid('lastStatusChange');
+  }
   return workflow;
 }
 

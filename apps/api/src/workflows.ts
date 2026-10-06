@@ -257,6 +257,8 @@ const STATUS = {
   invalid_workflow_transition: 409,
   workflow_concurrency_conflict: 409,
   workflow_not_active: 409,
+  // Its current version would not plan now (ADR-0179); `detail` says why, as codes.
+  workflow_not_valid: 409,
   assignee_unavailable: 409,
   workflow_plan_ended: 409,
   // From the plan and execution services the workflow calls.
@@ -275,7 +277,8 @@ function refusal(c: Context<AuthEnv>, error: unknown): Response {
       {
         error: code,
         // Which field, for an invalid workflow: a code, never user data.
-        ...(code === 'invalid_workflow' && coded.detail !== undefined
+        ...((code === 'invalid_workflow' || code === 'workflow_not_valid') &&
+        coded.detail !== undefined
           ? { detail: coded.detail }
           : {}),
       },
@@ -305,6 +308,16 @@ export const toWorkflowView = (w: Workflow) => ({
   createdAt: w.createdAt,
   createdBy: w.createdBy,
   updatedAt: w.updatedAt,
+  // Who last switched it on or off, and when (ADR-0179).
+  lastStatusChange:
+    w.lastStatusChange === undefined
+      ? null
+      : {
+          from: w.lastStatusChange.from,
+          to: w.lastStatusChange.to,
+          at: w.lastStatusChange.at,
+          by: w.lastStatusChange.by,
+        },
 });
 
 const toWorkflowVersionView = (v: WorkflowVersion) => ({

@@ -46,6 +46,13 @@ interface WorkflowDocument {
   readonly createdAt: FirestoreTimestamp;
   readonly createdBy: string;
   readonly updatedAt: FirestoreTimestamp;
+  /** Who last switched it on or off (ADR-0179). Absent on older records and new drafts. */
+  readonly lastStatusChange?: {
+    readonly from: string;
+    readonly to: string;
+    readonly at: FirestoreTimestamp;
+    readonly by: string;
+  };
 }
 
 interface WorkflowVersionDocument {
@@ -72,6 +79,16 @@ const toWorkflowDocument = (w: Workflow): WorkflowDocument => ({
   createdAt: ts(w.createdAt),
   createdBy: w.createdBy,
   updatedAt: ts(w.updatedAt),
+  ...(w.lastStatusChange === undefined
+    ? {}
+    : {
+        lastStatusChange: {
+          from: w.lastStatusChange.from,
+          to: w.lastStatusChange.to,
+          at: ts(w.lastStatusChange.at),
+          by: w.lastStatusChange.by,
+        },
+      }),
 });
 
 function toWorkflow(id: string, d: WorkflowDocument): Workflow {
@@ -86,6 +103,16 @@ function toWorkflow(id: string, d: WorkflowDocument): Workflow {
       createdAt: iso(d.createdAt),
       createdBy: d.createdBy as Workflow['createdBy'],
       updatedAt: iso(d.updatedAt),
+      ...(d.lastStatusChange === undefined
+        ? {}
+        : {
+            lastStatusChange: {
+              from: d.lastStatusChange.from as Workflow['status'],
+              to: d.lastStatusChange.to as Workflow['status'],
+              at: iso(d.lastStatusChange.at),
+              by: d.lastStatusChange.by as Workflow['createdBy'],
+            },
+          }),
     });
   } catch {
     throw new Error('invalid workflow record');

@@ -987,7 +987,22 @@ export function createApp({
             // A cancelled planning execution reaches the children its plan delegated.
             ...(plans === undefined
               ? {}
-              : { cascade: createPlanCancellationCascade({ repository: plans }) }),
+              : {
+                  cascade: createPlanCancellationCascade({
+                    repository: plans,
+                    // What a cancelled plan still waited for a person on leaves the inbox too.
+                    ...(approvals === undefined
+                      ? {}
+                      : {
+                          approvals: createApprovalService({
+                            repository: approvals,
+                            organizations: tenancy,
+                            authorization,
+                            audit,
+                          }),
+                        }),
+                  }),
+                }),
           })
         : undefined;
     // The one plan service (ADR-0028): plan routes decide with it, and the list of every agent's

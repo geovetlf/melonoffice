@@ -46,6 +46,14 @@ export const RUN_SWEEP_PATH = '/internal/sweeps/run';
 export const SWEEP_EVERY_MS = 3 * 3_600_000;
 
 /**
+ * A running plan nothing moved for this long is advanced once by the sweep (ADR-0179): the same
+ * idempotent call a step's end makes, so a plan whose step end was never told, whose wake-up
+ * was lost, or whose decision could not resume it goes on. On a plan that is fine, it changes
+ * nothing.
+ */
+export const PLAN_IDLE_MS = 30 * 60_000;
+
+/**
  * At most this many candidates are read per status and closed per run; the rest wait for the
  * next run. A run that died is claimed again after `staleRunMs`.
  */
@@ -220,7 +228,33 @@ export function createExecutionSweeper(options: ExecutionSweeperOptions): Execut
     | 'out_of_scope'
     | 'no_context'
     | 'moved'
+    | 'plan_advanced'
     | 'error';
+
+  /**
+   * A running plan nothing moved for `PLAN_IDLE_MS` (ADR-0179). Its planning execution is the
+   * plan's own (same id): it is advanced as its person's runtime, exactly as a step's end would.
+   * Nothing here runs a step twice: advancing starts only steps that never started, and decides,
+   * asks and waits each once.
+   */
+  async function recoverPlan(candidate: Execution): Promise<Outcome> {
+    if (plans === undefined || candidate.mode !== 'plan') return 'out_of_scope';
+    const organizationId = candidate.organizationId as OrganizationId;
+    const plan = await plans.find(organizationId, candidate.id as string as PlanId);
+    if (plan?.status !== 'executing' || plan.delegationState !== 'completed') return 'moved';
+    let tenant;
+    try {
+      tenant = await resolveRuntimeTenant(
+        candidate.userId as UserId,
+        candidate.organizationId,
+        tenancy,
+      );
+    } catch {
+      return 'no_context';
+    }
+    await plans.advance(tenant, plan.id);
+    return 'plan_advanced';
+  }
 
   async function visit(
     slotId: string,
@@ -315,6 +349,26 @@ export function createExecutionSweeper(options: ExecutionSweeperOptions): Execut
         }
         const key = outcome === 'stuck' ? 'closed' : outcome;
         counts[key] = (counts[key] ?? 0) + 1;
+      }
+    }
+    // Running plans nothing moved for a while (ADR-0179): their own executions are `running`.
+    if (plans !== undefined) {
+      const idle = new Date(now().getTime() - PLAN_IDLE_MS).toISOString() as IsoTimestamp;
+      const candidates = await executions.openSince('running', idle, SWEEP_LIMITS.perStatus);
+      for (const candidate of candidates) {
+        if (candidate.mode !== 'plan') continue;
+        let outcome: Outcome;
+        try {
+          outcome = await recoverPlan(candidate);
+        } catch (error) {
+          const code = (error as { code?: unknown }).code;
+          logger?.warn('sweep plan recovery failed', {
+            planId: candidate.id,
+            code: typeof code === 'string' ? code : 'error',
+          });
+          outcome = 'error';
+        }
+        counts[outcome] = (counts[outcome] ?? 0) + 1;
       }
     }
     return Object.freeze({

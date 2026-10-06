@@ -76,6 +76,8 @@ export interface PlanTrace {
   readonly planId: string;
   readonly status: string;
   readonly version: number;
+  /** The workflow and its version that made this plan, when one did (ADR-0179). */
+  readonly workflow: { readonly id: string; readonly version: number } | null;
   readonly createdAt: string;
   readonly updatedAt: string;
   /** Why it stopped (ADR-0155): its code, the step and that step's own code. */
@@ -95,6 +97,8 @@ export interface PlanTrace {
     readonly result: string;
     readonly at: string;
     readonly actor: string;
+    /** The person who acted, or for whom the runtime acted (ADR-0179). */
+    readonly actorId: string | null;
     readonly nodeId: string | null;
     readonly reason: string | null;
     readonly reference: string | null;
@@ -232,6 +236,8 @@ export async function readPlanTrace(
     const targets = [
       { type: 'plan', id: plan.id },
       ...runs.map((r) => ({ type: 'execution', id: r.executionId as string })),
+      // Who decided each step's approval, and when (ADR-0179).
+      ...(plan.stepApprovals ?? []).map((a) => ({ type: 'approval', id: a.approvalId })),
     ];
     const events = (
       await Promise.all(targets.map((t) => reader.history(organizationId, t, TRACE_LIMITS.history)))
@@ -244,6 +250,12 @@ export async function readPlanTrace(
         result: e.result,
         at: e.occurredAt,
         actor: e.actor.type,
+        actorId:
+          e.actor.type === 'user'
+            ? e.actor.userId
+            : e.actor.type === 'system'
+              ? e.actor.initiatedBy
+              : null,
         nodeId: e.nodeId ?? null,
         reason: e.reason ?? null,
         reference: e.reference ?? null,
@@ -255,6 +267,10 @@ export async function readPlanTrace(
     planId: plan.id,
     status: plan.status,
     version: plan.version,
+    workflow:
+      version.source.kind === 'workflow'
+        ? { id: version.source.workflowId, version: version.source.workflowVersion }
+        : null,
     createdAt: plan.createdAt,
     updatedAt: plan.updatedAt,
     failure:

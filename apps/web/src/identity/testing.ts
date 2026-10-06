@@ -149,6 +149,11 @@ export interface FakeBackend {
      */
     workflowCheck?: Record<string, unknown>;
     /**
+     * Why activating a workflow is refused (ADR-0179), as the API's `detail`
+     * (`stage:reason[:where]`). By default activation passes.
+     */
+    activationRefusal?: string;
+    /**
      * What `POST workflows/draft` answers (ADR-0171): GIA's draft from the person's words, one
      * answer per call in order (the last repeats). None: the route answers 503.
      */
@@ -1204,6 +1209,9 @@ export function fakeBackend(): FakeBackend {
           if (input.from !== workflow.status) {
             return json(409, { error: 'workflow_concurrency_conflict' });
           }
+          if (input.to === 'active' && options.activationRefusal !== undefined) {
+            return json(409, { error: 'workflow_not_valid', detail: options.activationRefusal });
+          }
           workflow.status = input.to;
         } else {
           workflow.version = (workflow.version as number) + 1;
@@ -1258,7 +1266,9 @@ export function fakeBackend(): FakeBackend {
         const denied = needs('approval.approve');
         if (denied !== undefined) return denied;
         if (plan === undefined) return json(404, { error: 'plan_not_found' });
-        if (plan.status !== 'approval_required') {
+        // Approving an approved plan again starts what did not start (ADR-0179).
+        const again = action === 'approve' && plan.status === 'approved';
+        if (plan.status !== 'approval_required' && !again) {
           return json(409, { error: 'invalid_plan_transition' });
         }
         plan.status = action === 'approve' ? 'executing' : 'rejected';

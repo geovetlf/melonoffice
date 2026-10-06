@@ -8,6 +8,7 @@ import type {
   PlanId,
   Specialist,
   UserId,
+  WorkflowId,
 } from '@melonoffice/domain';
 import { createApprovalService, createPlanStepApprovals } from '@melonoffice/approvals';
 import {
@@ -356,6 +357,7 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
       orgA,
       orgB,
       tenant,
+      plans,
       workflows,
       executions,
       specialists,
@@ -530,6 +532,49 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
       ).status,
     ).toBe(409);
     expect(t.kicked).toEqual([research]);
+  });
+
+  it('ADR-0179: a plan approved but cut short before it started starts when approved again, once', async () => {
+    const t = await setup(ROLES, { runPlans: true });
+    const { plan } = await t.proposeWork({ approvalRequired: true });
+    const version = must(await t.stores.plans.findVersion(t.orgA, plan.id, plan.version));
+    const seen = { version: 1, digest: version.digest };
+    // The decision was stored, and the request ended before anything started.
+    await t.plans.approve(t.tenant, plan.id, seen);
+    expect((await t.stores.plans.find(t.orgA, plan.id))?.status).toBe('approved');
+    expect(t.kicked).toEqual([]);
+
+    // Approved again, the same version: it starts, without a second decision.
+    const started = await t.post('token-alice', `/plans/${plan.id}/approve`, seen);
+    expect(started.status).toBe(200);
+    const view = (await started.json()) as {
+      status: string;
+      delegations: { executionId: string }[];
+    };
+    expect(view.status).toBe('executing');
+    expect(t.kicked).toEqual([view.delegations[0]?.executionId]);
+    const decisions = (await t.stores.auditEvents()).filter(
+      (e) => e.action === 'plan.approved' && e.target?.id === plan.id && e.result === 'success',
+    );
+    expect(decisions).toHaveLength(1);
+
+    // Once started, approving again starts nothing; another version starts nothing either.
+    expect((await t.post('token-alice', `/plans/${plan.id}/approve`, seen)).status).toBe(409);
+    expect(t.kicked).toHaveLength(1);
+  });
+
+  it('ADR-0179: approving again what was approved never starts a version the person did not see', async () => {
+    const t = await setup(ROLES, { runPlans: true });
+    const { plan } = await t.proposeWork({ approvalRequired: true });
+    const version = must(await t.stores.plans.findVersion(t.orgA, plan.id, plan.version));
+    await t.plans.approve(t.tenant, plan.id, { version: 1, digest: version.digest });
+    const other = await t.post('token-alice', `/plans/${plan.id}/approve`, {
+      version: 1,
+      digest: 'f'.repeat(64),
+    });
+    expect(other.status).toBe(409);
+    expect(t.kicked).toEqual([]);
+    expect((await t.stores.plans.find(t.orgA, plan.id))?.status).toBe('approved');
   });
 
   it('WF-1: a plan with a step it cannot run is not approved at all', async () => {
@@ -933,17 +978,49 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
 
     it('answers a refused plan with 422 and why, and keeps the answer for a repeat', async () => {
       const t = await setup();
-      const id = await activeWorkflow(t, [
-        researchStep,
-        {
-          id: 'search',
-          kind: 'tool',
-          label: 'Search',
-          dependsOn: ['research'],
-          performedBy: 'research',
-          tool: { id: 'unknown_tool', version: 1 },
-        },
-      ]);
+      const created = await t.post('token-alice', '/workflows', {
+        name: 'Market study',
+        steps: [
+          researchStep,
+          {
+            id: 'search',
+            kind: 'tool',
+            label: 'Search',
+            dependsOn: ['research'],
+            performedBy: 'research',
+            tool: { id: 'unknown_tool', version: 1 },
+          },
+        ],
+      });
+      const { id } = (await created.json()) as { id: string };
+      // ADR-0179: it is never switched on, and the person is told why, in codes.
+      const activation = await t.post('token-alice', `/workflows/${id}/status`, {
+        from: 'draft',
+        to: 'active',
+      });
+      expect(activation.status).toBe(409);
+      expect(await activation.json()).toEqual({
+        error: 'workflow_not_valid',
+        detail: 'policy:tool_not_found:steps.1',
+      });
+      // One switched on before that check still plans, and its plan is refused.
+      await t.stores.workflows.update(t.orgA, id as WorkflowId, (current) => ({
+        workflow: { ...current, status: 'active', revision: current.revision + 1 },
+        events: [
+          buildAuditEvent(
+            {
+              action: 'workflow.state_changed',
+              result: 'success',
+              actor: { type: 'user', userId: t.tenant.userId, via: 'direct' },
+              organizationId: t.orgA,
+              target: { type: 'workflow', id },
+              transition: { from: 'draft', to: 'active' },
+              source: 'api',
+            },
+            new Date(),
+          ),
+        ],
+      }));
       const refused = await t.post('token-alice', `/workflows/${id}/plans`, { requestKey: 'r' });
       expect(refused.status).toBe(422);
       const body = (await refused.json()) as { error: string; reason: string };

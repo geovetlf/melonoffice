@@ -391,4 +391,17 @@ export interface Workflow {
   readonly createdAt: IsoTimestamp;
   readonly createdBy: UserId;
   readonly updatedAt: IsoTimestamp;
+  /**
+   * Who last switched it on or off, and when (ADR-0179): activated, paused or archived. Absent on
+   * a workflow nobody switched since it was created.
+   */
+  readonly lastStatusChange?: WorkflowStatusChangeRecord;
+}
+
+/** A person's switch of a workflow's status (ADR-0179). */
+export interface WorkflowStatusChangeRecord {
+  readonly from: WorkflowStatus;
+  readonly to: WorkflowStatus;
+  readonly at: IsoTimestamp;
+  readonly by: UserId;
 }

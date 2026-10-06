@@ -51,6 +51,12 @@ const refusalId = ({ stage, reason, detail }: Refusal): string => {
   return REFUSAL_ID.test(full) ? full : `${stage}:${reason}`;
 };
 
+/** Why a dry run refused a workflow, as `stage:reason[:detail]`: codes and a step id only. */
+const refusalOf = (result: Extract<WorkflowCheck, { ok: false }>): string => {
+  const full = `${result.stage}:${result.reason}${result.detail === undefined ? '' : `:${result.detail}`}`;
+  return REFUSAL_ID.test(full) ? full : `${result.stage}:${result.reason}`;
+};
+
 /** What planning a workflow gave: the plan, or why it was refused, and its execution. */
 export type WorkflowPlanOutcome = ProposeOutcome & { readonly executionId: ExecutionId };
 
@@ -434,8 +440,22 @@ export function createWorkflowService({
     ) {
       const organizationId = await organizationOf(tenant, 'workflow.manage');
       personOnly(tenant);
+      // A version saved on a switched-on workflow is what its next plan uses: it must plan now,
+      // as activation asks (ADR-0179). A draft or paused one is checked when switched on.
+      const before = await find(organizationId, id);
+      if (before.status === 'active') {
+        const result = await dryRun(tenant, {
+          name: input.name ?? before.name,
+          steps: input.steps,
+        });
+        if (!result.ok) throw new WorkflowError('workflow_not_valid', refusalOf(result));
+      }
       const when = now();
       return repository.update(organizationId, idOf(id), (current) => {
+        // Switched on after the check: the person saves again, and it is checked then.
+        if (current.status === 'active' && before.status !== 'active') {
+          throw new WorkflowError('workflow_concurrency_conflict');
+        }
         const write = newWorkflowVersion(current, input, tenant.userId, iso(when));
         return {
           ...write,
@@ -451,9 +471,32 @@ export function createWorkflowService({
     ) {
       const organizationId = await organizationOf(tenant, 'workflow.manage');
       personOnly(tenant);
+      // Only a workflow whose current version would plan now is switched on (ADR-0179): the same
+      // dry run as the editor's, so a draft that cannot run never becomes active.
+      let checked: number | undefined;
+      if (change.to === 'active') {
+        const workflow = await find(organizationId, id);
+        const version = await repository.findVersion(organizationId, workflow.id, workflow.version);
+        if (version === undefined) throw new WorkflowError('workflow_not_found');
+        const result = await dryRun(tenant, { name: version.name, steps: version.steps });
+        if (!result.ok) {
+          throw new WorkflowError('workflow_not_valid', refusalOf(result));
+        }
+        checked = version.version;
+      }
       const when = now();
       return repository.update(organizationId, idOf(id), (current) => {
-        const workflow = applyWorkflowStatus(current, change.from, change.to, iso(when));
+        // A version saved after the check is not the one checked: the person asks again.
+        if (checked !== undefined && current.version !== checked) {
+          throw new WorkflowError('workflow_concurrency_conflict');
+        }
+        const workflow = applyWorkflowStatus(
+          current,
+          change.from,
+          change.to,
+          iso(when),
+          tenant.userId,
+        );
         return {
           workflow,
           events: [
@@ -493,50 +536,7 @@ export function createWorkflowService({
 
     async check(tenant: TenantContext, input: { name: string; steps: unknown }) {
       await organizationOf(tenant, 'workflow.manage');
-      let steps: readonly WorkflowStep[];
-      try {
-        steps = checkWorkflowSteps(input.name, input.steps);
-      } catch (error) {
-        if (!isWorkflowError(error)) throw error;
-        return Object.freeze({
-          ok: false,
-          stage: 'workflow',
-          reason: error.code,
-          ...(error.detail === undefined ? {} : { detail: error.detail }),
-        } as const);
-      }
-      const all = await specialists.list(tenant);
-      const agents: Record<string, Specialist> = {};
-      const proposed: Record<string, unknown>[] = [];
-      for (const step of steps) {
-        const { assignee, ...template } = step;
-        if (assignee === undefined) {
-          proposed.push({ ...template });
-          continue;
-        }
-        const specialist = await assigneeOf(tenant, all, assignee);
-        if (specialist === undefined) {
-          return Object.freeze({
-            ok: false,
-            stage: 'assignee',
-            reason: 'assignee_unavailable',
-            detail: step.id,
-          } as const);
-        }
-        agents[step.id] = specialist;
-        proposed.push({ ...template, specialistId: specialist.identity.id });
-      }
-      const validation = await plans.check(tenant, {
-        summary: input.name,
-        objective: input.name,
-        steps: proposed,
-      });
-      if (!validation.ok) return validation;
-      return Object.freeze({
-        ok: true,
-        plan: validation.plan,
-        agents: Object.freeze(agents),
-      } as const);
+      return dryRun(tenant, input);
     },
 
     async instantiate(tenant: TenantContext, id: string, input: { executionId: string }) {
@@ -547,75 +547,134 @@ export function createWorkflowService({
     },
 
     async plan(tenant: TenantContext, id: string, input: { requestKey: string }) {
-      const organizationId = await organizationOf(tenant, 'plan.create');
-      // Planning a workflow is a person's request: never GIA's, never the runtime's.
-      if (tenant.actor !== 'user') throw new WorkflowError('permission_denied');
-      if (typeof input.requestKey !== 'string' || !REQUEST_KEY.test(input.requestKey)) {
-        throw new WorkflowError('invalid_workflow', 'requestKey');
-      }
-      const { workflow, version } = await activeVersionOf(organizationId, id);
-      const key = `workflow-plan:${workflow.id}:${version.version}:${input.requestKey}`;
-      const executionId = executionIdFor(organizationId, key);
-
-      // Asked before: the same plan, or the same refusal, and nothing new.
-      const earlier = await executionOf(tenant, executionId);
-      if (earlier !== undefined && earlier.status !== 'pending' && earlier.status !== 'planning') {
-        return { ...(await outcomeOf(tenant, earlier)), executionId };
-      }
-
-      const { steps, owner } = await bound(tenant, version);
-      if (owner === undefined) throw new WorkflowError('invalid_workflow', 'assignee');
-      let execution = earlier;
-      if (execution === undefined) {
-        try {
-          execution = await executions.create(tenant, {
-            mode: 'plan',
-            input: { type: WORKFLOW_PLAN_INPUT, id: workflow.id },
-            workflowId: workflow.id,
-            specialistId: owner.identity.id,
-            specialistVersion: owner.version,
-            departmentId: owner.configuration.departmentId,
-            versionSnapshot: {
-              schemaVersion: 1,
-              components: [
-                { kind: 'specialist', id: owner.identity.id, version: String(owner.version) },
-                { kind: 'workflow', id: workflow.id, version: String(version.version) },
-              ],
-            },
-            idempotencyKey: key,
-            ...(requestId === undefined ? {} : { requestId }),
-          });
-        } catch (error) {
-          // Created concurrently by a repeat of the same request: that one is the plan.
-          const raced = await executionOf(tenant, executionId);
-          if (raced === undefined) throw error;
-          execution = raced;
-        }
-      }
-      if (execution.status === 'pending') {
-        execution = await moveOrReread(tenant, executionId, 'pending', 'planning');
-      }
-      if (execution.status !== 'planning') {
-        return { ...(await outcomeOf(tenant, execution)), executionId };
-      }
-
-      let outcome: ProposeOutcome;
-      try {
-        outcome = await proposeOn(tenant, workflow, version, steps, executionId);
-      } catch (error) {
-        // A repeat stored the plan first: that one is the answer.
-        const fresh = await executionOf(tenant, executionId);
-        if (fresh === undefined || fresh.status === 'planning') throw error;
-        return { ...(await outcomeOf(tenant, fresh)), executionId };
-      }
-      if (outcome.status === 'refused') {
-        // A refused plan ends its execution, with why, so a repeat gives the same answer.
-        await moveOrReread(tenant, executionId, 'planning', 'failed', {
-          code: WORKFLOW_PLAN_REFUSED,
-          ref: { type: 'plan_refusal', id: refusalId(outcome) },
-        });
-      }
-      return { ...outcome, executionId };
+      return planOf(tenant, id, input);
     },
   });
+
+  /** `check` without its permission check: what saving and planning the steps now would give. */
+  async function dryRun(
+    tenant: TenantContext,
+    input: { name: string; steps: unknown },
+  ): Promise<WorkflowCheck> {
+    let steps: readonly WorkflowStep[];
+    try {
+      steps = checkWorkflowSteps(input.name, input.steps);
+    } catch (error) {
+      if (!isWorkflowError(error)) throw error;
+      return Object.freeze({
+        ok: false,
+        stage: 'workflow',
+        reason: error.code,
+        ...(error.detail === undefined ? {} : { detail: error.detail }),
+      } as const);
+    }
+    const all = await specialists.list(tenant);
+    const agents: Record<string, Specialist> = {};
+    const proposed: Record<string, unknown>[] = [];
+    for (const step of steps) {
+      const { assignee, ...template } = step;
+      if (assignee === undefined) {
+        proposed.push({ ...template });
+        continue;
+      }
+      const specialist = await assigneeOf(tenant, all, assignee);
+      if (specialist === undefined) {
+        return Object.freeze({
+          ok: false,
+          stage: 'assignee',
+          reason: 'assignee_unavailable',
+          detail: step.id,
+        } as const);
+      }
+      agents[step.id] = specialist;
+      proposed.push({ ...template, specialistId: specialist.identity.id });
+    }
+    const validation = await plans.check(tenant, {
+      summary: input.name,
+      objective: input.name,
+      steps: proposed,
+    });
+    if (!validation.ok) return validation;
+    return Object.freeze({
+      ok: true,
+      plan: validation.plan,
+      agents: Object.freeze(agents),
+    } as const);
+  }
+
+  async function planOf(
+    tenant: TenantContext,
+    id: string,
+    input: { requestKey: string },
+  ): Promise<WorkflowPlanOutcome> {
+    const organizationId = await organizationOf(tenant, 'plan.create');
+    // Planning a workflow is a person's request: never GIA's, never the runtime's.
+    if (tenant.actor !== 'user') throw new WorkflowError('permission_denied');
+    if (typeof input.requestKey !== 'string' || !REQUEST_KEY.test(input.requestKey)) {
+      throw new WorkflowError('invalid_workflow', 'requestKey');
+    }
+    const { workflow, version } = await activeVersionOf(organizationId, id);
+    const key = `workflow-plan:${workflow.id}:${version.version}:${input.requestKey}`;
+    const executionId = executionIdFor(organizationId, key);
+
+    // Asked before: the same plan, or the same refusal, and nothing new.
+    const earlier = await executionOf(tenant, executionId);
+    if (earlier !== undefined && earlier.status !== 'pending' && earlier.status !== 'planning') {
+      return { ...(await outcomeOf(tenant, earlier)), executionId };
+    }
+
+    const { steps, owner } = await bound(tenant, version);
+    if (owner === undefined) throw new WorkflowError('invalid_workflow', 'assignee');
+    let execution = earlier;
+    if (execution === undefined) {
+      try {
+        execution = await executions.create(tenant, {
+          mode: 'plan',
+          input: { type: WORKFLOW_PLAN_INPUT, id: workflow.id },
+          workflowId: workflow.id,
+          specialistId: owner.identity.id,
+          specialistVersion: owner.version,
+          departmentId: owner.configuration.departmentId,
+          versionSnapshot: {
+            schemaVersion: 1,
+            components: [
+              { kind: 'specialist', id: owner.identity.id, version: String(owner.version) },
+              { kind: 'workflow', id: workflow.id, version: String(version.version) },
+            ],
+          },
+          idempotencyKey: key,
+          ...(requestId === undefined ? {} : { requestId }),
+        });
+      } catch (error) {
+        // Created concurrently by a repeat of the same request: that one is the plan.
+        const raced = await executionOf(tenant, executionId);
+        if (raced === undefined) throw error;
+        execution = raced;
+      }
+    }
+    if (execution.status === 'pending') {
+      execution = await moveOrReread(tenant, executionId, 'pending', 'planning');
+    }
+    if (execution.status !== 'planning') {
+      return { ...(await outcomeOf(tenant, execution)), executionId };
+    }
+
+    let outcome: ProposeOutcome;
+    try {
+      outcome = await proposeOn(tenant, workflow, version, steps, executionId);
+    } catch (error) {
+      // A repeat stored the plan first: that one is the answer.
+      const fresh = await executionOf(tenant, executionId);
+      if (fresh === undefined || fresh.status === 'planning') throw error;
+      return { ...(await outcomeOf(tenant, fresh)), executionId };
+    }
+    if (outcome.status === 'refused') {
+      // A refused plan ends its execution, with why, so a repeat gives the same answer.
+      await moveOrReread(tenant, executionId, 'planning', 'failed', {
+        code: WORKFLOW_PLAN_REFUSED,
+        ref: { type: 'plan_refusal', id: refusalId(outcome) },
+      });
+    }
+    return { ...outcome, executionId };
+  }
 }

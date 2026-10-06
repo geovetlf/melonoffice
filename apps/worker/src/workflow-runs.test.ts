@@ -54,12 +54,15 @@ import type {
   Specialist,
   SubscriptionId,
   UserId,
+  Workflow,
 } from '@melonoffice/domain';
 import {
   createAgentOutputStore,
   createExecutionService,
   InMemoryAgentOutputRepository,
   InMemoryExecutionRepository,
+  InMemorySweepLedger,
+  type StaleExecutionIndex,
   type AgentOutputRepository,
 } from '@melonoffice/execution';
 import {
@@ -86,6 +89,7 @@ import { harnessTaskPolicy } from '@melonoffice/harness';
 import { InMemoryJobRepository, isJobError } from '@melonoffice/jobs';
 import {
   createDelegation,
+  createPlanCancellationCascade,
   createPlanConductor,
   createPlanService,
   createPlanStepAttempts,
@@ -116,6 +120,7 @@ import {
 import { describe, expect, it } from 'vitest';
 import { createAgentTaskParts, createConversationAgentParts, routeAgentWork } from './agents.js';
 import { createWorkerRuntime, type WorkerStores } from './runtime.js';
+import { createExecutionSweeper, PLAN_IDLE_MS } from './sweeps.js';
 
 /**
  * A workflow a person saved runs end to end (Block 4, ADR-0178), on the engines that already
@@ -229,6 +234,8 @@ const STEPS = [
 ];
 
 type Stores = WorkerStores & {
+  /** What the sweep reads: every open execution nothing moved since a time (ADR-0121). */
+  readonly executions: WorkerStores['executions'] & StaleExecutionIndex;
   readonly conversations: ConversationRepository;
   readonly outputs: AgentOutputRepository;
   readonly tasks: AgentTaskRepository;
@@ -396,47 +403,62 @@ describe.each(STORES)(
           wakes.push({ planId: plan.planId, at });
         },
       };
-      const worker = createWorkerRuntime({
-        stores,
-        environment: 'dev',
-        leaseMs: LEASE_MS,
-        tools: { registry, executors: { ...conversation.executors, ...taskParts.executors } },
-        ai: createProviderRegistry({
-          providers: [VERTEX_AI_PROVIDER],
-          models: VERTEX_AI_MODELS,
-          adapters: [vertex],
-        }),
-        credits: { port: credits, rate: CREDIT_RATE },
-        policies: createModelPolicyCatalogue([
-          { ...CONVERSATION_AGENT_POLICY, backoffMs: 0 },
-          { ...AGENT_TASK_POLICY, backoffMs: 0 },
-          {
-            ...harnessTaskPolicy({
-              preferredProviders: ['nvidia'],
-              environments: ['dev'],
-              maxCostMicroUsd: CREDIT_RATE.microUsdPerCredit,
-            }),
-            backoffMs: 0,
-          },
-        ]),
-        work: routed.work,
-        verifier: routed.verifier,
-        outputs: conversation.outputs,
-        onStopped: routed.onStopped,
-        plans: stores.plans,
-        wakeups,
-        dispatcher: { dispatch: async (id) => void dispatched.push(id) },
-        now,
-      });
-      const { jobs, runtime } = worker;
+      /**
+       * The worker as deployed. `told: false` is one whose step ends never reach the plan: a
+       * worker that stored a step's end and died before telling its plan (ADR-0179).
+       */
+      const workerOf = (told: boolean) =>
+        createWorkerRuntime({
+          stores,
+          environment: 'dev',
+          leaseMs: LEASE_MS,
+          tools: { registry, executors: { ...conversation.executors, ...taskParts.executors } },
+          ai: createProviderRegistry({
+            providers: [VERTEX_AI_PROVIDER],
+            models: VERTEX_AI_MODELS,
+            adapters: [vertex],
+          }),
+          credits: { port: credits, rate: CREDIT_RATE },
+          policies: createModelPolicyCatalogue([
+            { ...CONVERSATION_AGENT_POLICY, backoffMs: 0 },
+            { ...AGENT_TASK_POLICY, backoffMs: 0 },
+            {
+              ...harnessTaskPolicy({
+                preferredProviders: ['nvidia'],
+                environments: ['dev'],
+                maxCostMicroUsd: CREDIT_RATE.microUsdPerCredit,
+              }),
+              backoffMs: 0,
+            },
+          ]),
+          work: routed.work,
+          verifier: routed.verifier,
+          outputs: conversation.outputs,
+          onStopped: routed.onStopped,
+          ...(told ? { plans: stores.plans, wakeups } : {}),
+          dispatcher: { dispatch: async (id) => void dispatched.push(id) },
+          now,
+        });
+      const worker = workerOf(true);
+      const untold = workerOf(false);
+      const { runtime } = worker;
 
       // The API's side: workflows, plans, approvals, and the conductor a person's approval runs.
+      const approvals = createApprovalService({
+        repository: stores.approvals,
+        organizations: stores.tenancy,
+        authorization,
+        audit,
+        now,
+      });
       const executions = createExecutionService({
         repository: stores.executions,
         organizations: stores.tenancy,
         assignments: specialists.assignments,
         authorization,
         audit,
+        // A cancelled plan reaches what it delegated, and what it waited for a person on.
+        cascade: createPlanCancellationCascade({ repository: stores.plans, approvals, now }),
         now,
       });
       const plans = createPlanService({
@@ -462,13 +484,6 @@ describe.each(STORES)(
         departments: stores.departments,
         organizations: stores.tenancy,
         authorization,
-        now,
-      });
-      const approvals = createApprovalService({
-        repository: stores.approvals,
-        organizations: stores.tenancy,
-        authorization,
-        audit,
         now,
       });
       const conductor = createPlanConductor({
@@ -529,10 +544,13 @@ describe.each(STORES)(
       });
 
       /** Saved, activated and planned by Alice, then approved by her: the plan starts. */
-      async function started(): Promise<Plan> {
-        const saved = await workflows.create(tenantA, { name: 'Oferta del Combo', steps });
-        await workflows.changeStatus(tenantA, saved.id, { from: 'draft', to: 'active' });
-        const planned = await workflows.plan(tenantA, saved.id, { requestKey: 'run-1' });
+      let saved: Workflow | undefined;
+      async function started(key = 'run-1'): Promise<Plan> {
+        if (saved === undefined) {
+          saved = await workflows.create(tenantA, { name: 'Oferta del Combo', steps });
+          saved = await workflows.changeStatus(tenantA, saved.id, { from: 'draft', to: 'active' });
+        }
+        const planned = await workflows.plan(tenantA, saved.id, { requestKey: key });
         if (planned.status !== 'planned') throw new Error(`refused: ${JSON.stringify(planned)}`);
         const version = must(
           await stores.plans.findVersion(orgA, planned.plan.id, planned.plan.version),
@@ -545,17 +563,17 @@ describe.each(STORES)(
       }
 
       /** Runs every queued job, as Cloud Tasks would deliver them to the worker. */
-      async function drive(limit = 30): Promise<void> {
+      async function drive(limit = 30, by = worker): Promise<void> {
         for (let i = 0; i < limit && dispatched.length > 0; i += 1) {
           const jobId = dispatched.shift() as JobId;
           let claim;
           try {
-            claim = await jobs.acquire(jobId, 'worker-1');
+            claim = await by.jobs.acquire(jobId, 'worker-1');
           } catch (error) {
             if (isJobError(error)) continue;
             throw error;
           }
-          await runtime.advance(claim.lease);
+          await by.runtime.advance(claim.lease);
         }
       }
 
@@ -583,10 +601,30 @@ describe.each(STORES)(
         must(plan.delegations.find((d) => d.stepId === stepId)).executionId;
       const wallet = async () => must(await stores.credits.findWallet(orgA));
 
+      /** The sweep as the worker runs it every 3 hours (ADR-0121, ADR-0179). */
+      const sweeper = createExecutionSweeper({
+        executions: stores.executions,
+        jobs: stores.jobs,
+        approvals: stores.approvals,
+        tenancy: stores.tenancy,
+        runtime,
+        ledger: new InMemorySweepLedger(),
+        plans: {
+          find: (organizationId, id) => stores.plans.find(organizationId, id),
+          advance: must(worker.advancePlan),
+        },
+        now,
+      });
+
       return {
         stores,
         orgA,
         tenantA,
+        workflows,
+        plans,
+        untold,
+        sweeper,
+        workflow: () => must(saved),
         tenantB,
         runtimeA,
         executions,
@@ -597,6 +635,8 @@ describe.each(STORES)(
         dispatched,
         started,
         drive,
+        /** Runs the queued jobs on a worker that dies before telling the plan each step ended. */
+        driveUntold: (limit = 30) => drive(limit, untold),
         wake,
         decide,
         later,
@@ -850,6 +890,240 @@ describe.each(STORES)(
       expect(tools).toHaveLength(1);
       // Nothing stays held when a step fails.
       expect((await other.wallet()).holds ?? []).toEqual([]);
+    });
+
+    const codeOf = (promise: Promise<unknown>): Promise<string> =>
+      promise.then(
+        () => 'ok',
+        (error: { code?: unknown }) =>
+          typeof error.code === 'string' ? error.code : String(error),
+      );
+    const NOBODY = { departmentTypeId: 'research', roleId: 'nobody_has_this_role' };
+    const pendingFor = async (w: Awaited<ReturnType<typeof world>>, stepId: string) =>
+      (await w.approvals.list(w.tenantA)).filter(
+        (x) => x.status === 'pending' && x.operation.nodeId === stepId,
+      );
+
+    it('5. a draft never runs, only a valid workflow is switched on, and switching it off stops new plans only (ADR-0179)', async () => {
+      const w = await world();
+      // A draft never plans.
+      const draft = await w.workflows.create(w.tenantA, { name: 'Borrador', steps: STEPS });
+      expect(await codeOf(w.workflows.plan(w.tenantA, draft.id, { requestKey: 'k' }))).toBe(
+        'workflow_not_active',
+      );
+      // A step of a role no agent has: it is never switched on, and it stays a draft.
+      const orphan = await w.workflows.create(w.tenantA, {
+        name: 'Sin agente',
+        steps: [{ ...STEPS[0], assignee: NOBODY }],
+      });
+      expect(
+        await codeOf(
+          w.workflows.changeStatus(w.tenantA, orphan.id, { from: 'draft', to: 'active' }),
+        ),
+      ).toBe('workflow_not_valid');
+      expect((await w.workflows.get(w.tenantA, orphan.id)).status).toBe('draft');
+
+      // Alice's workflow is switched on: who and when stay on it and in the audit.
+      const plan = await w.started();
+      const active = w.workflow();
+      expect(active.lastStatusChange).toMatchObject({ from: 'draft', to: 'active', by: ALICE });
+      const switched = (await w.stores.events()).filter(
+        (e) => e.action === 'workflow.state_changed',
+      );
+      expect(
+        switched.map((e) => [
+          e.target?.id,
+          e.transition?.to,
+          e.actor.type === 'user' ? e.actor.userId : null,
+        ]),
+      ).toEqual([[active.id, 'active', ALICE]]);
+
+      // Switched off while its plan runs: no new plan, and the running one goes on to its end.
+      const off = await w.workflows.changeStatus(w.tenantA, active.id, {
+        from: 'active',
+        to: 'paused',
+      });
+      expect(off.lastStatusChange).toMatchObject({ from: 'active', to: 'paused', by: ALICE });
+      expect(await codeOf(w.workflows.plan(w.tenantA, active.id, { requestKey: 'run-2' }))).toBe(
+        'workflow_not_active',
+      );
+      await w.drive();
+      await w.decide(plan.id, 'brief', 'approve');
+      await w.drive();
+      w.later(WAIT_SECONDS + 2);
+      await w.wake(plan.id);
+      await w.decide(plan.id, 'offer', 'approve');
+      await w.drive();
+      expect((await w.stored(plan.id)).status).toBe('completed');
+
+      // Switched on again, it plans again.
+      await w.workflows.changeStatus(w.tenantA, active.id, { from: 'paused', to: 'active' });
+      const again = await w.workflows.plan(w.tenantA, active.id, { requestKey: 'run-2' });
+      expect(again.status).toBe('planned');
+    });
+
+    it('6. a running plan keeps the version it started with; the next plan uses the new one (ADR-0179)', async () => {
+      const w = await world();
+      const first = await w.started();
+      const firstVersion = must(await w.stores.plans.findVersion(w.orgA, first.id, first.version));
+      // Alice edits the workflow while its plan runs: version 2 renames the brief.
+      const edited = STEPS.map((s) => (s.id === 'brief' ? { ...s, label: 'Resumen nuevo' } : s));
+      const v2 = await w.workflows.publishVersion(w.tenantA, w.workflow().id, { steps: edited });
+      expect(v2.version).toBe(2);
+      await w.drive();
+      const running = await w.stored(first.id);
+      const runningVersion = must(
+        await w.stores.plans.findVersion(w.orgA, running.id, running.version),
+      );
+      // Nothing of the running plan changed: same steps, from version 1.
+      expect(runningVersion).toEqual(firstVersion);
+      expect(runningVersion.source).toMatchObject({ kind: 'workflow', workflowVersion: 1 });
+      expect(runningVersion.steps.find((s) => s.id === 'brief')?.label).toBe(
+        'Preparar un resumen para el equipo',
+      );
+      expect(await pendingFor(w, 'brief')).toHaveLength(1);
+
+      // The next plan is version 2's.
+      const second = await w.started('run-2');
+      const secondVersion = must(
+        await w.stores.plans.findVersion(w.orgA, second.id, second.version),
+      );
+      expect(secondVersion.source).toMatchObject({ kind: 'workflow', workflowVersion: 2 });
+      expect(secondVersion.steps.find((s) => s.id === 'brief')?.label).toBe('Resumen nuevo');
+
+      // A version that would not plan is never saved on a switched-on workflow.
+      expect(
+        await codeOf(
+          w.workflows.publishVersion(w.tenantA, w.workflow().id, {
+            steps: [{ ...STEPS[0], assignee: NOBODY }],
+          }),
+        ),
+      ).toBe('workflow_not_valid');
+      expect((await w.workflows.get(w.tenantA, w.workflow().id)).version).toBe(2);
+    });
+
+    it('7. stopping a plan ends it, withdraws what it asked, holds nothing, and runs nothing more (ADR-0179)', async () => {
+      const w = await world();
+      const plan = await w.started();
+      await w.drive();
+      const [brief] = await pendingFor(w, 'brief');
+      expect(brief).toBeDefined();
+      const calls = w.providerCalls.length;
+
+      await w.executions.cancel(w.tenantA, plan.executionId, 'director_request');
+      const stopped = await w.stored(plan.id);
+      expect(stopped.status).toBe('cancelled');
+      // What it asked Alice leaves her inbox with it.
+      expect((await w.approvals.get(w.tenantA, must(brief).id)).status).toBe('cancelled');
+      // Each step it delegated ended: done before, or cancelled with it.
+      for (const d of stopped.delegations) {
+        const child = await w.executions.get(w.tenantA, d.executionId);
+        expect(['completed', 'cancelled']).toContain(child.status);
+      }
+      // Its wake, once the wait is over, moves nothing: no step starts and no model is asked.
+      w.later(WAIT_SECONDS + 2);
+      await w.wake(plan.id);
+      await w.drive();
+      expect(w.providerCalls).toHaveLength(calls);
+      expect((await w.stored(plan.id)).status).toBe('cancelled');
+      expect(await pendingFor(w, 'offer')).toEqual([]);
+      // Nothing stays held, and every hold closed once.
+      const wallet = await w.wallet();
+      expect(wallet.holds ?? []).toEqual([]);
+      const ledger = await w.stores.credits.ledger(w.orgA);
+      const holds = ledger.filter((e) => e.type === 'hold');
+      expect(holds).toHaveLength(calls);
+      expect(ledger.filter((e) => e.referenceId.endsWith(':close'))).toHaveLength(calls);
+      expect(wallet.balance).toBe(ledger.reduce((sum, e) => sum + e.amount, 0));
+      // Who stopped it, and why.
+      const ended = (await w.stores.events()).find(
+        (e) =>
+          e.action === 'plan.state_changed' &&
+          e.target?.id === plan.id &&
+          e.transition?.to === 'cancelled',
+      );
+      expect(ended?.actor).toMatchObject({ type: 'user', userId: ALICE });
+      expect(ended?.reason).toBe('director_request');
+    });
+
+    it('8. nothing runs twice: repeated or concurrent starts, advances, decisions and deliveries (ADR-0179)', async () => {
+      const w = await world();
+      const plan = await w.started();
+      // Started again, twice at once: still one child per step, one job queued.
+      await Promise.all([w.conductor.run(w.tenantA, plan.id), w.conductor.run(w.tenantA, plan.id)]);
+      expect(w.dispatched).toHaveLength(1);
+      // The same job delivered twice: the agent is asked once. Its end is told to nobody.
+      w.dispatched.push(must(w.dispatched[0]));
+      await w.driveUntold();
+      expect(w.providerCalls).toHaveLength(1);
+
+      // Three workers advance the plan at once: the brief is asked once, the wait starts once.
+      await Promise.all([w.wake(plan.id), w.wake(plan.id), w.wake(plan.id)]);
+      const asks = await pendingFor(w, 'brief');
+      expect(asks).toHaveLength(1);
+      expect((await w.stored(plan.id)).waits).toHaveLength(1);
+      expect(w.wakes).toHaveLength(1);
+
+      // Approved twice, rejected after, and resumed twice at once: the brief starts once.
+      const approval = must(asks[0]);
+      await w.approvals.approve(w.tenantA, approval.id);
+      expect(await codeOf(w.approvals.approve(w.tenantA, approval.id))).toBe(
+        'approval_not_pending',
+      );
+      expect(await codeOf(w.approvals.reject(w.tenantA, approval.id))).toBe('approval_not_pending');
+      await Promise.all([
+        w.conductor.resume(w.runtimeA, plan.id),
+        w.conductor.resume(w.runtimeA, plan.id),
+      ]);
+      // One job, even when both resumes hand it to the queue: delivering it twice runs it once.
+      expect(new Set(w.dispatched).size).toBe(1);
+      await w.drive();
+
+      // The wake delivered twice once the wait is over: the offer is asked once.
+      w.later(WAIT_SECONDS + 2);
+      await Promise.all([w.wake(plan.id), w.wake(plan.id)]);
+      expect(await pendingFor(w, 'offer')).toHaveLength(1);
+      await w.decide(plan.id, 'offer', 'approve');
+      await w.drive();
+      expect((await w.stored(plan.id)).status).toBe('completed');
+
+      // Each step ran once (research, brief, note, offer), each call held and closed once.
+      expect(w.providerCalls).toHaveLength(4);
+      const ledger = await w.stores.credits.ledger(w.orgA);
+      expect(ledger.filter((e) => e.type === 'hold')).toHaveLength(4);
+      expect(ledger.filter((e) => e.referenceId.endsWith(':close'))).toHaveLength(4);
+      expect((await w.wallet()).holds ?? []).toEqual([]);
+      const completions = (await w.stores.events()).filter(
+        (e) =>
+          e.action === 'plan.state_changed' &&
+          e.target?.id === plan.id &&
+          e.transition?.to === 'completed',
+      );
+      expect(completions).toHaveLength(1);
+    });
+
+    it('9. the sweep picks up a plan nobody told a step ended (ADR-0179)', async () => {
+      const w = await world();
+      const plan = await w.started();
+      // The worker runs it and dies before telling the plan: nothing after it starts.
+      await w.driveUntold();
+      expect(w.providerCalls).toHaveLength(1);
+      expect((await w.stored(plan.id)).waits ?? []).toEqual([]);
+      expect(await pendingFor(w, 'brief')).toEqual([]);
+      // Too soon: the sweep leaves a plan that may still be moving alone.
+      expect((await w.sweeper.sweep('sweep-20261005t12')).counts).toEqual({});
+      // Once idle long enough, the sweep advances it as the step's end would have.
+      w.later(PLAN_IDLE_MS / 1_000 + 1);
+      expect((await w.sweeper.sweep('sweep-20261005t15')).counts).toEqual({ plan_advanced: 1 });
+      expect((await w.stored(plan.id)).waits?.map((x) => x.stepId)).toEqual(['pause']);
+      expect(await pendingFor(w, 'brief')).toHaveLength(1);
+      // Swept again: nothing new is asked, started or woken.
+      w.later(PLAN_IDLE_MS / 1_000 + 1);
+      await w.sweeper.sweep('sweep-20261005t21');
+      expect(await pendingFor(w, 'brief')).toHaveLength(1);
+      expect(w.wakes).toHaveLength(1);
+      expect(w.dispatched).toEqual([]);
+      expect(w.providerCalls).toHaveLength(1);
     });
   },
 );

@@ -1,4 +1,4 @@
-import { InMemoryAuditStore, type AuditEvent } from '@melonoffice/audit';
+import { buildAuditEvent, InMemoryAuditStore, type AuditEvent } from '@melonoffice/audit';
 import type { Execution, Specialist, Workflow } from '@melonoffice/domain';
 import { createAuthorizationService, ROLES } from '@melonoffice/rbac';
 import type { TenantContext } from '@melonoffice/tenancy';
@@ -538,7 +538,6 @@ describe('workflow instantiation', () => {
   it('never lets a workflow reach a specialist of another organization', async () => {
     const w = await setup();
     await w.seed(w.orgB, BOB, { type: 'research', role: 'market_researcher' });
-    await w.pause(w.orgA, w.researcher);
     const created = await w.workflows.create(w.tenantA, {
       name: 'Launch',
       steps: STEPS.slice(0, 1),
@@ -547,6 +546,8 @@ describe('workflow instantiation', () => {
       from: 'draft',
       to: 'active',
     });
+    // Its only researcher stops after it was switched on: another organization's never stands in.
+    await w.pause(w.orgA, w.researcher);
     const execution = await w.planningFor(w.tenantA, w.owner, active);
     expect(
       await codeOf(w.workflows.instantiate(w.tenantA, active.id, { executionId: execution.id })),
@@ -710,10 +711,31 @@ describe('a person plans a workflow (WF-2)', () => {
   it('ends the planning execution of a refused plan, and a repeat gets the same refusal', async () => {
     // Only the tool step's performer may call its tool: without the tool, the plan is refused.
     const w = await setup();
-    const workflow = await active(w, [
-      STEPS[0],
-      { ...STEPS[1], tool: { id: 'unknown_tool', version: 1 } },
-    ]);
+    const steps = [STEPS[0], { ...STEPS[1], tool: { id: 'unknown_tool', version: 1 } }];
+    const created = await w.workflows.create(w.tenantA, { name: 'Launch', steps });
+    // Never switched on today (ADR-0179); one switched on before that check still plans, refused.
+    expect(
+      await codeOf(
+        w.workflows.changeStatus(w.tenantA, created.id, { from: 'draft', to: 'active' }),
+      ),
+    ).toBe('workflow_not_valid');
+    const workflow = await w.repository.update(w.orgA, created.id, (current) => ({
+      workflow: { ...current, status: 'active', revision: current.revision + 1 },
+      events: [
+        buildAuditEvent(
+          {
+            action: 'workflow.state_changed',
+            result: 'success',
+            actor: { type: 'user', userId: ALICE, via: 'direct' },
+            organizationId: w.orgA,
+            target: { type: 'workflow', id: current.id },
+            transition: { from: 'draft', to: 'active' },
+            source: 'api',
+          },
+          new Date(),
+        ),
+      ],
+    }));
     const outcome = await w.workflows.plan(w.tenantA, workflow.id, { requestKey: 'k-1' });
     expect(outcome.status).toBe('refused');
     if (outcome.status !== 'refused') return;

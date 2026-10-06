@@ -146,6 +146,19 @@ export function registerPlanRoutes(
             const version = await plans.getVersion(tenant, current.id, current.version);
             const unrunnable = unrunnableStepOf(version);
             if (unrunnable !== undefined) throw new PlanningError('plan_not_runnable', unrunnable);
+            // The same approval again, of exactly what was approved (ADR-0179): nothing is
+            // decided twice, and a start the first request could not finish is finished now.
+            // Running is idempotent: each step starts once, whoever asks.
+            if (
+              (current.status === 'approved' ||
+                (current.status === 'executing' && current.delegationState !== 'completed')) &&
+              seen.version === current.version &&
+              seen.digest === version.digest
+            ) {
+              const running = await conductor.run(tenant, current.id);
+              withCorrelation(c.get('logger'), { planId: current.id }).info('plan start resumed');
+              return toPlanView(running);
+            }
           }
           const decided = await decide(tenant, planId, seen);
           const log = withCorrelation(c.get('logger'), { planId: decided.id });

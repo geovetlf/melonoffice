@@ -1430,4 +1430,115 @@ describe('Writing workflows (block 4)', () => {
     expect(await workflows.findByText(/done by: Research agent/)).toBeTruthy();
     expect(workflows.queryByRole('button', { name: 'Edit (new version)' })).toBeNull();
   });
+
+  it('ADR-0179: says what each status means, who may run it, and turns a disabled workflow on again', async () => {
+    const backend = open((b) => {
+      b.options.workflows.org_1?.push({
+        id: 'wf-off',
+        name: 'Seguimiento',
+        status: 'paused',
+        version: 3,
+        createdAt: '2026-09-29T10:00:00Z',
+        createdBy: 'user-1',
+        updatedAt: '2026-09-30T10:00:00Z',
+        lastStatusChange: {
+          from: 'active',
+          to: 'paused',
+          at: '2026-09-30T10:00:00Z',
+          by: 'user-1',
+        },
+      } as never);
+    }, WRITER);
+    const workflows = within(await screen.findByRole('region', { name: 'Workflows' }));
+    expect(await workflows.findByText('Turned off')).toBeTruthy();
+    expect(
+      workflows.getByText(
+        /It never runs while it is a draft\. Activate it to prepare plans from it\./,
+      ),
+    ).toBeTruthy();
+    expect(
+      workflows.getByText(/Each plan keeps the version it had when it was prepared/),
+    ).toBeTruthy();
+    expect(
+      workflows.getByText(
+        /No new plans are made from it\. Plans already running go on until they end\./,
+      ),
+    ).toBeTruthy();
+    expect(workflows.getByText(/Last status change:/)).toBeTruthy();
+    // Only the active workflow prepares plans; the disabled one is turned on again, not "activated".
+    expect(workflows.getAllByRole('button', { name: 'Prepare a plan' })).toHaveLength(1);
+    fireEvent.click(workflows.getByRole('button', { name: 'Turn on again' }));
+    expect(
+      await screen.findByText('The workflow is active. You can prepare plans from it.'),
+    ).toBeTruthy();
+    const [moved] = posts(backend, '/workflows/wf-off/status');
+    expect(JSON.parse(moved?.body ?? '{}')).toEqual({ from: 'paused', to: 'active' });
+  });
+
+  it('ADR-0179: a draft says whether it can be activated, and activation refused says why in words', async () => {
+    const backend = open((b) => {
+      b.options.activationRefusal = 'permission:tool_not_assigned:steps.1';
+    }, WRITER);
+    const workflows = within(await screen.findByRole('region', { name: 'Workflows' }));
+    // Its steps show the same dry run activation asks for.
+    fireEvent.click((await workflows.findAllByRole('button', { name: 'Steps' }))[1] as HTMLElement);
+    expect(await workflows.findByText('Checked: it can be activated.')).toBeTruthy();
+    expect(posts(backend, '/org_1/workflows/check')).toHaveLength(1);
+
+    // The server still decides: refused, it says so, where, and the workflow stays a draft.
+    fireEvent.click(workflows.getByRole('button', { name: 'Activate' }));
+    expect(await screen.findByText('It cannot be activated yet.')).toBeTruthy();
+    expect(screen.getByText(/It is in step 2\./)).toBeTruthy();
+    expect(screen.queryByText('The workflow is active. You can prepare plans from it.')).toBeNull();
+    expect(backend.options.workflows.org_1?.find((w) => w.id === 'wf-draft')?.status).toBe('draft');
+  });
+
+  it('ADR-0179: a draft the dry run refuses says it cannot be activated yet', async () => {
+    open((b) => {
+      b.options.workflowCheck = {
+        ok: false,
+        stage: 'permission',
+        reason: 'tool_not_assigned',
+        detail: 'steps.0',
+      };
+    }, WRITER);
+    const workflows = within(await screen.findByRole('region', { name: 'Workflows' }));
+    fireEvent.click((await workflows.findAllByRole('button', { name: 'Steps' }))[1] as HTMLElement);
+    expect(await workflows.findByText('It cannot be activated yet.')).toBeTruthy();
+    expect(workflows.getByText(/It is in step 1\./)).toBeTruthy();
+    expect(workflows.queryByText('Checked: it can be activated.')).toBeNull();
+  });
+
+  it('ADR-0179: a plan says which workflow version made it, and an approved plan that did not start can start', async () => {
+    const backend = open((b) => {
+      b.options.plans.org_1 = [
+        {
+          id: 'plan-7',
+          status: 'approved',
+          version: 1,
+          createdAt: '2026-09-29T09:00:00Z',
+          current: {
+            version: 1,
+            digest: 'e'.repeat(64),
+            request: { summary: 'Oferta', objective: 'Preparar la oferta' },
+            steps: [{ id: 'research', kind: 'specialist', label: 'Research', dependsOn: [] }],
+            riskLevel: 'low',
+            estimate: { status: 'not_estimated' },
+            source: { kind: 'workflow', workflowId: 'wf-launch', workflowVersion: 1 },
+          },
+        },
+      ];
+    });
+    const plans = within(await screen.findByRole('region', { name: 'Plans' }));
+    fireEvent.click((await plans.findAllByRole('button'))[0] as HTMLElement);
+    const card = within(await screen.findByRole('article', { name: 'Oferta' }));
+    // Version 1, though the workflow is at version 2 now: an edit never changes a made plan.
+    expect(await card.findByText(/From “Lanzamiento”, version 1/)).toBeTruthy();
+    expect(card.getByText(/It was approved but did not start\./)).toBeTruthy();
+    fireEvent.click(card.getByRole('button', { name: 'Start now' }));
+    expect(await card.findByText(/Running/)).toBeTruthy();
+    const [started] = posts(backend, '/plans/plan-7/approve');
+    expect(JSON.parse(started?.body ?? '{}')).toEqual({ version: 1, digest: 'e'.repeat(64) });
+    expect(card.queryByRole('button', { name: 'Start now' })).toBeNull();
+  });
 });

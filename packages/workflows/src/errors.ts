@@ -11,6 +11,8 @@ export type WorkflowErrorCode =
   | 'invalid_workflow_transition'
   | 'workflow_concurrency_conflict'
   | 'workflow_not_active'
+  /** Its current version would not plan now (ADR-0179): `detail` says why, as codes. */
+  | 'workflow_not_valid'
   | 'assignee_unavailable'
   | 'workflow_plan_ended';
 

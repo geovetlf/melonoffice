@@ -2475,8 +2475,14 @@ a.sidebar__item:hover {
   background: var(--mo-color-accent-soft);
 }
 
-.automations__state--completed {
+.automations__state--completed,
+.automations__state--workflow-active {
   background: var(--mo-color-success-soft);
+}
+
+/* A workflow's own status (ADR-0179): a draft stays neutral, a turned-off one asks to be noticed. */
+.automations__state--workflow-paused {
+  background: var(--mo-color-warning-soft);
 }
 
 .automations__state--awaiting_approval,
