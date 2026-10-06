@@ -1623,4 +1623,62 @@ describe('Writing workflows (block 4)', () => {
     expect(await workflows.findByText('Lanzamiento')).toBeTruthy();
     expect(workflows.queryByRole('button', { name: 'Runs' })).toBeNull();
   });
+
+  it('ADR-0181: a plan says who approved and who stopped it, never by id', async () => {
+    const planOf = (id: string, extra: Record<string, unknown>) => ({
+      id,
+      status: 'cancelled',
+      version: 1,
+      createdAt: '2026-09-29T09:00:00Z',
+      updatedAt: '2026-09-29T10:00:00Z',
+      current: {
+        version: 1,
+        digest: 'c'.repeat(64),
+        request: { summary: id, objective: id },
+        steps: [{ id: 'research', kind: 'specialist', label: 'Research', dependsOn: [] }],
+        riskLevel: 'low',
+        estimate: { status: 'not_estimated' },
+        source: { kind: 'workflow', workflowId: 'wf-launch', workflowVersion: 2 },
+      },
+      ...extra,
+    });
+    const shown = async (plan: Record<string, unknown>) => {
+      cleanup();
+      open((b) => {
+        b.options.plans.org_1 = [plan];
+      });
+      const plans = within(await screen.findByRole('region', { name: 'Plans' }));
+      fireEvent.click((await plans.findAllByRole('button'))[0] as HTMLElement);
+      return within(await screen.findByRole('article', { name: plan.id as string }));
+    };
+    const decided = (by: string) => ({
+      decision: 'approved',
+      version: 1,
+      decidedBy: by,
+      decidedAt: '2026-09-29T09:05:00Z',
+    });
+    const stopped = (by: string) => ({
+      at: '2026-09-29T10:00:00Z',
+      by,
+      reason: 'director_request',
+    });
+
+    let card = await shown(
+      planOf('Mine', { decision: decided('user_ana'), stopped: stopped('user_ana') }),
+    );
+    expect(await card.findByText(/You approved it on/)).toBeTruthy();
+    expect(card.getByText(/You stopped it on/)).toBeTruthy();
+
+    card = await shown(
+      planOf('Theirs', { decision: decided('user_luis'), stopped: stopped('user_luis') }),
+    );
+    expect(await card.findByText(/Someone else in your organization approved it on/)).toBeTruthy();
+    expect(card.getByText(/Someone else in your organization stopped it on/)).toBeTruthy();
+    expect(card.queryByText(/user_luis/)).toBeNull();
+
+    // A plan nobody decided or stopped says nothing of the kind.
+    card = await shown(planOf('Quiet', { status: 'executing' }));
+    expect(await card.findByText(/From “Lanzamiento”, version 2/)).toBeTruthy();
+    expect(card.queryByText(/approved it on|stopped it on/)).toBeNull();
+  });
 });

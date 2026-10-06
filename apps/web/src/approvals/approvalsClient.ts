@@ -22,6 +22,8 @@ export interface ApprovalView {
   readonly requestedAt: string;
   readonly expiresAt: string;
   readonly decidedAt: string | null;
+  /** Why it was withdrawn, once cancelled (ADR-0181): a stable code. An older API sends none. */
+  readonly cancelReason?: string | null;
 }
 
 export class ApprovalRequestError extends Error {

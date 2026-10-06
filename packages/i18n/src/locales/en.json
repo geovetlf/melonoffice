@@ -2794,5 +2794,13 @@
   "automations.runs.title": "Runs of “{name}”",
   "automations.runs.empty": "No plan has been prepared from it yet.",
   "automations.runs.row": "{date} · version {version}",
-  "automations.planRowFrom": "“{name}”, version {version} · {date}"
+  "automations.planRowFrom": "“{name}”, version {version} · {date}",
+  "automations.plan.approvedBy.you": "You approved it on {at}.",
+  "automations.plan.approvedBy.other": "Someone else in your organization approved it on {at}.",
+  "automations.plan.rejectedBy.you": "You rejected it on {at}.",
+  "automations.plan.rejectedBy.other": "Someone else in your organization rejected it on {at}.",
+  "automations.plan.stoppedBy.you": "You stopped it on {at}.",
+  "automations.plan.stoppedBy.other": "Someone else in your organization stopped it on {at}.",
+  "approvals.withdrawn.plan_cancelled": "Withdrawn when the plan was cancelled",
+  "approvals.withdrawn.other": "Withdrawn"
 }

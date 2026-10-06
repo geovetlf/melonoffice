@@ -50,6 +50,8 @@ export interface ApprovalDocument {
   readonly expiresAt: FirestoreTimestamp;
   readonly decidedAt: FirestoreTimestamp | null;
   readonly decidedBy: string | null;
+  /** Why it was withdrawn (ADR-0181); absent on older approvals. */
+  readonly cancelReason?: string | null;
   readonly revision: number;
 }
 
@@ -83,6 +85,7 @@ export function toApprovalDocument(a: Approval): ApprovalDocument {
     expiresAt: ts(a.expiresAt),
     decidedAt: a.decidedAt === undefined ? null : ts(a.decidedAt),
     decidedBy: a.decidedBy ?? null,
+    cancelReason: a.cancelReason ?? null,
     revision: a.revision,
   };
 }
@@ -104,6 +107,7 @@ function toApproval(id: string, d: ApprovalDocument): Approval {
     expiresAt: iso(d.expiresAt),
     ...(d.decidedAt == null ? {} : { decidedAt: iso(d.decidedAt) }),
     ...(d.decidedBy == null ? {} : { decidedBy: d.decidedBy }),
+    ...(d.cancelReason == null ? {} : { cancelReason: d.cancelReason }),
     revision: d.revision,
   } as unknown as Approval;
   try {

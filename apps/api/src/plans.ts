@@ -65,6 +65,17 @@ export function registerPlanRoutes(
   const { plans, conductor, steps } = dependencies;
   const base = '/v1/organizations/:organizationId/plans';
 
+  // Who stopped a cancelled plan, when and why (ADR-0181), as its planning execution recorded it.
+  // Nothing is stored for it: the execution's cancellation is the record.
+  const stoppedOf = async (tenant: TenantContext, plan: Plan) => {
+    if (plan.status !== 'cancelled' || steps === undefined) return null;
+    const execution = await steps.executions.get(tenant, plan.executionId);
+    const cancellation = execution.cancellation;
+    return cancellation === undefined
+      ? null
+      : { at: cancellation.at, by: cancellation.by, reason: cancellation.reason };
+  };
+
   // The organization's latest plans, or one workflow's (ADR-0180) with `?workflowId=`.
   app.get(
     base,
@@ -86,7 +97,11 @@ export function registerPlanRoutes(
       answer(c, async () => {
         const plan = await plans.get(tenant, c.req.param('planId') ?? '');
         const version = await plans.getVersion(tenant, plan.id, plan.version);
-        return { ...toPlanView(plan), current: toVersionView(version) };
+        return {
+          ...toPlanView(plan),
+          current: toVersionView(version),
+          stopped: await stoppedOf(tenant, plan),
+        };
       }),
     ),
   );

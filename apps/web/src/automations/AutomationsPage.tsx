@@ -106,9 +106,12 @@ export function AutomationsPage({
   skills,
   decideStep,
   stop,
+  currentUserId,
 }: {
   readonly client: AutomationsClient;
   readonly permissions: AutomationsPermissions;
+  /** The signed-in person: a plan says "tú" for what they decided or stopped (ADR-0181). */
+  readonly currentUserId?: string | undefined;
   /**
    * Stops a running plan and everything it delegated (ADR-0029), with `execution.cancel`. Absent:
    * the plan shows no stop.
@@ -537,6 +540,7 @@ export function AutomationsPage({
               decideStep={permissions.decidePlans ? decideStep : undefined}
               stop={stop}
               workflowNames={workflowNames}
+              currentUserId={currentUserId}
             />
           )}
         </section>
@@ -893,9 +897,12 @@ function PlanCard({
   decideStep,
   stop,
   workflowNames = new Map(),
+  currentUserId,
 }: {
   readonly client: AutomationsClient;
   readonly planId: string;
+  /** The signed-in person, to say "tú" for what they decided or stopped (ADR-0181). */
+  readonly currentUserId?: string | undefined;
   /** Each workflow's name by id, to say which one made a plan (ADR-0179). */
   readonly workflowNames?: ReadonlyMap<string, string>;
   readonly canDecide: boolean;
@@ -1056,6 +1063,28 @@ function PlanCard({
           </>
         ) : null}
       </p>
+      {/* Who decided it and who stopped it (ADR-0181), never by id: "tú" or another person. */}
+      {detail.decision == null && detail.stopped == null ? null : (
+        <p className="automations__meta">
+          {detail.decision == null ? null : (
+            <FormattedMessage
+              id={`automations.plan.${detail.decision.decision}By.${
+                detail.decision.decidedBy === currentUserId ? 'you' : 'other'
+              }`}
+              values={{ at: date(detail.decision.decidedAt) }}
+            />
+          )}
+          {detail.decision != null && detail.stopped != null ? ' · ' : null}
+          {detail.stopped == null ? null : (
+            <FormattedMessage
+              id={`automations.plan.stoppedBy.${
+                detail.stopped.by === currentUserId ? 'you' : 'other'
+              }`}
+              values={{ at: date(detail.stopped.at) }}
+            />
+          )}
+        </p>
+      )}
       {now.length === 0 || ended ? null : (
         <p className="automations__meta">
           <FormattedMessage

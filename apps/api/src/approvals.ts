@@ -106,5 +106,7 @@ export function toApprovalView(approval: Approval) {
     expiresAt: approval.expiresAt,
     decidedAt: approval.decidedAt ?? null,
     decidedBy: approval.decidedBy ?? null,
+    // Why it was withdrawn (ADR-0181), as a stable code.
+    cancelReason: approval.cancelReason ?? null,
   };
 }

@@ -2794,5 +2794,13 @@
   "automations.runs.title": "Ejecuciones de «{name}»",
   "automations.runs.empty": "Aún no se ha preparado ningún plan con ella.",
   "automations.runs.row": "{date} · versión {version}",
-  "automations.planRowFrom": "«{name}», versión {version} · {date}"
+  "automations.planRowFrom": "«{name}», versión {version} · {date}",
+  "automations.plan.approvedBy.you": "Lo aprobaste tú el {at}.",
+  "automations.plan.approvedBy.other": "Lo aprobó otra persona de tu organización el {at}.",
+  "automations.plan.rejectedBy.you": "Lo rechazaste tú el {at}.",
+  "automations.plan.rejectedBy.other": "Lo rechazó otra persona de tu organización el {at}.",
+  "automations.plan.stoppedBy.you": "Lo detuviste tú el {at}.",
+  "automations.plan.stoppedBy.other": "Lo detuvo otra persona de tu organización el {at}.",
+  "approvals.withdrawn.plan_cancelled": "Retirada al cancelar el plan",
+  "approvals.withdrawn.other": "Retirada"
 }

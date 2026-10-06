@@ -51,6 +51,11 @@ export interface Approval {
   readonly expiresAt: IsoTimestamp;
   readonly decidedAt?: IsoTimestamp;
   readonly decidedBy?: UserId;
+  /**
+   * Why it was withdrawn, once `cancelled` (ADR-0181), as a stable code: `plan_cancelled` when
+   * the plan it belonged to was cancelled. Absent on approvals withdrawn before ADR-0181.
+   */
+  readonly cancelReason?: string;
   /** Increases with every change; a write expecting an older revision is refused. */
   readonly revision: number;
 }

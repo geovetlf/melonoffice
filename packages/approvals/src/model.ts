@@ -201,5 +201,17 @@ export function checkStoredApproval(approval: Approval): Approval {
   if (!(RISK_LEVELS as readonly string[]).includes(approval.riskLevel)) invalid('riskLevel');
   if (!positive(approval.revision)) invalid('revision');
   if (Number.isNaN(Date.parse(approval.expiresAt))) invalid('expiresAt');
+  if (
+    approval.cancelReason !== undefined &&
+    (approval.status !== 'cancelled' || !CODE.test(approval.cancelReason))
+  ) {
+    invalid('cancelReason');
+  }
   return approval;
+}
+
+/** Withdraws a pending approval and keeps why (ADR-0181): a stable code. */
+export function withdraw(approval: Approval, reason: string, now: Date): Approval {
+  if (!CODE.test(reason)) invalid('cancelReason');
+  return Object.freeze({ ...decide(approval, 'cancelled', undefined, now), cancelReason: reason });
 }

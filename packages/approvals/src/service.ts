@@ -10,7 +10,14 @@ import type { Approval, ApprovalId, OrganizationId } from '@melonoffice/domain';
 import type { AuthorizationService } from '@melonoffice/rbac';
 import { isResolvedTenant, type TenancyStore, type TenantContext } from '@melonoffice/tenancy';
 import { ApprovalError } from './errors.js';
-import { decide, hasExpired, isApprovalId, newApproval, type ApprovalRequest } from './model.js';
+import {
+  decide,
+  hasExpired,
+  isApprovalId,
+  newApproval,
+  withdraw,
+  type ApprovalRequest,
+} from './model.js';
 import type { ApprovalRepository } from './repository.js';
 
 export const MAX_APPROVALS_LISTED = 100;
@@ -213,7 +220,7 @@ export function createApprovalService({
       const organizationId = await organizationOf(tenant);
       const at = now();
       return repository.update(organizationId, idOf(id), (current) => {
-        const next = decide(current, 'cancelled', undefined, at);
+        const next = withdraw(current, reason, at);
         return {
           approval: next,
           events: [

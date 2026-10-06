@@ -506,6 +506,7 @@ export function AppShell(locale: LocaleProps) {
           <div className="light-surface">
             <AutomationsPage
               client={clients.automations}
+              currentUserId={me.userId}
               permissions={{
                 readWorkflows: canReadWorkflows,
                 readPlans: canReadPlans,
