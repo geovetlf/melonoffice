@@ -3,14 +3,17 @@ import type {
   Timestamp as FirestoreTimestamp,
   Transaction,
 } from '@google-cloud/firestore';
-import { Timestamp } from '@google-cloud/firestore';
+import { FieldPath, Timestamp } from '@google-cloud/firestore';
 import type { AuditEvent } from '@melonoffice/audit';
 import {
+  byOldestUpdate,
   checkNextRevision,
   checkStoredExecution,
   ExecutionError,
+  isAfterOpen,
   isExecutionId,
   OPEN_STATUSES,
+  type OpenPosition,
   type OpenExecutionIndex,
   type OpenOrganizationIndex,
   type ExecutionRepository,
@@ -281,10 +284,19 @@ export class FirestoreExecutionRepository
    * the status and filters here. A record that does not read as an execution is skipped, never
    * swept.
    */
-  async openSince(status: ExecutionStatus, before: IsoTimestamp, limit: number) {
+  async openSince(
+    status: ExecutionStatus,
+    before: IsoTimestamp,
+    limit: number,
+    after?: OpenPosition,
+  ) {
     if (!OPEN_STATUSES.includes(status) || !Number.isSafeInteger(limit) || limit < 1) return [];
     const cutoff = new Date(before);
     if (Number.isNaN(cutoff.getTime())) return [];
+    const from = after === undefined ? undefined : new Date(after.at);
+    if (from !== undefined && (Number.isNaN(from.getTime()) || !isExecutionId(after?.id))) {
+      return [];
+    }
     const ofStatus = this.db.collection(EXECUTIONS).where('status', '==', status);
     const read = (docs: readonly { id: string; data: () => unknown }[]): Execution[] =>
       docs.flatMap((doc) => {
@@ -295,19 +307,24 @@ export class FirestoreExecutionRepository
         }
       });
     try {
-      const snapshot = await ofStatus
+      // Oldest first by update, then id (ADR-0183): the index on status and update serves it,
+      // since Firestore orders an index by the document id after its last field.
+      let query = ofStatus
         .where('updatedAt', '<', Timestamp.fromDate(cutoff))
         .orderBy('updatedAt', 'asc')
-        .limit(limit)
-        .get();
+        .orderBy(FieldPath.documentId(), 'asc');
+      if (after !== undefined && from !== undefined) {
+        query = query.startAfter(Timestamp.fromDate(from), after.id);
+      }
+      const snapshot = await query.limit(limit).get();
       return read(snapshot.docs);
     } catch (error) {
       if (!isMissingIndex(error)) throw error;
       this.options.onIndexMissing?.('executions_status_updated');
       const snapshot = await ofStatus.limit(SWEEP_FALLBACK_LIMIT).get();
       return read(snapshot.docs)
-        .filter((e) => e.updatedAt < before)
-        .sort((a, b) => (a.updatedAt < b.updatedAt ? -1 : a.updatedAt > b.updatedAt ? 1 : 0))
+        .filter((e) => e.updatedAt < before && (after === undefined || isAfterOpen(e, after)))
+        .sort(byOldestUpdate)
         .slice(0, limit);
     }
   }
