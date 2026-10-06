@@ -21,6 +21,7 @@ import {
   type WorkflowStatus,
   type WorkflowStepDraft,
   type WorkflowView,
+  type PlanPageView,
 } from './automationsClient.js';
 import { navigate } from '../identity/router.js';
 import { openedWith, paths } from '../shell/routes.js';
@@ -133,6 +134,8 @@ export function AutomationsPage({
 }) {
   const [workflows, setWorkflows] = useState<Load<readonly WorkflowView[]>>({ status: 'loading' });
   const [plans, setPlans] = useState<Load<readonly PlanView[]>>({ status: 'loading' });
+  const [plansNext, setPlansNext] = useState<string | null>(null);
+  const planPage = client.planPage?.bind(client);
   const [runsOf, setRunsOf] = useState<string>();
   const [selected, setSelected] = useState<string>();
   const [error, setError] = useState<string>();
@@ -186,8 +189,16 @@ export function AutomationsPage({
 
   const loadPlans = useCallback(() => {
     if (!permissions.readPlans) return;
-    client.plans().then(
-      (value) => setPlans({ status: 'ready', value: [...value].sort(newestFirst) }),
+    // A page at a time where the client pages (ADR-0182); the first page is the newest 100.
+    const first =
+      client.planPage === undefined
+        ? client.plans().then((value) => ({ plans: value, nextCursor: null }))
+        : client.planPage();
+    first.then(
+      (page) => {
+        setPlans({ status: 'ready', value: [...page.plans].sort(newestFirst) });
+        setPlansNext(page.nextCursor);
+      },
       () => setPlans({ status: 'error' }),
     );
   }, [client, permissions.readPlans]);
@@ -546,6 +557,20 @@ export function AutomationsPage({
               ))}
             </ul>
           )}
+          {plans.status === 'ready' && planPage !== undefined ? (
+            <OlderPlans
+              cursor={plansNext}
+              load={planPage}
+              onPage={(page) => {
+                setPlans((current) =>
+                  current.status === 'ready'
+                    ? { status: 'ready', value: withPage(current.value, page.plans) }
+                    : current,
+                );
+                setPlansNext(page.nextCursor);
+              }}
+            />
+          ) : null}
           {selected === undefined ? null : (
             <PlanCard
               key={selected}
@@ -732,11 +757,17 @@ function WorkflowRuns({
 }) {
   const intl = useIntl();
   const [runs, setRuns] = useState<Load<readonly PlanView[]>>({ status: 'loading' });
+  const [next, setNext] = useState<string | null>(null);
+  const workflowPlans = client.workflowPlans?.bind(client);
   useEffect(() => {
     if (client.workflowPlans === undefined) return undefined;
     let live = true;
     client.workflowPlans(workflow.id).then(
-      (value) => live && setRuns({ status: 'ready', value: [...value].sort(newestFirst) }),
+      (page) => {
+        if (!live) return;
+        setRuns({ status: 'ready', value: [...page.plans].sort(newestFirst) });
+        setNext(page.nextCursor);
+      },
       () => live && setRuns({ status: 'error' }),
     );
     return () => {
@@ -787,7 +818,66 @@ function WorkflowRuns({
           ))}
         </ul>
       )}
+      {runs.status === 'ready' && workflowPlans !== undefined ? (
+        <OlderPlans
+          cursor={next}
+          load={(cursor) => workflowPlans(workflow.id, cursor)}
+          onPage={(page) => {
+            setRuns((current) =>
+              current.status === 'ready'
+                ? { status: 'ready', value: withPage(current.value, page.plans) }
+                : current,
+            );
+            setNext(page.nextCursor);
+          }}
+        />
+      ) : null}
     </div>
+  );
+}
+
+/** The plans listed so far and a later page, each plan once, newest first (ADR-0182). */
+const withPage = (listed: readonly PlanView[], page: readonly PlanView[]) =>
+  [...listed, ...page.filter((p) => !listed.some((l) => l.id === p.id))].sort(newestFirst);
+
+/**
+ * "Ver planes anteriores" (ADR-0182): the next page of a plans list, while there is one. A
+ * failure says so and leaves the button to try again.
+ */
+function OlderPlans({
+  cursor,
+  load,
+  onPage,
+}: {
+  readonly cursor: string | null;
+  readonly load: (cursor: string) => Promise<PlanPageView>;
+  readonly onPage: (page: PlanPageView) => void;
+}) {
+  const [state, setState] = useState<'idle' | 'loading' | 'error'>('idle');
+  if (cursor === null) return null;
+  const more = () => {
+    setState('loading');
+    load(cursor).then(
+      (page) => {
+        setState('idle');
+        onPage(page);
+      },
+      () => setState('error'),
+    );
+  };
+  return (
+    <>
+      {state === 'error' ? (
+        <StateMessage kind="error" inline>
+          <FormattedMessage id="automations.error.generic" />
+        </StateMessage>
+      ) : null}
+      <Button size="sm" variant="secondary" disabled={state === 'loading'} onClick={more}>
+        <FormattedMessage
+          id={state === 'loading' ? 'automations.loading' : 'automations.olderPlans'}
+        />
+      </Button>
+    </>
   );
 }
 

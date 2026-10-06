@@ -372,7 +372,7 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
   it('lists and shows plans with the digest a user approves, and nothing internal', async () => {
     const t = await setup();
     const empty = await t.get('token-alice', '/plans');
-    expect(await empty.json()).toEqual({ plans: [] });
+    expect(await empty.json()).toEqual({ plans: [], nextCursor: null });
     const { plan, version } = await t.propose();
     const listed = (await (await t.get('token-alice', '/plans')).json()) as { plans: unknown[] };
     expect(listed.plans).toEqual([
@@ -409,7 +409,7 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
     expect(fromB.status).toBe(404);
     expect(await fromB.json()).toEqual({ error: 'plan_not_found' });
     const listB = await t.app.request(`/v1/organizations/${t.orgB}/plans`, t.as('token-bob'));
-    expect(await listB.json()).toEqual({ plans: [] });
+    expect(await listB.json()).toEqual({ plans: [], nextCursor: null });
   });
 
   it('approves exactly the version the user saw, once', async () => {
@@ -768,6 +768,104 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
         id,
         version: 1,
       });
+    });
+
+    it('ADR-0182: pages the organization’s plans and one workflow’s, each once, newest first, and keeps cursors to their list', async () => {
+      const t = await setup(ROLES, { runPlans: true });
+      const id = await activeWorkflow(t, [researchStep]);
+      const first = (await (
+        await t.post('token-alice', `/workflows/${id}/plans`, { requestKey: 'r-1' })
+      ).json()) as { id: string };
+      const current = must(await t.stores.plans.find(t.orgA, first.id as never));
+      const version = must(await t.stores.plans.findVersion(t.orgA, first.id as never, 1));
+      // Just planned: nothing decided or run yet, so it can be copied as it is.
+      const bare = current;
+      // 130 more plans: four in five from this workflow, the rest from no workflow.
+      const start = Date.parse(current.createdAt);
+      for (let i = 1; i <= 130; i += 1) {
+        const planId = crypto.randomUUID() as Plan['id'];
+        const { workflow, ...rest } = bare;
+        await t.stores.plans.create({
+          plan: {
+            ...rest,
+            ...(i % 5 === 0 ? {} : { workflow }),
+            id: planId,
+            executionId: crypto.randomUUID() as Plan['executionId'],
+            status: 'ready',
+            delegations: [],
+            revision: 1,
+            createdAt: new Date(start + i * 1000).toISOString() as Plan['createdAt'],
+          } as unknown as Plan,
+          version: {
+            ...version,
+            planId,
+            digest: digestOf({
+              planId,
+              organizationId: version.organizationId,
+              version: version.version,
+              request: version.request,
+              steps: version.steps,
+              riskLevel: version.riskLevel,
+              approvalRequired: version.approvalRequired,
+              estimate: version.estimate,
+              source: version.source,
+            }),
+          },
+          events: [],
+        });
+      }
+
+      type Page = { plans: { id: string; createdAt: string }[]; nextCursor: string | null };
+      const pages = async (query: string) => {
+        const seen: string[] = [];
+        const sizes: number[] = [];
+        let cursor: string | null = null;
+        do {
+          const sep: string = query === '' ? '?' : '&';
+          const path: string =
+            cursor === null ? `/plans${query}` : `/plans${query}${sep}cursor=${cursor}`;
+          const response = await t.get('token-alice', path);
+          expect(response.status).toBe(200);
+          const page = (await response.json()) as Page;
+          sizes.push(page.plans.length);
+          seen.push(...page.plans.map((p) => `${p.createdAt}|${p.id}`));
+          cursor = page.nextCursor;
+        } while (cursor !== null);
+        return { seen, sizes };
+      };
+      const all = await pages('');
+      expect(all.sizes).toEqual([100, 31]);
+      expect(new Set(all.seen).size).toBe(131);
+      expect([...all.seen].sort().reverse()).toEqual(all.seen);
+      const mine = await pages(`?workflowId=${id}`);
+      expect(mine.sizes).toEqual([100, 5]);
+      expect(new Set(mine.seen).size).toBe(105);
+      expect([...mine.seen].sort().reverse()).toEqual(mine.seen);
+      expect(mine.seen.at(-1)?.endsWith(first.id)).toBe(true);
+
+      // A cursor is kept to its list and its organization; a malformed one is refused.
+      const orgCursor = must(
+        ((await (await t.get('token-alice', '/plans')).json()) as Page).nextCursor,
+      );
+      const wfCursor = must(
+        ((await (await t.get('token-alice', `/plans?workflowId=${id}`)).json()) as Page).nextCursor,
+      );
+      const refused = async (path: string) => {
+        const response = await t.get('token-alice', path);
+        expect(response.status).toBe(400);
+        expect(await response.json()).toEqual({ error: 'invalid_cursor' });
+      };
+      await refused(`/plans?workflowId=${id}&cursor=${orgCursor}`);
+      await refused(`/plans?cursor=${wfCursor}`);
+      await refused('/plans?cursor=not-a-cursor');
+      // Bob, in his own organization, cannot use Alice's cursor and sees none of her plans.
+      const bobs = await t.app.request(
+        `/v1/organizations/${t.orgB}/plans?cursor=${orgCursor}`,
+        t.as('token-bob'),
+      );
+      expect(bobs.status).toBe(400);
+      const bobsOwn = await t.app.request(`/v1/organizations/${t.orgB}/plans`, t.as('token-bob'));
+      expect(await bobsOwn.json()).toEqual({ plans: [], nextCursor: null });
     });
 
     it('ADR-0180: one workflow’s plans need plan.read', async () => {

@@ -13,7 +13,9 @@ import type { AgentOutputStore, ExecutionService } from '@melonoffice/execution'
 import {
   conditionStepState,
   gatedStepState,
+  isPlanId,
   isPlanningError,
+  MAX_PLANS_LISTED,
   PlanningError,
   BUDGET_EXCEEDED,
   planStepStates,
@@ -25,6 +27,7 @@ import {
   unrunnableStepOf,
   waitStepState,
   type PlanConductor,
+  type PlanPosition,
   type PlanService,
   type PlanStepState,
 } from '@melonoffice/planning';
@@ -76,17 +79,32 @@ export function registerPlanRoutes(
       : { at: cancellation.at, by: cancellation.by, reason: cancellation.reason };
   };
 
-  // The organization's latest plans, or one workflow's (ADR-0180) with `?workflowId=`.
+  // The organization's plans, or one workflow's (ADR-0180) with `?workflowId=`, newest first a
+  // page at a time (ADR-0182). The first page is the newest 100, as before paging.
   app.get(
     base,
     withPermission('plan.read', dependencies, async (c, tenant) => {
       const workflowId = c.req.query('workflowId');
-      if (workflowId === undefined) {
-        return c.json({ plans: (await plans.list(tenant)).map(toPlanView) });
+      if (workflowId !== undefined && !isWorkflowId(workflowId)) {
+        return c.json({ error: 'invalid_workflow_id' }, 400);
       }
-      if (!isWorkflowId(workflowId)) return c.json({ error: 'invalid_workflow_id' }, 400);
+      const scope = workflowId ?? ALL_PLANS;
+      const cursor = c.req.query('cursor');
+      const after =
+        cursor === undefined ? undefined : decodePlanCursor(cursor, tenant.organizationId, scope);
+      if (after === null) return c.json({ error: 'invalid_cursor' }, 400);
+      const request = { ...(after === undefined ? {} : { after }), limit: MAX_PLANS_LISTED };
+      const page =
+        workflowId === undefined
+          ? await plans.page(tenant, request)
+          : await plans.pageForWorkflow(tenant, workflowId, request);
+      const last = page.items.at(-1);
       return c.json({
-        plans: (await plans.listForWorkflow(tenant, workflowId)).map(toPlanView),
+        plans: page.items.map(toPlanView),
+        nextCursor:
+          page.hasMore && last !== undefined
+            ? encodePlanCursor(tenant.organizationId, scope, { at: last.createdAt, id: last.id })
+            : null,
       });
     }),
   );
@@ -633,4 +651,37 @@ export async function readPlanSteps(
     });
   }
   return { views: out, children };
+}
+
+/** The organization's own plans list, as a cursor's scope (ADR-0182). */
+const ALL_PLANS = 'all';
+
+/**
+ * Where a list of plans continues (ADR-0182): its organization, its list (`all`, or one
+ * workflow's id) and the last plan's position. Opaque to the browser.
+ */
+export function encodePlanCursor(organizationId: string, scope: string, position: PlanPosition) {
+  return Buffer.from(
+    JSON.stringify({ v: 1, o: organizationId, s: scope, a: position.at, i: position.id }),
+  ).toString('base64url');
+}
+
+/** The position a cursor names, or `null` when it is malformed or of another list. */
+export function decodePlanCursor(
+  cursor: string,
+  organizationId: string,
+  scope: string,
+): PlanPosition | null {
+  if (cursor.length > 400) return null;
+  let value: unknown;
+  try {
+    value = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'));
+  } catch {
+    return null;
+  }
+  if (typeof value !== 'object' || value === null) return null;
+  const { v, o, s, a, i } = value as Record<string, unknown>;
+  if (v !== 1 || o !== organizationId || s !== scope) return null;
+  if (typeof a !== 'string' || Number.isNaN(Date.parse(a)) || !isPlanId(i)) return null;
+  return { at: a, id: i };
 }

@@ -1704,6 +1704,59 @@ describe('Writing workflows (block 4)', () => {
     expect(workflows.queryByRole('button', { name: 'Runs' })).toBeNull();
   });
 
+  it('ADR-0182: the plans list and a workflow’s runs show earlier plans a page at a time, each once', async () => {
+    const planOf = (n: number) => ({
+      id: `plan-${n}`,
+      status: 'completed',
+      version: 1,
+      createdAt: `2026-09-2${9 - n}T09:00:00Z`,
+      workflow: { id: 'wf-launch', version: 1 },
+      current: {
+        version: 1,
+        digest: 'c'.repeat(64),
+        request: { summary: `plan-${n}`, objective: `plan-${n}` },
+        steps: [{ id: 'research', kind: 'specialist', label: 'Research', dependsOn: [] }],
+        riskLevel: 'low',
+        estimate: { status: 'not_estimated' },
+        source: { kind: 'workflow', workflowId: 'wf-launch', workflowVersion: 1 },
+      },
+    });
+    const backend = open((b) => {
+      b.options.planPageSize = 2;
+      b.options.plans.org_1 = [0, 1, 2, 3, 4].map(planOf);
+    }, WRITER);
+    const rowsIn = (region: ReturnType<typeof within>) =>
+      region.queryAllByRole('button', { name: /version 1/ }).length;
+    const pageThrough = async (region: ReturnType<typeof within>) => {
+      await vi.waitFor(() => expect(rowsIn(region)).toBe(2));
+      fireEvent.click(region.getByRole('button', { name: 'Show earlier plans' }));
+      await vi.waitFor(() => expect(rowsIn(region)).toBe(4));
+      fireEvent.click(region.getByRole('button', { name: 'Show earlier plans' }));
+      await vi.waitFor(() => expect(rowsIn(region)).toBe(5));
+      // Nothing older remains: the button goes.
+      expect(region.queryByRole('button', { name: 'Show earlier plans' })).toBeNull();
+    };
+
+    await pageThrough(within(await screen.findByRole('region', { name: 'Plans' })));
+    const workflows = within(await screen.findByRole('region', { name: 'Workflows' }));
+    fireEvent.click((await workflows.findAllByRole('button', { name: 'Runs' }))[0] as HTMLElement);
+    await pageThrough(within(await screen.findByRole('region', { name: 'Runs of “Lanzamiento”' })));
+    // Each later page asked for where the last one ended, in its own list.
+    const pages = backend
+      .apiCalls()
+      .filter((c) => c.method === 'GET' && /\/org_1\/plans\?/.test(c.url))
+      .map((c) => c.url.slice(c.url.indexOf('?')));
+    expect(pages).toEqual(
+      expect.arrayContaining([
+        '?cursor=2',
+        '?cursor=4',
+        '?workflowId=wf-launch',
+        '?workflowId=wf-launch&cursor=2',
+        '?workflowId=wf-launch&cursor=4',
+      ]),
+    );
+  });
+
   it('ADR-0181: a plan says who approved and who stopped it, never by id', async () => {
     const planOf = (id: string, extra: Record<string, unknown>) => ({
       id,

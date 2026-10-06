@@ -862,6 +862,21 @@ describe('plans', () => {
       fromWorkflow.plan.id,
     ]);
     expect(await w.plans.listForWorkflow(w.tenantB, workflowId)).toEqual([]);
+    // A page of it (ADR-0182): the same plans, in the same organization only.
+    expect(await w.plans.pageForWorkflow(w.tenantA, workflowId, { limit: 1 })).toEqual({
+      items: [fromWorkflow.plan],
+      hasMore: false,
+    });
+    expect(
+      await w.plans.pageForWorkflow(w.tenantA, workflowId, {
+        after: { at: fromWorkflow.plan.createdAt, id: fromWorkflow.plan.id },
+        limit: 1,
+      }),
+    ).toEqual({ items: [], hasMore: false });
+    expect(await w.plans.pageForWorkflow(w.tenantB, workflowId, { limit: 1 })).toEqual({
+      items: [],
+      hasMore: false,
+    });
 
     // An update that changes or drops it is refused, as a concurrent change would be.
     for (const workflow of [undefined, { id: workflowId, version: 4 }]) {
