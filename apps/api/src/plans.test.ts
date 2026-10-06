@@ -820,6 +820,48 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
       expect(t.kicked).toEqual([research]);
     });
 
+    it('ADR-0179: the trace route names the workflow version that made the plan, after later edits too', async () => {
+      const t = await setup(ROLES, { runPlans: true });
+      const id = await activeWorkflow(t, [researchStep]);
+      await t.post('token-alice', `/workflows/${id}/versions`, {
+        steps: [researchStep, campaignStep],
+      });
+      const plan = (await (
+        await t.post('token-alice', `/workflows/${id}/plans`, { requestKey: 'trace-1' })
+      ).json()) as PlanDetail;
+      await t.post('token-alice', `/plans/${plan.id}/approve`, {
+        version: plan.current.version,
+        digest: plan.current.digest,
+      });
+      // The workflow changes after the plan was made: the plan and its trace keep version 2.
+      const edited = await t.post('token-alice', `/workflows/${id}/versions`, {
+        steps: [researchStep],
+      });
+      expect(((await edited.json()) as { version: number }).version).toBe(3);
+      const response = await t.get('token-alice', `/plans/${plan.id}/trace`);
+      expect(response.status).toBe(200);
+      const trace = (await response.json()) as {
+        workflow: unknown;
+        steps: { stepId: string }[];
+        history: { action: string; actor: string; actorId: string | null }[];
+      };
+      expect(trace.workflow).toEqual({ id, version: 2 });
+      expect(trace.steps.map((s) => s.stepId)).toEqual(['research', 'campaign']);
+      expect(trace.history).toContainEqual(
+        expect.objectContaining({
+          action: 'plan.approved',
+          actor: 'user',
+          actorId: t.tenant.userId,
+        }),
+      );
+      // Another organization reads nothing of it.
+      const fromB = await t.app.request(
+        `/v1/organizations/${t.orgB}/plans/${plan.id}/trace`,
+        t.as('token-bob'),
+      );
+      expect(fromB.status).toBe(404);
+    });
+
     it('ADR-0158: a workflow’s wait is shown with its length for the editor', async () => {
       const t = await setup(ROLES, { runPlans: true });
       const pause = {
@@ -1540,6 +1582,138 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
       expect([403, 404]).toContain(intrude.status);
       expect((await w.t.stores.approvals.find(w.t.orgA, w.approvalId as never))?.status).toBe(
         'pending',
+      );
+      expect(w.t.kicked).toEqual([w.research, w.brief]);
+    });
+
+    it('ADR-0179: cancelling the plan over HTTP withdraws its step approval, and nothing starts after', async () => {
+      const w = await waitingPlan();
+      const cancelled = await w.t.post('token-alice', `/executions/${w.plan.executionId}/cancel`, {
+        reason: 'director_request',
+      });
+      expect(cancelled.status).toBe(200);
+      expect(((await cancelled.json()) as { status: string }).status).toBe('cancelled');
+
+      // The approval left the inbox: still listed, as cancelled, and nobody is asked any more.
+      const inbox = (await (await w.t.get('token-alice', '/approvals')).json()) as {
+        approvals: { id: string; status: string }[];
+      };
+      expect(inbox.approvals.filter((a) => a.status === 'pending')).toEqual([]);
+      expect(inbox.approvals).toEqual([
+        expect.objectContaining({ id: w.approvalId, status: 'cancelled' }),
+      ]);
+      const shown = await w.t.get('token-alice', `/approvals/${w.approvalId}`);
+      expect(((await shown.json()) as { status: string }).status).toBe('cancelled');
+
+      // Deciding it afterwards changes nothing and starts nothing.
+      for (const action of ['approve', 'reject']) {
+        expect((await w.t.post('token-alice', `/approvals/${w.approvalId}/${action}`)).status).toBe(
+          409,
+        );
+      }
+      const seen = await w.states();
+      expect(seen.status).toBe('cancelled');
+      expect(seen.steps['campaign']).not.toBe('awaiting_approval');
+      expect(w.t.kicked).toEqual([w.research, w.brief]);
+      // A later look by the conductor (a wake, a sweep) asks nothing new and starts nothing.
+      await w.worker.advance(w.runtime, w.plan.id);
+      expect((await w.t.stores.approvals.list(w.t.orgA, 10)).map((a) => a.status)).toEqual([
+        'cancelled',
+      ]);
+      expect(w.t.kicked).toEqual([w.research, w.brief]);
+
+      // Its children were cancelled with it. Cancelling again (a retried request) answers the
+      // same and withdraws nothing twice.
+      for (const id of [w.brief, w.campaign, w.launch]) {
+        const child = (await (await w.t.get('token-alice', `/executions/${id}`)).json()) as {
+          status: string;
+        };
+        expect(child.status).toBe('cancelled');
+      }
+      const again = await w.t.post('token-alice', `/executions/${w.plan.executionId}/cancel`, {
+        reason: 'director_request',
+      });
+      expect(again.status).toBe(200);
+      expect(((await again.json()) as { status: string }).status).toBe('cancelled');
+      const withdrawn = (await w.t.stores.auditEvents()).filter(
+        (e) => e.action === 'tool.approval_cancelled' && e.target?.id === w.approvalId,
+      );
+      expect(withdrawn).toEqual([
+        expect.objectContaining({
+          reason: 'plan_cancelled',
+          actor: expect.objectContaining({ type: 'user', userId: w.t.tenant.userId }),
+        }),
+      ]);
+    });
+
+    it('ADR-0179: the trace route names each step approval and who decided it', async () => {
+      const w = await waitingPlan();
+      expect((await w.t.post('token-alice', `/approvals/${w.approvalId}/approve`)).status).toBe(
+        200,
+      );
+      const response = await w.t.get('token-alice', `/plans/${w.plan.id}/trace`);
+      expect(response.status).toBe(200);
+      const trace = (await response.json()) as {
+        workflow: unknown;
+        steps: { stepId: string; approvals: { approvalId: string; declined: string | null }[] }[];
+        history: { action: string; actor: string; actorId: string | null }[];
+      };
+      // A plan the planner wrote names no workflow.
+      expect(trace.workflow).toBeNull();
+      expect(trace.steps.find((s) => s.stepId === 'campaign')?.approvals).toEqual([
+        expect.objectContaining({ approvalId: w.approvalId, declined: null }),
+      ]);
+      expect(trace.history).toContainEqual(
+        expect.objectContaining({
+          action: 'tool.approval_approved',
+          actor: 'user',
+          actorId: w.t.tenant.userId,
+        }),
+      );
+      // The runtime's requests name the person it acted for, never as the decider.
+      expect(trace.history).toContainEqual(
+        expect.objectContaining({
+          action: 'plan.step_approval_requested',
+          actor: 'system',
+          actorId: w.t.tenant.userId,
+        }),
+      );
+    });
+
+    it('ADR-0179: another organization can neither read the trace nor cancel the plan, nor decide its approval', async () => {
+      const w = await waitingPlan();
+      const asBob = (org: string, path: string, method = 'GET', body?: unknown) =>
+        w.t.app.request(
+          `/v1/organizations/${org}${path}`,
+          w.t.as('token-bob', {
+            method,
+            headers: { 'content-type': 'application/json' },
+            ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+          }),
+        );
+      const cancel = `/executions/${w.plan.executionId}/cancel`;
+      const stop = { reason: 'director_request' };
+      // From Bob's own organization, Alice's plan does not exist.
+      expect((await asBob(w.t.orgB, `/plans/${w.plan.id}/trace`)).status).toBe(404);
+      expect((await asBob(w.t.orgB, cancel, 'POST', stop)).status).toBe(404);
+      // Through Alice's organization, Bob is not a member.
+      expect((await asBob(w.t.orgA, `/plans/${w.plan.id}/trace`)).status).toBe(403);
+      expect((await asBob(w.t.orgA, cancel, 'POST', stop)).status).toBe(403);
+      expect((await asBob(w.t.orgA, `/approvals/${w.approvalId}/approve`, 'POST')).status).toBe(
+        403,
+      );
+      expect((await w.states()).status).toBe('executing');
+      expect((await w.t.stores.approvals.find(w.t.orgA, w.approvalId as never))?.status).toBe(
+        'pending',
+      );
+
+      // Once Alice cancels, neither of them can bring the withdrawn approval back.
+      await w.t.post('token-alice', cancel, stop);
+      expect((await asBob(w.t.orgB, `/approvals/${w.approvalId}/approve`, 'POST')).status).toBe(
+        404,
+      );
+      expect((await w.t.post('token-alice', `/approvals/${w.approvalId}/approve`)).status).toBe(
+        409,
       );
       expect(w.t.kicked).toEqual([w.research, w.brief]);
     });
