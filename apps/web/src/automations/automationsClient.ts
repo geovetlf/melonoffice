@@ -282,6 +282,12 @@ export type PlanStepState =
   | 'skipped'
   | 'failed';
 
+/** A page of plans (ADR-0182): `nextCursor` continues it, `null` at the end. */
+export interface PlanPageView {
+  readonly plans: readonly PlanView[];
+  readonly nextCursor: string | null;
+}
+
 export interface PlanDetail extends PlanView {
   /** Who stopped a cancelled plan, when and why (ADR-0181); null otherwise. */
   readonly stopped?: { readonly at: string; readonly by: string; readonly reason: string } | null;
@@ -539,8 +545,13 @@ export interface AutomationsClient {
   /** The same `requestKey` is the same plan: a retry never plans twice. */
   planWorkflow(workflowId: string, requestKey: string): Promise<WorkflowPlanOutcome>;
   plans(): Promise<readonly PlanView[]>;
-  /** One workflow's plans, newest first (ADR-0180). An older client has none. */
-  workflowPlans?(workflowId: string): Promise<readonly PlanView[]>;
+  /**
+   * The organization's plans newest first, a page at a time (ADR-0182), after `cursor`. An older
+   * client has none.
+   */
+  planPage?(cursor?: string): Promise<PlanPageView>;
+  /** One workflow's plans, newest first, a page at a time (ADR-0180, ADR-0182). */
+  workflowPlans?(workflowId: string, cursor?: string): Promise<PlanPageView>;
   plan(planId: string): Promise<PlanDetail>;
   steps(planId: string): Promise<readonly PlanStepProgress[]>;
   /** The plan's trace (ADR-0157). Absent: the screen shows none. */
@@ -658,10 +669,11 @@ export function createAutomationsClient(
       const body = (await (await call('/plans')).json()) as { plans?: PlanView[] };
       return body.plans ?? [];
     },
-    async workflowPlans(workflowId) {
-      const query = new URLSearchParams({ workflowId }).toString();
-      const body = (await (await call(`/plans?${query}`)).json()) as { plans?: PlanView[] };
-      return body.plans ?? [];
+    async planPage(cursor) {
+      return pageOf(await call(`/plans${queryOf({ cursor })}`));
+    },
+    async workflowPlans(workflowId, cursor) {
+      return pageOf(await call(`/plans${queryOf({ workflowId, cursor })}`));
     },
     async plan(id) {
       return (await (await call(plan(id))).json()) as PlanDetail;
@@ -699,5 +711,20 @@ export function createAutomationsClient(
       if (response.status === 422) throw new AutomationsError(422, 'unexpected');
       return (await response.json()) as PlanView;
     },
+  };
+}
+
+const queryOf = (params: Record<string, string | undefined>) => {
+  const present = Object.entries(params).filter(
+    (entry): entry is [string, string] => entry[1] !== undefined,
+  );
+  return present.length === 0 ? '' : `?${new URLSearchParams(present).toString()}`;
+};
+
+async function pageOf(response: Response): Promise<PlanPageView> {
+  const body = (await response.json()) as { plans?: PlanView[]; nextCursor?: unknown };
+  return {
+    plans: body.plans ?? [],
+    nextCursor: typeof body.nextCursor === 'string' ? body.nextCursor : null,
   };
 }

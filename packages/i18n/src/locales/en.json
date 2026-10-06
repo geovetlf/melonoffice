@@ -2791,6 +2791,7 @@
   "orgTasks.planStatus.cancelled": "Cancelled",
   "orgTasks.reason.rejected": "a person rejected it",
   "orgTasks.reason.expired": "it was not approved in time",
+  "automations.olderPlans": "Show earlier plans",
   "automations.runs": "Runs",
   "automations.runs.title": "Runs of “{name}”",
   "automations.runs.empty": "No plan has been prepared from it yet.",

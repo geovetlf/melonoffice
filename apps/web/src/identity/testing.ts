@@ -133,6 +133,8 @@ export interface FakeBackend {
      * steps as `GET plans/:id/steps` reads them.
      */
     plans: Record<string, Record<string, unknown>[]>;
+    /** How many plans a page of `GET plans` holds (ADR-0182): the API's 100 unless a test says. */
+    planPageSize: number;
     planSteps: Record<string, Record<string, unknown>[]>;
     /** Planning a workflow is refused with this reason (422), instead of making a plan. */
     planRefusal?: string;
@@ -279,6 +281,7 @@ export function fakeBackend(): FakeBackend {
     agentTasks: {},
     workflows: {},
     plans: {},
+    planPageSize: 100,
     planSteps: {},
     pageSize: 50,
     approvals: {},
@@ -1260,13 +1263,19 @@ export function fakeBackend(): FakeBackend {
       const denied = needs('plan.read');
       if (denied !== undefined) return denied;
       // One workflow's plans (ADR-0180), as the API filters them by the plan's own record.
-      const workflowId = new URLSearchParams(query).get('workflowId');
+      const params = new URLSearchParams(query);
+      const workflowId = params.get('workflowId');
       const all = options.plans[organizationId] ?? [];
+      const listed =
+        workflowId === null
+          ? all
+          : all.filter((p) => (p.workflow as { id?: string } | null)?.id === workflowId);
+      // A page at a time (ADR-0182), in stored order; the cursor is where the next page starts.
+      const from = Number(params.get('cursor') ?? '0');
+      const to = from + options.planPageSize;
       return json(200, {
-        plans:
-          workflowId === null
-            ? all
-            : all.filter((p) => (p.workflow as { id?: string } | null)?.id === workflowId),
+        plans: listed.slice(from, to),
+        nextCursor: to < listed.length ? String(to) : null,
       });
     }
     const onePlan = route?.match(/^plans\/([^/]+)(?:\/(steps|approve|reject))?$/);

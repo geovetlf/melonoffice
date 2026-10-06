@@ -20,7 +20,12 @@ import type { AuthorizationService } from '@melonoffice/rbac';
 import { isResolvedTenant, type TenancyStore, type TenantContext } from '@melonoffice/tenancy';
 import { PlanningError } from './errors.js';
 import { applyPlanStatus, decidePlan, isPlanId, isPlanReason, newPlan } from './model.js';
-import type { PlanPage, PlanPosition, PlanRepository } from './repository.js';
+import {
+  pageOfPlans,
+  type PlanPage,
+  type PlanPosition,
+  type PlanRepository,
+} from './repository.js';
 import type { PlanValidation, PlanValidator, ValidationStage } from './validate.js';
 
 export const MAX_PLANS_LISTED = 100;
@@ -63,6 +68,15 @@ export interface PlanService {
   /** Every plan of the organization, newest first, a page at a time (ADR-0150). */
   page(
     tenant: TenantContext,
+    request: { readonly after?: PlanPosition; readonly limit: number },
+  ): Promise<PlanPage>;
+  /**
+   * One workflow's plans in the tenant's organization, a page at a time in `page`'s order
+   * (ADR-0182). They are read whole with ADR-0180's equality filters, then paged.
+   */
+  pageForWorkflow(
+    tenant: TenantContext,
+    workflowId: WorkflowId,
     request: { readonly after?: PlanPosition; readonly limit: number },
   ): Promise<PlanPage>;
   /** `plan_not_found` for an unknown id or another organization's plan alike. */
@@ -261,6 +275,20 @@ export function createPlanService({
 
     async page(tenant: TenantContext, request: { after?: PlanPosition; limit: number }) {
       return repository.page(await organizationOf(tenant), request);
+    },
+
+    async pageForWorkflow(
+      tenant: TenantContext,
+      workflowId: WorkflowId,
+      request: { after?: PlanPosition; limit: number },
+    ) {
+      const organizationId = await organizationOf(tenant);
+      const all = await repository.listForWorkflow(
+        organizationId,
+        workflowId,
+        Number.MAX_SAFE_INTEGER,
+      );
+      return pageOfPlans(all, request);
     },
 
     get,
