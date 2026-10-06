@@ -144,6 +144,11 @@ describe('Automations (WF-3)', () => {
       await screen.findByText(/A step uses a tool the agent that would do it does not have\./)
     ).closest('[role="alert"]') as HTMLElement;
     expect(refusal.textContent).toContain('Give that agent the skill that allows it, in Agents');
+    // In the card of the workflow that was planned, where the person pressed.
+    expect(refusal.closest('li')?.querySelector('.mo-list-item__title')?.textContent).toBeTruthy();
+    expect(
+      within(refusal.closest('li') as HTMLElement).getByRole('button', { name: 'Prepare a plan' }),
+    ).toBeTruthy();
     // The code is there for support, folded away.
     expect(refusal.querySelector('details code')?.textContent).toContain('tool_not_assigned');
   });
@@ -493,6 +498,76 @@ describe('Automations (WF-3)', () => {
     const offer = (await card.findByText('Offer')).closest('li') as HTMLElement;
     expect(within(offer).getByText('Not approved in time')).toBeTruthy();
     expect(within(offer).queryByText('Rejected')).toBeNull();
+  });
+
+  it('ADR-0179: a step cancelled with its plan reads Cancelled, not Failed, and asks nothing to be fixed', async () => {
+    const step = (id: string, status: string) => ({
+      stepId: id,
+      kind: 'specialist',
+      label: id,
+      // The plan engine reads a cancelled child as `failed`; the plan's status says why.
+      state: status === 'completed' ? 'completed' : 'failed',
+      outcome: null,
+      executionId: `exec-${id}`,
+      status,
+      approvalId: null,
+      failure: status === 'failed' ? 'agent_failed' : null,
+      answer: null,
+      missing: [],
+      attempt: 1,
+      until: null,
+    });
+    const shown = async (planStatus: string, steps: unknown[]) => {
+      cleanup();
+      open((b) => {
+        b.options.plans.org_1 = [
+          {
+            id: 'plan-c',
+            status: planStatus,
+            version: 1,
+            createdAt: '2026-10-06T09:00:00Z',
+            current: {
+              version: 1,
+              digest: 'e'.repeat(64),
+              request: { summary: 'Estudio', objective: 'Estudiar el mercado' },
+              steps: [
+                { id: 'research', kind: 'specialist', label: 'research', dependsOn: [] },
+                { id: 'campaign', kind: 'specialist', label: 'campaign', dependsOn: ['research'] },
+              ],
+              riskLevel: 'low',
+              source: { kind: 'workflow', workflowId: 'wf-1', workflowVersion: 1 },
+            },
+          },
+        ];
+        b.options.planSteps['plan-c'] = steps as never;
+      });
+      const plans = within(await screen.findByRole('region', { name: 'Plans' }));
+      fireEvent.click(await plans.findByRole('button', { name: /Cancelled|Failed/ }));
+      const card = await screen.findByRole('article', { name: 'Estudio' });
+      return (id: string) => within(card).getByText(id, { selector: '.automations__name' });
+    };
+
+    // The person stopped the plan: its waiting step was cancelled with it.
+    let stepOf = await shown('cancelled', [
+      step('research', 'completed'),
+      step('campaign', 'cancelled'),
+    ]);
+    const campaign = stepOf('campaign').closest('li') as HTMLElement;
+    expect(within(campaign).getByText('Cancelled')).toBeTruthy();
+    expect(within(campaign).queryByText('Failed')).toBeNull();
+    expect(within(campaign).queryByText('What happened:')).toBeNull();
+
+    // A step that failed on its own still says so, whatever happened to the plan after.
+    stepOf = await shown('cancelled', [step('research', 'failed'), step('campaign', 'cancelled')]);
+    const research = stepOf('research').closest('li') as HTMLElement;
+    expect(within(research).getByText('Failed')).toBeTruthy();
+    expect(within(research).getByText('What happened:')).toBeTruthy();
+
+    // In a plan that failed, a cancelled child is still part of the failure.
+    stepOf = await shown('failed', [step('research', 'completed'), step('campaign', 'cancelled')]);
+    expect(
+      within(stepOf('campaign').closest('li') as HTMLElement).getByText('Failed'),
+    ).toBeTruthy();
   });
 
   it('ADR-0167: a person decides a step waiting for them on the plan, through Approvals’ own call', async () => {
@@ -1487,8 +1562,13 @@ describe('Writing workflows (block 4)', () => {
 
     // The server still decides: refused, it says so, where, and the workflow stays a draft.
     fireEvent.click(workflows.getByRole('button', { name: 'Activate' }));
-    expect(await screen.findByText('It cannot be activated yet.')).toBeTruthy();
+    const refusal = (await screen.findByText('It cannot be activated yet.')).closest(
+      '[role="alert"]',
+    ) as HTMLElement;
     expect(screen.getByText(/It is in step 2\./)).toBeTruthy();
+    // It is said in that workflow's own card, next to the button pressed: on a phone the top of
+    // the page is out of sight.
+    expect(refusal.closest('li')?.id).toBe('workflow-wf-draft');
     expect(screen.queryByText('The workflow is active. You can prepare plans from it.')).toBeNull();
     expect(backend.options.workflows.org_1?.find((w) => w.id === 'wf-draft')?.status).toBe('draft');
   });

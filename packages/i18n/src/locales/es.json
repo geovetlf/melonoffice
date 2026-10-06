@@ -1893,6 +1893,7 @@
   "automations.state.stopped": "Detenido",
   "automations.state.retrying": "Reintentando",
   "automations.state.expired": "Sin aprobar a tiempo",
+  "automations.state.cancelled": "Cancelado",
   "automations.step.ended": "terminó el {at}",
   "automations.approval.title": "Necesita tu aprobación",
   "automations.approval.what": "«{step}», que hace {agent}.",

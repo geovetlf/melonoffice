@@ -1893,6 +1893,7 @@
   "automations.state.stopped": "Stopped",
   "automations.state.retrying": "Retrying",
   "automations.state.expired": "Not approved in time",
+  "automations.state.cancelled": "Cancelled",
   "automations.step.ended": "ended {at}",
   "automations.approval.title": "Needs your approval",
   "automations.approval.what": "“{step}”, done by {agent}.",
