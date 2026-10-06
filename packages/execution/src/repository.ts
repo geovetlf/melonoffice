@@ -64,18 +64,44 @@ export interface OpenOrganizationIndex {
   countOpenOfOrganization(organizationId: OrganizationId, limit: number): Promise<number>;
 }
 
+/** Where a read of open executions continues (ADR-0183): the last one's update, then its id. */
+export interface OpenPosition {
+  readonly at: IsoTimestamp;
+  readonly id: ExecutionId;
+}
+
 /**
  * Open executions of every organization, in one status, not updated since `before`, oldest first
- * (ADR-0121): the automatic sweep's candidates, read by the worker only. Each one carries its own
- * organization, which every later step checks again.
+ * by update then id (ADR-0121): the automatic sweep's candidates, read by the worker only. Each
+ * one carries its own organization, which every later step checks again. `after` continues a
+ * read strictly after that position (ADR-0183), so work that is rightly waiting never hides the
+ * work behind it.
  */
 export interface StaleExecutionIndex {
   openSince(
     status: ExecutionStatus,
     before: IsoTimestamp,
     limit: number,
+    after?: OpenPosition,
   ): Promise<readonly Execution[]>;
 }
+
+/** Oldest first by update, then id: the order of `openSince`. */
+export const byOldestUpdate = (a: Execution, b: Execution): number =>
+  a.updatedAt === b.updatedAt
+    ? a.id < b.id
+      ? -1
+      : a.id > b.id
+        ? 1
+        : 0
+    : a.updatedAt < b.updatedAt
+      ? -1
+      : 1;
+
+/** Whether an execution comes strictly after `position` in that order. */
+export const isAfterOpen = (execution: Execution, position: OpenPosition): boolean =>
+  execution.updatedAt > position.at ||
+  (execution.updatedAt === position.at && execution.id > position.id);
 
 /** Checks what `change` returned: the same execution, one revision ahead. */
 export function checkNextRevision(current: Execution, next: Execution): void {
@@ -148,10 +174,20 @@ export class InMemoryExecutionRepository
     return { ids: Object.freeze(ids.slice(0, limit)), more: ids.length > limit };
   }
 
-  async openSince(status: ExecutionStatus, before: IsoTimestamp, limit: number) {
+  async openSince(
+    status: ExecutionStatus,
+    before: IsoTimestamp,
+    limit: number,
+    after?: OpenPosition,
+  ) {
     return [...this.#executions.values()]
-      .filter((e) => e.status === status && e.updatedAt < before)
-      .sort((a, b) => (a.updatedAt < b.updatedAt ? -1 : a.updatedAt > b.updatedAt ? 1 : 0))
+      .filter(
+        (e) =>
+          e.status === status &&
+          e.updatedAt < before &&
+          (after === undefined || isAfterOpen(e, after)),
+      )
+      .sort(byOldestUpdate)
       .slice(0, limit);
   }
 

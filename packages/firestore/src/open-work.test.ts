@@ -126,6 +126,56 @@ describe.runIf(emulatorHost)('open work and plan notices (ADR-0119, emulator)', 
     expect(missing).toEqual([]);
   });
 
+  it('continues the sweep’s candidates after a position, by update then id, each once (ADR-0183)', async () => {
+    const db = emulatorFirestore();
+    // Dates no other test uses, so other files' executions never show up here.
+    const execution = (n: number, updatedAt: string): Execution =>
+      ({
+        id: `00000000-0000-4000-8000-00000183${String(n).padStart(4, '0')}` as ExecutionId,
+        organizationId: n % 2 === 0 ? ORG_A : ORG_B,
+        userId: ALICE,
+        mode: 'plan',
+        status: 'running',
+        input: { type: 'agent_task', id: 'x' },
+        versionSnapshot: { schemaVersion: 1, components: [] },
+        nodes: [{ id: 'work', type: 'agent', label: 'work', status: 'pending', dependsOn: [] }],
+        revision: 1,
+        createdAt: '1999-01-01T00:00:00.000Z',
+        updatedAt,
+      }) as unknown as Execution;
+    // Three share one instant: their ids order them.
+    const rows = [
+      execution(3, '1999-01-02T00:00:00.000Z'),
+      execution(1, '1999-01-02T00:00:00.000Z'),
+      execution(2, '1999-01-02T00:00:00.000Z'),
+      execution(4, '1999-01-01T00:00:00.000Z'),
+      execution(5, '1999-01-03T00:00:00.000Z'),
+    ];
+    await Promise.all(
+      rows.map((e) => db.collection(EXECUTIONS).doc(e.id).set(toExecutionDocument(e))),
+    );
+    const repository = new FirestoreExecutionRepository(db);
+    const before = '1999-01-04T00:00:00.000Z' as IsoTimestamp;
+    const seen: string[] = [];
+    let after: { at: IsoTimestamp; id: ExecutionId } | undefined;
+    for (let pages = 0; pages < 10; pages += 1) {
+      const page = await repository.openSince('running', before, 2, after);
+      seen.push(...page.map((e) => e.id));
+      const last = page.at(-1);
+      if (page.length < 2 || last === undefined) break;
+      after = { at: last.updatedAt, id: last.id };
+    }
+    const mine = seen.filter((id) => rows.some((r) => r.id === id));
+    expect(mine).toEqual([4, 1, 2, 3, 5].map((n) => execution(n, '').id));
+    // A position that is not one reads nothing.
+    expect(
+      await repository.openSince('running', before, 2, {
+        at: 'never' as IsoTimestamp,
+        id: rows[0]?.id as ExecutionId,
+      }),
+    ).toEqual([]);
+  });
+
   it('keeps one record per sweep slot, run once (ADR-0121)', async () => {
     const ledger = new FirestoreSweepLedger(emulatorFirestore());
     const slot = `sweep-2000010${String(Date.now() % 10)}t${String(Date.now() % 7).padStart(2, '0')}x${String(Math.random()).slice(2, 8)}`;

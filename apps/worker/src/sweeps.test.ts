@@ -659,6 +659,81 @@ describe('the automatic sweep of abandoned agent work (ADR-0121)', () => {
     expect(advanced).toHaveLength(3);
   });
 
+  it('ADR-0183: work rightly waiting never hides abandoned work or a stalled plan behind it', async () => {
+    const w = await world();
+    const { execution } = await w.task('a', AGENT);
+    const stored = await w.find(execution);
+    const minutes = (n: number) =>
+      new Date(Date.parse(stored.updatedAt) + n * 60_000).toISOString() as IsoTimestamp;
+    // 60 running plans, each rightly waiting with one unstarted step, all older than the task:
+    // more than one page of candidates, ahead of it and of the stalled plan.
+    const waiting = new Set<string>();
+    const unstarted: { -readonly [K in keyof Execution]?: Execution[K] } = { ...stored };
+    delete unstarted.startedAt;
+    for (let i = 0; i < 60; i += 1) {
+      const planId = crypto.randomUUID();
+      waiting.add(planId);
+      w.stores.executions.put({
+        ...unstarted,
+        id: planId,
+        mode: 'plan',
+        input: { type: 'task', id: `task-${i}` },
+        updatedAt: minutes(-120 - i),
+      } as Execution);
+      w.stores.executions.put({
+        ...unstarted,
+        id: crypto.randomUUID(),
+        input: { type: 'plan_step', id: `${planId}:research` },
+        parentExecutionId: planId,
+        updatedAt: minutes(-60 - i),
+      } as Execution);
+    }
+    // The one plan that is stuck: its steps ended and nothing moved it. The newest of all.
+    const stalled = crypto.randomUUID();
+    w.stores.executions.put({
+      ...unstarted,
+      id: stalled,
+      mode: 'plan',
+      input: { type: 'task', id: 'task-stalled' },
+      updatedAt: minutes(1),
+    } as Execution);
+    const advanced: string[] = [];
+    const sweeper = createExecutionSweeper({
+      executions: w.stores.executions,
+      jobs: w.stores.jobs,
+      approvals: w.stores.approvals,
+      tenancy: w.stores.tenancy,
+      runtime: w.runtime,
+      ledger: w.ledger,
+      plans: {
+        find: async (organizationId, id) => {
+          if (organizationId !== stored.organizationId) return undefined;
+          if (id === stalled) {
+            return { id, status: 'executing', delegationState: 'completed' } as unknown as Plan;
+          }
+          return waiting.has(id)
+            ? ({ id, status: 'executing', delegationState: 'running' } as unknown as Plan)
+            : undefined;
+        },
+        advance: async (_tenant, id) => void advanced.push(id),
+      },
+      now: w.at,
+    });
+    w.advance(25 * HOUR);
+    const record = await sweeper.sweep(sweepSlotOf(w.at()).id);
+    // Every waiting step and plan was read and left alone; the task behind them was closed and
+    // the stalled plan advanced, once.
+    expect(record.counts).toMatchObject({
+      waiting_in_plan: 60,
+      moved: 60,
+      closed: 1,
+      plan_advanced: 1,
+    });
+    expect(record.closed).toEqual([expect.objectContaining({ executionId: execution.id })]);
+    expect(advanced).toEqual([stalled]);
+    expect((await w.find(execution)).status).toBe('failed');
+  });
+
   it('never closes work that is not an agent’s task or a plan’s step', async () => {
     const w = await world();
     const { execution } = await w.task('a', AGENT);

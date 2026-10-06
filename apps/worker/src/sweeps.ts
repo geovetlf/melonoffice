@@ -9,6 +9,7 @@ import {
 import type { ApprovalRepository } from '@melonoffice/approvals';
 import type {
   Execution,
+  ExecutionStatus,
   IsoTimestamp,
   OrganizationId,
   Plan,
@@ -19,6 +20,7 @@ import {
   MAX_NODE_ATTEMPTS,
   OPEN_STATUSES,
   type ExecutionRepository,
+  type OpenPosition,
   type StaleExecutionIndex,
   type SweepLedger,
   type SweepRecord,
@@ -54,14 +56,20 @@ export const SWEEP_EVERY_MS = 3 * 3_600_000;
 export const PLAN_IDLE_MS = 30 * 60_000;
 
 /**
- * At most this many candidates are read per status and closed per run; the rest wait for the
- * next run. A run that died is claimed again after `staleRunMs`.
+ * Candidates are read `perStatus` at a time, oldest first, up to `readPerStatus` per status and
+ * run (ADR-0183), so work that is rightly waiting never hides the work behind it. At most
+ * `perRun` are acted on (closed, or their plan advanced) per run; the rest wait for the next run.
+ * A run that died is claimed again after `staleRunMs`.
  */
 export const SWEEP_LIMITS = Object.freeze({
   perStatus: 50,
+  readPerStatus: 500,
   perRun: 100,
   staleRunMs: 30 * 60_000,
 });
+
+/** What the sweep did to a candidate, beyond reading it: closed it, or advanced its plan. */
+const ACTED = new Set<string>(['closed', 'awaiting_approval', 'wait_over', 'plan_advanced']);
 
 /** A slot is named by its UTC start: `sweep-20261002t03`. No colons, so it is a valid id. */
 const SLOT = /^sweep-(\d{4})(\d{2})(\d{2})t(\d{2})$/;
@@ -324,18 +332,34 @@ export function createExecutionSweeper(options: ExecutionSweeperOptions): Execut
     return 'closed';
   }
 
+  /**
+   * One status's candidates, oldest first by update then id, a page at a time (ADR-0183), until
+   * none remain or `readPerStatus` were read. Reaching that limit is logged: the rest are read by
+   * the next run.
+   */
+  async function* candidatesOf(status: ExecutionStatus, before: IsoTimestamp) {
+    let after: OpenPosition | undefined;
+    for (let read = 0; read < SWEEP_LIMITS.readPerStatus;) {
+      const page = await executions.openSince(status, before, SWEEP_LIMITS.perStatus, after);
+      yield* page;
+      read += page.length;
+      const last = page.at(-1);
+      if (page.length < SWEEP_LIMITS.perStatus || last === undefined) return;
+      after = { at: last.updatedAt, id: last.id };
+    }
+    logger?.warn('sweep read limit reached', { status, limit: SWEEP_LIMITS.readPerStatus });
+  }
+
   async function sweep(slotId: string): Promise<SweepRecord> {
     const before = new Date(now().getTime() - ABANDON_AFTER_MS).toISOString() as IsoTimestamp;
     const counts: Record<string, number> = {};
     const closed: SweptExecution[] = [];
-    let visited = 0;
+    let acted = 0;
     // A paused execution waits on something outside the runtime: never a candidate.
     for (const status of OPEN_STATUSES.filter((s) => s !== 'paused')) {
-      if (visited >= SWEEP_LIMITS.perRun) break;
-      const candidates = await executions.openSince(status, before, SWEEP_LIMITS.perStatus);
-      for (const candidate of candidates) {
-        if (visited >= SWEEP_LIMITS.perRun) break;
-        visited += 1;
+      if (acted >= SWEEP_LIMITS.perRun) break;
+      for await (const candidate of candidatesOf(status, before)) {
+        if (acted >= SWEEP_LIMITS.perRun) break;
         let outcome: Outcome;
         try {
           outcome = await visit(slotId, candidate, closed);
@@ -349,13 +373,16 @@ export function createExecutionSweeper(options: ExecutionSweeperOptions): Execut
         }
         const key = outcome === 'stuck' ? 'closed' : outcome;
         counts[key] = (counts[key] ?? 0) + 1;
+        if (ACTED.has(key)) acted += 1;
       }
     }
     // Running plans nothing moved for a while (ADR-0179): their own executions are `running`.
+    // Their budget is their own, so closing abandoned work never leaves a stalled plan behind.
     if (plans !== undefined) {
       const idle = new Date(now().getTime() - PLAN_IDLE_MS).toISOString() as IsoTimestamp;
-      const candidates = await executions.openSince('running', idle, SWEEP_LIMITS.perStatus);
-      for (const candidate of candidates) {
+      let advanced = 0;
+      for await (const candidate of candidatesOf('running', idle)) {
+        if (advanced >= SWEEP_LIMITS.perRun) break;
         if (candidate.mode !== 'plan') continue;
         let outcome: Outcome;
         try {
@@ -369,6 +396,7 @@ export function createExecutionSweeper(options: ExecutionSweeperOptions): Execut
           outcome = 'error';
         }
         counts[outcome] = (counts[outcome] ?? 0) + 1;
+        if (ACTED.has(outcome)) advanced += 1;
       }
     }
     return Object.freeze({
