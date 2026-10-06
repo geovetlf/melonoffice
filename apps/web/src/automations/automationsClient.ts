@@ -236,6 +236,8 @@ export interface PlanView {
    * the step needed, and the budget. An older API sends none.
    */
   readonly budgetBlocks?: readonly PlanBudgetBlockView[];
+  /** The workflow and version that made it (ADR-0180); null from the planner. An older API sends none. */
+  readonly workflow?: { readonly id: string; readonly version: number } | null;
 }
 
 export interface PlanBudgetBlockView {
@@ -529,6 +531,8 @@ export interface AutomationsClient {
   /** The same `requestKey` is the same plan: a retry never plans twice. */
   planWorkflow(workflowId: string, requestKey: string): Promise<WorkflowPlanOutcome>;
   plans(): Promise<readonly PlanView[]>;
+  /** One workflow's plans, newest first (ADR-0180). An older client has none. */
+  workflowPlans?(workflowId: string): Promise<readonly PlanView[]>;
   plan(planId: string): Promise<PlanDetail>;
   steps(planId: string): Promise<readonly PlanStepProgress[]>;
   /** The plan's trace (ADR-0157). Absent: the screen shows none. */
@@ -644,6 +648,11 @@ export function createAutomationsClient(
     },
     async plans() {
       const body = (await (await call('/plans')).json()) as { plans?: PlanView[] };
+      return body.plans ?? [];
+    },
+    async workflowPlans(workflowId) {
+      const query = new URLSearchParams({ workflowId }).toString();
+      const body = (await (await call(`/plans?${query}`)).json()) as { plans?: PlanView[] };
       return body.plans ?? [];
     },
     async plan(id) {

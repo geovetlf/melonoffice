@@ -13,6 +13,7 @@ import type {
   PlanId,
   PlanSource,
   PlanVersion,
+  WorkflowId,
 } from '@melonoffice/domain';
 import type { ExecutionService } from '@melonoffice/execution';
 import type { AuthorizationService } from '@melonoffice/rbac';
@@ -57,6 +58,8 @@ export interface PlanDecisionInput {
  */
 export interface PlanService {
   list(tenant: TenantContext): Promise<readonly Plan[]>;
+  /** One workflow's plans in the tenant's organization (ADR-0180), newest first. */
+  listForWorkflow(tenant: TenantContext, workflowId: WorkflowId): Promise<readonly Plan[]>;
   /** Every plan of the organization, newest first, a page at a time (ADR-0150). */
   page(
     tenant: TenantContext,
@@ -250,6 +253,10 @@ export function createPlanService({
   return Object.freeze({
     async list(tenant: TenantContext) {
       return repository.list(await organizationOf(tenant), MAX_PLANS_LISTED);
+    },
+
+    async listForWorkflow(tenant: TenantContext, workflowId: WorkflowId) {
+      return repository.listForWorkflow(await organizationOf(tenant), workflowId, MAX_PLANS_LISTED);
     },
 
     async page(tenant: TenantContext, request: { after?: PlanPosition; limit: number }) {

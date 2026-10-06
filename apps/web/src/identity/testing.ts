@@ -1243,6 +1243,7 @@ export function fakeBackend(): FakeBackend {
         status: 'approval_required',
         version: 1,
         createdAt: '2026-09-29T12:00:00Z',
+        workflow: { id: workflow.id, version: workflow.version },
         current: {
           version: 1,
           digest: 'a'.repeat(64),
@@ -1256,7 +1257,17 @@ export function fakeBackend(): FakeBackend {
       return json(201, plan);
     }
     if (route === 'plans') {
-      return needs('plan.read') ?? json(200, { plans: options.plans[organizationId] ?? [] });
+      const denied = needs('plan.read');
+      if (denied !== undefined) return denied;
+      // One workflow's plans (ADR-0180), as the API filters them by the plan's own record.
+      const workflowId = new URLSearchParams(query).get('workflowId');
+      const all = options.plans[organizationId] ?? [];
+      return json(200, {
+        plans:
+          workflowId === null
+            ? all
+            : all.filter((p) => (p.workflow as { id?: string } | null)?.id === workflowId),
+      });
     }
     const onePlan = route?.match(/^plans\/([^/]+)(?:\/(steps|approve|reject))?$/);
     if (onePlan?.[1] !== undefined) {

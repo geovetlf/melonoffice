@@ -2789,5 +2789,10 @@
   "orgTasks.planStatus.failed": "Failed",
   "orgTasks.planStatus.cancelled": "Cancelled",
   "orgTasks.reason.rejected": "a person rejected it",
-  "orgTasks.reason.expired": "it was not approved in time"
+  "orgTasks.reason.expired": "it was not approved in time",
+  "automations.runs": "Runs",
+  "automations.runs.title": "Runs of “{name}”",
+  "automations.runs.empty": "No plan has been prepared from it yet.",
+  "automations.runs.row": "{date} · version {version}",
+  "automations.planRowFrom": "“{name}”, version {version} · {date}"
 }

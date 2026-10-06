@@ -13,6 +13,7 @@ import type {
   PlanDecision,
   PlanId,
   PlanVersion,
+  WorkflowId,
 } from '@melonoffice/domain';
 import {
   checkNextPlan,
@@ -51,6 +52,9 @@ interface PlanDocument {
   /** Absent in plans written before delegation states existed: read as not delegated. */
   readonly delegationState?: string | null;
   readonly delegationFailure?: string | null;
+  /** The workflow and version it was made from (ADR-0180); absent on older plans. */
+  readonly workflowId?: string | null;
+  readonly workflowVersion?: number | null;
   readonly decision: {
     decision: string;
     version: number;
@@ -133,6 +137,8 @@ export function toPlanDocument(plan: Plan): PlanDocument {
     delegations: plan.delegations.map((d) => ({ stepId: d.stepId, executionId: d.executionId })),
     delegationState: plan.delegationState ?? null,
     delegationFailure: plan.delegationFailure ?? null,
+    workflowId: plan.workflow?.id ?? null,
+    workflowVersion: plan.workflow?.version ?? null,
     decision:
       plan.decision === undefined
         ? null
@@ -222,6 +228,9 @@ function toPlan(id: string, d: PlanDocument): Plan {
     ...(d.delegationFailure === undefined || d.delegationFailure === null
       ? {}
       : { delegationFailure: d.delegationFailure }),
+    ...(typeof d.workflowId === 'string' && typeof d.workflowVersion === 'number'
+      ? { workflow: { id: d.workflowId as WorkflowId, version: d.workflowVersion } }
+      : {}),
     ...(d.decision === null
       ? {}
       : {
@@ -394,6 +403,29 @@ export class FirestorePlanRepository implements PlanRepository {
     const snapshot = await this.db
       .collection(PLANS)
       .where('organizationId', '==', organizationId)
+      .get();
+    return snapshot.docs
+      .map((doc) => toPlan(doc.id, doc.data() as PlanDocument))
+      .sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0))
+      .slice(0, limit);
+  }
+
+  /**
+   * Two equality filters (ADR-0180): Firestore's automatic single-field indexes serve them, so no
+   * composite index is needed. Sorted here, newest first.
+   */
+  async listForWorkflow(
+    organizationId: OrganizationId,
+    workflowId: WorkflowId,
+    limit: number,
+  ): Promise<readonly Plan[]> {
+    if (!isOrganizationId(organizationId) || typeof workflowId !== 'string' || workflowId === '') {
+      return [];
+    }
+    const snapshot = await this.db
+      .collection(PLANS)
+      .where('organizationId', '==', organizationId)
+      .where('workflowId', '==', workflowId)
       .get();
     return snapshot.docs
       .map((doc) => toPlan(doc.id, doc.data() as PlanDocument))

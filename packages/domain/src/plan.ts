@@ -345,10 +345,22 @@ export interface Plan {
   readonly attempts?: readonly PlanStepAttempt[];
   /** Each step the approved credit budget could not cover, once (ADR-0163). */
   readonly budgetBlocks?: readonly PlanBudgetBlock[];
+  /**
+   * The workflow and version it was made from (ADR-0180), set once at creation and never changed:
+   * the same fact as its first version's `source`, where lists can read it. None from the planner,
+   * and none on plans made before ADR-0180.
+   */
+  readonly workflow?: PlanWorkflowRef;
   readonly revision: number;
   readonly createdAt: IsoTimestamp;
   readonly createdBy: UserId;
   readonly updatedAt: IsoTimestamp;
+}
+
+/** Which workflow, at which version, a plan was made from (ADR-0180). */
+export interface PlanWorkflowRef {
+  readonly id: WorkflowId;
+  readonly version: number;
 }
 
 /** Where a workflow is in its life. Only `active` workflows can be instantiated. */
