@@ -16,6 +16,7 @@ import {
   type PlanTraceView,
   type PlanView,
   type ToolResultField,
+  type WorkflowCheckView,
   type WorkflowDetail,
   type WorkflowStatus,
   type WorkflowStepDraft,
@@ -132,6 +133,7 @@ export function AutomationsPage({
   const [selected, setSelected] = useState<string>();
   const [error, setError] = useState<string>();
   const [refused, setRefused] = useState<{
+    readonly title?: string;
     readonly reason: string;
     readonly stage?: string | undefined;
     readonly detail?: string | undefined;
@@ -220,10 +222,22 @@ export function AutomationsPage({
     setPending(workflow.id);
     setError(undefined);
     setNotice(undefined);
+    setRefused(undefined);
     try {
       await client.changeStatus(workflow.id, workflow.status, to);
       setNotice(`automations.moved.${to}`);
     } catch (failure) {
+      // Its current version would not plan now (ADR-0179): why, as a refused plan says it.
+      if (failure instanceof AutomationsError && failure.code === 'workflow_not_valid') {
+        const [stage, reason, ...rest] = (failure.detail ?? '').split(':');
+        setRefused({
+          title: 'automations.refusal.activateTitle',
+          stage,
+          reason: reason ?? failure.code,
+          detail: rest.length === 0 ? undefined : rest.join(':'),
+        });
+        return;
+      }
       setError(
         failure instanceof AutomationsError &&
           (failure.code === 'workflow_concurrency_conflict' ||
@@ -357,9 +371,30 @@ export function AutomationsPage({
                   <div className="mo-list-item__main">
                     <span className="mo-list-item__title">{w.name}</span>
                     <span className="mo-list-item__meta">
-                      <FormattedMessage id={`automations.workflowStatus.${w.status}`} />
-                      {' · '}
+                      <span
+                        className={`automations__state automations__state--workflow-${w.status}`}
+                      >
+                        <FormattedMessage id={`automations.workflowStatus.${w.status}`} />
+                      </span>{' '}
                       <FormattedMessage id="automations.version" values={{ version: w.version }} />
+                    </span>
+                    {/* What the status means for the person (ADR-0179), and when it last changed. */}
+                    <span className="mo-list-item__meta">
+                      <FormattedMessage id={`automations.workflowState.${w.status}`} />
+                      {w.lastStatusChange == null ? null : (
+                        <>
+                          {' '}
+                          <FormattedMessage
+                            id="automations.workflowState.changed"
+                            values={{
+                              at: intl.formatDate(new Date(w.lastStatusChange.at), {
+                                dateStyle: 'short',
+                                timeStyle: 'short',
+                              }),
+                            }}
+                          />
+                        </>
+                      )}
                     </span>
                   </div>
                   <div className="mo-list-item__actions">
@@ -392,14 +427,20 @@ export function AutomationsPage({
                             disabled={pending !== undefined}
                             onClick={() => void move(w, to)}
                           >
-                            <FormattedMessage id={`automations.move.${to}`} />
+                            <FormattedMessage
+                              id={
+                                w.status === 'paused' && to === 'active'
+                                  ? 'automations.move.reactivate'
+                                  : `automations.move.${to}`
+                              }
+                            />
                           </Button>
                         ))
                       : null}
                   </div>
                   {openWorkflow === w.id ? (
                     <WorkflowSteps
-                      key={`${w.id}:${w.version}`}
+                      key={`${w.id}:${w.version}:${w.status}`}
                       client={client}
                       workflow={w}
                       onVersion={
@@ -460,6 +501,11 @@ export function AutomationsPage({
               onDecided={loadPlans}
               decideStep={permissions.decidePlans ? decideStep : undefined}
               stop={stop}
+              workflowNames={
+                new Map(
+                  workflows.status === 'ready' ? workflows.value.map((w) => [w.id, w.name]) : [],
+                )
+              }
             />
           )}
         </section>
@@ -510,6 +556,9 @@ function WorkflowSteps({
   const drafts = draftsOf(current.steps);
   return (
     <div className="automations__detail">
+      {workflow.status === 'draft' || workflow.status === 'paused' ? (
+        <Readiness client={client} name={current.name} steps={current.steps} />
+      ) : null}
       <ol className="automations__steps">
         {current.steps.map((step) => (
           <li key={step.id}>
@@ -607,11 +656,71 @@ function PlanRow({
   );
 }
 
+/**
+ * Whether a draft or a turned-off workflow can be switched on (ADR-0179): the same dry run
+ * activation asks of the server, so "Validada" here is what activating it will find. Nothing is
+ * stored or charged.
+ */
+function Readiness({
+  client,
+  name,
+  steps,
+}: {
+  readonly client: AutomationsClient;
+  readonly name: string;
+  /** The stored steps, as read once: the draft the editor would make of them is checked. */
+  readonly steps: WorkflowDetail['current']['steps'];
+}) {
+  const drafts = useMemo(() => draftsOf(steps), [steps]);
+  const [check, setCheck] = useState<Load<WorkflowCheckView>>({ status: 'loading' });
+  useEffect(() => {
+    if (client.checkWorkflow === undefined || drafts === undefined) return undefined;
+    let live = true;
+    client.checkWorkflow(name, drafts).then(
+      (value) => live && setCheck({ status: 'ready', value }),
+      () => live && setCheck({ status: 'error' }),
+    );
+    return () => {
+      live = false;
+    };
+  }, [client, name, drafts]);
+  // Nothing to say when it cannot be checked here: activating it still checks.
+  if (client.checkWorkflow === undefined || drafts === undefined || check.status === 'error') {
+    return null;
+  }
+  if (check.status === 'loading') {
+    return (
+      <StateMessage kind="loading" inline>
+        <FormattedMessage id="automations.readiness.checking" />
+      </StateMessage>
+    );
+  }
+  if (check.value.ok) {
+    return (
+      <StateMessage kind="success">
+        <FormattedMessage id="automations.readiness.ok" />
+      </StateMessage>
+    );
+  }
+  return (
+    <Refusal
+      refused={{
+        title: 'automations.refusal.activateTitle',
+        stage: check.value.stage,
+        reason: check.value.reason,
+        detail: check.value.detail,
+      }}
+    />
+  );
+}
+
 /** Why a workflow could not become a plan: what happened, what to do, and the codes, folded. */
 function Refusal({
   refused,
 }: {
   readonly refused: {
+    /** The message that names what could not be done; a plan's preparation by default. */
+    readonly title?: string | undefined;
     readonly reason: string;
     readonly stage?: string | undefined;
     readonly detail?: string | undefined;
@@ -620,9 +729,13 @@ function Refusal({
   const { what, todo } = refusalExplanation(refused.reason);
   const n = stepNumberOf(refused.detail);
   return (
-    <StateMessage kind="error">
+    // The codes go below the words: a folded block cannot sit inside the message's paragraph.
+    <StateMessage
+      kind="error"
+      action={<TechnicalDetail codes={[refused.stage, refused.reason, refused.detail]} />}
+    >
       <strong>
-        <FormattedMessage id="automations.refusal.title" />
+        <FormattedMessage id={refused.title ?? 'automations.refusal.title'} />
       </strong>{' '}
       <FormattedMessage id={what} />
       {n === undefined ? null : (
@@ -632,8 +745,25 @@ function Refusal({
         </>
       )}{' '}
       <FormattedMessage id={todo} />
-      <TechnicalDetail codes={[refused.stage, refused.reason, refused.detail]} />
     </StateMessage>
+  );
+}
+
+/** "From «name», version N", or just "from a workflow" when its name is not at hand. */
+function WorkflowSource({
+  names,
+  id,
+  version,
+}: {
+  readonly names: ReadonlyMap<string, string>;
+  readonly id: string;
+  readonly version: number;
+}) {
+  const name = names.get(id);
+  return name === undefined ? (
+    <FormattedMessage id="automations.fromWorkflow" />
+  ) : (
+    <FormattedMessage id="automations.fromWorkflowVersion" values={{ name, version }} />
   );
 }
 
@@ -647,9 +777,12 @@ function PlanCard({
   onDecided,
   decideStep,
   stop,
+  workflowNames = new Map(),
 }: {
   readonly client: AutomationsClient;
   readonly planId: string;
+  /** Each workflow's name by id, to say which one made a plan (ADR-0179). */
+  readonly workflowNames?: ReadonlyMap<string, string>;
   readonly canDecide: boolean;
   readonly onDecided: () => void;
   readonly decideStep?:
@@ -791,13 +924,16 @@ function PlanCard({
       <p className="automations__meta">
         <FormattedMessage id={planPhaseKey(detail.status, steps)} />
         {' · '}
-        <FormattedMessage
-          id={
-            detail.current.source.kind === 'workflow'
-              ? 'automations.fromWorkflow'
-              : 'automations.fromPlanner'
-          }
-        />
+        {detail.current.source.kind === 'workflow' ? (
+          // Which version made it (ADR-0179): editing the workflow later never changes this plan.
+          <WorkflowSource
+            names={workflowNames}
+            id={detail.current.source.workflowId}
+            version={detail.current.source.workflowVersion}
+          />
+        ) : (
+          <FormattedMessage id="automations.fromPlanner" />
+        )}
         {ended && detail.updatedAt !== undefined ? (
           <>
             {' · '}
@@ -975,6 +1111,17 @@ function PlanCard({
             onClick={() => void decide('reject', detail)}
           >
             <FormattedMessage id="automations.reject" />
+          </Button>
+        </div>
+      ) : null}
+      {detail.status === 'approved' && canDecide ? (
+        // Approved, but its start was cut short (ADR-0179): starting again repeats nothing.
+        <div className="mo-form__actions">
+          <p className="mo-hint automations__hint">
+            <FormattedMessage id="automations.plan.notStarted" />
+          </p>
+          <Button disabled={pending} onClick={() => void decide('approve', detail)}>
+            <FormattedMessage id="automations.start" />
           </Button>
         </div>
       ) : null}

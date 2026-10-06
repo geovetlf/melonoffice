@@ -731,9 +731,8 @@ export function WorkflowEditor({
             </Button>
           </div>
           {error === undefined ? null : (
-            <StateMessage kind="error">
+            <StateMessage kind="error" action={<TechnicalDetail codes={error.codes} />}>
               <FormattedMessage id={error.key} values={error.values ?? {}} />
-              <TechnicalDetail codes={error.codes} />
             </StateMessage>
           )}
           {refused === undefined ? null : (
@@ -1135,7 +1134,10 @@ function CheckRefusal({
   const at = ids.findIndex((s) => (s as { id?: unknown }).id === refused.detail);
   const n = at >= 0 ? at + 1 : stepNumberOf(refused.detail);
   return (
-    <StateMessage kind="error">
+    <StateMessage
+      kind="error"
+      action={<TechnicalDetail codes={[refused.stage, refused.reason, refused.detail]} />}
+    >
       <strong>
         <FormattedMessage id="automations.editor.check.title" />
       </strong>{' '}
@@ -1147,7 +1149,6 @@ function CheckRefusal({
         </>
       )}{' '}
       <FormattedMessage id={todo} />
-      <TechnicalDetail codes={[refused.stage, refused.reason, refused.detail]} />
     </StateMessage>
   );
 }

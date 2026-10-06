@@ -14,6 +14,13 @@ export interface WorkflowView {
   readonly status: WorkflowStatus;
   readonly version: number;
   readonly updatedAt: string;
+  /** Who last switched it on or off, and when (ADR-0179). Absent or null: nobody since made. */
+  readonly lastStatusChange?: {
+    readonly from: WorkflowStatus;
+    readonly to: WorkflowStatus;
+    readonly at: string;
+    readonly by: string;
+  } | null;
 }
 
 /** A workflow step as the API gives it back (ADR-0028). */

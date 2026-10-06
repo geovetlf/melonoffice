@@ -1511,6 +1511,7 @@ describe('a plan’s trace (ADR-0157)', () => {
         },
         { id: 'pause', kind: 'wait', label: 'Esperar', dependsOn: ['research'] },
       ],
+      source: { kind: 'workflow', workflowId: 'wf-1', workflowVersion: 3 },
     } as unknown as PlanVersion;
     const plan = {
       id: PLAN,
@@ -1582,6 +1583,8 @@ describe('a plan’s trace (ADR-0157)', () => {
       },
       outputs,
     });
+    // Which workflow version made it (ADR-0179).
+    expect(trace.workflow).toEqual({ id: 'wf-1', version: 3 });
     expect(trace.failure).toEqual({
       code: 'step_failed',
       stepId: 'research',

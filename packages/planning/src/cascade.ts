@@ -9,6 +9,13 @@ import type { PlanRepository } from './repository.js';
 
 export interface PlanCancellationCascadeOptions {
   readonly repository: PlanRepository;
+  /**
+   * Withdraws what a cancelled plan still waits for a person on (ADR-0179): each step approval
+   * nobody decided leaves the inbox with it. Absent: those approvals wait until they expire.
+   */
+  readonly approvals?: {
+    cancel(tenant: TenantContext, approvalId: string, reason: string): Promise<unknown>;
+  };
   readonly now?: () => Date;
   readonly requestId?: string;
 }
@@ -25,6 +32,7 @@ export interface PlanCancellationCascadeOptions {
  */
 export function createPlanCancellationCascade({
   repository,
+  approvals,
   now = () => new Date(),
   requestId,
 }: PlanCancellationCascadeOptions): CancellationCascade {
@@ -77,6 +85,13 @@ export function createPlanCancellationCascade({
       // Every child the plan ever had: its delegations and each step's later attempts (ADR-0153),
       // read again once the plan ended, so an attempt recorded meanwhile is cancelled too.
       const ended = (await repository.find(execution.organizationId, planId)) ?? plan;
+      if (approvals !== undefined && ended.status === 'cancelled') {
+        for (const entry of ended.stepApprovals ?? []) {
+          if (entry.declined !== undefined) continue;
+          // Decided or withdrawn already, by a person or another call: nothing left to withdraw.
+          await approvals.cancel(tenant, entry.approvalId, 'plan_cancelled').catch(() => undefined);
+        }
+      }
       return [
         ...ended.delegations.map((d) => d.executionId),
         ...(ended.attempts ?? []).map((a) => a.executionId),
