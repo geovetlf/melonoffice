@@ -133,6 +133,8 @@ export function AutomationsPage({
   const [selected, setSelected] = useState<string>();
   const [error, setError] = useState<string>();
   const [refused, setRefused] = useState<{
+    /** The workflow it is about: shown in that workflow's card, next to the button pressed. */
+    readonly workflowId?: string;
     readonly title?: string;
     readonly reason: string;
     readonly stage?: string | undefined;
@@ -231,6 +233,7 @@ export function AutomationsPage({
       if (failure instanceof AutomationsError && failure.code === 'workflow_not_valid') {
         const [stage, reason, ...rest] = (failure.detail ?? '').split(':');
         setRefused({
+          workflowId: workflow.id,
           title: 'automations.refusal.activateTitle',
           stage,
           reason: reason ?? failure.code,
@@ -264,7 +267,12 @@ export function AutomationsPage({
       const outcome = await client.planWorkflow(workflow.id, key);
       keys.current.delete(workflow.id);
       if (outcome.status === 'refused') {
-        setRefused({ reason: outcome.reason, stage: outcome.stage, detail: outcome.detail });
+        setRefused({
+          workflowId: workflow.id,
+          reason: outcome.reason,
+          stage: outcome.stage,
+          detail: outcome.detail,
+        });
         return;
       }
       setSelected(outcome.plan.id);
@@ -332,7 +340,9 @@ export function AutomationsPage({
           onClose={() => setAsking(false)}
         />
       ) : null}
-      {refused === undefined ? null : <Refusal refused={refused} />}
+      {refused === undefined || refused.workflowId !== undefined ? null : (
+        <Refusal refused={refused} />
+      )}
       {permissions.readWorkflows ? (
         <section className="mo-panel mo-page-section" aria-labelledby="automations-workflows">
           <div className="mo-page-section__header">
@@ -438,6 +448,12 @@ export function AutomationsPage({
                         ))
                       : null}
                   </div>
+                  {/* Why it could not be switched on or planned, where the person pressed. */}
+                  {refused?.workflowId === w.id ? (
+                    <div className="automations__detail">
+                      <Refusal refused={refused} />
+                    </div>
+                  ) : null}
                   {openWorkflow === w.id ? (
                     <WorkflowSteps
                       key={`${w.id}:${w.version}:${w.status}`}
@@ -989,10 +1005,10 @@ function PlanCard({
               <span className="automations__name">{step.label}</span>
               {done === undefined ? null : (
                 <span
-                  className={`automations__state automations__state--${stateOf(done, block !== undefined)}`}
+                  className={`automations__state automations__state--${stateOf(done, block !== undefined, detail.status)}`}
                 >
                   <FormattedMessage
-                    id={`automations.state.${stateOf(done, block !== undefined)}`}
+                    id={`automations.state.${stateOf(done, block !== undefined, detail.status)}`}
                   />
                 </span>
               )}
@@ -1071,7 +1087,9 @@ function PlanCard({
                   decide={decideStep === undefined ? undefined : decideApproval}
                 />
               ) : null}
-              {done?.state === 'failed' && done.failure !== 'budget_exceeded' ? (
+              {done?.state === 'failed' &&
+              done.failure !== 'budget_exceeded' &&
+              !cancelledWithPlan(done, detail.status) ? (
                 <StepFailure done={done} agent={agent} />
               ) : null}
               {done?.result == null ? null : (
@@ -1436,7 +1454,15 @@ export function planPhaseKey(status: string, steps: readonly PlanStepProgress[])
  * Where a step is, in one word the person reads (ADR-0167): pending, running, waiting for them,
  * waiting for a time, done, failed, skipped, blocked by the credit limit, rejected or stopped.
  */
-function stateOf(done: PlanStepProgress, blocked: boolean): string {
+/**
+ * A step a person's cancellation of the plan ended (ADR-0179): its execution was cancelled with
+ * the plan, so it did not fail and there is nothing to fix or try again.
+ */
+const cancelledWithPlan = (done: PlanStepProgress, planStatus: string): boolean =>
+  planStatus === 'cancelled' && done.state === 'failed' && done.status === 'cancelled';
+
+function stateOf(done: PlanStepProgress, blocked: boolean, planStatus = ''): string {
+  if (cancelledWithPlan(done, planStatus)) return 'cancelled';
   switch (done.state) {
     case 'waiting':
       return 'pending';
