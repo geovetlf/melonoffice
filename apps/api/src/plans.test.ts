@@ -1380,6 +1380,43 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
       };
     }
 
+    it('ADR-0181: a stopped plan says who stopped it, and its withdrawn approval says why', async () => {
+      const w = await waitingPlan();
+      // Running: nobody stopped it.
+      const running = await w.t.get('token-alice', `/plans/${w.plan.id}`);
+      expect(((await running.json()) as { stopped: unknown }).stopped).toBeNull();
+
+      const stop = await w.t.post('token-alice', `/executions/${w.plan.executionId}/cancel`, {
+        reason: 'director_request',
+      });
+      expect(stop.status).toBe(200);
+
+      const detail = (await (await w.t.get('token-alice', `/plans/${w.plan.id}`)).json()) as {
+        status: string;
+        createdBy: string;
+        stopped: { at: string; by: string; reason: string } | null;
+      };
+      expect(detail.status).toBe('cancelled');
+      expect(detail.stopped).toEqual({
+        at: expect.any(String),
+        by: detail.createdBy,
+        reason: 'director_request',
+      });
+
+      const withdrawn = await w.t.get('token-alice', `/approvals/${w.approvalId}`);
+      expect(await withdrawn.json()).toMatchObject({
+        id: w.approvalId,
+        status: 'cancelled',
+        cancelReason: 'plan_cancelled',
+      });
+
+      // Another organization sees neither.
+      const asBob = (path: string) =>
+        w.t.app.request(`/v1/organizations/${w.t.orgB}${path}`, w.t.as('token-bob'));
+      expect((await asBob(`/plans/${w.plan.id}`)).status).toBe(404);
+      expect((await asBob(`/approvals/${w.approvalId}`)).status).toBe(404);
+    });
+
     it('waits for a person, asks once, and shows it in the plan and the approvals inbox', async () => {
       const w = await waitingPlan();
       // The independent branch went on; the step that asked did not start.

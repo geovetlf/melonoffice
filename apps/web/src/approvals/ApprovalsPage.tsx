@@ -205,6 +205,19 @@ export function ApprovalsPage({
                         }}
                       />
                     )}
+                    {a.status === 'cancelled' && a.cancelReason != null ? (
+                      // Why it was withdrawn (ADR-0181): a plan stopped is not the person's "no".
+                      <>
+                        {' · '}
+                        <FormattedMessage
+                          id={
+                            a.cancelReason === 'plan_cancelled'
+                              ? 'approvals.withdrawn.plan_cancelled'
+                              : 'approvals.withdrawn.other'
+                          }
+                        />
+                      </>
+                    ) : null}
                   </span>
                 </div>
                 {a.status === 'pending' && canDecide ? (

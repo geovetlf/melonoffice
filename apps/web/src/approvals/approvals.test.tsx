@@ -103,6 +103,25 @@ describe('The approval center (ADR-0026)', () => {
     expect(screen.getAllByText(/Approved/).length).toBeGreaterThan(0);
   });
 
+  it('ADR-0181: says why an approval was withdrawn: its plan was cancelled, or another cause', async () => {
+    open('/approvals', (b) => {
+      b.options.approvals.org_1 = [
+        approval('a3', 'cancelled', {
+          decidedAt: '2026-09-29T11:00:00.000Z',
+          cancelReason: 'plan_cancelled',
+        }),
+        approval('a4', 'cancelled', {
+          decidedAt: '2026-09-29T10:00:00.000Z',
+          cancelReason: 'execution_ended',
+        }),
+        approval('a5', 'cancelled', { decidedAt: '2026-09-29T09:00:00.000Z' }),
+      ];
+    });
+    fireEvent.click(await screen.findByRole('tab', { name: /History/ }));
+    expect(await screen.findByText(/Withdrawn when the plan was cancelled/)).toBeTruthy();
+    expect(screen.getAllByText(/Withdrawn/)).toHaveLength(2);
+  });
+
   it("shows the API's refusal as its own message", async () => {
     open('/approvals', (b) => {
       b.options.approvalDecisionFails = { error: 'approval_expired', status: 409 };

@@ -238,6 +238,12 @@ export interface PlanView {
   readonly budgetBlocks?: readonly PlanBudgetBlockView[];
   /** The workflow and version that made it (ADR-0180); null from the planner. An older API sends none. */
   readonly workflow?: { readonly id: string; readonly version: number } | null;
+  /** Who approved or rejected it, and when (ADR-0181). An older API sends none. */
+  readonly decision?: {
+    readonly decision: 'approved' | 'rejected';
+    readonly decidedBy: string;
+    readonly decidedAt: string;
+  } | null;
 }
 
 export interface PlanBudgetBlockView {
@@ -277,6 +283,8 @@ export type PlanStepState =
   | 'failed';
 
 export interface PlanDetail extends PlanView {
+  /** Who stopped a cancelled plan, when and why (ADR-0181); null otherwise. */
+  readonly stopped?: { readonly at: string; readonly by: string; readonly reason: string } | null;
   readonly current: {
     readonly version: number;
     readonly digest: string;

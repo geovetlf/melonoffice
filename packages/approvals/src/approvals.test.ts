@@ -362,6 +362,33 @@ describe('approval service', () => {
     expect(await w.events('tool.approval_cancelled')).toEqual([
       expect.objectContaining({ reason: 'execution_ended' }),
     ]);
+    // Why it was withdrawn stays on the approval itself (ADR-0181), once.
+    expect(cancelled.cancelReason).toBe('execution_ended');
+    expect((await w.service.get(w.tenantA, approval.id)).cancelReason).toBe('execution_ended');
+    expect(await codeOf(w.service.cancel(w.tenantA, approval.id, 'plan_cancelled'))).toBe(
+      'approval_not_pending',
+    );
+    expect((await w.service.get(w.tenantA, approval.id)).cancelReason).toBe('execution_ended');
+  });
+
+  it('ADR-0181: a decided approval gets no withdrawal reason, and a malformed one is refused', async () => {
+    const w = await world();
+    const approval = await w.request();
+    await w.service.approve(w.tenantA, approval.id);
+    expect(await codeOf(w.service.cancel(w.tenantA, approval.id, 'plan_cancelled'))).toBe(
+      'approval_not_pending',
+    );
+    expect((await w.service.get(w.tenantA, approval.id)).cancelReason).toBeUndefined();
+    const other = await w.request({ nodeId: 'other' as ExecutionNodeId });
+    expect(await codeOf(w.service.cancel(w.tenantA, other.id, 'Not A Code'))).toBe(
+      'invalid_approval',
+    );
+    expect((await w.service.get(w.tenantA, other.id)).status).toBe('pending');
+    // A stored reason on an approval that is not cancelled, or that is not a code, is refused.
+    w.repository.put({ ...other, cancelReason: 'plan_cancelled' });
+    expect(await codeOf(w.service.get(w.tenantA, other.id))).toBe('invalid_approval');
+    w.repository.put({ ...other, status: 'cancelled', cancelReason: 'Plan Cancelled!' });
+    expect(await codeOf(w.service.get(w.tenantA, other.id))).toBe('invalid_approval');
   });
 
   it('lists newest first, and stores nothing of the input but its digest', async () => {
