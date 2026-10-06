@@ -1,5 +1,5 @@
 import { ROLES } from '@melonoffice/rbac';
-import type { Specialist } from '@melonoffice/domain';
+import type { Plan, Specialist, WorkflowId } from '@melonoffice/domain';
 import { describe, expect, it } from 'vitest';
 import { isPlanningError, PlanningError } from './errors.js';
 import { canChangePlanStatus, isPlanTerminal, PLAN_STATUSES } from './lifecycle.js';
@@ -826,6 +826,54 @@ describe('plans', () => {
         }),
       ),
     ).toBe('execution_not_found');
+  });
+
+  it('ADR-0180: a workflow’s plan names its workflow for good, and lists by workflow stay in their organization', async () => {
+    const w = await setup();
+    const workflowId = '11111111-1111-4111-8111-111111111111' as WorkflowId;
+    // A planning execution that recorded the workflow's version, as the workflow service makes.
+    const execution = await w.executions.create(w.tenantA, {
+      mode: 'plan',
+      input: { type: 'task', id: 'task-1' },
+      specialistId: w.owner.identity.id,
+      specialistVersion: w.owner.version,
+      departmentId: w.owner.configuration.departmentId,
+      workflowId,
+      versionSnapshot: {
+        schemaVersion: 1,
+        components: [
+          { kind: 'specialist', id: w.owner.identity.id, version: String(w.owner.version) },
+          { kind: 'workflow', id: workflowId, version: '3' },
+        ],
+      },
+    });
+    await w.executions.changeStatus(w.tenantA, execution.id, { from: 'pending', to: 'planning' });
+    const fromWorkflow = await w.plans.propose(w.tenantA, {
+      executionId: execution.id,
+      proposal: proposal([specialistStep('research', w.researcher)]),
+      source: { kind: 'workflow', workflowId, workflowVersion: 3 },
+    });
+    if (fromWorkflow.status !== 'planned') throw new Error(fromWorkflow.status);
+    expect(fromWorkflow.plan.workflow).toEqual({ id: workflowId, version: 3 });
+    const { plan: fromPlanner } = await propose(w, [specialistStep('research', w.researcher)]);
+    expect(fromPlanner.workflow).toBeUndefined();
+
+    expect((await w.plans.listForWorkflow(w.tenantA, workflowId)).map((p) => p.id)).toEqual([
+      fromWorkflow.plan.id,
+    ]);
+    expect(await w.plans.listForWorkflow(w.tenantB, workflowId)).toEqual([]);
+
+    // An update that changes or drops it is refused, as a concurrent change would be.
+    for (const workflow of [undefined, { id: workflowId, version: 4 }]) {
+      expect(
+        await codeOf(
+          w.planRepository.update(w.orgA, fromWorkflow.plan.id, (current) => ({
+            plan: { ...current, workflow, revision: current.revision + 1 } as Plan,
+            events: [],
+          })),
+        ),
+      ).toBe('plan_concurrency_conflict');
+    }
   });
 
   it('refuses a stored version whose content no longer matches its digest', async () => {

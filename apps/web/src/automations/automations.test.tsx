@@ -1541,4 +1541,86 @@ describe('Writing workflows (block 4)', () => {
     expect(JSON.parse(started?.body ?? '{}')).toEqual({ version: 1, digest: 'e'.repeat(64) });
     expect(card.queryByRole('button', { name: 'Start now' })).toBeNull();
   });
+
+  it('ADR-0180: a workflow shows its runs with their version, opens one, and an archived one keeps them', async () => {
+    const planOf = (
+      id: string,
+      workflowId: string,
+      version: number,
+      status: string,
+      at: string,
+    ) => ({
+      id,
+      status,
+      version: 1,
+      createdAt: at,
+      workflow: { id: workflowId, version },
+      current: {
+        version: 1,
+        digest: 'c'.repeat(64),
+        request: { summary: id, objective: id },
+        steps: [{ id: 'research', kind: 'specialist', label: 'Research', dependsOn: [] }],
+        riskLevel: 'low',
+        estimate: { status: 'not_estimated' },
+        source: { kind: 'workflow', workflowId, workflowVersion: version },
+      },
+    });
+    const backend = open((b) => {
+      b.options.workflows.org_1?.push({
+        id: 'wf-old',
+        name: 'Campaña',
+        status: 'archived',
+        version: 4,
+        createdAt: '2026-09-20T10:00:00Z',
+        createdBy: 'user-1',
+        updatedAt: '2026-09-28T10:00:00Z',
+      } as never);
+      b.options.plans.org_1 = [
+        planOf('plan-a', 'wf-launch', 1, 'completed', '2026-09-28T09:00:00Z'),
+        planOf('plan-b', 'wf-launch', 2, 'approval_required', '2026-09-29T09:00:00Z'),
+        planOf('plan-c', 'wf-old', 4, 'failed', '2026-09-27T09:00:00Z'),
+      ];
+    }, WRITER);
+    const workflows = within(await screen.findByRole('region', { name: 'Workflows' }));
+    // The plans list names the workflow and the version that made each plan.
+    const plans = within(screen.getByRole('region', { name: 'Plans' }));
+    expect(await plans.findByText(/“Lanzamiento”, version 2/)).toBeTruthy();
+    expect(plans.getByText(/“Campaña”, version 4/)).toBeTruthy();
+
+    const [launchRuns, , oldRuns] = await workflows.findAllByRole('button', { name: 'Runs' });
+    fireEvent.click(launchRuns as HTMLElement);
+    const runs = within(await screen.findByRole('region', { name: 'Runs of “Lanzamiento”' }));
+    const rows = await runs.findAllByRole('button');
+    // Newest first, each with its version and how it is.
+    expect(rows.map((r) => r.textContent)).toEqual([
+      expect.stringMatching(/version 2 · Waiting for your approval/),
+      expect.stringMatching(/version 1 · Completed/),
+    ]);
+    expect(
+      backend.apiCalls().some((c) => c.url.endsWith('/org_1/plans?workflowId=wf-launch')),
+    ).toBe(true);
+    fireEvent.click(rows[1] as HTMLElement);
+    expect(await screen.findByRole('article', { name: 'plan-a' })).toBeTruthy();
+
+    // An archived workflow's history is still there.
+    fireEvent.click(oldRuns as HTMLElement);
+    const history = within(await screen.findByRole('region', { name: 'Runs of “Campaña”' }));
+    expect(await history.findByText(/version 4 · Failed/)).toBeTruthy();
+  });
+
+  it('ADR-0180: a workflow with no runs says so', async () => {
+    open((b) => {
+      b.options.plans.org_1 = [];
+    }, WRITER);
+    const workflows = within(await screen.findByRole('region', { name: 'Workflows' }));
+    fireEvent.click((await workflows.findAllByRole('button', { name: 'Runs' }))[0] as HTMLElement);
+    expect(await screen.findByText('No plan has been prepared from it yet.')).toBeTruthy();
+  });
+
+  it('ADR-0180: without plan.read there is no Runs button', async () => {
+    open(undefined, ['workflow.read']);
+    const workflows = within(await screen.findByRole('region', { name: 'Workflows' }));
+    expect(await workflows.findByText('Lanzamiento')).toBeTruthy();
+    expect(workflows.queryByRole('button', { name: 'Runs' })).toBeNull();
+  });
 });

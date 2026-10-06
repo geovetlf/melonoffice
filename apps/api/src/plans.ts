@@ -30,6 +30,7 @@ import {
 } from '@melonoffice/planning';
 import type { TenantContext } from '@melonoffice/tenancy';
 import { withCorrelation } from '@melonoffice/observability';
+import { isWorkflowId } from '@melonoffice/workflows';
 import type { Context, Hono } from 'hono';
 import type { AuthEnv } from './auth.js';
 import { withPermission, type AuthorizationDependencies } from './authorization.js';
@@ -64,11 +65,19 @@ export function registerPlanRoutes(
   const { plans, conductor, steps } = dependencies;
   const base = '/v1/organizations/:organizationId/plans';
 
+  // The organization's latest plans, or one workflow's (ADR-0180) with `?workflowId=`.
   app.get(
     base,
-    withPermission('plan.read', dependencies, async (c, tenant) =>
-      c.json({ plans: (await plans.list(tenant)).map(toPlanView) }),
-    ),
+    withPermission('plan.read', dependencies, async (c, tenant) => {
+      const workflowId = c.req.query('workflowId');
+      if (workflowId === undefined) {
+        return c.json({ plans: (await plans.list(tenant)).map(toPlanView) });
+      }
+      if (!isWorkflowId(workflowId)) return c.json({ error: 'invalid_workflow_id' }, 400);
+      return c.json({
+        plans: (await plans.listForWorkflow(tenant, workflowId)).map(toPlanView),
+      });
+    }),
   );
 
   app.get(
@@ -227,6 +236,9 @@ export function toPlanView(plan: Plan) {
     delegations: plan.delegations.map((d) => ({ stepId: d.stepId, executionId: d.executionId })),
     delegationState: plan.delegationState ?? null,
     delegationFailure: plan.delegationFailure ?? null,
+    // Which workflow and version made it (ADR-0180); null from the planner or on older plans.
+    workflow:
+      plan.workflow === undefined ? null : { id: plan.workflow.id, version: plan.workflow.version },
     // The credit budget a person approved, as each step it could not cover found it (ADR-0163):
     // what the plan had used, what the step needed, and the budget.
     budgetBlocks: (plan.budgetBlocks ?? []).map((b) => ({

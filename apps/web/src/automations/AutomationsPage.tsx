@@ -130,6 +130,7 @@ export function AutomationsPage({
 }) {
   const [workflows, setWorkflows] = useState<Load<readonly WorkflowView[]>>({ status: 'loading' });
   const [plans, setPlans] = useState<Load<readonly PlanView[]>>({ status: 'loading' });
+  const [runsOf, setRunsOf] = useState<string>();
   const [selected, setSelected] = useState<string>();
   const [error, setError] = useState<string>();
   const [refused, setRefused] = useState<{
@@ -168,6 +169,15 @@ export function AutomationsPage({
   }, [listed, openWorkflow]);
   // One key per workflow and press: a retry after a network failure is the same plan.
   const keys = useRef(new Map<string, string>());
+
+  // Each workflow's name by id, to say which one made a plan (ADR-0179, ADR-0180).
+  const workflowNames = useMemo(
+    () =>
+      new Map<string, string>(
+        workflows.status === 'ready' ? workflows.value.map((w) => [w.id, w.name]) : [],
+      ),
+    [workflows],
+  );
 
   const loadPlans = useCallback(() => {
     if (!permissions.readPlans) return;
@@ -406,6 +416,16 @@ export function AutomationsPage({
                     >
                       <FormattedMessage id="automations.steps" />
                     </Button>
+                    {permissions.readPlans && client.workflowPlans !== undefined ? (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        aria-expanded={runsOf === w.id}
+                        onClick={() => setRunsOf(runsOf === w.id ? undefined : w.id)}
+                      >
+                        <FormattedMessage id="automations.runs" />
+                      </Button>
+                    ) : null}
                     {w.status === 'active' && permissions.planWorkflows ? (
                       <Button
                         size="sm"
@@ -456,6 +476,20 @@ export function AutomationsPage({
                       }
                     />
                   ) : null}
+                  {runsOf === w.id ? (
+                    <WorkflowRuns
+                      key={`${w.id}:${plans.status === 'ready' ? plans.value.length : 0}`}
+                      client={client}
+                      workflow={w}
+                      selected={selected}
+                      onOpen={(id) => {
+                        setSelected(id);
+                        globalThis.document
+                          ?.getElementById('automations-plans')
+                          ?.scrollIntoView?.({ block: 'start' });
+                      }}
+                    />
+                  ) : null}
                 </li>
               ))}
             </ul>
@@ -485,6 +519,7 @@ export function AutomationsPage({
                 <li key={p.id}>
                   <PlanRow
                     plan={p}
+                    workflowNames={workflowNames}
                     open={selected === p.id}
                     onToggle={() => setSelected(selected === p.id ? undefined : p.id)}
                   />
@@ -501,11 +536,7 @@ export function AutomationsPage({
               onDecided={loadPlans}
               decideStep={permissions.decidePlans ? decideStep : undefined}
               stop={stop}
-              workflowNames={
-                new Map(
-                  workflows.status === 'ready' ? workflows.value.map((w) => [w.id, w.name]) : [],
-                )
-              }
+              workflowNames={workflowNames}
             />
           )}
         </section>
@@ -629,30 +660,114 @@ function roleLabel(intl: ReturnType<typeof useIntl>, roleId: string): string {
 
 function PlanRow({
   plan,
+  workflowNames = new Map(),
   open,
   onToggle,
 }: {
   readonly plan: PlanView;
+  /** Each workflow's name by id: a plan says which one made it, and its version (ADR-0180). */
+  readonly workflowNames?: ReadonlyMap<string, string>;
   readonly open: boolean;
   readonly onToggle: () => void;
 }) {
   const intl = useIntl();
+  const date = intl.formatDate(new Date(plan.createdAt), {
+    day: 'numeric',
+    month: 'short',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+  const name = plan.workflow == null ? undefined : workflowNames.get(plan.workflow.id);
   return (
     <button type="button" className="automations__row" aria-expanded={open} onClick={onToggle}>
-      <FormattedMessage
-        id="automations.planRow"
-        values={{
-          date: intl.formatDate(new Date(plan.createdAt), {
-            day: 'numeric',
-            month: 'short',
-            hour: 'numeric',
-            minute: '2-digit',
-          }),
-        }}
-      />
+      {plan.workflow == null || name === undefined ? (
+        <FormattedMessage id="automations.planRow" values={{ date }} />
+      ) : (
+        <FormattedMessage
+          id="automations.planRowFrom"
+          values={{ name, version: plan.workflow.version, date }}
+        />
+      )}
       {' · '}
       <FormattedMessage id={`automations.planStatus.${plan.status}`} />
     </button>
+  );
+}
+
+/**
+ * What a workflow did (ADR-0180): the plans made from it, newest first, each with the version
+ * that made it and how it is or ended. Choosing one opens its plan as the plans list does. An
+ * archived workflow keeps them: its history.
+ */
+function WorkflowRuns({
+  client,
+  workflow,
+  selected,
+  onOpen,
+}: {
+  readonly client: AutomationsClient;
+  readonly workflow: WorkflowView;
+  readonly selected: string | undefined;
+  readonly onOpen: (planId: string) => void;
+}) {
+  const intl = useIntl();
+  const [runs, setRuns] = useState<Load<readonly PlanView[]>>({ status: 'loading' });
+  useEffect(() => {
+    if (client.workflowPlans === undefined) return undefined;
+    let live = true;
+    client.workflowPlans(workflow.id).then(
+      (value) => live && setRuns({ status: 'ready', value: [...value].sort(newestFirst) }),
+      () => live && setRuns({ status: 'error' }),
+    );
+    return () => {
+      live = false;
+    };
+  }, [client, workflow.id]);
+  const title = intl.formatMessage({ id: 'automations.runs.title' }, { name: workflow.name });
+  return (
+    <div className="automations__detail" role="region" aria-label={title}>
+      {runs.status === 'loading' ? (
+        <StateMessage kind="loading" inline>
+          <FormattedMessage id="automations.loading" />
+        </StateMessage>
+      ) : runs.status === 'error' ? (
+        <StateMessage kind="error" inline>
+          <FormattedMessage id="automations.error.generic" />
+        </StateMessage>
+      ) : runs.value.length === 0 ? (
+        <StateMessage kind="empty" inline>
+          <FormattedMessage id="automations.runs.empty" />
+        </StateMessage>
+      ) : (
+        <ul className="automations__list">
+          {runs.value.map((p) => (
+            <li key={p.id}>
+              <button
+                type="button"
+                className="automations__row"
+                aria-pressed={selected === p.id}
+                onClick={() => onOpen(p.id)}
+              >
+                <FormattedMessage
+                  id="automations.runs.row"
+                  values={{
+                    date: intl.formatDate(new Date(p.createdAt), {
+                      day: 'numeric',
+                      month: 'short',
+                      hour: 'numeric',
+                      minute: '2-digit',
+                    }),
+                    version: p.workflow?.version ?? workflow.version,
+                  }}
+                />
+                {' · '}
+                <FormattedMessage id={`automations.planStatus.${p.status}`} />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 

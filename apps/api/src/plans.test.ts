@@ -710,6 +710,77 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
       return id;
     }
 
+    it('ADR-0180: lists one workflow’s plans, each naming its workflow and version, and nothing of another', async () => {
+      const t = await setup(ROLES, { runPlans: true });
+      const id = await activeWorkflow(t, [researchStep]);
+      const other = await activeWorkflow(t, [researchStep]);
+      const first = (await (
+        await t.post('token-alice', `/workflows/${id}/plans`, { requestKey: 'r-1' })
+      ).json()) as { id: string };
+      await t.post('token-alice', `/workflows/${id}/versions`, {
+        steps: [researchStep, campaignStep],
+      });
+      const second = (await (
+        await t.post('token-alice', `/workflows/${id}/plans`, { requestKey: 'r-2' })
+      ).json()) as { id: string };
+      const elsewhere = (await (
+        await t.post('token-alice', `/workflows/${other}/plans`, { requestKey: 'r-3' })
+      ).json()) as { id: string };
+      const { plan: planned } = await t.proposeWork();
+
+      const listed = await t.get('token-alice', `/plans?workflowId=${id}`);
+      expect(listed.status).toBe(200);
+      const { plans } = (await listed.json()) as {
+        plans: { id: string; workflow: { id: string; version: number } | null }[];
+      };
+      // Only this workflow's, newest first, each with the version that made it.
+      expect(plans.map((p) => p.id).sort()).toEqual([first.id, second.id].sort());
+      expect(plans.find((p) => p.id === first.id)?.workflow).toEqual({ id, version: 1 });
+      expect(plans.find((p) => p.id === second.id)?.workflow).toEqual({ id, version: 2 });
+
+      // The organization's list names the workflow too; a plan from the planner names none.
+      const all = (await (await t.get('token-alice', '/plans')).json()) as {
+        plans: { id: string; workflow: { id: string } | null }[];
+      };
+      expect(all.plans.find((p) => p.id === elsewhere.id)?.workflow?.id).toBe(other);
+      expect(all.plans.find((p) => p.id === planned.id)?.workflow).toBeNull();
+
+      // A malformed id is refused; an unknown one has no plans.
+      expect((await t.get('token-alice', '/plans?workflowId=not-an-id')).status).toBe(400);
+      const unknown = await t.get(
+        'token-alice',
+        '/plans?workflowId=00000000-0000-4000-8000-000000000000',
+      );
+      expect(((await unknown.json()) as { plans: unknown[] }).plans).toEqual([]);
+
+      // Another organization never sees them, by route or by store.
+      expect((await t.get('token-bob', `/plans?workflowId=${id}`)).status).not.toBe(200);
+      expect(await t.stores.plans.listForWorkflow(t.orgB, id as WorkflowId, 10)).toEqual([]);
+      expect(await t.stores.plans.listForWorkflow(t.orgA, id as WorkflowId, 10)).toHaveLength(2);
+
+      // The record is kept as the plan moves: approved and started, it still names its workflow.
+      const version = must(await t.stores.plans.findVersion(t.orgA, first.id as never, 1));
+      await t.post('token-alice', `/plans/${first.id}/approve`, {
+        version: 1,
+        digest: version.digest,
+      });
+      expect((await t.stores.plans.find(t.orgA, first.id as never))?.workflow).toEqual({
+        id,
+        version: 1,
+      });
+    });
+
+    it('ADR-0180: one workflow’s plans need plan.read', async () => {
+      const t = await setup({
+        ...ROLES,
+        owner: ROLES.owner.filter((p) => p !== 'plan.read'),
+      });
+      expect(
+        (await t.get('token-alice', '/plans?workflowId=00000000-0000-4000-8000-000000000000'))
+          .status,
+      ).toBe(403);
+    });
+
     it('creates, versions and activates a workflow, then plans it and the approved plan runs', async () => {
       const t = await setup(ROLES, { runPlans: true });
       const id = await activeWorkflow(t, [researchStep]);
@@ -2130,6 +2201,8 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
         find: (org, id) => t.stores.plans.find(org, id),
         findVersion: (org, id, v) => t.stores.plans.findVersion(org, id, v),
         list: (org, limit) => t.stores.plans.list(org, limit),
+        listForWorkflow: (org, workflowId, limit) =>
+          t.stores.plans.listForWorkflow(org, workflowId, limit),
         page: (org, request) => t.stores.plans.page(org, request),
         create: (write) => t.stores.plans.create(write),
         async update(org, id, change) {
