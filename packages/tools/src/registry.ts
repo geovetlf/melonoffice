@@ -248,6 +248,9 @@ export const CONVERSATION_HANDOFF_TOOL: ToolDefinition = {
   ],
 };
 
+/** How many days ahead a plan's follow-up may be scheduled (`workflow_follow_up`, ADR-0184). */
+export const PLAN_FOLLOW_UP_MAX_DAYS = 30;
+
 /** The follow-up types, as the conversations domain lists them (a test keeps the two equal). */
 export const FOLLOW_UP_TYPE_CODES = ['follow_up', 'call', 'message', 'review', 'check_in'] as const;
 
@@ -396,6 +399,61 @@ export const FOLLOW_UP_SCHEDULE_TOOL: ToolDefinition = {
       provider: { kind: 'internal', id: 'follow_up' },
       environments: ['dev'],
       invocationModes: ['runtime', 'model'],
+    },
+  ],
+};
+
+/**
+ * `workflow_follow_up` (B6, ADR-0184): a workflow's write step schedules a follow-up with a contact a
+ * person chose in the workflow, and a person approves this exact follow-up every time a plan
+ * reaches it. Every field is fixed in the workflow; the date is today in the business's time zone
+ * plus `inDays`, read when it runs; the request key is the server's. It wraps the follow-up
+ * service's own `create`, as `follow_up_schedule` does, with source `agent`. Its own tool, not a
+ * version of `follow_up_schedule`: an agent holds one version of a tool, and keeps that one's
+ * version 3 mid-task.
+ */
+export const WORKFLOW_FOLLOW_UP_TOOL: ToolDefinition = {
+  id: 'workflow_follow_up' as ToolDefinition['id'],
+  status: 'active',
+  versions: [
+    {
+      toolId: 'workflow_follow_up' as ToolVersion['toolId'],
+      version: 1,
+      nameKey: 'tools.workflow_follow_up.name' as ToolVersion['nameKey'],
+      descriptionKey: 'tools.workflow_follow_up.description' as ToolVersion['descriptionKey'],
+      category: 'crm',
+      action: 'schedule',
+      mutating: true,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          contactId: { type: 'string', minLength: 36, maxLength: 36, ref: 'contact' },
+          type: { type: 'string', maxLength: 16, enum: [...FOLLOW_UP_TYPE_CODES] },
+          title: { type: 'string', minLength: 1, maxLength: 120 },
+          inDays: { type: 'integer', minimum: 0, maximum: PLAN_FOLLOW_UP_MAX_DAYS },
+          time: { type: 'string', minLength: 5, maxLength: 5 },
+        },
+        required: ['contactId', 'type', 'title', 'inDays', 'time'],
+      },
+      outputSchema: {
+        type: 'object',
+        properties: {
+          followUpId: { type: 'string', minLength: 36, maxLength: 36 },
+          created: { type: 'boolean' },
+        },
+        required: ['followUpId', 'created'],
+      },
+      permissions: ['follow_up.manage'],
+      credentials: [],
+      riskLevel: 'low',
+      approvalPolicy: 'approval_required',
+      approvalTtlSeconds: 2 * 24 * 3600,
+      timeoutMs: 15_000,
+      // Never retried here: whether a timed-out call wrote is unknown; the key keeps a repeat one.
+      retryPolicy: { maxAttempts: 1, backoffMs: 0 },
+      provider: { kind: 'internal', id: 'follow_up' },
+      environments: ['dev'],
+      invocationModes: ['runtime', 'plan'],
     },
   ],
 };
@@ -582,6 +640,7 @@ export const TOOL_CATALOGUE: readonly ToolDefinition[] = Object.freeze([
   FOLLOW_UP_SCHEDULE_TOOL,
   KNOWLEDGE_SEARCH_TOOL,
   CUSTOMER_RECORDS_TOOL,
+  WORKFLOW_FOLLOW_UP_TOOL,
 ]);
 
 export const defaultToolRegistry = (): ToolRegistry => createToolRegistry(TOOL_CATALOGUE);

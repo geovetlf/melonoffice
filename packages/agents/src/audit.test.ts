@@ -82,12 +82,13 @@ function agent(
       capabilities: [],
       skills: [
         { id: 'company_knowledge', version: 3 },
-        { id: 'customer_follow_up', version: 3 },
+        { id: 'customer_follow_up', version: 4 },
         { id: 'pipeline_analysis', version: 2 },
       ] as never,
       tools: [
         { id: 'knowledge_search', version: 1 },
         { id: 'follow_up_schedule', version: 3 },
+        { id: 'workflow_follow_up', version: 1 },
         { id: 'customer_records_summary', version: 1 },
       ] as never,
       permissions: [
@@ -180,11 +181,11 @@ describe('auditAgents (G-1, ADR-0131)', () => {
         code: 'skill_upgrade_available',
         severity: 'info',
         subject: { type: 'agent', id: 'a1', version: 2 },
-        evidence: { skill: 'customer_follow_up', from: 2, to: 3 },
+        evidence: { skill: 'customer_follow_up', from: 2, to: 4 },
         recommendation: 'upgrade_skill',
       },
     ]);
-    // A research agent is never offered customer_follow_up@3, which is for Comercial only.
+    // A research agent is never offered customer_follow_up@3 or @4, which are for Comercial only.
     const iris = agent('a2', {
       configuration: {
         departmentId: `${ORG}_research` as DepartmentId,

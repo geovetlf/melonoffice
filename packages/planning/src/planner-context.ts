@@ -64,6 +64,11 @@ export function plannerToolOf(
   if (!use.usable) {
     return Object.freeze({ ...base, usableAsStep: false, notUsableBecause: use.reason });
   }
+  // A write step is a person's to add, in the workflow editor (ADR-0184): the planner is never
+  // offered one, so the frozen planner (plan_proposal@3) plans exactly what it planned before.
+  if (version?.mutating === true) {
+    return Object.freeze({ ...base, usableAsStep: false, notUsableBecause: 'tool_changes_data' });
+  }
   return Object.freeze({
     ...base,
     riskLevel: use.riskLevel,

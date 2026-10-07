@@ -77,6 +77,8 @@ describe('skills grant only what exists, and only to agents (SK-1)', () => {
       ['company_knowledge@3', ['knowledge_search@1']],
       ['customer_follow_up@2', ['follow_up_schedule@2']],
       ['customer_follow_up@3', ['follow_up_schedule@3']],
+      // B6 (ADR-0184): the workflow's write step, beside what version 3 gave.
+      ['customer_follow_up@4', ['follow_up_schedule@3', 'workflow_follow_up@1']],
       ['pipeline_analysis@2', ['customer_records_summary@1']],
     ]);
     expect(
@@ -89,6 +91,7 @@ describe('skills grant only what exists, and only to agents (SK-1)', () => {
       ['company_knowledge@3', ['knowledge.propose_fact']],
       ['customer_follow_up@2', ['follow_up.schedule']],
       ['customer_follow_up@3', ['follow_up.schedule']],
+      ['customer_follow_up@4', ['follow_up.schedule']],
     ]);
     // Version 1 of every skill grants no action, as before.
     expect(SKILL_CATALOGUE.filter((s) => s.version === 1).flatMap((s) => s.actions)).toEqual([]);
@@ -115,6 +118,7 @@ describe('skills grant only what exists, and only to agents (SK-1)', () => {
         "customer_follow_up@1": "ffa7c617dfde",
         "customer_follow_up@2": "bc1f3e84c7c7",
         "customer_follow_up@3": "c559f1e6a76d",
+        "customer_follow_up@4": "d977f5a7a02f",
         "design_briefing@1": "39a1e0299b99",
         "finance_review@1": "b6fdaaa61bbc",
         "market_research@1": "973fa6cccfce",

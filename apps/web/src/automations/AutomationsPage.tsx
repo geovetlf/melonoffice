@@ -28,6 +28,7 @@ import { openedWith, paths } from '../shell/routes.js';
 import { readyList, useOfficeData } from '../office/OfficeData.js';
 import { draftsOf, WorkflowEditor } from './WorkflowEditor.js';
 import { draftClientOf, takeHandedOverDraft, WorkflowFromWords } from './WorkflowDraftCard.js';
+import { StepValues, useContacts, type ContactOption, type ContactsLoad } from './writeSteps.js';
 import {
   failureExplanation,
   refusalExplanation,
@@ -105,6 +106,7 @@ export function AutomationsPage({
   templates,
   tools,
   skills,
+  contacts: loadContacts,
   decideStep,
   stop,
   currentUserId,
@@ -124,6 +126,11 @@ export function AutomationsPage({
   readonly tools?: (() => Promise<readonly ToolView[]>) | undefined;
   /** The skill catalogue, to name the skill that would let an agent use a tool (ADR-0167). */
   readonly skills?: (() => Promise<readonly SkillView[]>) | undefined;
+  /**
+   * The organization's contacts (`contact.read`), to pick a write step's contact and to name it
+   * where a person approves the write (ADR-0184). Absent: no contact is named.
+   */
+  readonly contacts?: (() => Promise<readonly ContactOption[]>) | undefined;
   /**
    * Decides one approval a step waits for (`approval.approve`), the same call as Approvals: the
    * server binds the decision to what was asked, and GIA can never decide. Absent: the plan links
@@ -177,6 +184,29 @@ export function AutomationsPage({
   }, [listed, openWorkflow]);
   // One key per workflow and press: a retry after a network failure is the same plan.
   const keys = useRef(new Map<string, string>());
+
+  // Contacts, to name the one a write step uses where a person approves it (ADR-0184).
+  const contacts = useContacts(loadContacts);
+  // The tool versions that write data, to say so where a person approves one (ADR-0184).
+  const [writes, setWrites] = useState<ReadonlySet<string>>(new Set());
+  useEffect(() => {
+    let live = true;
+    tools?.().then(
+      (list) =>
+        live &&
+        setWrites(
+          new Set(
+            list.flatMap((t) =>
+              t.versions.filter((v) => v.mutating).map((v) => `${t.id}@${v.version}`),
+            ),
+          ),
+        ),
+      () => undefined,
+    );
+    return () => {
+      live = false;
+    };
+  }, [tools]);
 
   // Each workflow's name by id, to say which one made a plan (ADR-0179, ADR-0180).
   const workflowNames = useMemo(
@@ -333,6 +363,7 @@ export function AutomationsPage({
           tools={tools}
           assignees={assignees}
           skills={skills}
+          contacts={loadContacts}
           save={save}
           check={check}
           onSaved={(saved) => {
@@ -582,6 +613,8 @@ export function AutomationsPage({
               stop={stop}
               workflowNames={workflowNames}
               currentUserId={currentUserId}
+              contacts={contacts}
+              writes={writes}
             />
           )}
         </section>
@@ -1004,7 +1037,13 @@ function PlanCard({
   stop,
   workflowNames = new Map(),
   currentUserId,
+  contacts,
+  writes = new Set(),
 }: {
+  /** The contacts a write step names, by name (ADR-0184). */
+  readonly contacts?: ContactsLoad | undefined;
+  /** The tool versions (`id@version`) that write data (ADR-0184). */
+  readonly writes?: ReadonlySet<string>;
   readonly client: AutomationsClient;
   readonly planId: string;
   /** The signed-in person, to say "tú" for what they decided or stopped (ADR-0181). */
@@ -1312,10 +1351,11 @@ function PlanCard({
               {done?.state === 'awaiting_approval' ? (
                 <StepApproval
                   step={step}
+                  toolSteps={toolStepsOf(detail.current.steps, step)}
+                  writes={writes}
+                  contacts={contacts}
                   agent={agent}
-                  tool={
-                    step.kind === 'tool' && step.tool != null ? toolName(step.tool.id) : undefined
-                  }
+                  tool={approvedToolOf(detail.current.steps, step, toolName)}
                   approvalId={done.approvalId ?? undefined}
                   pending={pending}
                   decide={decideStep === undefined ? undefined : decideApproval}
@@ -1396,15 +1436,43 @@ function PlanCard({
   );
 }
 
+/**
+ * The tool steps a step's approval covers (ADR-0151): the step itself when it is a tool step, else
+ * the tool steps its agent uses that wait for a person.
+ */
+function toolStepsOf(steps: readonly PlanStepView[], step: PlanStepView): readonly PlanStepView[] {
+  if (step.kind === 'tool') return [step];
+  return steps.filter(
+    (s) => s.kind === 'tool' && s.performedBy === step.id && s.approvalRequired === true,
+  );
+}
+
+/** The tool a step's approval is for, by name: its own, or the one its agent's tool step uses. */
+function approvedToolOf(
+  steps: readonly PlanStepView[],
+  step: PlanStepView,
+  toolName: (id: string) => string,
+): string | undefined {
+  const [first] = toolStepsOf(steps, step);
+  return first?.tool == null ? undefined : toolName(first.tool.id);
+}
+
 /** A step waiting for the person: what, who asks, why, and the decision itself. */
 function StepApproval({
   step,
+  toolSteps,
+  writes,
+  contacts,
   agent,
   tool,
   approvalId,
   pending,
   decide,
 }: {
+  /** The tool steps this approval covers, with their fixed input (ADR-0151, ADR-0184). */
+  readonly toolSteps: readonly PlanStepView[];
+  readonly writes: ReadonlySet<string>;
+  readonly contacts: ContactsLoad | undefined;
   readonly step: PlanStepView;
   readonly agent: string | undefined;
   readonly tool: string | undefined;
@@ -1438,6 +1506,18 @@ function StepApproval({
           values={{ tool: tool ?? '' }}
         />
       </p>
+      {toolSteps.map((t) =>
+        t.tool == null || t.input == null ? null : (
+          // Exactly what it will use or write, as the person approves it (ADR-0184).
+          <StepValues
+            key={t.id}
+            toolId={t.tool.id}
+            input={t.input}
+            changesData={writes.has(`${t.tool.id}@${t.tool.version}`)}
+            contacts={contacts}
+          />
+        ),
+      )}
       {approvalId === undefined ? null : decide === undefined ? (
         <a
           className="mo-link"

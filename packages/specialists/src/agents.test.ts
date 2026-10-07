@@ -168,7 +168,8 @@ describe('catalogues', () => {
     expect(skills.resolve('customer_follow_up', 1)?.reads).toContain('follow_up.read');
     expect(skills.resolve('customer_follow_up', 2)?.actions).toEqual(['follow_up.schedule']);
     expect(skills.resolve('customer_follow_up', 3)?.departments).toEqual(['sales']);
-    expect(skills.resolve('customer_follow_up', 4)).toBeUndefined();
+    expect(skills.resolve('customer_follow_up', 4)?.departments).toEqual(['sales']);
+    expect(skills.resolve('customer_follow_up', 5)).toBeUndefined();
     expect(skills.resolve('nope', 1)).toBeUndefined();
     expect(() =>
       createSkillCatalogue([...SKILL_CATALOGUE, ...SKILL_CATALOGUE.slice(0, 1)]),

@@ -1,5 +1,5 @@
 import type { ToolDefinition, ToolSchema, ToolVersion } from '@melonoffice/domain';
-import type { ToolRegistry } from '@melonoffice/tools';
+import { isPlanWritable, type ToolRegistry } from '@melonoffice/tools';
 import type { Hono } from 'hono';
 import type { AuthEnv } from './auth.js';
 import { withPermission, type AuthorizationDependencies } from './authorization.js';
@@ -56,6 +56,8 @@ const fieldsOf = (schema: ToolSchema): readonly ToolStepField[] =>
               maxLength: field.maxLength,
               ...(field.minLength === undefined ? {} : { minLength: field.minLength }),
               ...(field.enum === undefined ? {} : { enum: [...field.enum] }),
+              // The record it names, for a picker (ADR-0184).
+              ...(field.ref === undefined ? {} : { ref: field.ref }),
             }
           : {}),
         ...(field.type === 'number' || field.type === 'integer'
@@ -69,11 +71,15 @@ const fieldsOf = (schema: ToolSchema): readonly ToolStepField[] =>
 /**
  * What a workflow's tool step can do with a version (ADR-0165): the top-level fields of its input
  * and output, only for a version a plan may run as a tool step (it reads, inside MelonOffice,
- * with no credential: ADR-0159). Any other version shows none.
+ * with no credential: ADR-0159; or it is a write built for plans: ADR-0184). Any other version
+ * shows none.
  */
 function stepOf(v: ToolVersion) {
   const readOnly = !v.mutating && v.provider.kind === 'internal' && v.credentials.length === 0;
-  return readOnly ? { input: fieldsOf(v.inputSchema), output: fieldsOf(v.outputSchema) } : null;
+  // A write built for plans (ADR-0184) is a step too, which a person approves every time.
+  return readOnly || isPlanWritable(v)
+    ? { input: fieldsOf(v.inputSchema), output: fieldsOf(v.outputSchema) }
+    : null;
 }
 
 /**

@@ -9,6 +9,7 @@ import {
   invocationModesOf,
   isModelInvocable,
   isHumanInvocable,
+  isPlanWritable,
   isRuntimeInvocable,
   toolCanRun,
   TOOL_TRANSITIONS,
@@ -24,6 +25,8 @@ import {
   KNOWLEDGE_SEARCH_LIMITS,
   KNOWLEDGE_SEARCH_TOOL,
   CUSTOMER_RECORDS_TOOL,
+  PLAN_FOLLOW_UP_MAX_DAYS,
+  WORKFLOW_FOLLOW_UP_TOOL,
 } from './registry.js';
 import { isForbiddenField, looksLikeCredential, schemaProblem, validate } from './schema.js';
 
@@ -200,13 +203,14 @@ describe('tool registry', () => {
     );
   });
 
-  it('ships message_send, conversation_handoff, follow_up_schedule, knowledge_search and customer_records_summary: real tools with executors, none invented', () => {
+  it('ships message_send, conversation_handoff, follow_up_schedule, knowledge_search, customer_records_summary and workflow_follow_up: real tools with executors, none invented', () => {
     expect(TOOL_CATALOGUE.map((t) => t.id)).toEqual([
       'message_send',
       'conversation_handoff',
       'follow_up_schedule',
       'knowledge_search',
       'customer_records_summary',
+      'workflow_follow_up',
     ]);
     expect(defaultToolRegistry().list()).toEqual([
       MESSAGE_SEND_TOOL,
@@ -214,6 +218,7 @@ describe('tool registry', () => {
       FOLLOW_UP_SCHEDULE_TOOL,
       KNOWLEDGE_SEARCH_TOOL,
       CUSTOMER_RECORDS_TOOL,
+      WORKFLOW_FOLLOW_UP_TOOL,
     ]);
     const v = defaultToolRegistry().resolve('message_send', 1)?.version;
     expect(v).toMatchObject({
@@ -545,6 +550,49 @@ describe('digests and idempotency', () => {
   });
 });
 
+describe("plans' writes (ADR-0184)", () => {
+  const write = (over: Partial<ToolVersion> = {}): ToolVersion =>
+    ({
+      ...(defaultToolRegistry().resolve('workflow_follow_up', 1)?.version as ToolVersion),
+      ...over,
+    }) as ToolVersion;
+
+  it('holds only for an internal write without credentials that a person approves', () => {
+    expect(isPlanWritable(write())).toBe(true);
+    expect(isPlanWritable(write({ mutating: false }))).toBe(false);
+    expect(isPlanWritable(write({ invocationModes: ['runtime'] }))).toBe(false);
+    expect(isPlanWritable(write({ invocationModes: ['plan'] }))).toBe(false);
+    expect(isPlanWritable(write({ approvalPolicy: 'auto' }))).toBe(false);
+    expect(isPlanWritable(write({ provider: { kind: 'external', id: 'channel' } }))).toBe(false);
+    expect(
+      isPlanWritable(write({ credentials: [{ provider: 'whatsapp', scopes: ['send'] }] })),
+    ).toBe(false);
+    // Every other write in the catalogue stays out of plans.
+    for (const tool of defaultToolRegistry().list()) {
+      for (const v of tool.versions) {
+        if (v.mutating && v.toolId !== 'workflow_follow_up') {
+          expect(isPlanWritable(v)).toBe(false);
+        }
+      }
+    }
+  });
+
+  it('refuses at registration a version that says plan without qualifying', () => {
+    expect(() => checkToolVersion(write({ approvalPolicy: 'auto' }))).toThrow(
+      'invocationModes.plan_write',
+    );
+    expect(() => checkToolVersion(write({ invocationModes: ['plan'] }))).toThrow(
+      'invocationModes.plan_write',
+    );
+    expect(() => checkToolVersion(write())).not.toThrow();
+  });
+
+  it('accepts a known record reference on a string field, and only that', () => {
+    expect(schemaProblem({ type: 'string', maxLength: 36, ref: 'contact' })).toBeUndefined();
+    expect(schemaProblem({ type: 'string', maxLength: 36, ref: 'invoice' })).toBe('$:ref');
+  });
+});
+
 describe('follow_up_schedule (TL-1, ADR-0068)', () => {
   it("is a person's own internal tool: low risk, no credential, never the runtime's", () => {
     const v = defaultToolRegistry().resolve('follow_up_schedule', 1)?.version;
@@ -575,6 +623,30 @@ describe('follow_up_schedule (TL-1, ADR-0068)', () => {
       'source',
     ]);
     expect(defaultToolRegistry().resolve('follow_up_schedule', 4)).toBeUndefined();
+  });
+
+  it("workflow_follow_up is a plan's write step (ADR-0184): runtime and plan, approved every time", () => {
+    const v = defaultToolRegistry().resolve('workflow_follow_up', 1)?.version;
+    expect(v).toMatchObject({
+      mutating: true,
+      permissions: ['follow_up.manage'],
+      credentials: [],
+      riskLevel: 'low',
+      approvalPolicy: 'approval_required',
+      retryPolicy: { maxAttempts: 1, backoffMs: 0 },
+      provider: { kind: 'internal', id: 'follow_up' },
+      invocationModes: ['runtime', 'plan'],
+    });
+    // Every field is the workflow's: no request key, date, organization or person in it.
+    expect(v?.inputSchema).toMatchObject({
+      properties: {
+        contactId: { type: 'string', ref: 'contact' },
+        inDays: { type: 'integer', minimum: 0, maximum: PLAN_FOLLOW_UP_MAX_DAYS },
+      },
+      required: ['contactId', 'type', 'title', 'inDays', 'time'],
+    });
+    expect(v !== undefined && isPlanWritable(v)).toBe(true);
+    expect(v !== undefined && isModelInvocable(v)).toBe(false);
   });
 
   it("version 2 is an agent's (ADR-0084): the runtime's only, approved by a person every time", () => {

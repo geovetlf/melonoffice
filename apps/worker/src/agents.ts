@@ -486,7 +486,7 @@ export function createAgentTaskParts(options: {
             specialists: stores.specialists,
           }),
         }),
-    ...(records === undefined || taskContacts === undefined
+    ...(records === undefined
       ? {}
       : {
           follow_up: createAgentFollowUpScheduleExecutor({
@@ -494,12 +494,19 @@ export function createAgentTaskParts(options: {
             organizations: stores.tenancy,
             // A model's contact reference (ADR-0104), resolved here only: among the contacts of
             // the task's organization the person may read, the very ones a task is shown.
-            contacts: {
-              async resolve(tenant, ref) {
-                const found = findContactRef(await taskContacts.list(tenant), ref);
-                return 'contact' in found ? { contactId: found.contact.id } : found;
-              },
-            },
+            ...(taskContacts === undefined
+              ? {}
+              : {
+                  contacts: {
+                    async resolve(tenant: TenantContext, ref: string) {
+                      const found = findContactRef(await taskContacts.list(tenant), ref);
+                      return 'contact' in found ? { contactId: found.contact.id } : found;
+                    },
+                  },
+                }),
+            // A plan's write step (ADR-0184): its date is read in the business's time zone.
+            timeZone: (organizationId) => records.timeZone(organizationId as OrganizationId),
+            now: clock,
           }),
         }),
   };

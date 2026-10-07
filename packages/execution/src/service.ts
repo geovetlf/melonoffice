@@ -680,28 +680,47 @@ export function createExecutionService({
       if (found === undefined) throw new ExecutionError('execution_not_found');
       if (found.nodes.find((n) => n.id === nodeId)?.approvalId === approvalId) return found;
       const at = now();
-      return repository.update(organizationId, executionId, (current) => {
-        if (
-          current.input.type !== 'plan_step' ||
-          current.parentExecutionId === undefined ||
-          current.status !== 'pending' ||
-          current.startedAt !== undefined
-        ) {
-          throw new ExecutionError('actor_not_allowed', 'not_pending_plan_step');
-        }
-        const next = attachApproval(current, nodeId, approvalId, at.toISOString() as IsoTimestamp);
-        return {
-          execution: next,
-          events: [
-            event(
-              tenant,
-              next,
-              { action: 'execution.approval_attached', nodeId, reference: approvalId },
-              at,
-            ),
-          ],
-        };
-      });
+      const attached = () =>
+        repository.update(organizationId, executionId, (current) => {
+          if (
+            current.input.type !== 'plan_step' ||
+            current.parentExecutionId === undefined ||
+            current.status !== 'pending' ||
+            current.startedAt !== undefined
+          ) {
+            throw new ExecutionError('actor_not_allowed', 'not_pending_plan_step');
+          }
+          const next = attachApproval(
+            current,
+            nodeId,
+            approvalId,
+            at.toISOString() as IsoTimestamp,
+          );
+          return {
+            execution: next,
+            events: [
+              event(
+                tenant,
+                next,
+                { action: 'execution.approval_attached', nodeId, reference: approvalId },
+                at,
+              ),
+            ],
+          };
+        });
+      try {
+        return await attached();
+      } catch (error) {
+        // Two resumes of the plan at once (ADR-0184): the one that lost finds this same approval
+        // attached by the other, which is what it came to do, whether its write conflicted or,
+        // retried, found the step already started with it.
+        if (!isExecutionError(error)) throw error;
+        if (error.code !== 'execution_concurrency_conflict' && error.code !== 'actor_not_allowed')
+          throw error;
+        const again = await repository.find(organizationId, executionId);
+        if (again?.nodes.find((n) => n.id === nodeId)?.approvalId === approvalId) return again;
+        throw error;
+      }
     },
 
     start: (tenant, id) => startOne(tenant, id, false),

@@ -285,6 +285,8 @@ export interface ToolStepField {
   readonly enum?: readonly string[];
   readonly minimum?: number;
   readonly maximum?: number;
+  /** The kind of record the value names (ADR-0184), e.g. `contact`: a picker, never an id field. */
+  readonly ref?: string;
 }
 
 export interface AgentsClient {

@@ -1,4 +1,7 @@
-import type { ToolSchema } from '@melonoffice/domain';
+import type { ToolRecordRef, ToolSchema } from '@melonoffice/domain';
+
+/** The records a string input may name by id (ADR-0184): a hint for screens, never a grant. */
+export const TOOL_RECORD_REFS = ['contact'] as const satisfies readonly ToolRecordRef[];
 
 /** Limits that keep schemas and inputs small and bounded. */
 export const MAX_SCHEMA_DEPTH = 8;
@@ -104,6 +107,9 @@ export function schemaProblem(schema: unknown, path = '$', depth = 0): string | 
         (!Array.isArray(values) || values.length === 0 || values.some((v) => typeof v !== 'string'))
       ) {
         return `${path}:enum`;
+      }
+      if (s.ref !== undefined && !(TOOL_RECORD_REFS as readonly unknown[]).includes(s.ref)) {
+        return `${path}:ref`;
       }
       return undefined;
     }

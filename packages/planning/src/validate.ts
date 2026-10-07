@@ -21,6 +21,7 @@ import type { AuthorizationService } from '@melonoffice/rbac';
 import { isSpecialistError, type SpecialistService } from '@melonoffice/specialists';
 import type { TenantContext } from '@melonoffice/tenancy';
 import {
+  isPlanWritable,
   isRuntimeInvocable,
   toolCanRun,
   validate as validateInput,
@@ -412,8 +413,11 @@ export function createPlanValidator(options: PlanValidatorOptions): PlanValidato
     }
     const policy = effectivePolicy(tool, riskPolicy);
     if (policy === 'denied') return { reason: 'tool_denied_by_policy' };
-    // Tool steps read only, inside MelonOffice (ADR-0159): no tool that changes anything, reaches
-    // an external provider or needs a credential is ever planned.
+    // A write built for plans (ADR-0184) is a step that a person approves every time, whatever
+    // the risk policy says.
+    if (isPlanWritable(tool.version)) return { tool, approval: true };
+    // Any other tool step reads only, inside MelonOffice (ADR-0159): no other tool that changes
+    // anything, reaches an external provider or needs a credential is ever planned.
     if (
       tool.version.mutating ||
       tool.version.provider.kind !== 'internal' ||

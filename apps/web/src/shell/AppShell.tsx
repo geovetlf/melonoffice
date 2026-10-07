@@ -226,6 +226,21 @@ export function AppShell(locale: LocaleProps) {
     () => (permission: string) => workspace?.permissions.has(permission) === true,
     [workspace],
   );
+  // The contacts a workflow's write step may name (ADR-0184): leads and customers, by name.
+  const contactOptions = useMemo(
+    () =>
+      clients === undefined
+        ? undefined
+        : async () => {
+            const pages = await Promise.all(
+              (['lead', 'customer'] as const).map((stage) => clients.customers.list(stage)),
+            );
+            return pages
+              .flatMap((p) => p.items)
+              .map((c) => ({ id: c.id, name: c.displayName ?? c.phone ?? c.email ?? '—' }));
+          },
+    [clients],
+  );
   if (state.status !== 'signed_in' || workspace === undefined || clients === undefined) return null;
   const { me } = state;
   // A contact's and an opportunity's follow-ups (C5), for a role that may read them.
@@ -518,6 +533,7 @@ export function AppShell(locale: LocaleProps) {
               templates={canReadAgents ? clients.agents.templates : undefined}
               tools={canReadTools ? clients.agents.tools : undefined}
               skills={canReadAgents ? clients.agents.skills : undefined}
+              contacts={canReadContacts ? contactOptions : undefined}
               decideStep={
                 canDecidePlans && canReadApprovals
                   ? async (approvalId: string, decision: 'approve' | 'reject') => {

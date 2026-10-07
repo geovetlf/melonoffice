@@ -2,6 +2,8 @@ import {
   ConversationError,
   isConversationError,
   isFollowUpId,
+  isLocalTime,
+  localDateTime,
   type ConversationErrorCode,
   type FollowUpService,
 } from '@melonoffice/conversations';
@@ -19,9 +21,11 @@ import {
 import {
   FOLLOW_UP_SCHEDULE_TOOL,
   FOLLOW_UP_TYPE_CODES,
+  PLAN_FOLLOW_UP_MAX_DAYS,
   type ToolExecutionContext,
   type ToolExecutor,
   type ToolExecutorOutcome,
+  WORKFLOW_FOLLOW_UP_TOOL,
 } from '@melonoffice/tools';
 import { createHash, randomUUID } from 'node:crypto';
 import type { ToolInvoker } from './outbound.js';
@@ -90,6 +94,75 @@ export const AGENT_FOLLOW_UP_SCHEDULE = FOLLOW_UP_SCHEDULE_TOOL.versions[1] as N
 export const MODEL_FOLLOW_UP_SCHEDULE = FOLLOW_UP_SCHEDULE_TOOL.versions[2] as NonNullable<
   (typeof FOLLOW_UP_SCHEDULE_TOOL.versions)[2]
 >;
+
+/** `workflow_follow_up@1` (B6, ADR-0184): a plan's write step, every field fixed in the workflow. */
+export const PLAN_FOLLOW_UP_SCHEDULE = WORKFLOW_FOLLOW_UP_TOOL.versions[0] as NonNullable<
+  (typeof WORKFLOW_FOLLOW_UP_TOOL.versions)[0]
+>;
+
+/** A plan's follow-up as the workflow fixed it (`workflow_follow_up@1`). */
+interface PlanFollowUp {
+  readonly contactId: string;
+  readonly type: string;
+  readonly title: string;
+  readonly inDays: number;
+  readonly time: string;
+}
+
+const PLAN_FOLLOW_UP_KEYS = ['contactId', 'inDays', 'time', 'title', 'type'];
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/** The plan's call, exactly its five fields, each well formed; anything else is refused. */
+function planFollowUpOf(input: unknown): PlanFollowUp | undefined {
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) return undefined;
+  const value = input as Record<string, unknown>;
+  if (Object.keys(value).sort().join() !== PLAN_FOLLOW_UP_KEYS.join()) return undefined;
+  const { contactId, type, title, inDays, time } = value;
+  if (typeof contactId !== 'string' || !UUID.test(contactId)) return undefined;
+  if (typeof type !== 'string' || !(FOLLOW_UP_TYPE_CODES as readonly string[]).includes(type)) {
+    return undefined;
+  }
+  if (typeof title !== 'string') return undefined;
+  const text = title.normalize('NFC').trim();
+  if (text.length === 0 || [...text].length > 120 || CONTROL.test(text)) return undefined;
+  if (
+    typeof inDays !== 'number' ||
+    !Number.isSafeInteger(inDays) ||
+    inDays < 0 ||
+    inDays > PLAN_FOLLOW_UP_MAX_DAYS
+  ) {
+    return undefined;
+  }
+  if (!isLocalTime(time)) return undefined;
+  return { contactId, type, title: text, inDays, time };
+}
+
+/** A local date `days` days after another, by the calendar (no time zone involved). */
+export function localDatePlus(date: string, days: number): string {
+  const at = new Date(`${date}T00:00:00Z`);
+  at.setUTCDate(at.getUTCDate() + days);
+  return at.toISOString().slice(0, 10);
+}
+
+/**
+ * The request key of a plan's follow-up (ADR-0184): made by the server from what the follow-up is
+ * (contact, type, title, local date and time), never from the run. A retry, a concurrent plan or a
+ * person running the workflow again after an ambiguous failure reach the same follow-up, which the
+ * follow-up service makes once in the organization. Another day or another content is another one.
+ */
+export const planFollowUpKey = (request: {
+  readonly contactId: string;
+  readonly type: string;
+  readonly title: string;
+  readonly date: string;
+  readonly time: string;
+}): string =>
+  `plan-step-${createHash('sha256')
+    .update(
+      JSON.stringify([request.contactId, request.type, request.title, request.date, request.time]),
+    )
+    .digest('hex')
+    .slice(0, 32)}`;
 
 /**
  * Where a contact's reference in a task leads (ADR-0104), resolved on the server only: among the
@@ -170,8 +243,12 @@ export function createAgentFollowUpScheduleExecutor(options: {
   readonly organizations: TenancyStore;
   /** Resolves a model's contact reference (ADR-0104). Absent: version 3 never runs here. */
   readonly contacts?: AgentContactResolver;
+  /** The business's time zone, for a plan's follow-up (ADR-0184). Absent: it never runs here. */
+  readonly timeZone?: (organizationId: string) => Promise<string>;
+  readonly now?: () => Date;
 }): ToolExecutor {
-  const { followUps, organizations, contacts } = options;
+  const { followUps, organizations, contacts, timeZone } = options;
+  const now = options.now ?? (() => new Date());
 
   /** Runs the follow-up service's own `create` as the runtime for the task's person. */
   async function create(
@@ -237,8 +314,48 @@ export function createAgentFollowUpScheduleExecutor(options: {
     });
   }
 
+  /**
+   * `workflow_follow_up@1` (ADR-0184): a plan's write step, after a person approved this exact input. The date
+   * is today in the business's time zone plus the days the workflow fixed; the request key is made
+   * here from the follow-up itself; the follow-up service checks the rest (the contact in this
+   * organization, the time, the limits) and audits the follow-up.
+   */
+  async function planCall(context: ToolExecutionContext, input: unknown) {
+    if (
+      context.actor.via !== 'runtime' ||
+      context.specialistId === undefined ||
+      timeZone === undefined
+    ) {
+      return { status: 'failure', code: 'tool_not_runtime_invokable' } as const;
+    }
+    // Never without a person's approval of this call, whatever the policy said.
+    if (context.approvalId === undefined)
+      return { status: 'failure', code: 'approval_missing' } as const;
+    const call = planFollowUpOf(input);
+    if (call === undefined) return { status: 'failure', code: 'invalid_input' } as const;
+    return create(context, async () => {
+      const today = localDateTime(now(), await timeZone(context.organizationId)).date;
+      const date = localDatePlus(today, call.inDays);
+      return {
+        requestKey: planFollowUpKey({ ...call, date }),
+        contactId: call.contactId,
+        type: call.type,
+        title: call.title,
+        date,
+        time: call.time,
+        source: 'agent',
+      };
+    });
+  }
+
   return {
     async execute(context: ToolExecutionContext, input: unknown): Promise<ToolExecutorOutcome> {
+      if (
+        context.toolId === PLAN_FOLLOW_UP_SCHEDULE.toolId &&
+        context.toolVersion === PLAN_FOLLOW_UP_SCHEDULE.version
+      ) {
+        return planCall(context, input);
+      }
       if (
         context.toolId === MODEL_FOLLOW_UP_SCHEDULE.toolId &&
         context.toolVersion === MODEL_FOLLOW_UP_SCHEDULE.version

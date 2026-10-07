@@ -8,7 +8,8 @@ import type {
 
 /**
  * Tool steps in the workflow editor (ADR-0165). The editor offers only what a plan would run: a
- * tool version that reads inside MelonOffice (the API shows its fields), filled with plain values
+ * tool version that reads inside MelonOffice, or one built to write there with a person's approval
+ * each time (ADR-0184) (the API shows its fields), filled with plain values
  * or with results the plan has before the step runs (ADR-0161). The server checks all of it again
  * when the workflow is saved and when it is planned; these rules only keep the form honest.
  */
@@ -19,6 +20,8 @@ export interface ToolChoice {
   readonly version: number;
   readonly nameKey: string;
   readonly riskLevel: string;
+  /** It writes data (ADR-0184): a person approves what it writes every time it runs. */
+  readonly changesData: boolean;
   readonly input: readonly ToolStepField[];
   readonly output: readonly ToolStepField[];
 }
@@ -45,6 +48,7 @@ export function toolChoicesOf(tools: readonly ToolView[]): readonly ToolChoice[]
       version: newest.version,
       nameKey: newest.nameKey,
       riskLevel: newest.riskLevel,
+      changesData: newest.mutating,
       input: newest.step.input,
       output: newest.step.output,
     });
@@ -89,6 +93,8 @@ export function sourcesFor(
 ): readonly ValueSource[] {
   const step = steps[index];
   if (step?.kind !== 'tool' || step.performer === '') return [];
+  // A write takes only what the person fixes here and approves (ADR-0184).
+  if (tool.changesData) return [];
   const before = new Set([step.performer, ...ancestorsOf(steps, step.performer)]);
   const sources: ValueSource[] = [];
   steps.forEach((s, i) => {
