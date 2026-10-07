@@ -138,7 +138,7 @@ describe.each(STORES)('agents with storage in %s', (_name, createStores) => {
       // agent uses, are offered, and a person decides whether to move to them.
       upgrades: [
         { skillId: 'company_knowledge', from: 2, to: 3 },
-        { skillId: 'customer_follow_up', from: 2, to: 3 },
+        { skillId: 'customer_follow_up', from: 2, to: 4 },
         { skillId: 'pipeline_analysis', from: 1, to: 2 },
       ],
     });

@@ -1058,14 +1058,14 @@ describe('Writing workflows (block 4)', () => {
     await vi.waitFor(() =>
       expect(
         within(kinds().at(-1) as HTMLElement).queryByRole('option', {
-          name: 'An agent uses a lookup tool',
+          name: 'An agent uses a tool',
         }),
       ).toBeTruthy(),
     );
     // The first step has no earlier agent step, so it is never offered a tool.
     expect(
       within(kinds()[0] as HTMLElement).queryByRole('option', {
-        name: 'An agent uses a lookup tool',
+        name: 'An agent uses a tool',
       }),
     ).toBeNull();
     fireEvent.change(kinds().at(-1) as HTMLElement, { target: { value: 'tool' } });
@@ -1133,7 +1133,7 @@ describe('Writing workflows (block 4)', () => {
       expect(
         within(again.getAllByLabelText('What this step is').at(-1) as HTMLElement).queryByRole(
           'option',
-          { name: 'An agent uses a lookup tool' },
+          { name: 'An agent uses a tool' },
         ),
       ).toBeTruthy(),
     );
@@ -1158,6 +1158,241 @@ describe('Writing workflows (block 4)', () => {
       tool: { id: 'knowledge_search', version: 1 },
       inputFrom: { query: { step: 'step_1' } },
     });
+  });
+
+  const WRITE_TOOL = {
+    id: 'workflow_follow_up',
+    status: 'active',
+    versions: [
+      {
+        version: 1,
+        nameKey: 'tools.workflow_follow_up.name',
+        descriptionKey: 'tools.workflow_follow_up.description',
+        category: 'crm',
+        action: 'schedule',
+        mutating: true,
+        riskLevel: 'low',
+        approvalPolicy: 'approval_required',
+        environments: ['dev'],
+        step: {
+          input: [
+            {
+              name: 'contactId',
+              type: 'string',
+              required: true,
+              maxLength: 36,
+              minLength: 36,
+              ref: 'contact',
+            },
+            {
+              name: 'type',
+              type: 'string',
+              required: true,
+              maxLength: 16,
+              enum: ['follow_up', 'call', 'message', 'review', 'check_in'],
+            },
+            { name: 'title', type: 'string', required: true, maxLength: 120, minLength: 1 },
+            { name: 'inDays', type: 'integer', required: true, minimum: 0, maximum: 30 },
+            { name: 'time', type: 'string', required: true, maxLength: 5, minLength: 5 },
+          ],
+          output: [
+            { name: 'followUpId', type: 'string', required: true, maxLength: 36 },
+            { name: 'created', type: 'boolean', required: true },
+          ],
+        },
+      },
+    ],
+  };
+  const JUAN = {
+    id: 'c1a2b3c4-0000-4000-8000-000000000001',
+    displayName: 'Juan Pérez',
+    phone: '+51999888777',
+    email: null,
+    origin: 'user',
+    revision: 1,
+    commercial: { stage: 'lead', owner: null, source: 'manual', consent: 'unknown' },
+    createdAt: '2026-10-01T10:00:00Z',
+    updatedAt: '2026-10-01T10:00:00Z',
+  };
+  const withWriteTool = (b: ReturnType<typeof fakeBackend>) => {
+    b.options.moreTools = [...READ_TOOLS, WRITE_TOOL];
+    b.options.customers.org_1 = [{ ...JUAN }];
+    b.options.assignees = {
+      org_1: [
+        {
+          departmentTypeId: 'sales',
+          roleId: 'commercial_agent',
+          agent: { id: 'agent-sales', displayName: 'Lucía' },
+          tools: [
+            { id: 'knowledge_search', version: 1 },
+            {
+              id: 'workflow_follow_up',
+              version: 1,
+              step: { usable: true, approvalRequired: true },
+            },
+          ],
+        },
+      ],
+    };
+  };
+
+  it('ADR-0184: writes a step that changes data: a contact by name, fixed values, approved each time', async () => {
+    const backend = open(withWriteTool, [...WRITER, 'tool.read', 'contact.read']);
+    fireEvent.click(await screen.findByRole('button', { name: 'New workflow' }));
+    const editor = within(await screen.findByRole('form', { name: 'New workflow' }));
+    fireEvent.change(editor.getByLabelText('Name'), { target: { value: 'Llamar a Juan' } });
+    fireEvent.change(editor.getByLabelText('Step 1: what to do'), {
+      target: { value: 'Preparar la llamada' },
+    });
+    fireEvent.change(editor.getByLabelText('Who does it'), {
+      target: { value: 'sales/commercial_agent' },
+    });
+    fireEvent.click(editor.getByRole('button', { name: 'Add a step' }));
+    fireEvent.change(editor.getByLabelText('Step 2: what to do'), {
+      target: { value: 'Agendar la llamada' },
+    });
+    await vi.waitFor(() =>
+      expect(
+        within(editor.getAllByLabelText('What this step is').at(-1) as HTMLElement).queryByRole(
+          'option',
+          { name: 'An agent uses a tool' },
+        ),
+      ).toBeTruthy(),
+    );
+    fireEvent.change(editor.getAllByLabelText('What this step is').at(-1) as HTMLElement, {
+      target: { value: 'tool' },
+    });
+    fireEvent.change(editor.getByLabelText('Tool'), { target: { value: 'workflow_follow_up@1' } });
+    // It says it changes data and that a person approves what it writes, each time.
+    expect(editor.getByText("This step changes your company's data.")).toBeTruthy();
+    expect(
+      await editor.findByText(
+        /^Lucía will use “.+”\. It will ask for your approval before using it\.$/,
+      ),
+    ).toBeTruthy();
+    // The contact is picked by name, never typed as an id.
+    const contact = (await editor.findByLabelText('Contact')) as HTMLSelectElement;
+    // Every value is fixed here: none comes from an earlier step's answer.
+    expect(editor.queryAllByLabelText(/^Where .* comes from$/)).toHaveLength(0);
+    await vi.waitFor(() =>
+      expect([...contact.options].map((o) => o.textContent)).toEqual(['Choose…', 'Juan Pérez']),
+    );
+    fireEvent.change(contact, { target: { value: JUAN.id } });
+    const type = editor.getByLabelText('Follow-up type') as HTMLSelectElement;
+    expect([...type.options].map((o) => o.textContent)).toEqual([
+      'Choose…',
+      'Follow up',
+      'Call',
+      'Write',
+      'Review',
+      'Check in',
+    ]);
+    fireEvent.change(type, { target: { value: 'call' } });
+    fireEvent.change(editor.getByLabelText('What to do'), {
+      target: { value: 'Llamar a Juan por su pedido' },
+    });
+    fireEvent.change(editor.getByLabelText('In how many days'), { target: { value: '2' } });
+    fireEvent.change(editor.getByLabelText('Time (HH:MM)'), { target: { value: '10:30' } });
+    fireEvent.click(editor.getByRole('button', { name: 'Create as draft' }));
+    await vi.waitFor(() => expect(posts(backend, '/org_1/workflows')).toHaveLength(1));
+    const [sent] = posts(backend, '/org_1/workflows');
+    const steps = (JSON.parse(sent?.body ?? '{}') as { steps: Record<string, unknown>[] }).steps;
+    expect(steps[1]).toEqual({
+      id: 'step_2',
+      kind: 'tool',
+      label: 'Agendar la llamada',
+      dependsOn: ['step_1'],
+      performedBy: 'step_1',
+      tool: { id: 'workflow_follow_up', version: 1 },
+      input: {
+        contactId: JUAN.id,
+        type: 'call',
+        title: 'Llamar a Juan por su pedido',
+        inDays: 2,
+        time: '10:30',
+      },
+    });
+  });
+
+  it('ADR-0184: a step waiting to write shows exactly what it will write, the contact by name', async () => {
+    const plan = {
+      id: 'plan-9',
+      status: 'executing',
+      version: 1,
+      createdAt: '2026-10-05T09:00:00Z',
+      current: {
+        version: 1,
+        digest: 'd'.repeat(64),
+        request: { summary: 'Llamar a Juan', objective: 'Agendar la llamada' },
+        steps: [
+          {
+            id: 'prepare',
+            kind: 'specialist',
+            label: 'Preparar la llamada',
+            dependsOn: [],
+            specialist: { id: 'agent-sales', version: 2 },
+          },
+          {
+            id: 'schedule',
+            kind: 'tool',
+            label: 'Agendar la llamada',
+            dependsOn: ['prepare'],
+            performedBy: 'prepare',
+            tool: { id: 'workflow_follow_up', version: 1 },
+            input: {
+              contactId: JUAN.id,
+              type: 'call',
+              title: 'Llamar a Juan por su pedido',
+              inDays: 2,
+              time: '10:30',
+            },
+            inputFrom: null,
+            approvalRequired: true,
+          },
+        ],
+        riskLevel: 'low',
+        estimate: { status: 'unknown', credits: null },
+        source: { kind: 'workflow', workflowId: 'wf-launch', workflowVersion: 2 },
+      },
+    };
+    const backend = open(
+      (b) => {
+        withWriteTool(b);
+        b.options.plans.org_1 = [plan];
+        b.options.approvals.org_1 = [{ id: 'appr-9', status: 'pending' }];
+        b.options.planSteps['plan-9'] = [
+          {
+            stepId: 'prepare',
+            kind: 'specialist',
+            label: 'Preparar la llamada',
+            state: 'awaiting_approval',
+            outcome: null,
+            executionId: 'exec-prepare',
+            status: 'pending',
+            approvalId: 'appr-9',
+            failure: null,
+            answer: null,
+            missing: [],
+          },
+        ];
+      },
+      [...OWNER, 'approval.read', 'tool.read', 'contact.read'],
+    );
+    const plans = within(await screen.findByRole('region', { name: 'Plans' }));
+    fireEvent.click(await plans.findByRole('button', { name: /Running/ }));
+    const shown = await screen.findByRole('article', { name: 'Llamar a Juan' });
+    const ask = await within(shown).findByRole('group', { name: 'Preparar la llamada' });
+    expect(ask.textContent).toContain('Schedule a follow-up from an automation');
+    await vi.waitFor(() =>
+      expect(ask.textContent).toContain('This is what will be written if you approve it:'),
+    );
+    await vi.waitFor(() => expect(ask.textContent).toContain('Juan Pérez'));
+    for (const text of ['Call', 'Llamar a Juan por su pedido', 'In 2 days', '10:30']) {
+      expect(ask.textContent).toContain(text);
+    }
+    expect(ask.textContent).not.toContain(JUAN.id);
+    fireEvent.click(within(ask).getByRole('button', { name: 'Approve' }));
+    await vi.waitFor(() => expect(posts(backend, '/approvals/appr-9/approve')).toHaveLength(1));
   });
 
   it('ADR-0165: shows a saved tool step and saves it unchanged', async () => {
@@ -1245,7 +1480,7 @@ describe('Writing workflows (block 4)', () => {
     await vi.waitFor(() =>
       expect(
         within(kinds().at(-1) as HTMLElement).queryByRole('option', {
-          name: 'An agent uses a lookup tool',
+          name: 'An agent uses a tool',
         }),
       ).toBeTruthy(),
     );
@@ -1279,7 +1514,7 @@ describe('Writing workflows (block 4)', () => {
     await vi.waitFor(() =>
       expect(
         within(kinds().at(-1) as HTMLElement).queryByRole('option', {
-          name: 'An agent uses a lookup tool',
+          name: 'An agent uses a tool',
         }),
       ).toBeTruthy(),
     );

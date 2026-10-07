@@ -36,13 +36,15 @@ import {
   type ToolAvailability,
   type ToolChoice,
 } from './toolSteps.js';
+import { optionLabelOf, useContacts, type ContactOption, type ContactsLoad } from './writeSteps.js';
 
 /**
  * Writing a workflow (ADR-0028, ADR-0144): a name and its steps. A step is done by an agent with
  * a role (from the agent catalogue), optionally after the person approves it, or is a company
  * policy check (WF-4, ADR-0075) that lets the steps after it run only when the policy allows the
- * action, or a set time to wait before the steps after it (ADR-0152, ADR-0158), or a tool that
- * only reads, used by an earlier agent step's agent (ADR-0165). Each step waits for the earlier
+ * action, or a set time to wait before the steps after it (ADR-0152, ADR-0158), or a tool used by
+ * an earlier agent step's agent (ADR-0165): one that reads, or one built to write that a person
+ * approves each time (ADR-0184). Each step waits for the earlier
  * steps the person ticks, so a workflow can branch.
  * Saving a workflow that exists writes a new version; the versions before it never change. The
  * server checks everything again.
@@ -163,6 +165,11 @@ export interface WorkflowEditorProps {
   readonly assignees?: (() => Promise<readonly RoleAgent[]>) | undefined;
   /** The skill catalogue, to name the skill that would let an agent use a tool. */
   readonly skills?: (() => Promise<readonly SkillView[]>) | undefined;
+  /**
+   * The organization's contacts (`contact.read`), for a write step's contact (ADR-0184). Absent:
+   * such a field is a plain text field.
+   */
+  readonly contacts?: (() => Promise<readonly ContactOption[]>) | undefined;
   readonly save: (
     name: string,
     steps: readonly WorkflowStepDraft[],
@@ -185,12 +192,14 @@ export function WorkflowEditor({
   tools,
   assignees,
   skills,
+  contacts: loadContacts,
   save,
   check,
   onSaved,
   onCancel,
 }: WorkflowEditorProps) {
   const intl = useIntl();
+  const contacts = useContacts(loadContacts);
   const { departments } = useOfficeData();
   const depts = readyList(departments);
   const [choices, setChoices] = useState<readonly RoleChoice[] | 'error' | undefined>();
@@ -554,6 +563,7 @@ export function WorkflowEditor({
                     stepName={stepName}
                     toolLabel={toolLabel}
                     fieldLabel={fieldLabel}
+                    contacts={contacts}
                     availability={(tool) => availabilityOf(step, tool)}
                     grantingSkill={grantingSkill}
                     onPerformer={(performer) => changeTool(i, { performer })}
@@ -825,12 +835,14 @@ function ToolStepFields({
   stepName,
   toolLabel,
   fieldLabel,
+  contacts,
   availability,
   grantingSkill,
   onPerformer,
   onTool,
   onValue,
 }: {
+  readonly contacts: ContactsLoad | undefined;
   readonly step: WorkflowToolDraft;
   readonly index: number;
   readonly steps: readonly WorkflowStepDraft[];
@@ -923,6 +935,15 @@ function ToolStepFields({
           skill={grantingSkill({ id: step.toolId, version: step.toolVersion })}
         />
       )}
+      {tool?.changesData === true ? (
+        // A write (ADR-0184): what it writes is fixed here, and a person approves it each time.
+        <StateMessage kind="warning">
+          <strong>
+            <FormattedMessage id="automations.editor.tool.writes" />
+          </strong>{' '}
+          <FormattedMessage id="automations.editor.tool.writesHint" />
+        </StateMessage>
+      ) : null}
       {tool === undefined
         ? null
         : tool.input.map((field) => {
@@ -973,8 +994,10 @@ function ToolStepFields({
                 )}
                 {value !== undefined && value.from !== 'fixed' ? null : (
                   <FixedValue
+                    toolId={tool.id}
                     field={field}
                     label={label}
+                    contacts={contacts}
                     value={fixed?.value}
                     onChange={(v) =>
                       onValue(field.name, v === undefined ? undefined : { from: 'fixed', value: v })
@@ -1155,17 +1178,58 @@ function CheckRefusal({
 
 /** A fixed input value, typed by its field: text, one of a list, a number or yes/no. */
 function FixedValue({
+  toolId,
   field,
   label,
+  contacts,
   value,
   onChange,
 }: {
+  readonly toolId: string;
   readonly field: ToolChoice['input'][number];
   readonly label: string;
+  readonly contacts?: ContactsLoad | undefined;
   readonly value: string | number | boolean | undefined;
   readonly onChange: (value: string | number | boolean | undefined) => void;
 }) {
   const intl = useIntl();
+  // A contact is picked by name, never typed as an id (ADR-0184).
+  if (field.ref === 'contact' && contacts !== undefined) {
+    if (contacts.status === 'loading') {
+      return (
+        <StateMessage kind="loading" inline>
+          <FormattedMessage id="automations.editor.contacts.loading" />
+        </StateMessage>
+      );
+    }
+    if (contacts.status === 'error') {
+      return (
+        <StateMessage kind="error" inline>
+          <FormattedMessage id="automations.editor.contacts.error" />
+        </StateMessage>
+      );
+    }
+    const chosen = typeof value === 'string' ? value : '';
+    const known = contacts.value.some((c) => c.id === chosen);
+    return (
+      <select
+        aria-label={label}
+        value={chosen}
+        onChange={(e) => onChange(e.target.value === '' ? undefined : e.target.value)}
+        required={field.required}
+      >
+        <option value="">{intl.formatMessage({ id: 'agents.create.choose' })}</option>
+        {chosen !== '' && !known ? (
+          <option value={chosen}>{intl.formatMessage({ id: 'automations.write.aContact' })}</option>
+        ) : null}
+        {contacts.value.map((c) => (
+          <option key={c.id} value={c.id}>
+            {c.name}
+          </option>
+        ))}
+      </select>
+    );
+  }
   if (field.type === 'boolean') {
     return (
       <label className="workflow-editor__check">
@@ -1189,7 +1253,7 @@ function FixedValue({
         <option value="">{intl.formatMessage({ id: 'agents.create.choose' })}</option>
         {field.enum.map((option) => (
           <option key={option} value={option}>
-            {option}
+            {optionLabelOf(intl, toolId, field.name, option)}
           </option>
         ))}
       </select>

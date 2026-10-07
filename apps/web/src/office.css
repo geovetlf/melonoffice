@@ -2523,6 +2523,43 @@ a.sidebar__item:hover {
   margin: 0;
 }
 
+/* What a write step will write, as the person approves it (ADR-0184). */
+.automations__write {
+  display: grid;
+  gap: var(--mo-space-1);
+  min-width: 0;
+}
+
+.automations__values {
+  display: grid;
+  gap: var(--mo-space-1);
+  margin: 0;
+}
+
+.automations__value {
+  display: grid;
+  grid-template-columns: minmax(0, 10rem) minmax(0, 1fr);
+  gap: var(--mo-space-2);
+  min-width: 0;
+}
+
+.automations__value dt {
+  color: var(--mo-color-text-secondary);
+}
+
+.automations__value dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* On a phone each value goes under its label, so neither is squeezed. */
+@media (max-width: 30rem) {
+  .automations__value {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+}
+
 .automations__technical {
   font-size: var(--mo-font-size-sm);
   color: var(--mo-color-text-secondary);

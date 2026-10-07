@@ -161,6 +161,12 @@ const TOOLS: readonly ToolDefinition[] = [
   tool('flaky', { retryPolicy: { maxAttempts: 3, backoffMs: 5 } }),
   tool('slow', { timeoutMs: 20 }),
   tool('update_record', { mutating: true }),
+  // ADR-0184: a write built for plans: internal, no credential, a person approves every call.
+  tool('plan_write', {
+    mutating: true,
+    approvalPolicy: 'approval_required',
+    invocationModes: ['runtime', 'plan'],
+  }),
   tool('retired', {}, 'disabled'),
   // ADR-0034 fixtures: tools a person may invoke directly, and only because they say so.
   tool('human_note', {
@@ -365,10 +371,11 @@ async function world(options: WorldOptions = {}) {
     specialist: Specialist,
     tools: readonly string[],
     mode: ExecutionMode = 'execute',
+    input: { readonly type: string; readonly id: string } = { type: 'task', id: 'task-1' },
   ): Promise<Execution> {
     const execution = await executions.create(tenant, {
       mode,
-      input: { type: 'task', id: 'task-1' },
+      input,
       specialistId: specialist.identity.id,
       specialistVersion: specialist.version,
       departmentId: specialist.configuration.departmentId,
@@ -851,6 +858,28 @@ describe('tool gate: execution integration', () => {
     expect(
       await w.gate.invoke(w.runtimeA, { executionId: execution.id, nodeId: 'n0', input: INPUT }),
     ).toEqual({ status: 'denied', code: 'tool_not_found' });
+  });
+
+  it("ADR-0184: in a plan step, writes only with a tool built for plans' writes, approved", async () => {
+    const w = await world();
+    const specialist = await w.seed(w.orgA);
+    const step = { type: 'plan_step', id: 'plan-1:write' };
+    // A write not built for plans is denied there, whatever a stored plan says.
+    const other = await w.running(w.tenantA, specialist, ['update_record'], 'execute', step);
+    expect(
+      await w.gate.invoke(w.runtimeA, { executionId: other.id, nodeId: 'n0', input: INPUT }),
+    ).toEqual({ status: 'denied', code: 'tool_not_plan_writable' });
+    // The same write in an agent's task is the policy's as before: not this rule's.
+    const task = await w.running(w.tenantA, specialist, ['update_record']);
+    expect(
+      (await w.gate.invoke(w.runtimeA, { executionId: task.id, nodeId: 'n0', input: INPUT }))
+        .status,
+    ).toBe('success');
+    // One built for plans waits for a person's approval of this exact call.
+    const write = await w.running(w.tenantA, specialist, ['plan_write'], 'execute', step);
+    expect(
+      await w.gate.invoke(w.runtimeA, { executionId: write.id, nodeId: 'n0', input: INPUT }),
+    ).toMatchObject({ status: 'requires_approval' });
   });
 
   it('refuses a tool that changes data in a read-only mode', async () => {

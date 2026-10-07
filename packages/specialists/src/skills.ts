@@ -104,6 +104,17 @@ export const SKILL_CATALOGUE: readonly AgentSkill[] = Object.freeze([
     reads: ['contact.read', 'opportunity.read', 'follow_up.read'],
     departments: ['sales'],
   }),
+  // Version 4 (B6, ADR-0184): also a workflow's write step, `workflow_follow_up@1`, which schedules
+  // the follow-up a person fixed in the workflow, approved by a person every time. The agent keeps
+  // `follow_up_schedule@3` mid-task. The commercial department only, and it reaches an agent only
+  // when a person upgrades it.
+  skill('customer_follow_up', {
+    version: 4,
+    tools: { follow_up_schedule: [3], workflow_follow_up: [1] },
+    actions: ['follow_up.schedule'],
+    reads: ['contact.read', 'opportunity.read', 'follow_up.read'],
+    departments: ['sales'],
+  }),
   skill('pipeline_analysis', { reads: ['opportunity.read', 'report.read'] }),
   // Version 2 (TL-2, ADR-0160): a plan's tool step may read the organization's own customer
   // records with `customer_records_summary@1`: counts and totals, never a record. Runtime only:

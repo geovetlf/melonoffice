@@ -48,6 +48,7 @@ async function setup(options: WorldOptions = {}) {
       'person_only',
       'ranked_lookup',
       'count_lookup',
+      'plan_write',
     ],
   });
   const marketer = await w.seed(w.orgA, ALICE, { type: 'marketing', role: 'campaign_manager' });
@@ -369,6 +370,44 @@ describe('plan validation pipeline', () => {
       toolStep('use', 'work', 'lookup', { tool: { id: 'lookup', version: 2 } }),
     ]);
     expect(await refusal(w, version2)).toBe('policy:tool_not_found');
+  });
+
+  it('ADR-0184: takes a write built for plans, with fixed input, always approved by a person', async () => {
+    const w = await setup();
+    const r = w.researcher;
+    const ok = await validate(
+      w,
+      proposal([
+        specialistStep('work', r),
+        toolStep('write', 'work', 'plan_write', { input: { query: 'Llamar a Ana' } }),
+        specialistStep('after', r, { dependsOn: ['work'] }),
+      ]),
+    );
+    if (!ok.ok) throw new Error(ok.reason);
+    const write = must(ok.plan.steps.find((s) => s.id === 'write'));
+    // Whatever the risk policy says for a low risk: a person approves this exact input.
+    expect(write.approvalRequired).toBe(true);
+    expect(write.input).toEqual({ query: 'Llamar a Ana' });
+    // Its input is never read from an earlier step: a person approves what is fixed.
+    expect(
+      await refusal(
+        w,
+        proposal([
+          specialistStep('work', r),
+          toolStep('write', 'work', 'plan_write', { inputFrom: { query: { step: 'work' } } }),
+        ]),
+      ),
+    ).toBe('policy:input_ref_needs_fixed_input');
+    expect(w.validator.toolUse({ id: 'plan_write', version: 1 })).toEqual({
+      usable: true,
+      riskLevel: 'low',
+      approvalRequired: true,
+    });
+    // Every other write is still refused (ADR-0159).
+    expect(w.validator.toolUse({ id: 'send_email', version: 1 })).toMatchObject({
+      usable: false,
+      reason: 'tool_not_read_only',
+    });
   });
 
   it('ADR-0161: takes tool input from earlier results it names, checked when the plan is made', async () => {

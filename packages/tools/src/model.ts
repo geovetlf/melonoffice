@@ -49,6 +49,7 @@ export const INVOCATION_MODES = [
   'runtime',
   'human',
   'model',
+  'plan',
 ] as const satisfies readonly ToolInvocationMode[];
 
 /** Who may invoke a tool version (ADR-0034). Unset means the runtime only. */
@@ -71,10 +72,30 @@ export const isRuntimeInvocable = (v: ToolVersion): boolean =>
 export const MODEL_TOOL_CALL_INPUT = 'model_tool_call';
 
 /**
+ * The input kind of an execution a plan's step runs in (ADR-0070). In one, a tool that changes data
+ * runs only when it is built for plans (`isPlanWritable`, ADR-0184), and never without a person's
+ * approval.
+ */
+export const PLAN_STEP_INPUT = 'plan_step';
+
+/**
  * Whether an agent's model may ask for this version in the middle of a task (ADR-0103): only when
  * it says `model`. No tool is offered to a model because it exists.
  */
 export const isModelInvocable = (v: ToolVersion): boolean => invocationModesOf(v).includes('model');
+
+/**
+ * Whether a plan's tool step may run this version although it changes data (ADR-0184): it says
+ * `plan` and `runtime`, it writes inside MelonOffice with no credential, and a person approves
+ * every call. Anything else that changes data is never a plan's step (ADR-0159).
+ */
+export const isPlanWritable = (v: ToolVersion): boolean =>
+  v.mutating &&
+  invocationModesOf(v).includes('plan') &&
+  invocationModesOf(v).includes('runtime') &&
+  v.provider.kind === 'internal' &&
+  v.credentials.length === 0 &&
+  v.approvalPolicy === 'approval_required';
 
 export const isDeploymentEnvironment = (value: unknown): value is DeploymentEnvironment =>
   typeof value === 'string' && (ENVIRONMENTS as readonly string[]).includes(value);
@@ -169,6 +190,10 @@ export function checkToolVersion(v: ToolVersion): ToolVersion {
     // A model's call is run by the runtime, with every check the runtime's calls have.
     if (v.invocationModes.includes('model') && !v.invocationModes.includes('runtime')) {
       invalid('invocationModes.model_runtime');
+    }
+    // A plan's write (ADR-0184): run by the runtime, inside MelonOffice, approved every time.
+    if (v.invocationModes.includes('plan') && !isPlanWritable(v)) {
+      invalid('invocationModes.plan_write');
     }
   }
   return v;

@@ -20,9 +20,15 @@ import {
   newSpecialist,
 } from '@melonoffice/specialists';
 import { resolveRuntimeTenant, resolveTenant, type TenantContext } from '@melonoffice/tenancy';
-import { createToolRegistry, type ToolExecutor } from '@melonoffice/tools';
+import {
+  createToolRegistry,
+  FOLLOW_UP_SCHEDULE_TOOL,
+  WORKFLOW_FOLLOW_UP_TOOL,
+  type ToolExecutor,
+} from '@melonoffice/tools';
 import { describe, expect, it } from 'vitest';
 import { setupApp, STORES, type Stores } from './test-api.js';
+import { toToolView } from './tools.js';
 
 const AT = '2026-09-27T12:00:00.000Z' as IsoTimestamp;
 const MISSING = '99999999-9999-4999-8999-999999999999';
@@ -325,6 +331,40 @@ describe.each(STORES)('tools and approvals with storage in %s', (_name, createSt
       // A credential, or a change, keeps a version out of workflow tool steps.
       const lookup = await call('token-alice', `/v1/organizations/${orgA}/tools/lookup`);
       expect((lookup.body.versions as { step: unknown }[])[0]?.step).toBeNull();
+    });
+
+    it("ADR-0184: shows a plan's write step with its fields, the contact as a record to pick", () => {
+      const view = toToolView(WORKFLOW_FOLLOW_UP_TOOL);
+      expect(view.versions[0]).toMatchObject({
+        mutating: true,
+        approvalPolicy: 'approval_required',
+      });
+      expect(view.versions[0]?.step?.input).toEqual([
+        {
+          name: 'contactId',
+          type: 'string',
+          required: true,
+          maxLength: 36,
+          minLength: 36,
+          ref: 'contact',
+        },
+        {
+          name: 'type',
+          type: 'string',
+          required: true,
+          maxLength: 16,
+          enum: ['follow_up', 'call', 'message', 'review', 'check_in'],
+        },
+        { name: 'title', type: 'string', required: true, maxLength: 120, minLength: 1 },
+        { name: 'inDays', type: 'integer', required: true, minimum: 0, maximum: 30 },
+        { name: 'time', type: 'string', required: true, maxLength: 5, minLength: 5 },
+      ]);
+      // Every other write stays out of workflow steps.
+      expect(toToolView(FOLLOW_UP_SCHEDULE_TOOL).versions.map((v) => v.step)).toEqual([
+        null,
+        null,
+        null,
+      ]);
     });
 
     it('needs tool.read and membership', async () => {

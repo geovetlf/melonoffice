@@ -56,6 +56,32 @@ describe('the planner context (ADR-0171)', () => {
       usableAsStep: false,
       notUsableBecause: 'tool_not_read_only',
     });
+    // A write built for plans is a person's to add in the editor, never the planner's (ADR-0184).
+    const write = {
+      definition: { id: 'lookup' },
+      version: {
+        action: 'search',
+        mutating: true,
+        riskLevel: 'low',
+        inputSchema: { type: 'object', properties: { query: { type: 'string' } } },
+        outputSchema: { type: 'object', properties: {} },
+      },
+    } as never;
+    expect(
+      plannerToolOf({ id: 'lookup', version: 1 }, write, {
+        usable: true,
+        riskLevel: 'low',
+        approvalRequired: true,
+      }),
+    ).toEqual({
+      id: 'lookup',
+      version: 1,
+      action: 'search',
+      changesData: true,
+      riskLevel: 'low',
+      usableAsStep: false,
+      notUsableBecause: 'tool_changes_data',
+    });
     // A tool the registry does not know is taken to change data.
     expect(
       plannerToolOf({ id: 'ghost', version: 1 }, undefined, {

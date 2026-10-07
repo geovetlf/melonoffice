@@ -13,8 +13,10 @@ import type { EligibilityDecision } from '@melonoffice/specialists';
 import {
   isHumanInvocable,
   isModelInvocable,
+  isPlanWritable,
   isRuntimeInvocable,
   MODEL_TOOL_CALL_INPUT,
+  PLAN_STEP_INPUT,
   toolCanRun,
   validate,
   type ResolvedTool,
@@ -36,6 +38,7 @@ export type GuardrailDenyReason =
   | 'node_not_found'
   | 'node_not_tool'
   | 'node_not_pending'
+  | 'tool_not_plan_writable'
   | 'no_specialist'
   | 'specialist_not_eligible'
   | 'tool_not_found'
@@ -145,11 +148,13 @@ export const nodeOf = (
  * 11. the tool allows the specialist's department type, when it restricts them;
  * 12. the user holds `tool.execute` and every permission the tool needs (GIA gets no more);
  * 13. the tool version allows this environment (an unknown one allows nothing);
- * 14. a tool that changes something does not run in a read-only mode;
+ * 14. a tool that changes something does not run in a read-only mode, and in a plan step's
+ *     execution only a tool built for plans' writes may change something (ADR-0184);
  * 15. an executor for the tool's provider is available;
  * 16. the input matches the tool's closed schema, with no authority or credential in it;
  * 17. the policy: `denied` denies, `approval_required` requires an approval, `auto` allows,
- *     unless the Harness marked the node for a person's approval (ADR-0103).
+ *     unless the Harness marked the node for a person's approval (ADR-0103) or it is a plan's
+ *     write (ADR-0184).
  *
  * Whether an attached approval covers the call is checked by the gate, against the approval.
  */
@@ -220,6 +225,9 @@ export function evaluatePreExecution(facts: PreExecutionFacts): GuardrailDecisio
   if (tool.version.mutating && READ_ONLY_MODES.includes(execution.mode)) {
     return deny('mode_forbids_mutation');
   }
+  // A plan's step writes only with a tool built for it (ADR-0184), whatever the stored plan says.
+  const planWrite = tool.version.mutating && execution.input.type === PLAN_STEP_INPUT;
+  if (planWrite && !isPlanWritable(tool.version)) return deny('tool_not_plan_writable');
   if (!Object.hasOwn(facts.executors, tool.version.provider.id)) {
     return deny('executor_unavailable');
   }
@@ -230,8 +238,9 @@ export function evaluatePreExecution(facts: PreExecutionFacts): GuardrailDecisio
     case 'approval_required':
       return APPROVAL;
     case 'auto':
-      // The Melon Agent Harness decided a person approves this use (ADR-0103): stricter only.
-      return node.approvalRequired === true ? APPROVAL : ALLOW;
+      // The Melon Agent Harness decided a person approves this use (ADR-0103), or it is a plan's
+      // write (ADR-0184): stricter only.
+      return node.approvalRequired === true || planWrite ? APPROVAL : ALLOW;
   }
 }
 

@@ -266,6 +266,8 @@ export interface PlanStepView {
   /** On a tool step: the agent step whose agent uses it, and the tool (ADR-0151). */
   readonly performedBy?: string | null;
   readonly tool?: { readonly id: string; readonly version: number } | null;
+  /** A tool step's input fixed in the plan (ADR-0151): what a person approves. */
+  readonly input?: Readonly<Record<string, unknown>> | null;
   /** Whether a person approves it before it starts (ADR-0146). */
   readonly approvalRequired?: boolean;
 }

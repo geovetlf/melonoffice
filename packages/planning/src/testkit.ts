@@ -131,6 +131,13 @@ export const TOOLS: readonly ToolDefinition[] = [
   tool('lookup'),
   tool('send_email', { riskLevel: 'high', mutating: true, action: 'send' }),
   tool('wipe_data', { riskLevel: 'critical', mutating: true }),
+  // ADR-0184: a write built for plans: internal, no credential, a person approves every call.
+  tool('plan_write', {
+    mutating: true,
+    action: 'create',
+    approvalPolicy: 'approval_required',
+    invocationModes: ['runtime', 'plan'],
+  }),
   // ADR-0159: a read that asks a person first, and reads that leave MelonOffice.
   tool('private_records', { riskLevel: 'high', action: 'read' }),
   tool('remote_lookup', { provider: { kind: 'external', id: 'remote' } }),

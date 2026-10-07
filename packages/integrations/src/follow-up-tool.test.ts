@@ -13,8 +13,11 @@ import {
   createFollowUpScheduleExecutor,
   createGatedFollowUpCreate,
   FOLLOW_UP_SCHEDULE,
+  localDatePlus,
   MODEL_FOLLOW_UP_SCHEDULE,
   modelFollowUpKey,
+  PLAN_FOLLOW_UP_SCHEDULE,
+  planFollowUpKey,
   SCHEDULE_NODE,
 } from './follow-up-tool.js';
 
@@ -390,6 +393,167 @@ describe("follow_up_schedule version 3: asked for by an agent's model, approved 
       contacts: resolver({ c_abcdefghij: [FU] }),
     });
     await expect(failing.execute(modelContext(), CALL)).rejects.toThrow('database unavailable');
+  });
+});
+
+describe("workflow_follow_up: a plan's write step, approved by a person (ADR-0184)", () => {
+  const CONTACT = '9b2e4c1d-0000-4000-8000-0000000000aa';
+  const STEP = {
+    contactId: CONTACT,
+    type: 'call',
+    title: 'Llamar a Ana',
+    inDays: 2,
+    time: '10:30',
+  };
+  // 2026-10-07 03:30Z is still 2026-10-06 in Lima (UTC-5): the business's day, not the server's.
+  const NOW = new Date('2026-10-07T03:30:00Z');
+  // `undefined` removes a field, to show the call is refused without it.
+  const planContext = (
+    over: {
+      readonly [K in keyof ToolExecutionContext]?: ToolExecutionContext[K] | undefined;
+    } = {},
+  ) =>
+    context({
+      toolId: PLAN_FOLLOW_UP_SCHEDULE.toolId,
+      toolVersion: PLAN_FOLLOW_UP_SCHEDULE.version,
+      executionId: 'child-1' as never,
+      nodeId: 'write' as never,
+      actor: { userId: ALICE, via: 'runtime' },
+      specialistId: 'agent-1' as never,
+      specialistVersion: 4,
+      approvalId: 'approval-1' as never,
+      idempotencyKey: 'key-child-1-write' as never,
+      ...(over as Partial<ToolExecutionContext>),
+    });
+
+  function world(fail?: Error) {
+    const seen: { tenant: TenantContext; input: Record<string, unknown> }[] = [];
+    const made = new Map<string, string>();
+    const zones: string[] = [];
+    const executor = createAgentFollowUpScheduleExecutor({
+      organizations: organizations(true) as never,
+      followUps: {
+        create: async (tenant: TenantContext, input: Record<string, unknown>) => {
+          seen.push({ tenant, input });
+          if (fail !== undefined) throw fail;
+          const key = String(input.requestKey);
+          const created = !made.has(key);
+          if (created) made.set(key, `${FU.slice(0, 30)}${String(made.size).padStart(6, '0')}`);
+          return { followUp: { id: made.get(key) } as never, created };
+        },
+      },
+      timeZone: async (organizationId) => {
+        zones.push(organizationId);
+        return 'America/Lima';
+      },
+      now: () => NOW,
+    });
+    return { executor, seen, made, zones };
+  }
+
+  it('schedules as the runtime, with the date in the business time zone and a key the server made', async () => {
+    const w = world();
+    const result = await w.executor.execute(planContext(), STEP);
+    expect(result).toMatchObject({ status: 'success', output: { created: true } });
+    expect(w.zones).toEqual([ORG]);
+    expect(w.seen[0]?.tenant).toMatchObject({
+      actor: 'runtime',
+      userId: ALICE,
+      organizationId: ORG,
+    });
+    const date = '2026-10-08';
+    expect(w.seen[0]?.input).toEqual({
+      requestKey: planFollowUpKey({ ...STEP, date }),
+      contactId: CONTACT,
+      type: 'call',
+      title: 'Llamar a Ana',
+      date,
+      time: '10:30',
+      source: 'agent',
+    });
+    expect(String(w.seen[0]?.input.requestKey)).toMatch(/^plan-step-[0-9a-f]{32}$/);
+  });
+
+  it('is one follow-up for the same content: a retry, another attempt or another plan the same day', async () => {
+    const w = world();
+    const first = await w.executor.execute(planContext(), STEP);
+    const retry = await w.executor.execute(planContext(), STEP);
+    const attempt = await w.executor.execute(planContext({ executionId: 'child-2' as never }), {
+      ...STEP,
+      title: ` ${STEP.title}  `,
+    });
+    expect(first).toMatchObject({ output: { created: true } });
+    expect(retry).toMatchObject({ output: { created: false } });
+    expect(attempt).toMatchObject({ output: { created: false } });
+    expect(w.made.size).toBe(1);
+    // Another time, contact or day is another follow-up.
+    await w.executor.execute(planContext(), { ...STEP, time: '11:00' });
+    await w.executor.execute(planContext(), { ...STEP, inDays: 3 });
+    expect(w.made.size).toBe(3);
+  });
+
+  it('never runs without an approval, outside the runtime, without an agent or a time zone', async () => {
+    const w = world();
+    expect(await w.executor.execute(planContext({ approvalId: undefined }), STEP)).toEqual({
+      status: 'failure',
+      code: 'approval_missing',
+    });
+    for (const over of [
+      { actor: { userId: ALICE, via: 'direct' as const } },
+      { actor: { userId: ALICE, via: 'gia' as const } },
+      { specialistId: undefined },
+    ]) {
+      expect(await w.executor.execute(planContext(over), STEP)).toEqual({
+        status: 'failure',
+        code: 'tool_not_runtime_invokable',
+      });
+    }
+    const zoneless = createAgentFollowUpScheduleExecutor({
+      organizations: organizations(true) as never,
+      followUps: { create: async () => ({}) as never },
+    });
+    expect(await zoneless.execute(planContext(), STEP)).toEqual({
+      status: 'failure',
+      code: 'tool_not_runtime_invokable',
+    });
+    expect(w.seen).toEqual([]);
+  });
+
+  it('refuses a malformed step: extra fields, a date, a key, bad days, times or ids', async () => {
+    const w = world();
+    for (const input of [
+      { ...STEP, date: '2026-10-08' },
+      { ...STEP, requestKey: 'mine-00000001' },
+      { ...STEP, inDays: -1 },
+      { ...STEP, inDays: 31 },
+      { ...STEP, inDays: 1.5 },
+      { ...STEP, time: '25:00' },
+      { ...STEP, contactId: 'c_abcdefghij' },
+      { ...STEP, type: 'party' },
+      { ...STEP, title: '   ' },
+      { contactId: CONTACT, type: 'call', title: 'x', time: '10:00' },
+    ]) {
+      expect(await w.executor.execute(planContext(), input)).toEqual({
+        status: 'failure',
+        code: 'invalid_input',
+      });
+    }
+    expect(w.seen).toEqual([]);
+  });
+
+  it("passes the service's refusal back as a code, e.g. another organization's contact", async () => {
+    const w = world(new ConversationError('contact_not_found'));
+    expect(await w.executor.execute(planContext(), STEP)).toEqual({
+      status: 'failure',
+      code: 'contact_not_found',
+    });
+  });
+
+  it('adds days by the calendar, across months and years', () => {
+    expect(localDatePlus('2026-10-30', 2)).toBe('2026-11-01');
+    expect(localDatePlus('2026-12-31', 1)).toBe('2027-01-01');
+    expect(localDatePlus('2028-02-28', 1)).toBe('2028-02-29');
+    expect(localDatePlus('2026-10-07', 0)).toBe('2026-10-07');
   });
 });
 

@@ -6,6 +6,9 @@ import type { DepartmentTypeId, MessageKey, ToolId } from './ids.js';
  */
 export type ToolRiskLevel = 'low' | 'medium' | 'high' | 'critical';
 
+/** The kinds of record a tool's string input may name (ADR-0184). */
+export type ToolRecordRef = 'contact';
+
 /** What running a tool needs from a human: nothing, an approval, or it never runs. */
 export type ToolApprovalPolicy = 'auto' | 'approval_required' | 'denied';
 
@@ -25,6 +28,11 @@ export type ToolSchema =
       readonly maxLength: number;
       readonly minLength?: number;
       readonly enum?: readonly string[];
+      /**
+       * The kind of record the value names, by its id (ADR-0184), so a screen can offer a picker.
+       * A hint only: it grants nothing, and the service that reads it checks the record again.
+       */
+      readonly ref?: ToolRecordRef;
     }
   | {
       readonly type: 'number' | 'integer';
@@ -62,9 +70,11 @@ export interface ToolProvider {
  * specialist (ADR-0031). `human`: the authenticated user acting directly, synchronously, for a
  * tool built for it. `model`: an agent's model may ask for it in the middle of a task, and the
  * Melon Agent Harness decides (ADR-0103); the runtime still runs it, so it comes with `runtime`.
+ * `plan`: a plan's tool step may run it although it changes data (ADR-0184); it comes with
+ * `runtime` too, and only an internal write without credentials that a person approves qualifies.
  * Each mode is explicit: allowing one never implies the other.
  */
-export type ToolInvocationMode = 'runtime' | 'human' | 'model';
+export type ToolInvocationMode = 'runtime' | 'human' | 'model' | 'plan';
 
 export interface ToolRetryPolicy {
   /** 1 means no retry. */
