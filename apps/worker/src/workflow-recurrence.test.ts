@@ -288,7 +288,7 @@ const codeOf = async (work: Promise<unknown>): Promise<string> => {
 
 describe.each(STORES)(
   'a workflow runs on its schedule, with storage in %s (ADR-0185)',
-  (_storage, createStores) => {
+  (storage, createStores) => {
     async function world(
       options: {
         readonly credits?: number;
@@ -821,7 +821,7 @@ describe.each(STORES)(
       expect(there.nextRunAt).toBe('2026-10-06T00:00:00.000Z');
     });
 
-    it('6, 24. a late occurrence still runs; past 6 hours it is missed, and missed ones are never replayed', async () => {
+    it('6. a late occurrence still runs; past 6 hours it is missed, and missed ones are never replayed', async () => {
       const w = await world();
       const { workflow } = await scheduled(w);
       // Two hours late (a slow queue): it runs.
@@ -1200,9 +1200,10 @@ describe.each(STORES)(
         body: { result: 'early' },
       });
       expect(w.tasks.length).toBe(before + 1);
-      // Three days of deliveries and sweeps: one plan per occurrence, one occurrence per day. Each day
-      // is a full plan run on the emulator (about 3 s), so the case stays well inside the 40 s limit.
-      const DAYS = 3;
+      // Consecutive days of deliveries and sweeps: one plan per occurrence, one occurrence per day. In
+      // memory, ten days. On the emulator, three: a day there is a full plan run (about 3 s), so ten
+      // would take most of the 40 s limit. The date arithmetic is the same code in both variants.
+      const DAYS = storage === 'firestore' ? 3 : 10;
       for (let day = 0; day < DAYS; day += 1) {
         const occurrence = (await w.scheduleOf(workflow.id)).nextRunAt as IsoTimestamp;
         const task = w.taskFor(workflow.id, occurrence);

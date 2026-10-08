@@ -170,7 +170,7 @@ describe('A workflow schedule (ADR-0185)', () => {
       b.options.plans.org_1 = [
         {
           id: 'plan-scheduled',
-          key: 'schedule-20261005t1400',
+          key: 'schedule-0000',
           status: 'completed',
           version: 1,
           createdAt: '2026-10-05T14:00:02.000Z',

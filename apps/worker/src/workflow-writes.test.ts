@@ -859,8 +859,13 @@ describe.each(STORES)(
       );
       expect(requested).toHaveLength(1);
       expect(await w.scheduled()).toHaveLength(1);
-      // The late answer has arrived before Alice runs the workflow again.
+      // The late answer arrives before Alice runs the workflow again, and it changes nothing: the
+      // timed-out write stays failed, the plan stays open, and no second write was requested.
       await answered;
+      const late = await w.childOf(first, 'prepare');
+      expect(must(late.nodes.find((n) => n.id === 'schedule')).status).toBe('failed');
+      expect(late.status).not.toBe('completed');
+      expect(await w.scheduled()).toHaveLength(1);
 
       // Alice stops that plan and runs the workflow again the same day: the same follow-up.
       await w.executions.cancel(w.tenantA, first.executionId, 'director_request');
