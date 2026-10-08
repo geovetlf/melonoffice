@@ -32,12 +32,10 @@ import { createJobService, type JobRepository, type JobService } from '@melonoff
 import type { EventBus } from '@melonoffice/events';
 import type { Logger } from '@melonoffice/observability';
 import {
-  createDelegation,
   createPlanConductor,
   createPlanStepAttempts,
   planStepOf,
   type ConditionEvaluator,
-  type PlanConductor,
   type PlanRepository,
   type PlanWakeups,
 } from '@melonoffice/planning';
@@ -58,6 +56,7 @@ import { createSpecialistService, type SpecialistRepository } from '@melonoffice
 import type { TenancyStore, TenantContext } from '@melonoffice/tenancy';
 import type { SkillCatalogue } from '@melonoffice/specialists';
 import type { ToolExecutors, ToolRegistry } from '@melonoffice/tools';
+import type { ScheduleDelegationFactory } from './workflow-schedules.js';
 
 /** The stores the worker reads and writes: the same repositories the API uses, nothing new. */
 export interface WorkerStores {
@@ -143,6 +142,11 @@ export interface WorkerRuntimeOptions {
    * their bell says the result is ready. Absent: a plan ends quietly, as before.
    */
   readonly events?: Pick<EventBus, 'publishRuntime'>;
+  /**
+   * Delegates a schedule's plan as its person's runtime (ADR-0185), built by the schedule
+   * composition. Absent: the conductor refuses to start a plan that a schedule approved.
+   */
+  readonly scheduleDelegation?: ScheduleDelegationFactory;
   readonly logger?: Logger;
   readonly now?: () => Date;
 }
@@ -163,7 +167,7 @@ export function createWorkerRuntime(options: WorkerRuntimeOptions): {
    * Starts an approved plan as its person's runtime: only a plan their own schedule approved
    * (ADR-0185); absent without plans.
    */
-  readonly conductor?: Pick<PlanConductor, 'run'>;
+  readonly conductor?: Pick<ReturnType<typeof createPlanConductor>, 'run'>;
 } {
   const { stores, environment, leaseMs, tools, ai, credits, logger, now } = options;
   const authorization = createAuthorizationService();
@@ -258,14 +262,19 @@ export function createWorkerRuntime(options: WorkerRuntimeOptions): {
     return createPlanConductor({
       plans,
       executions,
-      // A schedule's plan is delegated by its person's runtime (ADR-0185).
-      delegation: createDelegation({
-        plans,
-        executions,
-        specialists,
-        organizations: stores.tenancy,
-        authorization,
-      }),
+      // A schedule's plan is delegated by its person's runtime (ADR-0185), where the worker runs
+      // the schedules.
+      ...(options.scheduleDelegation === undefined
+        ? {}
+        : {
+            delegation: options.scheduleDelegation({
+              plans,
+              executions,
+              specialists,
+              organizations: stores.tenancy,
+              authorization,
+            }),
+          }),
       starter: {
         async start(runtimeTenant, executionId) {
           await executions.runtimeStart(runtimeTenant, executionId);

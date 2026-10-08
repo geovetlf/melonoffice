@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-10-08
+- Amended: 2026-10-08, after review. A first step that asks for approval waits for a person under a standing approval (7); a claim is held for a lease (5); a save never plans a day the last run took (2); the standing permissions are checked at every occurrence (6); the delegation is built in the schedule's composition and handed to the runtime (9).
 - Builds on: [ADR-0029](0029-runtime-guards.md) (runtime actor, idempotency), [ADR-0058](0058-commercial-follow-ups.md) (Cloud Tasks held until their time), [ADR-0071](0071-workflows-over-http.md) (a workflow's plan waits for a person), [ADR-0121](0121-automatic-sweep-of-abandoned-work.md) and [ADR-0183](0183-the-sweep-reads-past-waiting-work.md) (sweep), [ADR-0151](0151-tool-steps-run-in-plans.md) (step approvals), [ADR-0163](0163-the-approved-credit-budget-caps-a-plan.md) (budget), [ADR-0179](0179-workflow-lifecycle-and-reliability.md) (lifecycle, cancellation), [ADR-0180](0180-each-workflow-shows-its-runs.md) (a workflow's runs), [ADR-0184](0184-plan-tool-steps-that-write-data.md) (writes)
 - Product decisions: Geovet, 2026-10-05 07:45Z.
   - B5: no fake recurrence before this block.
@@ -46,7 +47,7 @@ What already exists and is reused:
 2. **A recurrence is bounded by construction.**
    - It runs daily, weekly on one or more weekdays, or monthly on a day from 1 to 28. It runs at a local time `HH:MM` in the business's time zone, read from the business profile when a person saves the schedule.
    - There is no "every N minutes".
-   - At most one occurrence per workflow per day, and one plan per occurrence.
+   - At most one occurrence per workflow per local day, and one plan per occurrence. A save never plans the day the last run already took: a time changed later that day waits for tomorrow.
 3. **Switching a schedule on is a person's standing approval (B8).**
    - The person must hold `workflow.manage`, `plan.create` and `approval.approve`.
    - It approves "this workflow, at this version, on this schedule".
@@ -58,19 +59,20 @@ What already exists and is reused:
    - A task for a time more than 29 days ahead arrives early and queues itself again.
 5. **A run claims its occurrence once.** In one transaction it checks that the schedule is on and that `nextRunAt` is exactly this occurrence. It then moves `nextRunAt` to the next occurrence after now and records the occurrence as `claimed`.
    - A duplicate task, a second worker, or a task for an occurrence that a later save replaced finds nothing to claim and changes nothing.
-   - A worker that dies after the claim gets the same task again from Cloud Tasks. The claimed occurrence is taken up again, because every step after it is idempotent.
+   - A claim is held for a lease of 20 minutes (`SCHEDULE_LEASE_MS`), which outlasts a task's dispatch deadline (the runtime's job lease, 15 minutes by default). While the lease holds, another delivery of the same occurrence is refused with `in_progress` (503), so Cloud Tasks retries it later and it never runs beside the first.
+   - Once the lease has lapsed, its worker is taken to have died. The same task takes the occurrence up again, because every step after the claim is idempotent: the plan's request key, the conductor's start, the recorded outcome.
 6. **What a claimed occurrence does, in order.** Each outcome is recorded on the schedule and audited (`workflow.schedule_run`).
    - `missed`: it is later than 6 hours past its time, after downtime or a lost task. Nothing runs, and the next occurrence is the next one after now. Missed occurrences are never run one after another.
    - `workflow_not_active`: the workflow is paused or archived. An archived workflow's schedule is switched off at its next occurrence, and recorded so.
    - `version_changed`: the workflow has a version the person did not confirm. Nothing runs until a person confirms the schedule again.
    - `overlap`: an earlier scheduled plan of this workflow is still open. The new one never stacks on it.
-   - `not_allowed`: the person is no longer an active member, or lost a permission above. Nothing runs.
+   - `not_allowed`: the person is no longer an active member, or no longer holds one of the three standing permissions (decision 3). The runner checks all three before it plans. If the approval itself is refused for that reason, the plan is left for a person and the occurrence is `not_allowed`.
    - `planned`: otherwise the workflow is planned as the runtime of the person who confirmed it, with the request key `schedule-<occurrence>`. The plan records its occurrence (`source.occurrence`, `Plan.workflow.occurrence`).
      - If the plan's risk is low or medium, the plan is approved with the standing approval: `decision.via = 'schedule'`, `decidedBy` the person who confirmed it. The conductor then runs it as that person's runtime.
      - If the risk is high or critical, the plan waits for a person, as every workflow plan did (ADR-0071). The outcome is `awaiting_person`.
    - `refused`: the plan was refused (for example an agent is unavailable). It is recorded, and the next occurrence is unaffected.
 7. **Everything after planning is the existing path.**
-   - A tool step's approval (ADR-0151, ADR-0184) and a step that asks for approval still wait for a person on every run (B8: approval follows each action).
+   - A tool step's approval (ADR-0151, ADR-0184) and a step that asks for approval still wait for a person on every run (B8: approval follows each action). This holds for a first step too: a standing approval gives the plan, never a step's approval, and a first step has no earlier step whose approval would cover it.
    - A withdrawn or rejected approval skips its branch.
    - The approved estimate caps the run (ADR-0163).
    - The Credit Core refuses a step it cannot charge.
@@ -89,7 +91,8 @@ What already exists and is reused:
    - It uses the same workflow service, plan service and validator as the API, over the same repositories.
    - It never uses a planner or a model.
    - Its conductor delegates and starts only a plan whose decision is that person's standing approval.
-   - The architecture test (`apps/worker/src/transport.test.ts`) names these imports one by one, and only for that file. Every other file of the worker is held to the old rule.
+   - The architecture test (`apps/worker/src/transport.test.ts`) names these imports one by one, and only for that file. Every other file of the worker is held to the old rule: it never names the workflows package in any form, and it takes only the planning names it took before.
+   - The plan delegation is built in that file (`createScheduleDelegation`) and handed to the runtime as an option. The runtime never names the delegation, and only a schedule's start uses it.
 10. **Recovery.** Each sweep run also reads schedules whose `nextRunAt` is more than 15 minutes past, oldest first (`workflowSchedules.nextRunAt`, automatic single-field index). It runs each of them as its task would. A lost task, a deploy, or a worker that was down are recovered within 3 hours; past 6 hours the occurrence is `missed`.
 11. **Changing a schedule.**
     - Saving recomputes `nextRunAt` from now and queues its task; the old task finds nothing to claim.
@@ -109,12 +112,16 @@ What already exists and is reused:
 - The earliest occurrence is the next one after now.
 - At most one plan per workflow per day.
 - Late occurrences are never replayed.
+- The overlap check reads every plan of the workflow on each occurrence, not only the newest 100. This is one read per occurrence, and it grows with the workflow's plan count; an index on open plans is the next step if that grows.
+- An occurrence whose every retry fails is not recorded. The next occurrence still runs and is recorded, so the chain goes on, but the failed one has no outcome and no audit event. Recording it from the sweep is the follow-up.
+- A plan whose every step was declined ends `nothing_ran`, for any plan and not only a scheduled one. That is the planning rule as it now stands, and it is noted here because the schedule relies on it.
 
 `automations.runsMonthly` is not enforced (D-12 is frozen). The structural bound above is the protection against a burst of runs.
 
 ## Tests
 
-- `apps/worker/src/workflow-recurrence.test.ts`: the 24 cases, in memory and on the emulator, through the worker's own composition (the runner, the conductor, the sweep). The cases cover the first and second occurrence, switching off and on, editing, time zones and daylight saving, a late and a missed occurrence, a new version, two deliveries at once and two workers, a retried or ambiguous delivery, a restarted worker, cancellation, a step approval required and withdrawn, a decline that ends the run as `nothing_ran`, no credits, a refused run followed by a good one, tenant isolation with forged tasks, audit, the sweep's recovery after downtime, a paused or archived workflow, and the bound of one plan per day.
+- `apps/worker/src/workflow-recurrence.test.ts`: the 28 cases, in memory and on the emulator, through the worker's own composition (the runner, the conductor, the sweep). The cases cover the first and second occurrence, switching off and on, editing, time zones and daylight saving, a late and a missed occurrence, a new version, two deliveries at once and two workers, a retry inside the lease (held) and after it (taken up), a restarted worker, an ambiguous delivery whose work ran once, a delivery held while its first is in flight (case 26), cancellation, a step approval required and withdrawn, a first step that asks for approval under a standing approval (case 25), a decline that ends the run as `nothing_ran`, no credits, a refused run followed by a good one, tenant isolation with forged tasks, audit, the sweep's recovery after downtime, a paused or archived workflow, the bound of one plan per day, a time changed later the same day (case 27), and a person who lost the approval's permission (case 28).
+- The overlap read of every plan (beyond the newest 100) has no dedicated test yet; it is one call to the plan service's full read.
 - `packages/workflows/src/schedule.test.ts`: the recurrence's exact fields, next occurrences in the time zone, the audit code, queueing in hops, and the service's permissions and tenant isolation.
 - `packages/planning/src/planning.test.ts`: `approveScheduled` (runtime only, the same workflow and version, risk up to medium, the person's own plan) and the occurrence on the plan.
 - `apps/api/src/plans.test.ts`: the schedule routes, exact bodies, the three permissions, another organization's workflow.

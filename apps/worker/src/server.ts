@@ -107,7 +107,11 @@ import { createJobHandler } from './handler.js';
 import { createWorkerRuntime } from './runtime.js';
 import { createPlanWakeHandler, createPlanWakeups, RUN_PLAN_WAKE_PATH } from './plan-wakeups.js';
 import { createExecutionSweeper, RUN_SWEEP_PATH } from './sweeps.js';
-import { createWorkflowScheduleRunner, RUN_SCHEDULE_PATH } from './workflow-schedules.js';
+import {
+  createScheduleDelegation,
+  createWorkflowScheduleRunner,
+  RUN_SCHEDULE_PATH,
+} from './workflow-schedules.js';
 
 const config = loadConfig(process.env);
 const logger = createLogger({ service: SERVICE_NAME, level: config.logLevel });
@@ -320,6 +324,8 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
     stores,
     environment: runtime.environment,
     leaseMs: runtime.leaseMs,
+    // A schedule's plan is delegated as its person's runtime (ADR-0185).
+    scheduleDelegation: createScheduleDelegation,
     // The real tool catalogue (ADR-0026) with the conversation agent's executors. The model is
     // Vertex AI's Gemini 2.5 Flash-Lite (D-7) with the credit rate (D-12), only where Terraform
     // sets the Vertex AI project; anywhere else no provider is registered and every model call

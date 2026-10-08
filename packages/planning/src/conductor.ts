@@ -208,6 +208,13 @@ export const waitsForApproval = (step: PlanStep): boolean =>
   step.kind === 'specialist' && step.approvalRequired && step.dependsOn.length > 0;
 
 /**
+ * Whether a first step waits for a person under a standing approval (ADR-0185): its plan was
+ * approved by a schedule, not by a person, so the step that asks for approval still needs one.
+ */
+export const waitsForStandingApproval = (plan: Plan, step: PlanStep): boolean =>
+  plan.decision?.via === 'schedule' && step.kind === 'specialist' && step.approvalRequired;
+
+/**
  * The tool steps a specialist step uses that need a person's approval (ADR-0151): their tool's
  * policy asks for one, or the plan does. Each is asked for once the specialist step is ready,
  * first steps included (the plan's approval never covers a tool call), and the step starts only
@@ -793,7 +800,7 @@ export function createPlanConductor(options: PlanConductorOptions): PlanConducto
     childId: ExecutionId,
   ): readonly Gate[] {
     const gates: Gate[] = [];
-    if (waitsForApproval(step))
+    if (waitsForApproval(step) || waitsForStandingApproval(plan, step))
       gates.push({ entry: step.id, ask: askOf(plan, version, step, childId) });
     for (const tool of approvedToolStepsOf(version, step)) {
       const ref = tool.tool as NonNullable<PlanStep['tool']>;

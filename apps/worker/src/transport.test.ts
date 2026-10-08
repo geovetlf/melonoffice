@@ -206,14 +206,14 @@ describe('worker architecture', () => {
     }
     // Credits are here only for the AI Gateway's charge per model call (CV-6B, ADR-0043).
     expect(Object.keys(manifest.dependencies)).not.toContain('@melonoffice/billing');
+    // The workflows package is read by workflow-schedules.ts alone (ADR-0185 §9), checked per file.
     // The worker never plans: from planning it takes only the plan conductor, which starts the
     // steps of a plan a person approved and closes it (ADR-0070), and the shape of the evaluator
     // that decides its condition steps through the Decision Engine (ADR-0075), and the reading of
     // which approvals a step waits for (ADR-0151), the shape of a plan's wake-up after a wait
     // (ADR-0152), and the creation of a failed step's next attempt, under its fixed id, only for
     // a step the plan already delegated (ADR-0153). No planner, validator, delegation of a new
-    // plan or plan decision is reachable from its code, with one exception below: a workflow
-    // schedule's occurrence (ADR-0185).
+    // plan or plan decision is reachable from its code.
     const PLAN_RUNS = [
       'PlanRepository',
       'createPlanConductor',
@@ -223,14 +223,17 @@ describe('worker architecture', () => {
       'isPlanId',
       'PlanWakeups',
       'createPlanStepAttempts',
-      // The conductor starts a plan its person's schedule approved, delegating it (ADR-0185).
-      'PlanConductor',
-      'createDelegation',
     ];
-    // The one exception (ADR-0185): a schedule's occurrence plans the workflow version a person
-    // confirmed, through the same validator as the API, and applies that person's standing
-    // approval. Only `workflow-schedules.ts` does it, and never with a planner or a model.
-    const SCHEDULE_PLANS = ['createPlanService', 'createPlanValidator'];
+    // The one exception (ADR-0185 §9): a workflow schedule's occurrence plans the workflow version a
+    // person confirmed, through the same validator as the API, and its delegation and conductor
+    // start only a plan that person's standing approval made. Only `workflow-schedules.ts` names
+    // these, and never with a planner or a model.
+    const SCHEDULE_PLANS = [
+      'createPlanService',
+      'createPlanValidator',
+      'createDelegation',
+      'PlanConductor',
+    ];
     const SCHEDULE_WORKFLOWS = [
       'createScheduleRunner',
       'RUN_SCHEDULE_PATH',
@@ -242,7 +245,7 @@ describe('worker architecture', () => {
     const namesFrom = (file: string, pkg: string) =>
       [
         ...text(file).matchAll(
-          new RegExp(`import\\s*(?:type\\s*)?\\{([^}]*)\\}\\s*from '${pkg}'`, 'g'),
+          new RegExp(`(?:import|export)\\s*(?:type\\s*)?\\{([^}]*)\\}\\s*from '${pkg}'`, 'g'),
         ),
       ].flatMap(([, names]) =>
         (names ?? '')
@@ -256,15 +259,20 @@ describe('worker architecture', () => {
         /from '[^']*(openai|anthropic|@google\/genai|generative-ai|vertexai|elevenlabs|@google-cloud\/tasks)[^']*'/i,
       );
       const schedules = file === 'workflow-schedules.ts';
+      // Any form of naming the workflows package: an import, a re-export, a side effect, a dynamic
+      // import. Only the schedules' file may, and only with the names it is allowed.
+      if (!schedules) expect(text(file)).not.toMatch(/['"]@melonoffice\/workflows['"]/);
       for (const name of namesFrom(file, '@melonoffice/workflows')) {
-        expect(schedules && SCHEDULE_WORKFLOWS.includes(name)).toBe(true);
+        expect(SCHEDULE_WORKFLOWS.includes(name)).toBe(true);
       }
-      expect(text(file)).not.toMatch(/import \* as \w+ from '@melonoffice\/workflows'/);
+      expect(text(file)).not.toMatch(
+        /(?:import|export) \* (?:as \w+ )?from '@melonoffice\/(?:workflows|planning)'/,
+      );
+      expect(text(file)).not.toMatch(/import\(\s*'@melonoffice\/(?:workflows|planning)'\s*\)/);
       expect(text(file)).not.toMatch(/createPlanner|createWorkflowDrafter/);
       for (const name of namesFrom(file, '@melonoffice/planning')) {
         expect(PLAN_RUNS.includes(name) || (schedules && SCHEDULE_PLANS.includes(name))).toBe(true);
       }
-      expect(text(file)).not.toMatch(/import \* as \w+ from '@melonoffice\/planning'/);
     }
   });
 

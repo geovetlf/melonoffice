@@ -40,6 +40,12 @@ export const SCHEDULE_RECOVER_AFTER_MS = 15 * 60_000;
 export const SCHEDULE_TASK_HORIZON_MS = 29 * 86_400_000;
 /** At most this many schedules recovered per sweep run. */
 export const SCHEDULE_RECOVER_LIMIT = 50;
+/**
+ * How long a claimed occurrence is held by its worker. It outlasts a task's dispatch deadline (the
+ * runtime's job lease, 15 min by default), so a retry never runs beside a live occurrence; once it
+ * has lapsed, a crashed worker's occurrence is taken up (ADR-0185 §5).
+ */
+export const SCHEDULE_LEASE_MS = 20 * 60_000;
 
 const WEEKDAYS = [1, 2, 3, 4, 5, 6, 7] as const;
 /** Monday is 1 … Sunday is 7. */
@@ -108,6 +114,28 @@ export function nextOccurrence(r: WorkflowRecurrence, timeZone: string, after: D
     if (at.getTime() > after.getTime()) return at;
   }
   throw new WorkflowError('invalid_schedule', 'recurrence');
+}
+
+/** The calendar day an instant falls on, in the time zone. */
+export const localDay = (at: Date, timeZone: string): string => localDateTime(at, timeZone).date;
+
+/**
+ * The next occurrence a save leaves. Never on the local day the last run already took: a schedule
+ * plans one day at most, so a time changed later that day waits for tomorrow (ADR-0185 §4).
+ */
+export function nextAfterRun(
+  r: WorkflowRecurrence,
+  timeZone: string,
+  after: Date,
+  last: WorkflowSchedule['last'],
+): IsoTimestamp {
+  const next = nextOccurrence(r, timeZone, after);
+  const ranOn = last === undefined ? undefined : localDay(new Date(last.occurrence), timeZone);
+  const onto =
+    ranOn === undefined || localDay(next, timeZone) !== ranOn
+      ? next
+      : nextOccurrence(r, timeZone, next);
+  return onto.toISOString() as IsoTimestamp;
 }
 
 /** A recurrence as a short code for audit: `daily-0900`, `weekly-1-3-0900`, `monthly-15-0900`. */
@@ -311,7 +339,11 @@ export interface WorkflowScheduleServiceOptions {
   readonly requestId?: string;
 }
 
-const SAVE_PERMISSIONS = ['workflow.manage', 'plan.create', 'approval.approve'] as const;
+/**
+ * The three permissions a standing approval needs: to switch it on, and to be run as (ADR-0185 §3,
+ * §6). The runner checks them again at every occurrence.
+ */
+export const STANDING_PERMISSIONS = ['workflow.manage', 'plan.create', 'approval.approve'] as const;
 
 export function createWorkflowScheduleService({
   repository,
@@ -384,7 +416,7 @@ export function createWorkflowScheduleService({
           `${tenant.actor}_cannot_schedule`,
         );
       }
-      for (const permission of SAVE_PERMISSIONS) {
+      for (const permission of STANDING_PERMISSIONS) {
         const decision = authorization.authorize(tenant, permission, { organizationId });
         if (!decision.allowed) {
           return refuse(tenant, organizationId, workflowId, action, 'permission_denied');
@@ -399,7 +431,6 @@ export function createWorkflowScheduleService({
       if (!isTimeZone(zone)) throw new WorkflowError('invalid_schedule', 'timeZone');
       const at = now();
       const iso = at.toISOString() as IsoTimestamp;
-      const next = nextOccurrence(recurrence, zone, at).toISOString() as IsoTimestamp;
       const saved = await repository.update(organizationId, id, (current) => ({
         schedule: Object.freeze({
           workflowId: id,
@@ -410,7 +441,7 @@ export function createWorkflowScheduleService({
           workflowVersion: workflow.version,
           confirmedBy: tenant.userId,
           confirmedAt: iso,
-          nextRunAt: next,
+          nextRunAt: nextAfterRun(recurrence, zone, at, current?.last),
           ...(current?.last === undefined ? {} : { last: current.last }),
           revision: (current?.revision ?? 0) + 1,
           updatedAt: iso,
@@ -431,10 +462,16 @@ export function createWorkflowScheduleService({
         ],
       }));
       // Its task; when it cannot be queued now, the sweep runs the occurrence (ADR-0185 §10).
-      try {
-        await queueOccurrence(scheduler, { organizationId, workflowId: id, occurrence: next }, at);
-      } catch {
-        // Recovered by the sweep.
+      if (saved.nextRunAt !== undefined) {
+        try {
+          await queueOccurrence(
+            scheduler,
+            { organizationId, workflowId: id, occurrence: saved.nextRunAt },
+            at,
+          );
+        } catch {
+          // Recovered by the sweep.
+        }
       }
       return saved;
     },

@@ -13,6 +13,7 @@ import {
   type PlanConductor,
   type PlanService,
 } from '@melonoffice/planning';
+import type { AuthorizationService } from '@melonoffice/rbac';
 import {
   isOrganizationId,
   resolveRuntimeTenant,
@@ -27,8 +28,10 @@ import {
   queueOccurrence,
   scheduleEvent,
   SCHEDULE_LATE_MS,
+  SCHEDULE_LEASE_MS,
   SCHEDULE_RECOVER_AFTER_MS,
   SCHEDULE_RECOVER_LIMIT,
+  STANDING_PERMISSIONS,
   switchedOff,
   withRun,
   type WorkflowScheduleRepository,
@@ -59,9 +62,11 @@ export interface ScheduleRunnerOptions {
   readonly schedules: WorkflowScheduleRepository;
   readonly workflows: Pick<WorkflowRepository, 'find'>;
   readonly workflowService: Pick<WorkflowService, 'planOccurrence'>;
-  readonly plans: Pick<PlanService, 'approveScheduled' | 'listForWorkflow'>;
+  readonly plans: Pick<PlanService, 'approveScheduled' | 'pageForWorkflow'>;
   readonly conductor: Pick<PlanConductor, 'run'>;
   readonly tenancy: TenancyStore;
+  /** Checked for the person at every occurrence: the standing approval holds only while they can (ADR-0185 §6). */
+  readonly authorization: Pick<AuthorizationService, 'authorize'>;
   /** Queues an occurrence's task. Absent: occurrences run only when the sweep recovers them. */
   readonly scheduler?: { schedule(body: object, at: Date): Promise<void> };
   readonly now?: () => Date;
@@ -78,7 +83,21 @@ class Unclaimed extends Error {
   }
 }
 
+/** Another delivery holds the occurrence and is still within its lease: this one is retried later. */
+class Busy extends Error {
+  readonly code = 'in_progress';
+  constructor() {
+    super('in_progress');
+  }
+}
+
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+
+/** The code a retry reports: the domain's own, or `in_progress` for a held occurrence. */
+const codeOf = (error: unknown): string => {
+  if (error instanceof Busy) return error.code;
+  return isWorkflowError(error) || isPlanningError(error) ? error.code : 'internal_error';
+};
 
 export function createScheduleRunner({
   schedules,
@@ -87,11 +106,12 @@ export function createScheduleRunner({
   plans,
   conductor,
   tenancy,
+  authorization,
   scheduler,
   now = () => new Date(),
   logger,
 }: ScheduleRunnerOptions): ScheduleRunner {
-  /** Takes the occurrence: once, by one caller. A claimed one is taken up again (a retry). */
+  /** Takes the occurrence: once, by one caller. A claimed one is taken up again only after its lease. */
   async function claim(
     organizationId: OrganizationId,
     workflowId: WorkflowId,
@@ -102,9 +122,14 @@ export function createScheduleRunner({
       .update(organizationId, workflowId, (current) => {
         if (current?.status !== 'on') throw new Unclaimed('not_on');
         if (current.nextRunAt !== occurrence) {
-          // The worker that claimed it died before it finished: the same task, delivered again.
           if (current.last?.occurrence === occurrence && current.last.outcome === 'claimed') {
-            return { schedule: { ...current, revision: current.revision + 1 }, events: [] };
+            // Another delivery of this task holds it. Once its lease has lapsed, its worker died
+            // before it finished, and the same task takes the occurrence up (ADR-0185 §5).
+            if (Date.parse(current.last.at) + SCHEDULE_LEASE_MS > at.getTime()) throw new Busy();
+            return {
+              schedule: withRun(current, { occurrence, outcome: 'claimed' }, at),
+              events: [],
+            };
           }
           throw new Unclaimed('not_this_occurrence');
         }
@@ -178,14 +203,19 @@ export function createScheduleRunner({
     return outcome;
   }
 
-  /** A plan this schedule made that is still open, other than this occurrence's. */
+  /**
+   * A plan this schedule made that is still open, other than this occurrence's. Every plan of the
+   * workflow is read, not only the newest page: an old plan that is still open blocks the run too.
+   */
   async function overlapping(
     tenant: TenantContext,
     schedule: WorkflowSchedule,
     occurrence: string,
   ) {
-    const all = await plans.listForWorkflow(tenant, schedule.workflowId);
-    return all.some(
+    const { items } = await plans.pageForWorkflow(tenant, schedule.workflowId, {
+      limit: Number.MAX_SAFE_INTEGER,
+    });
+    return items.some(
       (p) =>
         p.workflow?.occurrence !== undefined &&
         p.workflow.occurrence !== occurrence &&
@@ -226,10 +256,12 @@ export function createScheduleRunner({
           workflowVersion: schedule.workflowVersion,
         });
       } catch (error) {
-        // A risk above the standing approval, or a person who may no longer approve: the plan
-        // waits for a person, as a workflow's plan always did (ADR-0071).
+        // A risk above the standing approval: the plan waits for a person, as a workflow's plan
+        // always did (ADR-0071). A person who no longer may approve: the occurrence is not allowed.
         if (isPlanningError(error) && error.code === 'permission_denied') {
-          return { outcome: 'awaiting_person', planId: plan.id };
+          return error.detail === 'permission_denied'
+            ? { outcome: 'not_allowed', planId: plan.id }
+            : { outcome: 'awaiting_person', planId: plan.id };
         }
         throw error;
       }
@@ -308,6 +340,11 @@ export function createScheduleRunner({
       // The person left, was suspended, or the organization is no longer active.
       return finish(schedule, occurrence, 'not_allowed');
     }
+    // The standing approval holds only while its person keeps all three permissions (ADR-0185 §6).
+    const standing = STANDING_PERMISSIONS.every(
+      (permission) => authorization.authorize(tenant, permission, { organizationId }).allowed,
+    );
+    if (!standing) return finish(schedule, occurrence, 'not_allowed');
     if (await overlapping(tenant, schedule, occurrence)) {
       return finish(schedule, occurrence, 'overlap');
     }
@@ -345,10 +382,7 @@ export function createScheduleRunner({
         });
         return {
           status: 503,
-          body: {
-            result: 'retry',
-            code: isWorkflowError(error) || isPlanningError(error) ? error.code : 'internal_error',
-          },
+          body: { result: 'retry', code: codeOf(error) },
         };
       }
     },

@@ -104,6 +104,7 @@ import {
   createWorkflowService,
   InMemoryWorkflowRepository,
   InMemoryWorkflowScheduleRepository,
+  SCHEDULE_LEASE_MS,
   type ScheduleTask,
   type WorkflowRepository,
   type WorkflowScheduleRepository,
@@ -112,7 +113,7 @@ import { describe, expect, it } from 'vitest';
 import { createAgentTaskParts, createConversationAgentParts, routeAgentWork } from './agents.js';
 import { createWorkerRuntime, type WorkerStores } from './runtime.js';
 import { createExecutionSweeper, sweepSlotOf } from './sweeps.js';
-import { createWorkflowScheduleRunner } from './workflow-schedules.js';
+import { createScheduleDelegation, createWorkflowScheduleRunner } from './workflow-schedules.js';
 
 /**
  * A workflow runs by itself on a schedule (ADR-0185), on the engines that already exist: a
@@ -398,6 +399,7 @@ describe.each(STORES)(
         stores,
         environment: 'dev',
         leaseMs: LEASE_MS,
+        scheduleDelegation: createScheduleDelegation,
         tools: { registry, executors: { ...conversation.executors, ...taskParts.executors } },
         ai: createProviderRegistry({
           providers: [VERTEX_AI_PROVIDER],
@@ -487,7 +489,12 @@ describe.each(STORES)(
         now,
       });
       /** One worker instance's runner: the worker's own composition. */
-      const runnerOf = (conductor = runtimeConductor) =>
+      const runnerOf = (
+        conductor = runtimeConductor,
+        standingAuthorization?: Parameters<
+          typeof createWorkflowScheduleRunner
+        >[0]['standingAuthorization'],
+      ) =>
         createWorkflowScheduleRunner({
           stores,
           plans: stores.plans,
@@ -497,6 +504,7 @@ describe.each(STORES)(
           environment: 'dev',
           conductor,
           scheduler,
+          ...(standingAuthorization === undefined ? {} : { standingAuthorization }),
           now,
         });
       const runner = runnerOf();
@@ -917,7 +925,14 @@ describe.each(STORES)(
       });
       const [waiting] = await w.plansOf(workflow.id);
       expect(waiting?.status).toBe('approved');
-      // A new worker instance gets the same task again: it takes the claimed occurrence up again.
+      // Retried inside the lease: the first worker may still be alive, so this one waits.
+      expect(await w.deliver(task, { runner: w.runnerOf() })).toEqual({
+        status: 503,
+        body: { result: 'retry', code: 'in_progress' },
+      });
+      // A new worker instance gets the same task again once the lease has lapsed: it takes the
+      // claimed occurrence up (ADR-0185 §5).
+      w.at(new Date(Date.parse(FIRST) + SCHEDULE_LEASE_MS + 60_000));
       failing = false;
       const restarted = w.runnerOf();
       expect(await w.deliver(task, { runner: restarted })).toMatchObject({
@@ -936,7 +951,10 @@ describe.each(STORES)(
         },
       });
       expect(await w.deliver(next, { runner: lossy })).toMatchObject({ status: 503 });
+      // The work the lost answer covered ran before the retry: its job is done.
+      await w.drive();
       ambiguous = false;
+      w.at(new Date(Date.parse(SECOND) + SCHEDULE_LEASE_MS + 60_000));
       expect(await w.deliver(next, { runner: lossy })).toMatchObject({
         status: 200,
         body: { result: 'planned' },
@@ -945,6 +963,8 @@ describe.each(STORES)(
       const runs = await w.plansOf(workflow.id);
       expect(runs).toHaveLength(2);
       expect(runs.every((p) => p.status === 'completed')).toBe(true);
+      // One provider call per plan: the retry of the lost answer ran nothing again.
+      expect(w.providerCalls).toHaveLength(2);
       // Each plan's step ran once.
       for (const plan of runs) {
         const child = await w.childOf(plan, 'week');
@@ -1214,6 +1234,114 @@ describe.each(STORES)(
       expect(runs).toHaveLength(DAYS);
       const days = runs.map((p) => p.workflow?.occurrence?.slice(0, 10));
       expect(new Set(days).size).toBe(DAYS);
+    });
+
+    it('25. under a standing approval, a first step that needs approval still waits for a person', async () => {
+      const w = await world();
+      const { workflow } = await scheduled(w, [{ ...SUMMARY[0], approvalRequired: true }]);
+      expect(await w.deliver(w.taskFor(workflow.id, FIRST))).toEqual({
+        status: 200,
+        body: { result: 'planned' },
+      });
+      await w.drive();
+      const [plan] = await w.plansOf(workflow.id);
+      expect(must(plan).decision?.via).toBe('schedule');
+      // The standing approval gave the plan, never the step: nothing ran for it.
+      const waiting = await w.stored(must(plan).id);
+      expect(waiting.stepApprovals?.map((a) => a.stepId)).toEqual(['week']);
+      expect((await w.childOf(waiting, 'week')).startedAt).toBeUndefined();
+      expect(w.providerCalls).toHaveLength(0);
+      // Once a person approves the step, it runs and the plan completes.
+      await w.approvals.approve(w.tenantA, must(waiting.stepApprovals?.[0]).approvalId);
+      await w.advance(waiting.id);
+      await w.drive();
+      expect((await w.stored(waiting.id)).status).toBe('completed');
+    });
+
+    it('26. a delivery that finds its occurrence held waits; the occurrence runs once', async () => {
+      const w = await world();
+      const { workflow } = await scheduled(w);
+      const task = w.taskFor(workflow.id, FIRST);
+      let entered = () => {};
+      const inFlight = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      let release = () => {};
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      // The first delivery stops inside its plan's run, while it holds the occurrence.
+      const slow = w.runnerOf({
+        async run(tenant, planId) {
+          entered();
+          await held;
+          return w.runtimeConductor.run(tenant, planId);
+        },
+      });
+      const first = w.deliver(task, { runner: slow });
+      await inFlight;
+      expect(await w.deliver(task)).toEqual({
+        status: 503,
+        body: { result: 'retry', code: 'in_progress' },
+      });
+      release();
+      expect(await first).toEqual({ status: 200, body: { result: 'planned' } });
+      expect(await w.deliver(task)).toMatchObject({ body: { result: 'not_this_occurrence' } });
+      await w.drive();
+      expect(await w.plansOf(workflow.id)).toHaveLength(1);
+      // Only the claim that ran queued the next task.
+      expect(
+        w.tasks.filter((t) => t.body.workflowId === workflow.id && t.body.occurrence === SECOND),
+      ).toHaveLength(1);
+    });
+
+    it('27. a time changed later the same day plans tomorrow, never a second plan that day', async () => {
+      const w = await world();
+      const { workflow } = await scheduled(w);
+      expect(await w.deliver(w.taskFor(workflow.id, FIRST))).toMatchObject({
+        body: { result: 'planned' },
+      });
+      await w.drive();
+      // At 10:00 in Lima, the run moves to 18:00 in Lima: tomorrow, not the same day.
+      w.at('2026-10-05T15:00:00.000Z');
+      const saved = await w.schedules.save(w.tenantA, workflow.id, {
+        recurrence: { frequency: 'daily', time: '18:00' },
+      });
+      expect(saved.nextRunAt).toBe('2026-10-06T23:00:00.000Z');
+      expect(w.tasks.some((t) => t.body.occurrence === '2026-10-05T23:00:00.000Z')).toBe(false);
+      expect(await w.deliver(w.taskFor(workflow.id, '2026-10-06T23:00:00.000Z'))).toMatchObject({
+        body: { result: 'planned' },
+      });
+      await w.drive();
+      expect((await w.plansOf(workflow.id)).map((p) => p.workflow?.occurrence).sort()).toEqual([
+        FIRST,
+        '2026-10-06T23:00:00.000Z',
+      ]);
+    });
+
+    it('28. a standing approval whose person lost a permission runs nothing, and the run says so', async () => {
+      const w = await world();
+      const { workflow } = await scheduled(w);
+      // Alice may no longer approve: the runner checks the standing permissions at the occurrence.
+      const rbac = createAuthorizationService();
+      const withoutApproval: Parameters<
+        typeof createWorkflowScheduleRunner
+      >[0]['standingAuthorization'] = {
+        authorize: (tenant, permission, resource) =>
+          permission === 'approval.approve'
+            ? { allowed: false, reason: 'permission_denied' }
+            : rbac.authorize(tenant, permission, resource),
+      };
+      expect(
+        await w.deliver(w.taskFor(workflow.id, FIRST), {
+          runner: w.runnerOf(w.runtimeConductor, withoutApproval),
+        }),
+      ).toEqual({ status: 200, body: { result: 'not_allowed' } });
+      expect(await w.plansOf(workflow.id)).toEqual([]);
+      expect(await w.scheduleOf(workflow.id)).toMatchObject({
+        nextRunAt: SECOND,
+        last: { occurrence: FIRST, outcome: 'not_allowed' },
+      });
     });
   },
 );
