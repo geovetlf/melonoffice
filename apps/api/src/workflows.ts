@@ -1,4 +1,9 @@
-import type { Workflow, WorkflowStatus, WorkflowVersion } from '@melonoffice/domain';
+import type {
+  Workflow,
+  WorkflowSchedule,
+  WorkflowStatus,
+  WorkflowVersion,
+} from '@melonoffice/domain';
 import { isExecutionError } from '@melonoffice/execution';
 import { withCorrelation } from '@melonoffice/observability';
 import { isPlanningError } from '@melonoffice/planning';
@@ -7,6 +12,7 @@ import {
   WORKFLOW_STATUSES,
   type WorkflowDraft,
   type WorkflowDrafter,
+  type WorkflowScheduleService,
   type WorkflowService,
 } from '@melonoffice/workflows';
 import type { Context, Hono } from 'hono';
@@ -27,9 +33,11 @@ export function registerWorkflowRoutes(
     readonly workflows: WorkflowService;
     /** GIA's workflow drafts (ADR-0171). Absent: the draft route answers 503. */
     readonly drafter?: WorkflowDrafter;
+    /** Workflow schedules (ADR-0185). Absent: the schedule routes answer 503. */
+    readonly schedules?: WorkflowScheduleService;
   },
 ): void {
-  const { workflows, drafter } = dependencies;
+  const { workflows, drafter, schedules } = dependencies;
   const base = '/v1/organizations/:organizationId/workflows';
 
   app.get(
@@ -229,6 +237,75 @@ export function registerWorkflowRoutes(
       }
     }),
   );
+
+  // A workflow's schedule (ADR-0185): reading it, a person's standing approval, switching off.
+  app.get(
+    `${base}/:workflowId/schedule`,
+    withPermission('workflow.read', dependencies, async (c, tenant) => {
+      if (schedules === undefined) return c.json({ error: 'schedules_not_configured' }, 503);
+      return answer(c, 200, async () => {
+        const schedule = await schedules.get(tenant, c.req.param('workflowId') ?? '');
+        return { schedule: schedule === undefined ? null : toScheduleView(schedule) };
+      });
+    }),
+  );
+
+  app.put(
+    `${base}/:workflowId/schedule`,
+    withPermission('workflow.manage', dependencies, async (c, tenant) => {
+      if (schedules === undefined) return c.json({ error: 'schedules_not_configured' }, 503);
+      const body = await bodyOf(c, ['recurrence'], ['recurrence']);
+      if (body === undefined) return invalid(c);
+      return answer(c, 200, async () => {
+        const schedule = await schedules.save(tenant, c.req.param('workflowId') ?? '', {
+          recurrence: body.recurrence,
+        });
+        withCorrelation(c.get('logger'), { workflowId: schedule.workflowId }).info(
+          'workflow scheduled',
+        );
+        return { schedule: toScheduleView(schedule) };
+      });
+    }),
+  );
+
+  app.post(
+    `${base}/:workflowId/schedule/off`,
+    withPermission('workflow.manage', dependencies, async (c, tenant) => {
+      if (schedules === undefined) return c.json({ error: 'schedules_not_configured' }, 503);
+      return answer(c, 200, async () => {
+        const schedule = await schedules.switchOff(tenant, c.req.param('workflowId') ?? '');
+        withCorrelation(c.get('logger'), { workflowId: schedule.workflowId }).info(
+          'workflow schedule off',
+        );
+        return { schedule: toScheduleView(schedule) };
+      });
+    }),
+  );
+}
+
+/** A schedule as the API shows it: no field beyond what the screen needs. */
+export function toScheduleView(s: WorkflowSchedule) {
+  return {
+    workflowId: s.workflowId,
+    status: s.status,
+    recurrence: s.recurrence,
+    timeZone: s.timeZone,
+    workflowVersion: s.workflowVersion,
+    confirmedBy: s.confirmedBy,
+    confirmedAt: s.confirmedAt,
+    nextRunAt: s.nextRunAt ?? null,
+    last:
+      s.last === undefined
+        ? null
+        : {
+            occurrence: s.last.occurrence,
+            outcome: s.last.outcome,
+            at: s.last.at,
+            planId: s.last.planId ?? null,
+          },
+    revision: s.revision,
+    updatedAt: s.updatedAt,
+  };
 }
 
 const isStatus = (value: unknown): value is WorkflowStatus =>
@@ -261,6 +338,10 @@ const STATUS = {
   workflow_not_valid: 409,
   assignee_unavailable: 409,
   workflow_plan_ended: 409,
+  // Schedules (ADR-0185); `detail` names the field of an invalid one.
+  schedule_not_found: 404,
+  invalid_schedule: 400,
+  workflow_version_changed: 409,
   // From the plan and execution services the workflow calls.
   execution_not_plannable: 409,
   specialist_not_eligible: 409,
@@ -277,7 +358,9 @@ function refusal(c: Context<AuthEnv>, error: unknown): Response {
       {
         error: code,
         // Which field, for an invalid workflow: a code, never user data.
-        ...((code === 'invalid_workflow' || code === 'workflow_not_valid') &&
+        ...((code === 'invalid_workflow' ||
+          code === 'workflow_not_valid' ||
+          code === 'invalid_schedule') &&
         coded.detail !== undefined
           ? { detail: coded.detail }
           : {}),

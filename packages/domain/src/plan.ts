@@ -265,6 +265,8 @@ export type PlanSource =
       readonly kind: 'workflow';
       readonly workflowId: WorkflowId;
       readonly workflowVersion: number;
+      /** The schedule's occurrence that made it (ADR-0185); absent when a person started it. */
+      readonly occurrence?: IsoTimestamp;
     };
 
 /** What was asked, in short. The full request stays where the execution's input points. */
@@ -319,6 +321,11 @@ export interface PlanDecision {
   readonly digest: string;
   readonly decidedBy: UserId;
   readonly decidedAt: IsoTimestamp;
+  /**
+   * `schedule`: the standing approval `decidedBy` gave when switching the workflow's schedule on
+   * (ADR-0185), applied by the runtime to one occurrence's plan. Absent: decided there and then.
+   */
+  readonly via?: 'schedule';
 }
 
 export interface Plan {
@@ -361,6 +368,8 @@ export interface Plan {
 export interface PlanWorkflowRef {
   readonly id: WorkflowId;
   readonly version: number;
+  /** The schedule's occurrence that made it (ADR-0185); absent when a person started it. */
+  readonly occurrence?: IsoTimestamp;
 }
 
 /** Where a workflow is in its life. Only `active` workflows can be instantiated. */
@@ -408,6 +417,57 @@ export interface Workflow {
    * a workflow nobody switched since it was created.
    */
   readonly lastStatusChange?: WorkflowStatusChangeRecord;
+}
+
+/**
+ * When a workflow runs by itself (ADR-0185), at a local time `HH:MM` in the business's time zone:
+ * every day, on some weekdays (1 Monday to 7 Sunday), or on one day of the month (1 to 28). Never
+ * more than once a day.
+ */
+export type WorkflowRecurrence =
+  | { readonly frequency: 'daily'; readonly time: string }
+  | { readonly frequency: 'weekly'; readonly time: string; readonly weekdays: readonly number[] }
+  | { readonly frequency: 'monthly'; readonly time: string; readonly dayOfMonth: number };
+
+/** What one occurrence of a schedule did (ADR-0185). `claimed`: taken, not finished yet. */
+export type WorkflowScheduleOutcome =
+  | 'claimed'
+  | 'planned'
+  | 'awaiting_person'
+  | 'refused'
+  | 'missed'
+  | 'workflow_not_active'
+  | 'version_changed'
+  | 'overlap'
+  | 'not_allowed';
+
+export interface WorkflowScheduleRun {
+  readonly occurrence: IsoTimestamp;
+  readonly outcome: WorkflowScheduleOutcome;
+  readonly at: IsoTimestamp;
+  /** The plan it made, when it made one. */
+  readonly planId?: PlanId;
+}
+
+/**
+ * A workflow's schedule (ADR-0185): a person's standing approval to run this workflow, at this
+ * version, on this recurrence. `nextRunAt` is set only while it is `on`.
+ */
+export interface WorkflowSchedule {
+  readonly workflowId: WorkflowId;
+  readonly organizationId: OrganizationId;
+  readonly status: 'on' | 'off';
+  readonly recurrence: WorkflowRecurrence;
+  /** The business's IANA time zone when the schedule was saved. */
+  readonly timeZone: string;
+  /** The workflow version the person confirmed. */
+  readonly workflowVersion: number;
+  readonly confirmedBy: UserId;
+  readonly confirmedAt: IsoTimestamp;
+  readonly nextRunAt?: IsoTimestamp;
+  readonly last?: WorkflowScheduleRun;
+  readonly revision: number;
+  readonly updatedAt: IsoTimestamp;
 }
 
 /** A person's switch of a workflow's status (ADR-0179). */

@@ -205,16 +205,15 @@ describe('worker architecture', () => {
       expect(dependency.startsWith('@melonoffice/') || allowed.includes(dependency)).toBe(true);
     }
     // Credits are here only for the AI Gateway's charge per model call (CV-6B, ADR-0043).
-    for (const forbidden of ['@melonoffice/workflows', '@melonoffice/billing']) {
-      expect(Object.keys(manifest.dependencies)).not.toContain(forbidden);
-    }
+    expect(Object.keys(manifest.dependencies)).not.toContain('@melonoffice/billing');
     // The worker never plans: from planning it takes only the plan conductor, which starts the
     // steps of a plan a person approved and closes it (ADR-0070), and the shape of the evaluator
     // that decides its condition steps through the Decision Engine (ADR-0075), and the reading of
     // which approvals a step waits for (ADR-0151), the shape of a plan's wake-up after a wait
     // (ADR-0152), and the creation of a failed step's next attempt, under its fixed id, only for
     // a step the plan already delegated (ADR-0153). No planner, validator, delegation of a new
-    // plan or plan decision is reachable from its code.
+    // plan or plan decision is reachable from its code, with one exception below: a workflow
+    // schedule's occurrence (ADR-0185).
     const PLAN_RUNS = [
       'PlanRepository',
       'createPlanConductor',
@@ -224,21 +223,46 @@ describe('worker architecture', () => {
       'isPlanId',
       'PlanWakeups',
       'createPlanStepAttempts',
+      // The conductor starts a plan its person's schedule approved, delegating it (ADR-0185).
+      'PlanConductor',
+      'createDelegation',
     ];
+    // The one exception (ADR-0185): a schedule's occurrence plans the workflow version a person
+    // confirmed, through the same validator as the API, and applies that person's standing
+    // approval. Only `workflow-schedules.ts` does it, and never with a planner or a model.
+    const SCHEDULE_PLANS = ['createPlanService', 'createPlanValidator'];
+    const SCHEDULE_WORKFLOWS = [
+      'createScheduleRunner',
+      'RUN_SCHEDULE_PATH',
+      'createWorkflowService',
+      'ScheduleRunner',
+      'WorkflowRepository',
+      'WorkflowScheduleRepository',
+    ];
+    const namesFrom = (file: string, pkg: string) =>
+      [
+        ...text(file).matchAll(
+          new RegExp(`import\\s*(?:type\\s*)?\\{([^}]*)\\}\\s*from '${pkg}'`, 'g'),
+        ),
+      ].flatMap(([, names]) =>
+        (names ?? '')
+          .split(',')
+          .map((n) => n.replace(/^\s*type\s+/, '').trim())
+          .filter((n) => n.length > 0),
+      );
     for (const file of sources) {
       // Providers are reached only through their @melonoffice adapter packages, never an SDK.
       expect(text(file)).not.toMatch(
         /from '[^']*(openai|anthropic|@google\/genai|generative-ai|vertexai|elevenlabs|@google-cloud\/tasks)[^']*'/i,
       );
-      expect(text(file)).not.toMatch(/from '@melonoffice\/workflows'/);
-      for (const [, names] of text(file).matchAll(
-        /import\s*(?:type\s*)?\{([^}]*)\}\s*from '@melonoffice\/planning'/g,
-      )) {
-        const imported = (names ?? '')
-          .split(',')
-          .map((n) => n.replace(/^\s*type\s+/, '').trim())
-          .filter((n) => n.length > 0);
-        for (const name of imported) expect(PLAN_RUNS).toContain(name);
+      const schedules = file === 'workflow-schedules.ts';
+      for (const name of namesFrom(file, '@melonoffice/workflows')) {
+        expect(schedules && SCHEDULE_WORKFLOWS.includes(name)).toBe(true);
+      }
+      expect(text(file)).not.toMatch(/import \* as \w+ from '@melonoffice\/workflows'/);
+      expect(text(file)).not.toMatch(/createPlanner|createWorkflowDrafter/);
+      for (const name of namesFrom(file, '@melonoffice/planning')) {
+        expect(PLAN_RUNS.includes(name) || (schedules && SCHEDULE_PLANS.includes(name))).toBe(true);
       }
       expect(text(file)).not.toMatch(/import \* as \w+ from '@melonoffice\/planning'/);
     }

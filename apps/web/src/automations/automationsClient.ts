@@ -237,13 +237,59 @@ export interface PlanView {
    */
   readonly budgetBlocks?: readonly PlanBudgetBlockView[];
   /** The workflow and version that made it (ADR-0180); null from the planner. An older API sends none. */
-  readonly workflow?: { readonly id: string; readonly version: number } | null;
-  /** Who approved or rejected it, and when (ADR-0181). An older API sends none. */
+  readonly workflow?: {
+    readonly id: string;
+    readonly version: number;
+    /** The occurrence of a schedule that made it (ADR-0185); absent when a person did. */
+    readonly occurrence?: string;
+  } | null;
+  /**
+   * Who approved or rejected it, and when (ADR-0181). `via` is `schedule` when the person's
+   * standing approval of a schedule decided it (ADR-0185). An older API sends none.
+   */
   readonly decision?: {
     readonly decision: 'approved' | 'rejected';
     readonly decidedBy: string;
     readonly decidedAt: string;
+    readonly via?: 'schedule';
   } | null;
+}
+
+/** How a schedule repeats, in the business's time zone (ADR-0185): the shapes the API checks. */
+export type WorkflowRecurrence =
+  | { readonly frequency: 'daily'; readonly time: string }
+  | { readonly frequency: 'weekly'; readonly time: string; readonly weekdays: readonly number[] }
+  | { readonly frequency: 'monthly'; readonly time: string; readonly dayOfMonth: number };
+
+/** What the last occurrence of a schedule did (ADR-0185). */
+export type ScheduleOutcome =
+  | 'claimed'
+  | 'planned'
+  | 'awaiting_person'
+  | 'refused'
+  | 'missed'
+  | 'workflow_not_active'
+  | 'version_changed'
+  | 'overlap'
+  | 'not_allowed';
+
+/** A workflow's standing schedule: how it repeats, its next run and what the last one did. */
+export interface WorkflowScheduleView {
+  readonly workflowId: string;
+  readonly status: 'on' | 'off';
+  readonly recurrence: WorkflowRecurrence;
+  readonly timeZone: string;
+  /** The version the person confirmed; a newer version needs the schedule confirmed again. */
+  readonly workflowVersion: number;
+  readonly confirmedAt: string;
+  readonly nextRunAt: string | null;
+  readonly last: {
+    readonly occurrence: string;
+    readonly outcome: ScheduleOutcome;
+    readonly at: string;
+    readonly planId: string | null;
+  } | null;
+  readonly revision: number;
 }
 
 export interface PlanBudgetBlockView {
@@ -577,6 +623,17 @@ export interface AutomationsClient {
     decision: 'approve' | 'reject',
     seen: { readonly version: number; readonly digest: string },
   ): Promise<PlanView>;
+  /**
+   * A workflow's schedule (ADR-0185), or null when it never repeated. Absent: no schedule is shown.
+   */
+  schedule?(workflowId: string): Promise<WorkflowScheduleView | null>;
+  /**
+   * Switches a workflow's schedule on or changes it: the person's standing approval of this
+   * version (`workflow.manage`, `plan.create`, `approval.approve`). Absent: none is offered.
+   */
+  saveSchedule?(workflowId: string, recurrence: WorkflowRecurrence): Promise<WorkflowScheduleView>;
+  /** Switches a workflow's schedule off: nothing runs until it is switched on again. */
+  switchOffSchedule?(workflowId: string): Promise<WorkflowScheduleView>;
 }
 
 /** The API refused or failed, with its code: the screen says what happened, never guesses. */
@@ -712,6 +769,24 @@ export function createAutomationsClient(
       });
       if (response.status === 422) throw new AutomationsError(422, 'unexpected');
       return (await response.json()) as PlanView;
+    },
+    async schedule(id) {
+      const body = (await (await call(`${workflow(id)}/schedule`)).json()) as {
+        schedule?: WorkflowScheduleView | null;
+      };
+      return body.schedule ?? null;
+    },
+    async saveSchedule(id, recurrence) {
+      const response = await call(`${workflow(id)}/schedule`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ recurrence }),
+      });
+      return ((await response.json()) as { schedule: WorkflowScheduleView }).schedule;
+    },
+    async switchOffSchedule(id) {
+      const response = await post(`${workflow(id)}/schedule/off`, {});
+      return ((await response.json()) as { schedule: WorkflowScheduleView }).schedule;
     },
   };
 }

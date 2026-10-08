@@ -47,6 +47,15 @@ export type ProposeOutcome =
       readonly detail?: string;
     };
 
+/** What a schedule's person approved once for every occurrence (ADR-0185). */
+export interface StandingApproval {
+  readonly workflowId: WorkflowId;
+  readonly workflowVersion: number;
+}
+
+/** The risks a standing approval covers (ADR-0185); above them a person decides each time. */
+const STANDING_RISKS: ReadonlySet<string> = new Set(['low', 'medium']);
+
 /** What the user saw when deciding: the exact version and its digest. */
 export interface PlanDecisionInput {
   readonly version: number;
@@ -92,6 +101,13 @@ export interface PlanService {
   /** Whether a tool may be a tool step here, by the validator's own rule (ADR-0168). */
   toolUse: PlanValidator['toolUse'];
   approve(tenant: TenantContext, id: string, seen: PlanDecisionInput): Promise<Plan>;
+  /**
+   * The runtime applies a person's standing approval to one occurrence's plan (ADR-0185): only a
+   * plan its own person's schedule made from this workflow and version, at version 1, with a risk
+   * of at most `medium`, and only while that person still holds `approval.approve`. Anything
+   * else is refused and the plan keeps waiting for a person.
+   */
+  approveScheduled(tenant: TenantContext, id: string, standing: StandingApproval): Promise<Plan>;
   reject(tenant: TenantContext, id: string, seen: PlanDecisionInput): Promise<Plan>;
   /** Server side only. `reason` is a stable code. */
   cancel(tenant: TenantContext, id: string, reason: string): Promise<Plan>;
@@ -99,7 +115,8 @@ export interface PlanService {
 
 export interface PlanServiceOptions {
   readonly repository: PlanRepository;
-  readonly executions: Pick<ExecutionService, 'get' | 'changeStatus'>;
+  readonly executions: Pick<ExecutionService, 'get' | 'changeStatus'> &
+    Partial<Pick<ExecutionService, 'runtimePlanChangeStatus'>>;
   readonly validator: PlanValidator;
   /** Only `findOrganization` is used, to refuse inactive organizations. */
   readonly organizations: Pick<TenancyStore, 'findOrganization'>;
@@ -183,6 +200,15 @@ export function createPlanService({
       },
       at,
     );
+
+  /** A planning execution's status, moved by a person, or by the runtime for a schedule. */
+  const move: ExecutionService['changeStatus'] = (tenant, id, change) => {
+    if (tenant.actor !== 'runtime') return executions.changeStatus(tenant, id, change);
+    if (executions.runtimePlanChangeStatus === undefined) {
+      throw new PlanningError('permission_denied', 'runtime_only');
+    }
+    return executions.runtimePlanChangeStatus(tenant, id, change);
+  };
 
   async function get(tenant: TenantContext, id: string): Promise<Plan> {
     const organizationId = await organizationOf(tenant);
@@ -368,8 +394,9 @@ export function createPlanService({
         ],
       });
       if (write.plan.status === 'approval_required') {
-        // The execution waits on a human; nothing moves until a user decides.
-        await executions.changeStatus(tenant, execution.id, {
+        // The execution waits on a human; nothing moves until a user decides, or a schedule's
+        // standing approval applies (ADR-0185).
+        await move(tenant, execution.id, {
           from: 'planning',
           to: 'waiting_approval',
         });
@@ -381,6 +408,72 @@ export function createPlanService({
       decide(tenant, id, seen, 'approved'),
     reject: (tenant: TenantContext, id: string, seen: PlanDecisionInput) =>
       decide(tenant, id, seen, 'rejected'),
+
+    async approveScheduled(tenant: TenantContext, id: string, standing: StandingApproval) {
+      const organizationId = await organizationOf(tenant);
+      const plan = await repository.find(organizationId, idOf(id));
+      if (plan === undefined) throw new PlanningError('plan_not_found');
+      const version = await repository.findVersion(organizationId, plan.id, plan.version);
+      const refuse = async (reason: string): Promise<never> => {
+        await audit.record({
+          action: 'plan.approved',
+          result: 'denied',
+          actor: actorOf(tenant),
+          organizationId,
+          target: { type: 'plan', id: plan.id },
+          reason,
+          ...(requestId === undefined ? {} : { requestId }),
+          source: 'api',
+        });
+        throw new PlanningError('permission_denied', reason);
+      };
+      if (tenant.actor !== 'runtime') return refuse('runtime_only');
+      if (!authorization.authorize(tenant, 'approval.approve', { organizationId }).allowed) {
+        return refuse('permission_denied');
+      }
+      const source = version?.source;
+      if (
+        version === undefined ||
+        version.version !== 1 ||
+        source?.kind !== 'workflow' ||
+        source.occurrence === undefined ||
+        source.workflowId !== standing.workflowId ||
+        source.workflowVersion !== standing.workflowVersion ||
+        plan.createdBy !== tenant.userId
+      ) {
+        return refuse('not_standing');
+      }
+      if (!STANDING_RISKS.has(version.riskLevel)) return refuse('risk_needs_person');
+      const at = now();
+      return repository.update(organizationId, plan.id, (current, latest) => {
+        const next = decidePlan(
+          current,
+          latest,
+          'approved',
+          { version: version.version, digest: version.digest },
+          tenant.userId,
+          at.toISOString() as Plan['updatedAt'],
+          'schedule',
+        );
+        return {
+          plan: next,
+          events: [
+            eventOf(
+              tenant,
+              organizationId,
+              {
+                action: 'plan.approved',
+                result: 'success',
+                target: { type: 'plan', id: next.id },
+                transition: { from: current.status, to: next.status },
+                reason: 'schedule',
+              },
+              at,
+            ),
+          ],
+        };
+      });
+    },
 
     async cancel(tenant: TenantContext, id: string, reason: string) {
       const organizationId = await organizationOf(tenant);

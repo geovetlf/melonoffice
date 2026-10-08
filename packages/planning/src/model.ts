@@ -113,6 +113,10 @@ export function newPlan(request: NewPlan, by: UserId, at: IsoTimestamp): PlanWri
           workflow: Object.freeze({
             id: request.source.workflowId,
             version: request.source.workflowVersion,
+            // The schedule's occurrence that made it (ADR-0185).
+            ...(request.source.occurrence === undefined
+              ? {}
+              : { occurrence: request.source.occurrence }),
           }),
         }
       : {}),
@@ -159,6 +163,7 @@ export function decidePlan(
   seen: { readonly version: number; readonly digest: string },
   by: UserId,
   at: IsoTimestamp,
+  via?: PlanDecision['via'],
 ): Plan {
   if (plan.status !== 'approval_required') {
     throw new PlanningError(
@@ -182,6 +187,7 @@ export function decidePlan(
       digest: current.digest,
       decidedBy: by,
       decidedAt: next.updatedAt,
+      ...(via === undefined ? {} : { via }),
     }),
   });
 }

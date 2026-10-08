@@ -1,5 +1,5 @@
 import { ROLES } from '@melonoffice/rbac';
-import type { Plan, Specialist, WorkflowId } from '@melonoffice/domain';
+import type { IsoTimestamp, Plan, Specialist, WorkflowId } from '@melonoffice/domain';
 import { describe, expect, it } from 'vitest';
 import { isPlanningError, PlanningError } from './errors.js';
 import { canChangePlanStatus, isPlanTerminal, PLAN_STATUSES } from './lifecycle.js';
@@ -928,6 +928,92 @@ describe('plans', () => {
         ),
       ).toBe('plan_concurrency_conflict');
     }
+  });
+
+  it('ADR-0185: a standing approval decides only its own schedule’s occurrence, up to medium risk', async () => {
+    const w = await setup();
+    const workflowId = '11111111-1111-4111-8111-111111111111' as WorkflowId;
+    const occurrence = '2026-10-05T14:00:00.000Z' as IsoTimestamp;
+    async function planned(risk?: 'high', occurrenceOf: IsoTimestamp | null = occurrence) {
+      const execution = await w.executions.create(w.tenantA, {
+        mode: 'plan',
+        input: { type: 'task', id: 'task-1' },
+        specialistId: w.owner.identity.id,
+        specialistVersion: w.owner.version,
+        departmentId: w.owner.configuration.departmentId,
+        workflowId,
+        versionSnapshot: {
+          schemaVersion: 1,
+          components: [
+            { kind: 'specialist', id: w.owner.identity.id, version: String(w.owner.version) },
+            { kind: 'workflow', id: workflowId, version: '3' },
+          ],
+        },
+      });
+      await w.executions.changeStatus(w.tenantA, execution.id, { from: 'pending', to: 'planning' });
+      const outcome = await w.plans.propose(w.tenantA, {
+        executionId: execution.id,
+        proposal: proposal(
+          [specialistStep('research', w.researcher)],
+          risk === undefined ? {} : { riskLevel: risk },
+        ),
+        source: {
+          kind: 'workflow',
+          workflowId,
+          workflowVersion: 3,
+          ...(occurrenceOf === null ? {} : { occurrence: occurrenceOf }),
+        },
+      });
+      if (outcome.status !== 'planned') throw new Error(outcome.status);
+      return outcome.plan;
+    }
+    const standing = { workflowId, workflowVersion: 3 };
+
+    const plan = await planned();
+    expect(plan.workflow).toEqual({ id: workflowId, version: 3, occurrence });
+    // Never a person's own decision, nor GIA's: only the runtime of the plan's person.
+    expect(await codeOf(w.plans.approveScheduled(w.tenantA, plan.id, standing))).toBe(
+      'permission_denied',
+    );
+    expect(await codeOf(w.plans.approveScheduled(w.giaA, plan.id, standing))).toBe(
+      'permission_denied',
+    );
+    // Another workflow or version is not what the person approved.
+    for (const other of [
+      { workflowId: '22222222-2222-4222-8222-222222222222' as WorkflowId, workflowVersion: 3 },
+      { workflowId, workflowVersion: 4 },
+    ]) {
+      expect(await codeOf(w.plans.approveScheduled(w.runtimeA, plan.id, other))).toBe(
+        'permission_denied',
+      );
+    }
+    const approved = await w.plans.approveScheduled(w.runtimeA, plan.id, standing);
+    expect(approved.status).toBe('approved');
+    expect(approved.decision).toMatchObject({ decidedBy: ALICE, via: 'schedule' });
+    // Decided once: again, it is a change someone else already made.
+    expect(await codeOf(w.plans.approveScheduled(w.runtimeA, plan.id, standing))).toBe(
+      'plan_concurrency_conflict',
+    );
+
+    // A plan a person made by hand, or one of high risk, waits for a person.
+    const byHand = await planned(undefined, null);
+    const risky = await planned('high');
+    for (const [p, reason] of [
+      [byHand, 'not_standing'],
+      [risky, 'risk_needs_person'],
+    ] as const) {
+      expect(await codeOf(w.plans.approveScheduled(w.runtimeA, p.id, standing))).toBe(
+        'permission_denied',
+      );
+      expect((await w.plans.get(w.tenantA, p.id)).status).toBe('approval_required');
+      expect(
+        w.events('plan.approved').some((e) => e.target?.id === p.id && e.reason === reason),
+      ).toBe(true);
+    }
+    // Another organization's runtime finds nothing.
+    expect(await codeOf(w.plans.approveScheduled(w.tenantB, plan.id, standing))).toBe(
+      'plan_not_found',
+    );
   });
 
   it('refuses a stored version whose content no longer matches its digest', async () => {

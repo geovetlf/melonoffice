@@ -319,6 +319,9 @@ importers:
       '@melonoffice/tools':
         specifier: workspace:*
         version: link:../../packages/tools
+      '@melonoffice/workflows':
+        specifier: workspace:*
+        version: link:../../packages/workflows
       hono:
         specifier: 4.13.9
         version: 4.13.9
@@ -326,9 +329,6 @@ importers:
       '@melonoffice/config':
         specifier: workspace:*
         version: link:../../packages/config
-      '@melonoffice/workflows':
-        specifier: workspace:*
-        version: link:../../packages/workflows
       jose:
         specifier: 6.2.12
         version: 6.2.12
@@ -1518,6 +1518,9 @@ importers:
       '@melonoffice/audit':
         specifier: workspace:*
         version: link:../audit
+      '@melonoffice/conversations':
+        specifier: workspace:*
+        version: link:../conversations
       '@melonoffice/departments':
         specifier: workspace:*
         version: link:../departments

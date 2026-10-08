@@ -69,6 +69,8 @@ import {
   FirestoreSpecialistRepository,
   FirestoreSweepLedger,
   FirestoreTenancyStore,
+  FirestoreWorkflowRepository,
+  FirestoreWorkflowScheduleRepository,
 } from '@melonoffice/firestore';
 import {
   createIntegrationEngine,
@@ -105,6 +107,7 @@ import { createJobHandler } from './handler.js';
 import { createWorkerRuntime } from './runtime.js';
 import { createPlanWakeHandler, createPlanWakeups, RUN_PLAN_WAKE_PATH } from './plan-wakeups.js';
 import { createExecutionSweeper, RUN_SWEEP_PATH } from './sweeps.js';
+import { createWorkflowScheduleRunner, RUN_SCHEDULE_PATH } from './workflow-schedules.js';
 
 const config = loadConfig(process.env);
 const logger = createLogger({ service: SERVICE_NAME, level: config.logLevel });
@@ -312,6 +315,7 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
     jobs: jobService,
     runtime: engine,
     advancePlan,
+    conductor: planConductor,
   } = createWorkerRuntime({
     stores,
     environment: runtime.environment,
@@ -435,6 +439,28 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
     logger: logger.child({ component: 'forecasting' }),
     limits: forecasting.limits,
   });
+  // Workflow schedules (ADR-0185): one task per occurrence on the same queue and invoker, run as
+  // the runtime of the person who switched the schedule on; the sweep recovers a lost one.
+  const schedules =
+    planConductor === undefined
+      ? undefined
+      : createWorkflowScheduleRunner({
+          stores,
+          plans,
+          workflows: new FirestoreWorkflowRepository(firestore),
+          schedules: new FirestoreWorkflowScheduleRepository(firestore),
+          tools: createToolRegistry(TOOL_CATALOGUE),
+          environment: runtime.environment,
+          conductor: planConductor,
+          scheduler: createCloudTasksScheduler({
+            queue: runtime.queue,
+            targetUrl: `${runtime.workerUrl}${RUN_SCHEDULE_PATH}`,
+            audience: runtime.workerUrl,
+            invokerEmail: runtime.invokerEmail,
+            dispatchDeadlineSeconds: Math.ceil(runtime.leaseMs / 1000),
+          }),
+          logger: logger.child({ component: 'workflow-schedules' }),
+        });
   // The automatic sweep of abandoned agent work (ADR-0121): a task every 3 hours on the same
   // queue, behind the same invoker. Each run queues the next; every start queues it if missing.
   const sweeper = createExecutionSweeper({
@@ -460,11 +486,13 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
       invokerEmail: runtime.invokerEmail,
       dispatchDeadlineSeconds: Math.ceil(runtime.leaseMs / 1000),
     }),
+    ...(schedules === undefined ? {} : { schedules }),
     logger: logger.child({ component: 'sweeps' }),
   });
   void sweeper.ensureNext();
   return {
     sweeps: sweeper,
+    ...(schedules === undefined ? {} : { schedules }),
     handler: createJobHandler({
       jobs: jobService,
       runtime: engine,

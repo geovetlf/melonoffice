@@ -72,7 +72,13 @@ import {
   type AgentMemoryRepository,
   type AgentTaskRepository,
 } from '@melonoffice/agents';
-import { InMemoryWorkflowRepository, type WorkflowRepository } from '@melonoffice/workflows';
+import {
+  InMemoryWorkflowRepository,
+  InMemoryWorkflowScheduleRepository,
+  type ScheduleTask,
+  type WorkflowRepository,
+  type WorkflowScheduleRepository,
+} from '@melonoffice/workflows';
 import type {
   BillingAccount,
   ChannelConnection,
@@ -137,6 +143,7 @@ import {
   FirestoreAgentTaskRepository,
   PLAN_VERSIONS,
   FirestoreWorkflowRepository,
+  FirestoreWorkflowScheduleRepository,
   FirestoreTenancyStore,
   FirestoreBrandStore,
   FirestoreRequestRateLimiter,
@@ -227,6 +234,8 @@ export interface Stores {
   readonly aiUsage: AIUsageStore;
   readonly plans: PlanRepository;
   readonly workflows: WorkflowRepository;
+  /** Workflow schedules (ADR-0185). */
+  readonly workflowSchedules: WorkflowScheduleRepository;
   /** Changes a stored plan version's label behind the digest's back, as corrupted data would. */
   readonly tamperPlanVersion: (
     organizationId: OrganizationId,
@@ -318,6 +327,7 @@ function memoryStores(): Stores {
     aiUsage: new InMemoryAIUsageStore(),
     plans,
     workflows: new InMemoryWorkflowRepository(events),
+    workflowSchedules: new InMemoryWorkflowScheduleRepository(events),
     async tamperPlanVersion(organizationId, planId, version) {
       // Memory stores what it is given; the repository checks the digest when it reads.
       const found = await plans.findVersion(organizationId, planId, version);
@@ -394,6 +404,7 @@ function firestoreStores(): Stores {
     aiUsage: new FirestoreAIUsageStore(db),
     plans: new FirestorePlanRepository(db),
     workflows: new FirestoreWorkflowRepository(db),
+    workflowSchedules: new FirestoreWorkflowScheduleRepository(db),
     async tamperPlanVersion(organizationId, planId, version) {
       const doc = db.collection(PLAN_VERSIONS).doc(`${planId}_${version}`);
       const stored = await doc.get();
@@ -530,6 +541,8 @@ export function setupApp(
     followUpScheduler === undefined
       ? { schedule: async (task: FollowUpTask, at: Date) => void scheduled.push({ task, at }) }
       : followUpScheduler;
+  // Stands in for Cloud Tasks: every queued schedule occurrence is recorded (ADR-0185).
+  const occurrences: { readonly task: ScheduleTask; readonly at: Date }[] = [];
   const app = createApp({
     logger,
     version: 'test',
@@ -553,6 +566,13 @@ export function setupApp(
     plans: stores.plans,
     ...(runPlans ? { planRuntime: kickoff } : {}),
     workflows: stores.workflows,
+    workflowSchedules: {
+      repository: stores.workflowSchedules,
+      scheduler: {
+        schedule: async (task: object, at: Date) =>
+          void occurrences.push({ task: task as ScheduleTask, at }),
+      },
+    },
     audit: stores.audit,
     conversations: {
       repository: stores.conversations,
@@ -597,7 +617,19 @@ export function setupApp(
         userId: string;
       }
     ).userId;
-  return { app, lines, as, register, meta, agentOutputs, scheduled, kicked, files, ...stores };
+  return {
+    app,
+    lines,
+    as,
+    register,
+    meta,
+    agentOutputs,
+    scheduled,
+    occurrences,
+    kicked,
+    files,
+    ...stores,
+  };
 }
 
 type Call = (

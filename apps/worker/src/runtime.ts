@@ -32,10 +32,12 @@ import { createJobService, type JobRepository, type JobService } from '@melonoff
 import type { EventBus } from '@melonoffice/events';
 import type { Logger } from '@melonoffice/observability';
 import {
+  createDelegation,
   createPlanConductor,
   createPlanStepAttempts,
   planStepOf,
   type ConditionEvaluator,
+  type PlanConductor,
   type PlanRepository,
   type PlanWakeups,
 } from '@melonoffice/planning';
@@ -157,6 +159,11 @@ export function createWorkerRuntime(options: WorkerRuntimeOptions): {
   readonly runtime: Runtime;
   /** Advances one plan as its person's runtime (ADR-0070); absent without plans. */
   readonly advancePlan?: (tenant: TenantContext, planId: PlanId) => Promise<unknown>;
+  /**
+   * Starts an approved plan as its person's runtime: only a plan their own schedule approved
+   * (ADR-0185); absent without plans.
+   */
+  readonly conductor?: Pick<PlanConductor, 'run'>;
 } {
   const { stores, environment, leaseMs, tools, ai, credits, logger, now } = options;
   const authorization = createAuthorizationService();
@@ -245,6 +252,54 @@ export function createWorkerRuntime(options: WorkerRuntimeOptions): {
   // The plan conductor (ADR-0070) starts a plan's next steps through this same runtime, as the
   // runtime of the person the plan runs for: their delegated start, then the step's first node.
   const plans = options.plans;
+  /** The plan conductor (ADR-0070) over this runtime, for one correlation id. */
+  const conductorFor = (plans: PlanRepository, requestId: string) => {
+    const executions = executionsFor(requestId);
+    return createPlanConductor({
+      plans,
+      executions,
+      // A schedule's plan is delegated by its person's runtime (ADR-0185).
+      delegation: createDelegation({
+        plans,
+        executions,
+        specialists,
+        organizations: stores.tenancy,
+        authorization,
+      }),
+      starter: {
+        async start(runtimeTenant, executionId) {
+          await executions.runtimeStart(runtimeTenant, executionId);
+          await runtime.kickoff(runtimeTenant, executionId);
+        },
+      },
+      ...(options.conditions === undefined ? {} : { conditions: options.conditions }),
+      ...(options.wakeups === undefined ? {} : { wakeups: options.wakeups }),
+      // What its runs used, against the budget a person approved (ADR-0163).
+      ...(options.planOutputs === undefined
+        ? {}
+        : {
+            spending: createPlanSpending({ executions, outputs: options.planOutputs }),
+          }),
+      // A step that failed for a passing reason runs again, as its plan allows (ADR-0153).
+      attempts: createPlanStepAttempts({ executions, specialists }),
+      // A step marked "ask me before this step" waits for a person (ADR-0146).
+      approvals: createPlanStepApprovals(
+        createApprovalService({
+          repository: stores.approvals,
+          organizations: stores.tenancy,
+          authorization,
+          audit,
+          requestId,
+          ...clock,
+        }),
+        now,
+        tools.registry,
+      ),
+      requestId,
+      ...clock,
+      ...(logger === undefined ? {} : { logger: logger.child({ component: 'plans' }) }),
+    });
+  };
   /**
    * Advances one plan as the runtime of the person it runs for, and tells its end once. Called
    * when one of its steps ends, and by the sweep for a step that waits for a person (ADR-0146).
@@ -258,45 +313,9 @@ export function createWorkerRuntime(options: WorkerRuntimeOptions): {
           planId: PlanId,
           requestId: string,
         ) => {
-          const executions = executionsFor(requestId);
           const before =
             options.events === undefined ? undefined : await plans.find(organizationId, planId);
-          const after = await createPlanConductor({
-            plans,
-            executions,
-            starter: {
-              async start(runtimeTenant, executionId) {
-                await executions.runtimeStart(runtimeTenant, executionId);
-                await runtime.kickoff(runtimeTenant, executionId);
-              },
-            },
-            ...(options.conditions === undefined ? {} : { conditions: options.conditions }),
-            ...(options.wakeups === undefined ? {} : { wakeups: options.wakeups }),
-            // What its runs used, against the budget a person approved (ADR-0163).
-            ...(options.planOutputs === undefined
-              ? {}
-              : {
-                  spending: createPlanSpending({ executions, outputs: options.planOutputs }),
-                }),
-            // A step that failed for a passing reason runs again, as its plan allows (ADR-0153).
-            attempts: createPlanStepAttempts({ executions, specialists }),
-            // A step marked "ask me before this step" waits for a person (ADR-0146).
-            approvals: createPlanStepApprovals(
-              createApprovalService({
-                repository: stores.approvals,
-                organizations: stores.tenancy,
-                authorization,
-                audit,
-                requestId,
-                ...clock,
-              }),
-              now,
-              tools.registry,
-            ),
-            requestId,
-            ...clock,
-            ...(logger === undefined ? {} : { logger: logger.child({ component: 'plans' }) }),
-          }).advance(tenant, planId);
+          const after = await conductorFor(plans, requestId).advance(tenant, planId);
           // Told once, by the step end that closed the plan (the event's key repeats it at most).
           if (
             options.events === undefined ||
@@ -373,6 +392,14 @@ export function createWorkerRuntime(options: WorkerRuntimeOptions): {
       : {
           advancePlan: (tenant: TenantContext, planId: PlanId) =>
             advancePlan(tenant, tenant.organizationId, planId, `plan:${planId}`),
+        }),
+    ...(plans === undefined
+      ? {}
+      : {
+          conductor: {
+            run: (tenant: TenantContext, planId: string) =>
+              conductorFor(plans, `plan:${planId}`).run(tenant, planId),
+          },
         }),
   });
 }

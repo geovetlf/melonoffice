@@ -115,7 +115,22 @@ export interface WorkflowService {
     id: string,
     input: { requestKey: string },
   ): Promise<WorkflowPlanOutcome>;
+  /**
+   * One occurrence of the workflow's schedule (ADR-0185), planned by the runtime of the person
+   * who confirmed it, on exactly the version they confirmed: `workflow_version_changed` when the
+   * workflow has moved on. Idempotent by occurrence, like `plan` by its key. The plan waits for
+   * a decision; the schedule's standing approval is the caller's to apply.
+   */
+  planOccurrence(
+    tenant: TenantContext,
+    id: string,
+    input: { occurrence: IsoTimestamp; workflowVersion: number },
+  ): Promise<WorkflowPlanOutcome>;
 }
+
+/** The request key of a schedule's occurrence: `schedule-20261008t1430`, one per minute. */
+export const occurrenceKey = (occurrence: IsoTimestamp): string =>
+  `schedule-${occurrence.slice(0, 4)}${occurrence.slice(5, 7)}${occurrence.slice(8, 10)}t${occurrence.slice(11, 13)}${occurrence.slice(14, 16)}`;
 
 /** What a draft would give if saved and planned now (ADR-0168). Codes only, never user text. */
 export type WorkflowCheck =
@@ -156,7 +171,8 @@ export interface WorkflowServiceOptions {
   readonly repository: WorkflowRepository;
   readonly plans: Pick<PlanService, 'propose' | 'check' | 'toolUse' | 'get' | 'getVersion'>;
   /** Creates and moves the planning execution of `plan`. */
-  readonly executions: Pick<ExecutionService, 'create' | 'get' | 'changeStatus'>;
+  readonly executions: Pick<ExecutionService, 'create' | 'get' | 'changeStatus'> &
+    Partial<Pick<ExecutionService, 'runtimePlanChangeStatus'>>;
   readonly specialists: Pick<SpecialistService, 'list' | 'eligibility'>;
   readonly departments: Pick<DepartmentRepository, 'find'>;
   /** Only `findOrganization` is used, to refuse inactive organizations. */
@@ -323,11 +339,17 @@ export function createWorkflowService({
     version: WorkflowVersion,
     steps: Record<string, unknown>[],
     executionId: string,
+    occurrence?: IsoTimestamp,
   ): Promise<ProposeOutcome> =>
     plans.propose(tenant, {
       executionId,
       proposal: { summary: version.name, objective: version.name, steps },
-      source: { kind: 'workflow', workflowId: workflow.id, workflowVersion: version.version },
+      source: {
+        kind: 'workflow',
+        workflowId: workflow.id,
+        workflowVersion: version.version,
+        ...(occurrence === undefined ? {} : { occurrence }),
+      },
     });
 
   async function executionOf(tenant: TenantContext, id: ExecutionId) {
@@ -347,12 +369,16 @@ export function createWorkflowService({
     to: 'planning' | 'failed',
     failure?: { code: string; ref: { type: string; id: string } },
   ) {
+    const change = { from, to, ...(failure === undefined ? {} : { failure }) };
     try {
-      return await executions.changeStatus(tenant, id, {
-        from,
-        to,
-        ...(failure === undefined ? {} : { failure }),
-      });
+      // A schedule's occurrence plans as the runtime of its person (ADR-0185).
+      if (tenant.actor === 'runtime') {
+        if (executions.runtimePlanChangeStatus === undefined) {
+          throw new WorkflowError('permission_denied');
+        }
+        return await executions.runtimePlanChangeStatus(tenant, id, change);
+      }
+      return await executions.changeStatus(tenant, id, change);
     } catch (error) {
       if (!isExecutionError(error)) throw error;
       const fresh = await executionOf(tenant, id);
@@ -547,7 +573,30 @@ export function createWorkflowService({
     },
 
     async plan(tenant: TenantContext, id: string, input: { requestKey: string }) {
+      // Planning a workflow is a person's request: never GIA's, never the runtime's.
+      if (tenant.actor !== 'user') throw new WorkflowError('permission_denied');
+      // A schedule's keys are its own (ADR-0185): a person's request never takes one.
+      if (typeof input.requestKey === 'string' && input.requestKey.startsWith('schedule-')) {
+        throw new WorkflowError('invalid_workflow', 'requestKey');
+      }
       return planOf(tenant, id, input);
+    },
+
+    async planOccurrence(
+      tenant: TenantContext,
+      id: string,
+      input: { occurrence: IsoTimestamp; workflowVersion: number },
+    ) {
+      if (tenant.actor !== 'runtime') throw new WorkflowError('permission_denied');
+      if (typeof input.occurrence !== 'string' || Number.isNaN(Date.parse(input.occurrence))) {
+        throw new WorkflowError('invalid_workflow', 'occurrence');
+      }
+      return planOf(
+        tenant,
+        id,
+        { requestKey: occurrenceKey(input.occurrence) },
+        { occurrence: input.occurrence, workflowVersion: input.workflowVersion },
+      );
     },
   });
 
@@ -606,14 +655,16 @@ export function createWorkflowService({
     tenant: TenantContext,
     id: string,
     input: { requestKey: string },
+    scheduled?: { occurrence: IsoTimestamp; workflowVersion: number },
   ): Promise<WorkflowPlanOutcome> {
     const organizationId = await organizationOf(tenant, 'plan.create');
-    // Planning a workflow is a person's request: never GIA's, never the runtime's.
-    if (tenant.actor !== 'user') throw new WorkflowError('permission_denied');
     if (typeof input.requestKey !== 'string' || !REQUEST_KEY.test(input.requestKey)) {
       throw new WorkflowError('invalid_workflow', 'requestKey');
     }
     const { workflow, version } = await activeVersionOf(organizationId, id);
+    if (scheduled !== undefined && version.version !== scheduled.workflowVersion) {
+      throw new WorkflowError('workflow_version_changed');
+    }
     const key = `workflow-plan:${workflow.id}:${version.version}:${input.requestKey}`;
     const executionId = executionIdFor(organizationId, key);
 
@@ -661,7 +712,14 @@ export function createWorkflowService({
 
     let outcome: ProposeOutcome;
     try {
-      outcome = await proposeOn(tenant, workflow, version, steps, executionId);
+      outcome = await proposeOn(
+        tenant,
+        workflow,
+        version,
+        steps,
+        executionId,
+        scheduled?.occurrence,
+      );
     } catch (error) {
       // A repeat stored the plan first: that one is the answer.
       const fresh = await executionOf(tenant, executionId);

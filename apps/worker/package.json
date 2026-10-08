@@ -45,12 +45,12 @@
     "@melonoffice/specialists": "workspace:*",
     "@melonoffice/tenancy": "workspace:*",
     "@melonoffice/tools": "workspace:*",
+    "@melonoffice/workflows": "workspace:*",
     "hono": "4.13.9"
   },
   "devDependencies": {
     "@melonoffice/config": "workspace:*",
     "@melonoffice/credits": "workspace:*",
-    "@melonoffice/workflows": "workspace:*",
     "jose": "6.2.12"
   }
 }

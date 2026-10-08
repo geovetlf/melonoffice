@@ -1365,6 +1365,103 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
       const planned = await t.post('token-alice', `/workflows/${id}/plans`, { requestKey: 'r' });
       expect(planned.status).toBe(403);
     });
+
+    it('ADR-0185: a person schedules a workflow, sees it, and switches it off; nobody else can', async () => {
+      const t = await setup();
+      const id = await activeWorkflow(t, [researchStep]);
+      const put = (token: string, org: string, body: unknown) =>
+        t.app.request(
+          `/v1/organizations/${org}/workflows/${id}/schedule`,
+          t.as(token, {
+            method: 'PUT',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(body),
+          }),
+        );
+      expect(await (await t.get('token-alice', `/workflows/${id}/schedule`)).json()).toEqual({
+        schedule: null,
+      });
+      const daily = { frequency: 'daily', time: '09:00' };
+      const saved = await put('token-alice', t.orgA, { recurrence: daily });
+      expect(saved.status).toBe(200);
+      const { schedule } = (await saved.json()) as { schedule: Record<string, unknown> };
+      expect(schedule).toMatchObject({
+        workflowId: id,
+        status: 'on',
+        recurrence: daily,
+        timeZone: 'America/Lima',
+        workflowVersion: 1,
+        last: null,
+        revision: 1,
+      });
+      expect(typeof schedule.nextRunAt).toBe('string');
+      // Its first occurrence was queued for the worker.
+      expect(t.occurrences.map((o) => o.task)).toEqual([
+        { organizationId: t.orgA, workflowId: id, occurrence: schedule.nextRunAt },
+      ]);
+      expect(
+        (
+          (await (await t.get('token-alice', `/workflows/${id}/schedule`)).json()) as {
+            schedule: unknown;
+          }
+        ).schedule,
+      ).toEqual(schedule);
+
+      // Exact bodies and recurrences only.
+      for (const body of [
+        {},
+        { recurrence: daily, extra: true },
+        { recurrence: { frequency: 'hourly', time: '09:00' } },
+      ]) {
+        expect((await put('token-alice', t.orgA, body)).status).toBe(400);
+      }
+      expect(
+        await (
+          await put('token-alice', t.orgA, { recurrence: { frequency: 'daily', time: '9' } })
+        ).json(),
+      ).toEqual({ error: 'invalid_schedule', detail: 'time' });
+      // Another organization sees nothing and changes nothing.
+      expect((await put('token-bob', t.orgB, { recurrence: daily })).status).toBe(404);
+      const fromB = await t.app.request(
+        `/v1/organizations/${t.orgB}/workflows/${id}/schedule/off`,
+        t.as('token-bob', { method: 'POST' }),
+      );
+      expect(fromB.status).toBe(404);
+
+      const off = await t.post('token-alice', `/workflows/${id}/schedule/off`);
+      expect(off.status).toBe(200);
+      expect(((await off.json()) as { schedule: unknown }).schedule).toMatchObject({
+        status: 'off',
+        nextRunAt: null,
+        revision: 2,
+      });
+    });
+
+    it('ADR-0185: scheduling needs workflow.manage, plan.create and approval.approve', async () => {
+      for (const missing of ['workflow.manage', 'plan.create', 'approval.approve']) {
+        const t = await setup({ ...ROLES, owner: ROLES.owner.filter((p) => p !== missing) });
+        // Without workflow.manage the route refuses before reading any workflow.
+        let workflowId = '33333333-3333-4333-8333-333333333333';
+        if (missing !== 'workflow.manage') {
+          const created = await t.workflows.create(t.tenant, {
+            name: 'Study',
+            steps: [researchStep],
+          });
+          // A draft is enough: the permission is checked before the workflow's status.
+          workflowId = created.id;
+        }
+        const response = await t.app.request(
+          `/v1/organizations/${t.orgA}/workflows/${workflowId}/schedule`,
+          t.as('token-alice', {
+            method: 'PUT',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ recurrence: { frequency: 'daily', time: '09:00' } }),
+          }),
+        );
+        expect(response.status).toBe(403);
+        expect(t.occurrences).toEqual([]);
+      }
+    });
   });
 
   describe('ADR-0146: a step that asks a person before it runs', () => {
