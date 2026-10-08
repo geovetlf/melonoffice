@@ -834,11 +834,15 @@ describe.each(STORES)(
     });
 
     it('4. a write that timed out is never run again; running the workflow again reaches the same follow-up', async () => {
-      const w = await world({ timeoutMs: 50 });
+      // The gate gives up after 2 s, and the service answers 4 s after it wrote: a late answer by
+      // construction. The margins are wide because the emulator's latency varies on a loaded runner.
+      const w = await world({ timeoutMs: 2000 });
       // The service writes, then answers too late: whether it wrote is unknown to the gate.
+      let answered: Promise<void> = Promise.resolve();
       w.setHook(async (real, tenant, input) => {
         const result = await real(tenant, input);
-        await new Promise((resolve) => setTimeout(resolve, 200));
+        answered = new Promise((resolve) => setTimeout(resolve, 4000));
+        await answered;
         return result;
       });
       const first = await runToEnd(w);
@@ -855,6 +859,8 @@ describe.each(STORES)(
       );
       expect(requested).toHaveLength(1);
       expect(await w.scheduled()).toHaveLength(1);
+      // The late answer has arrived before Alice runs the workflow again.
+      await answered;
 
       // Alice stops that plan and runs the workflow again the same day: the same follow-up.
       await w.executions.cancel(w.tenantA, first.executionId, 'director_request');

@@ -1200,17 +1200,19 @@ describe.each(STORES)(
         body: { result: 'early' },
       });
       expect(w.tasks.length).toBe(before + 1);
-      // Ten days of deliveries and sweeps: one plan per occurrence, one occurrence per day.
-      for (let day = 0; day < 10; day += 1) {
+      // Three days of deliveries and sweeps: one plan per occurrence, one occurrence per day. Each day
+      // is a full plan run on the emulator (about 3 s), so the case stays well inside the 40 s limit.
+      const DAYS = 3;
+      for (let day = 0; day < DAYS; day += 1) {
         const occurrence = (await w.scheduleOf(workflow.id)).nextRunAt as IsoTimestamp;
         const task = w.taskFor(workflow.id, occurrence);
         await Promise.all([w.deliver(task), w.deliver(task), w.runner.recover()]);
         await w.drive();
       }
       const runs = await w.plansOf(workflow.id);
-      expect(runs).toHaveLength(10);
+      expect(runs).toHaveLength(DAYS);
       const days = runs.map((p) => p.workflow?.occurrence?.slice(0, 10));
-      expect(new Set(days).size).toBe(10);
+      expect(new Set(days).size).toBe(DAYS);
     });
   },
 );
