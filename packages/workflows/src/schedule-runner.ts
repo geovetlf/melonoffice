@@ -138,12 +138,36 @@ export function createScheduleRunner({
         // The next one is after now: late occurrences collapse into this one, never a burst.
         const from = new Date(Math.max(at.getTime(), Date.parse(occurrence)));
         const next = nextOccurrence(current.recurrence, current.timeZone, from);
+        // The occurrence before this one was claimed and never finished, and its lease has lapsed:
+        // its worker died and its retries ran out. It is recorded as abandoned, and the chain goes on.
+        const lost = current.last;
+        const abandoned =
+          lost !== undefined &&
+          lost.outcome === 'claimed' &&
+          lost.occurrence !== occurrence &&
+          Date.parse(lost.at) + SCHEDULE_LEASE_MS <= at.getTime();
         return {
           schedule: {
             ...withRun(current, { occurrence, outcome: 'claimed' }, at),
             nextRunAt: next.toISOString() as IsoTimestamp,
           },
-          events: [],
+          events:
+            abandoned && lost !== undefined
+              ? [
+                  scheduleEvent(
+                    { actor: 'runtime', userId: current.confirmedBy },
+                    current.organizationId,
+                    current.workflowId,
+                    'workflow.schedule_run',
+                    {
+                      reason: 'abandoned',
+                      reference: `occurrence:${lost.occurrence}`,
+                      version: current.workflowVersion,
+                    },
+                    at,
+                  ),
+                ]
+              : [],
         };
       })
       .catch((error: unknown) => {

@@ -491,20 +491,25 @@ describe.each(STORES)(
       /** One worker instance's runner: the worker's own composition. */
       const runnerOf = (
         conductor = runtimeConductor,
-        standingAuthorization?: Parameters<
-          typeof createWorkflowScheduleRunner
-        >[0]['standingAuthorization'],
+        options: {
+          readonly standingAuthorization?: Parameters<
+            typeof createWorkflowScheduleRunner
+          >[0]['standingAuthorization'];
+          readonly workflows?: WorkflowRepository;
+        } = {},
       ) =>
         createWorkflowScheduleRunner({
           stores,
           plans: stores.plans,
-          workflows: stores.workflows,
+          workflows: options.workflows ?? stores.workflows,
           schedules: stores.schedules,
           tools: registry,
           environment: 'dev',
           conductor,
           scheduler,
-          ...(standingAuthorization === undefined ? {} : { standingAuthorization }),
+          ...(options.standingAuthorization === undefined
+            ? {}
+            : { standingAuthorization: options.standingAuthorization }),
           now,
         });
       const runner = runnerOf();
@@ -1334,13 +1339,47 @@ describe.each(STORES)(
       };
       expect(
         await w.deliver(w.taskFor(workflow.id, FIRST), {
-          runner: w.runnerOf(w.runtimeConductor, withoutApproval),
+          runner: w.runnerOf(w.runtimeConductor, { standingAuthorization: withoutApproval }),
         }),
       ).toEqual({ status: 200, body: { result: 'not_allowed' } });
       expect(await w.plansOf(workflow.id)).toEqual([]);
       expect(await w.scheduleOf(workflow.id)).toMatchObject({
         nextRunAt: SECOND,
         last: { occurrence: FIRST, outcome: 'not_allowed' },
+      });
+    });
+
+    it('29. an occurrence whose retries all fail is recorded as abandoned when the next one runs', async () => {
+      const w = await world();
+      const { workflow } = await scheduled(w);
+      // The first occurrence fails after its claim, every time, and never reaches a plan.
+      const broken = Object.assign(Object.create(w.stores.workflows), {
+        find: async () => {
+          throw Object.assign(new Error('down'), { code: 'unavailable' });
+        },
+      }) as WorkflowRepository;
+      expect(
+        await w.deliver(w.taskFor(workflow.id, FIRST), {
+          runner: w.runnerOf(w.runtimeConductor, { workflows: broken }),
+        }),
+      ).toMatchObject({ status: 503, body: { result: 'retry' } });
+      expect(await w.plansOf(workflow.id)).toEqual([]);
+      // Tomorrow's occurrence runs, and the lost one is recorded in audit as abandoned.
+      expect(await w.deliver(w.taskFor(workflow.id, SECOND))).toEqual({
+        status: 200,
+        body: { result: 'planned' },
+      });
+      const runs = (await w.scheduleEvents(workflow.id)).filter(
+        (e) => e.action === 'workflow.schedule_run',
+      );
+      expect(runs.map((e) => [e.reference, e.reason])).toEqual([
+        [`occurrence:${FIRST}`, 'abandoned'],
+        [`occurrence:${SECOND}`, 'planned'],
+      ]);
+      expect((await w.plansOf(workflow.id)).map((p) => p.workflow?.occurrence)).toEqual([SECOND]);
+      expect(await w.scheduleOf(workflow.id)).toMatchObject({
+        nextRunAt: '2026-10-07T14:00:00.000Z',
+        last: { occurrence: SECOND, outcome: 'planned' },
       });
     });
   },
