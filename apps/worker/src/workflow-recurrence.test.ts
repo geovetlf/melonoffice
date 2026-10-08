@@ -1227,18 +1227,26 @@ describe.each(STORES)(
       expect(w.tasks.length).toBe(before + 1);
       // Consecutive days of deliveries and sweeps: one plan per occurrence, one occurrence per day. In
       // memory, ten days. On the emulator, three: a day there is a full plan run (about 3 s), so ten
-      // would take most of the 40 s limit. The date arithmetic is the same code in both variants.
+      // would take most of the 40 s limit. Each day's date is worked out here, from the first
+      // occurrence and a day's length (Lima keeps no daylight saving), never read back from the
+      // store, so both variants check the schedule's dates against an independent calculation.
       const DAYS = storage === 'firestore' ? 3 : 10;
+      const dayOf = (n: number) =>
+        new Date(Date.parse(FIRST) + n * DAY).toISOString() as IsoTimestamp;
       for (let day = 0; day < DAYS; day += 1) {
         const occurrence = (await w.scheduleOf(workflow.id)).nextRunAt as IsoTimestamp;
+        expect(occurrence).toBe(dayOf(day));
         const task = w.taskFor(workflow.id, occurrence);
         await Promise.all([w.deliver(task), w.deliver(task), w.runner.recover()]);
         await w.drive();
       }
+      expect((await w.scheduleOf(workflow.id)).nextRunAt).toBe(dayOf(DAYS));
+      // Newest first, so reversed: one plan per day, in order, each on its own occurrence.
       const runs = await w.plansOf(workflow.id);
       expect(runs).toHaveLength(DAYS);
-      const days = runs.map((p) => p.workflow?.occurrence?.slice(0, 10));
-      expect(new Set(days).size).toBe(DAYS);
+      expect(runs.map((p) => p.workflow?.occurrence).reverse()).toEqual(
+        Array.from({ length: DAYS }, (_, day) => dayOf(day)),
+      );
     });
 
     it('25. under a standing approval, a first step that needs approval still waits for a person', async () => {

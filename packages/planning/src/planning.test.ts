@@ -844,6 +844,46 @@ describe('plans', () => {
     ).toBe('execution_not_plannable');
   });
 
+  it('ADR-0185: the overlap read sees every plan of a workflow, past the newest 100 that a list shows', async () => {
+    const w = await setup();
+    const workflowId = '33333333-3333-4333-8333-333333333333' as WorkflowId;
+    const ids: string[] = [];
+    for (let n = 0; n < 101; n += 1) {
+      const execution = await w.executions.create(w.tenantA, {
+        mode: 'plan',
+        input: { type: 'task', id: `task-${n}` },
+        specialistId: w.owner.identity.id,
+        specialistVersion: w.owner.version,
+        departmentId: w.owner.configuration.departmentId,
+        workflowId,
+        versionSnapshot: {
+          schemaVersion: 1,
+          components: [
+            { kind: 'specialist', id: w.owner.identity.id, version: String(w.owner.version) },
+            { kind: 'workflow', id: workflowId, version: '3' },
+          ],
+        },
+      });
+      await w.executions.changeStatus(w.tenantA, execution.id, { from: 'pending', to: 'planning' });
+      const made = await w.plans.propose(w.tenantA, {
+        executionId: execution.id,
+        proposal: proposal([specialistStep('research', w.researcher)]),
+        source: { kind: 'workflow', workflowId, workflowVersion: 3 },
+      });
+      if (made.status !== 'planned') throw new Error(made.status);
+      ids.push(made.plan.id);
+    }
+    // A list shows the newest 100; the schedule's overlap read pages through all 101, so a plan
+    // that is still open beyond the list is never missed.
+    expect(await w.plans.listForWorkflow(w.tenantA, workflowId)).toHaveLength(100);
+    const all = await w.plans.pageForWorkflow(w.tenantA, workflowId, {
+      limit: Number.MAX_SAFE_INTEGER,
+    });
+    expect(all.hasMore).toBe(false);
+    expect(all.items).toHaveLength(101);
+    expect(all.items.map((p) => p.id)).toEqual(expect.arrayContaining(ids));
+  });
+
   it('keeps tenants apart: another organization sees no plan', async () => {
     const w = await setup();
     const { plan } = await propose(w, [specialistStep('research', w.researcher)]);
