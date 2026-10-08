@@ -869,6 +869,7 @@ describe.each(STORES)(
 
       // Alice stops that plan and runs the workflow again the same day: the same follow-up.
       await w.executions.cancel(w.tenantA, first.executionId, 'director_request');
+      expect((await w.executions.get(w.tenantA, first.executionId)).status).toBe('cancelled');
       w.setHook(undefined);
       const again = await runToEnd(w, 'run-2');
       expect(again.status).toBe('completed');
