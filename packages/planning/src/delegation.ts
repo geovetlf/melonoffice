@@ -30,6 +30,7 @@ import {
   markDelegated,
 } from './model.js';
 import type { PlanRepository } from './repository.js';
+import { abandonableScheduled, type AbandonScheduled } from './service.js';
 
 /** Which execution node type each non-tool step becomes. */
 const NODE_TYPE: Readonly<Record<Exclude<PlanStep['kind'], 'tool'>, NodeInput['type']>> = {
@@ -272,6 +273,19 @@ export interface DelegationResult {
  */
 export interface Delegation {
   delegate(tenant: TenantContext, planId: string): Promise<DelegationResult>;
+  /**
+   * Runtime only, for a schedule's own plan (ADR-0186): fails its `creating` delegation when the
+   * schedule moved past its occurrence or switched off, and the plan was not touched within the
+   * lease. Nothing ran, since a `creating` delegation has no running child, so nothing is undone:
+   * the children it made stay `pending`, as a schedule's always do (ADR-0185). A delegation this
+   * method failed has its cleanup finished, and any other is refused with `plan_not_abandonable`.
+   */
+  abandon(tenant: TenantContext, planId: string, input: AbandonScheduled): Promise<Plan>;
+  /**
+   * Finishes the cleanup of a failed delegation whose attempt was interrupted before it ended
+   * (ADR-0186). Idempotent: a finished cleanup changes nothing. It never starts or reactivates work.
+   */
+  closeFailed(tenant: TenantContext, planId: string): Promise<Plan>;
 }
 
 export interface DelegationOptions {
@@ -304,6 +318,21 @@ class Permanent extends Error {
 const isConflict = (error: unknown): boolean =>
   isPlanningError(error) && error.code === 'plan_concurrency_conflict';
 
+/** Another attempt moved an execution first: its change is refused against the stale state. */
+const isExecutionRace = (error: unknown): boolean =>
+  isExecutionError(error) &&
+  (error.code === 'execution_concurrency_conflict' || error.code === 'execution_already_terminal');
+
+/**
+ * A schedule's plan that `abandon` failed for this workflow (ADR-0186). Only such a plan is closed
+ * again here: a failure by any other cause is left to `closeFailed`, which never abandons anything.
+ */
+const isAbandonedBy = (plan: Plan, input: AbandonScheduled): boolean =>
+  plan.delegationState === 'failed' &&
+  plan.delegationFailure === 'delegation_abandoned' &&
+  plan.decision?.via === 'schedule' &&
+  plan.workflow?.id === input.workflowId;
+
 export function createDelegation({
   plans,
   executions,
@@ -335,7 +364,7 @@ export function createDelegation({
     tenant: TenantContext,
     organizationId: OrganizationId,
     fields: Pick<AuditEvent, 'action' | 'target'> &
-      Partial<Pick<AuditEvent, 'transition' | 'reason'>>,
+      Partial<Pick<AuditEvent, 'transition' | 'reason' | 'reference'>>,
     at: Date,
   ): AuditEvent =>
     buildAuditEvent(
@@ -347,6 +376,7 @@ export function createDelegation({
         ...(fields.target === undefined ? {} : { target: fields.target }),
         ...(fields.transition === undefined ? {} : { transition: fields.transition }),
         ...(fields.reason === undefined ? {} : { reason: fields.reason }),
+        ...(fields.reference === undefined ? {} : { reference: fields.reference }),
         ...(requestId === undefined ? {} : { requestId }),
         source: 'api',
       },
@@ -455,30 +485,53 @@ export function createDelegation({
   }
 
   /**
-   * A failed delegation's cleanup, idempotent: every child already created is cancelled and the
-   * planning execution fails. Any attempt that finds the delegation failed runs it again, so a
-   * child created by a concurrent attempt is cancelled by that attempt.
+   * A failed delegation's cleanup, idempotent: a person's children already created are cancelled,
+   * and the planning execution fails. The runtime cancels nothing (ADR-0029). Any attempt that finds
+   * the delegation failed runs it again, so a child created by a concurrent attempt is cleaned up too.
    */
   async function cleanUp(tenant: TenantContext, plan: Plan): Promise<void> {
-    for (const d of plan.delegations) {
-      const child = await findExecution(tenant, d.executionId);
-      if (child === undefined || isTerminal(child.status)) continue;
-      // The runtime never cancels (ADR-0029): a schedule's child that never started stays
-      // pending under a failed parent, which no start accepts (ADR-0185).
-      if (tenant.actor === 'runtime') continue;
-      await executions.changeStatus(tenant, child.id, {
-        from: child.status,
-        to: 'cancelled',
-        reason: 'delegation_failed',
-      });
+    // The runtime never cancels (ADR-0029): a schedule's child that never started stays pending
+    // under a failed parent, which no start accepts (ADR-0185). Only a person's children are closed.
+    if (tenant.actor !== 'runtime') {
+      for (const d of plan.delegations) {
+        const child = await findExecution(tenant, d.executionId);
+        if (child === undefined || isTerminal(child.status)) continue;
+        await settle(tenant, child.id, () =>
+          executions.changeStatus(tenant, child.id, {
+            from: child.status,
+            to: 'cancelled',
+            reason: 'delegation_failed',
+          }),
+        );
+      }
     }
     const parent = await findExecution(tenant, plan.executionId);
     if (parent !== undefined && !isTerminal(parent.status)) {
-      await moveParent(tenant, parent.id, {
-        from: parent.status,
-        to: 'failed',
-        failure: { code: plan.delegationFailure ?? 'delegation_failed' },
-      });
+      await settle(tenant, parent.id, () =>
+        moveParent(tenant, parent.id, {
+          from: parent.status,
+          to: 'failed',
+          failure: { code: plan.delegationFailure ?? 'delegation_failed' },
+        }),
+      );
+    }
+  }
+
+  /**
+   * One cleanup change. When another attempt moved the execution first, the change is accepted if
+   * the execution is now terminal, so an interrupted cleanup is finished once, never twice (ADR-0186).
+   */
+  async function settle(
+    tenant: TenantContext,
+    id: ExecutionId,
+    change: () => Promise<unknown>,
+  ): Promise<void> {
+    try {
+      await change();
+    } catch (error) {
+      if (!isExecutionRace(error)) throw error;
+      const fresh = await findExecution(tenant, id);
+      if (fresh === undefined || !isTerminal(fresh.status)) throw error;
     }
   }
 
@@ -682,5 +735,72 @@ export function createDelegation({
     return Object.freeze({ plan, children: await childrenOf(tenant, plan) });
   }
 
-  return Object.freeze({ delegate });
+  /** The plan of a tenant, with the organization and the `plan.create` permission checked. */
+  async function planOf(tenant: TenantContext, planId: string): Promise<[OrganizationId, Plan]> {
+    const organizationId = await organizationOf(tenant);
+    if (!authorization.authorize(tenant, 'plan.create', { organizationId }).allowed) {
+      throw new PlanningError('permission_denied');
+    }
+    if (!isPlanId(planId)) throw new PlanningError('plan_not_found');
+    const plan = await plans.find(organizationId, planId);
+    if (plan === undefined) throw new PlanningError('plan_not_found');
+    return [organizationId, plan];
+  }
+
+  async function abandon(
+    tenant: TenantContext,
+    planId: string,
+    input: AbandonScheduled,
+  ): Promise<Plan> {
+    if (tenant.actor !== 'runtime') throw new PlanningError('permission_denied', 'runtime_only');
+    const [organizationId, found] = await planOf(tenant, planId);
+    const at = now();
+    // Another attempt that failed the plan first makes `step` return it fresh, and nothing is
+    // written twice: only its cleanup runs below (ADR-0186).
+    const current =
+      found.delegationState === 'failed'
+        ? found
+        : await step(organizationId, found, (fresh) => {
+            if (fresh.delegationState === 'failed') {
+              throw new PlanningError('plan_concurrency_conflict');
+            }
+            if (!abandonableScheduled(fresh, input, { delegated: true })) {
+              throw new PlanningError('plan_not_abandonable');
+            }
+            const next = failDelegation(fresh, 'delegation_abandoned', iso(at));
+            return {
+              plan: next,
+              events: [
+                event(
+                  tenant,
+                  organizationId,
+                  {
+                    action: 'plan.state_changed',
+                    target: { type: 'plan', id: next.id },
+                    transition: { from: fresh.status, to: next.status },
+                    reason: input.reason ?? 'schedule_abandoned',
+                    reference: `occurrence:${fresh.workflow?.occurrence}`,
+                  },
+                  at,
+                ),
+              ],
+            };
+          });
+    // Failed for another cause, or not this schedule's: refused, and its cleanup stays with `closeFailed`.
+    if (!isAbandonedBy(current, input)) throw new PlanningError('plan_not_abandonable');
+    await cleanUp(tenant, current);
+    return current;
+  }
+
+  async function closeFailed(tenant: TenantContext, planId: string): Promise<Plan> {
+    const [, plan] = await planOf(tenant, planId);
+    // The runtime closes only what a schedule made (ADR-0185); a person closes their own plans.
+    if (tenant.actor === 'runtime' && plan.decision?.via !== 'schedule') {
+      throw new PlanningError('permission_denied', 'runtime_only');
+    }
+    if (plan.delegationState === 'failed') await cleanUp(tenant, plan);
+    return plan;
+  }
+
+  return Object.freeze({ delegate, abandon, closeFailed });
 }

@@ -1,0 +1,73 @@
+# ADR-0186: a schedule's stuck delegation is recovered, and an off schedule's open plans are closed
+
+- Status: Accepted
+- Date: 2026-10-10
+- Builds on: [ADR-0185](0185-workflow-recurrence.md) (decision 13 and its limits), [ADR-0029](0029-runtime-guards.md) (the runtime never cancels), [ADR-0070](0070-approved-plans-run.md) (the conductor starts an approved plan), [ADR-0121](0121-automatic-sweep-of-abandoned-work.md) and [ADR-0183](0183-the-sweep-reads-past-waiting-work.md) (the sweep)
+- Product decision: Geovet, 2026-10-10 09:07Z, in thread «Diagnóstico del Agent Engine»: recover stuck delegations (`creating` and `failed`) without duplicating or reactivating work, and close from the sweep the approved plans of disabled or archived schedules, with the rules of ADR-0185.
+- Terraform: none. Migration: none. Index: none. Its queries use equality filters only, which Firestore serves by merging single-field indexes, so no composite index is added. This is verified on the emulator; DEV confirms it on the first sweep after the deploy.
+
+## Context
+
+A schedule's plan is delegated in two steps: its planning execution is marked as delegated, then each specialist step gets a child execution with a deterministic id. Two states of that delegation could hold a schedule for good, and both were visible as `overlap` on every later occurrence:
+
+- **A `creating` delegation** whose attempt stopped before its children were all made. `PlanService.abandonScheduled` refuses a delegated plan, and `cancel` refuses `creating`, so nothing closed it.
+- **A `failed` delegation** whose cleanup an interrupted attempt left open: the plan is `failed`, but its planning execution still waits for a person. `PlanConductor.run` refuses a failed plan before it reaches the delegation, so nothing finished the cleanup.
+
+ADR-0185 also left the open plans of a switched-off schedule with no one to close them when its claim had died: no later claim runs for an off schedule, and the sweep read only due schedules.
+
+## Decision
+
+1. **Recovering a `creating` delegation (planning, runtime only).** `Delegation.abandon` fails the delegation of a schedule's own plan with `delegation_abandoned`, when all of these hold, in the plan's transaction:
+   - the plan is the schedule's (`decision.via = 'schedule'`), of this workflow, in its occurrence, approved, and `creating`;
+   - the schedule moved past the occurrence (`reason` `schedule_abandoned`, the occurrence claimed next is later), or the schedule is off (`reason` `schedule_off`, with no occurrence);
+   - the plan has not changed since the lease instant (`untouchedBefore`).
+
+   It writes one `plan.state_changed` event with the reason and the occurrence, then runs the cleanup. Nothing ran, since a `creating` delegation has no running child. The children it made stay `pending`, as a schedule's always do (ADR-0029, ADR-0185).
+
+2. **Finishing a failed delegation's cleanup (planning).** `Delegation.closeFailed` finishes the cleanup of a failed delegation: the planning execution fails, and a person's children are cancelled. It is idempotent, and it never starts or reactivates work. The runtime closes only a schedule's plans. `PlanConductor.run` finishes a failed plan through it and reports the occurrence as `planned`, instead of starting it.
+3. **The runtime never cancels.** The cleanup skips a child for the runtime, and only a person's cleanup cancels children (ADR-0029). A failure of the runtime's cleanup is retried by the next claim.
+4. **Races are settled by the transaction.** Every change of the cleanup is guarded in its own transaction:
+   - a delegation another attempt already failed is read back fresh, and nothing is written twice;
+   - an execution another attempt already closed is accepted once it is terminal, and refused (retried) otherwise.
+5. **Every claim closes what the occurrence before it left open (runner).** Once an occurrence claims its time, before any check (`missed`, `workflow_not_active`, `version_changed`, `not_allowed`, `overlap`), the runner closes the earlier occurrences' open plans through the rules above, and finishes every earlier failed delegation, oldest first. So a paused, late or refused occurrence closes them too. If the person can no longer be resolved, nothing is closed from there, and a later claim looks again.
+6. **Held plans hold the claim.** A refusal of `plan_not_abandonable` (the plan changed within the lease, or started) or `permission_denied` (the person may no longer plan) leaves the plan as it is. Any other failure of a closure fails the occurrence, which the task retries. A failed cleanup of an earlier delegation is logged and left to the next claim (decision 3).
+7. **An off schedule's open plans are closed from the sweep.** The sweep reads the schedules that are off, whose last claim was taken and whose lease has lapsed (`lapsedOff`). Nothing takes such an occurrence up again, so the sweep settles it: every plan the schedule made, of any occurrence, is closed with reason `schedule_off`:
+   - an approved, undelegated plan is cancelled;
+   - a `creating` delegation is failed (decision 1);
+   - a failed delegation's cleanup is finished (decision 2);
+   - an executing plan goes on as it is, and a plan a person decided is not the schedule's to close.
+
+   Then the lost occurrence is recorded as `abandoned`. A held plan leaves the claim for a later sweep.
+
+8. **Audit.** Every change is one `plan.state_changed` event with the actor the runtime of the person who confirmed the schedule, the target plan, the transition, the reason and the occurrence as its reference: `schedule_abandoned` when a later occurrence supersedes the plan, `schedule_off` when the schedule is off. The lost occurrence is recorded in `workflow.schedule_run` as `abandoned`.
+9. **One clock.** The worker passes its clock to the schedule's delegation, as to every other service it wires. A delegation's instants are the ones the lease is measured against. Before this, the delegation stamped the wall clock, so a plan could look newer than its lease in any clock but the real one.
+
+## Limits
+
+- The sweep reaches an off schedule through its last claim, while that claim is still open. A claim that finished with an earlier plan still approved behind it is closed by the next claim of that schedule, and a schedule that never claims again would leave that plan approved. The flows of ADR-0185 leave no such plan: a claim that finishes has run its own plan, and an earlier plan is at least a local day older than the next claim, past its lease. It is recorded here as the residual of ADR-0185 decision 13, rather than papered over.
+- A person who may no longer plan keeps a stuck `creating` delegation until they may plan again, because the runtime cannot change it (decision 6). Nothing runs in the meantime.
+- A failed delegation's cleanup is retried once per claim. A workflow with many failures reads one parent execution per failure on every claim, after the plan read it already makes. A marker on the plan is the follow-up if that grows.
+- The sweep reads at most 50 off schedules a run, in the order the store returns them. A schedule the sweep holds (its person left or may no longer plan, or a plan is within its lease) keeps its place on the page, so more than 50 of them would keep the rest unread until they settle. Nothing is closed or lost meanwhile; a cursor over the sweep's read is the follow-up if that happens.
+- A claim reads the workflow's plans twice: once for the closures, then for the overlap check, which sees them. Each read grows with the workflow's plan count, as ADR-0185 notes.
+- Only a schedule's own plans are closed. A person's plans are never closed here, whatever their state.
+
+## Tests
+
+- `packages/planning/src/delegation-recovery.test.ts`: 11 cases, in memory and on the emulator. A `creating` delegation is failed only when superseded, untouched within the lease, the schedule's, and of the right kind (including a schedule switched off, which supersedes nothing); a person's delegation is never failed by the runtime; concurrent abandons fail it once; a cleanup another attempt finished is accepted and written once; a created or completed delegation is never abandoned; a delegation that failed for another cause stays with `closeFailed`; an interrupted cleanup is finished and never reactivated; the runtime leaves a child pending while a person's cleanup cancels it; another organization finds no plan.
+- `apps/worker/src/workflow-recurrence.test.ts`, cases 38 (its dying worker now fails at the plan read, where the closure is made) and 40 to 53, in memory and on the emulator:
+  - a closure made at the claim survives a worker that dies after it (40);
+  - a switched-off schedule closes its open plan once the claim lapses, not before, with reason and occurrence (41);
+  - an archived workflow's next occurrence, run by the sweep, closes the plan before it and switches the schedule off (42);
+  - a plan that started is never closed by a switch-off or an archive (43);
+  - two workers and the sweep settle a switched-off schedule at once: one closure, one run recorded (44);
+  - a person's cancel races the sweep: one transition (45);
+  - a stuck `creating` delegation is failed at the next claim, its child stays pending, and the next occurrence runs (46);
+  - a stuck `creating` delegation of a switched-off schedule is failed by the sweep with its reason (47);
+  - an interrupted cleanup is finished by the next claim, and never reactivated (48);
+  - repeated sweeps and redeliveries add no plan, child or closure (49);
+  - two workers and the sweep reach a stuck delegation's next occurrence at once: one failure, one plan (50);
+  - another organization's runtime finds none of the schedule's plans (51);
+  - an interrupted failure is finished when the schedule is switched off (52);
+  - a person who may no longer plan holds the stuck plan, and the occurrence after the next one closes it once they may (53).
+
+The seeded-fault check that backs these tests is recorded in the report that accompanies this ADR, with each fault and whether a test caught it. It is a manual check, not a mutation-testing run: the repository has no mutation tool.

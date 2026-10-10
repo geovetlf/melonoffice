@@ -63,7 +63,7 @@ export interface ScheduleRunnerOptions {
   readonly workflows: Pick<WorkflowRepository, 'find'>;
   readonly workflowService: Pick<WorkflowService, 'planOccurrence'>;
   readonly plans: Pick<PlanService, 'abandonScheduled' | 'approveScheduled' | 'pageForWorkflow'>;
-  readonly conductor: Pick<PlanConductor, 'run'>;
+  readonly conductor: Pick<PlanConductor, 'run' | 'abandon' | 'closeFailed'>;
   readonly tenancy: TenancyStore;
   /** Checked for the person at every occurrence: the standing approval holds only while they can (ADR-0185 §6). */
   readonly authorization: Pick<AuthorizationService, 'authorize'>;
@@ -92,6 +92,12 @@ class Busy extends Error {
 }
 
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+
+/**
+ * The refusals that hold a plan as it is, rather than fail the occurrence: the plan changed within
+ * its lease or started, or the person may no longer plan (ADR-0185 §13, ADR-0186).
+ */
+const HELD_CLOSURES: ReadonlySet<string> = new Set(['plan_not_abandonable', 'permission_denied']);
 
 /** The code a retry reports: the domain's own, or `in_progress` for a held occurrence. */
 const codeOf = (error: unknown): string => {
@@ -230,15 +236,15 @@ export function createScheduleRunner({
   /**
    * Closes the plans this schedule approved and never started, from occurrences it has moved past
    * (ADR-0185 §13). The occurrence claimed now is later than them, so no task can start them again;
-   * a plan changed within the lease, or started meanwhile, is refused and left as it is. Returns
-   * whether any was tried, so the caller reads the plans again.
+   * a plan changed within the lease, or started meanwhile, is refused and left as it is. A delegation
+   * left `creating` is failed (ADR-0186), and every earlier failed delegation is finished, oldest first.
    */
   async function closeAbandoned(
     tenant: TenantContext,
     workflowId: WorkflowId,
     occurrence: IsoTimestamp,
     items: readonly Plan[],
-  ): Promise<boolean> {
+  ): Promise<void> {
     const untouchedBefore = new Date(
       now().getTime() - SCHEDULE_LEASE_MS,
     ).toISOString() as IsoTimestamp;
@@ -251,35 +257,90 @@ export function createScheduleRunner({
     );
     for (const p of earlier) {
       try {
-        await plans.abandonScheduled(tenant, p.id, {
-          workflowId,
-          supersededBy: occurrence,
-          untouchedBefore,
-        });
+        // A delegation left `creating` is failed here, as the plan's approval was (ADR-0186).
+        if (p.delegationState === 'creating') {
+          await conductor.abandon(tenant, p.id, {
+            workflowId,
+            supersededBy: occurrence,
+            untouchedBefore,
+          });
+        } else {
+          await plans.abandonScheduled(tenant, p.id, {
+            workflowId,
+            supersededBy: occurrence,
+            untouchedBefore,
+          });
+        }
       } catch (error) {
-        if (isPlanningError(error) && error.code === 'plan_not_abandonable') continue;
+        // Held: changed within the lease, started meanwhile, or the person may no longer plan. It
+        // stays as it is, and the next claim looks again.
+        if (isPlanningError(error) && HELD_CLOSURES.has(error.code)) continue;
         throw error;
       }
     }
-    return earlier.length > 0;
+    // Every earlier occurrence's failed delegation is finished here, oldest first: a cleanup that an
+    // interrupted attempt left open is closed by the claim that follows it, and a finished one changes
+    // nothing (ADR-0186). A failure that still cannot be finished is retried by the next claim.
+    const failedBefore = items
+      .filter(
+        (p) =>
+          p.decision?.via === 'schedule' &&
+          p.status === 'failed' &&
+          p.delegationState === 'failed' &&
+          p.workflow?.occurrence !== undefined &&
+          Date.parse(p.workflow.occurrence) < Date.parse(occurrence),
+      )
+      .sort(
+        (a, b) =>
+          Date.parse(a.workflow?.occurrence ?? '') - Date.parse(b.workflow?.occurrence ?? ''),
+      );
+    for (const p of failedBefore) {
+      try {
+        await conductor.closeFailed(tenant, p.id);
+      } catch (error) {
+        logger?.warn('workflow schedule could not finish a failed delegation', {
+          workflowId,
+          code: (error as { code?: unknown }).code ?? 'error',
+        });
+      }
+    }
   }
 
   /**
-   * Whether a plan this schedule made is still open, other than this occurrence's. First the plans
-   * it approved and never started are closed (ADR-0185 §13). Every plan of the workflow is read, not
-   * only the newest page: an old plan that is still open blocks the run too.
+   * Closes what an earlier occurrence left open, once this occurrence has claimed its time: every
+   * claim supersedes the ones before it, whatever it does next (ADR-0185 §13, ADR-0186). Run before
+   * any check, so a paused, late or refused occurrence closes them too. Without a runtime for the
+   * person, nothing is closed from here: the person left, and a later claim looks again.
+   */
+  async function settleSuperseded(
+    schedule: WorkflowSchedule,
+    occurrence: IsoTimestamp,
+  ): Promise<void> {
+    let tenant: TenantContext;
+    try {
+      tenant = await resolveRuntimeTenant(schedule.confirmedBy, schedule.organizationId, tenancy);
+    } catch {
+      return;
+    }
+    const { items } = await plans.pageForWorkflow(tenant, schedule.workflowId, {
+      limit: Number.MAX_SAFE_INTEGER,
+    });
+    await closeAbandoned(tenant, schedule.workflowId, occurrence, items);
+  }
+
+  /**
+   * Whether a plan this schedule made is still open, other than this occurrence's. Earlier plans
+   * are closed before, by `settleSuperseded`. Every plan of the workflow is read, not only the newest
+   * page: an old plan that is still open blocks the run too.
    */
   async function overlapping(
     tenant: TenantContext,
     schedule: WorkflowSchedule,
     occurrence: IsoTimestamp,
   ): Promise<boolean> {
-    const read = () =>
-      plans.pageForWorkflow(tenant, schedule.workflowId, { limit: Number.MAX_SAFE_INTEGER });
-    let { items } = await read();
-    if (await closeAbandoned(tenant, schedule.workflowId, occurrence, items)) {
-      ({ items } = await read());
-    }
+    const { items } = await plans.pageForWorkflow(tenant, schedule.workflowId, {
+      limit: Number.MAX_SAFE_INTEGER,
+    });
     return items.some(
       (p) =>
         p.workflow?.occurrence !== undefined &&
@@ -314,6 +375,11 @@ export function createScheduleRunner({
     }
     if (planned.status === 'refused') return { outcome: 'refused' };
     let plan: Plan = planned.plan;
+    if (plan.delegationState === 'failed') {
+      // An attempt failed this plan and may have stopped before its cleanup: finish it (ADR-0186).
+      await conductor.closeFailed(tenant, plan.id);
+      return { outcome: 'planned', planId: plan.id };
+    }
     if (plan.status === 'approval_required') {
       try {
         plan = await plans.approveScheduled(tenant, plan.id, {
@@ -338,6 +404,61 @@ export function createScheduleRunner({
     }
     // Rejected or cancelled by a person meanwhile, or already over: nothing to start.
     return { outcome: 'planned', planId: plan.id };
+  }
+
+  /**
+   * The claim of an occurrence that was never finished, of a schedule that is now off (ADR-0186).
+   * An off schedule claims nothing again, so nothing supersedes what it left open: the sweep closes
+   * every plan the schedule made that has not started (`schedule_off`), finishes the cleanup of a
+   * failed delegation, fails a `creating` one, and records the lost occurrence as abandoned. An
+   * executing plan goes on as it is. A plan a live delivery touched within the lease, or one the
+   * person may no longer plan, holds the claim for a later sweep. Returns whether it was recorded.
+   */
+  async function settleSwitchedOff(
+    schedule: WorkflowSchedule,
+    occurrence: IsoTimestamp,
+  ): Promise<boolean> {
+    const { organizationId, workflowId } = schedule;
+    let tenant: TenantContext;
+    try {
+      tenant = await resolveRuntimeTenant(schedule.confirmedBy, organizationId, tenancy);
+    } catch {
+      // The person left: nothing of theirs is closed from here, and a later sweep looks again.
+      return false;
+    }
+    const untouchedBefore = new Date(
+      now().getTime() - SCHEDULE_LEASE_MS,
+    ).toISOString() as IsoTimestamp;
+    const { items } = await plans.pageForWorkflow(tenant, workflowId, {
+      limit: Number.MAX_SAFE_INTEGER,
+    });
+    let held = false;
+    for (const p of items) {
+      if (p.decision?.via !== 'schedule') continue;
+      try {
+        if (p.delegationState === 'creating') {
+          await conductor.abandon(tenant, p.id, {
+            workflowId,
+            untouchedBefore,
+            reason: 'schedule_off',
+          });
+        } else if (p.status === 'approved' && p.delegationState === undefined) {
+          await plans.abandonScheduled(tenant, p.id, {
+            workflowId,
+            untouchedBefore,
+            reason: 'schedule_off',
+          });
+        } else if (p.status === 'failed' && p.delegationState === 'failed') {
+          await conductor.closeFailed(tenant, p.id);
+        }
+      } catch (error) {
+        if (!isPlanningError(error) || !HELD_CLOSURES.has(error.code)) throw error;
+        held = true;
+      }
+    }
+    if (held) return false;
+    await finish(schedule, occurrence, 'abandoned');
+    return true;
   }
 
   async function occur(
@@ -372,6 +493,7 @@ export function createScheduleRunner({
       }
     }
 
+    await settleSuperseded(schedule, occurrence);
     if (now().getTime() - Date.parse(occurrence) > SCHEDULE_LATE_MS) {
       return finish(schedule, occurrence, 'missed');
     }
@@ -463,6 +585,24 @@ export function createScheduleRunner({
         try {
           await occur(schedule.organizationId, schedule.workflowId, schedule.nextRunAt);
           ran += 1;
+        } catch (error) {
+          logger?.warn('workflow schedule recovery failed', {
+            workflowId: schedule.workflowId,
+            code: (error as { code?: unknown }).code ?? 'error',
+          });
+        }
+      }
+      // An occurrence whose claim lapsed while its schedule is off: no task takes it up again, so
+      // the sweep settles it (ADR-0186). An on schedule's lapsed claim is left to a task the platform
+      // still retries, or to the next claim, which abandons it (ADR-0185 §13).
+      const lapsedBefore = new Date(
+        now().getTime() - SCHEDULE_LEASE_MS,
+      ).toISOString() as IsoTimestamp;
+      const lapsed = await schedules.lapsedOff(lapsedBefore, SCHEDULE_RECOVER_LIMIT);
+      for (const schedule of lapsed) {
+        if (schedule.status !== 'off' || schedule.last?.outcome !== 'claimed') continue;
+        try {
+          if (await settleSwitchedOff(schedule, schedule.last.occurrence)) ran += 1;
         } catch (error) {
           logger?.warn('workflow schedule recovery failed', {
             workflowId: schedule.workflowId,

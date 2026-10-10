@@ -38,6 +38,7 @@ import {
   stepExecutionOf,
 } from './model.js';
 import type { PlanRepository } from './repository.js';
+import type { AbandonScheduled } from './service.js';
 
 /**
  * The plan conductor (WF-1, ADR-0070): an approved plan runs. It adds no engine: each specialist
@@ -68,6 +69,13 @@ export interface PlanConductor {
    * It never decides a condition step: those stay with the worker's `advance`.
    */
   resume(tenant: TenantContext, planId: string): Promise<Plan>;
+  /**
+   * Runtime only, for a schedule's plan (ADR-0186): fails its `creating` delegation when it will
+   * never finish, see `Delegation.abandon`. Refused with `plan_not_abandonable` otherwise.
+   */
+  abandon(tenant: TenantContext, planId: string, input: AbandonScheduled): Promise<Plan>;
+  /** Finishes the cleanup of a failed delegation an interrupted attempt left open (ADR-0186). */
+  closeFailed(tenant: TenantContext, planId: string): Promise<Plan>;
 }
 
 /**
@@ -270,7 +278,7 @@ export const WAKE_MARGIN_MS = 1_000;
 export interface PlanConductorOptions {
   readonly plans: PlanRepository;
   /** Needed by `run` only: the worker advances plans, it never delegates one. */
-  readonly delegation?: Pick<Delegation, 'delegate'>;
+  readonly delegation?: Pick<Delegation, 'delegate' | 'abandon' | 'closeFailed'>;
   readonly executions: Pick<
     ExecutionService,
     | 'get'
@@ -1647,5 +1655,15 @@ export function createPlanConductor(options: PlanConductorOptions): PlanConducto
     advance: (tenant: TenantContext, planId: string) => proceed(tenant, planId, true),
 
     resume: (tenant: TenantContext, planId: string) => proceed(tenant, planId, false),
+
+    async abandon(tenant: TenantContext, planId: string, input: AbandonScheduled) {
+      if (delegation === undefined) throw new PlanningError('permission_denied', 'no_delegation');
+      return delegation.abandon(tenant, planId, input);
+    },
+
+    async closeFailed(tenant: TenantContext, planId: string) {
+      if (delegation === undefined) throw new PlanningError('permission_denied', 'no_delegation');
+      return delegation.closeFailed(tenant, planId);
+    },
   });
 }

@@ -271,7 +271,8 @@ export type ScheduleOutcome =
   | 'workflow_not_active'
   | 'version_changed'
   | 'overlap'
-  | 'not_allowed';
+  | 'not_allowed'
+  | 'abandoned';
 
 /** A workflow's standing schedule: how it repeats, its next run and what the last one did. */
 export interface WorkflowScheduleView {

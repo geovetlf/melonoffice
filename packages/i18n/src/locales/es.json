@@ -1559,6 +1559,7 @@
   "automations.schedule.outcome.version_changed": "El flujo cambió de versión: guarda la programación de nuevo.",
   "automations.schedule.outcome.overlap": "Una ejecución anterior sigue abierta.",
   "automations.schedule.outcome.not_allowed": "Quien la programó ya no puede ejecutarla.",
+  "automations.schedule.outcome.abandoned": "La programación se desactivó antes de que esta ejecución terminara. Lo que dejó abierto se cerró.",
   "automations.archiveConfirm": "¿Archivar esta automatización? No se podrá volver a activar, y su historial se conserva.",
   "automations.editor.open": "Nueva automatización",
   "automations.editor.new": "Nueva automatización",

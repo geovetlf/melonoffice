@@ -1559,6 +1559,7 @@
   "automations.schedule.outcome.version_changed": "The workflow changed version: save the schedule again.",
   "automations.schedule.outcome.overlap": "An earlier run is still open.",
   "automations.schedule.outcome.not_allowed": "The person who scheduled it can no longer run it.",
+  "automations.schedule.outcome.abandoned": "The schedule was switched off before this run finished. What it left open was closed.",
   "automations.archiveConfirm": "Archive this workflow? It cannot be activated again, and its history stays.",
   "automations.editor.open": "New workflow",
   "automations.editor.new": "New workflow",

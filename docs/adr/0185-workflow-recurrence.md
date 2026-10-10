@@ -111,6 +111,7 @@ What already exists and is reused:
     - Only plans that are `approved`, decided by the schedule (`decision.via = 'schedule'`), never delegated (no `delegationState` and no delegations), from an earlier occurrence, and not changed within the lease (20 minutes) are closed. A running plan, a plan waiting for a person, and a plan a person decided are never closed here.
     - The closure is one transaction on the plan, with its guard read inside it (`PlanService.abandonScheduled`, runtime only). A plan started, cancelled or changed meanwhile is refused with `plan_not_abandonable`, left as it is, and the run reads the plans again. Any other failure fails the occurrence, which Cloud Tasks retries; a closure that ran once changes nothing the second time.
     - The closure is audited as `plan.state_changed` with reason `schedule_abandoned` and the occurrence as its reference. The plan keeps `workflow.occurrence`, so every closed plan still names the occurrence that made it.
+    - Extended by ADR-0186: a `creating` delegation of such a plan is failed when the schedule moved on or switched off, a failed delegation's cleanup is finished, and the sweep closes the open plans of a switched-off schedule with reason `schedule_off`. The rules above still hold.
 
 ## Limits
 
@@ -120,8 +121,8 @@ What already exists and is reused:
 - Late occurrences are never replayed.
 - The overlap check reads every plan of the workflow on each occurrence, not only the newest 100. This is one read per occurrence, and it grows with the workflow's plan count; an index on open plans is the next step if that grows.
 - An occurrence whose every retry fails is audited as `abandoned` when the next occurrence claims, and the plan it left approved and never started is closed then (decision 13). Until that claim, the plan stays approved and the card shows the last outcome. For a monthly schedule that can be a month.
-- A switched-off or archived schedule leaves its last such plan approved: no later claim closes it. Closing those from the sweep needs a query on schedules that are off, which the index does not serve yet; that is the follow-up.
-- A plan still waiting for a person's decision blocks later occurrences until that person decides it, as does a plan whose delegation is `creating` or `failed`: a half-made delegation is finished or failed only by its own occurrence's run, so it waits for delegation recovery. The schedule never decides for a person and never cancels a delegation it did not finish.
+- A switched-off schedule's open plans are closed by the sweep while its last claim is open (ADR-0186). An archived workflow's schedule is switched off at its next occurrence, as decision 6 has it. ADR-0186 records the one residual this leaves.
+- A plan still waiting for a person's decision blocks later occurrences until that person decides it. A delegation left `creating` or `failed` is recovered by ADR-0186: the next claim settles it before its checks, and the sweep does so for an off schedule. The schedule never decides for a person, and the runtime cancels no child (ADR-0029).
 - A plan whose every step was declined ends `nothing_ran`, for any plan and not only a scheduled one. That is the planning rule as it now stands, and it is noted here because the schedule relies on it.
 
 `automations.runsMonthly` is not enforced (D-12 is frozen). The structural bound above is the protection against a burst of runs.
@@ -136,3 +137,13 @@ What already exists and is reused:
 - `apps/web/src/automations/workflowSchedule.test.tsx`: setting, changing, turning off, the read-only view, a stale version, a scheduled plan's label, and a refused save.
 
 Limits and screens shown in the card are the ones above. Where a line of this ADR and the code differ, the code is the record, and this ADR is updated with it.
+
+## Addendum (ADR-0186)
+
+ADR-0186 extends this record in three places and changes nothing else:
+
+- **Delegations left `creating` or `failed`.** A `creating` delegation of a schedule's own plan is failed when the schedule moved past its occurrence or switched off, once the plan is untouched within the lease. A failed delegation's cleanup is finished by the next claim, which runs before any check, and by the sweep for an off schedule. Neither reactivates work, and the runtime cancels no child.
+- **Off schedules.** The sweep reads the schedules that are off whose last claim is still open after its lease, and closes every open plan the schedule made, of any occurrence, with reason `schedule_off`. The lost occurrence is recorded as `abandoned`, a new outcome, once nothing is held.
+- **The claim closes what the earlier occurrences left open** before its checks, so a paused, late or refused occurrence closes them too.
+
+The closure rules of decision 13 apply to all three: the transactional guards, the lease, the held refusals, and one audit event per change with its reason and occurrence. The record is [ADR-0186](0186-delegation-recovery-and-closure-of-off-schedules.md).
