@@ -27,6 +27,7 @@ import {
   attemptKey,
   type Delegation,
   type PlanStepAttempts,
+  type CloseAbandoned,
   type ReleaseManual,
 } from './delegation.js';
 import { isPlanningError, PlanningError } from './errors.js';
@@ -84,6 +85,11 @@ export interface PlanConductor {
    * releases its `creating` delegation, see `Delegation.releaseManual`.
    */
   releaseManual(tenant: TenantContext, planId: string, input: ReleaseManual): Promise<Plan>;
+  /**
+   * Runtime only, for a plan the runtime abandoned whose planning execution a crash left open (ADR-0187,
+   * decision 8): closes that execution, see `Delegation.closeAbandoned`. True when this call closed it.
+   */
+  closeAbandoned(tenant: TenantContext, planId: string, input: CloseAbandoned): Promise<boolean>;
   /** Finishes the cleanup of a failed delegation an interrupted attempt left open (ADR-0186). */
   closeFailed(tenant: TenantContext, planId: string): Promise<Plan>;
 }
@@ -288,7 +294,10 @@ export const WAKE_MARGIN_MS = 1_000;
 export interface PlanConductorOptions {
   readonly plans: PlanRepository;
   /** Needed by `run` only: the worker advances plans, it never delegates one. */
-  readonly delegation?: Pick<Delegation, 'delegate' | 'abandon' | 'releaseManual' | 'closeFailed'>;
+  readonly delegation?: Pick<
+    Delegation,
+    'delegate' | 'abandon' | 'releaseManual' | 'closeAbandoned' | 'closeFailed'
+  >;
   readonly executions: Pick<
     ExecutionService,
     | 'get'
@@ -1674,6 +1683,11 @@ export function createPlanConductor(options: PlanConductorOptions): PlanConducto
     async releaseManual(tenant: TenantContext, planId: string, input: ReleaseManual) {
       if (delegation === undefined) throw new PlanningError('permission_denied', 'no_delegation');
       return delegation.releaseManual(tenant, planId, input);
+    },
+
+    async closeAbandoned(tenant: TenantContext, planId: string, input: CloseAbandoned) {
+      if (delegation === undefined) throw new PlanningError('permission_denied', 'no_delegation');
+      return delegation.closeAbandoned(tenant, planId, input);
     },
 
     async closeFailed(tenant: TenantContext, planId: string) {

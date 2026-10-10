@@ -35,6 +35,9 @@ export interface CreatingPlanPage {
   readonly next?: PlanId;
 }
 
+/** A page of the plans a runtime abandoned, shaped as `creatingPage`'s (ADR-0187, decision 8). */
+export type AbandonedPlanPage = CreatingPlanPage;
+
 /**
  * Where plans live: `plans/{planId}` and write-once `planVersions/{planId}_{version}` in
  * Firestore (ADR-0028), memory in tests. Every write stores the plan and its audit events
@@ -76,6 +79,14 @@ export interface PlanRepository {
     readonly after?: PlanId;
     readonly limit: number;
   }): Promise<CreatingPlanPage>;
+  /**
+   * The plans a runtime abandoned (`delegationFailure` `delegation_abandoned`), a page at a time by id,
+   * so the sweep can close a planning execution an interrupted cleanup left open (ADR-0187, decision 8).
+   */
+  abandonedPage(request: {
+    readonly after?: PlanId;
+    readonly limit: number;
+  }): Promise<AbandonedPlanPage>;
   /** Stores a new plan and its first version. An id that already exists is `plan_concurrency_conflict`. */
   create(write: PlanCreate): Promise<void>;
   /**
@@ -179,17 +190,30 @@ export class InMemoryPlanRepository implements PlanRepository {
     readonly after?: PlanId;
     readonly limit: number;
   }): Promise<CreatingPlanPage> {
-    // The same order and cursor as the store's query: by id, one page after the last id given.
+    return this.#pageWhere((p) => p.delegationState === 'creating', request);
+  }
+
+  async abandonedPage(request: {
+    readonly after?: PlanId;
+    readonly limit: number;
+  }): Promise<AbandonedPlanPage> {
+    return this.#pageWhere((p) => p.delegationFailure === 'delegation_abandoned', request);
+  }
+
+  /**
+   * One page of the stored plans `match` keeps, by id after the cursor: the order and cursor of the
+   * store's queries. A record that does not check is never returned, and does not hold up its page.
+   */
+  #pageWhere(
+    match: (plan: Plan) => boolean,
+    request: { readonly after?: PlanId; readonly limit: number },
+  ): CreatingPlanPage {
     const page = [...this.#plans.values()]
-      .filter(
-        (p) =>
-          p.delegationState === 'creating' && (request.after === undefined || p.id > request.after),
-      )
+      .filter((p) => match(p) && (request.after === undefined || p.id > request.after))
       .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
       .slice(0, request.limit);
     const last = page.at(-1);
     return {
-      // A record that does not check is never released, and it does not hold up the rest of its page.
       plans: page.flatMap((p) => {
         try {
           return [checkStoredPlan(p)];

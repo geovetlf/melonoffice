@@ -23,6 +23,7 @@ import {
   pageOfPlans,
   PlanningError,
   planVersionKey,
+  type AbandonedPlanPage,
   type CreatingPlanPage,
   type PlanCreate,
   type PlanPage,
@@ -481,20 +482,34 @@ export class FirestorePlanRepository implements PlanRepository {
     }
   }
 
-  /**
-   * One equality and the document id as the order (ADR-0187): the automatic single-field index on
-   * `delegationState` serves it, so no composite index is needed. A record that does not read as a
-   * plan is never released, and it does not hold up the rest of its page.
-   */
+  /** The plans whose delegation is `creating`, a page at a time (ADR-0187, decision 6). */
   async creatingPage(request: {
     readonly after?: PlanId;
     readonly limit: number;
   }): Promise<CreatingPlanPage> {
+    return this.#pageWhere('delegationState', 'creating', request);
+  }
+
+  /** The plans a runtime abandoned, a page at a time (ADR-0187, decision 8). */
+  async abandonedPage(request: {
+    readonly after?: PlanId;
+    readonly limit: number;
+  }): Promise<AbandonedPlanPage> {
+    return this.#pageWhere('delegationFailure', 'delegation_abandoned', request);
+  }
+
+  /**
+   * One equality and the document id as the order (ADR-0187): the automatic single-field index on the
+   * field serves it, so no composite index is needed. A record that does not read as a plan is never
+   * returned, and it does not hold up the rest of its page.
+   */
+  async #pageWhere(
+    field: 'delegationState' | 'delegationFailure',
+    value: string,
+    request: { readonly after?: PlanId; readonly limit: number },
+  ): Promise<CreatingPlanPage> {
     if (!Number.isSafeInteger(request.limit) || request.limit < 1) return { plans: [] };
-    let query = this.db
-      .collection(PLANS)
-      .where('delegationState', '==', 'creating')
-      .orderBy(FieldPath.documentId());
+    let query = this.db.collection(PLANS).where(field, '==', value).orderBy(FieldPath.documentId());
     if (request.after !== undefined) query = query.startAfter(request.after);
     const snapshot = await query.limit(request.limit).get();
     const plans = snapshot.docs.flatMap((doc) => {

@@ -2402,5 +2402,61 @@ describe.each(STORES)(
       await w.runner.recover();
       expect(await closedWith(w, 'permission_lost')).toHaveLength(1);
     });
+
+    it('62. a release a crash left open: the schedule runner’s recovery closes its planning execution once a lease has passed, audited once', async () => {
+      const w = await world();
+      const { workflow } = await scheduled(w, TWO_STEPS);
+      const stuck = await stuckAtFirst(w, workflow.id);
+      // The hand-made plan of 61, failed by a release at the time of the crash, and its planning
+      // execution still open: the release never reached its cleanup (ADR-0187, decision 8).
+      await w.stores.plans.update(w.orgA, stuck.id, (current) => {
+        const decision = must(current.decision);
+        const ref = must(current.workflow);
+        return {
+          plan: {
+            ...current,
+            decision: {
+              decision: decision.decision,
+              version: decision.version,
+              digest: decision.digest,
+              decidedBy: decision.decidedBy,
+              decidedAt: decision.decidedAt,
+            },
+            workflow: { id: ref.id, version: ref.version },
+            status: 'failed',
+            delegationState: 'failed',
+            delegationFailure: 'delegation_abandoned',
+            updatedAt: FIRST as IsoTimestamp,
+            revision: current.revision + 1,
+          },
+          events: [],
+        };
+      });
+      // The planning execution's closures, audited with their failure code.
+      const closures = async () =>
+        (await w.stores.events())
+          .filter(
+            (e) =>
+              e.action === 'execution.state_changed' &&
+              e.target?.id === stuck.executionId &&
+              e.reason !== undefined,
+          )
+          .map((e) => e.reason);
+      const before = await closures();
+      expect((await w.executions.get(w.tenantA, stuck.executionId)).status).not.toBe('failed');
+
+      w.at(new Date(Date.parse(FIRST) + SCHEDULE_LEASE_MS + 60_000));
+      await w.runner.recover();
+      expect((await w.executions.get(w.tenantA, stuck.executionId)).status).toBe('failed');
+      expect(await closures()).toEqual([...before, 'delegation_abandoned']);
+      expect(await w.stored(stuck.id)).toMatchObject({
+        status: 'failed',
+        delegationFailure: 'delegation_abandoned',
+      });
+
+      // Closed once: the next sweep finds the execution closed and writes nothing.
+      await w.runner.recover();
+      expect(await closures()).toEqual([...before, 'delegation_abandoned']);
+    });
   },
 );
