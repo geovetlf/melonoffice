@@ -276,7 +276,8 @@ export interface Delegation {
 
 export interface DelegationOptions {
   readonly plans: PlanRepository;
-  readonly executions: Pick<ExecutionService, 'get' | 'create' | 'addNodes' | 'changeStatus'>;
+  readonly executions: Pick<ExecutionService, 'get' | 'create' | 'addNodes' | 'changeStatus'> &
+    Partial<Pick<ExecutionService, 'runtimePlanChangeStatus'>>;
   readonly specialists: Pick<SpecialistService, 'eligibility'>;
   /** Only `findOrganization` is used, to refuse inactive organizations. */
   readonly organizations: Pick<TenancyStore, 'findOrganization'>;
@@ -312,6 +313,15 @@ export function createDelegation({
   now = () => new Date(),
   requestId,
 }: DelegationOptions): Delegation {
+  /** The planning execution's status, moved by a person, or by the runtime for a schedule. */
+  const moveParent: ExecutionService['changeStatus'] = (tenant, id, change) => {
+    if (tenant.actor !== 'runtime') return executions.changeStatus(tenant, id, change);
+    if (executions.runtimePlanChangeStatus === undefined) {
+      throw new PlanningError('permission_denied', 'runtime_only');
+    }
+    return executions.runtimePlanChangeStatus(tenant, id, change);
+  };
+
   async function organizationOf(tenant: TenantContext): Promise<OrganizationId> {
     if (!isResolvedTenant(tenant)) throw new PlanningError('unresolved_tenant');
     const organization = await organizations.findOrganization(tenant.organizationId);
@@ -453,6 +463,9 @@ export function createDelegation({
     for (const d of plan.delegations) {
       const child = await findExecution(tenant, d.executionId);
       if (child === undefined || isTerminal(child.status)) continue;
+      // The runtime never cancels (ADR-0029): a schedule's child that never started stays
+      // pending under a failed parent, which no start accepts (ADR-0185).
+      if (tenant.actor === 'runtime') continue;
       await executions.changeStatus(tenant, child.id, {
         from: child.status,
         to: 'cancelled',
@@ -461,7 +474,7 @@ export function createDelegation({
     }
     const parent = await findExecution(tenant, plan.executionId);
     if (parent !== undefined && !isTerminal(parent.status)) {
-      await executions.changeStatus(tenant, parent.id, {
+      await moveParent(tenant, parent.id, {
         from: parent.status,
         to: 'failed',
         failure: { code: plan.delegationFailure ?? 'delegation_failed' },
@@ -652,7 +665,7 @@ export function createDelegation({
         const from = expectedOf(plan);
         if (parent.status !== from) throw new PlanningError('execution_not_plannable');
         try {
-          await executions.changeStatus(tenant, parent.id, { from, to: 'running' });
+          await moveParent(tenant, parent.id, { from, to: 'running' });
         } catch (error) {
           const fresh = await executions.get(tenant, parent.id);
           if (fresh.status !== 'running') throw error;

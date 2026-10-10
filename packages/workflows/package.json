@@ -21,6 +21,7 @@
   "dependencies": {
     "@melonoffice/ai-gateway": "workspace:*",
     "@melonoffice/audit": "workspace:*",
+    "@melonoffice/conversations": "workspace:*",
     "@melonoffice/departments": "workspace:*",
     "@melonoffice/domain": "workspace:*",
     "@melonoffice/execution": "workspace:*",

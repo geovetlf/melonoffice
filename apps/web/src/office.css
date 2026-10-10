@@ -2449,6 +2449,38 @@ a.sidebar__item:hover {
   min-width: 0;
 }
 
+/* A workflow's schedule (ADR-0185): its line under the card, and the form that sets it. */
+.automations__schedule {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--mo-space-2);
+  flex-basis: 100%;
+  min-width: 0;
+}
+
+.automations__schedule-form {
+  display: grid;
+  gap: var(--mo-space-2);
+  min-width: 0;
+}
+
+.automations__days {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--mo-space-2);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.automations__day {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--mo-space-1);
+}
+
 /* A plan in the person's words (ADR-0167): a step's state, approval, failure and result. */
 .automations__step {
   display: grid;

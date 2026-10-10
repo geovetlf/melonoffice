@@ -1,0 +1,9 @@
+# Secret scan exceptions, one exact finding per line (gitleaks 8.24.3). Not rules, paths or commits.
+#
+# 447483b: a fake plan request key used as a fixture in apps/web/src/automations/workflowSchedule.test.tsx,
+# at line 173 of that commit (line 174 at head, where it carries an inline gitleaks:allow marker).
+# The value is the shape of a schedule's request key (schedule-YYYYMMDDtHHMM, see occurrenceKey in
+# packages/workflows/src/service.ts). It is not a credential, and the test never reads it.
+# That commit cannot be changed without rewriting the branch's history, which the owner has ruled out,
+# so this one finding is excepted here by its fingerprint.
+447483b467d5b3fbfce52e715c3b495b08d91cba:apps/web/src/automations/workflowSchedule.test.tsx:generic-api-key:173

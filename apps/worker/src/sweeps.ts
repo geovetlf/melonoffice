@@ -121,6 +121,11 @@ export interface ExecutionSweeperOptions {
     find(organizationId: OrganizationId, id: PlanId): Promise<Plan | undefined>;
     advance(tenant: TenantContext, planId: PlanId): Promise<unknown>;
   };
+  /**
+   * Workflow schedules whose occurrence's task did not run in time (ADR-0185): each sweep runs
+   * them as their task would. Absent: nothing recovers a lost occurrence.
+   */
+  readonly schedules?: { recover(): Promise<number> };
   /** Queues the next slot's task. Absent: the sweep runs only when its task is delivered. */
   readonly scheduler?: { schedule(body: object, at: Date): Promise<void> };
   readonly now?: () => Date;
@@ -154,8 +159,18 @@ function slotOf(request: unknown): string | undefined {
 
 export function createExecutionSweeper(options: ExecutionSweeperOptions): ExecutionSweeper {
   const now = options.now ?? (() => new Date());
-  const { executions, jobs, approvals, tenancy, runtime, ledger, scheduler, logger, plans } =
-    options;
+  const {
+    executions,
+    jobs,
+    approvals,
+    tenancy,
+    runtime,
+    ledger,
+    scheduler,
+    logger,
+    plans,
+    schedules,
+  } = options;
 
   /**
    * A plan step that never started while its plan runs is not abandoned work: it waits for the
@@ -397,6 +412,18 @@ export function createExecutionSweeper(options: ExecutionSweeperOptions): Execut
         }
         counts[outcome] = (counts[outcome] ?? 0) + 1;
         if (ACTED.has(outcome)) advanced += 1;
+      }
+    }
+    // Schedules whose occurrence never ran: a lost task, a deploy, a worker that was down.
+    if (schedules !== undefined) {
+      try {
+        const recovered = await schedules.recover();
+        if (recovered > 0) counts.schedules = recovered;
+      } catch (error) {
+        const code = (error as { code?: unknown }).code;
+        logger?.warn('sweep schedule recovery failed', {
+          code: typeof code === 'string' ? code : 'error',
+        });
       }
     }
     return Object.freeze({

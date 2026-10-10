@@ -20,6 +20,8 @@ import {
   type WorkflowDetail,
   type WorkflowStatus,
   type WorkflowStepDraft,
+  type WorkflowRecurrence,
+  type WorkflowScheduleView,
   type WorkflowView,
   type PlanPageView,
 } from './automationsClient.js';
@@ -27,6 +29,7 @@ import { navigate } from '../identity/router.js';
 import { openedWith, paths } from '../shell/routes.js';
 import { readyList, useOfficeData } from '../office/OfficeData.js';
 import { draftsOf, WorkflowEditor } from './WorkflowEditor.js';
+import { ScheduleForm, ScheduleLine } from './WorkflowSchedule.js';
 import { draftClientOf, takeHandedOverDraft, WorkflowFromWords } from './WorkflowDraftCard.js';
 import { StepValues, useContacts, type ContactOption, type ContactsLoad } from './writeSteps.js';
 import {
@@ -166,6 +169,19 @@ export function AutomationsPage({
     openedWith('workflow'),
   );
   const [notice, setNotice] = useState<string>();
+  // Each workflow's schedule (ADR-0185), read once its list is there; `null`: it never repeated.
+  const readSchedule = useMemo(() => client.schedule?.bind(client), [client]);
+  const [schedules, setSchedules] = useState<Readonly<Record<string, WorkflowScheduleView | null>>>(
+    {},
+  );
+  const [scheduling, setScheduling] = useState<string>();
+  const [scheduleError, setScheduleError] = useState<string>();
+  // Switching a schedule on is a standing approval: the three permissions it needs, as the API.
+  const canSchedule =
+    permissions.manageWorkflows === true &&
+    permissions.planWorkflows &&
+    permissions.decidePlans &&
+    client.saveSchedule !== undefined;
   const canWrite = permissions.manageWorkflows === true && templates !== undefined;
   const drafts = useMemo(
     () =>
@@ -255,6 +271,20 @@ export function AutomationsPage({
     };
   }, [client, permissions.readWorkflows, loadPlans]);
 
+  useEffect(() => {
+    if (readSchedule === undefined || workflows.status !== 'ready') return;
+    let live = true;
+    for (const w of workflows.value) {
+      readSchedule(w.id).then(
+        (schedule) => live && setSchedules((current) => ({ ...current, [w.id]: schedule })),
+        () => undefined,
+      );
+    }
+    return () => {
+      live = false;
+    };
+  }, [readSchedule, workflows]);
+
   const checkActions = useCallback(() => client.checkActions(), [client]);
   // Who would do each role's steps, for the editor's tool steps (ADR-0167).
   const assignees = useMemo(() => client.assignees?.bind(client), [client]);
@@ -309,6 +339,44 @@ export function AutomationsPage({
   }
 
   const intl = useIntl();
+
+  async function setSchedule(workflow: WorkflowView, recurrence: WorkflowRecurrence) {
+    if (pending !== undefined || client.saveSchedule === undefined) return;
+    setPending(workflow.id);
+    setScheduleError(undefined);
+    setNotice(undefined);
+    try {
+      const saved = await client.saveSchedule(workflow.id, recurrence);
+      setSchedules((current) => ({ ...current, [workflow.id]: saved }));
+      setScheduling(undefined);
+      setNotice('automations.schedule.saved');
+    } catch (failure) {
+      setScheduleError(
+        failure instanceof AutomationsError && failure.code === 'invalid_schedule'
+          ? 'automations.schedule.error.invalid'
+          : errorKey(failure),
+      );
+    } finally {
+      setPending(undefined);
+    }
+  }
+
+  async function switchOffSchedule(workflow: WorkflowView) {
+    if (pending !== undefined || client.switchOffSchedule === undefined) return;
+    setPending(workflow.id);
+    setError(undefined);
+    setNotice(undefined);
+    try {
+      const off = await client.switchOffSchedule(workflow.id);
+      setSchedules((current) => ({ ...current, [workflow.id]: off }));
+      setScheduling(undefined);
+      setNotice('automations.schedule.switchedOff');
+    } catch (failure) {
+      setError(errorKey(failure));
+    } finally {
+      setPending(undefined);
+    }
+  }
 
   async function plan(workflow: WorkflowView) {
     if (pending !== undefined) return;
@@ -513,6 +581,33 @@ export function AutomationsPage({
                         ))
                       : null}
                   </div>
+                  {readSchedule === undefined || schedules[w.id] === undefined ? null : (
+                    <div className="automations__schedule">
+                      <ScheduleLine
+                        schedule={schedules[w.id] ?? null}
+                        workflowVersion={w.version}
+                        canManage={canSchedule}
+                        busy={pending === w.id}
+                        onChange={() => {
+                          setScheduleError(undefined);
+                          setScheduling(w.id);
+                        }}
+                        onSwitchOff={() => void switchOffSchedule(w)}
+                      />
+                    </div>
+                  )}
+                  {scheduling === w.id && canSchedule ? (
+                    <div className="automations__detail">
+                      <ScheduleForm
+                        initial={schedules[w.id]?.recurrence}
+                        workflowVersion={w.version}
+                        busy={pending === w.id}
+                        error={scheduleError}
+                        onSave={(recurrence) => void setSchedule(w, recurrence)}
+                        onCancel={() => setScheduling(undefined)}
+                      />
+                    </div>
+                  ) : null}
                   {/* Why it could not be switched on or planned, where the person pressed. */}
                   {refused?.workflowId === w.id ? (
                     <div className="automations__detail">
@@ -768,6 +863,12 @@ function PlanRow({
       )}
       {' · '}
       <FormattedMessage id={`automations.planStatus.${plan.status}`} />
+      {plan.workflow?.occurrence === undefined ? null : (
+        <>
+          {' · '}
+          <FormattedMessage id="automations.schedule.planLabel" />
+        </>
+      )}
     </button>
   );
 }
@@ -1200,6 +1301,12 @@ function PlanCard({
           />
         ) : (
           <FormattedMessage id="automations.fromPlanner" />
+        )}
+        {detail.workflow?.occurrence === undefined ? null : (
+          <>
+            {' · '}
+            <FormattedMessage id="automations.schedule.planLabel" />
+          </>
         )}
         {ended && detail.updatedAt !== undefined ? (
           <>

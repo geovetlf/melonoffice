@@ -834,14 +834,30 @@ describe.each(STORES)(
     });
 
     it('4. a write that timed out is never run again; running the workflow again reaches the same follow-up', async () => {
-      const w = await world({ timeoutMs: 50 });
-      // The service writes, then answers too late: whether it wrote is unknown to the gate.
-      w.setHook(async (real, tenant, input) => {
-        const result = await real(tenant, input);
-        await new Promise((resolve) => setTimeout(resolve, 200));
-        return result;
+      // The gate gives up after 2 s. The service writes, and its answer is held until the test
+      // releases it, after the timeout has been seen: late by construction, whatever the latency.
+      // No timer orders the answer, and every assertion reads the stored state, so a second write,
+      // a retry or a revived step would still show.
+      const w = await world({ timeoutMs: 2000 });
+      let writes = 0;
+      let wrote: ReturnType<FollowUpService['create']> | undefined;
+      let answered: ReturnType<FollowUpService['create']> | undefined;
+      let release: () => void = () => undefined;
+      const released = new Promise<void>((resolve) => {
+        release = () => resolve();
+      });
+      w.setHook((real, tenant, input) => {
+        writes += 1;
+        wrote = real(tenant, input);
+        answered = wrote.then(async (result) => {
+          await released;
+          return result;
+        });
+        return answered;
       });
       const first = await runToEnd(w);
+      // The write itself has finished: only its answer is still on its way to the gate.
+      await must(wrote);
       const child = await w.childOf(first, 'prepare');
       // Its outcome is unknown (ADR-0029): never retried, left for a person, nothing else in it runs.
       const node = must(child.nodes.find((n) => n.id === 'schedule'));
@@ -850,19 +866,70 @@ describe.each(STORES)(
       expect(child.status).not.toBe('completed');
       expect((await w.childOf(first, 'note')).startedAt).toBeUndefined();
       expect((await w.childOf(first, 'week')).status).toBe('completed');
-      const requested = (await w.stores.events()).filter(
-        (e) => e.action === 'tool.execution_requested' && e.target?.id === child.id,
-      );
-      expect(requested).toHaveLength(1);
+      const requests = async () =>
+        (await w.stores.events()).filter(
+          (e) => e.action === 'tool.execution_requested' && e.target?.id === child.id,
+        );
+      expect(await requests()).toHaveLength(1);
+      expect(writes).toBe(1);
+      expect(await w.scheduled()).toHaveLength(1);
+      // The late answer arrives before Alice runs the workflow again, and it changes nothing: the
+      // timed-out write stays failed, the plan stays open, and no second write was requested.
+      release();
+      await must(answered);
+      expect(writes).toBe(1);
+      expect(await requests()).toHaveLength(1);
+      const late = await w.childOf(first, 'prepare');
+      expect(must(late.nodes.find((n) => n.id === 'schedule')).status).toBe('failed');
+      expect(late.status).not.toBe('completed');
       expect(await w.scheduled()).toHaveLength(1);
 
       // Alice stops that plan and runs the workflow again the same day: the same follow-up.
       await w.executions.cancel(w.tenantA, first.executionId, 'director_request');
+      expect((await w.executions.get(w.tenantA, first.executionId)).status).toBe('cancelled');
       w.setHook(undefined);
       const again = await runToEnd(w, 'run-2');
       expect(again.status).toBe('completed');
       expect(await w.scheduled()).toHaveLength(1);
       // Asked again, the service queues the same follow-up's task, which runs once.
+      expect(new Set(w.queued).size).toBe(1);
+    });
+
+    it('4b. a plan cancelled before its late answer lands stays cancelled, and the answer changes nothing', async () => {
+      // The same timed-out write as case 4, but Alice stops the plan while the answer is still held.
+      const w = await world({ timeoutMs: 2000 });
+      let writes = 0;
+      let answered: ReturnType<FollowUpService['create']> | undefined;
+      let release: () => void = () => undefined;
+      const released = new Promise<void>((resolve) => {
+        release = () => resolve();
+      });
+      w.setHook((real, tenant, input) => {
+        writes += 1;
+        const written = real(tenant, input);
+        answered = written.then(async (result) => {
+          await released;
+          return result;
+        });
+        return answered;
+      });
+      const first = await runToEnd(w);
+      const timedOut = await w.childOf(first, 'prepare');
+      expect(must(timedOut.nodes.find((n) => n.id === 'schedule')).status).toBe('failed');
+      expect(writes).toBe(1);
+      // The write has already happened, and its answer has not come: the plan is stopped now.
+      await w.executions.cancel(w.tenantA, first.executionId, 'director_request');
+      expect((await w.executions.get(w.tenantA, first.executionId)).status).toBe('cancelled');
+      release();
+      await must(answered);
+      // The late answer revives nothing: the run stays cancelled, the step stays failed, and the one
+      // write that happened is the only follow-up, queued once.
+      expect((await w.executions.get(w.tenantA, first.executionId)).status).toBe('cancelled');
+      const late = await w.childOf(first, 'prepare');
+      expect(must(late.nodes.find((n) => n.id === 'schedule')).status).toBe('failed');
+      expect(late.status).not.toBe('completed');
+      expect(writes).toBe(1);
+      expect(await w.scheduled()).toHaveLength(1);
       expect(new Set(w.queued).size).toBe(1);
     });
 

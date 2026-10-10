@@ -20,6 +20,7 @@ import {
 } from '@melonoffice/forecasting';
 import { createCloudTasksDispatcher, createCloudTasksScheduler } from '@melonoffice/runtime';
 import { defaultToolRegistry } from '@melonoffice/tools';
+import { RUN_SCHEDULE_PATH } from '@melonoffice/workflows';
 import { createAgentTurns } from './agent-turns.js';
 import { createLogger } from '@melonoffice/observability';
 import { aiConfigurationOf } from './ai.js';
@@ -57,6 +58,7 @@ import {
   FirestoreCommercialStore,
   FirestoreUserDirectory,
   FirestoreWorkflowRepository,
+  FirestoreWorkflowScheduleRepository,
 } from '@melonoffice/firestore';
 
 const config = loadConfig(process.env);
@@ -198,6 +200,21 @@ function services(projectId: string) {
     // Approving a plan starts it (ADR-0070): its steps are queued through the same runtime.
     planRuntime: agentTurns,
     workflows: new FirestoreWorkflowRepository(firestore),
+    // Workflow schedules (ADR-0185): each occurrence a task for the worker on the same queue.
+    workflowSchedules: {
+      repository: new FirestoreWorkflowScheduleRepository(firestore),
+      ...(transport === undefined
+        ? {}
+        : {
+            scheduler: createCloudTasksScheduler({
+              queue: transport.queue,
+              targetUrl: `${transport.workerUrl}${RUN_SCHEDULE_PATH}`,
+              audience: transport.workerUrl,
+              invokerEmail: transport.invokerEmail,
+              dispatchDeadlineSeconds: Math.ceil(transport.leaseMs / 1000),
+            }),
+          }),
+    },
     audit,
     agentTurns,
     // Agent tasks (ADR-0063): queued for the worker through the same runtime as agents' turns.

@@ -162,8 +162,10 @@ import {
 import { defaultToolRegistry, type ToolRegistry } from '@melonoffice/tools';
 import {
   createWorkflowDrafter,
+  createWorkflowScheduleService,
   createWorkflowService,
   type WorkflowRepository,
+  type WorkflowScheduleRepository,
 } from '@melonoffice/workflows';
 import { Hono, type Context } from 'hono';
 import type { AgentTurns } from './agent-turns.js';
@@ -304,6 +306,14 @@ export interface AppOptions {
   readonly planRuntime?: TaskKickoff;
   /** Workflows (ADR-0028). Absent: the workflow routes answer 503 (fails closed). */
   readonly workflows?: WorkflowRepository;
+  /**
+   * Workflow schedules (ADR-0185): their records and the queue for each occurrence's task.
+   * Absent: the schedule routes answer 503. Without a scheduler, the worker's sweep runs them.
+   */
+  readonly workflowSchedules?: {
+    readonly repository: WorkflowScheduleRepository;
+    readonly scheduler?: { schedule(body: object, at: Date): Promise<void> };
+  };
   /**
    * Conversations, contacts and channel connections (ADR-0033). Absent: the inbox routes answer
    * 503 (fails closed). They also need departments (`structure`) to assign to one.
@@ -466,6 +476,7 @@ export function createApp({
   plans,
   planRuntime,
   workflows,
+  workflowSchedules,
   conversations,
   ai = {},
   forecasting,
@@ -1510,6 +1521,22 @@ export function createApp({
         registerWorkflowRoutes(app, {
           ...dependencies,
           workflows: workflowService,
+          ...(workflowSchedules === undefined
+            ? {}
+            : {
+                schedules: createWorkflowScheduleService({
+                  repository: workflowSchedules.repository,
+                  workflows,
+                  organizations: tenancy,
+                  authorization,
+                  // The business's own time zone (ADR-0185), as its activity uses.
+                  timeZone: zoneOf,
+                  ...(workflowSchedules.scheduler === undefined
+                    ? {}
+                    : { scheduler: workflowSchedules.scheduler }),
+                  audit,
+                }),
+              }),
           // GIA drafts a workflow from a person's words (ADR-0171). Without a gateway, the
           // route answers that no model serves it.
           ...(aiGateway === undefined

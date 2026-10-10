@@ -45,8 +45,9 @@ import type { PlanRepository } from './repository.js';
  * at a time, models only through the AI Gateway, tools only through the gate). The conductor only
  * decides when each child starts and when the plan is over.
  *
- * - `run` (the person who approved, right after approving): delegates the plan and starts the
- *   steps that depend on no other step.
+ * - `run` (the person who approved, right after approving; or the runtime of a schedule's person,
+ *   for a plan that person's standing approval approved, ADR-0185): delegates the plan and starts
+ *   the steps that depend on no other step.
  * - `advance` (the runtime, after one of the plan's steps ended): decides every condition step
  *   whose steps before it completed (WF-4, through the Decision Engine), starts every specialist
  *   step whose steps before it completed, mirrors the children on the planning execution's
@@ -205,6 +206,13 @@ export interface StepApprovals {
  */
 export const waitsForApproval = (step: PlanStep): boolean =>
   step.kind === 'specialist' && step.approvalRequired && step.dependsOn.length > 0;
+
+/**
+ * Whether a first step waits for a person under a standing approval (ADR-0185): its plan was
+ * approved by a schedule, not by a person, so the step that asks for approval still needs one.
+ */
+export const waitsForStandingApproval = (plan: Plan, step: PlanStep): boolean =>
+  plan.decision?.via === 'schedule' && step.kind === 'specialist' && step.approvalRequired;
 
 /**
  * The tool steps a specialist step uses that need a person's approval (ADR-0151): their tool's
@@ -538,6 +546,9 @@ export function everyBranchFailed(
 /** Why a plan's execution failed while the plan completed: a branch failed, others did not. */
 export const BRANCH_FAILED = 'branch_failed';
 
+/** Every step of the plan was declined or skipped: it ran nothing (ADR-0185). */
+export const NOTHING_RAN = 'nothing_ran';
+
 /** A node of the planning execution that finished with work done: its evidence is checked. */
 const decided = (view: StepView): boolean => view.state === 'completed' || view.state === 'stopped';
 
@@ -789,7 +800,7 @@ export function createPlanConductor(options: PlanConductorOptions): PlanConducto
     childId: ExecutionId,
   ): readonly Gate[] {
     const gates: Gate[] = [];
-    if (waitsForApproval(step))
+    if (waitsForApproval(step) || waitsForStandingApproval(plan, step))
       gates.push({ entry: step.id, ask: askOf(plan, version, step, childId) });
     for (const tool of approvedToolStepsOf(version, step)) {
       const ref = tool.tool as NonNullable<PlanStep['tool']>;
@@ -1577,6 +1588,22 @@ export function createPlanConductor(options: PlanConductorOptions): PlanConducto
       });
     }
     if (views.every((v) => decided(v) || v.state === 'skipped' || v.state === 'declined')) {
+      // Every step was declined or skipped: nothing ran, so there is nothing to verify. The plan
+      // ends failed with that reason, never stuck verifying an empty graph (ADR-0185).
+      if (!views.some(decided)) {
+        const parent = await mirror(tenant, plan.executionId, views);
+        if (!isTerminal(parent.status)) {
+          await settle(() =>
+            executions.runtimePlanChangeStatus(tenant, parent.id, {
+              from: parent.status,
+              to: 'failed',
+              failure: { code: NOTHING_RAN },
+            }),
+          );
+        }
+        logger?.info('plan ended with nothing run', { planId: plan.id });
+        return finishPlan(tenant, organizationId, plan, 'failed', NOTHING_RAN);
+      }
       await complete(tenant, await mirror(tenant, plan.executionId, views), views);
       const closed = await executions.get(tenant, plan.executionId);
       if (closed.status !== 'completed') return plan;
@@ -1592,8 +1619,17 @@ export function createPlanConductor(options: PlanConductorOptions): PlanConducto
   return Object.freeze({
     async run(tenant: TenantContext, planId: string) {
       const organizationId = organizationOf(tenant);
-      if (tenant.actor !== 'user') throw new PlanningError('permission_denied', 'person_only');
+      if (tenant.actor !== 'user' && tenant.actor !== 'runtime') {
+        throw new PlanningError('permission_denied', 'person_only');
+      }
       const { plan, version } = await load(organizationId, planId);
+      // The runtime starts only a plan its own person's schedule approved (ADR-0185).
+      if (
+        tenant.actor === 'runtime' &&
+        (plan.decision?.via !== 'schedule' || plan.decision.decidedBy !== tenant.userId)
+      ) {
+        throw new PlanningError('permission_denied', 'person_only');
+      }
       const unrunnable = unrunnableStepOf(version);
       if (unrunnable !== undefined) throw new PlanningError('plan_not_runnable', unrunnable);
       if (plan.status !== 'approved' && plan.status !== 'executing') {

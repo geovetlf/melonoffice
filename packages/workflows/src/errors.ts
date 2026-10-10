@@ -14,7 +14,11 @@ export type WorkflowErrorCode =
   /** Its current version would not plan now (ADR-0179): `detail` says why, as codes. */
   | 'workflow_not_valid'
   | 'assignee_unavailable'
-  | 'workflow_plan_ended';
+  | 'workflow_plan_ended'
+  /** A schedule's confirmed version is no longer the workflow's (ADR-0185). */
+  | 'workflow_version_changed'
+  | 'schedule_not_found'
+  | 'invalid_schedule';
 
 export class WorkflowError extends Error {
   override readonly name = 'WorkflowError';

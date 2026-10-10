@@ -55,12 +55,16 @@ interface PlanDocument {
   /** The workflow and version it was made from (ADR-0180); absent on older plans. */
   readonly workflowId?: string | null;
   readonly workflowVersion?: number | null;
+  /** The schedule's occurrence that made it (ADR-0185); absent when a person started it. */
+  readonly workflowOccurrence?: FirestoreTimestamp | null;
   readonly decision: {
     decision: string;
     version: number;
     digest: string;
     decidedBy: string;
     decidedAt: FirestoreTimestamp;
+    /** ADR-0185: `schedule` for a standing approval; absent otherwise. */
+    via?: string;
   } | null;
   /** What each condition step did (WF-4). Absent in plans written before conditions ran. */
   readonly conditions?: readonly ConditionDocument[];
@@ -139,6 +143,9 @@ export function toPlanDocument(plan: Plan): PlanDocument {
     delegationFailure: plan.delegationFailure ?? null,
     workflowId: plan.workflow?.id ?? null,
     workflowVersion: plan.workflow?.version ?? null,
+    ...(plan.workflow?.occurrence === undefined
+      ? {}
+      : { workflowOccurrence: ts(plan.workflow.occurrence) }),
     decision:
       plan.decision === undefined
         ? null
@@ -148,6 +155,7 @@ export function toPlanDocument(plan: Plan): PlanDocument {
             digest: plan.decision.digest,
             decidedBy: plan.decision.decidedBy,
             decidedAt: ts(plan.decision.decidedAt),
+            ...(plan.decision.via === undefined ? {} : { via: plan.decision.via }),
           },
     ...(plan.conditions === undefined
       ? {}
@@ -229,7 +237,15 @@ function toPlan(id: string, d: PlanDocument): Plan {
       ? {}
       : { delegationFailure: d.delegationFailure }),
     ...(typeof d.workflowId === 'string' && typeof d.workflowVersion === 'number'
-      ? { workflow: { id: d.workflowId as WorkflowId, version: d.workflowVersion } }
+      ? {
+          workflow: {
+            id: d.workflowId as WorkflowId,
+            version: d.workflowVersion,
+            ...(d.workflowOccurrence === undefined || d.workflowOccurrence === null
+              ? {}
+              : { occurrence: iso(d.workflowOccurrence) }),
+          },
+        }
       : {}),
     ...(d.decision === null
       ? {}
@@ -240,6 +256,7 @@ function toPlan(id: string, d: PlanDocument): Plan {
             digest: d.decision.digest,
             decidedBy: d.decision.decidedBy,
             decidedAt: iso(d.decision.decidedAt),
+            ...(d.decision.via === 'schedule' ? { via: 'schedule' as const } : {}),
           },
         }),
     ...(d.conditions === undefined

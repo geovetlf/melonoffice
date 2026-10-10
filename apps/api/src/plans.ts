@@ -270,8 +270,17 @@ export function toPlanView(plan: Plan) {
     delegationState: plan.delegationState ?? null,
     delegationFailure: plan.delegationFailure ?? null,
     // Which workflow and version made it (ADR-0180); null from the planner or on older plans.
+    // A schedule's occurrence too, when the schedule made it (ADR-0185).
     workflow:
-      plan.workflow === undefined ? null : { id: plan.workflow.id, version: plan.workflow.version },
+      plan.workflow === undefined
+        ? null
+        : {
+            id: plan.workflow.id,
+            version: plan.workflow.version,
+            ...(plan.workflow.occurrence === undefined
+              ? {}
+              : { occurrence: plan.workflow.occurrence }),
+          },
     // The credit budget a person approved, as each step it could not cover found it (ADR-0163):
     // what the plan had used, what the step needed, and the budget.
     budgetBlocks: (plan.budgetBlocks ?? []).map((b) => ({
@@ -289,6 +298,8 @@ export function toPlanView(plan: Plan) {
             version: plan.decision.version,
             decidedBy: plan.decision.decidedBy,
             decidedAt: plan.decision.decidedAt,
+            // The person's standing approval of the schedule decided it (ADR-0185).
+            ...(plan.decision.via === undefined ? {} : { via: plan.decision.via }),
           },
     createdAt: plan.createdAt,
     createdBy: plan.createdBy,

@@ -8,6 +8,7 @@ import type { JobHandler } from './handler.js';
 import { registerHealth } from './health.js';
 import { RUN_PLAN_WAKE_PATH, type PlanWakeHandler } from './plan-wakeups.js';
 import { RUN_SWEEP_PATH, type ExecutionSweeper } from './sweeps.js';
+import { RUN_SCHEDULE_PATH, type ScheduleRunner } from './workflow-schedules.js';
 
 export const SERVICE_NAME = 'worker';
 
@@ -53,6 +54,11 @@ export interface AppOptions {
      * deliveries are refused with 503.
      */
     readonly planWakes?: PlanWakeHandler;
+    /**
+     * Runs a workflow schedule's occurrence (ADR-0185), behind the same invoker check. Absent:
+     * occurrence deliveries are refused with 503.
+     */
+    readonly schedules?: Pick<ScheduleRunner, 'run'>;
   };
 }
 
@@ -187,6 +193,15 @@ export function createApp({ logger, version, jobs }: AppOptions): Hono<Env> {
     const read = await delivery(c);
     if ('refused' in read) return read.refused;
     const result = await jobs.planWakes.run(read.body);
+    return c.json(result.body, result.status);
+  });
+
+  // A workflow schedule's occurrence (ADR-0185): same invoker, same checks, its own small body.
+  app.post(RUN_SCHEDULE_PATH, async (c) => {
+    if (jobs?.schedules === undefined) return c.json({ error: 'schedules_not_configured' }, 503);
+    const read = await delivery(c);
+    if ('refused' in read) return read.refused;
+    const result = await jobs.schedules.run(read.body);
     return c.json(result.body, result.status);
   });
 

@@ -129,6 +129,11 @@ export interface FakeBackend {
      */
     workflows: Record<string, Record<string, unknown>[]>;
     /**
+     * Each organization's workflow schedules (ADR-0185), by workflow id, as the API shows them.
+     * `PUT` stores what it is sent with a fixed next run; `POST …/off` switches one off.
+     */
+    schedules: Record<string, Record<string, Record<string, unknown>>>;
+    /**
      * Each organization's plans (WF-3), as the API shows one (with `current`), and each plan's
      * steps as `GET plans/:id/steps` reads them.
      */
@@ -280,6 +285,7 @@ export function fakeBackend(): FakeBackend {
     followUps: {},
     agentTasks: {},
     workflows: {},
+    schedules: {},
     plans: {},
     planPageSize: 100,
     planSteps: {},
@@ -1222,6 +1228,59 @@ export function fakeBackend(): FakeBackend {
           workflow.steps = input.steps;
         }
         return json(action === 'status' ? 200 : 201, workflow);
+      }
+    }
+    const schedule = route?.match(/^workflows\/([^/]+)\/schedule(\/off)?$/);
+    if (schedule?.[1] !== undefined) {
+      const workflowId = schedule[1];
+      const workflow = (options.workflows[organizationId] ?? []).find((w) => w.id === workflowId);
+      const stored = (options.schedules[organizationId] ??= {});
+      if (method === 'GET') {
+        const denied = needs('workflow.read');
+        if (denied !== undefined) return denied;
+        if (workflow === undefined) return json(404, { error: 'workflow_not_found' });
+        return json(200, { schedule: stored[workflowId] ?? null });
+      }
+      if (method === 'PUT') {
+        for (const permission of ['workflow.manage', 'plan.create', 'approval.approve']) {
+          const denied = needs(permission);
+          if (denied !== undefined) return denied;
+        }
+        if (workflow === undefined) return json(404, { error: 'workflow_not_found' });
+        if (workflow.status !== 'active') return json(409, { error: 'workflow_not_active' });
+        const input = JSON.parse(body ?? '{}') as { recurrence?: unknown };
+        if (typeof input.recurrence !== 'object' || input.recurrence === null) {
+          return json(400, { error: 'invalid_schedule', detail: 'recurrence' });
+        }
+        const previous = stored[workflowId];
+        stored[workflowId] = {
+          workflowId,
+          status: 'on',
+          recurrence: input.recurrence,
+          timeZone: 'America/Lima',
+          workflowVersion: workflow.version,
+          confirmedBy: 'user-1',
+          confirmedAt: '2026-10-05T12:00:00Z',
+          nextRunAt: '2026-10-05T14:00:00.000Z',
+          last: null,
+          revision: previous === undefined ? 1 : (previous.revision as number) + 1,
+          updatedAt: '2026-10-05T12:00:00Z',
+        };
+        return json(200, { schedule: stored[workflowId] });
+      }
+      if (method === 'POST' && schedule[2] !== undefined) {
+        const denied = needs('workflow.manage');
+        if (denied !== undefined) return denied;
+        const current = stored[workflowId];
+        if (workflow === undefined) return json(404, { error: 'workflow_not_found' });
+        if (current === undefined) return json(404, { error: 'schedule_not_found' });
+        stored[workflowId] = {
+          ...current,
+          status: 'off',
+          nextRunAt: null,
+          revision: (current.revision as number) + 1,
+        };
+        return json(200, { schedule: stored[workflowId] });
       }
     }
     const planWorkflow = route?.match(/^workflows\/([^/]+)\/plans$/);
