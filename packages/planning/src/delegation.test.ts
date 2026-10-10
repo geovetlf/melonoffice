@@ -88,6 +88,7 @@ async function setup() {
       list: (org, limit) => w.planRepository.list(org, limit),
       listForWorkflow: (org, id, limit) => w.planRepository.listForWorkflow(org, id, limit),
       page: (org, request) => w.planRepository.page(org, request),
+      creatingPage: (request) => w.planRepository.creatingPage(request),
       create: (write) => w.planRepository.create(write),
       update: async (org, id, change) => {
         hit('planUpdate');

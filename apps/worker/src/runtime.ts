@@ -156,6 +156,9 @@ const PLAN_EVENT_CODE = /^[a-z][a-z_]{0,63}$/;
 /** What a schedule's closure of a plan takes, as the conductor declares it (ADR-0186). */
 type AbandonInput = Parameters<ReturnType<typeof createPlanConductor>['abandon']>[2];
 
+/** What a release of a hand-made plan takes, as the conductor declares it (ADR-0187, decision 6). */
+type ReleaseManualInput = Parameters<ReturnType<typeof createPlanConductor>['releaseManual']>[2];
+
 /**
  * Wires the existing services for the worker (ADR-0032). It builds nothing new: the job service
  * (X6b), the execution service (X1/X6a), the tool gate (X3), the AI Gateway (X4), approvals and
@@ -172,7 +175,7 @@ export function createWorkerRuntime(options: WorkerRuntimeOptions): {
    */
   readonly conductor?: Pick<
     ReturnType<typeof createPlanConductor>,
-    'run' | 'abandon' | 'closeFailed'
+    'run' | 'abandon' | 'releaseManual' | 'closeFailed'
   >;
 } {
   const { stores, environment, leaseMs, tools, ai, credits, logger, now } = options;
@@ -419,6 +422,8 @@ export function createWorkerRuntime(options: WorkerRuntimeOptions): {
               conductorFor(plans, `plan:${planId}`).run(tenant, planId),
             abandon: (tenant: TenantContext, planId: string, input: AbandonInput) =>
               conductorFor(plans, `plan:${planId}`).abandon(tenant, planId, input),
+            releaseManual: (tenant: TenantContext, planId: string, input: ReleaseManualInput) =>
+              conductorFor(plans, `plan:${planId}`).releaseManual(tenant, planId, input),
             closeFailed: (tenant: TenantContext, planId: string) =>
               conductorFor(plans, `plan:${planId}`).closeFailed(tenant, planId),
           },

@@ -23,7 +23,12 @@ import {
 } from '@melonoffice/execution';
 import type { Logger } from '@melonoffice/observability';
 import { isResolvedTenant, type TenantContext } from '@melonoffice/tenancy';
-import { attemptKey, type Delegation, type PlanStepAttempts } from './delegation.js';
+import {
+  attemptKey,
+  type Delegation,
+  type PlanStepAttempts,
+  type ReleaseManual,
+} from './delegation.js';
 import { isPlanningError, PlanningError } from './errors.js';
 import {
   applyPlanStatus,
@@ -74,6 +79,11 @@ export interface PlanConductor {
    * never finish, see `Delegation.abandon`. Refused with `plan_not_abandonable` otherwise.
    */
   abandon(tenant: TenantContext, planId: string, input: AbandonScheduled): Promise<Plan>;
+  /**
+   * Runtime only, for a hand-made plan whose creator may no longer plan (ADR-0187, decision 6):
+   * releases its `creating` delegation, see `Delegation.releaseManual`.
+   */
+  releaseManual(tenant: TenantContext, planId: string, input: ReleaseManual): Promise<Plan>;
   /** Finishes the cleanup of a failed delegation an interrupted attempt left open (ADR-0186). */
   closeFailed(tenant: TenantContext, planId: string): Promise<Plan>;
 }
@@ -278,7 +288,7 @@ export const WAKE_MARGIN_MS = 1_000;
 export interface PlanConductorOptions {
   readonly plans: PlanRepository;
   /** Needed by `run` only: the worker advances plans, it never delegates one. */
-  readonly delegation?: Pick<Delegation, 'delegate' | 'abandon' | 'closeFailed'>;
+  readonly delegation?: Pick<Delegation, 'delegate' | 'abandon' | 'releaseManual' | 'closeFailed'>;
   readonly executions: Pick<
     ExecutionService,
     | 'get'
@@ -1659,6 +1669,11 @@ export function createPlanConductor(options: PlanConductorOptions): PlanConducto
     async abandon(tenant: TenantContext, planId: string, input: AbandonScheduled) {
       if (delegation === undefined) throw new PlanningError('permission_denied', 'no_delegation');
       return delegation.abandon(tenant, planId, input);
+    },
+
+    async releaseManual(tenant: TenantContext, planId: string, input: ReleaseManual) {
+      if (delegation === undefined) throw new PlanningError('permission_denied', 'no_delegation');
+      return delegation.releaseManual(tenant, planId, input);
     },
 
     async closeFailed(tenant: TenantContext, planId: string) {

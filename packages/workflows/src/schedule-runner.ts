@@ -8,9 +8,11 @@ import type {
   WorkflowScheduleOutcome,
 } from '@melonoffice/domain';
 import {
+  createPermissionRecovery,
   isPlanningError,
   isPlanTerminal,
   type PlanConductor,
+  type PlanRepository,
   type PlanService,
 } from '@melonoffice/planning';
 import type { AuthorizationService } from '@melonoffice/rbac';
@@ -64,7 +66,12 @@ export interface ScheduleRunnerOptions {
   readonly workflows: Pick<WorkflowRepository, 'find'>;
   readonly workflowService: Pick<WorkflowService, 'planOccurrence'>;
   readonly plans: Pick<PlanService, 'abandonScheduled' | 'approveScheduled' | 'pageForWorkflow'>;
-  readonly conductor: Pick<PlanConductor, 'run' | 'abandon' | 'closeFailed'>;
+  readonly conductor: Pick<PlanConductor, 'run' | 'abandon' | 'releaseManual' | 'closeFailed'>;
+  /**
+   * The plans the sweep reads for a person who may no longer plan (ADR-0187, decision 6). Absent:
+   * the sweep releases none of them.
+   */
+  readonly handMadePlans?: Pick<PlanRepository, 'creatingPage'>;
   readonly tenancy: TenancyStore;
   /** Checked for the person at every occurrence: the standing approval holds only while they can (ADR-0185 §6). */
   readonly authorization: Pick<AuthorizationService, 'authorize'>;
@@ -113,12 +120,27 @@ export function createScheduleRunner({
   workflowService,
   plans,
   conductor,
+  handMadePlans,
   tenancy,
   authorization,
   scheduler,
   now = () => new Date(),
   logger,
 }: ScheduleRunnerOptions): ScheduleRunner {
+  // The plans of a person who may no longer plan, released by the sweep after the occurrences (ADR-0187).
+  const handMade =
+    handMadePlans === undefined
+      ? undefined
+      : createPermissionRecovery({
+          plans: handMadePlans,
+          conductor,
+          tenancy,
+          authorization,
+          leaseMs: SCHEDULE_LEASE_MS,
+          now,
+          ...(logger === undefined ? {} : { logger }),
+        });
+
   /** Takes the occurrence: once, by one caller. A claimed one is taken up again only after its lease. */
   async function claim(
     organizationId: OrganizationId,
@@ -623,6 +645,18 @@ export function createScheduleRunner({
         }
         if (next === undefined) break;
         after = next;
+      }
+      // The hand-made plans come last, so a failure of their query leaves the occurrences above settled
+      // and counted. It is logged, and the next run reads them again (ADR-0187, decision 6).
+      if (handMade !== undefined) {
+        try {
+          const released = await handMade.recover();
+          if (released > 0) logger?.info('hand-made plans released', { released });
+        } catch (error) {
+          logger?.warn('hand-made plan recovery failed', {
+            code: (error as { code?: unknown }).code ?? 'error',
+          });
+        }
       }
       return ran;
     },

@@ -23,6 +23,7 @@ import {
   pageOfPlans,
   PlanningError,
   planVersionKey,
+  type CreatingPlanPage,
   type PlanCreate,
   type PlanPage,
   type PlanPosition,
@@ -478,6 +479,36 @@ export class FirestorePlanRepository implements PlanRepository {
         request,
       );
     }
+  }
+
+  /**
+   * One equality and the document id as the order (ADR-0187): the automatic single-field index on
+   * `delegationState` serves it, so no composite index is needed. A record that does not read as a
+   * plan is never released, and it does not hold up the rest of its page.
+   */
+  async creatingPage(request: {
+    readonly after?: PlanId;
+    readonly limit: number;
+  }): Promise<CreatingPlanPage> {
+    if (!Number.isSafeInteger(request.limit) || request.limit < 1) return { plans: [] };
+    let query = this.db
+      .collection(PLANS)
+      .where('delegationState', '==', 'creating')
+      .orderBy(FieldPath.documentId());
+    if (request.after !== undefined) query = query.startAfter(request.after);
+    const snapshot = await query.limit(request.limit).get();
+    const plans = snapshot.docs.flatMap((doc) => {
+      try {
+        return [toPlan(doc.id, doc.data() as PlanDocument)];
+      } catch {
+        return [];
+      }
+    });
+    const last = snapshot.docs[snapshot.docs.length - 1];
+    return {
+      plans,
+      ...(last !== undefined && snapshot.size === request.limit ? { next: last.id as PlanId } : {}),
+    };
   }
 
   async create({ plan, version, events }: PlanCreate): Promise<void> {

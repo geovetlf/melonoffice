@@ -2610,6 +2610,7 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
         listForWorkflow: (org, workflowId, limit) =>
           t.stores.plans.listForWorkflow(org, workflowId, limit),
         page: (org, request) => t.stores.plans.page(org, request),
+        creatingPage: (request) => t.stores.plans.creatingPage(request),
         create: (write) => t.stores.plans.create(write),
         async update(org, id, change) {
           updates += 1;

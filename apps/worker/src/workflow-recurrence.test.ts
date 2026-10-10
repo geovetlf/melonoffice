@@ -2358,5 +2358,49 @@ describe.each(STORES)(
         ['schedule_abandoned', `occurrence:${FIRST}`, 'failed'],
       ]);
     });
+
+    it('61. the sweep releases a hand-made plan of a person who lost plan.create through the schedule runner’s recovery, audited as permission_lost once', async () => {
+      const w = await world();
+      const { workflow } = await scheduled(w, TWO_STEPS);
+      const stuck = await stuckAtFirst(w, workflow.id);
+      // The same stopped delegation as a plan Alice approved by hand: her own decision, and no schedule
+      // or occurrence made it. The schedule is still on, so only the hand-made pass can reach it.
+      await w.stores.plans.update(w.orgA, stuck.id, (current) => {
+        const decision = must(current.decision);
+        const ref = must(current.workflow);
+        return {
+          plan: {
+            ...current,
+            decision: {
+              decision: decision.decision,
+              version: decision.version,
+              digest: decision.digest,
+              decidedBy: decision.decidedBy,
+              decidedAt: decision.decidedAt,
+            },
+            workflow: { id: ref.id, version: ref.version },
+            revision: current.revision + 1,
+          },
+          events: [],
+        };
+      });
+      await w.setRole(LOST_ROLE);
+      w.at(new Date(Date.parse(FIRST) + SCHEDULE_LEASE_MS + 60_000));
+
+      await w.runner.recover();
+      expect(await w.stored(stuck.id)).toMatchObject({
+        status: 'failed',
+        delegationState: 'failed',
+        delegationFailure: 'delegation_abandoned',
+      });
+      expect((await w.executions.get(w.tenantA, stuck.executionId)).status).toBe('failed');
+      expect(await closedWith(w, 'permission_lost')).toEqual([
+        ['permission_lost', undefined, 'failed'],
+      ]);
+
+      // Released once: the next sweep finds nothing more to release.
+      await w.runner.recover();
+      expect(await closedWith(w, 'permission_lost')).toHaveLength(1);
+    });
   },
 );
