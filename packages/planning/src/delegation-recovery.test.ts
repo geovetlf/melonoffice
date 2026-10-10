@@ -1,11 +1,13 @@
 import type { IsoTimestamp, Plan, WorkflowId } from '@melonoffice/domain';
 import { ExecutionError, type ExecutionService } from '@melonoffice/execution';
+import { ROLES } from '@melonoffice/rbac';
+import { resolveRuntimeTenant, resolveTenant } from '@melonoffice/tenancy';
 import { describe, expect, it } from 'vitest';
 import { createDelegation, type Delegation } from './delegation.js';
 import { isPlanningError } from './errors.js';
 import { failDelegation } from './model.js';
 import type { AbandonScheduled } from './service.js';
-import { ALICE, must, proposal, specialistStep, world, type World } from './testkit.js';
+import { ALICE, BOB, as, must, proposal, specialistStep, world, type World } from './testkit.js';
 
 /**
  * Recovery of delegations (ADR-0186). A `creating` delegation of a schedule's plan is failed by
@@ -19,6 +21,12 @@ class Injected extends Error {}
 const WORKFLOW = '11111111-1111-4111-8111-111111111111' as WorkflowId;
 const FIRST = '2026-10-05T14:00:00.000Z' as IsoTimestamp;
 const SECOND = '2026-10-06T14:00:00.000Z' as IsoTimestamp;
+
+/** The roles of a test: `member` is an owner without `plan.create`, the role a person keeps once planning is withdrawn. */
+const WITHOUT_PLANNING = {
+  owner: ROLES.owner,
+  member: ROLES.owner.filter((permission) => permission !== 'plan.create'),
+};
 
 const codeOf = async (work: Promise<unknown>): Promise<string> => {
   try {
@@ -119,6 +127,12 @@ function stoppedAfter(w: World, allowed: number): Delegation {
 
 /** The plan as stored now: the instant of its last write is what a lease is measured from. */
 const stored = (w: World, plan: Plan): Promise<Plan> => w.plans.get(w.tenantA, plan.id);
+
+/** Alice keeps her membership and takes the role `role`: the permissions she holds now are that role's. */
+async function setRole(w: World, role: string): Promise<void> {
+  const membership = must(await w.tenancy.findMembership(w.orgA, ALICE));
+  w.tenancy.put({ ...membership, role });
+}
 
 /** The runner's input once the next occurrence moved past a plan untouched since its last write. */
 async function movedPast(w: World, plan: Plan): Promise<AbandonScheduled> {
@@ -367,5 +381,126 @@ describe('Delegation recovery (ADR-0186)', () => {
     // A person who closes the failed delegation cancels what it made.
     await w.delegation.closeFailed(w.tenantA, plan.id);
     expect((await w.executions.get(w.tenantA, made)).status).toBe('cancelled');
+  });
+});
+
+describe('Release of a schedule’s plan once its person may no longer plan (ADR-0187)', () => {
+  it('a person who loses plan.create releases the creating delegation of a schedule’s plan, audited as permission_lost', async () => {
+    const w = await world({ roles: WITHOUT_PLANNING });
+    const plan = await scheduledPlan(w);
+    expect(await codeOf(stoppedAtCreate(w).delegate(w.runtimeA, plan.id))).toBe('injected');
+    await setRole(w, 'member');
+
+    const runtime = await resolveRuntimeTenant(ALICE, w.orgA, w.tenancy);
+    expect(await codeOf(w.delegation.abandon(runtime, plan.id, await movedPast(w, plan)))).toBe(
+      'accepted',
+    );
+    expect(await stored(w, plan)).toMatchObject({
+      status: 'failed',
+      delegationState: 'failed',
+      delegationFailure: 'delegation_abandoned',
+    });
+    // Its planning execution is closed with it, and nothing it made ever ran.
+    expect((await w.executions.get(w.tenantA, plan.executionId)).status).toBe('failed');
+    expect(w.events('delegation.created')).toEqual([]);
+    // The release names the withdrawn permission, with the occurrence the plan belonged to.
+    expect(closed(w, plan.id)).toEqual([['permission_lost', `occurrence:${FIRST}`, 'failed']]);
+  });
+
+  it('a person who loses plan.create releases an approved plan that never started, audited as permission_lost', async () => {
+    const w = await world({ roles: WITHOUT_PLANNING });
+    const plan = await scheduledPlan(w);
+    await setRole(w, 'member');
+
+    const runtime = await resolveRuntimeTenant(ALICE, w.orgA, w.tenancy);
+    const { updatedAt } = await stored(w, plan);
+    expect(
+      await codeOf(
+        w.plans.abandonScheduled(runtime, plan.id, {
+          workflowId: WORKFLOW,
+          reason: 'schedule_off',
+          untouchedBefore: updatedAt,
+        }),
+      ),
+    ).toBe('accepted');
+    expect((await stored(w, plan)).status).toBe('cancelled');
+    expect(closed(w, plan.id)).toEqual([['permission_lost', `occurrence:${FIRST}`, 'cancelled']]);
+  });
+
+  it('concurrent releases after the permission is lost change the plan once, and a later one or a cleanup changes nothing', async () => {
+    const w = await world({ roles: WITHOUT_PLANNING });
+    const plan = await scheduledPlan(w);
+    await codeOf(stoppedAtCreate(w).delegate(w.runtimeA, plan.id));
+    await setRole(w, 'member');
+
+    const runtime = await resolveRuntimeTenant(ALICE, w.orgA, w.tenancy);
+    const input = await movedPast(w, plan);
+    const results = await Promise.all(
+      [1, 2, 3].map(() => codeOf(w.delegation.abandon(runtime, plan.id, input))),
+    );
+    expect(results).toEqual(['accepted', 'accepted', 'accepted']);
+    expect(await codeOf(w.delegation.abandon(runtime, plan.id, input))).toBe('accepted');
+    expect(await codeOf(w.delegation.closeFailed(runtime, plan.id))).toBe('accepted');
+    expect(closed(w, plan.id)).toEqual([['permission_lost', `occurrence:${FIRST}`, 'failed']]);
+    expect((await stored(w, plan)).status).toBe('failed');
+  });
+
+  it('the audit names the schedule’s own reason once the person may plan again', async () => {
+    const w = await world({ roles: WITHOUT_PLANNING });
+    const plan = await scheduledPlan(w);
+    await codeOf(stoppedAtCreate(w).delegate(w.runtimeA, plan.id));
+    await setRole(w, 'member');
+    await setRole(w, 'owner');
+
+    const runtime = await resolveRuntimeTenant(ALICE, w.orgA, w.tenancy);
+    const { updatedAt } = await stored(w, plan);
+    expect(
+      await codeOf(
+        w.delegation.abandon(runtime, plan.id, {
+          workflowId: WORKFLOW,
+          reason: 'schedule_off',
+          untouchedBefore: updatedAt,
+        }),
+      ),
+    ).toBe('accepted');
+    expect(closed(w, plan.id)).toEqual([['schedule_off', `occurrence:${FIRST}`, 'failed']]);
+  });
+
+  it('a delegation that was created is never released, and a release reaches only its own organization’s plans', async () => {
+    const w = await world({ roles: WITHOUT_PLANNING });
+    const plan = await scheduledPlan(w);
+    await w.delegation.delegate(w.runtimeA, plan.id);
+    const planned = await scheduledPlan(w);
+    await codeOf(stoppedAtCreate(w).delegate(w.runtimeA, planned.id));
+    await setRole(w, 'member');
+
+    const runtime = await resolveRuntimeTenant(ALICE, w.orgA, w.tenancy);
+    const other = await resolveRuntimeTenant(BOB, w.orgB, w.tenancy);
+    expect(await codeOf(w.delegation.abandon(runtime, plan.id, await movedPast(w, plan)))).toBe(
+      'plan_not_abandonable',
+    );
+    expect((await w.plans.get(w.tenantA, plan.id)).status).toBe('executing');
+    // Another organization’s runtime finds none of this organization’s plans.
+    expect(await codeOf(w.delegation.abandon(other, planned.id, await movedPast(w, planned)))).toBe(
+      'plan_not_found',
+    );
+    expect((await stored(w, planned)).delegationState).toBe('creating');
+    expect(closed(w, planned.id)).toEqual([]);
+  });
+
+  it('a person who lost plan.create closes none of her plans by hand, and the runtime closes none of them', async () => {
+    const w = await world({ roles: WITHOUT_PLANNING });
+    const personal = await personalPlan(w);
+    await codeOf(stoppedAtCreate(w).delegate(w.tenantA, personal.id));
+    await setRole(w, 'member');
+
+    const alice = await resolveTenant(as(ALICE), w.orgA, w.tenancy);
+    const runtime = await resolveRuntimeTenant(ALICE, w.orgA, w.tenancy);
+    expect(
+      await codeOf(w.delegation.abandon(runtime, personal.id, await movedPast(w, personal))),
+    ).toBe('plan_not_abandonable');
+    expect(await codeOf(w.delegation.closeFailed(alice, personal.id))).toBe('permission_denied');
+    expect((await stored(w, personal)).delegationState).toBe('creating');
+    expect(closed(w, personal.id)).toEqual([]);
   });
 });

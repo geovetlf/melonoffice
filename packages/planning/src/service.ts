@@ -100,6 +100,19 @@ export function abandonableScheduled(
   );
 }
 
+/**
+ * The reason the runtime's closure of a schedule's plan is audited with (ADR-0187). A person who may
+ * no longer plan does not hold the plan: the runtime releases it on the schedule's own rules, and the
+ * audit says so with `permission_lost`, in place of the schedule's reason.
+ */
+export function closureReason(
+  given: string | undefined,
+  fallback: string,
+  mayPlan: boolean,
+): string {
+  return mayPlan ? (given ?? fallback) : 'permission_lost';
+}
+
 /** The risks a standing approval covers (ADR-0185); above them a person decides each time. */
 const STANDING_RISKS: ReadonlySet<string> = new Set(['low', 'medium']);
 
@@ -570,6 +583,9 @@ export function createPlanService({
     async abandonScheduled(tenant: TenantContext, id: string, input: AbandonScheduled) {
       const organizationId = await organizationOf(tenant);
       if (tenant.actor !== 'runtime') throw new PlanningError('permission_denied', 'runtime_only');
+      // The person's current permission decides only the audit reason: the closure is the runtime's,
+      // on the schedule's own rules, whether or not the person may still plan (ADR-0187).
+      const mayPlan = authorization.authorize(tenant, 'plan.create', { organizationId }).allowed;
       const at = now();
       return repository.update(organizationId, idOf(id), (current) => {
         const occurrence = current.workflow?.occurrence;
@@ -578,7 +594,7 @@ export function createPlanService({
         if (!abandonableScheduled(current, input, { delegated: false })) {
           throw new PlanningError('plan_not_abandonable');
         }
-        const reason = input.reason ?? 'schedule_abandoned';
+        const reason = closureReason(input.reason, 'schedule_abandoned', mayPlan);
         const next = applyPlanStatus(
           current,
           'approved',

@@ -176,11 +176,11 @@ export class FirestoreWorkflowScheduleRepository implements WorkflowScheduleRepo
     if (Number.isNaN(cutoff.getTime()) || !Number.isSafeInteger(limit) || limit < 1) {
       return { schedules: [] };
     }
-    // Equalities, and the document id as the order: the automatic single-field indexes serve them, so
-    // no composite index is needed. The lease is read from each record, since a range on it would need one.
+    // One equality and the document id as the order. The automatic single-field index on `last.outcome`
+    // serves it with no composite index (ADR-0187): two equalities, or an equality with a range, would
+    // need one. Status and lease are read from each record, which is cheap: few claims are open at once.
     let query = this.db
       .collection(WORKFLOW_SCHEDULES)
-      .where('status', '==', 'off')
       .where('last.outcome', '==', 'claimed')
       .orderBy(FieldPath.documentId());
     if (after !== undefined) query = query.startAfter(after);
@@ -188,7 +188,9 @@ export class FirestoreWorkflowScheduleRepository implements WorkflowScheduleRepo
     const schedules = snapshot.docs.flatMap((doc) => {
       try {
         const schedule = toSchedule(doc.data() as ScheduleDocument);
-        return schedule.last !== undefined && Date.parse(schedule.last.at) <= cutoff.getTime()
+        return schedule.status === 'off' &&
+          schedule.last !== undefined &&
+          Date.parse(schedule.last.at) <= cutoff.getTime()
           ? [schedule]
           : [];
       } catch {

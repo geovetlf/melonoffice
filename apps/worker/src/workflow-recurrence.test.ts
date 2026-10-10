@@ -40,6 +40,7 @@ import type {
   IsoTimestamp,
   JobId,
   Organization,
+  OrganizationId,
   Plan,
   SubscriptionId,
   UserId,
@@ -72,6 +73,7 @@ import {
   FirestoreWorkflowRepository,
   FirestoreWorkflowScheduleRepository,
   fromAuditDocument,
+  MEMBERSHIPS,
   WORKFLOW_SCHEDULES,
   type AuditDocument,
 } from '@melonoffice/firestore';
@@ -83,7 +85,6 @@ import {
   createPlanService,
   createPlanValidator,
   InMemoryPlanRepository,
-  PlanningError,
   type PlanRepository,
 } from '@melonoffice/planning';
 import { createAuthorizationService } from '@melonoffice/rbac';
@@ -96,6 +97,7 @@ import {
 import {
   createOrganization,
   InMemoryTenancyStore,
+  membershipIdOf,
   resolveRuntimeTenant,
   resolveTenant,
 } from '@melonoffice/tenancy';
@@ -137,6 +139,12 @@ const ALICE = '11111111-1111-4111-8111-111111111111' as UserId;
 const BOB = '22222222-2222-4222-8222-222222222222' as UserId;
 const CREDITS = 100;
 const DAILY = { frequency: 'daily', time: '09:00' };
+/**
+ * The role a person takes when they lose `plan.create`. The built-in roles hold only `owner` today
+ * (D-22), and a role RBAC does not know grants nothing: so this role is the person with no planning.
+ */
+const LOST_ROLE = 'viewer';
+const OWNER_ROLE = 'owner';
 
 const BILLING = (organization: Organization): InitialBilling => {
   const subscriptionId = `sub-${organization.id}` as SubscriptionId;
@@ -223,14 +231,22 @@ type Stores = WorkerStores & {
   readonly schedules: WorkflowScheduleRepository;
   readonly credits: CreditStore;
   readonly events: () => Promise<readonly AuditEvent[]>;
+  /** Changes a person's role in an organization, as an edit of the membership does (ADR-0187). */
+  readonly setRole: (organizationId: OrganizationId, userId: UserId, role: string) => Promise<void>;
 };
 
 function memoryStores(now: () => Date): Stores {
   const audit = new InMemoryAuditStore();
   const departments = new InMemoryDepartmentRepository();
   const credits = new InMemoryCreditStore(audit);
+  const tenancy = new InMemoryTenancyStore(now, audit, undefined, departments, credits);
   return {
-    tenancy: new InMemoryTenancyStore(now, audit, undefined, departments, credits),
+    tenancy,
+    async setRole(organizationId, userId, role) {
+      const membership = await tenancy.findMembership(organizationId, userId);
+      if (membership === undefined) throw new Error('no membership to change');
+      tenancy.put({ ...membership, role });
+    },
     departments,
     specialists: new InMemorySpecialistRepository(audit),
     executions: new InMemoryExecutionRepository(audit),
@@ -256,6 +272,9 @@ async function firestoreStores(now: () => Date): Promise<Stores> {
   await Promise.all(left.docs.map((doc) => doc.ref.delete()));
   return {
     tenancy: new FirestoreTenancyStore(db, now),
+    async setRole(organizationId, userId, role) {
+      await db.collection(MEMBERSHIPS).doc(membershipIdOf(organizationId, userId)).update({ role });
+    },
     departments: new FirestoreDepartmentRepository(db),
     specialists: new FirestoreSpecialistRepository(db),
     executions: new FirestoreExecutionRepository(db),
@@ -697,6 +716,8 @@ describe.each(STORES)(
         writeAsks,
         advance,
         followUps: scheduledFollowUps,
+        /** Alice keeps her membership and takes `role`: the permissions she holds from now on. */
+        setRole: (role: string) => stores.setRole(orgA, ALICE, role),
       };
     }
     type World = Awaited<ReturnType<typeof world>>;
@@ -2109,35 +2130,50 @@ describe.each(STORES)(
       ]);
     });
 
-    it('53. a person who may no longer plan holds the stuck plan as it is: the next occurrence overlaps and nothing is closed', async () => {
+    it('53. a person who loses plan.create releases the stuck plan at the next claim, audited as permission_lost, and that occurrence is not allowed to plan', async () => {
       const w = await world();
       const { workflow } = await scheduled(w, TWO_STEPS);
       const stuck = await stuckAtFirst(w, workflow.id);
-      // The person lost the permission to plan: their runtime may not change the plan.
-      const unable = {
-        ...w.runtimeConductor,
-        abandon: async () => {
-          throw new PlanningError('permission_denied', 'plan_create');
-        },
-      };
-      expect(
-        await w.deliver(w.taskFor(workflow.id, SECOND), { runner: w.runnerOf(unable) }),
-      ).toEqual({ status: 200, body: { result: 'overlap' } });
-      expect(await w.stored(stuck.id)).toMatchObject({
-        status: 'approved',
-        delegationState: 'creating',
+      await w.setRole(LOST_ROLE);
+
+      // The claim releases the stuck plan on the schedule's own rules, and refuses the occurrence.
+      expect(await w.deliver(w.taskFor(workflow.id, SECOND))).toEqual({
+        status: 200,
+        body: { result: 'not_allowed' },
       });
-      expect(await closedWith(w, 'schedule_abandoned')).toEqual([]);
-      // Once it may plan again, the occurrence after the next one closes it as usual, and runs.
-      w.at(new Date(Date.parse(THIRD) + SCHEDULE_RECOVER_AFTER_MS + 60_000));
-      expect(await w.runner.recover()).toBe(1);
       expect(await w.stored(stuck.id)).toMatchObject({
         status: 'failed',
+        delegationState: 'failed',
         delegationFailure: 'delegation_abandoned',
       });
-      expect(await closedWith(w, 'schedule_abandoned')).toEqual([
-        ['schedule_abandoned', `occurrence:${FIRST}`, 'failed'],
+      expect((await w.executions.get(w.tenantA, stuck.executionId)).status).toBe('failed');
+      expect(await closedWith(w, 'permission_lost')).toEqual([
+        ['permission_lost', `occurrence:${FIRST}`, 'failed'],
       ]);
+      expect(await closedWith(w, 'schedule_abandoned')).toEqual([]);
+      expect(
+        (await w.plansOf(workflow.id)).filter((p) => p.workflow?.occurrence === SECOND),
+      ).toEqual([]);
+      expect(await runsOf(w, workflow.id)).toEqual([
+        [`occurrence:${FIRST}`, 'abandoned'],
+        [`occurrence:${SECOND}`, 'not_allowed'],
+      ]);
+
+      // Once it may plan again, the next occurrence plans and runs as usual, and nothing is released twice.
+      await w.setRole(OWNER_ROLE);
+      w.at(new Date(Date.parse(THIRD) + SCHEDULE_RECOVER_AFTER_MS + 60_000));
+      expect(await w.runner.recover()).toBe(1);
+      await w.drive();
+      const third = must(
+        (await w.plansOf(workflow.id)).find((p) => p.workflow?.occurrence === THIRD),
+      );
+      expect((await w.stored(third.id)).status).toBe('completed');
+      expect(await runsOf(w, workflow.id)).toEqual([
+        [`occurrence:${FIRST}`, 'abandoned'],
+        [`occurrence:${SECOND}`, 'not_allowed'],
+        [`occurrence:${THIRD}`, 'planned'],
+      ]);
+      expect(await closedWith(w, 'permission_lost')).toHaveLength(1);
     });
 
     it('54. the sweep reaches a switched-off schedule behind a page it cannot settle yet, and settles it', async () => {
@@ -2175,6 +2211,152 @@ describe.each(STORES)(
       expect(await w.runner.recover()).toBe(1);
       expect((await w.scheduleOf(target)).last?.outcome).toBe('abandoned');
       expect((await w.scheduleOf(held[0] as WorkflowId)).last?.outcome).toBe('claimed');
+    });
+
+    it('55. a switched-off schedule whose person lost plan.create is settled by the sweep: its stuck plan is released as permission_lost, and the occurrence recorded abandoned', async () => {
+      const w = await world();
+      const { workflow } = await scheduled(w, TWO_STEPS);
+      const stuck = await stuckAtFirst(w, workflow.id);
+      await w.schedules.switchOff(w.tenantA, workflow.id);
+      await w.setRole(LOST_ROLE);
+      // The claim of FIRST has lapsed. An off schedule claims nothing again, so the sweep settles it.
+      w.at(new Date(Date.parse(FIRST) + SCHEDULE_LEASE_MS + 60_000));
+      expect(await w.runner.recover()).toBe(1);
+      expect(await w.stored(stuck.id)).toMatchObject({
+        status: 'failed',
+        delegationFailure: 'delegation_abandoned',
+      });
+      expect((await w.executions.get(w.tenantA, stuck.executionId)).status).toBe('failed');
+      expect(await closedWith(w, 'permission_lost')).toEqual([
+        ['permission_lost', `occurrence:${FIRST}`, 'failed'],
+      ]);
+      expect(await closedWith(w, 'schedule_off')).toEqual([]);
+      expect(await runsOf(w, workflow.id)).toEqual([[`occurrence:${FIRST}`, 'abandoned']]);
+      // Settled once: the sweep finds nothing more to do.
+      expect(await w.runner.recover()).toBe(0);
+      expect(await closedWith(w, 'permission_lost')).toHaveLength(1);
+    });
+
+    it('56. a switched-off schedule whose person lost plan.create: the sweep cancels the approved plan that never started, as permission_lost', async () => {
+      const w = await world();
+      const { workflow } = await scheduled(w);
+      // The standing approval approves the plan, and its start fails: nothing was delegated.
+      expect(
+        await w.deliver(w.taskFor(workflow.id, FIRST), { runner: w.runnerOf(failingStart()) }),
+      ).toMatchObject({ status: 503, body: { result: 'retry' } });
+      const [lost] = await w.plansOf(workflow.id);
+      expect(must(lost)).toMatchObject({ status: 'approved', decision: { via: 'schedule' } });
+      await w.schedules.switchOff(w.tenantA, workflow.id);
+      await w.setRole(LOST_ROLE);
+      w.at(new Date(Date.parse(FIRST) + SCHEDULE_LEASE_MS + 60_000));
+
+      expect(await w.runner.recover()).toBe(1);
+      expect(await w.stored(must(lost).id)).toMatchObject({ status: 'cancelled' });
+      expect(await closedWith(w, 'permission_lost')).toEqual([
+        ['permission_lost', `occurrence:${FIRST}`, 'cancelled'],
+      ]);
+      expect(await runsOf(w, workflow.id)).toEqual([[`occurrence:${FIRST}`, 'abandoned']]);
+    });
+
+    it('57. two workers and the sweep release the stuck plan of a person who lost plan.create at once: one release, one occurrence refused', async () => {
+      const w = await world();
+      const { workflow } = await scheduled(w, TWO_STEPS);
+      const stuck = await stuckAtFirst(w, workflow.id);
+      await w.setRole(LOST_ROLE);
+      const task = w.taskFor(workflow.id, SECOND);
+      w.at(new Date(Date.parse(SECOND) + SCHEDULE_RECOVER_AFTER_MS + 60_000));
+      await Promise.all([
+        w.runnerOf().run(task.body),
+        w.runnerOf().run(task.body),
+        w.runner.recover(),
+      ]);
+
+      expect(await w.stored(stuck.id)).toMatchObject({
+        status: 'failed',
+        delegationFailure: 'delegation_abandoned',
+      });
+      expect(await closedWith(w, 'permission_lost')).toHaveLength(1);
+      expect(
+        (await w.plansOf(workflow.id)).filter((p) => p.workflow?.occurrence === SECOND),
+      ).toEqual([]);
+      expect(await runsOf(w, workflow.id)).toEqual([
+        [`occurrence:${FIRST}`, 'abandoned'],
+        [`occurrence:${SECOND}`, 'not_allowed'],
+      ]);
+    });
+
+    it('58. another organization’s runtime finds none of this schedule’s plans, even once the person lost plan.create here', async () => {
+      const w = await world();
+      const { workflow } = await scheduled(w, TWO_STEPS);
+      const stuck = await stuckAtFirst(w, workflow.id);
+      await w.setRole(LOST_ROLE);
+      const runtimeB = await resolveRuntimeTenant(BOB, w.orgB, w.stores.tenancy);
+
+      expect(
+        await codeOf(
+          w.runtimeConductor.abandon(runtimeB, stuck.id, {
+            workflowId: workflow.id,
+            supersededBy: SECOND as IsoTimestamp,
+            untouchedBefore: stuck.updatedAt,
+          }),
+        ),
+      ).toBe('plan_not_found');
+      expect(await codeOf(w.runtimeConductor.closeFailed(runtimeB, stuck.id))).toBe(
+        'plan_not_found',
+      );
+      expect(await w.stored(stuck.id)).toMatchObject({
+        status: 'approved',
+        delegationState: 'creating',
+      });
+      expect(await closedWith(w, 'permission_lost')).toEqual([]);
+    });
+
+    it('59. a switched-off schedule whose person got plan.create back before the sweep is settled as schedule_off, not as permission_lost', async () => {
+      const w = await world();
+      const { workflow } = await scheduled(w, TWO_STEPS);
+      const stuck = await stuckAtFirst(w, workflow.id);
+      await w.setRole(LOST_ROLE);
+      await w.setRole(OWNER_ROLE);
+      await w.schedules.switchOff(w.tenantA, workflow.id);
+      w.at(new Date(Date.parse(FIRST) + SCHEDULE_LEASE_MS + 60_000));
+
+      expect(await w.runner.recover()).toBe(1);
+      expect(await w.stored(stuck.id)).toMatchObject({
+        status: 'failed',
+        delegationFailure: 'delegation_abandoned',
+      });
+      expect(await closedWith(w, 'schedule_off')).toEqual([
+        ['schedule_off', `occurrence:${FIRST}`, 'failed'],
+      ]);
+      expect(await closedWith(w, 'permission_lost')).toEqual([]);
+    });
+
+    it('60. the sweep leaves an on schedule’s lapsed claim to its next occurrence, which settles the stuck plan as superseded', async () => {
+      const w = await world();
+      const { workflow } = await scheduled(w, TWO_STEPS);
+      const stuck = await stuckAtFirst(w, workflow.id);
+      // The claim lapsed, but the schedule is still on: the sweep settles nothing of a schedule that runs.
+      w.at(new Date(Date.parse(FIRST) + SCHEDULE_LEASE_MS + 60_000));
+      expect(await w.runner.recover()).toBe(0);
+      expect(await w.stored(stuck.id)).toMatchObject({
+        status: 'approved',
+        delegationState: 'creating',
+      });
+      expect(await w.scheduleOf(workflow.id)).toMatchObject({
+        status: 'on',
+        last: { occurrence: FIRST, outcome: 'claimed' },
+      });
+      expect(await closedWith(w, 'schedule_off')).toEqual([]);
+      expect(await closedWith(w, 'schedule_abandoned')).toEqual([]);
+
+      // Its next occurrence closes the stuck plan as superseded, and plans as usual.
+      expect(await w.deliver(w.taskFor(workflow.id, SECOND))).toEqual({
+        status: 200,
+        body: { result: 'planned' },
+      });
+      expect(await closedWith(w, 'schedule_abandoned')).toEqual([
+        ['schedule_abandoned', `occurrence:${FIRST}`, 'failed'],
+      ]);
     });
   },
 );
