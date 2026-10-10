@@ -45,7 +45,7 @@ export interface WorkflowScheduleRunnerOptions {
   /** Where this worker runs. Undefined: every tool step is refused, as in the API. */
   readonly environment: DeploymentEnvironment | undefined;
   /** The worker runtime's conductor: starts a plan its person's schedule approved. */
-  readonly conductor: Pick<PlanConductor, 'run'>;
+  readonly conductor: Pick<PlanConductor, 'run' | 'abandon' | 'closeFailed'>;
   readonly scheduler?: { schedule(body: object, at: Date): Promise<void> };
   /** Checks a standing approval's permissions at each occurrence. Absent: the organization's roles. */
   readonly standingAuthorization?: Pick<AuthorizationService, 'authorize'>;

@@ -54,13 +54,50 @@ export interface StandingApproval {
   readonly workflowVersion: number;
 }
 
-/** The occurrence the schedule moved past, and the instant a live delivery's lease has lapsed by. */
+/**
+ * Why a schedule's open plan is closed, and the instant a live delivery's lease has lapsed by.
+ * `schedule_abandoned`: the schedule moved past the plan's occurrence (ADR-0185 §13).
+ * `schedule_off`: the schedule is off, so no occurrence supersedes the plan (ADR-0186).
+ */
 export interface AbandonScheduled {
   readonly workflowId: WorkflowId;
-  /** The occurrence the schedule claimed next: the plan's own must be earlier. */
-  readonly supersededBy: IsoTimestamp;
+  readonly reason?: 'schedule_abandoned' | 'schedule_off';
+  /**
+   * The occurrence the schedule claimed next: the plan's own must be earlier. Only with
+   * `schedule_abandoned`; with `schedule_off` nothing supersedes it.
+   */
+  readonly supersededBy?: IsoTimestamp;
   /** The plan must not have changed after this instant (ADR-0185 §13). */
   readonly untouchedBefore: IsoTimestamp;
+}
+
+/**
+ * Whether a schedule's plan may be closed for `input` (ADR-0185 §13, ADR-0186): it is the
+ * schedule's own, of this workflow, in its occurrence, approved and not yet started, and it has
+ * not changed since `untouchedBefore`. `delegated` says whether the caller also wants a plan whose
+ * delegation is `creating`; `input.reason` decides whether the next occurrence must supersede it.
+ */
+export function abandonableScheduled(
+  plan: Plan,
+  input: AbandonScheduled,
+  options: { readonly delegated: boolean },
+): boolean {
+  const occurrence = plan.workflow?.occurrence;
+  const reason = input.reason ?? 'schedule_abandoned';
+  const delegation = options.delegated
+    ? plan.delegationState === 'creating'
+    : plan.delegationState === undefined && plan.delegations.length === 0;
+  return (
+    plan.decision?.via === 'schedule' &&
+    plan.workflow?.id === input.workflowId &&
+    occurrence !== undefined &&
+    plan.status === 'approved' &&
+    delegation &&
+    Date.parse(plan.updatedAt) <= Date.parse(input.untouchedBefore) &&
+    (reason === 'schedule_abandoned'
+      ? input.supersededBy !== undefined && Date.parse(occurrence) < Date.parse(input.supersededBy)
+      : input.supersededBy === undefined)
+  );
 }
 
 /** The risks a standing approval covers (ADR-0185); above them a person decides each time. */
@@ -537,19 +574,11 @@ export function createPlanService({
       return repository.update(organizationId, idOf(id), (current) => {
         const occurrence = current.workflow?.occurrence;
         // Read here, in the plan's transaction: a plan started or delegated meanwhile is refused,
-        // and so is one a live delivery touched within the lease (ADR-0185 §13).
-        if (
-          current.decision?.via !== 'schedule' ||
-          current.workflow?.id !== input.workflowId ||
-          occurrence === undefined ||
-          Date.parse(occurrence) >= Date.parse(input.supersededBy) ||
-          current.status !== 'approved' ||
-          current.delegationState !== undefined ||
-          current.delegations.length > 0 ||
-          Date.parse(current.updatedAt) > Date.parse(input.untouchedBefore)
-        ) {
+        // and so is one a live delivery touched within the lease (ADR-0185 §13, ADR-0186).
+        if (!abandonableScheduled(current, input, { delegated: false })) {
           throw new PlanningError('plan_not_abandonable');
         }
+        const reason = input.reason ?? 'schedule_abandoned';
         const next = applyPlanStatus(
           current,
           'approved',
@@ -567,7 +596,7 @@ export function createPlanService({
                 result: 'success',
                 target: { type: 'plan', id: next.id },
                 transition: { from: 'approved', to: 'cancelled' },
-                reason: 'schedule_abandoned',
+                reason,
                 reference: `occurrence:${occurrence}`,
               },
               at,

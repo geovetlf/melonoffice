@@ -166,6 +166,30 @@ export class FirestoreWorkflowScheduleRepository implements WorkflowScheduleRepo
     });
   }
 
+  async lapsedOff(before: IsoTimestamp, limit: number): Promise<readonly WorkflowSchedule[]> {
+    const cutoff = new Date(before);
+    if (Number.isNaN(cutoff.getTime()) || !Number.isSafeInteger(limit) || limit < 1) return [];
+    // Equalities only, so the automatic single-field indexes serve them without a composite index;
+    // the lease is read from each record, since a range on it would need one.
+    const snapshot = await this.db
+      .collection(WORKFLOW_SCHEDULES)
+      .where('status', '==', 'off')
+      .where('last.outcome', '==', 'claimed')
+      .limit(limit)
+      .get();
+    return snapshot.docs.flatMap((doc) => {
+      try {
+        const schedule = toSchedule(doc.data() as ScheduleDocument);
+        return schedule.last !== undefined && Date.parse(schedule.last.at) <= cutoff.getTime()
+          ? [schedule]
+          : [];
+      } catch {
+        // A record that does not read as a schedule is never run.
+        return [];
+      }
+    });
+  }
+
   #audit(t: Transaction, events: readonly AuditEvent[]): void {
     for (const e of events) t.create(this.db.collection(AUDIT_LOGS).doc(e.id), toAuditDocument(e));
   }

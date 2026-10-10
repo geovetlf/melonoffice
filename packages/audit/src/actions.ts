@@ -667,7 +667,7 @@ export const AUDIT_ACTIONS = {
   'workflow.schedule_run': {
     category: 'workflow',
     description:
-      "One occurrence of a workflow's schedule ran (ADR-0185); `reason` is what it did (`planned`, `awaiting_person`, `refused`, `missed`, `workflow_not_active`, `version_changed`, `overlap`, `not_allowed`) and `reference` the occurrence (`occurrence:2026-10-08T14:00:00.000Z`).",
+      "One occurrence of a workflow's schedule ran (ADR-0185); `reason` is what it did (`planned`, `awaiting_person`, `refused`, `missed`, `workflow_not_active`, `version_changed`, `overlap`, `not_allowed`, `abandoned`) and `reference` the occurrence (`occurrence:2026-10-08T14:00:00.000Z`).",
     results: ['success'],
   },
   'conversation.assigned': {

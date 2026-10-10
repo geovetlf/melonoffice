@@ -192,6 +192,13 @@ export interface WorkflowScheduleRepository {
    * organizations: the sweep's recovery (ADR-0185 §10). Server side only.
    */
   due(before: IsoTimestamp, limit: number): Promise<readonly WorkflowSchedule[]>;
+  /**
+   * Schedules that are off, whose last occurrence was claimed and never finished, its claim taken at
+   * or before `before` (its lease lapsed): the sweep's look at an occurrence nothing may take up again
+   * (ADR-0186). An on schedule is not listed: a later claim finishes its occurrence (ADR-0185 §13), and
+   * listing them would let them take the page that off schedules need. Server side only.
+   */
+  lapsedOff(before: IsoTimestamp, limit: number): Promise<readonly WorkflowSchedule[]>;
 }
 
 /** The next schedule must be exactly one revision ahead of the stored one (or the first). */
@@ -254,6 +261,12 @@ export class InMemoryWorkflowScheduleRepository implements WorkflowScheduleRepos
     return [...this.#schedules.values()]
       .filter((s) => s.status === 'on' && s.nextRunAt !== undefined && s.nextRunAt <= before)
       .sort((a, b) => ((a.nextRunAt ?? '') < (b.nextRunAt ?? '') ? -1 : 1))
+      .slice(0, limit);
+  }
+
+  async lapsedOff(before: IsoTimestamp, limit: number) {
+    return [...this.#schedules.values()]
+      .filter((s) => s.status === 'off' && s.last?.outcome === 'claimed' && s.last.at <= before)
       .slice(0, limit);
   }
 }

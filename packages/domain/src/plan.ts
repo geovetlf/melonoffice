@@ -439,7 +439,9 @@ export type WorkflowScheduleOutcome =
   | 'workflow_not_active'
   | 'version_changed'
   | 'overlap'
-  | 'not_allowed';
+  | 'not_allowed'
+  /** Its claim was never finished and the schedule went off: the sweep closed what it left open (ADR-0186). */
+  | 'abandoned';
 
 export interface WorkflowScheduleRun {
   readonly occurrence: IsoTimestamp;

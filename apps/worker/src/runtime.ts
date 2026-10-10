@@ -153,6 +153,9 @@ export interface WorkerRuntimeOptions {
 
 const PLAN_EVENT_CODE = /^[a-z][a-z_]{0,63}$/;
 
+/** What a schedule's closure of a plan takes, as the conductor declares it (ADR-0186). */
+type AbandonInput = Parameters<ReturnType<typeof createPlanConductor>['abandon']>[2];
+
 /**
  * Wires the existing services for the worker (ADR-0032). It builds nothing new: the job service
  * (X6b), the execution service (X1/X6a), the tool gate (X3), the AI Gateway (X4), approvals and
@@ -167,7 +170,10 @@ export function createWorkerRuntime(options: WorkerRuntimeOptions): {
    * Starts an approved plan as its person's runtime: only a plan their own schedule approved
    * (ADR-0185); absent without plans.
    */
-  readonly conductor?: Pick<ReturnType<typeof createPlanConductor>, 'run'>;
+  readonly conductor?: Pick<
+    ReturnType<typeof createPlanConductor>,
+    'run' | 'abandon' | 'closeFailed'
+  >;
 } {
   const { stores, environment, leaseMs, tools, ai, credits, logger, now } = options;
   const authorization = createAuthorizationService();
@@ -273,6 +279,9 @@ export function createWorkerRuntime(options: WorkerRuntimeOptions): {
               specialists,
               organizations: stores.tenancy,
               authorization,
+              // The worker's clock, as every service it wires: a delegation's instants are the
+              // ones the schedule's lease is measured against (ADR-0186).
+              ...clock,
             }),
           }),
       starter: {
@@ -408,6 +417,10 @@ export function createWorkerRuntime(options: WorkerRuntimeOptions): {
           conductor: {
             run: (tenant: TenantContext, planId: string) =>
               conductorFor(plans, `plan:${planId}`).run(tenant, planId),
+            abandon: (tenant: TenantContext, planId: string, input: AbandonInput) =>
+              conductorFor(plans, `plan:${planId}`).abandon(tenant, planId, input),
+            closeFailed: (tenant: TenantContext, planId: string) =>
+              conductorFor(plans, `plan:${planId}`).closeFailed(tenant, planId),
           },
         }),
   });
