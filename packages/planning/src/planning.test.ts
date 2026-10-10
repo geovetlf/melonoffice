@@ -1054,6 +1054,51 @@ describe('plans', () => {
     expect(await codeOf(w.plans.approveScheduled(w.tenantB, plan.id, standing))).toBe(
       'plan_not_found',
     );
+
+    // ADR-0185 §13: the plan it approved and never started is closed only by a later occurrence of
+    // its own workflow, and only when nothing changed it within the lease.
+    const later = '2026-10-06T14:00:00.000Z' as IsoTimestamp;
+    const moved = { workflowId, supersededBy: later, untouchedBefore: approved.updatedAt };
+    expect(await codeOf(w.plans.abandonScheduled(w.tenantA, approved.id, moved))).toBe(
+      'permission_denied',
+    );
+    for (const input of [
+      { ...moved, supersededBy: occurrence },
+      {
+        ...moved,
+        untouchedBefore: new Date(Date.parse(approved.updatedAt) - 1).toISOString() as IsoTimestamp,
+      },
+      { ...moved, workflowId: '22222222-2222-4222-8222-222222222222' as WorkflowId },
+    ] as const) {
+      expect(await codeOf(w.plans.abandonScheduled(w.runtimeA, approved.id, input))).toBe(
+        'plan_not_abandonable',
+      );
+    }
+    // A plan a person approved is theirs to start or drop, never the schedule's to close.
+    const decided = await planned();
+    const seen = {
+      version: 1,
+      digest: (await w.plans.getVersion(w.tenantA, decided.id, 1)).digest,
+    };
+    await w.plans.approve(w.tenantA, decided.id, seen);
+    expect(
+      await codeOf(
+        w.plans.abandonScheduled(w.runtimeA, decided.id, { ...moved, untouchedBefore: later }),
+      ),
+    ).toBe('plan_not_abandonable');
+    expect((await w.plans.get(w.tenantA, decided.id)).status).toBe('approved');
+    // Closed once, with its reason and its occurrence on the audit event.
+    const closed = await w.plans.abandonScheduled(w.runtimeA, approved.id, moved);
+    expect(closed.status).toBe('cancelled');
+    expect(
+      w
+        .events('plan.state_changed')
+        .filter((e) => e.target?.id === approved.id)
+        .map((e) => [e.reason, e.reference, e.transition?.to]),
+    ).toEqual([['schedule_abandoned', `occurrence:${occurrence}`, 'cancelled']]);
+    expect(await codeOf(w.plans.abandonScheduled(w.runtimeA, approved.id, moved))).toBe(
+      'plan_not_abandonable',
+    );
   });
 
   it('refuses a stored version whose content no longer matches its digest', async () => {

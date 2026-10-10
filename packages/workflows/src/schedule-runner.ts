@@ -62,7 +62,7 @@ export interface ScheduleRunnerOptions {
   readonly schedules: WorkflowScheduleRepository;
   readonly workflows: Pick<WorkflowRepository, 'find'>;
   readonly workflowService: Pick<WorkflowService, 'planOccurrence'>;
-  readonly plans: Pick<PlanService, 'approveScheduled' | 'pageForWorkflow'>;
+  readonly plans: Pick<PlanService, 'abandonScheduled' | 'approveScheduled' | 'pageForWorkflow'>;
   readonly conductor: Pick<PlanConductor, 'run'>;
   readonly tenancy: TenancyStore;
   /** Checked for the person at every occurrence: the standing approval holds only while they can (ADR-0185 §6). */
@@ -228,17 +228,58 @@ export function createScheduleRunner({
   }
 
   /**
-   * A plan this schedule made that is still open, other than this occurrence's. Every plan of the
-   * workflow is read, not only the newest page: an old plan that is still open blocks the run too.
+   * Closes the plans this schedule approved and never started, from occurrences it has moved past
+   * (ADR-0185 §13). The occurrence claimed now is later than them, so no task can start them again;
+   * a plan changed within the lease, or started meanwhile, is refused and left as it is. Returns
+   * whether any was tried, so the caller reads the plans again.
+   */
+  async function closeAbandoned(
+    tenant: TenantContext,
+    workflowId: WorkflowId,
+    occurrence: IsoTimestamp,
+    items: readonly Plan[],
+  ): Promise<boolean> {
+    const untouchedBefore = new Date(
+      now().getTime() - SCHEDULE_LEASE_MS,
+    ).toISOString() as IsoTimestamp;
+    const earlier = items.filter(
+      (p) =>
+        p.decision?.via === 'schedule' &&
+        p.status === 'approved' &&
+        p.workflow?.occurrence !== undefined &&
+        Date.parse(p.workflow.occurrence) < Date.parse(occurrence),
+    );
+    for (const p of earlier) {
+      try {
+        await plans.abandonScheduled(tenant, p.id, {
+          workflowId,
+          supersededBy: occurrence,
+          untouchedBefore,
+        });
+      } catch (error) {
+        if (isPlanningError(error) && error.code === 'plan_not_abandonable') continue;
+        throw error;
+      }
+    }
+    return earlier.length > 0;
+  }
+
+  /**
+   * Whether a plan this schedule made is still open, other than this occurrence's. First the plans
+   * it approved and never started are closed (ADR-0185 §13). Every plan of the workflow is read, not
+   * only the newest page: an old plan that is still open blocks the run too.
    */
   async function overlapping(
     tenant: TenantContext,
     schedule: WorkflowSchedule,
-    occurrence: string,
-  ) {
-    const { items } = await plans.pageForWorkflow(tenant, schedule.workflowId, {
-      limit: Number.MAX_SAFE_INTEGER,
-    });
+    occurrence: IsoTimestamp,
+  ): Promise<boolean> {
+    const read = () =>
+      plans.pageForWorkflow(tenant, schedule.workflowId, { limit: Number.MAX_SAFE_INTEGER });
+    let { items } = await read();
+    if (await closeAbandoned(tenant, schedule.workflowId, occurrence, items)) {
+      ({ items } = await read());
+    }
     return items.some(
       (p) =>
         p.workflow?.occurrence !== undefined &&

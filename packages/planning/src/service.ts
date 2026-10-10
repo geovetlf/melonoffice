@@ -8,6 +8,7 @@ import {
 } from '@melonoffice/audit';
 import type {
   Execution,
+  IsoTimestamp,
   OrganizationId,
   Plan,
   PlanId,
@@ -51,6 +52,15 @@ export type ProposeOutcome =
 export interface StandingApproval {
   readonly workflowId: WorkflowId;
   readonly workflowVersion: number;
+}
+
+/** The occurrence the schedule moved past, and the instant a live delivery's lease has lapsed by. */
+export interface AbandonScheduled {
+  readonly workflowId: WorkflowId;
+  /** The occurrence the schedule claimed next: the plan's own must be earlier. */
+  readonly supersededBy: IsoTimestamp;
+  /** The plan must not have changed after this instant (ADR-0185 §13). */
+  readonly untouchedBefore: IsoTimestamp;
 }
 
 /** The risks a standing approval covers (ADR-0185); above them a person decides each time. */
@@ -111,6 +121,13 @@ export interface PlanService {
   reject(tenant: TenantContext, id: string, seen: PlanDecisionInput): Promise<Plan>;
   /** Server side only. `reason` is a stable code. */
   cancel(tenant: TenantContext, id: string, reason: string): Promise<Plan>;
+  /**
+   * Closes a plan its schedule approved and never started, from an occurrence the schedule has
+   * moved past (ADR-0185 §13): no task can start it now. Runtime only. The guard is read again in
+   * the plan's own transaction, so a plan started, delegated or changed within the lease is refused
+   * with `plan_not_abandonable` and nothing changes.
+   */
+  abandonScheduled(tenant: TenantContext, id: string, input: AbandonScheduled): Promise<Plan>;
 }
 
 export interface PlanServiceOptions {
@@ -183,6 +200,7 @@ export function createPlanService({
       target: { type: 'plan' | 'execution'; id: string };
       transition?: AuditTransition;
       reason?: string;
+      reference?: string;
     },
     at: Date,
   ): AuditEvent =>
@@ -195,6 +213,7 @@ export function createPlanService({
         target: fields.target,
         ...(fields.transition === undefined ? {} : { transition: fields.transition }),
         ...(fields.reason === undefined ? {} : { reason: fields.reason }),
+        ...(fields.reference === undefined ? {} : { reference: fields.reference }),
         ...(requestId === undefined ? {} : { requestId }),
         source: 'api',
       },
@@ -503,6 +522,53 @@ export function createPlanService({
                 target: { type: 'plan', id: next.id },
                 transition: { from: current.status, to: 'cancelled' },
                 reason,
+              },
+              at,
+            ),
+          ],
+        };
+      });
+    },
+
+    async abandonScheduled(tenant: TenantContext, id: string, input: AbandonScheduled) {
+      const organizationId = await organizationOf(tenant);
+      if (tenant.actor !== 'runtime') throw new PlanningError('permission_denied', 'runtime_only');
+      const at = now();
+      return repository.update(organizationId, idOf(id), (current) => {
+        const occurrence = current.workflow?.occurrence;
+        // Read here, in the plan's transaction: a plan started or delegated meanwhile is refused,
+        // and so is one a live delivery touched within the lease (ADR-0185 §13).
+        if (
+          current.decision?.via !== 'schedule' ||
+          current.workflow?.id !== input.workflowId ||
+          occurrence === undefined ||
+          Date.parse(occurrence) >= Date.parse(input.supersededBy) ||
+          current.status !== 'approved' ||
+          current.delegationState !== undefined ||
+          current.delegations.length > 0 ||
+          Date.parse(current.updatedAt) > Date.parse(input.untouchedBefore)
+        ) {
+          throw new PlanningError('plan_not_abandonable');
+        }
+        const next = applyPlanStatus(
+          current,
+          'approved',
+          'cancelled',
+          at.toISOString() as Plan['updatedAt'],
+        );
+        return {
+          plan: next,
+          events: [
+            eventOf(
+              tenant,
+              organizationId,
+              {
+                action: 'plan.state_changed',
+                result: 'success',
+                target: { type: 'plan', id: next.id },
+                transition: { from: 'approved', to: 'cancelled' },
+                reason: 'schedule_abandoned',
+                reference: `occurrence:${occurrence}`,
               },
               at,
             ),
