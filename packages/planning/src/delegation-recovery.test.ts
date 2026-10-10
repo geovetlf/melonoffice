@@ -866,6 +866,11 @@ async function stoppedPlans(w: World, count: number, children = 0): Promise<Plan
   return plans;
 }
 
+/** One plan a person made while she may still plan, stopped while `creating`: see `stoppedPlans`. */
+async function stoppedPlan(w: World, children = 0): Promise<Plan> {
+  return must((await stoppedPlans(w, 1, children))[0]);
+}
+
 /** Alice’s release of `plan` once she lost plan.create, which crashes after the plan failed (ADR-0187, decision 8). */
 async function crashedRelease(w: World, plan: Plan): Promise<void> {
   const runtime = await resolveRuntimeTenant(ALICE, w.orgA, w.tenancy);
@@ -918,7 +923,7 @@ const abandonedSweep = (
 describe('Recovery of an abandoned plan’s execution after a crash (ADR-0187, decision 8)', () => {
   it('a release that crashed after failing the plan leaves its execution open: the runtime closes it once a lease has passed, audited once', async () => {
     const w = await world({ roles: WITHOUT_PLANNING });
-    const [plan] = await stoppedPlans(w, 1);
+    const plan = await stoppedPlan(w);
     await setRole(w, 'member');
     await crashedRelease(w, plan);
     const failed = await stored(w, plan);
@@ -948,7 +953,7 @@ describe('Recovery of an abandoned plan’s execution after a crash (ADR-0187, d
 
   it('the recovery closes nothing while a child of the plan has started, and the execution stays open', async () => {
     const w = await world({ roles: WITHOUT_PLANNING });
-    const [plan] = await stoppedPlans(w, 1, 1);
+    const plan = await stoppedPlan(w, 1);
     await failedAsAbandoned(w, plan);
     const runtime = await resolveRuntimeTenant(ALICE, w.orgA, w.tenancy);
     const child = must((await stored(w, plan)).delegations[0]);
@@ -962,7 +967,7 @@ describe('Recovery of an abandoned plan’s execution after a crash (ADR-0187, d
 
   it('a child that never started does not hold the recovery: the execution closes, and the child stays pending', async () => {
     const w = await world({ roles: WITHOUT_PLANNING });
-    const [plan] = await stoppedPlans(w, 1, 1);
+    const plan = await stoppedPlan(w, 1);
     await failedAsAbandoned(w, plan);
     const runtime = await resolveRuntimeTenant(ALICE, w.orgA, w.tenancy);
     const child = must((await stored(w, plan)).delegations[0]);
@@ -974,7 +979,7 @@ describe('Recovery of an abandoned plan’s execution after a crash (ADR-0187, d
 
   it('a child waiting for approval holds the recovery too, as it may resume from running', async () => {
     const w = await world({ roles: WITHOUT_PLANNING });
-    const [plan] = await stoppedPlans(w, 1, 1);
+    const plan = await stoppedPlan(w, 1);
     await failedAsAbandoned(w, plan);
     const runtime = await resolveRuntimeTenant(ALICE, w.orgA, w.tenancy);
     const child = must((await stored(w, plan)).delegations[0]);
@@ -991,7 +996,7 @@ describe('Recovery of an abandoned plan’s execution after a crash (ADR-0187, d
 
   it('a plan that failed for another cause is never closed by the runtime: its cleanup stays with closeFailed', async () => {
     const w = await world();
-    const [plan] = await stoppedPlans(w, 1);
+    const plan = await stoppedPlan(w);
     await w.planRepository.update(w.orgA, plan.id, (current) => ({
       plan: failDelegation(
         current,
@@ -1011,7 +1016,7 @@ describe('Recovery of an abandoned plan’s execution after a crash (ADR-0187, d
 
   it('a person never closes an abandoned plan through this path, and another member’s runtime finds none of it', async () => {
     const w = await world({ roles: WITHOUT_PLANNING });
-    const [plan] = await stoppedPlans(w, 1);
+    const plan = await stoppedPlan(w);
     await setRole(w, 'member');
     await crashedRelease(w, plan);
     const input = { untouchedBefore: (await stored(w, plan)).updatedAt };
@@ -1037,7 +1042,7 @@ describe('Recovery of an abandoned plan’s execution after a crash (ADR-0187, d
 
   it('concurrent recoveries close the execution once: one writes, and the others find it closed', async () => {
     const w = await world({ roles: WITHOUT_PLANNING });
-    const [plan] = await stoppedPlans(w, 1);
+    const plan = await stoppedPlan(w);
     await setRole(w, 'member');
     await crashedRelease(w, plan);
     const runtime = await resolveRuntimeTenant(ALICE, w.orgA, w.tenancy);
@@ -1051,7 +1056,8 @@ describe('Recovery of an abandoned plan’s execution after a crash (ADR-0187, d
 
   it('the store reads the abandoned plans a page at a time, by id, and no plan of another kind', async () => {
     const w = await world({ roles: WITHOUT_PLANNING });
-    const [creating, first, second] = await stoppedPlans(w, 3);
+    const plans = await stoppedPlans(w, 3);
+    const [creating, first, second] = [must(plans[0]), must(plans[1]), must(plans[2])];
     await setRole(w, 'member');
     await crashedRelease(w, first);
     await crashedRelease(w, second);
@@ -1086,7 +1092,7 @@ describe('Sweep of abandoned plans’ executions (ADR-0187, decision 8)', () => 
 
   it('the sweep leaves a plan failed within its lease, and a plan whose creator left, as they are', async () => {
     const w = await world({ roles: WITHOUT_PLANNING });
-    const [recent] = await stoppedPlans(w, 1);
+    const recent = await stoppedPlan(w);
     await setRole(w, 'member');
     await crashedRelease(w, recent);
     expect(await abandonedSweep(w, { now: () => new Date() }).recover()).toBe(0);
