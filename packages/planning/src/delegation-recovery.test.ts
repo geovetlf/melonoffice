@@ -1,4 +1,11 @@
-import type { IsoTimestamp, OrganizationId, Plan, UserId, WorkflowId } from '@melonoffice/domain';
+import type {
+  IsoTimestamp,
+  OrganizationId,
+  Plan,
+  PlanId,
+  UserId,
+  WorkflowId,
+} from '@melonoffice/domain';
 import { ExecutionError, type ExecutionService } from '@melonoffice/execution';
 import { ROLES } from '@melonoffice/rbac';
 import {
@@ -8,6 +15,7 @@ import {
   type TenantContext,
 } from '@melonoffice/tenancy';
 import { describe, expect, it } from 'vitest';
+import { createAbandonedRecovery } from './abandoned-recovery.js';
 import { createDelegation, type Delegation } from './delegation.js';
 import { isPlanningError } from './errors.js';
 import { failDelegation } from './model.js';
@@ -822,5 +830,270 @@ describe('Permission recovery sweep (ADR-0187, decision 6)', () => {
     expect((await held(w, w.orgA, lost))?.delegationFailure).toBe('delegation_abandoned');
     expect((await held(w, w.orgB, bobs))?.delegationState).toBe('creating');
     expect(closed(w, bobs.id)).toEqual([]);
+  });
+});
+
+/** A delegation whose cleanup stops at its planning execution: the plan is failed and the execution stays open, as a crash leaves them (ADR-0187, decision 8). */
+function crashingCleanup(w: World): Delegation {
+  const executions = {
+    ...w.executions,
+    runtimePlanChangeStatus: (
+      tenant: Parameters<ExecutionService['runtimePlanChangeStatus']>[0],
+      id: Parameters<ExecutionService['runtimePlanChangeStatus']>[1],
+      change: Parameters<ExecutionService['runtimePlanChangeStatus']>[2],
+    ) => {
+      if (change.to === 'failed') return Promise.reject(new Injected('cleanup'));
+      return w.executions.runtimePlanChangeStatus(tenant, id, change);
+    },
+  };
+  return createDelegation({
+    plans: w.planRepository,
+    executions,
+    specialists: w.specialists,
+    organizations: w.tenancy,
+    authorization: w.authorization,
+  });
+}
+
+/** Plans a person made while she may still plan, their delegations stopped while they were `creating`. */
+async function stoppedPlans(w: World, count: number, children = 0): Promise<Plan[]> {
+  const plans: Plan[] = [];
+  for (let i = 0; i < count; i += 1) {
+    const plan = await personalPlan(w);
+    await codeOf(stoppedAfter(w, children).delegate(w.tenantA, plan.id));
+    plans.push(plan);
+  }
+  return plans;
+}
+
+/** Alice’s release of `plan` once she lost plan.create, which crashes after the plan failed (ADR-0187, decision 8). */
+async function crashedRelease(w: World, plan: Plan): Promise<void> {
+  const runtime = await resolveRuntimeTenant(ALICE, w.orgA, w.tenancy);
+  const { updatedAt } = await stored(w, plan);
+  expect(
+    await codeOf(
+      crashingCleanup(w).releaseManual(runtime, plan.id, { untouchedBefore: updatedAt }),
+    ),
+  ).toBe('injected');
+}
+
+/**
+ * A plan failed as an abandonment whose cleanup never ran, as a crash before the cleanup leaves it
+ * (ADR-0187, decision 8).
+ */
+async function failedAsAbandoned(w: World, plan: Plan): Promise<void> {
+  await w.planRepository.update(w.orgA, plan.id, (current) => ({
+    plan: failDelegation(
+      { ...current, delegationState: 'creating' },
+      'delegation_abandoned',
+      new Date().toISOString() as IsoTimestamp,
+    ),
+    events: [],
+  }));
+}
+
+/** The reasons of the execution changes that carry one, audited for a planning execution: a closure's is its failure code. */
+const executionClosed = (w: World, executionId: string): string[] =>
+  w
+    .events('execution.state_changed')
+    .filter((e) => e.target?.id === executionId && e.reason !== undefined)
+    .map((e) => e.reason as string);
+
+/** The sweep that closes the executions a crash left open, with the clock of a run an hour later by default. */
+const abandonedSweep = (
+  w: World,
+  options: { readonly now?: () => Date; readonly limit?: number } = {},
+) =>
+  createAbandonedRecovery({
+    plans: w.planRepository,
+    conductor: {
+      closeAbandoned: (tenant, planId, input) => w.delegation.closeAbandoned(tenant, planId, input),
+    },
+    tenancy: w.tenancy,
+    leaseMs: LEASE_MS,
+    now: options.now ?? LATER,
+    ...(options.limit === undefined ? {} : { limit: options.limit }),
+  });
+
+describe('Recovery of an abandoned plan’s execution after a crash (ADR-0187, decision 8)', () => {
+  it('a release that crashed after failing the plan leaves its execution open: the runtime closes it once a lease has passed, audited once', async () => {
+    const w = await world({ roles: WITHOUT_PLANNING });
+    const [plan] = await stoppedPlans(w, 1);
+    await setRole(w, 'member');
+    await crashedRelease(w, plan);
+    const failed = await stored(w, plan);
+    expect(failed).toMatchObject({
+      delegationState: 'failed',
+      delegationFailure: 'delegation_abandoned',
+    });
+    expect((await w.executions.get(w.tenantA, plan.executionId)).status).not.toBe('failed');
+
+    const runtime = await resolveRuntimeTenant(ALICE, w.orgA, w.tenancy);
+    // Within its lease the attempt that failed the plan still owns its cleanup: nothing closes.
+    const within = new Date(Date.parse(failed.updatedAt) - 1).toISOString() as IsoTimestamp;
+    expect(await w.delegation.closeAbandoned(runtime, plan.id, { untouchedBefore: within })).toBe(
+      false,
+    );
+    expect((await w.executions.get(w.tenantA, plan.executionId)).status).not.toBe('failed');
+
+    // Once it has passed, the runtime closes the execution, and a second attempt writes nothing.
+    const input = { untouchedBefore: failed.updatedAt };
+    expect(await w.delegation.closeAbandoned(runtime, plan.id, input)).toBe(true);
+    expect((await w.executions.get(w.tenantA, plan.executionId)).status).toBe('failed');
+    expect(await w.delegation.closeAbandoned(runtime, plan.id, input)).toBe(false);
+    expect(executionClosed(w, plan.executionId)).toEqual(['delegation_abandoned']);
+    // The plan’s audit is the release’s alone: the recovery writes no plan event.
+    expect(closed(w, plan.id)).toEqual([['permission_lost', undefined, 'failed']]);
+  });
+
+  it('the recovery closes nothing while a child of the plan has started, and the execution stays open', async () => {
+    const w = await world({ roles: WITHOUT_PLANNING });
+    const [plan] = await stoppedPlans(w, 1, 1);
+    await failedAsAbandoned(w, plan);
+    const runtime = await resolveRuntimeTenant(ALICE, w.orgA, w.tenancy);
+    const child = must((await stored(w, plan)).delegations[0]);
+    await w.executions.start(w.tenantA, child.executionId);
+    const input = { untouchedBefore: LATER().toISOString() as IsoTimestamp };
+    expect(await w.delegation.closeAbandoned(runtime, plan.id, input)).toBe(false);
+    expect((await w.executions.get(w.tenantA, plan.executionId)).status).not.toBe('failed');
+    expect((await w.executions.get(w.tenantA, child.executionId)).status).toBe('running');
+    expect(executionClosed(w, plan.executionId)).toEqual([]);
+  });
+
+  it('a child that never started does not hold the recovery: the execution closes, and the child stays pending', async () => {
+    const w = await world({ roles: WITHOUT_PLANNING });
+    const [plan] = await stoppedPlans(w, 1, 1);
+    await failedAsAbandoned(w, plan);
+    const runtime = await resolveRuntimeTenant(ALICE, w.orgA, w.tenancy);
+    const child = must((await stored(w, plan)).delegations[0]);
+    const input = { untouchedBefore: LATER().toISOString() as IsoTimestamp };
+    expect(await w.delegation.closeAbandoned(runtime, plan.id, input)).toBe(true);
+    expect((await w.executions.get(w.tenantA, plan.executionId)).status).toBe('failed');
+    expect((await w.executions.get(w.tenantA, child.executionId)).status).toBe('pending');
+  });
+
+  it('a child waiting for approval holds the recovery too, as it may resume from running', async () => {
+    const w = await world({ roles: WITHOUT_PLANNING });
+    const [plan] = await stoppedPlans(w, 1, 1);
+    await failedAsAbandoned(w, plan);
+    const runtime = await resolveRuntimeTenant(ALICE, w.orgA, w.tenancy);
+    const child = must((await stored(w, plan)).delegations[0]);
+    await w.executions.start(w.tenantA, child.executionId);
+    await w.executions.runtimeChangeStatus(runtime, child.executionId, {
+      from: 'running',
+      to: 'waiting_approval',
+    });
+    const input = { untouchedBefore: LATER().toISOString() as IsoTimestamp };
+    expect(await w.delegation.closeAbandoned(runtime, plan.id, input)).toBe(false);
+    expect((await w.executions.get(w.tenantA, plan.executionId)).status).not.toBe('failed');
+    expect((await w.executions.get(w.tenantA, child.executionId)).status).toBe('waiting_approval');
+  });
+
+  it('a plan that failed for another cause is never closed by the runtime: its cleanup stays with closeFailed', async () => {
+    const w = await world();
+    const [plan] = await stoppedPlans(w, 1);
+    await w.planRepository.update(w.orgA, plan.id, (current) => ({
+      plan: failDelegation(
+        current,
+        'delegation_conflict',
+        new Date().toISOString() as IsoTimestamp,
+      ),
+      events: [],
+    }));
+    const runtime = await resolveRuntimeTenant(ALICE, w.orgA, w.tenancy);
+    const input = { untouchedBefore: LATER().toISOString() as IsoTimestamp };
+    expect(await w.delegation.closeAbandoned(runtime, plan.id, input)).toBe(false);
+    expect((await w.executions.get(w.tenantA, plan.executionId)).status).not.toBe('failed');
+
+    await w.delegation.closeFailed(w.tenantA, plan.id);
+    expect((await w.executions.get(w.tenantA, plan.executionId)).status).toBe('failed');
+  });
+
+  it('a person never closes an abandoned plan through this path, and another member’s runtime finds none of it', async () => {
+    const w = await world({ roles: WITHOUT_PLANNING });
+    const [plan] = await stoppedPlans(w, 1);
+    await setRole(w, 'member');
+    await crashedRelease(w, plan);
+    const input = { untouchedBefore: (await stored(w, plan)).updatedAt };
+    expect(await codeOf(w.delegation.closeAbandoned(w.tenantA, plan.id, input))).toBe(
+      'permission_denied',
+    );
+    // Bob is a member of Alice’s organization, and may not plan either: the plan is not his to close.
+    const bobs = must(await w.tenancy.findMembership(w.orgB, BOB));
+    w.tenancy.put({
+      ...bobs,
+      id: membershipIdOf(w.orgA, BOB),
+      organizationId: w.orgA,
+      role: 'member',
+    });
+    const bob = await resolveRuntimeTenant(BOB, w.orgA, w.tenancy);
+    expect(await w.delegation.closeAbandoned(bob, plan.id, input)).toBe(false);
+    // Another organization’s runtime finds none of the plans.
+    const other = await resolveRuntimeTenant(BOB, w.orgB, w.tenancy);
+    expect(await codeOf(w.delegation.closeAbandoned(other, plan.id, input))).toBe('plan_not_found');
+    expect((await w.executions.get(w.tenantA, plan.executionId)).status).not.toBe('failed');
+    expect(executionClosed(w, plan.executionId)).toEqual([]);
+  });
+
+  it('concurrent recoveries close the execution once: one writes, and the others find it closed', async () => {
+    const w = await world({ roles: WITHOUT_PLANNING });
+    const [plan] = await stoppedPlans(w, 1);
+    await setRole(w, 'member');
+    await crashedRelease(w, plan);
+    const runtime = await resolveRuntimeTenant(ALICE, w.orgA, w.tenancy);
+    const input = { untouchedBefore: (await stored(w, plan)).updatedAt };
+    const results = await Promise.all(
+      [1, 2, 3].map(() => w.delegation.closeAbandoned(runtime, plan.id, input)),
+    );
+    expect(results.filter((closedNow) => closedNow)).toHaveLength(1);
+    expect(executionClosed(w, plan.executionId)).toEqual(['delegation_abandoned']);
+  });
+
+  it('the store reads the abandoned plans a page at a time, by id, and no plan of another kind', async () => {
+    const w = await world({ roles: WITHOUT_PLANNING });
+    const [creating, first, second] = await stoppedPlans(w, 3);
+    await setRole(w, 'member');
+    await crashedRelease(w, first);
+    await crashedRelease(w, second);
+    const ids: string[] = [];
+    let after: PlanId | undefined;
+    do {
+      const page = await w.planRepository.abandonedPage(
+        after === undefined ? { limit: 1 } : { limit: 1, after },
+      );
+      ids.push(...page.plans.map((p) => p.id));
+      after = page.next;
+    } while (after !== undefined);
+    expect(ids).toEqual([first.id, second.id].sort());
+    expect(ids).not.toContain(creating.id);
+  });
+});
+
+describe('Sweep of abandoned plans’ executions (ADR-0187, decision 8)', () => {
+  it('the sweep closes the open execution of every plan a crashed release left, page by page, and a second run closes nothing', async () => {
+    const w = await world({ roles: WITHOUT_PLANNING });
+    const plans = await stoppedPlans(w, 3);
+    await setRole(w, 'member');
+    for (const plan of plans) await crashedRelease(w, plan);
+    const sweep = abandonedSweep(w, { limit: 1 });
+    expect(await sweep.recover()).toBe(3);
+    for (const plan of plans) {
+      expect((await w.executions.get(w.tenantA, plan.executionId)).status).toBe('failed');
+      expect(executionClosed(w, plan.executionId)).toEqual(['delegation_abandoned']);
+    }
+    expect(await sweep.recover()).toBe(0);
+  });
+
+  it('the sweep leaves a plan failed within its lease, and a plan whose creator left, as they are', async () => {
+    const w = await world({ roles: WITHOUT_PLANNING });
+    const [recent] = await stoppedPlans(w, 1);
+    await setRole(w, 'member');
+    await crashedRelease(w, recent);
+    expect(await abandonedSweep(w, { now: () => new Date() }).recover()).toBe(0);
+    expect((await w.executions.get(w.tenantA, recent.executionId)).status).not.toBe('failed');
+
+    await leave(w);
+    expect(await abandonedSweep(w).recover()).toBe(0);
+    expect((await w.executions.get(w.tenantA, recent.executionId)).status).not.toBe('failed');
   });
 });

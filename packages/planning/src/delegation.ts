@@ -280,6 +280,11 @@ export interface ReleaseManual {
   readonly untouchedBefore: IsoTimestamp;
 }
 
+/** What a crash recovery of an abandoned plan takes: the plan untouched since before this (ADR-0187, decision 8). */
+export interface CloseAbandoned {
+  readonly untouchedBefore: IsoTimestamp;
+}
+
 export interface Delegation {
   delegate(tenant: TenantContext, planId: string): Promise<DelegationResult>;
   /**
@@ -298,6 +303,12 @@ export interface Delegation {
    * is read back, never made twice. Otherwise refused with `plan_not_abandonable`.
    */
   releaseManual(tenant: TenantContext, planId: string, input: ReleaseManual): Promise<Plan>;
+  /**
+   * Runtime only, for a plan the runtime abandoned whose planning execution an interrupted cleanup left
+   * open (ADR-0187, decision 8): closes that execution once the plan failed a lease ago and no child of it
+   * started. Its creator's runtime only. True when this call closed the execution; otherwise nothing changes.
+   */
+  closeAbandoned(tenant: TenantContext, planId: string, input: CloseAbandoned): Promise<boolean>;
   /**
    * Finishes the cleanup of a failed delegation whose attempt was interrupted before it ended
    * (ADR-0186). Idempotent: a finished cleanup changes nothing. It never starts or reactivates work.
@@ -371,6 +382,16 @@ const isReleasedManual = (plan: Plan, creator: UserId): boolean =>
   plan.delegationState === 'failed' &&
   plan.delegationFailure === 'delegation_abandoned' &&
   isManualOf(plan, creator);
+
+/**
+ * A plan the runtime abandoned, of its creator, that failed at least a lease before `untouchedBefore`
+ * (ADR-0187, decision 8): its cleanup had a whole lease and did not finish, as a crash leaves it.
+ */
+const abandonedOpen = (plan: Plan, creator: UserId, untouchedBefore: IsoTimestamp): boolean =>
+  plan.createdBy === creator &&
+  plan.delegationState === 'failed' &&
+  plan.delegationFailure === 'delegation_abandoned' &&
+  Date.parse(plan.updatedAt) <= Date.parse(untouchedBefore);
 
 export function createDelegation({
   plans,
@@ -544,16 +565,26 @@ export function createDelegation({
         );
       }
     }
+    await failParent(tenant, plan);
+  }
+
+  /**
+   * A failed plan's planning execution fails, unless it is already terminal. True when this call failed
+   * it: a change another attempt made first is accepted, as `settle` accepts it, and is not counted here.
+   */
+  async function failParent(tenant: TenantContext, plan: Plan): Promise<boolean> {
     const parent = await findExecution(tenant, plan.executionId);
-    if (parent !== undefined && !isTerminal(parent.status)) {
-      await settle(tenant, parent.id, () =>
-        moveParent(tenant, parent.id, {
-          from: parent.status,
-          to: 'failed',
-          failure: { code: plan.delegationFailure ?? 'delegation_failed' },
-        }),
-      );
-    }
+    if (parent === undefined || isTerminal(parent.status)) return false;
+    let failed = false;
+    await settle(tenant, parent.id, async () => {
+      await moveParent(tenant, parent.id, {
+        from: parent.status,
+        to: 'failed',
+        failure: { code: plan.delegationFailure ?? 'delegation_failed' },
+      });
+      failed = true;
+    });
+    return failed;
   }
 
   /**
@@ -881,6 +912,33 @@ export function createDelegation({
     return current;
   }
 
+  /**
+   * Runtime only, for a plan the runtime abandoned whose planning execution an interrupted cleanup left
+   * open (ADR-0187, decision 8). Its creator's runtime, and only once the plan failed a lease ago, reads
+   * the real state: the execution must still be open, and no child of it may have started. Only then
+   * the execution fails, as `cleanUp` fails it. Nothing is cancelled, started or written to the plan.
+   */
+  async function closeAbandoned(
+    tenant: TenantContext,
+    planId: string,
+    input: CloseAbandoned,
+  ): Promise<boolean> {
+    if (tenant.actor !== 'runtime') throw new PlanningError('permission_denied', 'runtime_only');
+    const [, plan] = await planOf(tenant, planId);
+    if (!abandonedOpen(plan, tenant.userId, input.untouchedBefore)) return false;
+    const parent = await findExecution(tenant, plan.executionId);
+    if (parent === undefined || isTerminal(parent.status)) return false;
+    for (const d of plan.delegations) {
+      // A child that started, or waits for a person (it may resume from running), may still be in use:
+      // the execution stays open. A child that never started is left as `abandon` leaves it.
+      const child = await findExecution(tenant, d.executionId);
+      if (child !== undefined && !isTerminal(child.status) && child.status !== 'pending') {
+        return false;
+      }
+    }
+    return failParent(tenant, plan);
+  }
+
   async function closeFailed(tenant: TenantContext, planId: string): Promise<Plan> {
     const [, plan] = await planOf(tenant, planId);
     // The runtime closes only what a schedule made (ADR-0185); a person closes their own plans.
@@ -891,5 +949,5 @@ export function createDelegation({
     return plan;
   }
 
-  return Object.freeze({ delegate, abandon, releaseManual, closeFailed });
+  return Object.freeze({ delegate, abandon, releaseManual, closeAbandoned, closeFailed });
 }

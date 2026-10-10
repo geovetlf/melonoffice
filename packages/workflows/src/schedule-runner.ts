@@ -8,6 +8,7 @@ import type {
   WorkflowScheduleOutcome,
 } from '@melonoffice/domain';
 import {
+  createAbandonedRecovery,
   createPermissionRecovery,
   isPlanningError,
   isPlanTerminal,
@@ -66,12 +67,16 @@ export interface ScheduleRunnerOptions {
   readonly workflows: Pick<WorkflowRepository, 'find'>;
   readonly workflowService: Pick<WorkflowService, 'planOccurrence'>;
   readonly plans: Pick<PlanService, 'abandonScheduled' | 'approveScheduled' | 'pageForWorkflow'>;
-  readonly conductor: Pick<PlanConductor, 'run' | 'abandon' | 'releaseManual' | 'closeFailed'>;
+  readonly conductor: Pick<
+    PlanConductor,
+    'run' | 'abandon' | 'releaseManual' | 'closeAbandoned' | 'closeFailed'
+  >;
   /**
-   * The plans the sweep reads for a person who may no longer plan (ADR-0187, decision 6). Absent:
-   * the sweep releases none of them.
+   * The plan records the sweep recovers from: the plans of a person who may no longer plan (ADR-0187,
+   * decision 6) and the plans an interrupted cleanup left open (decision 8). Absent: the sweep recovers
+   * none of them.
    */
-  readonly handMadePlans?: Pick<PlanRepository, 'creatingPage'>;
+  readonly recoveryPlans?: Pick<PlanRepository, 'creatingPage' | 'abandonedPage'>;
   readonly tenancy: TenancyStore;
   /** Checked for the person at every occurrence: the standing approval holds only while they can (ADR-0185 §6). */
   readonly authorization: Pick<AuthorizationService, 'authorize'>;
@@ -120,7 +125,7 @@ export function createScheduleRunner({
   workflowService,
   plans,
   conductor,
-  handMadePlans,
+  recoveryPlans,
   tenancy,
   authorization,
   scheduler,
@@ -129,13 +134,25 @@ export function createScheduleRunner({
 }: ScheduleRunnerOptions): ScheduleRunner {
   // The plans of a person who may no longer plan, released by the sweep after the occurrences (ADR-0187).
   const handMade =
-    handMadePlans === undefined
+    recoveryPlans === undefined
       ? undefined
       : createPermissionRecovery({
-          plans: handMadePlans,
+          plans: recoveryPlans,
           conductor,
           tenancy,
           authorization,
+          leaseMs: SCHEDULE_LEASE_MS,
+          now,
+          ...(logger === undefined ? {} : { logger }),
+        });
+  // The planning executions an interrupted cleanup of an abandoned plan left open (ADR-0187, decision 8).
+  const abandoned =
+    recoveryPlans === undefined
+      ? undefined
+      : createAbandonedRecovery({
+          plans: recoveryPlans,
+          conductor,
+          tenancy,
           leaseMs: SCHEDULE_LEASE_MS,
           now,
           ...(logger === undefined ? {} : { logger }),
@@ -654,6 +671,17 @@ export function createScheduleRunner({
           if (released > 0) logger?.info('hand-made plans released', { released });
         } catch (error) {
           logger?.warn('hand-made plan recovery failed', {
+            code: (error as { code?: unknown }).code ?? 'error',
+          });
+        }
+      }
+      // Last, after the releases: a cleanup a release left open is closed once its lease has passed (decision 8).
+      if (abandoned !== undefined) {
+        try {
+          const closed = await abandoned.recover();
+          if (closed > 0) logger?.info('abandoned plan executions closed', { closed });
+        } catch (error) {
+          logger?.warn('abandoned plan recovery failed', {
             code: (error as { code?: unknown }).code ?? 'error',
           });
         }

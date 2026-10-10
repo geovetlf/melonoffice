@@ -12,4 +12,5 @@ export * from './delegation.js';
 export * from './cascade.js';
 export * from './conductor.js';
 export * from './permission-recovery.js';
+export * from './abandoned-recovery.js';
 export * from './tool-steps.js';
