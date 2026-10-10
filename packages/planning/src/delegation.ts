@@ -30,7 +30,7 @@ import {
   markDelegated,
 } from './model.js';
 import type { PlanRepository } from './repository.js';
-import { abandonableScheduled, type AbandonScheduled } from './service.js';
+import { abandonableScheduled, type AbandonScheduled, closureReason } from './service.js';
 
 /** Which execution node type each non-tool step becomes. */
 const NODE_TYPE: Readonly<Record<Exclude<PlanStep['kind'], 'tool'>, NodeInput['type']>> = {
@@ -735,16 +735,22 @@ export function createDelegation({
     return Object.freeze({ plan, children: await childrenOf(tenant, plan) });
   }
 
-  /** The plan of a tenant, with the organization and the `plan.create` permission checked. */
-  async function planOf(tenant: TenantContext, planId: string): Promise<[OrganizationId, Plan]> {
+  /**
+   * The plan of a tenant, with the organization checked. A person must still hold `plan.create`; the
+   * runtime does not need it to release a schedule's plan, which the schedule's own rules already bound
+   * (ADR-0187). `mayPlan` is the person's current permission, for the audit reason.
+   */
+  async function planOf(
+    tenant: TenantContext,
+    planId: string,
+  ): Promise<[OrganizationId, Plan, boolean]> {
     const organizationId = await organizationOf(tenant);
-    if (!authorization.authorize(tenant, 'plan.create', { organizationId }).allowed) {
-      throw new PlanningError('permission_denied');
-    }
+    const mayPlan = authorization.authorize(tenant, 'plan.create', { organizationId }).allowed;
+    if (tenant.actor !== 'runtime' && !mayPlan) throw new PlanningError('permission_denied');
     if (!isPlanId(planId)) throw new PlanningError('plan_not_found');
     const plan = await plans.find(organizationId, planId);
     if (plan === undefined) throw new PlanningError('plan_not_found');
-    return [organizationId, plan];
+    return [organizationId, plan, mayPlan];
   }
 
   async function abandon(
@@ -753,7 +759,7 @@ export function createDelegation({
     input: AbandonScheduled,
   ): Promise<Plan> {
     if (tenant.actor !== 'runtime') throw new PlanningError('permission_denied', 'runtime_only');
-    const [organizationId, found] = await planOf(tenant, planId);
+    const [organizationId, found, mayPlan] = await planOf(tenant, planId);
     const at = now();
     // Another attempt that failed the plan first makes `step` return it fresh, and nothing is
     // written twice: only its cleanup runs below (ADR-0186).
@@ -778,7 +784,7 @@ export function createDelegation({
                     action: 'plan.state_changed',
                     target: { type: 'plan', id: next.id },
                     transition: { from: fresh.status, to: next.status },
-                    reason: input.reason ?? 'schedule_abandoned',
+                    reason: closureReason(input.reason, 'schedule_abandoned', mayPlan),
                     reference: `occurrence:${fresh.workflow?.occurrence}`,
                   },
                   at,

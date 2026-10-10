@@ -95,10 +95,11 @@ class Busy extends Error {
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
 /**
- * The refusals that hold a plan as it is, rather than fail the occurrence: the plan changed within
- * its lease or started, or the person may no longer plan (ADR-0185 §13, ADR-0186).
+ * The refusal that holds a plan as it is, rather than fail the occurrence: the plan changed within its
+ * lease or started meanwhile (ADR-0185 §13, ADR-0186). A person who may no longer plan does not hold
+ * it: the runtime releases the plan, audited as `permission_lost` (ADR-0187).
  */
-const HELD_CLOSURES: ReadonlySet<string> = new Set(['plan_not_abandonable', 'permission_denied']);
+const HELD_CLOSURES: ReadonlySet<string> = new Set(['plan_not_abandonable']);
 
 /** The code a retry reports: the domain's own, or `in_progress` for a held occurrence. */
 const codeOf = (error: unknown): string => {
@@ -273,8 +274,8 @@ export function createScheduleRunner({
           });
         }
       } catch (error) {
-        // Held: changed within the lease, started meanwhile, or the person may no longer plan. It
-        // stays as it is, and the next claim looks again.
+        // Held: changed within the lease, or started meanwhile. It stays as it is, and the next claim
+        // looks again.
         if (isPlanningError(error) && HELD_CLOSURES.has(error.code)) continue;
         throw error;
       }
@@ -412,8 +413,9 @@ export function createScheduleRunner({
    * An off schedule claims nothing again, so nothing supersedes what it left open: the sweep closes
    * every plan the schedule made that has not started (`schedule_off`), finishes the cleanup of a
    * failed delegation, fails a `creating` one, and records the lost occurrence as abandoned. An
-   * executing plan goes on as it is. A plan a live delivery touched within the lease, or one the
-   * person may no longer plan, holds the claim for a later sweep. Returns whether it was recorded.
+   * executing plan goes on as it is. A plan a live delivery touched within the lease holds the claim
+   * for a later sweep. A person who may no longer plan does not hold a plan: it is released, audited as
+   * `permission_lost` (ADR-0187). Returns whether the occurrence was recorded.
    */
   async function settleSwitchedOff(
     schedule: WorkflowSchedule,

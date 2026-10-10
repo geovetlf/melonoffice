@@ -1,5 +1,5 @@
 import { createAuditService } from '@melonoffice/audit';
-import type { IsoTimestamp, Workflow, WorkflowId } from '@melonoffice/domain';
+import type { IsoTimestamp, Workflow, WorkflowId, WorkflowSchedule } from '@melonoffice/domain';
 import type { TenantContext } from '@melonoffice/tenancy';
 import { describe, expect, it } from 'vitest';
 // The planning package's own test world, reused rather than rebuilt.
@@ -221,5 +221,53 @@ describe('a workflow schedule service (ADR-0185)', () => {
     expect(w.events('workflow.schedule_switched_off')).toMatchObject([
       { result: 'success', reason: 'person', target: { type: 'workflow', id: workflow.id } },
     ]);
+  });
+});
+
+describe('the sweep reads the lapsed claims of schedules that are off (ADR-0187)', () => {
+  const CLAIMED = '2026-09-27T08:00:00.000Z' as IsoTimestamp;
+  /** Now less the lease: a claim taken at or before it has lapsed. */
+  const LEASE_CUTOFF = '2026-09-27T11:40:00.000Z' as IsoTimestamp;
+  /** The n-th test workflow. Ids sort in n order, the order the store pages in. */
+  const idOf = (n: number) =>
+    `00000000-0000-4000-8000-${String(n).padStart(12, '0')}` as WorkflowId;
+
+  it('lists only the schedules that are off, even when on schedules fill the first page', async () => {
+    const w = await world();
+    const repository = new InMemoryWorkflowScheduleRepository(w.audit);
+    // A schedule whose last claim was taken and never finished, and that is on or off.
+    const claimed = (n: number, status: WorkflowSchedule['status']) =>
+      repository.update(w.orgA, idOf(n), () => ({
+        schedule: {
+          workflowId: idOf(n),
+          organizationId: w.orgA,
+          status,
+          recurrence: { frequency: 'daily', time: '09:00' },
+          timeZone: 'Europe/Madrid',
+          workflowVersion: 1,
+          confirmedBy: ALICE,
+          confirmedAt: CLAIMED,
+          ...(status === 'on' ? { nextRunAt: '2026-09-28T07:00:00.000Z' as IsoTimestamp } : {}),
+          last: { occurrence: CLAIMED, outcome: 'claimed', at: CLAIMED },
+          revision: 1,
+          updatedAt: CLAIMED,
+        },
+        events: [],
+      }));
+    for (let n = 1; n <= 25; n += 1) await claimed(n, 'on');
+    await claimed(900, 'off');
+
+    // The first page is full of schedules that are on: none is listed, and the walk goes on.
+    const first = await repository.lapsedOff(LEASE_CUTOFF, 20);
+    expect(first.schedules).toEqual([]);
+    expect(first.next).toBe(idOf(20));
+    const seen: WorkflowId[] = [];
+    let after: WorkflowId | undefined = first.next;
+    do {
+      const page = await repository.lapsedOff(LEASE_CUTOFF, 20, after);
+      seen.push(...page.schedules.map((s) => s.workflowId));
+      after = page.next;
+    } while (after !== undefined);
+    expect(seen).toEqual([idOf(900)]);
   });
 });

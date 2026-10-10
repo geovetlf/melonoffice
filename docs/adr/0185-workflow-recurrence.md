@@ -146,4 +146,4 @@ ADR-0186 extends this record in three places and changes nothing else:
 - **Off schedules.** The sweep reads the schedules that are off whose last claim is still open after its lease, and closes every open plan the schedule made, of any occurrence, with reason `schedule_off`. The lost occurrence is recorded as `abandoned`, a new outcome, once nothing is held.
 - **The claim closes what the earlier occurrences left open** before its checks, so a paused, late or refused occurrence closes them too.
 
-The closure rules of decision 13 apply to all three: the transactional guards, the lease, the held refusals, and one audit event per change with its reason and occurrence. The record is [ADR-0186](0186-delegation-recovery-and-closure-of-off-schedules.md).
+The closure rules of decision 13 apply to all three: the transactional guards, the lease, the held refusals, and one audit event per change with its reason and occurrence. The record is [ADR-0186](0186-delegation-recovery-and-closure-of-off-schedules.md), amended by [ADR-0187](0187-release-of-a-schedule-plan-when-its-person-may-not-plan.md): a person who may no longer plan does not hold a schedule's plan.

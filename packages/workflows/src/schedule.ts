@@ -195,11 +195,12 @@ export interface WorkflowScheduleRepository {
    */
   due(before: IsoTimestamp, limit: number): Promise<readonly WorkflowSchedule[]>;
   /**
-   * One page of the schedules that are off, whose last occurrence was claimed and never finished
-   * (ADR-0186): the sweep's look at an occurrence nothing may take up again. The page is the first
-   * `limit` such records after `after`, in workflow id order; its schedules are those whose claim was
-   * taken at or before `before` (its lease lapsed). `next` is where the following page starts, when this
-   * one filled its limit. An on schedule is never listed: a later claim finishes its occurrence
+   * One page of the schedules whose last occurrence was claimed and never finished (ADR-0186), the
+   * sweep's look at an occurrence nothing may take up again. The page is the first `limit` such records
+   * after `after`, in workflow id order, and one equality serves it without a composite index
+   * (ADR-0187). Its schedules are those that are off and whose claim was taken at or before `before`
+   * (its lease lapsed). `next` is where the following page starts, when this one filled its limit. An
+   * on schedule is never returned, though it may fill a page: a later claim finishes its occurrence
    * (ADR-0185 §13). Server side only.
    */
   lapsedOff(before: IsoTimestamp, limit: number, after?: WorkflowId): Promise<LapsedSchedulePage>;
@@ -280,20 +281,17 @@ export class InMemoryWorkflowScheduleRepository implements WorkflowScheduleRepos
     limit: number,
     after?: WorkflowId,
   ): Promise<LapsedSchedulePage> {
-    // The same page the store reads: the first `limit` records after `after`, in id order, then the
-    // lease read from each of them.
+    // The same page the store reads (ADR-0187): the first `limit` claimed records after `after`, in id
+    // order; of those, the schedules that are off and whose lease has lapsed.
     const page = [...this.#schedules.values()]
-      .filter(
-        (s) =>
-          s.status === 'off' &&
-          s.last?.outcome === 'claimed' &&
-          (after === undefined || s.workflowId > after),
-      )
+      .filter((s) => s.last?.outcome === 'claimed' && (after === undefined || s.workflowId > after))
       .sort((a, b) => (a.workflowId < b.workflowId ? -1 : 1))
       .slice(0, limit);
     const last = page[page.length - 1];
     return {
-      schedules: page.filter((s) => s.last !== undefined && s.last.at <= before),
+      schedules: page.filter(
+        (s) => s.status === 'off' && s.last !== undefined && s.last.at <= before,
+      ),
       ...(page.length === limit && last !== undefined ? { next: last.workflowId } : {}),
     };
   }

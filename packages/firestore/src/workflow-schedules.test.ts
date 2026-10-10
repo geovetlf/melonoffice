@@ -55,15 +55,24 @@ async function put(
 
 // The store's own query, read on the emulator. A missing filter here changes what a page holds.
 describe.runIf(emulatorHost)('FirestoreWorkflowScheduleRepository.lapsedOff (emulator)', () => {
-  it('lists only schedules that are off, even when on schedules come first in the page order', async () => {
+  it('lists only schedules that are off, even when on schedules fill the first page', async () => {
     const repository = new FirestoreWorkflowScheduleRepository(emulatorFirestore());
     for (let n = 1; n <= 25; n += 1) await put(repository, idOf(n), 'on', CLAIMED_AT);
     await put(repository, idOf(900), 'off', CLAIMED_AT);
 
-    const page = await repository.lapsedOff(LEASE_CUTOFF, 20);
+    // The first page is full of on schedules: none is listed, and the walk goes on.
+    const first = await repository.lapsedOff(LEASE_CUTOFF, 20);
+    expect(first.schedules).toEqual([]);
+    expect(first.next).toBe(idOf(20));
 
-    expect(page.schedules.map((s) => s.workflowId)).toEqual([idOf(900)]);
-    expect(page.next).toBeUndefined();
+    const seen: string[] = [];
+    let after: WorkflowId | undefined = first.next;
+    do {
+      const page = await repository.lapsedOff(LEASE_CUTOFF, 20, after);
+      seen.push(...page.schedules.map((s) => s.workflowId));
+      after = page.next;
+    } while (after !== undefined);
+    expect(seen).toEqual([idOf(900)]);
   });
 
   it('pages the lapsed schedules in workflow id order, and leaves out a claim within its lease', async () => {
