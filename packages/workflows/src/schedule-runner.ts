@@ -31,6 +31,7 @@ import {
   SCHEDULE_LEASE_MS,
   SCHEDULE_RECOVER_AFTER_MS,
   SCHEDULE_RECOVER_LIMIT,
+  SCHEDULE_RECOVER_PAGES,
   STANDING_PERMISSIONS,
   switchedOff,
   withRun,
@@ -598,17 +599,28 @@ export function createScheduleRunner({
       const lapsedBefore = new Date(
         now().getTime() - SCHEDULE_LEASE_MS,
       ).toISOString() as IsoTimestamp;
-      const lapsed = await schedules.lapsedOff(lapsedBefore, SCHEDULE_RECOVER_LIMIT);
-      for (const schedule of lapsed) {
-        if (schedule.status !== 'off' || schedule.last?.outcome !== 'claimed') continue;
-        try {
-          if (await settleSwitchedOff(schedule, schedule.last.occurrence)) ran += 1;
-        } catch (error) {
-          logger?.warn('workflow schedule recovery failed', {
-            workflowId: schedule.workflowId,
-            code: (error as { code?: unknown }).code ?? 'error',
-          });
+      // A page at a time, in workflow id order, so schedules held for a later run do not keep the rest
+      // from being read: up to SCHEDULE_RECOVER_PAGES pages per run (ADR-0186).
+      let after: WorkflowId | undefined;
+      for (let page = 0; page < SCHEDULE_RECOVER_PAGES; page += 1) {
+        const { schedules: lapsed, next } = await schedules.lapsedOff(
+          lapsedBefore,
+          SCHEDULE_RECOVER_LIMIT,
+          after,
+        );
+        for (const schedule of lapsed) {
+          if (schedule.status !== 'off' || schedule.last?.outcome !== 'claimed') continue;
+          try {
+            if (await settleSwitchedOff(schedule, schedule.last.occurrence)) ran += 1;
+          } catch (error) {
+            logger?.warn('workflow schedule recovery failed', {
+              workflowId: schedule.workflowId,
+              code: (error as { code?: unknown }).code ?? 'error',
+            });
+          }
         }
+        if (next === undefined) break;
+        after = next;
       }
       return ran;
     },

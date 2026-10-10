@@ -3,7 +3,7 @@ import type {
   Timestamp as FirestoreTimestamp,
   Transaction,
 } from '@google-cloud/firestore';
-import { Timestamp } from '@google-cloud/firestore';
+import { FieldPath, Timestamp } from '@google-cloud/firestore';
 import type { AuditEvent } from '@melonoffice/audit';
 import type {
   IsoTimestamp,
@@ -20,6 +20,7 @@ import {
   checkNextSchedule,
   checkStoredSchedule,
   isWorkflowId,
+  type LapsedSchedulePage,
   WorkflowError,
   type WorkflowScheduleChange,
   type WorkflowScheduleRepository,
@@ -166,18 +167,25 @@ export class FirestoreWorkflowScheduleRepository implements WorkflowScheduleRepo
     });
   }
 
-  async lapsedOff(before: IsoTimestamp, limit: number): Promise<readonly WorkflowSchedule[]> {
+  async lapsedOff(
+    before: IsoTimestamp,
+    limit: number,
+    after?: WorkflowId,
+  ): Promise<LapsedSchedulePage> {
     const cutoff = new Date(before);
-    if (Number.isNaN(cutoff.getTime()) || !Number.isSafeInteger(limit) || limit < 1) return [];
-    // Equalities only, so the automatic single-field indexes serve them without a composite index;
-    // the lease is read from each record, since a range on it would need one.
-    const snapshot = await this.db
+    if (Number.isNaN(cutoff.getTime()) || !Number.isSafeInteger(limit) || limit < 1) {
+      return { schedules: [] };
+    }
+    // Equalities, and the document id as the order: the automatic single-field indexes serve them, so
+    // no composite index is needed. The lease is read from each record, since a range on it would need one.
+    let query = this.db
       .collection(WORKFLOW_SCHEDULES)
       .where('status', '==', 'off')
       .where('last.outcome', '==', 'claimed')
-      .limit(limit)
-      .get();
-    return snapshot.docs.flatMap((doc) => {
+      .orderBy(FieldPath.documentId());
+    if (after !== undefined) query = query.startAfter(after);
+    const snapshot = await query.limit(limit).get();
+    const schedules = snapshot.docs.flatMap((doc) => {
       try {
         const schedule = toSchedule(doc.data() as ScheduleDocument);
         return schedule.last !== undefined && Date.parse(schedule.last.at) <= cutoff.getTime()
@@ -188,6 +196,11 @@ export class FirestoreWorkflowScheduleRepository implements WorkflowScheduleRepo
         return [];
       }
     });
+    const last = snapshot.docs[snapshot.docs.length - 1];
+    return {
+      schedules,
+      ...(snapshot.size === limit && last !== undefined ? { next: last.id as WorkflowId } : {}),
+    };
   }
 
   #audit(t: Transaction, events: readonly AuditEvent[]): void {

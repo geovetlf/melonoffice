@@ -2139,5 +2139,42 @@ describe.each(STORES)(
         ['schedule_abandoned', `occurrence:${FIRST}`, 'failed'],
       ]);
     });
+
+    it('54. the sweep reaches a switched-off schedule behind a page it cannot settle yet, and settles it', async () => {
+      const w = await world();
+      // Fifty schedules switched off while their claims lapsed, whose person has left: the sweep reads
+      // them and cannot settle them yet. Their ids sort first, so they fill the first page of the sweep.
+      const GONE = '99999999-9999-4999-8999-999999999999' as UserId;
+      const CLAIMED = '2026-10-01T08:00:00.000Z' as IsoTimestamp;
+      const offSince = (workflowId: WorkflowId, confirmedBy: UserId) => ({
+        schedule: {
+          workflowId,
+          organizationId: w.orgA,
+          status: 'off' as const,
+          recurrence: { frequency: 'daily' as const, time: '09:00' },
+          timeZone: 'Europe/Madrid',
+          workflowVersion: 1,
+          confirmedBy,
+          confirmedAt: CLAIMED,
+          last: { occurrence: CLAIMED, outcome: 'claimed' as const, at: CLAIMED },
+          revision: 1,
+          updatedAt: CLAIMED,
+        },
+        events: [],
+      });
+      const held = Array.from(
+        { length: 50 },
+        (_, i) => `00000000-0000-4000-8000-${String(i + 1).padStart(12, '0')}` as WorkflowId,
+      );
+      for (const id of held) await w.stores.schedules.update(w.orgA, id, () => offSince(id, GONE));
+      const target = 'ffffffff-ffff-4fff-8fff-ffffffffffff' as WorkflowId;
+      await w.stores.schedules.update(w.orgA, target, () => offSince(target, ALICE));
+      w.at(new Date(Date.parse(CLAIMED) + SCHEDULE_LEASE_MS + 60_000));
+
+      // One settled, found on the second page; the fifty held ones stay as they are.
+      expect(await w.runner.recover()).toBe(1);
+      expect((await w.scheduleOf(target)).last?.outcome).toBe('abandoned');
+      expect((await w.scheduleOf(held[0] as WorkflowId)).last?.outcome).toBe('claimed');
+    });
   },
 );

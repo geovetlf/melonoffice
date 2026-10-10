@@ -38,8 +38,10 @@ export const SCHEDULE_LATE_MS = 6 * 3_600_000;
 export const SCHEDULE_RECOVER_AFTER_MS = 15 * 60_000;
 /** Cloud Tasks holds a task up to 30 days: a later occurrence is reached in hops. */
 export const SCHEDULE_TASK_HORIZON_MS = 29 * 86_400_000;
-/** At most this many schedules recovered per sweep run. */
+/** At most this many schedules recovered per sweep run, and per page of the lapsed ones (ADR-0186). */
 export const SCHEDULE_RECOVER_LIMIT = 50;
+/** At most this many pages of lapsed schedules one sweep run reads (ADR-0186). */
+export const SCHEDULE_RECOVER_PAGES = 10;
 /**
  * How long a claimed occurrence is held by its worker. It outlasts a task's dispatch deadline (the
  * runtime's job lease, 15 min by default), so a retry never runs beside a live occurrence; once it
@@ -193,12 +195,21 @@ export interface WorkflowScheduleRepository {
    */
   due(before: IsoTimestamp, limit: number): Promise<readonly WorkflowSchedule[]>;
   /**
-   * Schedules that are off, whose last occurrence was claimed and never finished, its claim taken at
-   * or before `before` (its lease lapsed): the sweep's look at an occurrence nothing may take up again
-   * (ADR-0186). An on schedule is not listed: a later claim finishes its occurrence (ADR-0185 §13), and
-   * listing them would let them take the page that off schedules need. Server side only.
+   * One page of the schedules that are off, whose last occurrence was claimed and never finished
+   * (ADR-0186): the sweep's look at an occurrence nothing may take up again. The page is the first
+   * `limit` such records after `after`, in workflow id order; its schedules are those whose claim was
+   * taken at or before `before` (its lease lapsed). `next` is where the following page starts, when this
+   * one filled its limit. An on schedule is never listed: a later claim finishes its occurrence
+   * (ADR-0185 §13). Server side only.
    */
-  lapsedOff(before: IsoTimestamp, limit: number): Promise<readonly WorkflowSchedule[]>;
+  lapsedOff(before: IsoTimestamp, limit: number, after?: WorkflowId): Promise<LapsedSchedulePage>;
+}
+
+/** One page of the lapsed schedules (ADR-0186). */
+export interface LapsedSchedulePage {
+  readonly schedules: readonly WorkflowSchedule[];
+  /** Set when the page filled its limit: the next page starts after this workflow. */
+  readonly next?: WorkflowId;
 }
 
 /** The next schedule must be exactly one revision ahead of the stored one (or the first). */
@@ -264,10 +275,27 @@ export class InMemoryWorkflowScheduleRepository implements WorkflowScheduleRepos
       .slice(0, limit);
   }
 
-  async lapsedOff(before: IsoTimestamp, limit: number) {
-    return [...this.#schedules.values()]
-      .filter((s) => s.status === 'off' && s.last?.outcome === 'claimed' && s.last.at <= before)
+  async lapsedOff(
+    before: IsoTimestamp,
+    limit: number,
+    after?: WorkflowId,
+  ): Promise<LapsedSchedulePage> {
+    // The same page the store reads: the first `limit` records after `after`, in id order, then the
+    // lease read from each of them.
+    const page = [...this.#schedules.values()]
+      .filter(
+        (s) =>
+          s.status === 'off' &&
+          s.last?.outcome === 'claimed' &&
+          (after === undefined || s.workflowId > after),
+      )
+      .sort((a, b) => (a.workflowId < b.workflowId ? -1 : 1))
       .slice(0, limit);
+    const last = page[page.length - 1];
+    return {
+      schedules: page.filter((s) => s.last !== undefined && s.last.at <= before),
+      ...(page.length === limit && last !== undefined ? { next: last.workflowId } : {}),
+    };
   }
 }
 
