@@ -9,6 +9,7 @@ import type {
   PlanDelegation,
   PlanStep,
   PlanVersion,
+  UserId,
   VersionRef,
 } from '@melonoffice/domain';
 import {
@@ -271,6 +272,14 @@ export interface DelegationResult {
  * A specialist that can no longer take its step while the delegation is `creating` fails it:
  * the plan and its planning execution fail, and every child already created is cancelled.
  */
+/**
+ * What a release of a person's hand-made plan is checked against (ADR-0187, decision 6): the plan
+ * must not have changed since this instant, the lease its live attempt is measured from.
+ */
+export interface ReleaseManual {
+  readonly untouchedBefore: IsoTimestamp;
+}
+
 export interface Delegation {
   delegate(tenant: TenantContext, planId: string): Promise<DelegationResult>;
   /**
@@ -281,6 +290,14 @@ export interface Delegation {
    * method failed has its cleanup finished, and any other is refused with `plan_not_abandonable`.
    */
   abandon(tenant: TenantContext, planId: string, input: AbandonScheduled): Promise<Plan>;
+  /**
+   * Runtime only, for a plan its creator made by hand (ADR-0187, decision 6): fails its `creating`
+   * delegation once the creator may no longer plan and the plan was not touched within the lease.
+   * Only the creator's own runtime releases it, and never a schedule's plan. Nothing ran, so the
+   * children it made stay `pending`, as the runtime leaves them (ADR-0029). A release already made
+   * is read back, never made twice. Otherwise refused with `plan_not_abandonable`.
+   */
+  releaseManual(tenant: TenantContext, planId: string, input: ReleaseManual): Promise<Plan>;
   /**
    * Finishes the cleanup of a failed delegation whose attempt was interrupted before it ended
    * (ADR-0186). Idempotent: a finished cleanup changes nothing. It never starts or reactivates work.
@@ -332,6 +349,28 @@ const isAbandonedBy = (plan: Plan, input: AbandonScheduled): boolean =>
   plan.delegationFailure === 'delegation_abandoned' &&
   plan.decision?.via === 'schedule' &&
   plan.workflow?.id === input.workflowId;
+
+/** A plan a person made by hand: no schedule made it, and `creator` is the person who did (ADR-0187). */
+const isManualOf = (plan: Plan, creator: UserId): boolean =>
+  plan.createdBy === creator &&
+  plan.decision?.via !== 'schedule' &&
+  plan.workflow?.occurrence === undefined;
+
+/**
+ * A hand-made plan `releaseManual` may fail: `creating` and never started, with the status a
+ * `beginDelegation` leaves it in, and untouched since `untouchedBefore` (ADR-0187, decision 6).
+ */
+const releasableManual = (plan: Plan, creator: UserId, untouchedBefore: IsoTimestamp): boolean =>
+  isManualOf(plan, creator) &&
+  plan.delegationState === 'creating' &&
+  (plan.status === 'ready' || plan.status === 'approved') &&
+  Date.parse(plan.updatedAt) <= Date.parse(untouchedBefore);
+
+/** A hand-made plan that `releaseManual` failed: only its cleanup can be left open. */
+const isReleasedManual = (plan: Plan, creator: UserId): boolean =>
+  plan.delegationState === 'failed' &&
+  plan.delegationFailure === 'delegation_abandoned' &&
+  isManualOf(plan, creator);
 
 export function createDelegation({
   plans,
@@ -798,6 +837,50 @@ export function createDelegation({
     return current;
   }
 
+  async function releaseManual(
+    tenant: TenantContext,
+    planId: string,
+    input: ReleaseManual,
+  ): Promise<Plan> {
+    if (tenant.actor !== 'runtime') throw new PlanningError('permission_denied', 'runtime_only');
+    const [organizationId, found, mayPlan] = await planOf(tenant, planId);
+    // A person who may still plan keeps their plan: it is theirs to finish or to close.
+    if (mayPlan) throw new PlanningError('plan_not_abandonable');
+    const at = now();
+    // Another attempt that released the plan first makes `step` return it fresh, and nothing is
+    // written twice: only its cleanup runs below.
+    const current = isReleasedManual(found, tenant.userId)
+      ? found
+      : await step(organizationId, found, (fresh) => {
+          if (fresh.delegationState === 'failed') {
+            throw new PlanningError('plan_concurrency_conflict');
+          }
+          if (!releasableManual(fresh, tenant.userId, input.untouchedBefore)) {
+            throw new PlanningError('plan_not_abandonable');
+          }
+          const next = failDelegation(fresh, 'delegation_abandoned', iso(at));
+          return {
+            plan: next,
+            events: [
+              event(
+                tenant,
+                organizationId,
+                {
+                  action: 'plan.state_changed',
+                  target: { type: 'plan', id: next.id },
+                  transition: { from: fresh.status, to: next.status },
+                  reason: 'permission_lost',
+                },
+                at,
+              ),
+            ],
+          };
+        });
+    if (!isReleasedManual(current, tenant.userId)) throw new PlanningError('plan_not_abandonable');
+    await cleanUp(tenant, current);
+    return current;
+  }
+
   async function closeFailed(tenant: TenantContext, planId: string): Promise<Plan> {
     const [, plan] = await planOf(tenant, planId);
     // The runtime closes only what a schedule made (ADR-0185); a person closes their own plans.
@@ -808,5 +891,5 @@ export function createDelegation({
     return plan;
   }
 
-  return Object.freeze({ delegate, abandon, closeFailed });
+  return Object.freeze({ delegate, abandon, releaseManual, closeFailed });
 }

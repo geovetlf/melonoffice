@@ -11,4 +11,5 @@ export * from './planner-context.js';
 export * from './delegation.js';
 export * from './cascade.js';
 export * from './conductor.js';
+export * from './permission-recovery.js';
 export * from './tool-steps.js';

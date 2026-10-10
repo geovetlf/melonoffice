@@ -28,6 +28,13 @@ export interface PlanPage {
   readonly hasMore: boolean;
 }
 
+/** One page of the plans whose delegation is `creating`, across organizations (ADR-0187). */
+export interface CreatingPlanPage {
+  readonly plans: readonly Plan[];
+  /** The last id of a full page: the next page starts after it. Absent when the page is not full. */
+  readonly next?: PlanId;
+}
+
 /**
  * Where plans live: `plans/{planId}` and write-once `planVersions/{planId}_{version}` in
  * Firestore (ADR-0028), memory in tests. Every write stores the plan and its audit events
@@ -60,6 +67,15 @@ export interface PlanRepository {
     organizationId: OrganizationId,
     request: { readonly after?: PlanPosition; readonly limit: number },
   ): Promise<PlanPage>;
+  /**
+   * The plans of every organization whose delegation is `creating`, by id, strictly after `after`, at
+   * most `limit` (ADR-0187). Only the permission sweep reads them, and each plan keeps its own
+   * organization: nothing here is scoped to one.
+   */
+  creatingPage(request: {
+    readonly after?: PlanId;
+    readonly limit: number;
+  }): Promise<CreatingPlanPage>;
   /** Stores a new plan and its first version. An id that already exists is `plan_concurrency_conflict`. */
   create(write: PlanCreate): Promise<void>;
   /**
@@ -157,6 +173,32 @@ export class InMemoryPlanRepository implements PlanRepository {
   ): Promise<PlanPage> {
     const mine = [...this.#plans.values()].filter((p) => p.organizationId === organizationId);
     return pageOfPlans(mine.map(checkStoredPlan), request);
+  }
+
+  async creatingPage(request: {
+    readonly after?: PlanId;
+    readonly limit: number;
+  }): Promise<CreatingPlanPage> {
+    // The same order and cursor as the store's query: by id, one page after the last id given.
+    const page = [...this.#plans.values()]
+      .filter(
+        (p) =>
+          p.delegationState === 'creating' && (request.after === undefined || p.id > request.after),
+      )
+      .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+      .slice(0, request.limit);
+    const last = page.at(-1);
+    return {
+      // A record that does not check is never released, and it does not hold up the rest of its page.
+      plans: page.flatMap((p) => {
+        try {
+          return [checkStoredPlan(p)];
+        } catch {
+          return [];
+        }
+      }),
+      ...(last !== undefined && page.length === request.limit ? { next: last.id } : {}),
+    };
   }
 
   async create({ plan, version, events }: PlanCreate): Promise<void> {
