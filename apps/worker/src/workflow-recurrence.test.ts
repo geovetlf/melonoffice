@@ -2426,7 +2426,7 @@ describe.each(STORES)(
             status: 'failed',
             delegationState: 'failed',
             delegationFailure: 'delegation_abandoned',
-            updatedAt: FIRST,
+            updatedAt: FIRST as IsoTimestamp,
             revision: current.revision + 1,
           },
           events: [],
