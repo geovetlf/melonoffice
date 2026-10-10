@@ -170,7 +170,7 @@ describe('A workflow schedule (ADR-0185)', () => {
       b.options.plans.org_1 = [
         {
           id: 'plan-scheduled',
-          // A fake request key for the fixture, excepted from the secret scan on this line only.
+          // A fake request key for the fixture, not a credential: the secret scan excepts this line only (see .gitleaksignore).
           key: 'schedule-20261005t1400', // gitleaks:allow
           status: 'completed',
           version: 1,
