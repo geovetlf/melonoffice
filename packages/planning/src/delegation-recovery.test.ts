@@ -1102,4 +1102,27 @@ describe('Sweep of abandoned plans’ executions (ADR-0187, decision 8)', () => 
     expect(await abandonedSweep(w).recover()).toBe(0);
     expect((await w.executions.get(w.tenantA, recent.executionId)).status).not.toBe('failed');
   });
+
+  it('the sweep does not offer a plan within its lease to the conductor at all', async () => {
+    const w = await world({ roles: WITHOUT_PLANNING });
+    const recent = await stoppedPlan(w);
+    await setRole(w, 'member');
+    await crashedRelease(w, recent);
+    const offered: string[] = [];
+    const sweep = createAbandonedRecovery({
+      plans: w.planRepository,
+      conductor: {
+        closeAbandoned: (tenant, planId, input) => {
+          offered.push(planId);
+          return w.delegation.closeAbandoned(tenant, planId, input);
+        },
+      },
+      tenancy: w.tenancy,
+      leaseMs: LEASE_MS,
+      now: () => new Date(),
+    });
+    expect(await sweep.recover()).toBe(0);
+    expect(offered).toEqual([]);
+    expect((await w.executions.get(w.tenantA, recent.executionId)).status).not.toBe('failed');
+  });
 });
