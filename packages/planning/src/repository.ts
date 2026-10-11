@@ -39,6 +39,19 @@ export interface CreatingPlanPage {
 export type AbandonedPlanPage = CreatingPlanPage;
 
 /**
+ * Where the abandoned-plan sweep stands (ADR-0187, decision 9). `round` counts the full walks over the
+ * abandoned plans; `after` is the id the next page starts after, and is absent at the start of a walk.
+ */
+export interface AbandonedSweepCursor {
+  readonly round: number;
+  readonly after?: PlanId;
+}
+
+/** Whether two cursors stand at the same place: the same walk, and the same id after it. */
+export const sameSweepCursor = (a: AbandonedSweepCursor, b: AbandonedSweepCursor): boolean =>
+  a.round === b.round && a.after === b.after;
+
+/**
  * Where plans live: `plans/{planId}` and write-once `planVersions/{planId}_{version}` in
  * Firestore (ADR-0028), memory in tests. Every write stores the plan and its audit events
  * together, or nothing.
@@ -87,6 +100,13 @@ export interface PlanRepository {
     readonly after?: PlanId;
     readonly limit: number;
   }): Promise<AbandonedPlanPage>;
+  /** Where the abandoned-plan sweep stands: round 0 with no id until a sweep has walked any plan. */
+  abandonedCursor(): Promise<AbandonedSweepCursor>;
+  /**
+   * Moves the sweep's cursor from `from` to `to`, only while it still stands at `from` (ADR-0187, decision
+   * 9). False: another sweep moved it first, and that sweep carries the walk on from there.
+   */
+  advanceAbandonedCursor(from: AbandonedSweepCursor, to: AbandonedSweepCursor): Promise<boolean>;
   /** Stores a new plan and its first version. An id that already exists is `plan_concurrency_conflict`. */
   create(write: PlanCreate): Promise<void>;
   /**
@@ -143,6 +163,7 @@ export function checkNextPlan(current: Plan, next: Plan): void {
 export class InMemoryPlanRepository implements PlanRepository {
   readonly #plans = new Map<string, Plan>();
   readonly #versions = new Map<string, PlanVersion>();
+  #abandonedCursor: AbandonedSweepCursor = { round: 0 };
 
   constructor(private readonly audit?: InMemoryAuditStore) {}
 
@@ -198,6 +219,19 @@ export class InMemoryPlanRepository implements PlanRepository {
     readonly limit: number;
   }): Promise<AbandonedPlanPage> {
     return this.#pageWhere((p) => p.delegationFailure === 'delegation_abandoned', request);
+  }
+
+  async abandonedCursor(): Promise<AbandonedSweepCursor> {
+    return this.#abandonedCursor;
+  }
+
+  async advanceAbandonedCursor(
+    from: AbandonedSweepCursor,
+    to: AbandonedSweepCursor,
+  ): Promise<boolean> {
+    if (!sameSweepCursor(this.#abandonedCursor, from)) return false;
+    this.#abandonedCursor = to;
+    return true;
   }
 
   /**

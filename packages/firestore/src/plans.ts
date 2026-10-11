@@ -23,7 +23,9 @@ import {
   pageOfPlans,
   PlanningError,
   planVersionKey,
+  sameSweepCursor,
   type AbandonedPlanPage,
+  type AbandonedSweepCursor,
   type CreatingPlanPage,
   type PlanCreate,
   type PlanPage,
@@ -44,6 +46,26 @@ import { AUDIT_LOGS, toAuditDocument } from './audit.js';
  */
 export const PLANS = 'plans';
 export const PLAN_VERSIONS = 'planVersions';
+/**
+ * `planSweeps/abandoned` (ADR-0187, decision 9): where the abandoned-plan sweep stands, written by the
+ * worker only. It holds a round number and a plan id, and no organization's data.
+ */
+export const PLAN_SWEEPS = 'planSweeps';
+const ABANDONED_SWEEP = 'abandoned';
+
+interface SweepCursorDocument {
+  readonly round: number;
+  readonly after: string | null;
+  readonly updatedAt: FirestoreTimestamp;
+}
+
+/** The stored cursor, or round 0 with no id when no sweep has written one yet. */
+const cursorOf = (data: SweepCursorDocument | undefined): AbandonedSweepCursor => {
+  if (data === undefined) return { round: 0 };
+  return data.after === null
+    ? { round: data.round }
+    : { round: data.round, after: data.after as PlanId };
+};
 
 interface PlanDocument {
   readonly organizationId: string;
@@ -524,6 +546,39 @@ export class FirestorePlanRepository implements PlanRepository {
       plans,
       ...(last !== undefined && snapshot.size === request.limit ? { next: last.id as PlanId } : {}),
     };
+  }
+
+  /** Where the abandoned-plan sweep stands: round 0 with no id until a sweep has walked any plan (ADR-0187, decision 9). */
+  async abandonedCursor(): Promise<AbandonedSweepCursor> {
+    const snapshot = await this.#sweepCursor().get();
+    return cursorOf(snapshot.data() as SweepCursorDocument | undefined);
+  }
+
+  /**
+   * Compare-and-set in one transaction: the cursor moves only while it still reads `from`, so two
+   * sweeps never both carry the same walk on from the same place (ADR-0187, decision 9).
+   */
+  async advanceAbandonedCursor(
+    from: AbandonedSweepCursor,
+    to: AbandonedSweepCursor,
+  ): Promise<boolean> {
+    const doc = this.#sweepCursor();
+    return this.db.runTransaction(async (t) => {
+      const snapshot = await t.get(doc);
+      if (!sameSweepCursor(cursorOf(snapshot.data() as SweepCursorDocument | undefined), from)) {
+        return false;
+      }
+      t.set(doc, {
+        round: to.round,
+        after: to.after ?? null,
+        updatedAt: Timestamp.now(),
+      } satisfies SweepCursorDocument);
+      return true;
+    });
+  }
+
+  #sweepCursor() {
+    return this.db.collection(PLAN_SWEEPS).doc(ABANDONED_SWEEP);
   }
 
   async create({ plan, version, events }: PlanCreate): Promise<void> {

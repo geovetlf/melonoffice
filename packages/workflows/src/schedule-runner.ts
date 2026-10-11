@@ -76,7 +76,10 @@ export interface ScheduleRunnerOptions {
    * decision 6) and the plans an interrupted cleanup left open (decision 8). Absent: the sweep recovers
    * none of them.
    */
-  readonly recoveryPlans?: Pick<PlanRepository, 'creatingPage' | 'abandonedPage'>;
+  readonly recoveryPlans?: Pick<
+    PlanRepository,
+    'creatingPage' | 'abandonedPage' | 'abandonedCursor' | 'advanceAbandonedCursor'
+  >;
   readonly tenancy: TenancyStore;
   /** Checked for the person at every occurrence: the standing approval holds only while they can (ADR-0185 §6). */
   readonly authorization: Pick<AuthorizationService, 'authorize'>;
@@ -676,10 +679,20 @@ export function createScheduleRunner({
         }
       }
       // Last, after the releases: a cleanup a release left open is closed once its lease has passed (decision 8).
+      // One bounded pass a run, resumed by the next from the stored cursor (decision 9).
       if (abandoned !== undefined) {
         try {
-          const closed = await abandoned.recover();
-          if (closed > 0) logger?.info('abandoned plan executions closed', { closed });
+          const pass = await abandoned.recover();
+          if (pass.closed > 0)
+            logger?.info('abandoned plan executions closed', { closed: pass.closed });
+          if (pass.read > 0) {
+            logger?.info('abandoned plan sweep pass', {
+              round: pass.round,
+              read: pass.read,
+              closed: pass.closed,
+              complete: pass.complete,
+            });
+          }
         } catch (error) {
           logger?.warn('abandoned plan recovery failed', {
             code: (error as { code?: unknown }).code ?? 'error',

@@ -90,6 +90,8 @@ async function setup() {
       page: (org, request) => w.planRepository.page(org, request),
       creatingPage: (request) => w.planRepository.creatingPage(request),
       abandonedPage: (request) => w.planRepository.abandonedPage(request),
+      abandonedCursor: () => w.planRepository.abandonedCursor(),
+      advanceAbandonedCursor: (from, to) => w.planRepository.advanceAbandonedCursor(from, to),
       create: (write) => w.planRepository.create(write),
       update: async (org, id, change) => {
         hit('planUpdate');

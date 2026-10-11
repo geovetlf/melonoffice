@@ -101,3 +101,37 @@ describe.runIf(emulatorHost)('FirestorePlanRepository.abandonedPage (emulator)',
     expect(page.plans.map((p) => p.id)).toEqual([idOf(1), idOf(3), idOf(5), idOf(7), idOf(9)]);
   });
 });
+
+/**
+ * The sweep's cursor, stored in `planSweeps/abandoned` (ADR-0187, decision 9): it starts at round 0 with
+ * no id, and moves only from the state it reads, one transaction at a time, so two sweeps never both carry
+ * the same walk on from the same place.
+ */
+describe.runIf(emulatorHost)('FirestorePlanRepository abandoned sweep cursor (emulator)', () => {
+  it('starts at round 0 with no id, and moves only from the state it reads', async () => {
+    const repository = new FirestorePlanRepository(emulatorFirestore());
+    expect(await repository.abandonedCursor()).toEqual({ round: 0 });
+    expect(
+      await repository.advanceAbandonedCursor({ round: 0 }, { round: 0, after: idOf(3) }),
+    ).toBe(true);
+    // The cursor stands at id 3 now, so a move that still starts from the beginning is refused.
+    expect(
+      await repository.advanceAbandonedCursor({ round: 0 }, { round: 0, after: idOf(5) }),
+    ).toBe(false);
+    expect(
+      await repository.advanceAbandonedCursor({ round: 0, after: idOf(3) }, { round: 1 }),
+    ).toBe(true);
+    expect(await repository.abandonedCursor()).toEqual({ round: 1 });
+  });
+
+  it('two advances from the same cursor: exactly one wins, and the stored cursor is the winner’s', async () => {
+    const repository = new FirestorePlanRepository(emulatorFirestore());
+    const results = await Promise.all([
+      repository.advanceAbandonedCursor({ round: 0 }, { round: 0, after: idOf(3) }),
+      repository.advanceAbandonedCursor({ round: 0 }, { round: 0, after: idOf(5) }),
+    ]);
+    expect(results.filter((won) => won)).toHaveLength(1);
+    const winner = results[0] ? idOf(3) : idOf(5);
+    expect(await repository.abandonedCursor()).toEqual({ round: 0, after: winner });
+  });
+});
