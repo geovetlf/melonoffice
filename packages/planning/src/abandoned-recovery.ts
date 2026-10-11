@@ -97,8 +97,11 @@ export function createAbandonedRecovery({
           }
         }
         // The store gives no `next` on the walk's last page. The walk ends here, and the next pass starts a new round.
+        // A walk with no plan from its first page has nothing to resume: the cursor stays, so an idle sweep writes nothing.
         if (found.next === undefined) {
-          await plans.advanceAbandonedCursor(cursor, { round: cursor.round + 1 });
+          if (cursor.after !== undefined || found.plans.length > 0) {
+            await plans.advanceAbandonedCursor(cursor, { round: cursor.round + 1 });
+          }
           return walkPass(start.round, read, closed, true);
         }
         // The cursor moves once the page is judged, so a crash repeats at most that page, and judging it again writes nothing.

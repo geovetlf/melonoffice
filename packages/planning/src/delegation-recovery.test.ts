@@ -1302,4 +1302,56 @@ describe('Sweep walk over the abandoned plans, a bounded pass at a time (ADR-018
     expect(await w.planRepository.advanceAbandonedCursor(start, { round: 1 })).toBe(false);
     expect(await w.planRepository.abandonedCursor()).toEqual({ round: 0, after: mark });
   });
+
+  it('a sweep with no abandoned plan writes nothing, and the cursor stays in round 0', async () => {
+    const w = await world();
+    const written: AbandonedSweepCursor[] = [];
+    const sweep = walkingSweep(w, [], {
+      limit: 2,
+      pages: 2,
+      store: {
+        abandonedPage: (request) => w.planRepository.abandonedPage(request),
+        abandonedCursor: () => w.planRepository.abandonedCursor(),
+        advanceAbandonedCursor: async (from, to) => {
+          written.push(to);
+          return w.planRepository.advanceAbandonedCursor(from, to);
+        },
+      },
+    });
+    for (let pass = 0; pass < 3; pass += 1) {
+      expect(await sweep.recover()).toMatchObject({ round: 0, read: 0, closed: 0, complete: true });
+    }
+    expect(written).toEqual([]);
+    expect(await w.planRepository.abandonedCursor()).toEqual({ round: 0 });
+  });
+
+  it('a pass that crashed before it moved the cursor repeats its page, and closes nothing twice', async () => {
+    const w = await world();
+    const plans = await abandonedPlansOfAlice(w, 4);
+    const judged: Judged[] = [];
+    const crashing = walkingSweep(w, judged, {
+      limit: 2,
+      pages: 1,
+      store: {
+        abandonedPage: (request) => w.planRepository.abandonedPage(request),
+        abandonedCursor: () => w.planRepository.abandonedCursor(),
+        advanceAbandonedCursor: async () => {
+          throw new Injected('advance');
+        },
+      },
+    });
+    // The crash comes after the first page is judged, and before its cursor moves.
+    await expect(crashing.recover()).rejects.toBeInstanceOf(Injected);
+    expect(await w.planRepository.abandonedCursor()).toEqual({ round: 0 });
+    const sweep = walkingSweep(w, judged, { limit: 2, pages: 1 });
+    // The repeated page closes nothing: the crashed pass already closed its plans.
+    expect(await sweep.recover()).toMatchObject({ round: 0, read: 2, closed: 0, complete: false });
+    expect(await sweep.recover()).toMatchObject({ round: 0, read: 2, closed: 2, complete: false });
+    expect(await sweep.recover()).toMatchObject({ round: 0, read: 0, complete: true });
+    const ids = plans.map((plan) => plan.id).sort();
+    expect(judged.map((entry) => entry.planId)).toEqual([...ids.slice(0, 2), ...ids]);
+    for (const plan of plans) {
+      expect(executionClosed(w, plan.executionId)).toEqual(['delegation_abandoned']);
+    }
+  });
 });
