@@ -20,6 +20,7 @@ import { createDelegation, type Delegation } from './delegation.js';
 import { isPlanningError } from './errors.js';
 import { failDelegation } from './model.js';
 import { createPermissionRecovery } from './permission-recovery.js';
+import type { AbandonedSweepCursor, PlanRepository } from './repository.js';
 import type { AbandonScheduled } from './service.js';
 import { ALICE, BOB, as, must, proposal, specialistStep, world, type World } from './testkit.js';
 
@@ -1082,12 +1083,12 @@ describe('Sweep of abandoned plans’ executions (ADR-0187, decision 8)', () => 
     await setRole(w, 'member');
     for (const plan of plans) await crashedRelease(w, plan);
     const sweep = abandonedSweep(w, { limit: 1 });
-    expect(await sweep.recover()).toBe(3);
+    expect((await sweep.recover()).closed).toBe(3);
     for (const plan of plans) {
       expect((await w.executions.get(w.tenantA, plan.executionId)).status).toBe('failed');
       expect(executionClosed(w, plan.executionId)).toEqual(['delegation_abandoned']);
     }
-    expect(await sweep.recover()).toBe(0);
+    expect((await sweep.recover()).closed).toBe(0);
   });
 
   it('the sweep leaves a plan failed within its lease, and a plan whose creator left, as they are', async () => {
@@ -1095,11 +1096,11 @@ describe('Sweep of abandoned plans’ executions (ADR-0187, decision 8)', () => 
     const recent = await stoppedPlan(w);
     await setRole(w, 'member');
     await crashedRelease(w, recent);
-    expect(await abandonedSweep(w, { now: () => new Date() }).recover()).toBe(0);
+    expect((await abandonedSweep(w, { now: () => new Date() }).recover()).closed).toBe(0);
     expect((await w.executions.get(w.tenantA, recent.executionId)).status).not.toBe('failed');
 
     await leave(w);
-    expect(await abandonedSweep(w).recover()).toBe(0);
+    expect((await abandonedSweep(w).recover()).closed).toBe(0);
     expect((await w.executions.get(w.tenantA, recent.executionId)).status).not.toBe('failed');
   });
 
@@ -1121,8 +1122,184 @@ describe('Sweep of abandoned plans’ executions (ADR-0187, decision 8)', () => 
       leaseMs: LEASE_MS,
       now: () => new Date(),
     });
-    expect(await sweep.recover()).toBe(0);
+    expect((await sweep.recover()).closed).toBe(0);
     expect(offered).toEqual([]);
     expect((await w.executions.get(w.tenantA, recent.executionId)).status).not.toBe('failed');
+  });
+});
+
+/** A plan of `user` in `organization`, failed as abandoned as `failedAsAbandoned` does, in any organization. */
+async function abandonedIn(
+  w: World,
+  tenant: TenantContext,
+  organization: OrganizationId,
+  user: UserId,
+): Promise<Plan> {
+  const plan = await handMadePlanIn(w, tenant, organization, user);
+  await w.planRepository.update(organization, plan.id, (current) => ({
+    plan: failDelegation(
+      { ...current, delegationState: 'creating' },
+      'delegation_abandoned',
+      new Date().toISOString() as IsoTimestamp,
+    ),
+    events: [],
+  }));
+  return plan;
+}
+
+/** Alice’s plans, each stopped while `creating` and failed as abandoned, in the order they were made. */
+async function abandonedPlansOfAlice(w: World, count: number): Promise<Plan[]> {
+  const plans: Plan[] = [];
+  for (let i = 0; i < count; i += 1) {
+    const plan = await stoppedPlan(w);
+    await failedAsAbandoned(w, plan);
+    plans.push(plan);
+  }
+  return plans;
+}
+
+/** One plan the sweep judged, and the organization of the runtime that judged it. */
+interface Judged {
+  readonly planId: string;
+  readonly organizationId: string;
+}
+
+/** A sweep that records each plan its conductor is offered, in order, so a test can count the judgments. */
+function walkingSweep(
+  w: World,
+  judged: Judged[],
+  options: {
+    readonly limit: number;
+    readonly pages: number;
+    readonly store?: Pick<
+      PlanRepository,
+      'abandonedPage' | 'abandonedCursor' | 'advanceAbandonedCursor'
+    >;
+  },
+) {
+  return createAbandonedRecovery({
+    plans: options.store ?? w.planRepository,
+    conductor: {
+      closeAbandoned: (tenant, planId, input) => {
+        judged.push({ planId, organizationId: tenant.organizationId });
+        return w.delegation.closeAbandoned(tenant, planId, input);
+      },
+    },
+    tenancy: w.tenancy,
+    leaseMs: LEASE_MS,
+    now: LATER,
+    limit: options.limit,
+    pages: options.pages,
+  });
+}
+
+describe('Sweep walk over the abandoned plans, a bounded pass at a time (ADR-0187, decision 9)', () => {
+  it('a pass reads its pages and stops, and the next pass resumes after the last id it read', async () => {
+    const w = await world();
+    const plans = await abandonedPlansOfAlice(w, 5);
+    const judged: Judged[] = [];
+    const sweep = walkingSweep(w, judged, { limit: 2, pages: 1 });
+    expect(await sweep.recover()).toMatchObject({ round: 0, read: 2, closed: 2, complete: false });
+    expect(await sweep.recover()).toMatchObject({ round: 0, read: 2, closed: 2, complete: false });
+    expect(await sweep.recover()).toMatchObject({ round: 0, read: 1, closed: 1, complete: true });
+    // The walk judges each plan once, in id order; its end opens round 1, which starts at the first plan again.
+    const ids = plans.map((plan) => plan.id).sort();
+    expect(judged.map((entry) => entry.planId)).toEqual(ids);
+    expect(await sweep.recover()).toMatchObject({ round: 1, read: 2, closed: 0, complete: false });
+    expect(judged.slice(ids.length).map((entry) => entry.planId)).toEqual(ids.slice(0, 2));
+    for (const plan of plans) {
+      expect(executionClosed(w, plan.executionId)).toEqual(['delegation_abandoned']);
+    }
+  });
+
+  it('a walk spans several organizations, and each plan is judged for its own organization', async () => {
+    const w = await world();
+    const inAlices = await abandonedPlansOfAlice(w, 3);
+    const inBobs = [
+      await abandonedIn(w, w.tenantB, w.orgB, BOB),
+      await abandonedIn(w, w.tenantB, w.orgB, BOB),
+    ];
+    const organizationOf = new Map<string, string>([
+      ...inAlices.map((plan) => [plan.id, w.orgA] as const),
+      ...inBobs.map((plan) => [plan.id, w.orgB] as const),
+    ]);
+    const judged: Judged[] = [];
+    const sweep = walkingSweep(w, judged, { limit: 2, pages: 1 });
+    const passes = [await sweep.recover(), await sweep.recover(), await sweep.recover()];
+    expect(passes.map((pass) => pass.closed)).toEqual([2, 2, 1]);
+    expect(passes.at(-1)).toMatchObject({ complete: true });
+    expect(judged).toHaveLength(5);
+    for (const entry of judged) {
+      expect(entry.organizationId).toBe(organizationOf.get(entry.planId));
+    }
+    for (const plan of [...inAlices, ...inBobs]) {
+      expect(executionClosed(w, plan.executionId)).toEqual(['delegation_abandoned']);
+    }
+  });
+
+  it('a sweep started after another stopped resumes the walk from the cursor the store kept', async () => {
+    const w = await world();
+    const plans = await abandonedPlansOfAlice(w, 4);
+    const earlier: Judged[] = [];
+    await walkingSweep(w, earlier, { limit: 2, pages: 1 }).recover();
+    // A worker that starts later, as after a restart or on another instance, carries the walk on.
+    const later: Judged[] = [];
+    await walkingSweep(w, later, { limit: 2, pages: 1 }).recover();
+    const ids = plans.map((plan) => plan.id).sort();
+    expect(earlier.map((entry) => entry.planId)).toEqual(ids.slice(0, 2));
+    expect(later.map((entry) => entry.planId)).toEqual(ids.slice(2, 4));
+  });
+
+  it('two workers share one walk: each plan is closed once, and the cursor only moves forward', async () => {
+    const w = await world();
+    const plans = await abandonedPlansOfAlice(w, 6);
+    const moved: AbandonedSweepCursor[] = [];
+    const store: Pick<
+      PlanRepository,
+      'abandonedPage' | 'abandonedCursor' | 'advanceAbandonedCursor'
+    > = {
+      abandonedPage: (request) => w.planRepository.abandonedPage(request),
+      abandonedCursor: () => w.planRepository.abandonedCursor(),
+      advanceAbandonedCursor: async (from, to) => {
+        const done = await w.planRepository.advanceAbandonedCursor(from, to);
+        if (done) moved.push(to);
+        return done;
+      },
+    };
+    const first: Judged[] = [];
+    const second: Judged[] = [];
+    const a = walkingSweep(w, first, { limit: 2, pages: 2, store });
+    const b = walkingSweep(w, second, { limit: 2, pages: 2, store });
+    let closed = 0;
+    let completed = 0;
+    // Both workers run their passes together until one of them ends the walk: six plans take three passes.
+    for (let step = 0; step < 10 && completed === 0; step += 1) {
+      const [x, y] = await Promise.all([a.recover(), b.recover()]);
+      closed += x.closed + y.closed;
+      completed += [x, y].filter((pass) => pass.complete).length;
+    }
+    expect(closed).toBe(plans.length);
+    for (const plan of plans) {
+      expect(executionClosed(w, plan.executionId)).toEqual(['delegation_abandoned']);
+    }
+    const judgedIds = new Set([...first, ...second].map((entry) => entry.planId));
+    expect(judgedIds).toEqual(new Set(plans.map((plan) => plan.id)));
+    // The checkpoints of round 0 move forward, one id at a time, and never back.
+    const checkpoints = moved.filter((cursor) => cursor.round === 0).map((c) => c.after as string);
+    expect(checkpoints).toEqual([...checkpoints].sort());
+    expect(new Set(checkpoints).size).toBe(checkpoints.length);
+  });
+
+  it('the cursor moves only from the state it reads', async () => {
+    const w = await world();
+    const start = await w.planRepository.abandonedCursor();
+    expect(start).toEqual({ round: 0 });
+    const mark = '11111111-1111-4111-8111-111111111111' as PlanId;
+    expect(await w.planRepository.advanceAbandonedCursor(start, { round: 0, after: mark })).toBe(
+      true,
+    );
+    // A cursor another sweep has already moved past is refused, and nothing changes.
+    expect(await w.planRepository.advanceAbandonedCursor(start, { round: 1 })).toBe(false);
+    expect(await w.planRepository.abandonedCursor()).toEqual({ round: 0, after: mark });
   });
 });
