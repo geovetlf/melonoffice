@@ -18,7 +18,13 @@ import {
   type CustomerUsage,
   type OwnBrand,
 } from './consoleClient.js';
-import { REAUTHENTICATION_REQUIRED, SignInAgain } from '../identity/SignInAgain.js';
+import { PasskeySecurity } from '../identity/PasskeySecurity.js';
+import { usePasskeys } from '../identity/PasskeysContext.js';
+import {
+  PASSKEY_REQUIRED,
+  REAUTHENTICATION_REQUIRED,
+  SignInAgain,
+} from '../identity/SignInAgain.js';
 
 /**
  * The partner and agency console (ADR-0090): the caller's own accounts and, inside one, its
@@ -58,6 +64,8 @@ const ROLES: Readonly<Record<ConsoleAccount['type'], readonly string[]>> = {
 
 /** A change refused after an old sign-in (ADR-0138): shown with a way to sign in again. */
 const SIGN_IN_AGAIN = 'identity.signInAgain.message';
+/** A change refused to a person with passkeys until they confirm with one (ADR-0188). */
+const CONFIRM_WITH_PASSKEY = 'identity.passkey.confirm.message';
 
 /** The API's refusals this console explains in words; any other shows its code. */
 const EXPLAINED: Readonly<Record<string, string>> = {
@@ -73,6 +81,7 @@ const EXPLAINED: Readonly<Record<string, string>> = {
   cannot_change_own_role: 'console.errors.self',
   member_not_found: 'console.errors.not_found',
   [REAUTHENTICATION_REQUIRED]: SIGN_IN_AGAIN,
+  [PASSKEY_REQUIRED]: CONFIRM_WITH_PASSKEY,
 };
 
 /** A refusal as the person reads it: a message id, and the code when there is no message. */
@@ -97,6 +106,8 @@ export function failureOf(error: unknown): Failure {
 const Failed = ({ failure }: { readonly failure: Failure | undefined }) =>
   failure === undefined ? null : failure.id === SIGN_IN_AGAIN ? (
     <SignInAgain />
+  ) : failure.id === CONFIRM_WITH_PASSKEY ? (
+    <SignInAgain code={PASSKEY_REQUIRED} />
   ) : (
     <StateMessage kind="error">
       <FormattedMessage id={failure.id} values={{ reason: failure.reason ?? '' }} />
@@ -138,6 +149,7 @@ export function PartnerConsole({
 }) {
   const [accounts] = useLoad(() => client.accounts(), [client]);
   const [chosen, setChosen] = useState<string>();
+  const passkeys = usePasskeys();
 
   if (accounts === 'loading') return null;
   if (accounts === 'error') {
@@ -168,6 +180,7 @@ export function PartnerConsole({
           <Account key={account.id} account={account} client={client} origin={origin} now={now} />
         </>
       )}
+      {passkeys === undefined ? null : <PasskeySecurity client={passkeys} />}
     </article>
   );
 }

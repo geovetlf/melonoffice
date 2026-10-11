@@ -1,3 +1,4 @@
+import { PASSKEY_CONFIRMATION_HEADER, passkeyConfirmation } from './passkeyConfirmation.js';
 import type { Session } from './session.js';
 
 /**
@@ -46,6 +47,9 @@ export function createApiClient(
   async function send(path: string, init: RequestInit, token: string | undefined) {
     const headers = new Headers(init.headers);
     if (token !== undefined) headers.set('authorization', `Bearer ${token}`);
+    // A passkey confirmation (ADR-0188) while it lasts: the API decides what it allows.
+    const confirmation = passkeyConfirmation();
+    if (confirmation !== undefined) headers.set(PASSKEY_CONFIRMATION_HEADER, confirmation);
     return fetcher(`${apiUrl}${path}`, { ...init, headers, credentials: 'omit' });
   }
 

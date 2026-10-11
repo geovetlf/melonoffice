@@ -16,7 +16,8 @@ export type RequestScope =
   | 'credit_grant'
   | 'invitation_token'
   | 'commercial_write'
-  | 'relationship_write';
+  | 'relationship_write'
+  | 'passkey';
 
 export interface RequestLimit {
   readonly maxSends: number;
@@ -40,6 +41,8 @@ export const DEFAULT_REQUEST_LIMITS: Readonly<Record<RequestScope, RequestLimit>
   invitation_token: { maxSends: 20, windowMs: 10 * MINUTE },
   commercial_write: { maxSends: 60, windowMs: MINUTE },
   relationship_write: { maxSends: 30, windowMs: MINUTE },
+  // Adding, confirming and removing passkeys (ADR-0188): a few a session, never a guessing loop.
+  passkey: { maxSends: 20, windowMs: 10 * MINUTE },
 };
 
 const CREDIT_GRANT = /^\/v1\/platform\/organizations\/[^/]+\/credit-grants$/;
@@ -57,6 +60,7 @@ export function scopesOf(method: string, path: string): readonly RequestScope[] 
   if (INVITATION_TOKEN.test(path)) return ['invitation_token'];
   if (path.startsWith('/v1/commercial/')) return ['commercial_write'];
   if (RELATIONSHIPS.test(path)) return ['relationship_write'];
+  if (path === '/v1/me/passkeys' || path.startsWith('/v1/me/passkeys/')) return ['passkey'];
   return [];
 }
 

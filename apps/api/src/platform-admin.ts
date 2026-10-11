@@ -24,7 +24,8 @@ import type { AuthEnv } from './auth.js';
  * With `denied`, a refusal is audited under that action first. Nothing is changed before this.
  *
  * A change (any method but GET) also needs a recent sign-in (ADR-0138): 403
- * `reauthentication_required` otherwise, and the person signs in again.
+ * `reauthentication_required` otherwise, and the person signs in again. A person with passkeys
+ * needs a passkey confirmation instead (ADR-0188): 403 `passkey_required`.
  */
 export async function platformAdminOf(
   c: Context<AuthEnv>,
@@ -65,8 +66,9 @@ const changes = (c: Context<AuthEnv>) => c.req.method !== 'GET' && c.req.method 
 
 /**
  * For a change by a sensitive administrator (platform, white label, reseller), the refusal to send
- * when they did not sign in recently (ADR-0138), audited under `denied` when given; otherwise
- * undefined. Reads are never refused for this.
+ * when they did not sign in recently (ADR-0138) or, once they have passkeys, did not confirm with
+ * one in the last 30 minutes (ADR-0188), audited under `denied` when given; otherwise undefined.
+ * Reads are never refused for this.
  */
 export async function staleSignInRefusal(
   c: Context<AuthEnv>,
@@ -77,13 +79,24 @@ export async function staleSignInRefusal(
   } & Pick<AuditEventInput, 'reference' | 'commercialAccountId' | 'permission'>,
 ): Promise<Response | undefined> {
   const auth = c.get('auth');
-  if (!changes(c) || signedInRecently(auth, now)) return undefined;
+  if (!changes(c)) return undefined;
+  // A person with passkeys confirms with one (ADR-0188); a password sign-in alone no longer does.
+  const passkey = c.get('passkey');
+  const code =
+    passkey?.enrolled === true
+      ? passkey.confirmation === undefined
+        ? 'passkey_required'
+        : undefined
+      : signedInRecently(auth, now)
+        ? undefined
+        : 'reauthentication_required';
+  if (code === undefined) return undefined;
   if (denied !== undefined) {
     await recordOutcome(c, denied.audit, {
       action: denied.action,
       result: 'denied',
       actor: actorOf(auth),
-      reason: 'reauthentication_required',
+      reason: code,
       ...(denied.reference === undefined ? {} : { reference: denied.reference }),
       ...(denied.commercialAccountId === undefined
         ? {}
@@ -92,5 +105,5 @@ export async function staleSignInRefusal(
       ...requestFields(c),
     });
   }
-  return c.json({ error: 'reauthentication_required' }, 403);
+  return c.json({ error: code }, 403);
 }

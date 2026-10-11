@@ -8,6 +8,9 @@ import {
   type ReactNode,
 } from 'react';
 import { ApiError } from './apiClient.js';
+import { forgetPasskeyConfirmation } from './passkeyConfirmation.js';
+import { createPasskeysClient } from './passkeysClient.js';
+import { PasskeysProvider } from './PasskeysContext.js';
 import { IdentityError, type IdentityErrorCode } from './identityPlatform.js';
 import type { IdentityServices } from './services.js';
 
@@ -250,6 +253,8 @@ export function AuthProvider({
         }
       },
       signOut() {
+        // A passkey confirmation (ADR-0188) never outlives the sign-in it was made in.
+        forgetPasskeyConfirmation();
         session.signOut();
       },
       async createOrganization(name) {
@@ -277,5 +282,11 @@ export function AuthProvider({
     [state, services, session, settle, enter],
   );
 
-  return <AuthContext.Provider value={auth}>{children}</AuthContext.Provider>;
+  // Passkeys (ADR-0188): any screen can ask a sensitive administrator to confirm with one.
+  const passkeys = useMemo(() => createPasskeysClient(services.api.request), [services]);
+  return (
+    <AuthContext.Provider value={auth}>
+      <PasskeysProvider client={passkeys}>{children}</PasskeysProvider>
+    </AuthContext.Provider>
+  );
 }

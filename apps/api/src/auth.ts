@@ -12,9 +12,16 @@ import type { Logger } from '@melonoffice/observability';
 import type { Context, Hono } from 'hono';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import { recordRequired, requestFields } from './audit.js';
+import type { PasskeyState } from './passkeys.js';
 
 export type AuthEnv = {
-  Variables: { logger: Logger; requestId: string; auth: AuthenticatedContext };
+  Variables: {
+    logger: Logger;
+    requestId: string;
+    auth: AuthenticatedContext;
+    /** The person's passkeys and confirmation, on the routes that need them (ADR-0188). */
+    passkey?: PasskeyState;
+  };
 };
 
 const STATUS: Record<AuthErrorCode, ContentfulStatusCode> = {

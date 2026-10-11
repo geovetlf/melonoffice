@@ -9,7 +9,7 @@ import {
   type PlatformClient,
   type PlatformOrganizationView,
 } from './platformClient.js';
-import { REAUTHENTICATION_REQUIRED, SignInAgain } from '../identity/SignInAgain.js';
+import { needsIdentityCheck, SignInAgain } from '../identity/SignInAgain.js';
 
 /**
  * Adding credits to an organization by hand (ADR-0091), for the platform administrator only: the
@@ -266,8 +266,8 @@ export function CreditGrant({ client }: { readonly client: PlatformClient }) {
           />
         </StateMessage>
       )}
-      {failed === undefined ? null : failed === REAUTHENTICATION_REQUIRED ? (
-        <SignInAgain />
+      {failed === undefined ? null : needsIdentityCheck(failed) ? (
+        <SignInAgain code={failed} />
       ) : (
         <StateMessage kind="error">
           <FormattedMessage id="platform.refused" values={{ reason: failed }} />
