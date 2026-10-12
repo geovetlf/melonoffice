@@ -188,6 +188,8 @@ describe('Agents (ADR-0025, ADR-0062)', () => {
     expect(within(await list()).queryByRole('button', { name: 'Agent 00' })).toBeNull();
     expect(backend.apiCalls().some((c) => c.url.includes('status=draft'))).toBe(true);
 
+    // The filters are their own named search, apart from the top bar's (axe landmark-unique).
+    expect(screen.getByRole('search', { name: 'Filter agents' })).toBeTruthy();
     fireEvent.change(screen.getByRole('searchbox', { name: 'Search by name' }), {
       target: { value: 'nobody' },
     });

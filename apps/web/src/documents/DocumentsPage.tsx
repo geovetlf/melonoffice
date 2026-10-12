@@ -145,13 +145,13 @@ export function DocumentsPage({
           <h2 id="doc-upload" className="mo-section-title">
             <FormattedMessage id="documents.upload.title" />
           </h2>
-          <label className="mo-field">
-            <span className="mo-label">
-              <FormattedMessage id="documents.upload.choose" />
-            </span>
+          {/* The browser's own picker names its button in the browser's language; this button
+              says it in the page's (the input stays focusable under it). */}
+          <label className="documents__picker">
             <input
               ref={input}
               type="file"
+              className="documents__picker-input"
               accept={ACCEPT}
               disabled={upload.status === 'sending'}
               onChange={(event) => {
@@ -159,6 +159,12 @@ export function DocumentsPage({
                 if (file !== undefined) void send(file);
               }}
             />
+            <span
+              className="mo-button mo-button--secondary"
+              aria-disabled={upload.status === 'sending' ? 'true' : undefined}
+            >
+              <FormattedMessage id="documents.upload.choose" />
+            </span>
           </label>
           <p className="mo-hint">
             <FormattedMessage id="documents.upload.hint" />
