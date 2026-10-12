@@ -1,5 +1,5 @@
 import type { IsoTimestamp, PlanId } from '@melonoffice/domain';
-import { resolveRuntimeTenant, type TenancyStore } from '@melonoffice/tenancy';
+import { isTenancyError, resolveRuntimeTenant, type TenancyStore } from '@melonoffice/tenancy';
 import type { PlanConductor } from './conductor.js';
 import type { AbandonedSweepCursor, PlanRepository } from './repository.js';
 
@@ -81,12 +81,21 @@ export function createAbandonedRecovery({
           read += 1;
           if (Date.parse(plan.updatedAt) > Date.parse(untouchedBefore)) continue;
           try {
-            // The runtime acts only through an active membership (ADR-0029): a creator who left has none.
+            // The runtime acts only through an active membership (ADR-0029): a creator who left has none, and
+            // that plan stays as it is (decision 7). Any other read failure is logged; the plan waits for a later round.
             const tenant = await resolveRuntimeTenant(
               plan.createdBy,
               plan.organizationId,
               tenancy,
-            ).catch(() => undefined);
+            ).catch((error: unknown) => {
+              if (!isTenancyError(error) || error.code !== 'organization_forbidden') {
+                logger?.warn('abandoned plan recovery could not read the membership', {
+                  planId: plan.id,
+                  code: (error as { code?: unknown }).code ?? 'error',
+                });
+              }
+              return undefined;
+            });
             if (tenant === undefined) continue;
             if (await conductor.closeAbandoned(tenant, plan.id, { untouchedBefore })) closed += 1;
           } catch (error) {
