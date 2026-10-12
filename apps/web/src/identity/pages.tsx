@@ -76,6 +76,7 @@ export function Redirect({ to }: { readonly to: string }) {
 
 export const SIGN_IN_ERRORS: Record<IdentityErrorCode, string> = {
   invalid_credentials: 'auth.error.invalid_credentials',
+  invalid_email: 'auth.error.invalid_email',
   user_disabled: 'auth.error.user_disabled',
   too_many_attempts: 'auth.error.too_many_attempts',
   session_expired: 'auth.error.unavailable',

@@ -37,6 +37,8 @@ export interface IdentityTokens {
 /** Why signing in or refreshing failed, as a stable code the login page can explain. */
 export type IdentityErrorCode =
   | 'invalid_credentials'
+  /** The email is not written as an email: said as such, not as a wrong password. */
+  | 'invalid_email'
   | 'user_disabled'
   | 'too_many_attempts'
   | 'session_expired'
@@ -65,9 +67,11 @@ function codeOf(message: string): IdentityErrorCode {
     case 'EMAIL_NOT_FOUND':
     case 'INVALID_PASSWORD':
     case 'INVALID_LOGIN_CREDENTIALS':
-    case 'INVALID_EMAIL':
     case 'MISSING_PASSWORD':
       return 'invalid_credentials';
+    case 'INVALID_EMAIL':
+    case 'MISSING_EMAIL':
+      return 'invalid_email';
     case 'EMAIL_EXISTS':
       return 'email_exists';
     case 'WEAK_PASSWORD':
