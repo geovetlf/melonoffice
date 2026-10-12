@@ -37,7 +37,7 @@ Out of the MVP until the owner decides: J1 (journeys), voice, calendar and email
 | Area                                                         | Status                                                   | Evidence                                                                                                                                                     |
 | ------------------------------------------------------------ | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Sign-in, Identity Platform tokens, recent sign-in            | `PASS_VERIFIED`                                          | `packages/auth` tests, `apps/web/src/App.test.tsx`, `apps/api/src/*` auth cases                                                                              |
-| Passkeys for administrators (ADR-0188)                       | `PASS_VERIFIED` locally, `IMPLEMENTED_UNVERIFIED` in DEV | `apps/api/src/passkeys.test.ts`; the owner has not added a passkey in DEV yet                                                                                |
+| Passkeys for administrators (ADR-0188)                       | `PASS_VERIFIED` locally, `IMPLEMENTED_UNVERIFIED` in DEV | `apps/api/src/passkeys.test.ts`; counters only go forward (#225); the owner has not added a passkey in DEV yet                                               |
 | Create an organization                                       | `PASS_VERIFIED`                                          | `apps/api/src/tenancy*.test.ts`, `App.test.tsx`                                                                                                              |
 | More than one member per organization                        | `NOT_IMPLEMENTED` / `BLOCKED_OWNER`                      | only the `owner` role exists (`packages/rbac/src/roles.ts`); no member routes. Needs a product decision and ADR                                              |
 | Choose between several organizations                         | `NOT_IMPLEMENTED`                                        | the web app always uses the first membership (`AuthProvider.tsx`)                                                                                            |
@@ -55,12 +55,15 @@ Out of the MVP until the owner decides: J1 (journeys), voice, calendar and email
 | Plan limits enforced                                         | `INCOMPLETE` / `BLOCKED_OWNER`                           | only integrations and credit renewal limits are checked; `storage.bytesMax`, `documents.maxFileBytes`, `agents.*`, `automations.*` have no values or callers |
 | Credit purchase, packs, payment provider, payment webhooks   | `NOT_IMPLEMENTED` / `BLOCKED_OWNER`                      | `CREDIT_PACKS = []`, no provider, no route (D-12 frozen)                                                                                                     |
 | Ledger reconciliation                                        | `NOT_IMPLEMENTED`                                        | `verifyLedger` has no production caller; a failed AI-usage write is not recovered                                                                            |
+| AI answer over 16,000 characters                             | `INCOMPLETE` (engine)                                    | the model call is charged once, then the answer is refused and the step fails; a manual or scheduled rerun charges again; the ledger's refund has no caller  |
+| Plan cost estimate before approval                           | `BLOCKED_OWNER`                                          | no DEV plan has an estimate (neither the API nor the worker passes an estimator), so a "deny without estimate" rule would block every plan in DEV            |
+| Worker kept free of billing                                  | `PASS_VERIFIED`                                          | the worker no longer loads `@melonoffice/billing` through `@melonoffice/firestore` (#228); a worker test walks the imports                                   |
 | Billing (subscription read, plan in force)                   | `PASS_VERIFIED` (read only)                              | `apps/api/src/billing.ts` tests; no plan change or invoice route                                                                                             |
-| Comercial: contacts, opportunities, follow-ups               | `PASS_VERIFIED`                                          | API and web tests; links that only change the page's query now open what they name (#223)                                                                    |
+| Comercial: contacts, opportunities, follow-ups               | `PASS_VERIFIED`                                          | API and web tests; links that only change the page's query now open what they name (#224)                                                                    |
 | WhatsApp channel and templates                               | `IMPLEMENTED_UNVERIFIED`                                 | DEV only; templates were never wired in deployed servers until #222; not tested against Meta                                                                 |
 | Conversation agents' settings                                | `INCOMPLETE`                                             | the API routes exist; no screen turns them on                                                                                                                |
 | Forecasts (TimesFM)                                          | `IMPLEMENTED_UNVERIFIED`                                 | tested with a fake model; DEV activation report in the project files                                                                                         |
-| Partner, reseller, white label, platform consoles            | `PASS_VERIFIED`                                          | `commercial.test.ts`, `resellers.test.ts`, `platform-operations.test.ts`; versions now always move on change (#224)                                          |
+| Partner, reseller, white label, platform consoles            | `PASS_VERIFIED`                                          | `commercial.test.ts`, `resellers.test.ts`, `platform-operations.test.ts`; versions now always move on change (#225)                                          |
 | Discount threshold, offers, contact changes by agents        | `BLOCKED_OWNER`                                          | decided in cards on 2026-10-12, not applied: the White Label thread waits for the owner's own words                                                          |
 | J1 journeys                                                  | `BLOCKED_OWNER`                                          | blocked until the owner authorizes it                                                                                                                        |
 | Voice, calendar, email, other providers                      | `DEFERRED_POST_MVP`                                      |                                                                                                                                                              |
@@ -81,26 +84,31 @@ Out of the MVP until the owner decides: J1 (journeys), voice, calendar and email
 ## Test results
 
 - `FIRESTORE_EMULATOR_HOST=127.0.0.1:8085 pnpm validate` (format, lint, typecheck, tests with the emulator required, build) passed locally on `main` at d828f5f before the sprint, and on each sprint branch before it was pushed.
+- `main` turned red once after #221: `brain.test.ts` matched a price's digits inside a random id (CI run 38194025921). #222 fixed the test without weakening it; CI (run 38195267607) and CD (dev) (run 38195267592) were green on its merge, 018608f.
+- #229's first CI run failed in an automations web test it does not touch (a timing race in `automations.test.tsx`, owned and fixed by the engine thread in #226); the one re-run passed.
 - CI on `main` is green; every sprint pull request is merged only with "Lint, typecheck, test, build", "Terraform format, validate, test" and "Secret scan" green.
 - Not run from here: real-model evals, DEV, Meta, Vertex AI, TimesFM in Cloud Run, a browser against DEV.
 
 ## Pull requests of the sprint
 
-| PR   | What                                                                                       | State at writing |
-| ---- | ------------------------------------------------------------------------------------------ | ---------------- |
-| #221 | GIA keeps what the person confirmed when they leave the chat; balance refresh; clear 403   | merged           |
-| #222 | Channel templates wired in production; CD (dev) runs CI's full gate; rollback doc          | open             |
-| #223 | A link to the page already open with another query opens what it names                     | prepared         |
-| #224 | Versions strictly later on every commercial change; passkey counter; `PASSKEY_RP_ID` check | prepared         |
-| #225 | This page and the README status                                                            | prepared         |
+| PR      | What                                                                                                                                                 | State   |
+| ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| #221    | GIA keeps what the person confirmed when they leave the chat; balance refresh; clear 403                                                             | merged  |
+| #222    | Channel templates wired in production; CD (dev) runs CI's full gate; rollback doc; Brain test made deterministic                                     | merged  |
+| #224    | A link to the page already open with another query opens what it names                                                                               | merged  |
+| #225    | Versions strictly later on every versioned change; passkey counter; `PASSKEY_RP_ID` check; GIA plan summary permissions; follow-up cross-tenant test | merged  |
+| #227    | Connections and sign-in say errors in words, never raw codes                                                                                         | merged  |
+| #228    | The worker no longer loads billing                                                                                                                   | merged  |
+| #229    | `/v1` refuses bodies over 1 MB (document uploads keep 10 MB)                                                                                         | merged  |
+| this PR | This page and the README status                                                                                                                      | this PR |
 
-The engine thread merged #219 and #220 during the sprint.
+The engine thread merged #219, #220 and #223 (ADR-0189) during the sprint.
 
 ## CI/CD and DEV
 
 - CI (`ci.yml`): format, lint (with architecture rules), typecheck, tests with the Firestore emulator required, build, forecaster tests, Terraform fmt/validate/tests, environment isolation, gitleaks.
 - CD (dev) (`cd-dev.yml`): on every push to `main`; a read-only Terraform plan, then build, deploy and health checks of web, api and worker, and a browser smoke test. From #222 it runs the same gate as CI before deploying.
-- Last green CD (dev) before the sprint: d828f5f (2026-10-12 01:25Z). Whether DEV serves each revision with 100% traffic, its alerts and its indexes can only be checked by the owner (below).
+- Last green CD (dev) before the sprint: d828f5f (2026-10-12 01:25Z). During the sprint, CI and CD (dev) were green on #222's merge (018608f) and on #225's merge (68c42a3, CI run 38197939242, CD run 38197939173); later merges' runs are listed in the final report. Whether DEV serves each revision with 100% traffic, its alerts and its indexes can only be checked by the owner (below).
 - Staging and production hold infrastructure only; no deploy workflow exists for them.
 
 ## Production blockers
@@ -152,8 +160,8 @@ Decisions:
 - A retried AI call with a fixed request id can call the provider again on a closed hold (sent to the engine thread).
 - AI usage reports can undercount the ledger when a usage write fails (no reconcile).
 - The Agent Guardian keeps a report built while the Brain was unreadable (sent to the engine thread).
-- Raw provider codes appear on the Connections screen for some connection and template errors.
-- No global request body limit on `/v1`.
+- Other raw codes may still show in the partner console, the audit trail and approvals.
+- A webhook delivery whose audit write fails is not audited again on the provider's retry.
 
 ## Rollback
 
