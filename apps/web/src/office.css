@@ -1074,6 +1074,11 @@ a.sidebar__item:hover {
   gap: var(--mo-space-4);
 }
 
+/* Each card keeps its own height: the agents card does not stretch empty to the strip's height. */
+.dept-office__grid > * {
+  align-self: start;
+}
+
 .agent-list {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(12rem, 1fr));
