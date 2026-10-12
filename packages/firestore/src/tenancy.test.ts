@@ -12,12 +12,8 @@ import {
   ORGANIZATIONS,
 } from './tenancy.js';
 import { AUDIT_LOGS, FirestoreAuditStore } from './audit.js';
-import {
-  BILLING_ACCOUNTS,
-  FirestoreBillingStore,
-  SUBSCRIPTIONS,
-  toAccountDocument,
-} from './billing.js';
+import { BILLING_ACCOUNTS, SUBSCRIPTIONS, toAccountDocument } from './billing.js';
+import { FirestoreBillingStore } from './billing-store.js';
 import { CREDIT_WALLETS, FirestoreCreditStore } from './credits.js';
 import { emulatorFirestore, emulatorHost } from './testing.js';
 
