@@ -205,6 +205,25 @@ describe.each(STORES)('follow-ups (C5) with storage in %s', (_name, createStores
         .status,
     ).toBe(404);
     expect((await t.call('token-bob', `${t.base(t.orgB)}/follow-ups`)).body.items).toEqual([]);
+    // Nor can Bob move, complete or cancel it from his own organization or from A's.
+    for (const change of ['reschedule', 'complete', 'cancel']) {
+      const body =
+        change === 'reschedule'
+          ? { revision: 1, date: plusDays(t.tomorrow, 3), time: '11:00' }
+          : { revision: 1 };
+      expect(
+        (await t.send('token-bob', 'POST', `${t.base(t.orgB)}/follow-ups/${id}/${change}`, body))
+          .status,
+      ).toBe(404);
+      expect(
+        (await t.send('token-bob', 'POST', `${t.base(t.orgA)}/follow-ups/${id}/${change}`, body))
+          .status,
+      ).toBe(403);
+    }
+    expect((await t.call('token-alice', `${t.base(t.orgA)}/follow-ups/${id}`)).body).toMatchObject({
+      revision: 1,
+      status: 'scheduled',
+    });
   });
 
   it('schedules through the tool gate: each attempt is one audited tool call, one follow-up (TL-1)', async () => {

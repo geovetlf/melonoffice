@@ -94,6 +94,14 @@ export function registerGiaSummaryRoute(
   app.post(
     '/v1/organizations/:organizationId/gia/plans/:planId/summary',
     withPermission('gia.ask', dependencies, async (c, tenant) => {
+      // She reads the plan and its steps' runs as the person: without both reads the plan is not
+      // found, as if it were not there, so its existence is never revealed.
+      if (
+        !dependencies.authorization.authorize(tenant, 'plan.read').allowed ||
+        !dependencies.authorization.authorize(tenant, 'execution.read').allowed
+      ) {
+        return c.json({ error: 'plan_not_found' }, 404);
+      }
       if (summary === undefined) return c.json({ error: 'ai_not_available' }, 503);
       const body: unknown = await c.req.json().catch(() => undefined);
       if (
