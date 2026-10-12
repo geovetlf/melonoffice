@@ -17,6 +17,7 @@ import {
   resolveRuntimeTenant,
   resolveTenant,
 } from '@melonoffice/tenancy';
+import type * as NodeCrypto from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import { LIMITS } from './catalogue.js';
 import { BrainError } from './errors.js';
@@ -33,6 +34,17 @@ import {
   profileKnowledge,
   recordResult,
 } from './sources.js';
+
+// Deterministic ids. A random UUID that happens to contain "2500" (organization or audit event)
+// would fail the audit check below by chance; these never do, and that check still catches a leaked value.
+const uuids = vi.hoisted(() => ({ next: 0 }));
+vi.mock('node:crypto', async (importOriginal) => {
+  const actual = await importOriginal<typeof NodeCrypto>();
+  return {
+    ...actual,
+    randomUUID: () => `00000000-0000-4000-8000-${(++uuids.next).toString(16).padStart(12, '0')}`,
+  };
+});
 
 const ALICE = '11111111-1111-4111-8111-111111111111' as UserId;
 const BOB = '22222222-2222-4222-8222-222222222222' as UserId;

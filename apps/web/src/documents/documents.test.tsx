@@ -76,6 +76,14 @@ describe('Documents (DOC-3)', () => {
     expect(await screen.findByText('Carta 2026.pdf')).toBeTruthy();
   });
 
+  it("names the file picker in the page's language, not the browser's", async () => {
+    open('/documents');
+    await screen.findByText('menu.docx');
+    const input = screen.getByLabelText('Choose a file');
+    expect(input.getAttribute('type')).toBe('file');
+    expect(screen.queryByText(/No file chosen/)).toBeNull();
+  });
+
   it('opens the company memory from a read document, to confirm what GIA learned', async () => {
     open('/documents', (b) => {
       b.options.permissions.push('knowledge.read');

@@ -3358,8 +3358,10 @@
     width: 100cqw;
   }
 
+  /* Stretched to the row, so a long context line ends in an ellipsis instead of widening the page. */
   .home4__heading {
     flex-direction: column;
+    align-items: stretch;
     gap: 2px;
   }
 

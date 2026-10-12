@@ -1,5 +1,5 @@
 import type { IsoTimestamp, OrganizationId, UserId } from '@melonoffice/domain';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { AUDIT_ACTIONS, isAuditAction, type AuditAction } from './actions.js';
 
 export type AuditEventId = string & { readonly __brand: 'AuditEventId' };
@@ -204,7 +204,22 @@ export interface AuditMessage {
   readonly language?: string;
 }
 
-export type AuditEventInput = Omit<AuditEvent, 'id' | 'occurredAt'>;
+/**
+ * What a caller records. The server sets the time, and a random id unless the caller gives one: a caller
+ * that records a fact a retry may record again gives its stable id, so the store holds one copy (`recordOnce`).
+ */
+export type AuditEventInput = Omit<AuditEvent, 'id' | 'occurredAt'> & {
+  readonly id?: AuditEventId;
+};
+
+/**
+ * A stable id for a fact that may be recorded again: the same key always gives the same id. It is a SHA-256
+ * digest shaped as a UUID, so it reads like every other event id.
+ */
+export function stableAuditEventId(key: string): AuditEventId {
+  const hex = createHash('sha256').update(key).digest('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}` as AuditEventId;
+}
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const CODE = /^[a-z][a-z_]{0,63}$/;
@@ -234,6 +249,7 @@ export function buildAuditEvent(input: AuditEventInput, at: Date): AuditEvent {
   if (!allowed.includes(input.result)) {
     throw new Error(`audit action ${input.action} cannot be ${input.result}`);
   }
+  if (input.id !== undefined && !UUID.test(input.id)) throw new Error('invalid audit event id');
   if (input.commercialAccountId !== undefined && !UUID.test(input.commercialAccountId)) {
     throw new Error('invalid audit commercial account');
   }
@@ -324,7 +340,7 @@ export function buildAuditEvent(input: AuditEventInput, at: Date): AuditEvent {
   const actor: AuditActor = copyActor(input.actor);
   const requested = input.requestedOrganizationId;
   return Object.freeze({
-    id: randomUUID() as AuditEventId,
+    id: input.id ?? (randomUUID() as AuditEventId),
     occurredAt: at.toISOString() as IsoTimestamp,
     action: input.action,
     result: input.result,

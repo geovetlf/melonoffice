@@ -3,6 +3,7 @@
 - Status: Proposed (CV-6C, pending Geovet's review)
 - Amended by: [ADR-0045](0045-channel-delivery-limits-and-retries.md) (limits and retries), [ADR-0046](0046-channel-templates-and-media.md) (templates and media)
 - Date: 2026-09-28
+- Amended: 2026-10-12, the inbound audit record. A repeated delivery records the message's audit event under a stable id (`stableAuditEventId`, `AuditService.recordOnce`), so a retry after a failed audit write records it once. Another fact under that id is an error (`AuditEventConflict`). What is stored or sent does not change.
 - Amends:
   - [ADR-0033](0033-conversations-foundation.md) (connections: lifecycle, routes, permissions; `channel.manage` is replaced)
   - [ADR-0007](0007-plans-entitlements.md) concept of per-organization overrides, now wired and audited

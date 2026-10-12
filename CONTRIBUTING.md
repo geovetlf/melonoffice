@@ -9,12 +9,32 @@
 
 ## Local setup
 
-Requirements: Node 22 (see `.nvmrc`) and pnpm (version pinned in `package.json`).
+Requirements: Node 22.22.2 or a later 22.x (see `.nvmrc`; jsdom needs at least 22.22.2 and `engine-strict` refuses to install below it) and pnpm (version pinned in `package.json`).
 
 ```sh
-pnpm install
+pnpm install --frozen-lockfile
 pnpm validate   # format check, lint, typecheck, tests, build
 ```
+
+Tests that use Firestore need its emulator on `127.0.0.1:8085`, the version CI pins in `.github/workflows/ci.yml` (it needs Java 21):
+
+```sh
+java -jar cloud-firestore-emulator-v1.22.0.jar --host 127.0.0.1 --port 8085 &
+FIRESTORE_EMULATOR_HOST=127.0.0.1:8085 pnpm validate
+```
+
+### Visual checks
+
+The web app has a preview with representative data (`apps/web/preview.html`, scenarios in `apps/web/src/preview/`), and scripts in `apps/web/scripts/` that drive it in Chromium through `@playwright/test`. Start the preview server, then run them from `apps/web`:
+
+```sh
+pnpm --filter @melonoffice/web exec vite --port 5198
+node scripts/capture-pages.mjs <out-dir>   # every page at 1440, 1024, 768 and 390; fails on sideways scroll
+node scripts/capture-home.mjs <out-dir>    # the Home and its keyboard and phone states
+node scripts/audit-a11y.mjs <out-dir>      # axe WCAG 2.2 AA, target sizes, overflow, one h1, Home motion
+```
+
+Set `CAPTURE_CHROMIUM_PATH` to a Chromium binary when Playwright's own is not installed. These scripts are not part of `pnpm validate`.
 
 Useful commands:
 

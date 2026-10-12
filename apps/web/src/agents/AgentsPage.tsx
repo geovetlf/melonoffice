@@ -234,6 +234,7 @@ export function AgentsPage({
       <form
         className="mo-panel mo-page-section agents__filters"
         role="search"
+        aria-label={intl.formatMessage({ id: 'agents.filters.label' })}
         onSubmit={(e) => {
           e.preventDefault();
           filter({ q: search.trim() });
