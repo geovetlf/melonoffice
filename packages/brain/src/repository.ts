@@ -26,6 +26,13 @@ export interface KnowledgeFilter {
   readonly statuses?: readonly KnowledgeStatus[];
 }
 
+/** One page of an organization's items, and where the next page starts. */
+export interface KnowledgePage {
+  readonly items: readonly KnowledgeItem[];
+  /** Where the next page starts, after this id. Absent on the walk's last page. */
+  readonly next?: string;
+}
+
 /**
  * Where Company Brain lives: `knowledgeItems`, `knowledgeVersions`, `knowledgeConflicts` and
  * `knowledgeDocuments` in Firestore, memory in tests. Every read and write names the
@@ -39,6 +46,14 @@ export interface KnowledgeRepository {
     filter: KnowledgeFilter,
     limit: number,
   ): Promise<readonly KnowledgeItem[]>;
+  /**
+   * One page of the organization's items in document-id order, after `page.after` (exclusive). `next`
+   * is set only on a full page, so a short page ends the walk.
+   */
+  pageItems(
+    organizationId: OrganizationId,
+    page: { readonly after?: string; readonly limit: number },
+  ): Promise<KnowledgePage>;
   listVersions(
     organizationId: OrganizationId,
     itemId: string,
@@ -106,6 +121,25 @@ export class InMemoryKnowledgeRepository implements KnowledgeRepository {
           (filter.statuses === undefined || filter.statuses.includes(item.status)),
       )
       .slice(0, limit);
+  }
+
+  async pageItems(
+    organizationId: OrganizationId,
+    page: { readonly after?: string; readonly limit: number },
+  ) {
+    const items = [...this.#items.values()]
+      .filter(
+        (item) =>
+          item.organizationId === organizationId &&
+          (page.after === undefined || item.id > page.after),
+      )
+      .sort((a, b) => (a.id < b.id ? -1 : 1))
+      .slice(0, page.limit);
+    const last = items.at(-1);
+    return {
+      items,
+      ...(last !== undefined && items.length === page.limit ? { next: last.id } : {}),
+    };
   }
 
   async listVersions(organizationId: OrganizationId, itemId: string) {

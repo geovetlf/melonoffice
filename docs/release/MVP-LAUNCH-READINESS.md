@@ -159,7 +159,7 @@ Decisions:
 - A storage error while leasing a job answers 503, so the queue delivers it again. Not reproduced; `apps/worker/src/transport.test.ts` pins it.
 - A retried AI call with a fixed request id can call the provider again on a closed hold (sent to the engine thread).
 - AI usage reports can undercount the ledger when a usage write fails (no reconcile).
-- The Agent Guardian keeps no report when the Brain cannot be read whole: a Brain of 1000 items or more is refused as incomplete. Above that, the figures stay unchecked until the read pages, which is not built.
+- The Agent Guardian keeps no report when the Brain cannot be read whole: its complete read takes up to ten pages of 1000 items, so a Brain of 10,000 items or more is refused as incomplete, and its figures stay unchecked.
 - Other raw codes may still show in the partner console, the audit trail and approvals.
 - A webhook delivery whose audit write fails is not audited again on the provider's retry.
 - UX gaps found and not fixed in the sprint: every refusal of team work reads "not now"; "review the plan" opens the plan list, not the plan; a department that fails to load looks like one that does not exist; a configuration failure looks like "not configured"; some screen-reader labels are hard-coded in English; a few panels keep desktop minimum widths on phones.
