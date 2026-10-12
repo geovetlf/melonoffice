@@ -141,6 +141,10 @@ export interface FakeBackend {
     /** How many plans a page of `GET plans` holds (ADR-0182): the API's 100 unless a test says. */
     planPageSize: number;
     planSteps: Record<string, Record<string, unknown>[]>;
+    /** How many of the next reads of a plan (`GET plans/:id`) fail with a 503, by plan id. */
+    planReadFailures: Record<string, number>;
+    /** How many of the next reads of a plan's steps fail with a 503, by plan id. */
+    planStepsFailures: Record<string, number>;
     /** Planning a workflow is refused with this reason (422), instead of making a plan. */
     planRefusal?: string;
     /** More tools `GET tools` lists after `message_send`, as the API shows them (ADR-0165). */
@@ -232,6 +236,14 @@ export interface FakeBackend {
 const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
+/** Whether this read fails: a count of failures left for the id goes down by one for each. */
+const takeFailure = (failures: Record<string, number>, id: string): boolean => {
+  const left = failures[id] ?? 0;
+  if (left === 0) return false;
+  failures[id] = left - 1;
+  return true;
+};
+
 export function fakeBackend(): FakeBackend {
   let issued = 0;
   // Workflow drafts asked so far (ADR-0171), to answer each in turn.
@@ -291,6 +303,8 @@ export function fakeBackend(): FakeBackend {
     plans: {},
     planPageSize: 100,
     planSteps: {},
+    planReadFailures: {},
+    planStepsFailures: {},
     pageSize: 50,
     approvals: {},
     aiUsage: {},
@@ -1363,11 +1377,17 @@ export function fakeBackend(): FakeBackend {
       if (denied !== undefined) return denied;
       if (plan === undefined) return json(404, { error: 'plan_not_found' });
       if (action === 'steps') {
+        if (takeFailure(options.planStepsFailures, plan.id as string)) {
+          return json(503, { error: 'unavailable' });
+        }
         return json(200, {
           planId: plan.id,
           status: plan.status,
           steps: options.planSteps[plan.id as string] ?? [],
         });
+      }
+      if (takeFailure(options.planReadFailures, plan.id as string)) {
+        return json(503, { error: 'unavailable' });
       }
       return json(200, plan);
     }
