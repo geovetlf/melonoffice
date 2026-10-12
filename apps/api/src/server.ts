@@ -35,6 +35,7 @@ import {
   FirestoreChannelConnectionRepository,
   FirestoreChannelTemplateRepository,
   FirestoreConnectionRateLimiter,
+  FirestorePasskeyStore,
   FirestoreRequestRateLimiter,
   FirestoreConversationRepository,
   FirestoreAgentHandoffRepository,
@@ -165,6 +166,8 @@ function services(projectId: string) {
     brands: new FirestoreBrandStore(firestore),
     // One limit per person on sensitive requests, shared by every instance (ADR-0092).
     requestLimiter: new FirestoreRequestRateLimiter(firestore),
+    // Sensitive administrators' passkeys (ADR-0188): public keys only, equality queries only.
+    passkeys: new FirestorePasskeyStore(firestore),
     billing: new FirestoreBillingStore(firestore),
     executions,
     approvals,
@@ -319,6 +322,9 @@ const app = createApp({
   logger,
   version: config.version,
   webOrigins: config.webOrigins ?? [],
+  ...(config.passkeyRelyingPartyId === undefined
+    ? {}
+    : { passkeyRelyingPartyId: config.passkeyRelyingPartyId }),
   platformAdmins: config.platformAdminUserIds ?? [],
   ai,
   ...configured,

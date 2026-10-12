@@ -8,3 +8,4 @@ export * from './commercial-memory.js';
 export * from './commercial-writes.js';
 export * from './invitations.js';
 export * from './platform.js';
+export * from './passkeys.js';

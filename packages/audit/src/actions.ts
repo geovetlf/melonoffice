@@ -50,6 +50,30 @@ export const AUDIT_ACTIONS = {
     description: 'An existing user signed in (POST /v1/me).',
     results: ['success'],
   },
+  'auth.passkey_added': {
+    category: 'auth',
+    description:
+      'A sensitive administrator added a passkey (ADR-0188); `reference` is its id. Only its public key is stored. Denied when the person is not an administrator, did not confirm recently, or the answer did not verify.',
+    results: ['success', 'denied'],
+  },
+  'auth.passkey_confirmed': {
+    category: 'auth',
+    description:
+      'A person confirmed it was them with one of their passkeys (ADR-0188); for 30 minutes their administrative changes go through. `reference` is the passkey. Denied when the answer did not verify.',
+    results: ['success', 'denied'],
+  },
+  'auth.passkey_removed': {
+    category: 'auth',
+    description:
+      'A person removed one of their passkeys after confirming with a passkey (ADR-0188); `reference` is its id. Denied without a recent confirmation.',
+    results: ['success', 'denied'],
+  },
+  'auth.passkeys_reset': {
+    category: 'auth',
+    description:
+      'A platform administrator removed every passkey of a person who lost theirs (ADR-0188); `target` is that person. They go back to signing in again for each administrative session until they add a new one.',
+    results: ['success', 'denied'],
+  },
   'organization.create': {
     category: 'tenancy',
     description: 'A user created an organization, or was refused or failed trying.',

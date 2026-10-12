@@ -3,7 +3,10 @@ import { Badge, DataTable, PageHeader, PeriodPicker, StateMessage, Toolbar } fro
 import { useEffect, useState } from 'react';
 import { usd } from '../aiUsage/AIUsagePage.js';
 import { periodDays, type UsagePeriod } from '../aiUsage/aiUsageClient.js';
+import { PasskeySecurity } from '../identity/PasskeySecurity.js';
+import { usePasskeys } from '../identity/PasskeysContext.js';
 import { CommercialAdmin } from './CommercialAdmin.js';
+import { PasskeyReset } from './PasskeyReset.js';
 import type {
   PlatformAI,
   PlatformBucket,
@@ -38,6 +41,7 @@ export function PlatformPage({
   readonly currentUserId?: string;
 }) {
   const intl = useIntl();
+  const passkeys = usePasskeys();
   const [ai, setAI] = useState<Load<PlatformAI>>('loading');
   const [period, setPeriod] = useState<UsagePeriod>('month');
   const [usage, setUsage] = useState<{ key: UsagePeriod; load: Load<PlatformUsage> }>();
@@ -80,6 +84,13 @@ export function PlatformPage({
         client={client}
         {...(currentUserId === undefined ? {} : { currentUserId })}
       />
+
+      {passkeys === undefined ? null : (
+        <>
+          <PasskeySecurity client={passkeys} />
+          <PasskeyReset client={passkeys} />
+        </>
+      )}
 
       {ai === 'loading' ? (
         <Loading />

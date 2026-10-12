@@ -29,6 +29,11 @@ export interface ServiceConfig {
    */
   readonly webOrigins?: readonly string[];
   /**
+   * The passkeys' site (ADR-0188) in `PASSKEY_RP_ID`, e.g. `melonoffice.io`, when it is not the
+   * first web origin's host. Unset: that host.
+   */
+  readonly passkeyRelyingPartyId?: string;
+  /**
    * The MelonOffice platform administrators (ADR-0082), as exact user ids comma-separated in
    * `PLATFORM_ADMIN_USER_IDS`: only they see AI providers, models, routing and internal cost.
    * Unset or empty: nobody does.
@@ -153,6 +158,15 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): S
   for (const origin of webOrigins) {
     if (!ORIGIN.test(origin)) throw new Error(`Invalid WEB_ORIGINS entry: ${origin}`);
   }
+  const passkeyRelyingPartyId = env.PASSKEY_RP_ID || undefined;
+  if (
+    passkeyRelyingPartyId !== undefined &&
+    !/^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(
+      passkeyRelyingPartyId,
+    )
+  ) {
+    throw new Error(`Invalid PASSKEY_RP_ID: ${passkeyRelyingPartyId}`);
+  }
   const platformAdminUserIds = (env.PLATFORM_ADMIN_USER_IDS ?? '')
     .split(',')
     .map((id) => id.trim())
@@ -198,6 +212,7 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): S
       ? {}
       : { deploymentEnvironment: deploymentEnvironment as DeploymentEnvironment }),
     ...(webOrigins.length === 0 ? {} : { webOrigins }),
+    ...(passkeyRelyingPartyId === undefined ? {} : { passkeyRelyingPartyId }),
     ...(platformAdminUserIds.length === 0 ? {} : { platformAdminUserIds }),
     ...(vertexProjectId === undefined || vertexLocation === undefined
       ? {}

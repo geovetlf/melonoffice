@@ -103,6 +103,8 @@ import {
 } from '@melonoffice/specialists';
 import {
   InMemoryCommercialStore,
+  InMemoryPasskeyStore,
+  type PasskeyStore,
   InMemoryTenancyStore,
   type CommercialRepository,
   type TenancyStore,
@@ -146,6 +148,7 @@ import {
   FirestoreWorkflowScheduleRepository,
   FirestoreTenancyStore,
   FirestoreBrandStore,
+  FirestorePasskeyStore,
   FirestoreRequestRateLimiter,
   FirestoreCommercialStore,
   MEMBERSHIPS,
@@ -200,6 +203,8 @@ export interface Stores {
   readonly brands: InMemoryBrandRepository | FirestoreBrandStore;
   /** Limits on sensitive requests (ADR-0092); used only when a test passes `requestLimits`. */
   readonly requestLimiter: RequestRateLimiter;
+  /** Sensitive administrators' passkeys (ADR-0188); active only with web origins. */
+  readonly passkeys: PasskeyStore;
   /** Stores a record as given, e.g. a suspended membership, the way an operator change would. */
   readonly put: (record: Organization | Membership) => Promise<void>;
   readonly billing: BillingStore;
@@ -296,6 +301,7 @@ function memoryStores(): Stores {
     commercial: new InMemoryCommercialStore(events),
     brands: new InMemoryBrandRepository(events),
     requestLimiter: new InMemoryRequestRateLimiter(),
+    passkeys: new InMemoryPasskeyStore(events),
     put: async (r) => tenancy.put(r),
     billing,
     putBilling: async (r) => billing.put(r),
@@ -360,6 +366,7 @@ function firestoreStores(): Stores {
     commercial: new FirestoreCommercialStore(db),
     brands: new FirestoreBrandStore(db),
     requestLimiter: new FirestoreRequestRateLimiter(db),
+    passkeys: new FirestorePasskeyStore(db),
     billing: new FirestoreBillingStore(db),
     async putBilling(record) {
       if ('status' in record) {
@@ -550,6 +557,7 @@ export function setupApp(
     tenancy: stores.tenancy,
     commercialAccounts: stores.commercial,
     brands: stores.brands,
+    passkeys: stores.passkeys,
     ...(requestLimits === undefined
       ? {}
       : { requestLimiter: stores.requestLimiter, requestLimits }),

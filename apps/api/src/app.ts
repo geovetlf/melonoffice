@@ -156,6 +156,7 @@ import {
 import {
   resolveTenant,
   type CommercialRepository,
+  type PasskeyStore,
   type TenancyStore,
   type TenantContext,
 } from '@melonoffice/tenancy';
@@ -180,6 +181,7 @@ import { registerCommercialRoutes, type CommercialDependencies } from './commerc
 import { registerInvitationRoutes } from './invitations.js';
 import { registerMemberInvitationRoutes } from './member-invitations.js';
 import { registerResellerRoutes } from './resellers.js';
+import { passkeyStateMiddleware, registerPasskeyRoutes, relyingPartyOf } from './passkeys.js';
 import { DEFAULT_ACTIVITY_TIME_ZONE, registerActivityRoutes } from './activity.js';
 import { registerBrainRoutes } from './brain.js';
 import { registerBusinessRoutes } from './business.js';
@@ -445,6 +447,14 @@ export interface AppOptions {
    */
   readonly requestLimiter?: RequestRateLimiter;
   readonly requestLimits?: Partial<Record<RequestScope, RequestLimit>>;
+  /**
+   * Sensitive administrators' passkeys (ADR-0188). They also need `webOrigins`: the passkeys
+   * belong to the web app's site. Absent: nobody has passkeys, and a recent sign-in (ADR-0138) is
+   * what administrative changes need.
+   */
+  readonly passkeys?: PasskeyStore;
+  /** The passkeys' site when it is not the first web origin's host, e.g. `melonoffice.io`. */
+  readonly passkeyRelyingPartyId?: string;
 }
 
 type Env = AuthEnv;
@@ -489,6 +499,8 @@ export function createApp({
   brands,
   requestLimiter,
   requestLimits,
+  passkeys,
+  passkeyRelyingPartyId,
 }: AppOptions): Hono<Env> {
   const app = new Hono<Env>();
 
@@ -560,6 +572,31 @@ export function createApp({
   }
   registerAuthRoutes(app, auth, audit);
   if (requestLimiter !== undefined) registerRequestLimits(app, requestLimiter, requestLimits);
+  // Passkeys for sensitive administrators (ADR-0188): read once per covered request, before any
+  // route decides on it.
+  const relyingParty = relyingPartyOf(webOrigins, passkeyRelyingPartyId);
+  const passkeyDeps =
+    passkeys !== undefined && relyingParty !== undefined && audit !== undefined
+      ? {
+          store: passkeys,
+          relyingParty,
+          audit,
+          admins: new Set(platformAdmins),
+          ...(commercialAccounts === undefined ? {} : { commercial: commercialAccounts }),
+        }
+      : undefined;
+  if (passkeyDeps !== undefined) {
+    app.use('/v1/*', passkeyStateMiddleware(passkeyDeps));
+    registerPasskeyRoutes(app, passkeyDeps);
+  } else {
+    app.get('/v1/me/passkeys', (c) =>
+      c.json({ available: false, administrator: false, passkeys: [], confirmedUntil: null }),
+    );
+    app.all('/v1/me/passkeys/*', (c) => c.json({ error: 'passkeys_unavailable' }, 503));
+    app.post('/v1/platform/users/:userId/passkeys/reset', (c) =>
+      c.json({ error: 'passkeys_unavailable' }, 503),
+    );
+  }
   if (auth !== undefined && audit !== undefined) {
     // A new organization's Company Brain starts with its name (ADR-0051).
     registerTenancyRoutes(app, tenancy, authorization, audit, async (auth, organization) => {
