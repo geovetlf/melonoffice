@@ -743,15 +743,12 @@ describe.each(STORES)('AE-2 agent tasks with storage in %s', (_storage, createSt
   it('3e. a complete read that runs over its time budget shows the organization as unchecked: the task is not failed (ADR-0132)', async () => {
     const w = await world();
     await w.brain.propose(w.tenantA, price(25));
-    const real = w.stores.knowledge.pageItems.bind(w.stores.knowledge);
     // The first page takes longer than the whole budget: the walk stops before its second page.
-    vi.spyOn(w.stores.knowledge, 'pageItems').mockImplementationOnce(
-      async (organizationId, page) => {
-        const read = await real(organizationId, page);
-        w.jump(LIMITS.completeReadMs + 1);
-        return { ...read, next: 'zzz' };
-      },
-    );
+    replacePages(w.stores.knowledge, (real) => async (organizationId, page) => {
+      const read = await real(organizationId, page);
+      w.jump(LIMITS.completeReadMs + 1);
+      return { ...read, next: 'zzz' };
+    });
     const lucia = await w.agent();
     w.setModel(async () =>
       answer({ answer: 'Publica que el Combo Familiar cuesta S/ 30.', missing: [] }),
@@ -766,7 +763,7 @@ describe.each(STORES)('AE-2 agent tasks with storage in %s', (_storage, createSt
       guardianFindingsOf(await w.outputs.find(w.tenantA, must(execution).id, GUARDIAN_NODE)),
     ).toEqual([expect.objectContaining({ code: 'organization_unchecked' })]);
     expect(checkCodesOf(execution)).not.toContain('agent_guardian');
-    // Only the figures' read stopped: the secrets' read finished in time.
+    // The figures and the secrets share that one read, so its single refusal is logged once.
     expect(w.logged.filter((l) => l.message === 'brain.complete_read_refused')).toEqual([
       expect.objectContaining({ reason: 'time', pages: 1, items: 1 }),
     ]);
@@ -778,7 +775,7 @@ describe.each(STORES)('AE-2 agent tasks with storage in %s', (_storage, createSt
     // The count does not decide it: every page is full, so the walk runs out of pages before its end.
     vi.spyOn(w.stores.knowledge, 'countItems').mockResolvedValue(0);
     let calls = 0;
-    vi.spyOn(w.stores.knowledge, 'pageItems').mockImplementation(async () => {
+    replacePages(w.stores.knowledge, () => async () => {
       calls += 1;
       // A page that gives no item but a cursor after it, every time: a Brain that never ends.
       return { items: [], next: `t${String(calls).padStart(3, '0')}` };
@@ -1020,6 +1017,26 @@ describe.each(STORES)('AE-2 agent tasks with storage in %s', (_storage, createSt
 function must<T>(value: T | undefined): T {
   if (value === undefined) throw new Error('missing value');
   return value;
+}
+
+/**
+ * Replaces the pages a complete read walks. The walk reads its pages through the view that `snapshot`
+ * hands it (ADR-0132): on Firestore a new object inside a transaction, not the repository. So the
+ * replacement goes on that view, and `behave` gets the view's own page read to call or not.
+ */
+function replacePages(
+  knowledge: KnowledgeRepository,
+  behave: (real: KnowledgeRepository['pageItems']) => KnowledgeRepository['pageItems'],
+): void {
+  const snapshot = must(knowledge.snapshot).bind(knowledge);
+  vi.spyOn(knowledge, 'snapshot').mockImplementation((read) =>
+    snapshot((view) => {
+      // The real read is bound before the spy replaces it, or it would call the spy.
+      const real = view.pageItems.bind(view);
+      vi.spyOn(view, 'pageItems').mockImplementation(behave(real));
+      return read(view);
+    }),
+  );
 }
 
 /** The codes of the checks a verification recorded, in order. */
