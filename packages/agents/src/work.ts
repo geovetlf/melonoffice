@@ -737,11 +737,6 @@ export interface AgentTaskVerifier {
   >;
 }
 
-/**
- * Checks a finished task (ADR-0029): the model's answer is kept and has the task's shape
- * (`output_schema`), and a follow-up the task scheduled exists (`checks`, ADR-0084). It checks the
- * shape, not the advice: a person reads the answer.
- */
 /** The Brain's items, read by the first call and shared by the calls after it. */
 export type GuardianBrainRead = () => Promise<readonly KnowledgeItem[]>;
 
@@ -750,6 +745,11 @@ function once<T>(read: () => Promise<T>): () => Promise<T> {
   return () => (started ??= read());
 }
 
+/**
+ * Checks a finished task (ADR-0029): the model's answer is kept and has the task's shape
+ * (`output_schema`), and a follow-up the task scheduled exists (`checks`, ADR-0084). It checks the
+ * shape, not the advice: a person reads the answer.
+ */
 export function createAgentTaskVerifier(options: {
   readonly outputs: Pick<AgentOutputStore, 'find'>;
   /**
