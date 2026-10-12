@@ -155,14 +155,20 @@ describe('Company Brain: creating and reading knowledge (ADR-0051)', () => {
       targetVersion: 1,
       reference: 'products:user',
     });
-    // The audit trail never holds the value; its versions do. Every leaf of the event is compared as
-    // a whole value, under any key and at any depth, so an id that merely contains "2500" is not a leak.
-    const leaves = (value: unknown): unknown[] =>
+    // The audit trail never holds the value; its versions do. Every value of the event is checked,
+    // under any key and at any depth, except the id fields (random uuids that can contain any digits).
+    // The amount is refused as a number, as a whole word in text ("S/ 2500", "2500 créditos") and in
+    // the usual formatted form ("25.00"); a letter, digit or separator next to it does not count, so a uuid never matches.
+    const values = (value: unknown, key = ''): [string, unknown][] =>
       typeof value === 'object' && value !== null
-        ? Object.values(value).flatMap((inner) => leaves(inner))
-        : [value];
-    expect(leaves(event)).not.toContain(2500);
-    expect(leaves(event)).not.toContain('2500');
+        ? Object.entries(value).flatMap(([inner, v]) => values(v, inner))
+        : [[key, value]];
+    const shown = values(event)
+      .filter(([key]) => !/id$/i.test(key))
+      .map(([, value]) => value);
+    expect(shown).not.toContain(2500);
+    const text = shown.filter((value): value is string => typeof value === 'string');
+    expect(text.some((value) => /(?<![\w.,])(2500|25[.,]00)(?![\w.,])/.test(value))).toBe(false);
     expect(JSON.stringify(event)).not.toContain('amountMinor');
   });
 
