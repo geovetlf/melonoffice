@@ -1,5 +1,6 @@
 import type { AgentNotification, OrganizationId, SpecialistId, UserId } from '@melonoffice/domain';
 import { notificationIdOf } from '@melonoffice/agents';
+import { createAuthorizationService, ROLES } from '@melonoffice/rbac';
 import { describe, expect, it } from 'vitest';
 import { setupApp, STORES, type Stores } from './test-api.js';
 
@@ -19,9 +20,12 @@ interface Body {
 }
 
 describe.each(STORES)('agent engine with storage in %s', (_name, createStores) => {
-  async function setup() {
+  async function setup(roles?: Record<string, readonly string[]>) {
     const stores: Stores = createStores();
-    const ctx = setupApp(stores);
+    const ctx = setupApp(
+      stores,
+      roles === undefined ? undefined : createAuthorizationService(roles as never),
+    );
     const alice = await ctx.register('token-alice');
     await ctx.register('token-bob');
     const call = async (token: string, method: string, path: string, body?: unknown) => {
@@ -177,6 +181,34 @@ describe.each(STORES)('agent engine with storage in %s', (_name, createStores) =
     expect(
       (await t.call('token-alice', 'POST', `${t.base(t.orgA)}/notifications/read`)).body,
     ).toEqual({ marked: 0 });
+  });
+
+  it('GIA summarizes no plan for a role that may ask her but not read plans and runs', async () => {
+    for (const missing of ['plan.read', 'execution.read']) {
+      const t = await setup({
+        owner: ROLES.owner.filter((p: string) => p !== missing),
+      });
+      // Even a malformed request is answered "not found": nothing about the plan is revealed.
+      const summary = await t.call(
+        'token-alice',
+        'POST',
+        `${t.base(t.orgA)}/gia/plans/00000000-0000-4000-8000-000000000000/summary`,
+        {},
+      );
+      expect(summary).toEqual({ status: 404, body: { error: 'plan_not_found' } });
+    }
+    // With both reads, the same request is checked as usual.
+    const t = await setup();
+    expect(
+      (
+        await t.call(
+          'token-alice',
+          'POST',
+          `${t.base(t.orgA)}/gia/plans/00000000-0000-4000-8000-000000000000/summary`,
+          {},
+        )
+      ).status,
+    ).toBe(400);
   });
 
   it('GIA summarizes only a plan the person may read', async () => {

@@ -12,6 +12,11 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./billing": {
+      "@melonoffice/source": "./src/billing-store.ts",
+      "types": "./dist/billing-store.d.ts",
+      "default": "./dist/billing-store.js"
+    },
     "./testing": {
       "@melonoffice/source": "./src/testing.ts",
       "types": "./dist/testing.d.ts",

@@ -116,7 +116,6 @@ import {
   type AuditDocument,
   fromAuditDocument,
   BILLING_ACCOUNTS,
-  FirestoreBillingStore,
   SUBSCRIPTIONS,
   toAccountDocument,
   toSubscriptionDocument,
@@ -161,6 +160,8 @@ import {
   putOutboundMessage,
   toConnectionDocument,
 } from '@melonoffice/firestore';
+// Billing is read by the API alone: the worker never loads it.
+import { FirestoreBillingStore } from '@melonoffice/firestore/billing';
 import { emulatorFirestore, emulatorHost } from '@melonoffice/firestore/testing';
 import { InMemoryRequestRateLimiter, type RequestRateLimiter } from './request-limits.js';
 

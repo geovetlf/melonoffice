@@ -31,7 +31,6 @@ import {
   FirestoreAgentTaskRepository,
   FirestoreApprovalRepository,
   FirestoreAuditStore,
-  FirestoreBillingStore,
   FirestoreChannelConnectionRepository,
   FirestoreChannelTemplateRepository,
   FirestoreConnectionRateLimiter,
@@ -61,6 +60,8 @@ import {
   FirestoreWorkflowRepository,
   FirestoreWorkflowScheduleRepository,
 } from '@melonoffice/firestore';
+// Billing is read by the API alone: the worker never loads it.
+import { FirestoreBillingStore } from '@melonoffice/firestore/billing';
 
 const config = loadConfig(process.env);
 // The Forecasting Engine (ADR-0059): the model's runtime, its credit cost and limits, from

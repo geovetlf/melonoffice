@@ -41,6 +41,7 @@ import type { AuthEnv } from './auth.js';
 import { withPermission } from './authorization.js';
 import { createCommercialGuard } from './commercial.js';
 import { platformAdminOf } from './platform-admin.js';
+import { versionAfter } from './versions.js';
 
 /**
  * Brands and domains (ADR-0087):
@@ -165,7 +166,7 @@ export function registerBrandingRoutes(app: Hono<AuthEnv>, deps: BrandingDepende
         return c.json({ error: 'brand_conflict' }, 409);
       }
       const at = now();
-      const iso = at.toISOString() as IsoTimestamp;
+      const iso = versionAfter(current?.updatedAt, at);
       const record: BrandConfigRecord = {
         id: brandConfigIdOf(owner),
         owner,
@@ -406,7 +407,7 @@ export function registerBrandingRoutes(app: Hono<AuthEnv>, deps: BrandingDepende
       const next: DomainBinding = {
         ...current,
         status: input.status,
-        updatedAt: at.toISOString() as IsoTimestamp,
+        updatedAt: versionAfter(current.updatedAt, at),
       };
       await brands.saveDomain(next, current, [
         event(

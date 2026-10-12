@@ -21,6 +21,7 @@ import type { Context, Hono } from 'hono';
 import { recordOutcome, requestFields } from './audit.js';
 import type { AuthEnv } from './auth.js';
 import { createCommercialGuard, type CommercialDependencies } from './commercial.js';
+import { versionAfter } from './versions.js';
 
 /**
  * Invitations to join a partner or agency account (ADR-0093). Nobody becomes a member without
@@ -72,7 +73,7 @@ export function registerMemberInvitationRoutes(app: Hono<AuthEnv>, deps: Commerc
     const expired: MemberInvitation = {
       ...invitation,
       status: 'expired',
-      updatedAt: at.toISOString() as IsoTimestamp,
+      updatedAt: versionAfter(invitation.updatedAt, at),
     };
     try {
       await commercial.saveMemberInvitation(expired, invitation, [
@@ -200,7 +201,7 @@ export function registerMemberInvitationRoutes(app: Hono<AuthEnv>, deps: Commerc
       const revoked: MemberInvitation = {
         ...current,
         status: 'revoked',
-        updatedAt: at.toISOString() as IsoTimestamp,
+        updatedAt: versionAfter(current.updatedAt, at),
       };
       await commercial.saveMemberInvitation(revoked, current, [
         event(
@@ -308,13 +309,13 @@ export function registerMemberInvitationRoutes(app: Hono<AuthEnv>, deps: Commerc
       role: invitation.role,
       status: 'active',
       createdAt: current?.createdAt ?? iso,
-      updatedAt: iso,
+      updatedAt: versionAfter(current?.updatedAt, at),
     };
     const accepted: MemberInvitation = {
       ...invitation,
       status: 'accepted',
       decidedBy: auth.userId,
-      updatedAt: iso,
+      updatedAt: versionAfter(invitation.updatedAt, at),
     };
     const common = {
       result: 'success' as const,
@@ -374,7 +375,7 @@ export function registerMemberInvitationRoutes(app: Hono<AuthEnv>, deps: Commerc
       ...invitation,
       status: 'rejected',
       decidedBy: auth.userId,
-      updatedAt: at.toISOString() as IsoTimestamp,
+      updatedAt: versionAfter(invitation.updatedAt, at),
     };
     return guarded(c, async () => {
       await commercial.saveMemberInvitation(rejected, invitation, [

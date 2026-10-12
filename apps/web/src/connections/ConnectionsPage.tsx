@@ -210,11 +210,14 @@ export function ConnectionsPage({
                   {c.status === 'error' && c.statusReason !== null ? (
                     <span>
                       {' · '}
-                      {intl.messages[`connections.reason.${c.statusReason}`] === undefined ? (
-                        c.statusReason
-                      ) : (
-                        <FormattedMessage id={`connections.reason.${c.statusReason}`} />
-                      )}
+                      {/* A code the app has no words for reads as a generic failure, never raw. */}
+                      <FormattedMessage
+                        id={
+                          intl.messages[`connections.reason.${c.statusReason}`] === undefined
+                            ? 'connections.reason.generic'
+                            : `connections.reason.${c.statusReason}`
+                        }
+                      />
                     </span>
                   ) : null}
                 </p>

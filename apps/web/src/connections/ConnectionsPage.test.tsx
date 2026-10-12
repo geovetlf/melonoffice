@@ -47,9 +47,9 @@ const setupOf = (id: string) => ({
 });
 
 /** The API's connection routes, for two organizations, with one permission set per caller. */
-function fakeApi(granted: readonly string[] = ALL) {
+function fakeApi(granted: readonly string[] = ALL, first: ConnectionView = connection('conn-a')) {
   const stores: Record<string, ConnectionView[]> = {
-    [ORG_A]: [connection('conn-a')],
+    [ORG_A]: [first],
     [ORG_B]: [connection('conn-b', { displayName: 'B private line' })],
   };
   const calls: { method: string; path: string; body: string | undefined }[] = [];
@@ -151,8 +151,8 @@ function fakeApi(granted: readonly string[] = ALL) {
   return { request, calls, stores };
 }
 
-function show(granted: readonly string[] = ALL, org = ORG_A) {
-  const api = fakeApi(granted);
+function show(granted: readonly string[] = ALL, org = ORG_A, first?: ConnectionView) {
+  const api = fakeApi(granted, first);
   const can = (permission: string) => granted.includes(permission);
   render(
     <I18nProvider locale="en">
@@ -181,6 +181,17 @@ describe('Settings → Connections', () => {
     // The number is masked; the Phone Number ID is not shown on the card.
     expect(within(ventas).getByText('+51 ••••21')).toBeTruthy();
     expect(ventas.textContent).not.toContain('106540352242922');
+  });
+
+  it('says why a check failed in words, and never shows a raw provider code', async () => {
+    show(ALL, ORG_A, connection('conn-a', { status: 'error', statusReason: 'account_mismatch' }));
+    const ventas = await card('Ventas');
+    expect(within(ventas).getByText(/WhatsApp answered for another phone number/)).toBeTruthy();
+    cleanup();
+    show(ALL, ORG_A, connection('conn-a', { status: 'error', statusReason: 'some_new_code' }));
+    const other = await card('Ventas');
+    expect(within(other).getByText(/the check failed; check again later/)).toBeTruthy();
+    expect(other.textContent).not.toMatch(/[a-z]+_[a-z_]+/);
   });
 
   it('offers no change to a person who may only read', async () => {
