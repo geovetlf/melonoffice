@@ -16,6 +16,7 @@ const METRICS = [
     entity: 'currency',
     frequencies: ['day', 'week', 'month'],
     departments: ['sales', 'leadership', 'finance', 'research'],
+    owner: 'sales',
     readable: true,
   },
   {
@@ -24,6 +25,7 @@ const METRICS = [
     entity: 'source_kind',
     frequencies: ['day', 'week', 'month'],
     departments: ['sales', 'marketing', 'leadership', 'research'],
+    owner: 'sales',
     readable: true,
   },
   {
@@ -32,6 +34,7 @@ const METRICS = [
     entity: 'channel',
     frequencies: ['day', 'week', 'month'],
     departments: ['operations', 'sales', 'marketing', 'leadership', 'research'],
+    owner: null,
     // The person may not read conversations: never shown.
     readable: false,
   },
@@ -166,19 +169,31 @@ describe('Reports (ADR-0060): what was recorded, never a projection', () => {
     expect(globalThis.location.pathname).toBe('/memory');
   });
 
-  it("puts each department's metrics in its office, and no section where none serves it", async () => {
-    open('/office/marketing');
+  it("puts each department's own metrics in its office, and no section where it owns none", async () => {
+    open('/office/sales');
     const section = await screen.findByRole('region', { name: 'Reports' });
+    expect(await within(section).findByRole('article', { name: 'Sales won (value)' })).toBeTruthy();
     expect(
       await within(section).findByRole('article', { name: 'New leads and customers' }),
     ).toBeTruthy();
-    expect(within(section).queryByRole('article', { name: 'Sales won (value)' })).toBeNull();
     cleanup();
+    // Marketing owns none of these metrics, so its office shows its own empty state, not figures of Sales.
+    open('/office/marketing');
+    await screen.findByRole('heading', { level: 1 });
+    const marketing = await screen.findByRole('region', { name: 'Reports' });
+    expect(
+      await within(marketing).findByText('There are no reports you can see yet.'),
+    ).toBeTruthy();
+    expect(within(marketing).queryByRole('article')).toBeNull();
+    cleanup();
+    // Operations is served only by conversations, which carry no owner: its office shows none.
     open('/office/operations');
     await screen.findByRole('heading', { level: 1 });
-    // Operations is served only by conversations, which this person may not read.
-    await vi.waitFor(() => expect(screen.queryByText('Loading…')).toBeNull());
-    expect(screen.queryByRole('region', { name: 'Reports' })).toBeNull();
+    const operations = await screen.findByRole('region', { name: 'Reports' });
+    expect(
+      await within(operations).findByText('There are no reports you can see yet.'),
+    ).toBeTruthy();
+    expect(within(operations).queryByRole('article')).toBeNull();
   });
 
   it('without report.read, Reports stays a coming tool and nothing is read', async () => {
