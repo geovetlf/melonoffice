@@ -235,6 +235,9 @@ function services(projectId: string) {
     conversations: {
       repository: conversations,
       connections,
+      // The organizations' approved templates (ADR-0046): their routes and a person's template
+      // sends read the same repository the Integration Engine sends from.
+      templates,
       agentOutputs: new FirestoreAgentOutputRepository(firestore),
       ...(secretProjectId === undefined ? {} : { secretProjectId }),
       ...(engine === undefined ? {} : { engine }),

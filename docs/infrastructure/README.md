@@ -96,7 +96,7 @@ You need the Google Cloud CLI and Terraform 1.16 or later. For each project you 
   It has no cloud credentials.
 
 - **CD (dev)** (`cd-dev.yml`, push to `main` or manual) has three jobs:
-  - **validate**: lint, typecheck, tests and build.
+  - **validate**: the same gate as CI's first job: format, lint, typecheck, tests against the Firestore emulator (required, never skipped), build and the forecaster's tests. Terraform checks and the secret scan already ran on the pull request, which `main` requires.
   - **terraform-plan**: a read-only drift check for dev.
   - **deploy**, which:
     1. builds the three images tagged with the commit SHA and pushes them to Artifact Registry;
@@ -109,9 +109,9 @@ You need the Google Cloud CLI and Terraform 1.16 or later. For each project you 
 
 There is no staging or production deployment workflow.
 
-## Channels (not applied)
+## Channels (DEV only)
 
-Channel webhooks ([ADR-0033](../adr/0033-conversations-foundation.md)) are in the API code but are off everywhere: without `CHANNEL_SECRETS_PROJECT_ID`, `/webhooks/*` answers 503. Nothing in Terraform sets it. Turning them on is CV-2 and needs Geovet's authorization and apply (**INFRASTRUCTURE REQUIRED**):
+Channel webhooks ([ADR-0033](../adr/0033-conversations-foundation.md)): without `CHANNEL_SECRETS_PROJECT_ID`, `/webhooks/*` answers 503. DEV turns them on (`whatsapp_channel = true` in `infra/envs/dev`, which sets that variable); staging and production do not. Turning them on in another environment needs Geovet's authorization and apply (**INFRASTRUCTURE REQUIRED**):
 
 - enable the Secret Manager API in the environment's project;
 - create one secret per connection and kind (`channel-{connectionId}-app-secret`, `-access-token`, `-verify-token`), with values entered by the owner, never in the repository or chat;
@@ -125,4 +125,10 @@ Every deploy creates a new Cloud Run revision. To roll back dev, route traffic t
 
 ```sh
 gcloud run services update-traffic <service> --to-revisions=<revision>=100 --region=<region> --project=<project id>
+```
+
+That pins traffic to the old revision: the next deploy then creates a revision that gets no traffic, and the api's version check fails while web and the worker keep serving the old one. Once the fix is merged and deployed, send traffic back to the latest revision of every service you pinned:
+
+```sh
+gcloud run services update-traffic <service> --to-latest --region=<region> --project=<project id>
 ```
