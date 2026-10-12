@@ -136,16 +136,15 @@ export function TemplatesPanel({
                       {t.category === null ? null : ` · ${t.category}`}
                       {t.statusReason === null
                         ? null
-                        : ` · ${
-                            Object.hasOwn(
+                        : ` · ${intl.formatMessage({
+                            // A code the app has no words for reads as a generic one, never raw.
+                            id: Object.hasOwn(
                               intl.messages,
                               `connections.templates.reason.${t.statusReason}`,
                             )
-                              ? intl.formatMessage({
-                                  id: `connections.templates.reason.${t.statusReason}`,
-                                })
-                              : t.statusReason
-                          }`}
+                              ? `connections.templates.reason.${t.statusReason}`
+                              : 'connections.templates.reason.generic',
+                          })}`}
                     </span>
                     {t.spec === null ? null : (
                       <span className="mo-list-item__meta">
