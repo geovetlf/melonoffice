@@ -95,3 +95,44 @@ describe.runIf(emulatorHost)('FirestoreWorkflowScheduleRepository.lapsedOff (emu
     expect(seen).toEqual(Array.from({ length: 45 }, (_, i) => idOf(i + 1)));
   });
 });
+
+/** An on schedule whose next run is `nextRunAt`. */
+async function putNext(
+  repository: FirestoreWorkflowScheduleRepository,
+  workflowId: WorkflowId,
+  nextRunAt: string,
+): Promise<void> {
+  await repository.update(ORGANIZATION, workflowId, () => ({
+    schedule: { ...scheduleOf(workflowId, 'on', CLAIMED_AT), nextRunAt: nextRunAt as IsoTimestamp },
+    events: [],
+  }));
+}
+
+// The recovery's read (`due`, ADR-0185): the on schedules whose next run is due, oldest first. A
+// schedule that is off has no next run, so it is never in the range and never takes a place in a page.
+describe.runIf(emulatorHost)('FirestoreWorkflowScheduleRepository.due (emulator)', () => {
+  const CUTOFF = '2026-09-28T12:00:00.000Z' as IsoTimestamp;
+
+  it('lists the on schedules whose next run is due, oldest run first, and leaves out the rest', async () => {
+    const repository = new FirestoreWorkflowScheduleRepository(emulatorFirestore());
+    await putNext(repository, idOf(1), '2026-09-28T09:00:00.000Z');
+    await putNext(repository, idOf(2), '2026-09-27T07:00:00.000Z');
+    // Not due yet: its next run is after the cutoff.
+    await putNext(repository, idOf(3), '2026-09-28T13:00:00.000Z');
+    await put(repository, idOf(4), 'off', CLAIMED_AT);
+
+    const due = await repository.due(CUTOFF, 10);
+    expect(due.map((s) => s.workflowId)).toEqual([idOf(2), idOf(1)]);
+  });
+
+  it('holds at most the limit, and many schedules that are off do not take its places', async () => {
+    const repository = new FirestoreWorkflowScheduleRepository(emulatorFirestore());
+    for (let n = 1; n <= 25; n += 1) await put(repository, idOf(n), 'off', CLAIMED_AT);
+    await putNext(repository, idOf(901), '2026-09-28T09:00:00.000Z');
+    await putNext(repository, idOf(902), '2026-09-27T07:00:00.000Z');
+    await putNext(repository, idOf(903), '2026-09-27T08:00:00.000Z');
+
+    const due = await repository.due(CUTOFF, 2);
+    expect(due.map((s) => s.workflowId)).toEqual([idOf(902), idOf(903)]);
+  });
+});
