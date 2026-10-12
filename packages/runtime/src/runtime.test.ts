@@ -998,8 +998,8 @@ describe.each(STORES)('runtime advance() with storage in %s', (storage, createSt
     write.mockRestore();
     expect(await w.nodeOf(execution.id, 'n0')).toMatchObject({ status: 'completed' });
     expect((await w.jobs.get(w.tenantA, claim.job.id)).state).toBe('leased');
-    // While the lease is live, no other worker takes the job over, finished node or not.
-    expect(await codeOf(w.jobs.acquire(claim.job.id, 'worker-2'))).toBe('node_not_runnable');
+    // While the lease is live the job is held, not refused for good: the queue delivers it again.
+    expect(await codeOf(w.jobs.acquire(claim.job.id, 'worker-2'))).toBe('job_lease_held');
     // The lease runs out and the queue delivers the job again: n0 is done, so what is left is to queue n1.
     w.advanceClock(LEASE_MS + 1);
     const takeover = await w.jobs.acquire(claim.job.id, 'worker-2');
