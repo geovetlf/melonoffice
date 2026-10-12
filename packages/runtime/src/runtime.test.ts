@@ -440,6 +440,8 @@ describe.each(STORES)('runtime advance() with storage in %s', (storage, createSt
     });
 
     const dispatched: JobId[] = [];
+    // The next hand-offs to the transport that fail, as a network blip would.
+    let handOffsToFail = 0;
     const executionsFor = (requestId: string) =>
       createExecutionService({
         repository: stores.executions,
@@ -544,7 +546,15 @@ describe.each(STORES)('runtime advance() with storage in %s', (storage, createSt
       services,
       ...(options.work === 'none' ? {} : { work: options.work ?? work }),
       ...(options.verifier === 'none' ? {} : { verifier: options.verifier ?? verifier }),
-      dispatcher: { dispatch: async (id) => void dispatched.push(id) },
+      dispatcher: {
+        dispatch: async (id) => {
+          if (handOffsToFail > 0) {
+            handOffsToFail -= 1;
+            throw new Error('transport down');
+          }
+          dispatched.push(id);
+        },
+      },
       ...(options.outputs === undefined ? {} : { outputs: options.outputs }),
       ...(options.onStopped === undefined ? {} : { onStopped: options.onStopped }),
       ...(options.onEnded === undefined ? {} : { onEnded: options.onEnded }),
@@ -657,6 +667,9 @@ describe.each(STORES)('runtime advance() with storage in %s', (storage, createSt
       providerCalls,
       credits,
       dispatched,
+      failHandOffs: (count: number) => {
+        handOffsToFail = count;
+      },
       started,
       get,
       nodeOf,
@@ -1465,6 +1478,34 @@ describe.each(STORES)('runtime advance() with storage in %s', (storage, createSt
     });
     expect((await w.get(execution.id)).status).toBe('failed');
     expect(w.providerCalls).toHaveLength(1);
+  });
+
+  it('36c. a hand-off that fails is tried again, and the next job is still handed over', async () => {
+    const w = await world();
+    const execution = await w.started([
+      { id: 'n0', tool: 'lookup' },
+      { id: 'n1', tool: 'lookup', dependsOn: ['n0'] },
+    ]);
+    const claim = await firstClaim(w, execution);
+    w.failHandOffs(2);
+    const result = await w.runtime.advance(claim.lease);
+    expect(result.nextJobId).toBe(jobIdFor(w.orgA, execution.id, 'n1', 1));
+    expect(w.dispatched).toContain(result.nextJobId);
+  });
+
+  it('36d. a hand-off that keeps failing is tried three times, then the job stays queued', async () => {
+    const w = await world();
+    const execution = await w.started([
+      { id: 'n0', tool: 'lookup' },
+      { id: 'n1', tool: 'lookup', dependsOn: ['n0'] },
+    ]);
+    const claim = await firstClaim(w, execution);
+    w.failHandOffs(3);
+    const result = await w.runtime.advance(claim.lease);
+    // The first node is done and the next job exists, but the transport never took it.
+    expect(result).toMatchObject({ outcome: 'progressed', code: 'node_completed' });
+    expect(result.nextJobId).toBe(jobIdFor(w.orgA, execution.id, 'n1', 1));
+    expect(w.dispatched).not.toContain(result.nextJobId);
   });
 
   it('37. skips a node the work before it made unnecessary, and never runs it', async () => {
