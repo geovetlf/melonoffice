@@ -23,7 +23,7 @@ The Guardian is part of `createAgentTaskVerifier`, not a second verifier. Once t
 | `tool_failed` (a tool step of the task failed)                                                                                           | warning                                         | `review_tool_error`     |
 | `missing_information` (the agent listed what it still needs)                                                                             | info                                            | `provide_missing_data`  |
 
-The report is kept once per execution as the agent output `guardian` (codes, ids, figures as written). A later verification reads it back. The verification gets an `agent_guardian` check, which **fails only on a critical finding**, just as a failed AI review fails it. The Guardian never rewrites the answer and never runs or undoes anything. If Company Brain cannot be read, figures are left unchecked and the task is not failed.
+The report is kept once per execution as the agent output `guardian` (codes, ids, figures as written). A later verification reads it back. The verification gets an `agent_guardian` check, which **fails only on a critical finding**, just as a failed AI review fails it. The Guardian never rewrites the answer and never runs or undoes anything. If Company Brain cannot be read, figures are left unchecked and the task is not failed. Such a report is returned but not kept, so a later verification checks the figures again instead of keeping an unchecked verdict.
 
 ### 2. The person is told
 

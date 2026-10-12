@@ -786,9 +786,15 @@ export function createAgentTaskVerifier(options: {
     const kept = await outputs.find(tenant, execution.id, GUARDIAN_NODE);
     const previous = kept === undefined ? undefined : parseGuardianReport(kept.output.structured);
     if (previous !== undefined) return previous;
-    // Company Brain that cannot be read now leaves the figures unchecked, never the task failed.
-    const figures = await guardian.figures?.(tenant, execution).catch(() => undefined);
-    const secrets = await guardian.secrets?.(tenant, execution).catch(() => undefined);
+    // Company Brain that cannot be read now leaves the figures unchecked, never the task failed. Such a
+    // report is returned but not kept: the next verify checks the figures again, instead of keeping this one.
+    const unread = { any: false };
+    const unreadSource = () => {
+      unread.any = true;
+      return undefined;
+    };
+    const figures = await guardian.figures?.(tenant, execution).catch(unreadSource);
+    const secrets = await guardian.secrets?.(tenant, execution).catch(unreadSource);
     const report = guardAnswer({
       answer: answer.answer,
       missing: answer.missing,
@@ -797,14 +803,16 @@ export function createAgentTaskVerifier(options: {
       ...(secrets === undefined ? {} : { secrets }),
       mutating: guardian.mutating,
     });
-    await guardian
-      .record(tenant, {
-        executionId: execution.id,
-        nodeId: GUARDIAN_NODE as ExecutionNodeId,
-        requestId: `guardian-${execution.id}`,
-        output: { structured: report },
-      })
-      .catch(() => undefined);
+    if (!unread.any) {
+      await guardian
+        .record(tenant, {
+          executionId: execution.id,
+          nodeId: GUARDIAN_NODE as ExecutionNodeId,
+          requestId: `guardian-${execution.id}`,
+          output: { structured: report },
+        })
+        .catch(() => undefined);
+    }
     return report;
   }
 

@@ -903,6 +903,39 @@ describe('Agent Guardian (G-2, ADR-0132)', () => {
     return { w, done, verifier, reads: () => reads };
   }
 
+  it('a Brain that cannot be read now is not kept as checked: the next verify compares the figures', async () => {
+    const t = await setup('Publica que el Combo Familiar cuesta S/ 30.');
+    let attempts = 0;
+    const verifier = createAgentTaskVerifier({
+      outputs: t.w.outputs,
+      guardian: {
+        record: (tenant, input) => t.w.outputs.record(tenant, input),
+        figures: async () => {
+          attempts += 1;
+          if (attempts === 1) throw new Error('brain unavailable');
+          return [price(25, true)];
+        },
+        mutating: () => true,
+      },
+    });
+    // Unreadable now: the task is not failed, the figures are left unchecked, and nothing is kept.
+    const first = await verifier.verify(t.w.runtime, t.done);
+    expect(first?.verification.nodes[0]?.checks[1]).toMatchObject({
+      code: 'agent_guardian',
+      result: 'passed',
+    });
+    expect(await t.w.outputs.find(t.w.runtime, t.done.id, GUARDIAN_NODE)).toBeUndefined();
+    // Readable on the next verify: the figure disagrees with the confirmed fact, and that verdict is kept.
+    const second = await verifier.verify(t.w.runtime, t.done);
+    expect(second?.verification.nodes[0]?.checks[1]).toMatchObject({
+      code: 'agent_guardian',
+      result: 'failed',
+    });
+    const kept = await t.w.outputs.find(t.w.runtime, t.done.id, GUARDIAN_NODE);
+    expect(parseGuardianReport(kept?.output.structured)?.findings).toHaveLength(1);
+    expect(attempts).toBe(2);
+  });
+
   it('passes a clean answer, keeps its report and never checks twice', async () => {
     const t = await setup('El Combo Familiar cuesta S/ 25. ¿Lo publico?');
     const first = await t.verifier.verify(t.w.runtime, t.done);

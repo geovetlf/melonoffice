@@ -82,6 +82,35 @@ describe('a recurrence (ADR-0185)', () => {
     expect(next(monthly, 'UTC', '2027-01-28T10:00:00Z')).toBe('2027-02-28T09:00:00.000Z');
   });
 
+  it('finds the next occurrence across a year end, a leap day and the daylight-saving edges', () => {
+    // New Year's Eve in Auckland is already 1 January there at 12:00 UTC: the day is the business's own.
+    expect(
+      next({ frequency: 'daily', time: '09:00' }, 'Pacific/Auckland', '2026-12-31T12:00:00Z'),
+    ).toBe('2026-12-31T20:00:00.000Z');
+    expect(
+      next({ frequency: 'monthly', time: '09:00', dayOfMonth: 1 }, 'UTC', '2026-12-15T10:00:00Z'),
+    ).toBe('2027-01-01T09:00:00.000Z');
+    // 2026-12-31 is a Thursday: the next Monday is in the new year.
+    expect(
+      next({ frequency: 'weekly', time: '09:00', weekdays: [1] }, 'UTC', '2026-12-31T10:00:00Z'),
+    ).toBe('2027-01-04T09:00:00.000Z');
+    // 2028 is a leap year, and 29 February 2028 is a Tuesday.
+    expect(
+      next({ frequency: 'weekly', time: '09:00', weekdays: [2] }, 'UTC', '2028-02-28T10:00:00Z'),
+    ).toBe('2028-02-29T09:00:00.000Z');
+    // Madrid skips 02:00 to 03:00 on 2026-03-29: a 02:30 that day moves forward with the clock, to 03:30 CEST.
+    expect(
+      next({ frequency: 'daily', time: '02:30' }, 'Europe/Madrid', '2026-03-28T12:00:00Z'),
+    ).toBe('2026-03-29T01:30:00.000Z');
+    // Madrid repeats 02:00 to 03:00 on 2026-10-25: 02:30 is planned once, at its first occurrence.
+    expect(
+      next({ frequency: 'daily', time: '02:30' }, 'Europe/Madrid', '2026-10-24T23:00:00Z'),
+    ).toBe('2026-10-25T00:30:00.000Z');
+    expect(
+      next({ frequency: 'daily', time: '02:30' }, 'Europe/Madrid', '2026-10-25T00:30:00Z'),
+    ).toBe('2026-10-26T01:30:00.000Z');
+  });
+
   it('names a recurrence by a short code for audit', () => {
     expect(recurrenceCode(checkRecurrence({ frequency: 'daily', time: '09:00' }))).toBe(
       'daily-0900',

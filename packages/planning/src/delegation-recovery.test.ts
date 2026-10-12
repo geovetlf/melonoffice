@@ -1194,6 +1194,49 @@ function walkingSweep(
 }
 
 describe('Sweep walk over the abandoned plans, a bounded pass at a time (ADR-0187, decision 9)', () => {
+  it('a creator whose membership cannot be read is logged and kept for a later round, never silently skipped', async () => {
+    const w = await world();
+    const plan = must((await abandonedPlansOfAlice(w, 1))[0]);
+    const warnings: { message: string; fields?: Record<string, unknown> }[] = [];
+    const logger = {
+      warn: (message: string, fields?: Record<string, unknown>) => {
+        warnings.push({ message, ...(fields === undefined ? {} : { fields }) });
+      },
+    };
+    const closed: string[] = [];
+    const sweep = (tenancy: typeof w.tenancy) =>
+      createAbandonedRecovery({
+        plans: w.planRepository,
+        conductor: {
+          closeAbandoned: (tenant, planId, input) => {
+            closed.push(planId);
+            return w.delegation.closeAbandoned(tenant, planId, input);
+          },
+        },
+        tenancy,
+        leaseMs: LEASE_MS,
+        now: LATER,
+        logger,
+      });
+    // The membership read fails for a reason other than a missing membership (decision 7 leaves those plans alone).
+    const unreadable = Object.assign(Object.create(w.tenancy) as typeof w.tenancy, {
+      findMembership: async () => {
+        throw new Injected('membership');
+      },
+    });
+    expect((await sweep(unreadable).recover()).closed).toBe(0);
+    expect(closed).toEqual([]);
+    expect(warnings).toEqual([
+      {
+        message: 'abandoned plan recovery could not read the membership',
+        fields: { planId: plan.id, code: 'error' },
+      },
+    ]);
+    // The plan is still abandoned: once the store reads, the next pass closes its execution.
+    expect((await sweep(w.tenancy).recover()).closed).toBe(1);
+    expect(closed).toEqual([plan.id]);
+  });
+
   it('a pass reads its pages and stops, and the next pass resumes after the last id it read', async () => {
     const w = await world();
     const plans = await abandonedPlansOfAlice(w, 5);

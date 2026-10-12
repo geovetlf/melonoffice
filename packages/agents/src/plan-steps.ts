@@ -8,7 +8,11 @@ import type {
   PlanStep,
   PlanVersion,
 } from '@melonoffice/domain';
-import type { AgentOutputStore, VerificationInput } from '@melonoffice/execution';
+import {
+  isExecutionError,
+  type AgentOutputStore,
+  type VerificationInput,
+} from '@melonoffice/execution';
 import { planStepOf, stepExecutionsOf, type PlanRepository } from '@melonoffice/planning';
 import type { SkillCatalogue } from '@melonoffice/specialists';
 import { isResolvedTenant, type TenantContext } from '@melonoffice/tenancy';
@@ -373,6 +377,15 @@ export interface PlanResults {
 }
 
 /**
+ * A step whose execution does not exist has not started. Any other read failure is not absence: it
+ * reaches the caller, so a step that is running is never reported as not started.
+ */
+function absentWhenNotFound(error: unknown): undefined {
+  if (isExecutionError(error) && error.code === 'execution_not_found') return undefined;
+  throw error;
+}
+
+/**
  * What the agents of a plan answered (ADR-0117), read as the person: the plan with `plan.read`,
  * each step's execution with `execution.read`, and only a completed step's verified answer. GIA
  * summarizes this for the person; nothing here runs or changes anything.
@@ -400,7 +413,7 @@ export async function readPlanResults(
         const child =
           childId === undefined
             ? undefined
-            : await ports.executions.get(tenant, childId).catch(() => undefined);
+            : await ports.executions.get(tenant, childId).catch(absentWhenNotFound);
         const node = child?.nodes.find((n) => n.id === step.id);
         const record =
           child?.status === 'completed' && node?.status === 'completed'
