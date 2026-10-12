@@ -943,6 +943,35 @@ describe('Agent Guardian (G-2, ADR-0132)', () => {
     expect(attempts).toBe(2);
   });
 
+  it('a secret in the answer still fails the Guardian check when the Brain cannot be read: the critical finding stays, with the notice', async () => {
+    const t = await setup(`Usa la clave api_key: sk-${'7'.repeat(24)} para el Combo Familiar.`);
+    const verifier = createAgentTaskVerifier({
+      outputs: t.w.outputs,
+      guardian: {
+        record: (tenant, input) => t.w.outputs.record(tenant, input),
+        figures: async () => {
+          throw new Error('brain unavailable');
+        },
+        secrets: async () => {
+          throw new Error('brain unavailable');
+        },
+        mutating: () => true,
+      },
+    });
+    // The pattern is in the answer itself, so it does not need the Brain: the check fails even though it is unchecked.
+    const result = await verifier.verify(t.w.runtime, t.done);
+    expect(result?.verification.nodes[0]?.checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'agent_guardian', result: 'failed' }),
+      ]),
+    );
+    const kept = await t.w.outputs.find(t.w.runtime, t.done.id, GUARDIAN_NODE);
+    expect(parseGuardianReport(kept?.output.structured)?.findings).toEqual([
+      expect.objectContaining({ code: 'secret_disclosed', severity: 'critical' }),
+      expect.objectContaining({ code: 'organization_unchecked', severity: 'info' }),
+    ]);
+  });
+
   it('passes a clean answer, keeps its report and never checks twice', async () => {
     const t = await setup('El Combo Familiar cuesta S/ 25. ¿Lo publico?');
     const first = await t.verifier.verify(t.w.runtime, t.done);
