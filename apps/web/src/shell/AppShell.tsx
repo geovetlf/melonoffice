@@ -27,7 +27,7 @@ import { createOpportunitiesClient } from '../opportunities/opportunitiesClient.
 import { HomePage } from '../home/HomePage.js';
 import { useAuth, useCan } from '../identity/AuthProvider.js';
 import type { LocaleProps } from '../identity/pages.js';
-import { usePath } from '../identity/router.js';
+import { usePath, useSearch } from '../identity/router.js';
 import { GiaChatProvider } from '../gia/GiaChat.js';
 import { GiaQuickAsk } from '../gia/GiaQuickAsk.js';
 import { createGiaClient } from '../gia/giaClient.js';
@@ -116,6 +116,9 @@ export function AppShell(locale: LocaleProps) {
   // Stopping a plan or an agent task under way (ADR-0029).
   const canCancelExecutions = useCan('execution.cancel');
   const route = parseRoute(usePath());
+  // A page reads what it was opened with (`openedWith`) when it mounts: a link to the same page
+  // with another query opens it again, so the contact, plan or follow-up it names is shown.
+  const search = useSearch();
   const [menuOpen, setMenuOpen] = useState(false);
   // The platform AI view (ADR-0082) is the MelonOffice platform administrator's, never a
   // company role: the server says who that is, and refuses everyone else whatever this shows.
@@ -671,7 +674,7 @@ export function AppShell(locale: LocaleProps) {
                     id="main"
                     tabIndex={-1}
                     className="app__main"
-                    key={route.kind === 'office' ? route.slug : route.kind}
+                    key={`${route.kind === 'office' ? route.slug : route.kind}${search}`}
                   >
                     {page}
                   </main>

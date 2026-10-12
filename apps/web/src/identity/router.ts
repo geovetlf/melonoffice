@@ -18,10 +18,19 @@ function subscribe(listener: () => void): () => void {
 }
 
 const currentPath = () => globalThis.location.pathname;
+const currentSearch = () => globalThis.location.search;
 
 /** The current path; the component re-renders when it changes. */
 export function usePath(): string {
   return useSyncExternalStore(subscribe, currentPath, () => '/');
+}
+
+/**
+ * The current query (`?contact=…`); the component re-renders when it changes. A link to the page
+ * already open with another query (a contact, a plan) is a navigation too.
+ */
+export function useSearch(): string {
+  return useSyncExternalStore(subscribe, currentSearch, () => '');
 }
 
 /** Only paths inside this app: never another origin (`//host`) or a scheme. */
@@ -31,7 +40,7 @@ export function isAppPath(path: string): boolean {
 
 export function navigate(path: string, { replace = false } = {}): void {
   const target = isAppPath(path) ? path : '/';
-  if (target === currentPath()) return;
+  if (target === currentPath() + currentSearch()) return;
   if (replace) globalThis.history.replaceState(null, '', target);
   else globalThis.history.pushState(null, '', target);
   listeners.forEach((listener) => listener());
