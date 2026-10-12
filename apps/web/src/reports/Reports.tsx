@@ -95,7 +95,6 @@ export function ReportsSection({
             (department === undefined || m.owner === department),
         )
       : [];
-  if (department !== undefined && metrics.status === 'ready' && shown.length === 0) return null;
   return (
     <section className="mo-panel mo-page-section reports" aria-labelledby={titleId}>
       <header className="mo-page-section__header">
