@@ -2,6 +2,7 @@
 
 - Status: Proposed
 - Date: 2026-10-03
+- Amended: 2026-10-12, complete reads. The Guardian reads the Company Brain page by page, in document-id order, at most `LIMITS.completeReadPages` (ten) pages of `LIMITS.readWindow` (1000) items: the bounds the sweep uses (ADR-0187, decision 9). A Brain of 10,000 items or more is refused as incomplete, and no report is kept; below that, the figures and secrets are checked against all of it. Geovet's answer «Paginar y mostrar» to the card in the project chat, relayed by the coordinator on 2026-10-12. Before this amendment a Brain of 1000 items or more was refused.
 - Builds on: [ADR-0131](0131-agent-audit.md) (team review, figure checks), [ADR-0117](0117-agent-memory-handoffs-notifications.md) (optional AI review, notifications, trace), [ADR-0029](0029-runtime-guards.md) (task verification), [ADR-0066](0066-event-system.md) (events), [ADR-0084](0084-agents-propose-and-schedule.md) (skill upgrades)
 - Decision: Geovet, 2026-10-03 18:52Z, "Autorización: continuar auditoría MelonOffice", block G-2 Agent Guardian, right after G-1. Its rule: WARNING → EVIDENCE → SEVERITY → RECOMMENDATION, and nothing critical is changed automatically.
 - Terraform: none. Firestore: no new collection, field or index. Nothing is migrated. No model is called and no credit is used.
