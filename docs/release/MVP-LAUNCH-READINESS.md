@@ -162,6 +162,8 @@ Decisions:
 - The Agent Guardian keeps a report built while the Brain was unreadable (sent to the engine thread).
 - Other raw codes may still show in the partner console, the audit trail and approvals.
 - A webhook delivery whose audit write fails is not audited again on the provider's retry.
+- UX gaps found and not fixed in the sprint: every refusal of team work reads "not now"; "review the plan" opens the plan list, not the plan; a department that fails to load looks like one that does not exist; a configuration failure looks like "not configured"; some screen-reader labels are hard-coded in English; a few panels keep desktop minimum widths on phones.
+- A disabled NVIDIA secret binding in Terraform would break the planner if it were applied as is; the operator's Workload Identity is broader than CD needs; `/health` does not say which optional parts are configured.
 
 ## Rollback
 
