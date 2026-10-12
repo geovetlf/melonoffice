@@ -1,7 +1,8 @@
 import { I18nProvider } from '@melonoffice/i18n';
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../App.js';
+import { navigate } from '../identity/router.js';
 import { createServices } from '../identity/services.js';
 import { REFRESH_KEY } from '../identity/session.js';
 import { API, KEY, fakeBackend, memoryStore } from '../identity/testing.js';
@@ -322,6 +323,51 @@ describe('GIA drafts a workflow in her chat (ADR-0171)', () => {
     );
     expect(globalThis.location.pathname).toBe('/automations');
     expect(posts(backend, '/org_1/workflows')).toHaveLength(0);
+  });
+
+  it('keeps the saved draft when the person leaves the chat and comes back: no new draft, no second save', async () => {
+    const backend = open('/gia', (b) => {
+      b.options.workflowDrafts = [READY];
+    });
+    const chat = within(await screen.findByRole('region', { name: 'Talk to GIA' }));
+    fireEvent.change(chat.getByRole('textbox', { name: 'Your message to GIA' }), {
+      target: { value: 'Recupera a los clientes inactivos' },
+    });
+    fireEvent.click(chat.getByRole('button', { name: 'Prepare as an automation' }));
+    const card = within(await chat.findByRole('region', { name: 'Recuperar clientes inactivos' }));
+    fireEvent.click(card.getByRole('button', { name: 'Save draft' }));
+    await chat.findByText(/“Recuperar clientes inactivos” was saved as a draft/);
+
+    act(() => navigate('/automations'));
+    expect(screen.queryByRole('region', { name: 'Talk to GIA' })).toBeNull();
+    act(() => navigate('/gia'));
+    const again = within(await screen.findByRole('region', { name: 'Talk to GIA' }));
+    expect(
+      await again.findByText(/“Recuperar clientes inactivos” was saved as a draft/),
+    ).toBeTruthy();
+    expect(again.queryByRole('button', { name: 'Save draft' })).toBeNull();
+    expect(posts(backend, '/workflows/draft')).toHaveLength(1);
+    expect(posts(backend, '/org_1/workflows')).toHaveLength(1);
+  });
+
+  it('a failed save keeps the draft, and trying again saves it without planning it again', async () => {
+    const backend = open('/gia', (b) => {
+      b.options.workflowDrafts = [READY];
+      b.options.workflowSaveFailures = 1;
+    });
+    const chat = within(await screen.findByRole('region', { name: 'Talk to GIA' }));
+    fireEvent.change(chat.getByRole('textbox', { name: 'Your message to GIA' }), {
+      target: { value: 'Recupera a los clientes inactivos' },
+    });
+    fireEvent.click(chat.getByRole('button', { name: 'Prepare as an automation' }));
+    const card = within(await chat.findByRole('region', { name: 'Recuperar clientes inactivos' }));
+    fireEvent.click(card.getByRole('button', { name: 'Save draft' }));
+    fireEvent.click(await chat.findByRole('button', { name: 'Try again' }));
+    expect(
+      await chat.findByText(/“Recuperar clientes inactivos” was saved as a draft/),
+    ).toBeTruthy();
+    expect(posts(backend, '/workflows/draft')).toHaveLength(1);
+    expect(posts(backend, '/org_1/workflows')).toHaveLength(2);
   });
 
   it('offers no automation draft to a role that may not write workflows', async () => {

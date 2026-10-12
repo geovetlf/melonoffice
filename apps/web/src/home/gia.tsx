@@ -68,7 +68,8 @@ export function GiaCommandBar({
       setNotice(true);
       return;
     }
-    if (text.trim() === '') return;
+    // While GIA is still answering, the words stay in the bar instead of being dropped.
+    if (text.trim() === '' || chat.pending) return;
     chat.send(text);
     setText('');
     navigate(paths.gia());

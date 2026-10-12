@@ -16,8 +16,10 @@ import { FollowUpForm } from '../followUps/FollowUps.js';
 import type { FollowUpView, FollowUpsClient } from '../followUps/followUpsClient.js';
 import { navigate } from '../identity/router.js';
 import { errorKey, MAX_REQUEST, newRequestKey } from '../office/AgentTasks.js';
+import { useCreditsSpent } from '../office/OfficeData.js';
 import type { AgentTaskView, AgentTasksClient } from '../office/agentTasksClient.js';
 import { formatMoney } from '../opportunities/OpportunitiesSection.js';
+import { createKeptStore, useKept, type KeptStore } from '../shell/keptState.js';
 import { paths } from '../shell/routes.js';
 import {
   handOverDraft,
@@ -80,6 +82,12 @@ export interface GiaChat {
    */
   readonly draftWorkflow?: (text: string, options?: { readonly echo?: boolean }) => void;
   readonly workflows?: DraftClient;
+  /**
+   * What the person already did with each entry (a proposal confirmed, a draft saved) and its
+   * request key, kept for as long as the chat: leaving GIA's page and coming back never offers a
+   * confirmed proposal again, and a retry stays the same request.
+   */
+  readonly kept?: KeptStore;
 }
 
 const UNAVAILABLE: GiaChat = {
@@ -115,6 +123,8 @@ export function GiaChatProvider({
   const locale = intl.locale.toLowerCase().startsWith('es') ? 'es' : 'en';
   const [entries, setEntries] = useState<readonly GiaChatEntry[]>([]);
   const [pending, setPending] = useState(false);
+  const [kept] = useState(createKeptStore);
+  const creditsSpent = useCreditsSpent();
 
   const send = useCallback(
     (raw: string) => {
@@ -149,9 +159,13 @@ export function GiaChatProvider({
                 },
           ]);
         })
-        .finally(() => setPending(false));
+        .finally(() => {
+          setPending(false);
+          // An answer, and some refusals, spent credits: the balance shown is read again.
+          creditsSpent();
+        });
     },
-    [client, entries, pending, locale],
+    [client, entries, pending, locale, creditsSpent],
   );
 
   // The card asks the server itself; the chat only keeps the person's words and the card.
@@ -176,12 +190,13 @@ export function GiaChatProvider({
             entries,
             pending,
             send,
+            kept,
             ...(followUps === undefined ? {} : { followUps }),
             ...(agentTasks === undefined ? {} : { agentTasks }),
             ...(team === undefined ? {} : { team }),
             ...(workflows === undefined ? {} : { workflows, draftWorkflow }),
           },
-    [client, entries, pending, send, followUps, agentTasks, team, workflows, draftWorkflow],
+    [client, entries, pending, send, kept, followUps, agentTasks, team, workflows, draftWorkflow],
   );
   return <GiaChatContext.Provider value={value}>{children}</GiaChatContext.Provider>;
 }
@@ -191,6 +206,7 @@ export const useGiaChat = () => useContext(GiaChatContext);
 const ERRORS: Readonly<Record<GiaFailure, string>> = {
   credits: 'gia.chat.error.credits',
   not_available: 'gia.chat.error.notAvailable',
+  denied: 'gia.chat.error.denied',
   rate_limited: 'gia.chat.error.rateLimited',
   failed: 'gia.chat.error.failed',
 };
@@ -272,7 +288,7 @@ export function GiaConversation() {
                 <p className="gia-chat__text">{entry.text}</p>
               </>
             ) : entry.role === 'gia' ? (
-              <GiaReply answer={entry.answer} asked={entry.asked} />
+              <GiaReply entryId={entry.id} answer={entry.answer} asked={entry.asked} />
             ) : entry.role === 'workflow' ? (
               chat.workflows === undefined ? null : (
                 <>
@@ -284,6 +300,9 @@ export function GiaConversation() {
                     client={chat.workflows}
                     intent={entry.intent}
                     onAdjust={handOverDraft}
+                    {...(chat.kept === undefined
+                      ? {}
+                      : { kept: { store: chat.kept, key: entry.id } })}
                   />
                 </>
               )
@@ -424,9 +443,20 @@ function linkOf(
  * A follow-up GIA prepared (C5), for the person to confirm: nothing is scheduled until they do,
  * and the chat says it is scheduled only once the API answered that it is.
  */
-function FollowUpProposal({ answer }: { readonly answer: GiaAnswerView }) {
+function FollowUpProposal({
+  entryId,
+  answer,
+}: {
+  readonly entryId: string;
+  readonly answer: GiaAnswerView;
+}) {
   const chat = useGiaChat();
-  const [state, setState] = useState<'open' | 'discarded' | FollowUpView>('open');
+  const [state, setState] = useKept<'open' | 'discarded' | FollowUpView>(
+    chat.kept,
+    `${entryId}:followUp`,
+    () => 'open',
+  );
+  const [requestKey] = useKept(chat.kept, `${entryId}:followUpKey`, newRequestKey);
   const proposal = answer.proposedFollowUp;
   if (proposal === null) return null;
   if (chat.followUps === undefined) {
@@ -484,6 +514,7 @@ function FollowUpProposal({ answer }: { readonly answer: GiaAnswerView }) {
           time: proposal.time,
         }}
         source="gia"
+        requestKey={requestKey}
         onDone={(created) => setState(created ?? 'discarded')}
       />
     </div>
@@ -595,14 +626,25 @@ function Priorities({ answer }: { readonly answer: GiaAnswerView }) {
   );
 }
 
-function AgentTaskProposal({ answer }: { readonly answer: GiaAnswerView }) {
+function AgentTaskProposal({
+  entryId,
+  answer,
+}: {
+  readonly entryId: string;
+  readonly answer: GiaAnswerView;
+}) {
   const chat = useGiaChat();
   const proposal = answer.proposedAgentTask;
   const [text, setText] = useState(proposal?.request ?? '');
-  const [state, setState] = useState<'open' | 'sending' | 'discarded' | AgentTaskView>('open');
+  const [state, setState] = useKept<'open' | 'sending' | 'discarded' | AgentTaskView>(
+    chat.kept,
+    `${entryId}:agentTask`,
+    () => 'open',
+  );
   const [error, setError] = useState<string>();
-  // One key per proposal: a retry after a failure is the same task, never a second one.
-  const key = useRef(newRequestKey());
+  // One key per proposal: a retry after a failure is the same task, never a second one, even
+  // after the person left GIA's page and came back.
+  const [key] = useKept(chat.kept, `${entryId}:agentTaskKey`, newRequestKey);
   if (proposal === null) return null;
   const name = proposal.agentName;
   if (chat.agentTasks === undefined) {
@@ -645,7 +687,7 @@ function AgentTaskProposal({ answer }: { readonly answer: GiaAnswerView }) {
     setState('sending');
     setError(undefined);
     try {
-      const task = await client.assign(proposal.agentId, request, key.current);
+      const task = await client.assign(proposal.agentId, request, key);
       // GIA goes to the agent she brought the work to, for as long as it is in its hands.
       giaEngagements.record({ taskId: task.id, agentId: proposal.agentId, at: Date.now() });
       setState(task);
@@ -776,13 +818,23 @@ export function TeamResult({ planId }: { readonly planId: string }) {
  * confirms. The Melon Agent Harness plans it; a plan waits for their approval in Automations.
  * Once the agents answered, GIA summarizes their answers on request. Nothing runs without them.
  */
-function TeamTaskProposal({ answer }: { readonly answer: GiaAnswerView }) {
+function TeamTaskProposal({
+  entryId,
+  answer,
+}: {
+  readonly entryId: string;
+  readonly answer: GiaAnswerView;
+}) {
   const chat = useGiaChat();
   const intl = useIntl();
   const proposal = answer.proposedTeamTask ?? null;
   const [text, setText] = useState(proposal?.request ?? '');
-  const [state, setState] = useState<'open' | 'sending' | 'discarded' | TeamStart>('open');
-  const key = useRef(newRequestKey());
+  const [state, setState] = useKept<'open' | 'sending' | 'discarded' | TeamStart>(
+    chat.kept,
+    `${entryId}:team`,
+    () => 'open',
+  );
+  const [key] = useKept(chat.kept, `${entryId}:teamKey`, newRequestKey);
   if (proposal === null) return null;
   const departments = proposal.departments
     .map((d) => {
@@ -840,7 +892,7 @@ function TeamTaskProposal({ answer }: { readonly answer: GiaAnswerView }) {
     if (request === '' || state === 'sending') return;
     setState('sending');
     const started = await team
-      .start(request, key.current)
+      .start(request, key)
       .catch((): TeamStart => ({ kind: 'not_started', reason: 'unavailable' }));
     setState(started);
   };
@@ -887,15 +939,21 @@ function TeamTaskProposal({ answer }: { readonly answer: GiaAnswerView }) {
  * planner, and saving and activating stay theirs.
  */
 function WorkflowOffer({
+  entryId,
   answer,
   asked,
 }: {
+  readonly entryId: string;
   readonly answer: GiaAnswerView;
   readonly asked: string | undefined;
 }) {
   const chat = useGiaChat();
   const intl = useIntl();
-  const [state, setState] = useState<'open' | 'taken' | 'dismissed'>('open');
+  const [state, setState] = useKept<'open' | 'taken' | 'dismissed'>(
+    chat.kept,
+    `${entryId}:workflowOffer`,
+    () => 'open',
+  );
   if (answer.workflowIntent !== true || asked === undefined || chat.draftWorkflow === undefined) {
     return null;
   }
@@ -934,9 +992,11 @@ function WorkflowOffer({
 }
 
 function GiaReply({
+  entryId,
   answer,
   asked,
 }: {
+  readonly entryId: string;
   readonly answer: GiaAnswerView;
   readonly asked?: string | undefined;
 }) {
@@ -1032,10 +1092,10 @@ function GiaReply({
         </ul>
       )}
       <Priorities answer={answer} />
-      <FollowUpProposal answer={answer} />
-      <AgentTaskProposal answer={answer} />
-      <TeamTaskProposal answer={answer} />
-      <WorkflowOffer answer={answer} asked={asked} />
+      <FollowUpProposal entryId={entryId} answer={answer} />
+      <AgentTaskProposal entryId={entryId} answer={answer} />
+      <TeamTaskProposal entryId={entryId} answer={answer} />
+      <WorkflowOffer entryId={entryId} answer={answer} asked={asked} />
       {place === undefined ? null : (
         <a
           className="gia-chat__go"

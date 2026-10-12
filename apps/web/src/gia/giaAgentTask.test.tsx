@@ -1,7 +1,8 @@
 import { I18nProvider } from '@melonoffice/i18n';
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../App.js';
+import { navigate } from '../identity/router.js';
 import { createServices } from '../identity/services.js';
 import { REFRESH_KEY } from '../identity/session.js';
 import { API, KEY, fakeBackend, memoryStore } from '../identity/testing.js';
@@ -102,6 +103,30 @@ describe('GIA prepares a task for an agent (AE-3)', () => {
     expect(giaEngagements.list()).toEqual([
       expect.objectContaining({ agentId: 'spec_lucia', taskId: expect.any(String) }),
     ]);
+  });
+
+  it('a task sent stays sent after the person leaves GIA and comes back: no second task', async () => {
+    const backend = open((b) => {
+      b.options.permissions.push('specialist.task');
+      b.options.gia = answer(PROPOSAL);
+    });
+    const chat = await ask();
+    fireEvent.click(await chat.findByRole('button', { name: 'Confirm and send' }));
+    await chat.findByText("Task sent to Lucía. Its answer will appear in the agent's place.", {
+      exact: false,
+    });
+    act(() => navigate('/automations'));
+    // GIA's page is gone: what she showed comes back only from what the chat kept.
+    expect(screen.queryByRole('region', { name: 'Talk to GIA' })).toBeNull();
+    act(() => navigate('/gia'));
+    const again = within(await screen.findByRole('region', { name: 'Talk to GIA' }));
+    expect(
+      await again.findByText("Task sent to Lucía. Its answer will appear in the agent's place.", {
+        exact: false,
+      }),
+    ).toBeTruthy();
+    expect(again.queryByRole('button', { name: 'Confirm and send' })).toBeNull();
+    expect(taskPosts(backend)).toHaveLength(1);
   });
 
   it('discarding sends nothing', async () => {
