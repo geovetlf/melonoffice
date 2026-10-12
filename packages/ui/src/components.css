@@ -942,6 +942,11 @@
   min-width: 0;
 }
 
+/* A badge placed straight in the column keeps its own width instead of stretching across it. */
+.mo-list-item__main > .mo-badge {
+  justify-self: start;
+}
+
 .mo-list-item__heading {
   display: flex;
   flex-wrap: wrap;
