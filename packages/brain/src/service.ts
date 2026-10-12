@@ -153,7 +153,7 @@ export interface DocumentResult extends IngestResult {
 
 export interface CompanyBrainService {
   summary(tenant: TenantContext): Promise<BrainSummary>;
-  /** `complete` refuses with `read_incomplete` when the Brain holds as many items as one read returns. */
+  /** `complete` reads every page, and refuses with `read_incomplete` a Brain too large for LIMITS.completeReadPages. */
   list(
     tenant: TenantContext,
     filter?: {
@@ -561,6 +561,31 @@ export function createCompanyBrain(options: CompanyBrainOptions): CompanyBrainSe
     });
   }
 
+  /**
+   * Every item of the organization, a page at a time in document-id order (ADR-0132, ADR-0187). A Brain of
+   * as many items as the pages take is refused before any page is read: a count decides it.
+   */
+  async function everyItem(organizationId: OrganizationId): Promise<readonly KnowledgeItem[]> {
+    if (
+      (await repository.countItems(organizationId)) >=
+      LIMITS.readWindow * LIMITS.completeReadPages
+    ) {
+      throw new BrainError('read_incomplete');
+    }
+    const items: KnowledgeItem[] = [];
+    let after: string | undefined;
+    for (let page = 0; page < LIMITS.completeReadPages; page += 1) {
+      const request =
+        after === undefined ? { limit: LIMITS.readWindow } : { after, limit: LIMITS.readWindow };
+      const read = await repository.pageItems(organizationId, request);
+      items.push(...read.items);
+      if (read.next === undefined) return items;
+      after = read.next;
+    }
+    // Every page allowed was full, so the end is not in sight: a Brain that large is not read whole.
+    throw new BrainError('read_incomplete');
+  }
+
   async function visibleItems(
     tenant: TenantContext,
     organizationId: OrganizationId,
@@ -569,12 +594,11 @@ export function createCompanyBrain(options: CompanyBrainOptions): CompanyBrainSe
     ceiling = ceilingOf(tenant),
     complete = false,
   ): Promise<KnowledgeItem[]> {
-    // The read window is the organization's first items, whatever their status or domain: the
-    // filters apply to that window only, so they run here, after it.
-    const stored = await repository.listItems(organizationId, {}, LIMITS.readWindow);
-    // A full window may hide items the filters would keep. A complete read refuses it, rather than
-    // taking the part it can see for all of them.
-    if (complete && stored.length >= LIMITS.readWindow) throw new BrainError('read_incomplete');
+    // A plain read takes the organization's first window, whatever its status or domain: the filters
+    // apply to that window only, so they run here, after it. A complete read takes every page instead.
+    const stored = complete
+      ? await everyItem(organizationId)
+      : await repository.listItems(organizationId, {}, LIMITS.readWindow);
     return stored.filter(
       (item) =>
         item.organizationId === organizationId &&
