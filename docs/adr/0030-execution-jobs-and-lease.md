@@ -3,6 +3,7 @@
 - Status: Proposed (Phase X6b, pending Geovet's review)
 - Date: 2026-09-27
 - Builds on: [ADR-0017](0017-user-persistence-in-firestore.md), [ADR-0020](0020-audit-log-foundation.md), [ADR-0024](0024-execution-foundation.md) and [ADR-0029](0029-runtime-guards.md)
+- Amended: 2026-10-12, a takeover after expiry of a job whose node is `completed` or `skipped` is accepted, not refused as `node_not_runnable`. A worker that stopped after its node finished, before the next job was queued, left the execution waiting for the 24-hour sweep. The takeover goes on to the runtime, which queues the next node if none is queued yet and finishes the job; the finished node never runs again. A live lease still refuses any takeover. Branch `claude/job-takeover-finished-node`.
 - Decisions it applies: D-X6-JOB (Geovet, 2026-09-27, X6b authorization)
 - Amended by: [ADR-0031](0031-runtime-advance.md): the lease holder's turn (`leased → leased`, same lease), `release` (`leased → queued`), and finishing the job of an execution the runtime itself completed or failed.
 - Open decisions it respects: D-7, D-12, D-27, credit reservation, CONFIDENTIAL/RESTRICTED data, sweeper, scheduler, refund policy, retention, specialist review, human review, final provider selection

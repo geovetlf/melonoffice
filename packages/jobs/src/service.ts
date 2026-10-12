@@ -37,6 +37,7 @@ import {
   isJobTerminal,
   isWorkerId,
   jobIdFor,
+  leaseIsLive,
   newJob,
   releaseJob,
   takeTurn,
@@ -462,7 +463,13 @@ export function createJobService({
           { workerId },
         );
       }
-      if (node.status !== 'pending' && node.status !== 'running') {
+      const at = now();
+      // A worker that stopped after its node finished, before the next job was queued, leaves this job
+      // lapsed. Its takeover goes on to the runtime, which queues the next node if none is queued yet
+      // (ADR-0030: a takeover after expiry). The finished node itself never runs again.
+      const lapsed = job.state === 'leased' && !leaseIsLive(job.lease, iso(at));
+      const finished = node.status === 'completed' || node.status === 'skipped';
+      if (node.status !== 'pending' && node.status !== 'running' && !(finished && lapsed)) {
         return deny(
           'execution.job_leased',
           job,
@@ -473,7 +480,6 @@ export function createJobService({
           },
         );
       }
-      const at = now();
       const leaseId = newLeaseId();
       let leased: ExecutionJob;
       try {

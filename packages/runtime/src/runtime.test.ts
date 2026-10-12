@@ -107,7 +107,7 @@ import {
 import { randomUUID } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { isRuntimeError } from './errors.js';
 import type {
   AgentOutputSink,
@@ -970,12 +970,44 @@ describe.each(STORES)('runtime advance() with storage in %s', (storage, createSt
     const result = await w.runtime.advance(claim.lease);
     expect(result.outcome).toBe('progressed');
     expect((await w.jobs.get(w.tenantA, claim.job.id)).state).toBe('leased');
-    // Another worker takes the job over: the node is done, so there is nothing to run.
-    expect(await codeOf(w.jobs.acquire(claim.job.id, 'worker-2'))).toBe('node_not_runnable');
+    // Another worker takes the job over: the node is done, so it is not run again. The takeover goes on
+    // to the runtime, which finds the next node already queued and finishes the job.
+    const takeover = await w.jobs.acquire(claim.job.id, 'worker-2');
+    expect(await w.runtime.advance(takeover.lease)).toMatchObject({
+      outcome: 'progressed',
+      nextJobId: jobIdFor(w.orgA, execution.id, 'n1', 1),
+    });
     expect(w.toolCalls).toHaveLength(1);
     expect(await w.nodeOf(execution.id, 'n0')).toMatchObject({ status: 'completed' });
     // The next node was queued before the lost finish, so no progress is lost.
     expect(result.nextJobId).toBe(jobIdFor(w.orgA, execution.id, 'n1', 1));
+  });
+
+  it('14b. a worker that stops after its node finished leaves a job the next delivery takes over, and that queues the next node', async () => {
+    const w = await world();
+    const execution = await w.started([
+      { id: 'n0', tool: 'lookup' },
+      { id: 'n1', tool: 'lookup', dependsOn: ['n0'] },
+    ]);
+    const claim = await firstClaim(w, execution);
+    // The worker stops after n0 is completed and before the job of n1 is written.
+    const write = vi
+      .spyOn(w.stores.jobs, 'create')
+      .mockRejectedValueOnce(new Error('worker stopped'));
+    await expect(w.runtime.advance(claim.lease)).rejects.toThrow('worker stopped');
+    write.mockRestore();
+    expect(await w.nodeOf(execution.id, 'n0')).toMatchObject({ status: 'completed' });
+    expect((await w.jobs.get(w.tenantA, claim.job.id)).state).toBe('leased');
+    // While the lease is live, no other worker takes the job over, finished node or not.
+    expect(await codeOf(w.jobs.acquire(claim.job.id, 'worker-2'))).toBe('node_not_runnable');
+    // The lease runs out and the queue delivers the job again: n0 is done, so what is left is to queue n1.
+    w.advanceClock(LEASE_MS + 1);
+    const takeover = await w.jobs.acquire(claim.job.id, 'worker-2');
+    const result = await w.runtime.advance(takeover.lease);
+    expect(result).toMatchObject({ outcome: 'progressed', code: 'node_completed' });
+    expect(result.nextJobId).toBe(jobIdFor(w.orgA, execution.id, 'n1', 1));
+    // n0's tool ran once, in the worker that stopped: the takeover never runs it again.
+    expect(w.toolCalls).toHaveLength(1);
   });
 
   it('15. never runs a skipped node', async () => {
