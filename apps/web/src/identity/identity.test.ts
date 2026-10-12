@@ -27,6 +27,15 @@ describe('Identity Platform sign-in (ADR-0036)', () => {
     await expect(client.signIn('ana@example.com', 'wrong')).rejects.toEqual(
       new IdentityError('invalid_credentials'),
     );
+    // An email that is not written as one is said as such, never as a wrong password.
+    const malformed = createIdentityClient(KEY, () =>
+      Promise.resolve(
+        new Response(JSON.stringify({ error: { message: 'INVALID_EMAIL' } }), { status: 400 }),
+      ),
+    );
+    await expect(malformed.signIn('ana@x', 'x')).rejects.toEqual(
+      new IdentityError('invalid_email'),
+    );
     const offline = createIdentityClient(KEY, () => Promise.reject(new TypeError('offline')));
     await expect(offline.signIn('a@b.c', 'x')).rejects.toEqual(new IdentityError('network'));
   });

@@ -173,6 +173,7 @@
   "auth.signOut": "Cerrar sesión",
   "auth.expired": "Tu sesión terminó. Vuelve a iniciar sesión.",
   "auth.error.invalid_credentials": "El correo o la contraseña no son correctos.",
+  "auth.error.invalid_email": "Escribe el correo como nombre@ejemplo.com.",
   "auth.error.user_disabled": "Esta cuenta está desactivada. Contacta al propietario de tu organización.",
   "auth.error.too_many_attempts": "Demasiados intentos. Espera unos minutos y vuelve a intentarlo.",
   "auth.error.network": "No pudimos conectar. Revisa tu conexión y vuelve a intentarlo.",

@@ -173,6 +173,7 @@
   "auth.signOut": "Sign out",
   "auth.expired": "Your session has ended. Please sign in again.",
   "auth.error.invalid_credentials": "The email or password is not correct.",
+  "auth.error.invalid_email": "Write the email as name@example.com.",
   "auth.error.user_disabled": "This account is disabled. Contact your organization's owner.",
   "auth.error.too_many_attempts": "Too many attempts. Please wait a few minutes and try again.",
   "auth.error.network": "We could not connect. Check your connection and try again.",
