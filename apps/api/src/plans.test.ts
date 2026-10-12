@@ -33,7 +33,13 @@ import {
   createSpecialistService,
   newSpecialist,
 } from '@melonoffice/specialists';
-import { resolveRuntimeTenant, resolveTenant, type TenantContext } from '@melonoffice/tenancy';
+import {
+  membershipIdOf,
+  OWNER_ROLE,
+  resolveRuntimeTenant,
+  resolveTenant,
+  type TenantContext,
+} from '@melonoffice/tenancy';
 import { defaultToolRegistry, digestOf } from '@melonoffice/tools';
 import { createWorkflowService } from '@melonoffice/workflows';
 import { describe, expect, it } from 'vitest';
@@ -70,7 +76,7 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
     const authorization = createAuthorizationService(roles as never);
     const ctx = setupApp(stores, authorization, undefined, undefined, undefined, options);
     const aliceId = (await ctx.register('token-alice')) as UserId;
-    await ctx.register('token-bob');
+    const bobId = (await ctx.register('token-bob')) as UserId;
     const createOrg = async (token: string, name: string) => {
       const response = await ctx.app.request(
         '/v1/organizations',
@@ -357,6 +363,7 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
       orgA,
       orgB,
       tenant,
+      bobId,
       plans,
       workflows,
       executions,
@@ -575,6 +582,44 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
     expect(other.status).toBe(409);
     expect(t.kicked).toEqual([]);
     expect((await t.stores.plans.find(t.orgA, plan.id))?.status).toBe('approved');
+  });
+
+  it('ADR-0190: only the owner starts an approved plan; another approver’s decision waits for the owner', async () => {
+    const t = await setup(ROLES, { runPlans: true });
+    await t.stores.put({
+      id: membershipIdOf(t.orgA, t.bobId),
+      organizationId: t.orgA,
+      userId: t.bobId,
+      status: 'active',
+      role: OWNER_ROLE,
+      createdAt: AT,
+      updatedAt: AT,
+    });
+    const { plan } = await t.proposeWork({ approvalRequired: true });
+    const version = must(await t.stores.plans.findVersion(t.orgA, plan.id, plan.version));
+    const seen = { version: 1, digest: version.digest };
+
+    // Bob approves the version Alice planned: the decision is his, and nothing starts.
+    const decided = await t.post('token-bob', `/plans/${plan.id}/approve`, seen);
+    expect(decided.status).toBe(200);
+    expect(((await decided.json()) as { status: string }).status).toBe('approved');
+    expect(t.kicked).toEqual([]);
+
+    // Bob asks to start it: refused, and still nothing runs.
+    const refused = await t.post('token-bob', `/plans/${plan.id}/approve`, seen);
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toEqual({ error: 'plan_start_not_owner' });
+    expect(t.kicked).toEqual([]);
+
+    // Alice, who planned it, starts it, and the decision is not recorded twice.
+    const started = await t.post('token-alice', `/plans/${plan.id}/approve`, seen);
+    expect(started.status).toBe(200);
+    expect(((await started.json()) as { status: string }).status).toBe('executing');
+    expect(t.kicked).toHaveLength(1);
+    const decisions = (await t.stores.auditEvents()).filter(
+      (e) => e.action === 'plan.approved' && e.target?.id === plan.id && e.result === 'success',
+    );
+    expect(decisions).toHaveLength(1);
   });
 
   it('WF-1: a plan with a step it cannot run is not approved at all', async () => {
@@ -1704,6 +1749,23 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
         ]),
       );
       expect(events).not.toContain('plan.step_declined');
+    });
+
+    it('ADR-0190: a step another approver decides still starts at once; only the plan’s start is the owner’s', async () => {
+      const w = await waitingPlan();
+      await w.t.stores.put({
+        id: membershipIdOf(w.t.orgA, w.t.bobId),
+        organizationId: w.t.orgA,
+        userId: w.t.bobId,
+        status: 'active',
+        role: OWNER_ROLE,
+        createdAt: AT,
+        updatedAt: AT,
+      });
+      const decided = await w.t.post('token-bob', `/approvals/${w.approvalId}/approve`);
+      expect(decided.status).toBe(200);
+      expect(w.t.kicked).toEqual([w.research, w.brief, w.campaign]);
+      expect((await w.states()).steps).toMatchObject({ campaign: 'running', launch: 'waiting' });
     });
 
     it('rejection: the step and the ones after it are skipped, the rest finish, the plan does not fail', async () => {
