@@ -491,6 +491,15 @@ const METRIC_DEPARTMENTS: Record<string, string[]> = {
   'conversations.new': ['operations', 'sales', 'marketing', 'leadership', 'research'],
 };
 
+/** The department that owns each metric's Informes figures; conversations have none. */
+const METRIC_OWNERS: Record<string, string | null> = {
+  'sales.won_value': 'sales',
+  'sales.won_count': 'sales',
+  'leads.new': 'sales',
+  'opportunities.new': 'sales',
+  'conversations.new': null,
+};
+
 function metrics() {
   const list = Object.entries(METRIC_SERIES).map(([id, { unit }]) => ({
     id,
@@ -498,6 +507,7 @@ function metrics() {
     entity: unit === 'currency' ? 'currency' : 'all',
     frequencies: ['day', 'week', 'month'],
     departments: METRIC_DEPARTMENTS[id] ?? [],
+    owner: METRIC_OWNERS[id] ?? null,
     readable: true,
   }));
   const histories: Record<string, Record<string, unknown>> = {};
