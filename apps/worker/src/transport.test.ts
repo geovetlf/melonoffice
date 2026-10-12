@@ -196,6 +196,26 @@ describe('worker architecture', () => {
   );
   const text = (file: string) => readFileSync(join(root, 'src', file), 'utf8');
 
+  it('loads no billing through the Firestore stores it reads', () => {
+    // The worker's manifest has no billing (above), but a package it does use could still load it
+    // for it: every file the store package's main entry reaches must leave billing out. Its billing
+    // store has its own entry, `@melonoffice/firestore/billing`, for the API alone.
+    const store = join(root, '..', '..', 'packages', 'firestore', 'src');
+    const seen = new Set<string>();
+    const visit = (file: string) => {
+      if (seen.has(file)) return;
+      seen.add(file);
+      const source = readFileSync(join(store, file), 'utf8');
+      expect(source, file).not.toMatch(/^import (?!type )[^;]*from '@melonoffice\/billing'/m);
+      for (const [, next] of source.matchAll(/from '\.\/([\w-]+)\.js'/g)) visit(`${next}.ts`);
+    };
+    visit('index.ts');
+    expect(seen).toContain('tenancy.ts');
+    expect(seen).not.toContain('billing-store.ts');
+    for (const file of sources)
+      expect(text(file), file).not.toContain('@melonoffice/firestore/billing');
+  });
+
   it('depends on no provider SDK, HTTP client library or planner', () => {
     const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as {
       dependencies: Record<string, string>;
