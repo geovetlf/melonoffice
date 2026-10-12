@@ -251,6 +251,7 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
       followUps,
       timeZone: async (organizationId) =>
         (await businessProfiles.find(organizationId))?.timeZone ?? 'America/Lima',
+      approvals: stores.approvals,
     },
     // An agent task's end, and whether it now needs a person, on the event bus (ADR-0102).
     events,

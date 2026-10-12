@@ -7,7 +7,13 @@ import {
   type ConversationErrorCode,
   type FollowUpService,
 } from '@melonoffice/conversations';
-import type { FollowUp, FollowUpId } from '@melonoffice/domain';
+import type {
+  Approval,
+  ApprovalId,
+  FollowUp,
+  FollowUpId,
+  OrganizationId,
+} from '@melonoffice/domain';
 import { isExecutionError, type ExecutionService } from '@melonoffice/execution';
 import type { Logger } from '@melonoffice/observability';
 import type { AuthorizationService } from '@melonoffice/rbac';
@@ -245,10 +251,15 @@ export function createAgentFollowUpScheduleExecutor(options: {
   readonly contacts?: AgentContactResolver;
   /** The business's time zone, for a plan's follow-up (ADR-0184). Absent: it never runs here. */
   readonly timeZone?: (organizationId: string) => Promise<string>;
-  readonly now?: () => Date;
+  /**
+   * The approvals a plan's follow-up runs under (ADR-0189): the day a person decided one fixes its
+   * date. Absent: a plan's follow-up never runs here.
+   */
+  readonly approvals?: {
+    find(organizationId: OrganizationId, id: ApprovalId): Promise<Approval | undefined>;
+  };
 }): ToolExecutor {
-  const { followUps, organizations, contacts, timeZone } = options;
-  const now = options.now ?? (() => new Date());
+  const { followUps, organizations, contacts, timeZone, approvals } = options;
 
   /** Runs the follow-up service's own `create` as the runtime for the task's person. */
   async function create(
@@ -315,27 +326,46 @@ export function createAgentFollowUpScheduleExecutor(options: {
   }
 
   /**
-   * `workflow_follow_up@1` (ADR-0184): a plan's write step, after a person approved this exact input. The date
-   * is today in the business's time zone plus the days the workflow fixed; the request key is made
-   * here from the follow-up itself; the follow-up service checks the rest (the contact in this
-   * organization, the time, the limits) and audits the follow-up.
+   * `workflow_follow_up@1` (ADR-0184, ADR-0189): a plan's write step, after a person approved this exact
+   * input. The date is the day the person decided that approval, in the business's time zone, plus the
+   * days the workflow fixed; it is never the day the step runs. The request key is made here from the
+   * follow-up itself; the follow-up service checks the rest (the contact in this organization, the
+   * time, the limits) and audits the follow-up.
    */
   async function planCall(context: ToolExecutionContext, input: unknown) {
     if (
       context.actor.via !== 'runtime' ||
       context.specialistId === undefined ||
-      timeZone === undefined
+      timeZone === undefined ||
+      approvals === undefined
     ) {
       return { status: 'failure', code: 'tool_not_runtime_invokable' } as const;
     }
     // Never without a person's approval of this call, whatever the policy said.
     if (context.approvalId === undefined)
       return { status: 'failure', code: 'approval_missing' } as const;
+    const approvalId = context.approvalId;
     const call = planFollowUpOf(input);
     if (call === undefined) return { status: 'failure', code: 'invalid_input' } as const;
     return create(context, async () => {
-      const today = localDateTime(now(), await timeZone(context.organizationId)).date;
-      const date = localDatePlus(today, call.inDays);
+      // The approval must be this call's, approved, with its decision instant. Anything else
+      // schedules nothing: the date is never guessed from the clock.
+      const approval = await approvals.find(context.organizationId, approvalId);
+      const decidedAt = approval?.decidedAt;
+      if (
+        approval === undefined ||
+        approval.status !== 'approved' ||
+        decidedAt === undefined ||
+        approval.operation.executionId !== context.executionId ||
+        approval.operation.nodeId !== context.nodeId
+      ) {
+        return 'approval_missing';
+      }
+      const decidedOn = localDateTime(
+        new Date(decidedAt),
+        await timeZone(context.organizationId),
+      ).date;
+      const date = localDatePlus(decidedOn, call.inDays);
       return {
         requestKey: planFollowUpKey({ ...call, date }),
         contactId: call.contactId,

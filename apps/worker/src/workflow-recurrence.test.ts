@@ -418,6 +418,7 @@ describe.each(STORES)(
           conversations: stores.conversations,
           followUps,
           timeZone: async () => zone,
+          approvals: stores.approvals,
         },
         now,
       });

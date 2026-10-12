@@ -322,6 +322,7 @@ describe.each(STORES)('AE-2 agent tasks with storage in %s', (_storage, createSt
         outputs: stores.outputs,
       },
       proposals: {
+        approvals: stores.approvals,
         conversations: stores.conversations,
         followUps,
         timeZone: async () => 'America/Lima',

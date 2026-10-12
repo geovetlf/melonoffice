@@ -1,5 +1,5 @@
 import { ConversationError, FOLLOW_UP_TYPES } from '@melonoffice/conversations';
-import type { OrganizationId, UserId } from '@melonoffice/domain';
+import type { Approval, ApprovalId, OrganizationId, UserId } from '@melonoffice/domain';
 import type { TenantContext } from '@melonoffice/tenancy';
 import {
   FOLLOW_UP_TYPE_CODES,
@@ -405,8 +405,28 @@ describe("workflow_follow_up: a plan's write step, approved by a person (ADR-018
     inDays: 2,
     time: '10:30',
   };
-  // 2026-10-07 03:30Z is still 2026-10-06 in Lima (UTC-5): the business's day, not the server's.
+  const OTHER_ORG = '5d0e8f2a-3b4c-4d5e-8f6a-7b8c9d0e1f2a' as OrganizationId;
+  // The approval's operation: this call, in this execution and node, in this organization.
+  const STEP_OPERATION = {
+    organizationId: ORG,
+    executionId: 'child-1',
+    nodeId: 'write',
+  } as Approval['operation'];
+  // Decided at 03:30Z on 7 October: still 6 October in Lima (UTC-5), the business's day (ADR-0189).
   const NOW = new Date('2026-10-07T03:30:00Z');
+  /** The step's approval, approved at `decidedAt`; `over` changes one part of it. */
+  const stepApproval = (
+    decidedAt: Date = NOW,
+    over: { readonly [K in keyof Approval]?: Approval[K] | undefined } = {},
+  ): Approval =>
+    ({
+      id: 'approval-1',
+      organizationId: ORG,
+      operation: STEP_OPERATION,
+      status: 'approved',
+      decidedAt: decidedAt.toISOString(),
+      ...over,
+    }) as Approval;
   // `undefined` removes a field, to show the call is refused without it.
   const planContext = (
     over: {
@@ -426,7 +446,7 @@ describe("workflow_follow_up: a plan's write step, approved by a person (ADR-018
       ...(over as Partial<ToolExecutionContext>),
     });
 
-  function world(fail?: Error) {
+  function world(fail?: Error, approvals: readonly Approval[] = [stepApproval()]) {
     const seen: { tenant: TenantContext; input: Record<string, unknown> }[] = [];
     const made = new Map<string, string>();
     const zones: string[] = [];
@@ -446,7 +466,12 @@ describe("workflow_follow_up: a plan's write step, approved by a person (ADR-018
         zones.push(organizationId);
         return 'America/Lima';
       },
-      now: () => NOW,
+      approvals: {
+        find: async (organizationId: OrganizationId, id: ApprovalId) =>
+          approvals.find(
+            (approval) => approval.organizationId === organizationId && approval.id === id,
+          ),
+      },
     });
     return { executor, seen, made, zones };
   }
@@ -475,13 +500,17 @@ describe("workflow_follow_up: a plan's write step, approved by a person (ADR-018
   });
 
   it('is one follow-up for the same content: a retry, another attempt or another plan the same day', async () => {
-    const w = world();
+    const other = stepApproval(NOW, {
+      id: 'approval-2' as Approval['id'],
+      operation: { ...STEP_OPERATION, executionId: 'child-2' } as Approval['operation'],
+    });
+    const w = world(undefined, [stepApproval(), other]);
     const first = await w.executor.execute(planContext(), STEP);
     const retry = await w.executor.execute(planContext(), STEP);
-    const attempt = await w.executor.execute(planContext({ executionId: 'child-2' as never }), {
-      ...STEP,
-      title: ` ${STEP.title}  `,
-    });
+    const attempt = await w.executor.execute(
+      planContext({ executionId: 'child-2' as never, approvalId: 'approval-2' as never }),
+      { ...STEP, title: ` ${STEP.title}  ` },
+    );
     expect(first).toMatchObject({ output: { created: true } });
     expect(retry).toMatchObject({ output: { created: false } });
     expect(attempt).toMatchObject({ output: { created: false } });
@@ -547,6 +576,58 @@ describe("workflow_follow_up: a plan's write step, approved by a person (ADR-018
       status: 'failure',
       code: 'contact_not_found',
     });
+  });
+
+  it('dates the follow-up by the day it was approved, in the business time zone; a re-run keeps it (ADR-0189)', async () => {
+    // Decided at 23:55 on 6 October in Lima (04:55Z on 7 October). A run after midnight still
+    // schedules 8 October, and the same approval run again is the same follow-up.
+    const w = world(undefined, [stepApproval(new Date('2026-10-07T04:55:00Z'))]);
+    const first = await w.executor.execute(planContext(), STEP);
+    const rerun = await w.executor.execute(planContext(), STEP);
+    expect(first).toMatchObject({ output: { created: true } });
+    expect(rerun).toMatchObject({ output: { created: false } });
+    expect(w.seen[0]?.input).toMatchObject({ date: '2026-10-08' });
+    expect(w.seen[0]?.input.requestKey).toBe(planFollowUpKey({ ...STEP, date: '2026-10-08' }));
+    expect(w.made.size).toBe(1);
+    expect(w.zones).toEqual([ORG, ORG]);
+  });
+
+  it('an approval decided just after midnight in the business time zone counts that new day', async () => {
+    // 00:05 on 7 October in Lima (05:05Z): 7 October is the day decided, so `inDays` 2 is 9 October.
+    const w = world(undefined, [stepApproval(new Date('2026-10-07T05:05:00Z'))]);
+    expect(await w.executor.execute(planContext(), STEP)).toMatchObject({
+      output: { created: true },
+    });
+    expect(w.seen[0]?.input).toMatchObject({ date: '2026-10-09' });
+  });
+
+  it('schedules nothing unless the approval is this call, approved, decided and in this organization', async () => {
+    for (const approvals of [
+      [],
+      [stepApproval(NOW, { status: 'pending', decidedAt: undefined })],
+      [stepApproval(NOW, { status: 'rejected' })],
+      [stepApproval(NOW, { status: 'cancelled' })],
+      [stepApproval(NOW, { status: 'expired' })],
+      [stepApproval(NOW, { decidedAt: undefined })],
+      [
+        stepApproval(NOW, {
+          operation: { ...STEP_OPERATION, executionId: 'child-9' } as Approval['operation'],
+        }),
+      ],
+      [
+        stepApproval(NOW, {
+          operation: { ...STEP_OPERATION, nodeId: 'other' } as Approval['operation'],
+        }),
+      ],
+      [stepApproval(NOW, { organizationId: OTHER_ORG })],
+    ]) {
+      const w = world(undefined, approvals);
+      expect(await w.executor.execute(planContext(), STEP)).toEqual({
+        status: 'failure',
+        code: 'approval_missing',
+      });
+      expect(w.seen).toEqual([]);
+    }
   });
 
   it('adds days by the calendar, across months and years', () => {

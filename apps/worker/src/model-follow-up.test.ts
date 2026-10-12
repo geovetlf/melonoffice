@@ -320,6 +320,7 @@ describe.each(STORES)(
           conversations: stores.conversations,
           followUps,
           timeZone: async () => 'America/Lima',
+          approvals: stores.approvals,
         },
         tools: {
           registry,

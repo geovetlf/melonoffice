@@ -1,6 +1,6 @@
 # ADR-0184: a plan's tool step may write data (B6)
 
-- Status: Accepted
+- Status: Accepted. The date rule (decision 4) is amended by [ADR-0189](0189-plan-follow-up-date-fixed-at-approval.md): the day of approval, not the day the step runs.
 - Date: 2026-10-07
 - Builds on: [ADR-0026](0026-tools-approvals-and-guardrails.md) (tools, approvals, guardrails), [ADR-0029](0029-runtime-guards.md) (runtime guards, idempotency), [ADR-0034](0034-human-tool-invocation.md) (invocation modes), [ADR-0084](0084-agents-propose-and-schedule.md) and [ADR-0104](0104-follow-up-schedule-v3-model-tool.md) (`follow_up_schedule`), [ADR-0151](0151-tool-steps-run-in-plans.md) (tool steps in plans), [ADR-0153](0153-failed-plan-steps-run-again.md) (retries), [ADR-0159](0159-workflow-step-kinds-and-read-only-tool-steps.md) (read-only tool steps), [ADR-0161](0161-tool-step-input-from-earlier-steps.md) (inputs from earlier steps), [ADR-0163](0163-the-approved-credit-budget-caps-a-plan.md) (budget), [ADR-0165](0165-tool-steps-in-the-workflow-editor.md) (editor), [ADR-0179](0179-workflow-lifecycle-and-reliability.md) (cancellation)
 - Product decision: Geovet, B6, 2026-10-05 07:45Z ("write tools may be workflow steps when they are assigned to the agent and pass risk, autonomy, approval policy and audit; not a blanket permission") and 2026-10-07 03:01Z (build B6 end to end on the existing engines; no recurrence, no J1).
@@ -48,7 +48,7 @@ What was missing:
    - a plan-writable one never runs without an attached approval. `auto` becomes `approval_required`.
 4. **The first write tool is `workflow_follow_up@1`.** It is its own tool, not a version of `follow_up_schedule`, because an agent holds one version of a tool and keeps `follow_up_schedule@3` for its model mid-task. It schedules a follow-up with a contact, through the follow-up service's own `create`, as the runtime for the person the plan runs for, with source `agent`.
    - Input: `contactId`, `type`, `title` (1–120 characters), `inDays` (0–30) and `time` (`HH:MM`). Every field is fixed in the workflow.
-   - The date is today in the business's time zone plus `inDays`, read when the step runs. The time is never assumed.
+   - The date is the day a person decided the approval, in the business's time zone, plus `inDays` (ADR-0189; it was "read when the step runs" before). The time is never assumed.
    - The request key is made by the server from the organization's follow-up content: contact, type, title, resolved date and time. A retry, a concurrent plan or a person running the workflow again the same day after an ambiguous failure all reach the same follow-up, which the service makes once (`created: false` after the first).
    - It refuses to run without the runtime, the plan's agent and an attached approval.
    - The contact must be in the execution's organization; the service checks that, as for every follow-up.
@@ -74,7 +74,7 @@ The validator, gate, approvals, cancellation, budget, audit and screens need no 
 ## Known limits
 
 - A follow-up that a person cancelled and a workflow asks for again the same day, with the same content, is not made again: the service returns the cancelled one.
-- The approval is for "in N days at HH:MM". The date is fixed when the step runs, which is right after the approval.
+- The approval is for "in N days at HH:MM". The date is fixed by the decision of that approval (ADR-0189), not by the run.
 - The Approvals page shows the tool and its impact (`changes_data`), not the values. The plan's card shows the values.
 - Recurrence is out of scope: a workflow still runs when a person starts it.
 
