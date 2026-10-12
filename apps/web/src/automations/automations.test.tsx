@@ -545,6 +545,45 @@ describe('Automations (WF-3)', () => {
     }
   });
 
+  it('ADR-0167: a plan whose first read fails is read again on the next tick, without reloading', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const plan = {
+        id: 'plan-f',
+        status: 'executing',
+        version: 1,
+        createdAt: '2026-09-29T09:00:00Z',
+        current: {
+          version: 1,
+          digest: 'e'.repeat(64),
+          request: { summary: 'Propuesta', objective: 'Preparar la propuesta' },
+          steps: [{ id: 'research', kind: 'specialist', label: 'Research', dependsOn: [] }],
+          riskLevel: 'low',
+          estimate: { status: 'not_estimated' },
+          source: { kind: 'workflow', workflowId: 'wf-launch', workflowVersion: 2 },
+        },
+      };
+      const backend = open((b) => {
+        b.options.plans.org_1 = [plan];
+        b.options.planSteps['plan-f'] = [];
+        // The first read of the plan fails: the screen says so, and the next tick reads it again.
+        b.options.planReadFailures['plan-f'] = 1;
+      });
+      const plans = within(await screen.findByRole('region', { name: 'Plans' }));
+      fireEvent.click(await plans.findByRole('button', { name: /Running/ }));
+      expect(await screen.findByText('This could not be loaded. Try again.')).toBeTruthy();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(PLAN_REFRESH_MS);
+      });
+      expect(await screen.findByRole('article', { name: 'Propuesta' })).toBeTruthy();
+      expect(screen.queryByText('This could not be loaded. Try again.')).toBeNull();
+      expect(backend).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('ADR-0167: steps that could not be read stay on screen and are read again until the plan has ended and its steps are read', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
