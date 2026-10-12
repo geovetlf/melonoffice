@@ -80,4 +80,18 @@ describe('the web app calling the API from a browser (ADR-0036)', () => {
       expect(() => loadConfig({ WEB_ORIGINS: bad })).toThrow('Invalid WEB_ORIGINS entry');
     }
   });
+
+  it('refuses a passkey relying party that no web origin belongs to (ADR-0188)', () => {
+    expect(
+      loadConfig({ WEB_ORIGINS: 'https://app.melonoffice.io', PASSKEY_RP_ID: 'melonoffice.io' })
+        .passkeyRelyingPartyId,
+    ).toBe('melonoffice.io');
+    expect(
+      loadConfig({ WEB_ORIGINS: WEB, PASSKEY_RP_ID: 'web-123456789.us-central1.run.app' })
+        .passkeyRelyingPartyId,
+    ).toBe('web-123456789.us-central1.run.app');
+    expect(() => loadConfig({ WEB_ORIGINS: WEB, PASSKEY_RP_ID: 'melonoffice.io' })).toThrow(
+      'PASSKEY_RP_ID matches no WEB_ORIGINS host',
+    );
+  });
 });

@@ -30,6 +30,7 @@ import type { Context, Hono } from 'hono';
 import { recordOutcome, requestFields } from './audit.js';
 import type { AuthEnv } from './auth.js';
 import { createCommercialGuard, type CommercialDependencies } from './commercial.js';
+import { versionAfter } from './versions.js';
 
 /**
  * Invitations by email to become a partner's or agency's customer (ADR-0089), over the commercial
@@ -118,7 +119,7 @@ export function registerInvitationRoutes(app: Hono<AuthEnv>, deps: InvitationDep
     const expired: CustomerInvitation = {
       ...invitation,
       status: 'expired',
-      updatedAt: at.toISOString() as IsoTimestamp,
+      updatedAt: versionAfter(invitation.updatedAt, at),
     };
     try {
       await commercial.saveInvitation(expired, invitation, [
@@ -286,7 +287,7 @@ export function registerInvitationRoutes(app: Hono<AuthEnv>, deps: InvitationDep
       const revoked: CustomerInvitation = {
         ...current,
         status: 'revoked',
-        updatedAt: at.toISOString() as IsoTimestamp,
+        updatedAt: versionAfter(current.updatedAt, at),
       };
       await commercial.saveInvitation(revoked, current, [
         event(
@@ -458,7 +459,7 @@ export function registerInvitationRoutes(app: Hono<AuthEnv>, deps: InvitationDep
       status: 'accepted',
       decidedBy: tenant.userId,
       organizationId: tenant.organizationId,
-      updatedAt: iso,
+      updatedAt: versionAfter(invitation.updatedAt, at),
     };
     const common = {
       result: 'success' as const,
@@ -533,7 +534,7 @@ export function registerInvitationRoutes(app: Hono<AuthEnv>, deps: InvitationDep
       ...invitation,
       status: 'rejected',
       decidedBy: auth.userId,
-      updatedAt: at.toISOString() as IsoTimestamp,
+      updatedAt: versionAfter(invitation.updatedAt, at),
     };
     return guarded(c, async () => {
       await commercial.saveInvitation(rejected, invitation, [

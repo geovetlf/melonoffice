@@ -1,5 +1,5 @@
 import { createAICostEngine, createAIUsageLedger } from '@melonoffice/ai-usage';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { joinAccount, setupApp, STORES, type Stores } from './test-api.js';
 
 /**
@@ -375,6 +375,40 @@ describe.each(STORES)('the commercial layer with storage in %s', (_name, createS
       { from: 'active', to: 'ended' },
     ]);
     expect(updates[0]).toMatchObject({ organizationId: tenantA, commercialAccountId: partnerA });
+  });
+
+  it('moves the version on every change, even within one millisecond, so a stale one is refused', async () => {
+    const { call, acc, rel, tenantA, partnerA } = await setup();
+    // Every request below happens at the same instant (CLAUDE.md: records with versions).
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-10-12T02:00:00.000Z') });
+    try {
+      await call('carol', 'POST', `${acc(partnerA)}/customers`, {
+        organizationId: tenantA,
+        mode: 'reseller',
+        scopes: ['summary'],
+      });
+      const [pending] = (await call('alice', 'GET', rel(tenantA))).body.relationships as {
+        updatedAt: string;
+      }[];
+      const accepted = await call('alice', 'POST', `${rel(tenantA)}/${partnerA}/accept`, {
+        scopes: ['summary'],
+        expectedUpdatedAt: pending?.updatedAt,
+      });
+      expect(accepted.status).toBe(200);
+      const after = (accepted.body.relationship as { updatedAt: string }).updatedAt;
+      expect(after > (pending?.updatedAt ?? '')).toBe(true);
+      // Ending it with the version read before the acceptance is a conflict, not a change.
+      const stale = await call('alice', 'POST', `${rel(tenantA)}/${partnerA}/end`, {
+        expectedUpdatedAt: pending?.updatedAt,
+      });
+      expect(stale.status).toBe(409);
+      const ended = await call('alice', 'POST', `${rel(tenantA)}/${partnerA}/end`, {
+        expectedUpdatedAt: after,
+      });
+      expect(ended.status).toBe(200);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('13. has no route that moves credits, and 15. keeps the platform administrator apart from owners', async () => {
