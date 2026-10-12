@@ -1,9 +1,11 @@
 import type { Firestore, Timestamp as FirestoreTimestamp } from '@google-cloud/firestore';
 import { Timestamp } from '@google-cloud/firestore';
 import {
+  AuditEventAlreadyStored,
   MAX_HISTORY_EVENTS,
   MAX_QUERY_ACTIONS,
   type AuditEvent,
+  type AuditEventId,
   type AuditHistoryReader,
   type AuditQuery,
   type AuditReader,
@@ -131,8 +133,9 @@ export function toAuditDocument(event: AuditEvent): AuditDocument {
 }
 
 /**
- * Audit events in Firestore. Only `append` exists, and it uses `create`, which fails if the
+ * Audit events in Firestore. Only `append` writes, and it uses `create`, which fails if the
  * document already exists, so a recorded event is never overwritten. A batch writes all or none.
+ * `find` reads one event back by its id.
  */
 export class FirestoreAuditStore implements AuditStore, AuditReader, AuditHistoryReader {
   constructor(private readonly db: Firestore) {}
@@ -202,7 +205,19 @@ export class FirestoreAuditStore implements AuditStore, AuditReader, AuditHistor
     for (const event of events) {
       batch.create(this.db.collection(AUDIT_LOGS).doc(event.id), toAuditDocument(event));
     }
-    await batch.commit();
+    try {
+      await batch.commit();
+    } catch (error) {
+      // gRPC 6: ALREADY_EXISTS. A batch writes all or none, so nothing of this one was stored.
+      if ((error as { code?: unknown }).code === 6) throw new AuditEventAlreadyStored();
+      throw error;
+    }
+  }
+
+  async find(id: AuditEventId): Promise<AuditEvent | undefined> {
+    const snapshot = await this.db.collection(AUDIT_LOGS).doc(id).get();
+    const data = snapshot.data();
+    return data === undefined ? undefined : fromAuditDocument(snapshot.id, data as AuditDocument);
   }
 }
 
