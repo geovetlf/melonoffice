@@ -212,6 +212,11 @@ export const LIMITS = Object.freeze({
    * fills them all is refused, since its end is not in sight; the sweep's passes are bounded the same way (ADR-0187).
    */
   completeReadPages: 10,
+  /**
+   * The time one complete read may spend walking pages, checked before each page. A walk still going after this
+   * long is refused as incomplete. It is a bound, not a measurement: DEV's `brain.complete_read` logs show what reads take.
+   */
+  completeReadMs: 30_000,
   documentCharacters: 60_000,
   documentName: 200,
 });

@@ -2,8 +2,10 @@ import type { Firestore } from '@google-cloud/firestore';
 import {
   contactRef,
   createAgentTaskService,
+  GUARDIAN_NODE,
   InMemoryAgentTaskRepository,
   parseAgentAnswer,
+  parseGuardianReport,
   type AgentTaskRepository,
 } from '@melonoffice/agents';
 import {
@@ -28,6 +30,7 @@ import {
   createCompanyBrain,
   InMemoryKnowledgeRepository,
   type KnowledgeRepository,
+  LIMITS,
 } from '@melonoffice/brain';
 import {
   createCustomerService,
@@ -86,7 +89,7 @@ import {
 import { createOrganization, InMemoryTenancyStore, resolveTenant } from '@melonoffice/tenancy';
 import { createToolRegistry, TOOL_CATALOGUE } from '@melonoffice/tools';
 import { harnessTaskPolicy } from '@melonoffice/harness';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createAgentTaskParts, createConversationAgentParts, routeAgentWork } from './agents.js';
 import { createWorkerRuntime, type WorkerStores } from './runtime.js';
 
@@ -666,6 +669,66 @@ describe.each(STORES)('AE-2 agent tasks with storage in %s', (_storage, createSt
     const guardian = w.logged.filter((l) => l.message === 'agent_guardian.warning');
     expect(guardian).toEqual([
       expect.objectContaining({ code: 'unsupported_completion', guardianSeverity: 'warning' }),
+    ]);
+  });
+
+  it('3c. the Guardian checks a figure against a complete read: a confirmed price on a later page catches a wrong one, and keeps the report (G-2, ADR-0132)', async () => {
+    const w = await world();
+    await w.brain.propose(w.tenantA, price(25));
+    // More items than one read window, each sorting before the price's id: the price is on the second page.
+    const [template] = await w.stores.knowledge.listItems(w.orgA, {}, 1);
+    const fillers = Array.from({ length: LIMITS.readWindow }, (_, i) => ({
+      ...must(template),
+      id: `-${String(i).padStart(5, '0')}`,
+      domain: 'documents' as const,
+    }));
+    // A write is one transaction, so the fillers go in batches of 250.
+    for (let from = 0; from < fillers.length; from += 250) {
+      await w.stores.knowledge.write(w.orgA, { itemIds: [] }, () => ({
+        write: { items: fillers.slice(from, from + 250), versions: [], conflicts: [], events: [] },
+        result: undefined,
+      }));
+    }
+    const lucia = await w.agent();
+    w.setModel(async () =>
+      answer({ answer: 'Publica que el Combo Familiar cuesta S/ 30.', missing: [] }),
+    );
+    const { task } = await w.tasks.assign(w.tenantA, lucia.identity.id, {
+      request: 'Confirma el precio del Combo Familiar',
+    });
+    await w.drive();
+    const { execution } = await w.tasks.get(w.tenantA, task.id);
+    const kept = await w.outputs.find(w.tenantA, must(execution).id, GUARDIAN_NODE);
+    expect(parseGuardianReport(kept?.output.structured)?.findings).toEqual([
+      expect.objectContaining({ code: 'figure_contradiction', severity: 'critical' }),
+    ]);
+    // A critical finding fails the task (ADR-0132).
+    expect(execution?.status).toBe('failed');
+  });
+
+  it('3d. a Brain too large to read whole leaves its figures unchecked: the task is not failed, and no Guardian report is kept (ADR-0132)', async () => {
+    const w = await world();
+    await w.brain.propose(w.tenantA, price(25));
+    // A Brain at the size a complete read refuses: its count decides it, before any page is read.
+    vi.spyOn(w.stores.knowledge, 'countItems').mockResolvedValue(
+      LIMITS.readWindow * LIMITS.completeReadPages,
+    );
+    const lucia = await w.agent();
+    w.setModel(async () =>
+      answer({ answer: 'Publica que el Combo Familiar cuesta S/ 30.', missing: [] }),
+    );
+    const { task } = await w.tasks.assign(w.tenantA, lucia.identity.id, {
+      request: 'Confirma el precio del Combo Familiar',
+    });
+    await w.drive();
+    const { execution } = await w.tasks.get(w.tenantA, task.id);
+    // Unchecked is not wrong: nothing fails, and nothing is kept as checked.
+    expect(execution?.status).toBe('completed');
+    expect(await w.outputs.find(w.tenantA, must(execution).id, GUARDIAN_NODE)).toBeUndefined();
+    // Logged with counts and the reason only: once for the figures' read and once for the secrets' (each reads the whole Brain).
+    expect(w.logged.filter((l) => l.message === 'brain.complete_read_refused')).toEqual([
+      expect.objectContaining({ reason: 'items', pages: 0, items: 0 }),
+      expect.objectContaining({ reason: 'items', pages: 0, items: 0 }),
     ]);
   });
 

@@ -6,10 +6,13 @@ import type {
   BusinessProfile,
   InitialBilling,
   IsoTimestamp,
+  KnowledgeItem,
   Organization,
+  OrganizationId,
   SubscriptionId,
   UserId,
 } from '@melonoffice/domain';
+import type { Logger } from '@melonoffice/observability';
 import { createAuthorizationService, ROLES, type RoleCatalogue } from '@melonoffice/rbac';
 import {
   createOrganization,
@@ -88,7 +91,12 @@ const price = (soles: number) => ({
 });
 
 async function world(
-  options: { roles?: RoleCatalogue; extractor?: KnowledgeExtractor; clock?: () => Date } = {},
+  options: {
+    roles?: RoleCatalogue;
+    extractor?: KnowledgeExtractor;
+    clock?: () => Date;
+    logger?: Logger;
+  } = {},
 ) {
   const audit = new InMemoryAuditStore();
   const tenancy = new InMemoryTenancyStore(() => NOW);
@@ -107,6 +115,7 @@ async function world(
     organizations: tenancy,
     authorization: createAuthorizationService(options.roles ?? ROLES),
     ...(options.extractor === undefined ? {} : { extractor: options.extractor }),
+    ...(options.logger === undefined ? {} : { logger: options.logger }),
     // Each change a second later, so versions and updates are ordered.
     now: options.clock ?? (() => new Date(NOW.getTime() + 1000 * tick++)),
   });
@@ -188,15 +197,24 @@ describe('Company Brain: creating and reading knowledge (ADR-0051)', () => {
 });
 
 describe('complete reads take every page, and refuse a Brain too large to read whole (Guardian, ADR-0132)', () => {
-  /** Stores `count` more items shaped like the proposed one, straight to the repository. */
-  async function seedItems(w: Awaited<ReturnType<typeof world>>, count: number) {
+  /**
+   * Stores `count` more items shaped like the proposed one, straight to the repository, in `organization`
+   * (A by default). The ids carry `prefix`: the repository keys items by id alone, so two organizations never share one.
+   */
+  async function seedItems(
+    w: Awaited<ReturnType<typeof world>>,
+    count: number,
+    organization: OrganizationId = w.orgA,
+    prefix = 'seeded',
+  ) {
     const [item] = await w.repository.listItems(w.orgA, {}, 1);
     if (item === undefined) throw new Error('the proposed item is missing');
     const items = Array.from({ length: count }, (_, i) => ({
       ...item,
-      id: `seeded-${String(i).padStart(5, '0')}`,
+      organizationId: organization,
+      id: `${prefix}-${String(i).padStart(5, '0')}`,
     }));
-    await w.repository.write(w.orgA, { itemIds: [] }, () => ({
+    await w.repository.write(organization, { itemIds: [] }, () => ({
       write: { items, versions: [], conflicts: [], events: [] },
       result: undefined,
     }));
@@ -252,6 +270,236 @@ describe('complete reads take every page, and refuse a Brain too large to read w
     });
     expect(pages).not.toHaveBeenCalled();
     expect((await w.brain.list(w.alice)).length).toBe(LIMITS.readWindow);
+  });
+
+  it('stops at a cursor that does not move forward, before it reads the same page again', async () => {
+    const w = await world();
+    await w.brain.propose(w.alice, price(25));
+    await seedItems(w, 2_500);
+    const real = w.repository.pageItems.bind(w.repository);
+    const pages = vi
+      .spyOn(w.repository, 'pageItems')
+      .mockImplementation(async (organizationId, page) => {
+        const read = await real(organizationId, page);
+        // The second page answers with the cursor it was asked from: the same page again, forever.
+        const after = page.after;
+        return pages.mock.calls.length === 2 && after !== undefined
+          ? { ...read, next: after }
+          : read;
+      });
+    await expect(w.brain.list(w.alice, { complete: true })).rejects.toMatchObject({
+      code: 'read_incomplete',
+    });
+    expect(pages).toHaveBeenCalledTimes(2);
+  });
+
+  it('stops at a cursor that is not a document id, after the page that gave it', async () => {
+    const w = await world();
+    await w.brain.propose(w.alice, price(25));
+    await seedItems(w, 2_500);
+    const real = w.repository.pageItems.bind(w.repository);
+    const pages = vi
+      .spyOn(w.repository, 'pageItems')
+      .mockImplementation(async (organizationId, page) => ({
+        ...(await real(organizationId, page)),
+        next: 'not a cursor: spaces',
+      }));
+    await expect(w.brain.list(w.alice, { complete: true })).rejects.toMatchObject({
+      code: 'read_incomplete',
+    });
+    expect(pages).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops at an item a page repeats, and returns nothing partial', async () => {
+    const w = await world();
+    await w.brain.propose(w.alice, price(25));
+    await seedItems(w, 2_500);
+    const real = w.repository.pageItems.bind(w.repository);
+    let first: KnowledgeItem | undefined;
+    const pages = vi
+      .spyOn(w.repository, 'pageItems')
+      .mockImplementation(async (organizationId, page) => {
+        const read = await real(organizationId, page);
+        if (pages.mock.calls.length === 1) first = read.items[0];
+        // The second page repeats the first page's first item.
+        return pages.mock.calls.length === 2 && first !== undefined
+          ? { ...read, items: [first, ...read.items] }
+          : read;
+      });
+    await expect(w.brain.list(w.alice, { complete: true })).rejects.toMatchObject({
+      code: 'read_incomplete',
+    });
+    expect(pages).toHaveBeenCalledTimes(2);
+  });
+
+  it('stops after its pages when the count does not decide it, and never reads an eleventh', async () => {
+    const w = await world();
+    await w.brain.propose(w.alice, price(25));
+    const [sample] = await w.repository.listItems(w.orgA, {}, 1);
+    if (sample === undefined) throw new Error('the proposed item is missing');
+    vi.spyOn(w.repository, 'countItems').mockResolvedValue(0);
+    let calls = 0;
+    const pages = vi.spyOn(w.repository, 'pageItems').mockImplementation(async () => {
+      calls += 1;
+      // One new item and a cursor after it, every time: a Brain that never ends.
+      const id = `t${String(calls).padStart(3, '0')}`;
+      return { items: [{ ...sample, id }], next: id };
+    });
+    await expect(w.brain.list(w.alice, { complete: true })).rejects.toMatchObject({
+      code: 'read_incomplete',
+    });
+    expect(pages).toHaveBeenCalledTimes(LIMITS.completeReadPages);
+  });
+
+  it('stops a walk that runs over its time budget, before the next page', async () => {
+    let at = NOW.getTime();
+    const w = await world({ clock: () => new Date(at) });
+    await w.brain.propose(w.alice, price(25));
+    await seedItems(w, 2_500);
+    const real = w.repository.pageItems.bind(w.repository);
+    const pages = vi
+      .spyOn(w.repository, 'pageItems')
+      .mockImplementation(async (organizationId, page) => {
+        const read = await real(organizationId, page);
+        // The first page alone takes longer than the whole budget.
+        at += LIMITS.completeReadMs + 1;
+        return read;
+      });
+    await expect(w.brain.list(w.alice, { complete: true })).rejects.toMatchObject({
+      code: 'read_incomplete',
+    });
+    expect(pages).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails a read whose page fails, returns nothing partial, and a retry reads every item', async () => {
+    const w = await world();
+    await w.brain.propose(w.alice, price(25));
+    await seedItems(w, 2_500);
+    const real = w.repository.pageItems.bind(w.repository);
+    const pages = vi
+      .spyOn(w.repository, 'pageItems')
+      .mockImplementation(async (organizationId, page) => {
+        // The second page fails once, as a storage read may.
+        if (pages.mock.calls.length === 2) throw new Error('storage unavailable');
+        return real(organizationId, page);
+      });
+    await expect(w.brain.list(w.alice, { complete: true })).rejects.toThrow('storage unavailable');
+    // Nothing is kept between calls: the retry starts from the first page and reads every item.
+    expect((await w.brain.list(w.alice, { complete: true })).length).toBe(2_501);
+  });
+
+  it('logs a page that fails as the reason its read stopped, and throws its error as it was', async () => {
+    const warn = vi.fn();
+    const logger: Logger = {
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn,
+      error: vi.fn(),
+      child: () => logger,
+    };
+    const w = await world({ logger });
+    await w.brain.propose(w.alice, price(25));
+    await seedItems(w, 2_500);
+    const real = w.repository.pageItems.bind(w.repository);
+    const pages = vi
+      .spyOn(w.repository, 'pageItems')
+      .mockImplementation(async (organizationId, page) => {
+        if (pages.mock.calls.length === 2) throw new Error('storage unavailable');
+        return real(organizationId, page);
+      });
+    await expect(w.brain.list(w.alice, { complete: true })).rejects.toThrow('storage unavailable');
+    // The second page failed after the first one's 1,000 items: counts and the reason, no content.
+    expect(warn).toHaveBeenCalledWith('brain.complete_read_refused', {
+      reason: 'read_failed',
+      pages: 1,
+      items: LIMITS.readWindow,
+      elapsedMs: expect.any(Number),
+    });
+  });
+
+  it('returns the same items in the same order whatever the page size, each once, with no read past the end', async () => {
+    const w = await world();
+    await w.brain.propose(w.alice, price(25));
+    await seedItems(w, 2_500);
+    const ids = (await w.brain.list(w.alice, { complete: true })).map((item) => item.id);
+    expect(ids.length).toBe(2_501);
+    expect(new Set(ids).size).toBe(ids.length);
+    const real = w.repository.pageItems.bind(w.repository);
+    for (const size of [500, 300]) {
+      const pages = vi
+        .spyOn(w.repository, 'pageItems')
+        .mockImplementation((organizationId, page) =>
+          real(organizationId, { ...page, limit: Math.min(page.limit, size) }),
+        );
+      expect((await w.brain.list(w.alice, { complete: true })).map((item) => item.id)).toEqual(ids);
+      // A short last page ends the walk: no empty page is read after it.
+      expect(pages).toHaveBeenCalledTimes(Math.ceil(2_501 / size));
+      pages.mockRestore();
+    }
+  });
+
+  it('reads on past a page that gives no item but a cursor, so the items after it are not lost', async () => {
+    const w = await world();
+    await w.brain.propose(w.alice, price(25));
+    await seedItems(w, 1_500);
+    const real = w.repository.pageItems.bind(w.repository);
+    const pages = vi
+      .spyOn(w.repository, 'pageItems')
+      .mockImplementation(async (organizationId, page) =>
+        // The first page gives no item (as if every document on it were dropped), but a cursor after it.
+        page.after === undefined ? { items: [], next: 'seeded-00999' } : real(organizationId, page),
+      );
+    const read = await w.brain.list(w.alice, { complete: true });
+    const seeded = read.map((item) => item.id).filter((id) => id.startsWith('seeded-'));
+    // Everything after the cursor, and nothing before it: the seeded items from 01000 to 01499.
+    expect(seeded).toHaveLength(500);
+    expect(seeded.every((id) => id > 'seeded-00999')).toBe(true);
+    expect(seeded.at(-1)).toBe('seeded-01499');
+    expect(pages).toHaveBeenCalledTimes(2);
+  });
+
+  it('reads only its own organization: another organization’s items count toward neither its limit nor its read', async () => {
+    const w = await world();
+    await w.brain.propose(w.alice, price(25));
+    await seedItems(w, 2_500);
+    // Another organization of more items than one organization may be read whole.
+    await seedItems(w, 9_000, w.orgB, 'other');
+    const pages = vi.spyOn(w.repository, 'pageItems');
+    const read = await w.brain.list(w.alice, { complete: true });
+    expect(read).toHaveLength(2_501);
+    expect(read.every((item) => item.organizationId === w.orgA)).toBe(true);
+    expect(pages).toHaveBeenCalledTimes(3);
+  });
+
+  it('logs what a complete read took, and why a refused one stopped, with counts and no content', async () => {
+    const info = vi.fn();
+    const warn = vi.fn();
+    const logger: Logger = { debug: vi.fn(), info, warn, error: vi.fn(), child: () => logger };
+    const w = await world({ logger });
+    await w.brain.propose(w.alice, price(25));
+    await seedItems(w, 2_500);
+    await w.brain.list(w.alice, { complete: true });
+    expect(info).toHaveBeenCalledWith('brain.complete_read', {
+      pages: 3,
+      items: 2_501,
+      elapsedMs: expect.any(Number),
+    });
+    const real = w.repository.pageItems.bind(w.repository);
+    vi.spyOn(w.repository, 'pageItems').mockImplementation(async (organizationId, page) => ({
+      ...(await real(organizationId, page)),
+      next: 'not a cursor: spaces',
+    }));
+    await expect(w.brain.list(w.alice, { complete: true })).rejects.toMatchObject({
+      code: 'read_incomplete',
+    });
+    expect(warn).toHaveBeenCalledWith('brain.complete_read_refused', {
+      reason: 'cursor',
+      pages: 1,
+      items: LIMITS.readWindow,
+      elapsedMs: expect.any(Number),
+    });
+    // Counts and a reason only: no item id, title or value reaches the log.
+    expect(JSON.stringify([info.mock.calls, warn.mock.calls])).not.toContain('seeded-');
   });
 });
 
