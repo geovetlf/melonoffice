@@ -1132,6 +1132,28 @@ export function fakeBackend(): FakeBackend {
         (found === undefined ? json(404, { error: 'task_not_found' }) : json(200, found))
       );
     }
+    // The trace of a task (ADR-0117) as the task details read it: its Guardian notice, no steps or credits.
+    const oneTrace = route?.match(/^agent-tasks\/([^/]+)\/trace$/);
+    if (oneTrace?.[1] !== undefined) {
+      const found = Object.values(options.agentTasks)
+        .flat()
+        .find((t) => t.id === oneTrace[1]);
+      return (
+        needs('specialist.read') ??
+        (found === undefined
+          ? json(404, { error: 'task_not_found' })
+          : json(200, {
+              taskId: found.id,
+              status: found.status,
+              failure: found.failure ?? null,
+              steps: [],
+              review: null,
+              guardian: found.guardian ?? null,
+              subtasks: [],
+              credits: { task: 0, review: 0, subtasks: 0, total: 0, budget: null, byAgent: [] },
+            }))
+      );
+    }
     if (route === 'decisions/actions') {
       return (
         needs('gia.ask') ??
