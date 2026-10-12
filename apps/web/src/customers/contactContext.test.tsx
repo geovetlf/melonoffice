@@ -1,7 +1,8 @@
 import { I18nProvider } from '@melonoffice/i18n';
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../App.js';
+import { navigate } from '../identity/router.js';
 import { createServices } from '../identity/services.js';
 import { REFRESH_KEY } from '../identity/session.js';
 import { API, KEY, fakeBackend, memoryStore } from '../identity/testing.js';
@@ -123,6 +124,17 @@ describe("a contact's commercial context (C3)", () => {
     const history = within(card.getByRole('region', { name: 'History' }));
     expect(history.getByText(/Opened · Birthday dinner/)).toBeTruthy();
     expect(history.getByText(/Stage changed \(Lead → Customer\)/)).toBeTruthy();
+  });
+
+  it('opens the card from a link to the page already open, with only its query changed', async () => {
+    open('/office/sales', (b) => {
+      b.options.customers.org_1 = [juan];
+      b.options.contactContext['contact-c1'] = context;
+    });
+    await screen.findByRole('region', { name: 'Customers and leads' });
+    expect(screen.queryByRole('article', { name: 'Juan Pérez' })).toBeNull();
+    act(() => navigate('/office/sales?contact=contact-c1'));
+    expect(await screen.findByRole('article', { name: 'Juan Pérez' })).toBeTruthy();
   });
 
   it('says a part is hidden when the role may not read it, instead of "none"', async () => {
