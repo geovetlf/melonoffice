@@ -161,7 +161,7 @@ Decisions:
 - AI usage reports can undercount the ledger when a usage write fails (no reconcile).
 - The Agent Guardian keeps no report when the Brain cannot be read whole: a Brain of 1000 items or more is refused as incomplete. Above that, the figures stay unchecked until the read pages, which is not built.
 - Other raw codes may still show in the partner console, the audit trail and approvals.
-- A webhook delivery whose audit write fails is not audited again on the provider's retry.
+- Reviewed, no duplicate: a WhatsApp inbound message is stored once, by the provider's message id, and a retry is not stored or sent again. If the audit write for a delivery fails, the retry does not write that audit event again; the record is lost, nothing else. Not changed.
 - UX gaps found and not fixed in the sprint: every refusal of team work reads "not now"; "review the plan" opens the plan list, not the plan; a department that fails to load looks like one that does not exist; a configuration failure looks like "not configured"; some screen-reader labels are hard-coded in English; a few panels keep desktop minimum widths on phones.
 - A disabled NVIDIA secret binding in Terraform would break the planner if it were applied as is; the operator's Workload Identity is broader than CD needs; `/health` does not say which optional parts are configured.
 
