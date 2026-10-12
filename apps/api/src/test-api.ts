@@ -19,6 +19,7 @@ import {
   createAuditService,
   InMemoryAuditStore,
   type AuditEvent,
+  type AuditEventId,
   type AuditHistoryReader,
   type AuditReader,
   type AuditService,
@@ -276,6 +277,10 @@ class Breakable implements AuditStore {
   async append(events: readonly AuditEvent[]): Promise<void> {
     if (this.broken) throw new Error('audit store unavailable');
     await this.inner.append(events);
+  }
+  async find(id: AuditEventId): Promise<AuditEvent | undefined> {
+    if (this.broken) throw new Error('audit store unavailable');
+    return this.inner.find(id);
   }
 }
 

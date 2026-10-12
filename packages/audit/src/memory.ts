@@ -1,6 +1,7 @@
-import type { AuditEvent } from './event.js';
+import type { AuditEvent, AuditEventId } from './event.js';
 import type { OrganizationId } from '@melonoffice/domain';
 import {
+  AuditEventAlreadyStored,
   MAX_HISTORY_EVENTS,
   type AuditHistoryReader,
   type AuditQuery,
@@ -19,7 +20,7 @@ export class InMemoryAuditStore implements AuditStore, AuditReader, AuditHistory
   /** Synchronous append, for an in-memory store that must write in the same step as its data. */
   appendNow(events: readonly AuditEvent[]): void {
     if (events.some((event) => this.#events.some((stored) => stored.id === event.id))) {
-      throw new Error('audit event already recorded');
+      throw new AuditEventAlreadyStored();
     }
     this.#events.push(...events);
   }
@@ -56,6 +57,10 @@ export class InMemoryAuditStore implements AuditStore, AuditReader, AuditHistory
       .slice(-MAX_HISTORY_EVENTS)
       .reverse()
       .slice(0, Math.min(limit, MAX_HISTORY_EVENTS));
+  }
+
+  async find(id: AuditEventId) {
+    return this.#events.find((event) => event.id === id);
   }
 
   /** A copy of what was recorded, oldest first. Events are frozen. */

@@ -605,6 +605,35 @@ describe('inbound', () => {
     });
   });
 
+  it('records a message whose audit write failed once the provider retries, and only once', async () => {
+    const w = await world();
+    const connection = await w.connected();
+    const append = w.store.append.bind(w.store);
+    let failed = false;
+    vi.spyOn(w.store, 'append').mockImplementation(async (events) => {
+      if (!failed && events.some((e) => e.action === 'conversation.message_received')) {
+        failed = true;
+        throw new Error('audit store unavailable');
+      }
+      await append(events);
+    });
+    const received = () =>
+      w.store.events().filter((e) => e.action === 'conversation.message_received');
+    // The message is stored, but its audit write fails: the provider gets 503 and retries.
+    expect((await w.deliver(connection)).status).toBe(503);
+    expect(received()).toHaveLength(0);
+    const retry = await w.deliver(connection);
+    expect(retry).toEqual({ status: 200, body: { received: 0, duplicates: 1, statuses: 0 } });
+    const again = await w.deliver(connection);
+    expect(again.body).toEqual({ received: 0, duplicates: 1, statuses: 0 });
+    expect(received()).toHaveLength(1);
+    expect(received()[0]).toMatchObject({
+      actor: { type: 'anonymous' },
+      organizationId: w.orgA,
+      reason: 'whatsapp',
+    });
+  });
+
   it('refuses a delivery before the connection was checked, but answers its handshake', async () => {
     const w = await world();
     const created = await w.service.create(w.tenantA, {
