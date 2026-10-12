@@ -9,7 +9,14 @@ export default defineConfig({
   // Worker tests also run against one shared Firestore emulator, file by file in parallel; the first
   // test of a file can wait on it well past Vitest's 5 s default on a busy CI runner (a first plan
   // run on the emulator has taken over 20 s there).
-  test: { ...vitestPreset.test, testTimeout: 40_000 },
+  test: {
+    ...vitestPreset.test,
+    testTimeout: 40_000,
+    // The first Firestore call in a test file asks the Google metadata server for credentials over
+    // the network: about half a second locally before its first write. The emulator needs no
+    // credentials, so that lookup is switched off for these tests.
+    env: { METADATA_SERVER_DETECTION: 'none' },
+  },
   ssr: {
     ...vitestPreset.ssr,
     resolve: {
