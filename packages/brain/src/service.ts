@@ -153,9 +153,14 @@ export interface DocumentResult extends IngestResult {
 
 export interface CompanyBrainService {
   summary(tenant: TenantContext): Promise<BrainSummary>;
+  /** `complete` refuses with `read_incomplete` when the Brain holds as many items as one read returns. */
   list(
     tenant: TenantContext,
-    filter?: { readonly domain?: KnowledgeDomain; readonly includeInactive?: boolean },
+    filter?: {
+      readonly domain?: KnowledgeDomain;
+      readonly includeInactive?: boolean;
+      readonly complete?: boolean;
+    },
   ): Promise<readonly KnowledgeView[]>;
   get(
     tenant: TenantContext,
@@ -562,18 +567,20 @@ export function createCompanyBrain(options: CompanyBrainOptions): CompanyBrainSe
     domains: readonly KnowledgeDomain[] | undefined,
     includeInactive: boolean,
     ceiling = ceilingOf(tenant),
+    complete = false,
   ): Promise<KnowledgeItem[]> {
-    const items = await repository.listItems(
-      organizationId,
-      {
-        ...(domains === undefined ? {} : { domains }),
-        ...(includeInactive ? {} : { statuses: ['active'] }),
-      },
-      LIMITS.readWindow,
-    );
-    return items.filter(
+    // The read window is the organization's first items, whatever their status or domain: the
+    // filters apply to that window only, so they run here, after it.
+    const stored = await repository.listItems(organizationId, {}, LIMITS.readWindow);
+    // A full window may hide items the filters would keep. A complete read refuses it, rather than
+    // taking the part it can see for all of them.
+    if (complete && stored.length >= LIMITS.readWindow) throw new BrainError('read_incomplete');
+    return stored.filter(
       (item) =>
-        item.organizationId === organizationId && sensitivityAllows(ceiling, item.sensitivity),
+        item.organizationId === organizationId &&
+        (domains === undefined || domains.includes(item.domain)) &&
+        (includeInactive || item.status === 'active') &&
+        sensitivityAllows(ceiling, item.sensitivity),
     );
   }
 
@@ -621,6 +628,8 @@ export function createCompanyBrain(options: CompanyBrainOptions): CompanyBrainSe
         organizationId,
         filter.domain === undefined ? undefined : [filter.domain],
         filter.includeInactive === true,
+        ceilingOf(tenant),
+        filter.complete === true,
       );
       return items
         .sort((a, b) => a.domain.localeCompare(b.domain) || a.key.localeCompare(b.key))
