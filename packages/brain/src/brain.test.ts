@@ -155,9 +155,14 @@ describe('Company Brain: creating and reading knowledge (ADR-0051)', () => {
       targetVersion: 1,
       reference: 'products:user',
     });
-    // The audit trail never holds the value; its versions do. The amount is matched as a JSON number:
-    // a plain substring check also matched the random organization id that contains "2500".
-    expect(JSON.stringify(event)).not.toMatch(/:2500\b/);
+    // The audit trail never holds the value; its versions do. Every leaf of the event is compared as
+    // a whole value, under any key and at any depth, so an id that merely contains "2500" is not a leak.
+    const leaves = (value: unknown): unknown[] =>
+      typeof value === 'object' && value !== null
+        ? Object.values(value).flatMap((inner) => leaves(inner))
+        : [value];
+    expect(leaves(event)).not.toContain(2500);
+    expect(leaves(event)).not.toContain('2500');
     expect(JSON.stringify(event)).not.toContain('amountMinor');
   });
 
