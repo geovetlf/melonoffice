@@ -17,7 +17,7 @@ Almost everything a write needs already exists, on the one path every tool takes
 - **Double execution.** Only one caller moves a node from pending to running, in one transaction. The second gets `node_not_pending`.
 - **Idempotency.** A mutating tool gets its node's idempotency key, recorded before the effect.
 - **Timeouts.** A timeout is never retried. A plan step is retried only when no tool in it started (ADR-0153).
-- **Cancellation.** A cancelled plan withdraws its approvals and no node starts in an ended execution (ADR-0179). A call that ends after the plan ended is `execution_ended`.
+- **Cancellation.** A cancelled plan withdraws its approvals and no node starts in an ended execution (ADR-0179). A call that ends after the plan ended is `execution_ended`: its output is not passed on, but the provider may already have changed the data, so its real result is audited (`tool.execution_completed` or `tool.execution_failed`, with reason `execution_ended` on success) and never left silent.
 - **Budget.** A tool has no price. The step's agent call goes through the Credit Core, and a step the approved budget cannot cover never starts (ADR-0163), so neither do its tools.
 - **Audit and tenancy.** The `tool.*` and `execution.*` events, and every read and write, are scoped to the execution's organization.
 
