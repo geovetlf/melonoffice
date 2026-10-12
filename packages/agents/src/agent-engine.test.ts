@@ -893,6 +893,7 @@ describe('Agent Guardian (G-2, ADR-0132)', () => {
       outputs: w.outputs,
       guardian: {
         record: (tenant, input) => w.outputs.record(tenant, input),
+        wholeBrain: async () => [],
         figures: async () => {
           reads += 1;
           return [price(25, confirmed)];
@@ -903,13 +904,14 @@ describe('Agent Guardian (G-2, ADR-0132)', () => {
     return { w, done, verifier, reads: () => reads };
   }
 
-  it('a Brain that cannot be read now is not kept as checked: the next verify compares the figures', async () => {
+  it('a Brain that cannot be read now is shown as unchecked, never as passed: the next verify compares the figures and replaces that notice', async () => {
     const t = await setup('Publica que el Combo Familiar cuesta S/ 30.');
     let attempts = 0;
     const verifier = createAgentTaskVerifier({
       outputs: t.w.outputs,
       guardian: {
         record: (tenant, input) => t.w.outputs.record(tenant, input),
+        wholeBrain: async () => [],
         figures: async () => {
           attempts += 1;
           if (attempts === 1) throw new Error('brain unavailable');
@@ -918,22 +920,88 @@ describe('Agent Guardian (G-2, ADR-0132)', () => {
         mutating: () => true,
       },
     });
-    // Unreadable now: the task is not failed, the figures are left unchecked, and nothing is kept.
+    // Unreadable now: the task is not failed, and the Guardian's check is left out rather than passed.
+    // The report is kept with one notice, so the task says the figures were not checked.
     const first = await verifier.verify(t.w.runtime, t.done);
-    expect(first?.verification.nodes[0]?.checks[1]).toMatchObject({
-      code: 'agent_guardian',
-      result: 'passed',
-    });
-    expect(await t.w.outputs.find(t.w.runtime, t.done.id, GUARDIAN_NODE)).toBeUndefined();
-    // Readable on the next verify: the figure disagrees with the confirmed fact, and that verdict is kept.
+    expect(first?.verification.nodes[0]?.checks.map((c) => c.code)).toEqual(['agent_answer_valid']);
+    const unchecked = await t.w.outputs.find(t.w.runtime, t.done.id, GUARDIAN_NODE);
+    expect(parseGuardianReport(unchecked?.output.structured)?.findings).toEqual([
+      expect.objectContaining({
+        code: 'organization_unchecked',
+        severity: 'info',
+        recommendation: 'check_by_hand',
+      }),
+    ]);
+    // Readable on the next verify: the figure disagrees with the confirmed fact, and that verdict replaces the notice.
     const second = await verifier.verify(t.w.runtime, t.done);
     expect(second?.verification.nodes[0]?.checks[1]).toMatchObject({
       code: 'agent_guardian',
       result: 'failed',
     });
     const kept = await t.w.outputs.find(t.w.runtime, t.done.id, GUARDIAN_NODE);
-    expect(parseGuardianReport(kept?.output.structured)?.findings).toHaveLength(1);
+    expect(parseGuardianReport(kept?.output.structured)?.findings).toEqual([
+      expect.objectContaining({ code: 'figure_contradiction', severity: 'critical' }),
+    ]);
     expect(attempts).toBe(2);
+  });
+
+  it('a secret in the answer still fails the Guardian check when the Brain cannot be read: the critical finding stays, with the notice', async () => {
+    const t = await setup(`Usa la clave api_key: sk-${'7'.repeat(24)} para el Combo Familiar.`);
+    const verifier = createAgentTaskVerifier({
+      outputs: t.w.outputs,
+      guardian: {
+        record: (tenant, input) => t.w.outputs.record(tenant, input),
+        wholeBrain: async () => [],
+        figures: async () => {
+          throw new Error('brain unavailable');
+        },
+        secrets: async () => {
+          throw new Error('brain unavailable');
+        },
+        mutating: () => true,
+      },
+    });
+    // The pattern is in the answer itself, so it does not need the Brain: the check fails even though it is unchecked.
+    const result = await verifier.verify(t.w.runtime, t.done);
+    expect(result?.verification.nodes[0]?.checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'agent_guardian', result: 'failed' }),
+      ]),
+    );
+    const kept = await t.w.outputs.find(t.w.runtime, t.done.id, GUARDIAN_NODE);
+    expect(parseGuardianReport(kept?.output.structured)?.findings).toEqual([
+      expect.objectContaining({ code: 'secret_disclosed', severity: 'critical' }),
+      expect.objectContaining({ code: 'organization_unchecked', severity: 'info' }),
+    ]);
+  });
+
+  it('reads Company Brain once for both checks, and both use that one read', async () => {
+    const t = await setup('El Combo Familiar cuesta S/ 25. ¿Lo publico?');
+    let reads = 0;
+    const seen: unknown[] = [];
+    const verifier = createAgentTaskVerifier({
+      outputs: t.w.outputs,
+      guardian: {
+        record: (tenant, input) => t.w.outputs.record(tenant, input),
+        wholeBrain: async () => {
+          reads += 1;
+          return [];
+        },
+        figures: async (_tenant, _execution, whole) => {
+          seen.push(await whole());
+          return [];
+        },
+        secrets: async (_tenant, _execution, whole) => {
+          seen.push(await whole());
+          return [];
+        },
+        mutating: () => true,
+      },
+    });
+    await verifier.verify(t.w.runtime, t.done);
+    expect(reads).toBe(1);
+    expect(seen).toHaveLength(2);
+    expect(seen[1]).toBe(seen[0]);
   });
 
   it('passes a clean answer, keeps its report and never checks twice', async () => {

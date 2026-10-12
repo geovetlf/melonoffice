@@ -46,7 +46,7 @@ import {
   versionOf,
   type MergeOutcome,
 } from './merge.js';
-import type { KnowledgeRepository, KnowledgeWrite } from './repository.js';
+import type { KnowledgeReader, KnowledgeRepository, KnowledgeWrite } from './repository.js';
 
 /**
  * Company Brain (ADR-0051): the organization's knowledge of itself, as one service every caller
@@ -153,7 +153,10 @@ export interface DocumentResult extends IngestResult {
 
 export interface CompanyBrainService {
   summary(tenant: TenantContext): Promise<BrainSummary>;
-  /** `complete` reads every page, and refuses with `read_incomplete` a Brain too large for LIMITS.completeReadPages. */
+  /**
+   * `complete` reads every page, or refuses with `read_incomplete`: a Brain too large for LIMITS.completeReadPages,
+   * a walk that does not move forward, repeats an item, or runs over LIMITS.completeReadMs.
+   */
   list(
     tenant: TenantContext,
     filter?: {
@@ -214,6 +217,8 @@ export interface CompanyBrainOptions {
 
 const REASON = /^[a-z][a-z_]{0,63}$/;
 const ITEM_ID = /^[\w-]{1,200}$/;
+/** Why a complete read stopped without the whole Brain: logged as `brain.complete_read_refused`. */
+type CompleteReadStop = 'items' | 'pages' | 'time' | 'cursor' | 'repeated_item' | 'read_failed';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 export function recorderOf(tenant: TenantContext): KnowledgeRecorder {
@@ -562,28 +567,70 @@ export function createCompanyBrain(options: CompanyBrainOptions): CompanyBrainSe
   }
 
   /**
-   * Every item of the organization, a page at a time in document-id order (ADR-0132, ADR-0187). A Brain of
-   * as many items as the pages take is refused before any page is read: a count decides it.
+   * Every item of the organization, a page at a time in document-id order (ADR-0132, ADR-0187). It returns the whole
+   * Brain or nothing. A Brain of as many items as the pages take is refused before any page is read: a count decides
+   * it. So is a walk that stops moving forward: a cursor that is not a document id or does not advance, an item a page
+   * repeats, a walk over its time budget, or every page full. A failed page throws its error as it was, and a retry
+   * starts from the first page. Each stop is logged with its reason and counts.
    */
   async function everyItem(organizationId: OrganizationId): Promise<readonly KnowledgeItem[]> {
+    const started = now().getTime();
+    const stopped = (reason: CompleteReadStop, pages: number, items: number) => {
+      // Counts and a stop reason only: never an item, a value or an id.
+      logger.warn('brain.complete_read_refused', {
+        reason,
+        pages,
+        items,
+        elapsedMs: now().getTime() - started,
+      });
+    };
+    const refuse = (reason: CompleteReadStop, pages: number, items: number): never => {
+      stopped(reason, pages, items);
+      throw new BrainError('read_incomplete');
+    };
     if (
       (await repository.countItems(organizationId)) >=
       LIMITS.readWindow * LIMITS.completeReadPages
     ) {
-      throw new BrainError('read_incomplete');
+      refuse('items', 0, 0);
     }
-    const items: KnowledgeItem[] = [];
-    let after: string | undefined;
-    for (let page = 0; page < LIMITS.completeReadPages; page += 1) {
-      const request =
-        after === undefined ? { limit: LIMITS.readWindow } : { after, limit: LIMITS.readWindow };
-      const read = await repository.pageItems(organizationId, request);
-      items.push(...read.items);
-      if (read.next === undefined) return items;
-      after = read.next;
-    }
-    // Every page allowed was full, so the end is not in sight: a Brain that large is not read whole.
-    throw new BrainError('read_incomplete');
+    // Every page comes from one view of the items, so a write during the walk is in all of its pages or none:
+    // a read never mixes what the Brain held before the write with what it held after (ADR-0132).
+    const walk = async (view: KnowledgeReader): Promise<KnowledgeItem[]> => {
+      const items: KnowledgeItem[] = [];
+      const seen = new Set<string>();
+      let after: string | undefined;
+      for (let page = 1; page <= LIMITS.completeReadPages; page += 1) {
+        if (now().getTime() - started > LIMITS.completeReadMs)
+          refuse('time', page - 1, items.length);
+        const request =
+          after === undefined ? { limit: LIMITS.readWindow } : { after, limit: LIMITS.readWindow };
+        const read = await view.pageItems(organizationId, request).catch((error: unknown) => {
+          stopped('read_failed', page - 1, items.length);
+          throw error;
+        });
+        for (const item of read.items) {
+          if (seen.has(item.id)) refuse('repeated_item', page, items.length);
+          seen.add(item.id);
+          items.push(item);
+        }
+        if (read.next === undefined) {
+          logger.info('brain.complete_read', {
+            pages: page,
+            items: items.length,
+            elapsedMs: now().getTime() - started,
+          });
+          return items;
+        }
+        if (!ITEM_ID.test(read.next) || (after !== undefined && read.next <= after)) {
+          refuse('cursor', page, items.length);
+        }
+        after = read.next;
+      }
+      // Every page allowed was full, so the end is not in sight: a Brain that large is not read whole.
+      return refuse('pages', LIMITS.completeReadPages, items.length);
+    };
+    return repository.snapshot === undefined ? walk(repository) : repository.snapshot(walk);
   }
 
   async function visibleItems(

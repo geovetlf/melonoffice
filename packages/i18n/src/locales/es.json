@@ -2327,6 +2327,7 @@
   "agentTasks.details.guardian.unsupported_completion": "El Guardián: la respuesta dice que algo ya se hizo, pero ningún paso de la tarea lo hizo. Confírmalo antes de darlo por hecho.",
   "agentTasks.details.guardian.tool_failed": "El Guardián: una herramienta falló durante la tarea. Revisa si la respuesta se apoya en ella.",
   "agentTasks.details.guardian.missing_information": "El Guardián: el agente indicó datos que le faltan. Dáselos para completar la tarea.",
+  "agentTasks.details.guardian.organization_unchecked": "El Guardián: no se pudo leer toda la memoria de la empresa, así que las cifras y los secretos de la respuesta no se han comprobado. Compruébalos antes de usarla.",
   "agentTasks.details.subtasks": "Pasó parte del trabajo a {count, plural, one {otro agente} other {# agentes}}: {credits, plural, one {# crédito} other {# créditos}}.",
   "agentTasks.details.status.pending": "pendiente",
   "agentTasks.details.status.running": "en curso",

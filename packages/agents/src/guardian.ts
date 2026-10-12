@@ -28,14 +28,20 @@ export type GuardianCode =
   /** A tool the agent used during the task failed. */
   | 'tool_failed'
   /** The agent said what it still needs from the person. */
-  | 'missing_information';
+  | 'missing_information'
+  /**
+   * Company Brain could not be read whole (a time or page limit, or 10,000 items or more), so the
+   * figures and stored secrets were not compared. It is shown so the person checks them by hand.
+   */
+  | 'organization_unchecked';
 
 export type GuardianRecommendation =
   | 'discard_answer'
   | 'check_figure'
   | 'confirm_before_acting'
   | 'review_tool_error'
-  | 'provide_missing_data';
+  | 'provide_missing_data'
+  | 'check_by_hand';
 
 export interface GuardianFinding {
   readonly code: GuardianCode;
@@ -50,6 +56,17 @@ export interface GuardianReport {
 }
 
 export const GUARDIAN_LIMITS = Object.freeze({ findings: 10, evidenceText: 120 });
+
+/**
+ * The notice of an unchecked organization. Informational: it is shown on the task, and it does not
+ * raise the Guardian's warning, which a person is notified of.
+ */
+export const UNCHECKED_FINDING: GuardianFinding = Object.freeze({
+  code: 'organization_unchecked',
+  severity: 'info',
+  evidence: Object.freeze({}),
+  recommendation: 'check_by_hand',
+});
 
 const SEVERITY_ORDER: readonly GuardianSeverity[] = ['critical', 'warning', 'info'];
 
@@ -100,6 +117,8 @@ export interface GuardianFacts {
    * credentials written under their name or of a known shape are found.
    */
   readonly secrets?: readonly StoredSecret[];
+  /** Company Brain could not be read whole: the notice of an unchecked organization is added. */
+  readonly unchecked?: boolean;
   /** Whether a tool version changes something (from the tool catalogue). Unknown counts as yes. */
   readonly mutating: (id: string, version: number) => boolean;
 }
@@ -181,10 +200,16 @@ export function guardAnswer(facts: GuardianFacts): GuardianReport {
     });
   }
 
-  const sorted = findings
-    .sort((a, b) => SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity))
-    .slice(0, GUARDIAN_LIMITS.findings)
-    .map((f) => Object.freeze({ ...f, evidence: Object.freeze({ ...f.evidence }) }));
+  const ordered = findings.sort(
+    (a, b) => SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity),
+  );
+  // The notice of an unchecked organization keeps its place when the list is cut to its limit.
+  const kept = facts.unchecked
+    ? [...ordered.slice(0, GUARDIAN_LIMITS.findings - 1), UNCHECKED_FINDING]
+    : ordered.slice(0, GUARDIAN_LIMITS.findings);
+  const sorted = kept.map((f) =>
+    Object.freeze({ ...f, evidence: Object.freeze({ ...f.evidence }) }),
+  );
   return Object.freeze({ findings: Object.freeze(sorted) });
 }
 
@@ -194,6 +219,7 @@ const CODES: ReadonlySet<string> = new Set([
   'unsupported_completion',
   'tool_failed',
   'missing_information',
+  'organization_unchecked',
 ]);
 const SEVERITIES: ReadonlySet<string> = new Set(SEVERITY_ORDER);
 const RECOMMENDATIONS: ReadonlySet<string> = new Set([
@@ -202,6 +228,7 @@ const RECOMMENDATIONS: ReadonlySet<string> = new Set([
   'confirm_before_acting',
   'review_tool_error',
   'provide_missing_data',
+  'check_by_hand',
 ]);
 
 const isPlain = (v: unknown): v is string | number | boolean =>
@@ -239,4 +266,9 @@ export function parseGuardianReport(output: unknown): GuardianReport | undefined
 /** The most serious finding a person should hear about: warning or critical, never info. */
 export function guardianWarningOf(report: GuardianReport): GuardianFinding | undefined {
   return report.findings.find((f) => f.severity !== 'info');
+}
+
+/** Whether the report says Company Brain was not read whole, so its figures and secrets are unchecked. */
+export function isUncheckedReport(report: GuardianReport): boolean {
+  return report.findings.some((f) => f.code === UNCHECKED_FINDING.code);
 }

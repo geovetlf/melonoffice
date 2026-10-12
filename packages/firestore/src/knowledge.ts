@@ -1,7 +1,14 @@
-import { FieldPath, type Firestore, type Transaction } from '@google-cloud/firestore';
+import {
+  FieldPath,
+  type DocumentReference,
+  type Firestore,
+  type Query,
+  type Transaction,
+} from '@google-cloud/firestore';
 import {
   checkWrite,
   type KnowledgeFilter,
+  type KnowledgeReader,
   type KnowledgeRepository,
   type KnowledgeWrite,
 } from '@melonoffice/brain';
@@ -44,21 +51,49 @@ function owned<T extends { readonly organizationId: string }>(
 }
 
 export class FirestoreKnowledgeRepository implements KnowledgeRepository {
-  constructor(private readonly db: Firestore) {}
+  /** `tx` is set only inside a snapshot: every read then sees the items as they stood when it began. */
+  constructor(
+    private readonly db: Firestore,
+    private readonly tx?: Transaction,
+  ) {}
+
+  /**
+   * Runs `read` against one snapshot of the items: a read-only transaction, so each read in it sees the
+   * storage as it stood when the transaction began (ADR-0132). A complete read walks its pages inside one.
+   */
+  async snapshot<T>(read: (view: KnowledgeReader) => Promise<T>): Promise<T> {
+    return this.db.runTransaction((tx) => read(new FirestoreKnowledgeRepository(this.db, tx)), {
+      readOnly: true,
+    });
+  }
+
+  private readDocument(ref: DocumentReference) {
+    return this.tx === undefined ? ref.get() : this.tx.get(ref);
+  }
+
+  private readQuery(query: Query) {
+    return this.tx === undefined ? query.get() : this.tx.get(query);
+  }
+
+  private readCount(query: Query) {
+    const aggregate = query.count();
+    return this.tx === undefined ? aggregate.get() : this.tx.get(aggregate);
+  }
 
   async findItem(organizationId: OrganizationId, id: string) {
     if (!isOrganizationId(organizationId) || !DOC_ID.test(id)) return undefined;
-    const snapshot = await this.db.collection(KNOWLEDGE_ITEMS).doc(id).get();
+    const snapshot = await this.readDocument(this.db.collection(KNOWLEDGE_ITEMS).doc(id));
     return owned<KnowledgeItem>(snapshot.data(), organizationId);
   }
 
   async listItems(organizationId: OrganizationId, filter: KnowledgeFilter, limit: number) {
     if (!isOrganizationId(organizationId)) return [];
-    const snapshot = await this.db
-      .collection(KNOWLEDGE_ITEMS)
-      .where('organizationId', '==', organizationId)
-      .limit(limit)
-      .get();
+    const snapshot = await this.readQuery(
+      this.db
+        .collection(KNOWLEDGE_ITEMS)
+        .where('organizationId', '==', organizationId)
+        .limit(limit),
+    );
     return snapshot.docs
       .map((d) => owned<KnowledgeItem>(d.data(), organizationId))
       .filter(
@@ -86,7 +121,7 @@ export class FirestoreKnowledgeRepository implements KnowledgeRepository {
       .where('organizationId', '==', organizationId)
       .orderBy(FieldPath.documentId());
     if (page.after !== undefined) query = query.startAfter(page.after);
-    const snapshot = await query.limit(page.limit).get();
+    const snapshot = await this.readQuery(query.limit(page.limit));
     const last = snapshot.docs[snapshot.docs.length - 1];
     return {
       items: snapshot.docs
@@ -102,21 +137,20 @@ export class FirestoreKnowledgeRepository implements KnowledgeRepository {
    */
   async countItems(organizationId: OrganizationId) {
     if (!isOrganizationId(organizationId)) return 0;
-    const snapshot = await this.db
-      .collection(KNOWLEDGE_ITEMS)
-      .where('organizationId', '==', organizationId)
-      .count()
-      .get();
+    const snapshot = await this.readCount(
+      this.db.collection(KNOWLEDGE_ITEMS).where('organizationId', '==', organizationId),
+    );
     return snapshot.data().count;
   }
 
   async listVersions(organizationId: OrganizationId, itemId: string) {
     if (!isOrganizationId(organizationId) || !DOC_ID.test(itemId)) return [];
-    const snapshot = await this.db
-      .collection(KNOWLEDGE_VERSIONS)
-      .where('organizationId', '==', organizationId)
-      .where('itemId', '==', itemId)
-      .get();
+    const snapshot = await this.readQuery(
+      this.db
+        .collection(KNOWLEDGE_VERSIONS)
+        .where('organizationId', '==', organizationId)
+        .where('itemId', '==', itemId),
+    );
     return snapshot.docs
       .map((d) => owned<KnowledgeVersion>(d.data(), organizationId))
       .filter((v): v is KnowledgeVersion => v !== undefined)
@@ -125,17 +159,18 @@ export class FirestoreKnowledgeRepository implements KnowledgeRepository {
 
   async findConflict(organizationId: OrganizationId, id: string) {
     if (!isOrganizationId(organizationId) || !DOC_ID.test(id)) return undefined;
-    const snapshot = await this.db.collection(KNOWLEDGE_CONFLICTS).doc(id).get();
+    const snapshot = await this.readDocument(this.db.collection(KNOWLEDGE_CONFLICTS).doc(id));
     return owned<KnowledgeConflict>(snapshot.data(), organizationId);
   }
 
   async listConflicts(organizationId: OrganizationId, status: KnowledgeConflict['status']) {
     if (!isOrganizationId(organizationId)) return [];
-    const snapshot = await this.db
-      .collection(KNOWLEDGE_CONFLICTS)
-      .where('organizationId', '==', organizationId)
-      .where('status', '==', status)
-      .get();
+    const snapshot = await this.readQuery(
+      this.db
+        .collection(KNOWLEDGE_CONFLICTS)
+        .where('organizationId', '==', organizationId)
+        .where('status', '==', status),
+    );
     return snapshot.docs
       .map((d) => owned<KnowledgeConflict>(d.data(), organizationId))
       .filter((c): c is KnowledgeConflict => c !== undefined);
@@ -143,7 +178,7 @@ export class FirestoreKnowledgeRepository implements KnowledgeRepository {
 
   async findDocument(organizationId: OrganizationId, id: string) {
     if (!isOrganizationId(organizationId) || !DOC_ID.test(id)) return undefined;
-    const snapshot = await this.db.collection(KNOWLEDGE_DOCUMENTS).doc(id).get();
+    const snapshot = await this.readDocument(this.db.collection(KNOWLEDGE_DOCUMENTS).doc(id));
     return owned<KnowledgeDocument>(snapshot.data(), organizationId);
   }
 

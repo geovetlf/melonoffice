@@ -2327,6 +2327,7 @@
   "agentTasks.details.guardian.unsupported_completion": "Guardian: the answer says something was already done, but no step of the task did it. Confirm it before counting on it.",
   "agentTasks.details.guardian.tool_failed": "Guardian: a tool failed during the task. Check whether the answer relies on it.",
   "agentTasks.details.guardian.missing_information": "Guardian: the agent listed information it still needs. Give it to complete the task.",
+  "agentTasks.details.guardian.organization_unchecked": "Guardian: the company memory could not be read whole, so the figures and secrets in the answer were not checked. Check them before using it.",
   "agentTasks.details.subtasks": "It handed part of the work to {count, plural, one {another agent} other {# agents}}: {credits, plural, one {# credit} other {# credits}}.",
   "agentTasks.details.status.pending": "pending",
   "agentTasks.details.status.running": "running",

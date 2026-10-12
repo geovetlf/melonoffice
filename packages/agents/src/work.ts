@@ -11,6 +11,7 @@ import { AI_REVIEW_NODE, type AgentAnswerReviewer } from './ai-review.js';
 import {
   GUARDIAN_NODE,
   guardAnswer,
+  isUncheckedReport,
   parseGuardianReport,
   type GuardianReport,
 } from './guardian.js';
@@ -22,6 +23,7 @@ import type {
   ExecutionId,
   ExecutionNode,
   ExecutionNodeId,
+  KnowledgeItem,
   OrganizationId,
   SpecialistConfiguration,
   SpecialistId,
@@ -735,6 +737,14 @@ export interface AgentTaskVerifier {
   >;
 }
 
+/** The Brain's items, read by the first call and shared by the calls after it. */
+export type GuardianBrainRead = () => Promise<readonly KnowledgeItem[]>;
+
+function once<T>(read: () => Promise<T>): () => Promise<T> {
+  let started: Promise<T> | undefined;
+  return () => (started ??= read());
+}
+
 /**
  * Checks a finished task (ADR-0029): the model's answer is kept and has the task's shape
  * (`output_schema`), and a follow-up the task scheduled exists (`checks`, ADR-0084). It checks the
@@ -758,10 +768,19 @@ export function createAgentTaskVerifier(options: {
    */
   readonly guardian?: {
     readonly record: AgentOutputStore['record'];
+    /**
+     * Company Brain's items, read complete or refused. Both checks ask for it through `whole`, which
+     * reads it once per verification, so the Brain is read once, not once per check.
+     */
+    readonly wholeBrain: (
+      tenant: TenantContext,
+      execution: Execution,
+    ) => Promise<readonly KnowledgeItem[]>;
     /** Company Brain's figures the task's agent may read. Absent or undefined: not compared. */
     readonly figures?: (
       tenant: TenantContext,
       execution: Execution,
+      whole: GuardianBrainRead,
     ) => Promise<readonly FigureFact[] | undefined>;
     /**
      * The credentials stored in Company Brain (G-7), to look for in the answer. Absent or
@@ -770,6 +789,7 @@ export function createAgentTaskVerifier(options: {
     readonly secrets?: (
       tenant: TenantContext,
       execution: Execution,
+      whole: GuardianBrainRead,
     ) => Promise<readonly StoredSecret[] | undefined>;
     readonly mutating: (id: string, version: number) => boolean;
   };
@@ -785,34 +805,36 @@ export function createAgentTaskVerifier(options: {
     if (guardian === undefined) return undefined;
     const kept = await outputs.find(tenant, execution.id, GUARDIAN_NODE);
     const previous = kept === undefined ? undefined : parseGuardianReport(kept.output.structured);
-    if (previous !== undefined) return previous;
-    // Company Brain that cannot be read now leaves the figures unchecked, never the task failed. Such a
-    // report is returned but not kept: the next verify checks the figures again, instead of keeping this one.
+    // A kept report that says Company Brain was not read whole is read again: it may be readable now.
+    if (previous !== undefined && !isUncheckedReport(previous)) return previous;
+    // Company Brain that cannot be read now leaves the figures and secrets unchecked, never the task failed.
+    // The report says so and is kept, so the task shows it; the next verify reads again and replaces it.
     const unread = { any: false };
     const unreadSource = () => {
       unread.any = true;
       return undefined;
     };
-    const figures = await guardian.figures?.(tenant, execution).catch(unreadSource);
-    const secrets = await guardian.secrets?.(tenant, execution).catch(unreadSource);
+    // One read of the Brain serves both checks: the first to ask starts it, and the other shares it.
+    const whole = once(() => guardian.wholeBrain(tenant, execution));
+    const figures = await guardian.figures?.(tenant, execution, whole).catch(unreadSource);
+    const secrets = await guardian.secrets?.(tenant, execution, whole).catch(unreadSource);
     const report = guardAnswer({
       answer: answer.answer,
       missing: answer.missing,
       execution,
       ...(figures === undefined ? {} : { figures }),
       ...(secrets === undefined ? {} : { secrets }),
+      unchecked: unread.any,
       mutating: guardian.mutating,
     });
-    if (!unread.any) {
-      await guardian
-        .record(tenant, {
-          executionId: execution.id,
-          nodeId: GUARDIAN_NODE as ExecutionNodeId,
-          requestId: `guardian-${execution.id}`,
-          output: { structured: report },
-        })
-        .catch(() => undefined);
-    }
+    await guardian
+      .record(tenant, {
+        executionId: execution.id,
+        nodeId: GUARDIAN_NODE as ExecutionNodeId,
+        requestId: `guardian-${execution.id}`,
+        output: { structured: report },
+      })
+      .catch(() => undefined);
     return report;
   }
 
@@ -836,8 +858,10 @@ export function createAgentTaskVerifier(options: {
           : undefined;
       const reviewed = review !== undefined && review.verdict !== 'unavailable';
       const report = valid ? await guard(tenant, execution, parsed) : undefined;
-      const guarded = report !== undefined;
       const critical = report?.findings.some((f) => f.severity === 'critical') ?? false;
+      // An unchecked report says nothing about the figures and secrets, so its check is left out, not
+      // passed. A critical finding in it (a secret in the answer) still shows as a failed check.
+      const guarded = report !== undefined && (!isUncheckedReport(report) || critical);
       const passed = valid && (!reviewed || review.verdict === 'pass') && !critical;
       const nodes: VerificationInput['nodes'][number][] = [
         {
