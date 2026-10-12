@@ -197,6 +197,10 @@ export function registerPlanRoutes(
               seen.version === current.version &&
               seen.digest === version.digest
             ) {
+              // Only the plan's owner starts it (ADR-0190); another approver is refused.
+              if (current.createdBy !== tenant.userId) {
+                throw new PlanningError('plan_start_not_owner');
+              }
               const running = await conductor.run(tenant, current.id);
               withCorrelation(c.get('logger'), { planId: current.id }).info('plan start resumed');
               return toPlanView(running);
@@ -206,6 +210,8 @@ export function registerPlanRoutes(
           const log = withCorrelation(c.get('logger'), { planId: decided.id });
           log.info(`plan ${action}`);
           if (decided.status !== 'approved' || conductor === undefined) return toPlanView(decided);
+          // The decision stands; the owner starts an approved plan (ADR-0190).
+          if (decided.createdBy !== tenant.userId) return toPlanView(decided);
           const running = await conductor.run(tenant, decided.id);
           log.info('plan running');
           return toPlanView(running);
@@ -236,6 +242,7 @@ const STATUS = {
   plan_not_found: 404,
   gia_cannot_decide: 403,
   runtime_cannot_decide: 403,
+  plan_start_not_owner: 403,
   permission_denied: 403,
   plan_version_mismatch: 409,
   plan_concurrency_conflict: 409,
