@@ -207,6 +207,10 @@ function readyNode(execution: Execution): ExecutionNode | undefined {
   );
 }
 
+/** Hand-offs to the transport: a few quick tries absorb a blip. */
+const DISPATCH_ATTEMPTS = 3;
+const DISPATCH_RETRY_MS = 100;
+
 export function createRuntime(options: RuntimeOptions): Runtime {
   const {
     jobs,
@@ -235,14 +239,24 @@ export function createRuntime(options: RuntimeOptions): Runtime {
           ...(leaseId === undefined ? {} : { leaseId }),
         });
 
+  /**
+   * Hands a queued job to the transport, with a few quick tries. A job still not handed over stays
+   * queued and is logged: nothing re-dispatches queued jobs yet, so that needs its own decision. A
+   * second hand-off is harmless, since a job runs once, under its lease.
+   */
   async function dispatch(job: ExecutionJob): Promise<void> {
     if (dispatcher === undefined || job.state !== 'queued') return;
-    try {
-      await dispatcher.dispatch(job.id);
-    } catch {
-      // The job is stored and queued: a failed hand-off loses nothing (X6d delivers it again).
-      logOf(job)?.warn('job dispatch failed');
+    for (let attempt = 1; attempt <= DISPATCH_ATTEMPTS; attempt += 1) {
+      try {
+        await dispatcher.dispatch(job.id);
+        return;
+      } catch {
+        if (attempt < DISPATCH_ATTEMPTS) {
+          await new Promise((resolve) => setTimeout(resolve, DISPATCH_RETRY_MS * attempt));
+        }
+      }
     }
+    logOf(job)?.warn('job dispatch failed');
   }
 
   /** One job's work, from a claim this runtime took its turn with. */

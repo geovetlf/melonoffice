@@ -1351,6 +1351,48 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
       }
     });
 
+    it('keeps other organizations out of the workflow list, create, schedule and plan decisions', async () => {
+      const t = await setup();
+      const created = await t.post('token-alice', '/workflows', {
+        name: 'Market study',
+        steps: [researchStep],
+      });
+      const { id } = (await created.json()) as { id: string };
+      const { plan } = await t.proposeWork({ approvalRequired: true, askBeforeCampaign: true });
+      const version = must(await t.stores.plans.findVersion(t.orgA, plan.id, plan.version));
+      const decision = { version: plan.version, digest: version.digest };
+      const fromBob = (path: string, method = 'GET', body?: unknown) =>
+        t.app.request(
+          path,
+          t.as('token-bob', {
+            method,
+            ...(body === undefined
+              ? {}
+              : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
+          }),
+        );
+      // Bob is not a member of Alice's organization at all.
+      const notMember = [403, 404];
+      expect(notMember).toContain((await fromBob(`/v1/organizations/${t.orgA}/workflows`)).status);
+      const intruder = { name: 'Intruder', steps: [researchStep] };
+      const write = await fromBob(`/v1/organizations/${t.orgA}/workflows`, 'POST', intruder);
+      expect(notMember).toContain(write.status);
+      const approve = `/v1/organizations/${t.orgA}/plans/${plan.id}/approve`;
+      expect(notMember).toContain((await fromBob(approve, 'POST', decision)).status);
+      // Bob's own organization has none of Alice's workflows or plans: they answer like missing ones.
+      const inB = (path: string) => `/v1/organizations/${t.orgB}${path}`;
+      expect((await fromBob(inB(`/workflows/${id}/schedule`))).status).toBe(404);
+      expect((await fromBob(inB(`/plans/${plan.id}/approve`), 'POST', decision)).status).toBe(404);
+      expect((await fromBob(inB(`/plans/${plan.id}/reject`), 'POST', decision)).status).toBe(404);
+      // Nothing moved: Alice's list has no intruder, and her plan is still as she left it.
+      const listed = JSON.stringify(await (await t.get('token-alice', '/workflows')).json());
+      expect(listed).toContain(id);
+      expect(listed).not.toContain('Intruder');
+      expect(await (await t.get('token-alice', `/plans/${plan.id}`)).json()).toMatchObject({
+        status: plan.status,
+      });
+    });
+
     it('needs workflow.manage to change a workflow and plan.create to plan one', async () => {
       const t = await setup({
         owner: ROLES.owner.filter((p) => p !== 'workflow.manage' && p !== 'plan.create'),

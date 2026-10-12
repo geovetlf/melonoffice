@@ -544,6 +544,16 @@ describe.each(STORES)(
         audit,
         now,
       });
+      /** A store whose membership reads fail, as a storage outage would: no verdict on the person. */
+      const failingMembershipReads = <T extends object>(store: T): T =>
+        new Proxy(store, {
+          get: (target, property) =>
+            property === 'findMembership'
+              ? async () => {
+                  throw new Error('store unavailable');
+                }
+              : Reflect.get(target, property, target),
+        });
       /** One worker instance's runner: the worker's own composition. */
       const runnerOf = (
         conductor = runtimeConductor,
@@ -553,10 +563,14 @@ describe.each(STORES)(
           >[0]['standingAuthorization'];
           readonly workflows?: WorkflowRepository;
           readonly plans?: PlanRepository;
+          readonly failingReads?: boolean;
         } = {},
       ) =>
         createWorkflowScheduleRunner({
-          stores,
+          stores:
+            options.failingReads === true
+              ? { ...stores, tenancy: failingMembershipReads(stores.tenancy) }
+              : stores,
           plans: options.plans ?? stores.plans,
           workflows: options.workflows ?? stores.workflows,
           schedules: stores.schedules,
@@ -1417,6 +1431,24 @@ describe.each(STORES)(
       expect(await w.scheduleOf(workflow.id)).toMatchObject({
         nextRunAt: SECOND,
         last: { occurrence: FIRST, outcome: 'not_allowed' },
+      });
+    });
+
+    it("28b. a failed read of a person's access is retried, never ended as not allowed", async () => {
+      const w = await world();
+      const { workflow } = await scheduled(w);
+      const task = w.taskFor(workflow.id, FIRST);
+      // The store fails while it reads the person's membership: that is no verdict on the person.
+      expect(
+        await w.deliver(task, { runner: w.runnerOf(w.runtimeConductor, { failingReads: true }) }),
+      ).toEqual(expect.objectContaining({ status: 503 }));
+      expect(await w.scheduleOf(workflow.id)).not.toMatchObject({
+        last: { outcome: 'not_allowed' },
+      });
+      // Delivered again once the lease of the failed attempt has lapsed: the occurrence runs.
+      expect(await w.deliver(task, { late: SCHEDULE_LEASE_MS + 60_000 })).toEqual({
+        status: 200,
+        body: { result: 'planned' },
       });
     });
 
