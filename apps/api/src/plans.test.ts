@@ -622,6 +622,144 @@ describe.each(STORES)('plans and workflows API with storage in %s', (_name, crea
     expect(decisions).toHaveLength(1);
   });
 
+  describe('ADR-0192: a plan whose owner left the organization', () => {
+    type Setup = Awaited<ReturnType<typeof setup>>;
+    const LATER = '2026-09-28T12:00:00.000Z' as IsoTimestamp;
+
+    /** Sets a person's membership of Alice's organization (A), as the tenancy store holds it. */
+    async function membership(
+      t: Setup,
+      userId: UserId,
+      status: 'active' | 'revoked',
+      role: string,
+    ): Promise<void> {
+      await t.stores.put({
+        id: membershipIdOf(t.orgA, userId),
+        organizationId: t.orgA,
+        userId,
+        status,
+        role,
+        createdAt: AT,
+        updatedAt: LATER,
+      });
+    }
+
+    /** Alice plans it, and Bob, the organization owner, approves it: it waits for Alice to start it. */
+    async function approvedByAnother(roles: Record<string, readonly string[]> = ROLES) {
+      const t = await setup(roles, { runPlans: true });
+      await membership(t, t.bobId, 'active', OWNER_ROLE);
+      const { plan } = await t.proposeWork({ approvalRequired: true });
+      const version = must(await t.stores.plans.findVersion(t.orgA, plan.id, plan.version));
+      const seen = { version: 1, digest: version.digest };
+      expect((await t.post('token-bob', `/plans/${plan.id}/approve`, seen)).status).toBe(200);
+      return { t, plan, seen };
+    }
+
+    /** The plan's status, read by Bob, the organization owner. */
+    const statusOf = async (t: Setup, planId: string) =>
+      ((await (await t.get('token-bob', `/plans/${planId}`)).json()) as { status: string }).status;
+
+    /** The plan's state changes in the audit trail. */
+    const planChanges = async (t: Setup, planId: string) =>
+      (await t.stores.auditEvents()).filter(
+        (e) => e.action === 'plan.state_changed' && e.target?.id === planId,
+      );
+
+    it('the organization owner cancels it once, and nobody starts it', async () => {
+      const { t, plan, seen } = await approvedByAnother();
+      await membership(t, t.tenant.userId, 'revoked', OWNER_ROLE);
+
+      // Alice is no longer a member, and Bob is not the owner: neither can start it.
+      expect([403, 404]).toContain(
+        (await t.post('token-alice', `/plans/${plan.id}/approve`, seen)).status,
+      );
+      const bobStart = await t.post('token-bob', `/plans/${plan.id}/approve`, seen);
+      expect(bobStart.status).toBe(403);
+      expect(await bobStart.json()).toEqual({ error: 'plan_start_not_owner' });
+      expect(t.kicked).toEqual([]);
+      expect(await statusOf(t, plan.id)).toBe('approved');
+
+      // Bob cancels it through the existing cancellation: the plan ends, and nothing starts.
+      const before = await planChanges(t, plan.id);
+      const cancelled = await t.post('token-bob', `/executions/${plan.executionId}/cancel`, {
+        reason: 'owner_left',
+      });
+      expect(cancelled.status).toBe(200);
+      expect(((await cancelled.json()) as { status: string }).status).toBe('cancelled');
+      expect(await statusOf(t, plan.id)).toBe('cancelled');
+      expect(t.kicked).toEqual([]);
+
+      // The plan says who stopped it, and the change is audited once, with Bob as the actor.
+      const shown = (await (await t.get('token-bob', `/plans/${plan.id}`)).json()) as {
+        stopped: unknown;
+      };
+      expect(shown.stopped).toEqual(expect.objectContaining({ by: t.bobId }));
+      expect((await planChanges(t, plan.id)).slice(before.length)).toEqual([
+        expect.objectContaining({ actor: expect.objectContaining({ userId: t.bobId }) }),
+      ]);
+
+      // A retried cancellation answers the same and writes nothing more.
+      const again = await t.post('token-bob', `/executions/${plan.executionId}/cancel`, {
+        reason: 'owner_left',
+      });
+      expect(again.status).toBe(200);
+      expect(await statusOf(t, plan.id)).toBe('cancelled');
+      expect(await planChanges(t, plan.id)).toHaveLength(before.length + 1);
+    });
+
+    it('a role without execution.cancel cannot cancel it, and the refusal is audited', async () => {
+      const { t, plan } = await approvedByAnother({
+        ...ROLES,
+        member: ['organization.read', 'plan.read'],
+      });
+      await membership(t, t.tenant.userId, 'revoked', OWNER_ROLE);
+      await membership(t, t.bobId, 'active', 'member');
+
+      const refused = await t.post('token-bob', `/executions/${plan.executionId}/cancel`, {
+        reason: 'owner_left',
+      });
+      expect(refused.status).toBe(403);
+      expect(await refused.json()).toEqual({ error: 'permission_denied' });
+      expect(await statusOf(t, plan.id)).toBe('approved');
+      const denials = (await t.stores.auditEvents()).filter(
+        (e) => e.action === 'authorization.check' && e.result === 'denied',
+      );
+      expect(denials).toEqual([
+        expect.objectContaining({ actor: expect.objectContaining({ userId: t.bobId }) }),
+      ]);
+    });
+
+    it('a cancellation sent through another organization is refused, and the plan is unchanged', async () => {
+      const { t, plan } = await approvedByAnother();
+      await membership(t, t.tenant.userId, 'revoked', OWNER_ROLE);
+      const before = await planChanges(t, plan.id);
+
+      // Bob owns the other organization (B), where this execution does not exist.
+      const elsewhere = await t.app.request(
+        `/v1/organizations/${t.orgB}/executions/${plan.executionId}/cancel`,
+        t.as('token-bob', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ reason: 'owner_left' }),
+        }),
+      );
+      expect(elsewhere.status).toBe(404);
+      expect(await statusOf(t, plan.id)).toBe('approved');
+      expect(await planChanges(t, plan.id)).toEqual(before);
+    });
+
+    it('a plan whose owner is still active is unchanged: only its owner starts it', async () => {
+      const { t, plan, seen } = await approvedByAnother();
+
+      expect((await t.post('token-bob', `/plans/${plan.id}/approve`, seen)).status).toBe(403);
+      expect(t.kicked).toEqual([]);
+      const started = await t.post('token-alice', `/plans/${plan.id}/approve`, seen);
+      expect(started.status).toBe(200);
+      expect(((await started.json()) as { status: string }).status).toBe('executing');
+      expect(t.kicked).toHaveLength(1);
+    });
+  });
+
   it('WF-1: a plan with a step it cannot run is not approved at all', async () => {
     const t = await setup(ROLES, { runPlans: true });
     // An approval step has no defined behaviour in a plan yet: the plan is refused before the
