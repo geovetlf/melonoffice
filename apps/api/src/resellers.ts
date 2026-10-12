@@ -27,6 +27,7 @@ import {
   parseAccountLimits,
   type CommercialDependencies,
 } from './commercial.js';
+import { versionAfter } from './versions.js';
 
 /**
  * A white label's resellers (ADR-0098). A white label creates its resellers, each with the
@@ -226,15 +227,11 @@ export function registerResellerRoutes(app: Hono<AuthEnv>, deps: CommercialDepen
       if (!canChangeAccountStatus(reseller.status, status)) {
         return c.json({ error: 'invalid_account_transition' }, 409);
       }
-      // A version is its timestamp: it must move even when two writes share a millisecond,
-      // or a stale `expectedUpdatedAt` would still match.
-      const previous = Date.parse(reseller.updatedAt);
-      const clock = now();
-      const at = clock.getTime() > previous ? clock : new Date(previous + 1);
+      const at = now();
       const next: CommercialAccount = {
         ...reseller,
         status,
-        updatedAt: at.toISOString() as IsoTimestamp,
+        updatedAt: versionAfter(reseller.updatedAt, at),
       };
       await commercial.saveAccount(next, reseller, [
         buildAuditEvent(

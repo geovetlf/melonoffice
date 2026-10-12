@@ -57,6 +57,7 @@ import { recordOutcome, requestFields } from './audit.js';
 import type { AuthEnv } from './auth.js';
 import { withPermission } from './authorization.js';
 import { platformAdminOf, staleSignInRefusal } from './platform-admin.js';
+import { versionAfter } from './versions.js';
 
 /**
  * The commercial layer's routes (ADR-0086), over ADR-0085's model:
@@ -404,7 +405,7 @@ export function registerCommercialRoutes(app: Hono<AuthEnv>, deps: CommercialDep
       const next: CommercialAccount = {
         ...account,
         status,
-        updatedAt: at.toISOString() as IsoTimestamp,
+        updatedAt: versionAfter(account.updatedAt, at),
       };
       await commercial.saveAccount(next, account, [
         event(
@@ -439,7 +440,7 @@ export function registerCommercialRoutes(app: Hono<AuthEnv>, deps: CommercialDep
       const next: CommercialAccount = {
         ...account,
         limits,
-        updatedAt: at.toISOString() as IsoTimestamp,
+        updatedAt: versionAfter(account.updatedAt, at),
       };
       await commercial.saveAccount(next, account, [
         event(
@@ -525,7 +526,7 @@ export function registerCommercialRoutes(app: Hono<AuthEnv>, deps: CommercialDep
       const membership: CommercialMembership = {
         ...current,
         role,
-        updatedAt: at.toISOString() as IsoTimestamp,
+        updatedAt: versionAfter(current.updatedAt, at),
       };
       await commercial.saveMembership(membership, current, [
         event(
@@ -558,7 +559,7 @@ export function registerCommercialRoutes(app: Hono<AuthEnv>, deps: CommercialDep
       }
       const at = now();
       await commercial.saveMembership(
-        { ...current, status: 'revoked', updatedAt: at.toISOString() as IsoTimestamp },
+        { ...current, status: 'revoked', updatedAt: versionAfter(current.updatedAt, at) },
         current,
         [
           event(
@@ -831,7 +832,7 @@ export function registerCommercialRoutes(app: Hono<AuthEnv>, deps: CommercialDep
     next: CustomerRelationship,
   ) => {
     const at = now();
-    const saved = { ...next, updatedAt: at.toISOString() as IsoTimestamp };
+    const saved = { ...next, updatedAt: versionAfter(current.updatedAt, at) };
     await commercial.saveRelationship(saved, current, [
       event(
         {

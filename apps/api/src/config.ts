@@ -167,6 +167,18 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): S
   ) {
     throw new Error(`Invalid PASSKEY_RP_ID: ${passkeyRelyingPartyId}`);
   }
+  // A relying party no web origin belongs to turns passkeys off without a word (ADR-0188): an
+  // administrator would then be refused every change that needs one. Refuse to start instead.
+  if (
+    passkeyRelyingPartyId !== undefined &&
+    webOrigins.length > 0 &&
+    !webOrigins.some((origin) => {
+      const host = new URL(origin).hostname;
+      return host === passkeyRelyingPartyId || host.endsWith(`.${passkeyRelyingPartyId}`);
+    })
+  ) {
+    throw new Error(`PASSKEY_RP_ID matches no WEB_ORIGINS host: ${passkeyRelyingPartyId}`);
+  }
   const platformAdminUserIds = (env.PLATFORM_ADMIN_USER_IDS ?? '')
     .split(',')
     .map((id) => id.trim())

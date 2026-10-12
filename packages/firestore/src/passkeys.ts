@@ -2,6 +2,7 @@ import type { Firestore, Transaction } from '@google-cloud/firestore';
 import type { AuditEvent } from '@melonoffice/audit';
 import type { IsoTimestamp, UserId } from '@melonoffice/domain';
 import {
+  counterMovesOn,
   MAX_PASSKEYS_PER_PERSON,
   PasskeyError,
   type Passkey,
@@ -156,6 +157,7 @@ export class FirestorePasskeyStore implements PasskeyStore {
       if (stored === undefined || stored.userId !== passkey.userId) {
         throw new PasskeyError('passkey_not_found');
       }
+      if (!counterMovesOn(stored.counter, counter)) throw new PasskeyError('passkey_counter');
       tx.update(ref, { counter, lastUsedAt: confirmation.confirmedAt });
       const { id, ...rest } = confirmation;
       tx.create(this.db.collection(PASSKEY_CONFIRMATIONS).doc(id), rest);

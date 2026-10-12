@@ -102,7 +102,20 @@ export interface PasskeyStore {
   ): Promise<number>;
 }
 
-export type PasskeyErrorCode = 'passkey_exists' | 'passkey_limit' | 'passkey_not_found';
+export type PasskeyErrorCode =
+  | 'passkey_exists'
+  | 'passkey_limit'
+  | 'passkey_not_found'
+  /** The signature counter did not move past the stored one: a replay or a cloned key. */
+  | 'passkey_counter';
+
+/**
+ * Whether a confirmation's counter may follow the stored one (WebAuthn §6.1.1): an authenticator
+ * without a counter answers 0 every time; any other must move forward. Checked where the counter
+ * is stored, so two confirmations at once cannot both pass with the same value.
+ */
+export const counterMovesOn = (stored: number, next: number): boolean =>
+  (stored === 0 && next === 0) || next > stored;
 
 export class PasskeyError extends Error {
   override readonly name = 'PasskeyError';
@@ -184,6 +197,7 @@ export class InMemoryPasskeyStore implements PasskeyStore {
     if (stored === undefined || stored.userId !== passkey.userId) {
       throw new PasskeyError('passkey_not_found');
     }
+    if (!counterMovesOn(stored.counter, counter)) throw new PasskeyError('passkey_counter');
     this.#record(events);
     this.#passkeys.set(
       passkey.id,
