@@ -70,16 +70,16 @@ Out of the MVP until the owner decides: J1 (journeys), voice, calendar and email
 
 ## Integrations
 
-| From → to                               | Status                   | Note                                                                                                     |
-| --------------------------------------- | ------------------------ | -------------------------------------------------------------------------------------------------------- |
-| Web → API                               | `PASS_VERIFIED`          | every path the web clients call is a registered route (214 routes compared, Front A)                     |
-| API → worker (Cloud Tasks)              | `IMPLEMENTED_UNVERIFIED` | each side is tested with a recorded scheduler; the live hop runs only in DEV                             |
-| Agent Engine → AI Gateway → Vertex AI   | `IMPLEMENTED_UNVERIFIED` | real-model evals run in DEV by the owner only                                                            |
-| GIA → workflow draft → plan → approval  | `PASS_VERIFIED`          | `workflowDrafts.test.tsx`, `plans.test.ts`                                                               |
-| Plan → execution → result on screen     | `INCOMPLETE`             | one failed poll stops a plan's live view; failed step reads show as no steps (sent to the engine thread) |
-| Integration Engine → WhatsApp Cloud API | `IMPLEMENTED_UNVERIFIED` | fake Graph API in tests                                                                                  |
-| Credits ↔ AI usage events               | `INCOMPLETE`             | no reconciliation (above)                                                                                |
-| Payments → credits                      | `NOT_IMPLEMENTED`        | no provider                                                                                              |
+| From → to                               | Status                   | Note                                                                                        |
+| --------------------------------------- | ------------------------ | ------------------------------------------------------------------------------------------- |
+| Web → API                               | `PASS_VERIFIED`          | every path the web clients call is a registered route (214 routes compared, Front A)        |
+| API → worker (Cloud Tasks)              | `IMPLEMENTED_UNVERIFIED` | each side is tested with a recorded scheduler; the live hop runs only in DEV                |
+| Agent Engine → AI Gateway → Vertex AI   | `IMPLEMENTED_UNVERIFIED` | real-model evals run in DEV by the owner only                                               |
+| GIA → workflow draft → plan → approval  | `PASS_VERIFIED`          | `workflowDrafts.test.tsx`, `plans.test.ts`                                                  |
+| Plan → execution → result on screen     | `INCOMPLETE`             | #233 keeps a running plan on screen; a first read that fails is not retried (design screen) |
+| Integration Engine → WhatsApp Cloud API | `IMPLEMENTED_UNVERIFIED` | fake Graph API in tests                                                                     |
+| Credits ↔ AI usage events               | `INCOMPLETE`             | no reconciliation (above)                                                                   |
+| Payments → credits                      | `NOT_IMPLEMENTED`        | no provider                                                                                 |
 
 ## Test results
 
@@ -156,10 +156,10 @@ Decisions:
 
 ## Residual risks
 
-- A transient Firestore error while leasing a job is treated as a permission refusal, so the job is not retried (sent to the engine thread).
+- A storage error while leasing a job answers 503, so the queue delivers it again. Not reproduced; `apps/worker/src/transport.test.ts` pins it.
 - A retried AI call with a fixed request id can call the provider again on a closed hold (sent to the engine thread).
 - AI usage reports can undercount the ledger when a usage write fails (no reconcile).
-- The Agent Guardian keeps a report built while the Brain was unreadable (sent to the engine thread).
+- The Agent Guardian keeps no report when the Brain cannot be read whole: a Brain of 1000 items or more is refused as incomplete. Above that, the figures stay unchecked until the read pages, which is not built.
 - Other raw codes may still show in the partner console, the audit trail and approvals.
 - A webhook delivery whose audit write fails is not audited again on the provider's retry.
 - UX gaps found and not fixed in the sprint: every refusal of team work reads "not now"; "review the plan" opens the plan list, not the plan; a department that fails to load looks like one that does not exist; a configuration failure looks like "not configured"; some screen-reader labels are hard-coded in English; a few panels keep desktop minimum widths on phones.
