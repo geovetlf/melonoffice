@@ -55,6 +55,7 @@ import {
   createExecutionService,
   InMemoryAgentOutputRepository,
   InMemoryExecutionRepository,
+  MAX_AGENT_OUTPUT_LENGTH,
   type ExecutionRepository,
 } from '@melonoffice/execution';
 import {
@@ -1440,6 +1441,30 @@ describe.each(STORES)('runtime advance() with storage in %s', (storage, createSt
       status: 'failed',
       error: { code: 'output_unavailable' },
     });
+  });
+
+  it('36b. an answer over the size limit is paid for once, fails the node and is never run again', async () => {
+    const repository = new InMemoryAgentOutputRepository();
+    const w = await world({
+      outputs: createAgentOutputStore(repository),
+      ai: async () => ({ ...OK, output: { text: 'x'.repeat(MAX_AGENT_OUTPUT_LENGTH) } }),
+    });
+    const execution = await w.started([{ id: 'n0' }]);
+    const claim = await firstClaim(w, execution);
+    expect(await w.runtime.advance(claim.lease)).toEqual({
+      outcome: 'failed',
+      code: 'output_unavailable',
+    });
+    // One provider call is one charge: the gateway settles it when the answer comes back.
+    expect(w.providerCalls).toHaveLength(1);
+    expect(repository.records()).toHaveLength(0);
+    // No retry rule lets an agent node run again, so the node and the execution stay failed.
+    expect(await w.nodeOf(execution.id, 'n0')).toMatchObject({
+      status: 'failed',
+      error: { code: 'output_unavailable' },
+    });
+    expect((await w.get(execution.id)).status).toBe('failed');
+    expect(w.providerCalls).toHaveLength(1);
   });
 
   it('37. skips a node the work before it made unnecessary, and never runs it', async () => {

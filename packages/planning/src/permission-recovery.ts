@@ -1,6 +1,6 @@
 import type { IsoTimestamp, Plan, PlanId } from '@melonoffice/domain';
 import type { AuthorizationService } from '@melonoffice/rbac';
-import { resolveRuntimeTenant, type TenancyStore } from '@melonoffice/tenancy';
+import { runtimeTenantIfAny, type TenancyStore } from '@melonoffice/tenancy';
 import type { PlanConductor } from './conductor.js';
 import type { PlanRepository } from './repository.js';
 
@@ -50,9 +50,7 @@ export function createPermissionRecovery({
   async function releaseOne(plan: Plan, untouchedBefore: IsoTimestamp): Promise<boolean> {
     if (plan.decision?.via === 'schedule' || plan.workflow?.occurrence !== undefined) return false;
     // The runtime acts only through an active membership (ADR-0029): a creator who left has none.
-    const tenant = await resolveRuntimeTenant(plan.createdBy, plan.organizationId, tenancy).catch(
-      () => undefined,
-    );
+    const tenant = await runtimeTenantIfAny(plan.createdBy, plan.organizationId, tenancy);
     if (tenant === undefined) return false;
     const { allowed } = authorization.authorize(tenant, 'plan.create', {
       organizationId: plan.organizationId,
