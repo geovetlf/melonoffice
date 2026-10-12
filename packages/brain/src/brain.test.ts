@@ -216,7 +216,21 @@ describe('complete reads take every page, and refuse a Brain too large to read w
     expect(pages).toHaveBeenCalledTimes(2);
   });
 
-  it('refuses a Brain that fills every page, and keeps the plain read as it was', async () => {
+  it('refuses a Brain of as many items as its pages take, before it reads any of them', async () => {
+    const w = await world();
+    await w.brain.propose(w.alice, price(25));
+    await seedItems(w, LIMITS.readWindow * LIMITS.completeReadPages - 1);
+    const pages = vi.spyOn(w.repository, 'pageItems');
+    const windows = vi.spyOn(w.repository, 'listItems');
+    await expect(w.brain.list(w.alice, { complete: true })).rejects.toMatchObject({
+      code: 'read_incomplete',
+    });
+    // The count decides it: a document read here would fail this test.
+    expect(pages).not.toHaveBeenCalled();
+    expect(windows).not.toHaveBeenCalled();
+  });
+
+  it('refuses a Brain larger than its pages take, and keeps the plain read as it was', async () => {
     const w = await world();
     await w.brain.propose(w.alice, price(25));
     await seedItems(w, LIMITS.readWindow * LIMITS.completeReadPages);
@@ -224,7 +238,7 @@ describe('complete reads take every page, and refuse a Brain too large to read w
     await expect(w.brain.list(w.alice, { complete: true })).rejects.toMatchObject({
       code: 'read_incomplete',
     });
-    expect(pages).toHaveBeenCalledTimes(LIMITS.completeReadPages);
+    expect(pages).not.toHaveBeenCalled();
     expect((await w.brain.list(w.alice)).length).toBe(LIMITS.readWindow);
   });
 });

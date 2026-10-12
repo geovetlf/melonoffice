@@ -10,6 +10,7 @@ import { emulatorFirestore, emulatorHost } from './testing.js';
 
 const ORG_A = '5e1d2c3b-4a59-4e6f-8a7b-9c0d1e2f3a4b' as OrganizationId;
 const ORG_B = '6f5e4d3c-2b1a-4f9e-8d7c-6b5a4f3e2d1c' as OrganizationId;
+const ORG_C = '7a6b5c4d-3e2f-4a1b-8c9d-0e1f2a3b4c5d' as OrganizationId;
 
 describe.runIf(emulatorHost)('Company Brain pages (ADR-0132, emulator)', () => {
   it('walks an organization’s items a page at a time, in document-id order, and only its own', async () => {
@@ -50,5 +51,22 @@ describe.runIf(emulatorHost)('Company Brain pages (ADR-0132, emulator)', () => {
     expect(full.next).toBe('page-b');
     expect(await repository.pageItems(ORG_A, { after: 'page-b', limit: 2 })).toEqual({ items: [] });
     expect(await repository.pageItems(ORG_B, { limit: 2 })).toEqual({ items: [] });
+  });
+
+  it('counts an organization’s items exactly, and only its own', async () => {
+    const db = emulatorFirestore();
+    const repository = new FirestoreKnowledgeRepository(db);
+    const rows: [OrganizationId, string][] = [
+      [ORG_A, 'count-a'],
+      [ORG_B, 'count-b'],
+      [ORG_A, 'count-c'],
+      [ORG_A, 'count-d'],
+    ];
+    for (const [organizationId, id] of rows) {
+      await db.collection(KNOWLEDGE_ITEMS).doc(id).set({ id, organizationId });
+    }
+    expect(await repository.countItems(ORG_A)).toBe(3);
+    expect(await repository.countItems(ORG_B)).toBe(1);
+    expect(await repository.countItems(ORG_C)).toBe(0);
   });
 });

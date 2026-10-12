@@ -54,6 +54,8 @@ export interface KnowledgeRepository {
     organizationId: OrganizationId,
     page: { readonly after?: string; readonly limit: number },
   ): Promise<KnowledgePage>;
+  /** How many items the organization holds, counted with the filter the pages read by. */
+  countItems(organizationId: OrganizationId): Promise<number>;
   listVersions(
     organizationId: OrganizationId,
     itemId: string,
@@ -140,6 +142,11 @@ export class InMemoryKnowledgeRepository implements KnowledgeRepository {
       items,
       ...(last !== undefined && items.length === page.limit ? { next: last.id } : {}),
     };
+  }
+
+  async countItems(organizationId: OrganizationId) {
+    return [...this.#items.values()].filter((item) => item.organizationId === organizationId)
+      .length;
   }
 
   async listVersions(organizationId: OrganizationId, itemId: string) {

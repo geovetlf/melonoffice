@@ -96,6 +96,20 @@ export class FirestoreKnowledgeRepository implements KnowledgeRepository {
     };
   }
 
+  /**
+   * How many items the organization holds: an aggregation over the same single equality the pages read by
+   * (ADR-0187). It returns a number, not documents, and Firestore bills it per index entry it reads.
+   */
+  async countItems(organizationId: OrganizationId) {
+    if (!isOrganizationId(organizationId)) return 0;
+    const snapshot = await this.db
+      .collection(KNOWLEDGE_ITEMS)
+      .where('organizationId', '==', organizationId)
+      .count()
+      .get();
+    return snapshot.data().count;
+  }
+
   async listVersions(organizationId: OrganizationId, itemId: string) {
     if (!isOrganizationId(organizationId) || !DOC_ID.test(itemId)) return [];
     const snapshot = await this.db

@@ -561,8 +561,17 @@ export function createCompanyBrain(options: CompanyBrainOptions): CompanyBrainSe
     });
   }
 
-  /** Every item of the organization, a page at a time in document-id order (ADR-0132, ADR-0187). */
+  /**
+   * Every item of the organization, a page at a time in document-id order (ADR-0132, ADR-0187). A Brain of
+   * as many items as the pages take is refused before any page is read: a count decides it.
+   */
   async function everyItem(organizationId: OrganizationId): Promise<readonly KnowledgeItem[]> {
+    if (
+      (await repository.countItems(organizationId)) >=
+      LIMITS.readWindow * LIMITS.completeReadPages
+    ) {
+      throw new BrainError('read_incomplete');
+    }
     const items: KnowledgeItem[] = [];
     let after: string | undefined;
     for (let page = 0; page < LIMITS.completeReadPages; page += 1) {
