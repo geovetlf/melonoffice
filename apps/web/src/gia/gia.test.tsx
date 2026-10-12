@@ -1,5 +1,5 @@
 import { I18nProvider } from '@melonoffice/i18n';
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../App.js';
 import { createServices } from '../identity/services.js';
@@ -335,6 +335,47 @@ describe("GIA's Workplace (ADR-0050)", () => {
     const none = await screen.findByRole('region', { name: 'Talk to GIA' });
     expect(within(none).queryByRole('textbox')).toBeNull();
     expect(within(none).getByText('Your role cannot talk to GIA.')).toBeTruthy();
+  });
+
+  it('says a refusal of her role or organization as such, not as "try again"', async () => {
+    open('/gia', (b) => {
+      b.options.gia = { error: 'permission_denied', status: 403 };
+    });
+    const chat = await screen.findByRole('region', { name: 'Talk to GIA' });
+    fireEvent.change(within(chat).getByRole('textbox', { name: 'Your message to GIA' }), {
+      target: { value: 'Hola' },
+    });
+    fireEvent.click(within(chat).getByRole('button', { name: 'Send' }));
+    const alert = await within(chat).findByRole('alert');
+    expect(alert.textContent).toContain('Your role or your organization cannot use GIA right now.');
+    expect(alert.textContent).not.toContain('Try again');
+  });
+
+  it('reads the balance again after she answers, so the top bar shows what is left', async () => {
+    const backend = open('/gia', (b) => {
+      b.options.gia = {
+        answer: 'Hola.',
+        department: null,
+        screen: null,
+        proposedAction: null,
+        proposedFacts: 0,
+        links: [],
+        proposedFollowUp: null,
+        context: { facts: 0, activity: false, agents: false, missing: [] },
+        replayed: false,
+        generatedBy: 'ai',
+      };
+    });
+    const balance = () => document.querySelector('.topbar__credits')?.textContent ?? '';
+    await waitFor(() => expect(balance()).toContain('498'));
+    backend.options.credits.org_1 = 497;
+    const chat = await screen.findByRole('region', { name: 'Talk to GIA' });
+    fireEvent.change(within(chat).getByRole('textbox', { name: 'Your message to GIA' }), {
+      target: { value: 'Hola' },
+    });
+    fireEvent.click(within(chat).getByRole('button', { name: 'Send' }));
+    await within(chat).findByText('Hola.');
+    await waitFor(() => expect(balance()).toContain('497'));
   });
 
   it('keeps the avatar decorative where her name is written, and named where it is alone', async () => {

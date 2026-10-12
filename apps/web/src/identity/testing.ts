@@ -165,6 +165,8 @@ export interface FakeBackend {
      * answer per call in order (the last repeats). None: the route answers 503.
      */
     workflowDrafts?: readonly Record<string, unknown>[];
+    /** How many saves of a workflow fail with a 503 before one succeeds. */
+    workflowSaveFailures?: number;
     /** Records per page of Comercial's lists (ADR-0061), unless the request asks a `limit`. */
     pageSize: number;
     /** Every page after the first fails (ADR-0061). */
@@ -1130,6 +1132,10 @@ export function fakeBackend(): FakeBackend {
     if (route === 'workflows' && method === 'POST') {
       const denied = needs('workflow.manage');
       if (denied !== undefined) return denied;
+      if ((options.workflowSaveFailures ?? 0) > 0) {
+        options.workflowSaveFailures = (options.workflowSaveFailures ?? 0) - 1;
+        return json(503, { error: 'unavailable' });
+      }
       const input = JSON.parse(body ?? '{}') as { name?: string; steps?: unknown[] };
       if (typeof input.name !== 'string' || input.name.trim() === '') {
         return json(400, { error: 'invalid_workflow', detail: 'name' });

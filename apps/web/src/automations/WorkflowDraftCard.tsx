@@ -3,6 +3,8 @@ import { Badge, Button, StateMessage } from '@melonoffice/ui';
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { OutOfCredits } from '../aiUsage/OutOfCredits.js';
 import { navigate } from '../identity/router.js';
+import { useCreditsSpent } from '../office/OfficeData.js';
+import { useKept, type KeptStore } from '../shell/keptState.js';
 import { paths } from '../shell/routes.js';
 import {
   AutomationsError,
@@ -44,6 +46,12 @@ type Phase =
   | { readonly kind: 'drafted'; readonly draft: WorkflowDraftView }
   | { readonly kind: 'error'; readonly code: string }
   | { readonly kind: 'saving'; readonly draft: Extract<WorkflowDraftView, { status: 'ready' }> }
+  /** Saving failed: the draft is kept, and trying again saves it, never plans it again. */
+  | {
+      readonly kind: 'save_error';
+      readonly draft: Extract<WorkflowDraftView, { status: 'ready' }>;
+      readonly code: string;
+    }
   | { readonly kind: 'saved'; readonly workflow: WorkflowView }
   | { readonly kind: 'discarded' };
 
@@ -61,6 +69,7 @@ export function WorkflowDraftCard({
   onSaved,
   onOpen,
   onDone,
+  kept,
 }: {
   readonly client: DraftClient;
   /** The person's words, as they wrote them. */
@@ -74,34 +83,50 @@ export function WorkflowDraftCard({
   readonly onOpen?: ((workflow: WorkflowView) => void) | undefined;
   /** The card has nothing left to do (discarded): its holder may close it. */
   readonly onDone?: (() => void) | undefined;
+  /**
+   * Where the card keeps its draft when its holder outlives it (GIA's chat): coming back to the
+   * chat shows the same draft or saved workflow, and never asks the planner again.
+   */
+  readonly kept?: { readonly store: KeptStore; readonly key: string } | undefined;
 }) {
   const intl = useIntl();
-  const [words, setWords] = useState(intent);
-  const [phase, setPhase] = useState<Phase>({ kind: 'working' });
+  const [words, setWords] = useKept(kept?.store, `${kept?.key ?? ''}:words`, () => intent);
+  const [phase, setPhase] = useKept<Phase>(kept?.store, `${kept?.key ?? ''}:phase`, () => ({
+    kind: 'working',
+  }));
+  const [started, setStarted] = useKept(kept?.store, `${kept?.key ?? ''}:started`, () => false);
   const asked = useRef<string | undefined>(undefined);
+  const creditsSpent = useCreditsSpent();
 
   const ask = useCallback(
     (text: string) => {
       asked.current = text;
       setWords(text);
       setPhase({ kind: 'working' });
-      client.draftWorkflow(text).then(
-        (draft) => asked.current === text && setPhase({ kind: 'drafted', draft }),
-        (failure: unknown) =>
-          asked.current === text &&
-          setPhase({
-            kind: 'error',
-            code: failure instanceof AutomationsError ? failure.code : 'network',
-          }),
-      );
+      client
+        .draftWorkflow(text)
+        .then(
+          (draft) => asked.current === text && setPhase({ kind: 'drafted', draft }),
+          (failure: unknown) =>
+            asked.current === text &&
+            setPhase({
+              kind: 'error',
+              code: failure instanceof AutomationsError ? failure.code : 'network',
+            }),
+        )
+        // Planning a draft spends credits: the balance shown is read again.
+        .finally(creditsSpent);
     },
-    [client],
+    [client, setWords, setPhase, creditsSpent],
   );
 
   useEffect(() => {
-    // Once per card: a new request is a new card, or an answer to GIA's question.
-    if (asked.current === undefined) ask(intent);
-  }, [ask, intent]);
+    // Once per card: a new request is a new card, or an answer to GIA's question. A card shown
+    // again from where it was kept already asked.
+    if (asked.current !== undefined || started) return;
+    setStarted(true);
+    ask(intent);
+  }, [ask, intent, started, setStarted]);
 
   async function save(draft: Extract<WorkflowDraftView, { status: 'ready' }>) {
     setPhase({ kind: 'saving', draft });
@@ -111,7 +136,8 @@ export function WorkflowDraftCard({
       onSaved?.(workflow);
     } catch (failure) {
       setPhase({
-        kind: 'error',
+        kind: 'save_error',
+        draft,
         code: failure instanceof AutomationsError ? failure.code : 'network',
       });
     }
@@ -133,6 +159,8 @@ export function WorkflowDraftCard({
         </StateMessage>
       ) : phase.kind === 'error' ? (
         <DraftError code={phase.code} onRetry={() => ask(words)} onDiscard={discard} />
+      ) : phase.kind === 'save_error' ? (
+        <DraftError code={phase.code} onRetry={() => void save(phase.draft)} onDiscard={discard} />
       ) : phase.kind === 'saved' ? (
         <StateMessage kind="success" inline>
           <FormattedMessage id="automations.draft.saved" values={{ name: phase.workflow.name }} />{' '}

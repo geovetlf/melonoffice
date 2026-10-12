@@ -129,7 +129,7 @@ export type GiaForecastGap =
     }
   | { readonly kind: 'profile' | 'currency' };
 
-export type GiaFailure = 'credits' | 'not_available' | 'rate_limited' | 'failed';
+export type GiaFailure = 'credits' | 'not_available' | 'denied' | 'rate_limited' | 'failed';
 
 export type GiaResult =
   | { readonly kind: 'answered'; readonly answer: GiaAnswerView }
@@ -292,6 +292,10 @@ const FAILURES: Readonly<Record<string, GiaFailure>> = {
   ai_credits_insufficient: 'credits',
   ai_not_available: 'not_available',
   ai_policy_denied: 'not_available',
+  // The person may not talk to GIA here, or the organization is not active: not "try again".
+  permission_denied: 'denied',
+  organization_inactive: 'denied',
+  requires_user: 'denied',
   rate_limited: 'rate_limited',
 };
 

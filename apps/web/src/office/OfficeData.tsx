@@ -43,6 +43,7 @@ const LOADING: OfficeData = {
 const OfficeDataContext = createContext<OfficeData>(LOADING);
 const BusinessSavedContext = createContext<(view: BusinessProfileView) => void>(() => undefined);
 const SpecialistSavedContext = createContext<(view: SpecialistView) => void>(() => undefined);
+const CreditsSpentContext = createContext<() => void>(() => undefined);
 
 export const useOfficeData = (): OfficeData => useContext(OfficeDataContext);
 
@@ -56,6 +57,12 @@ export const useBusinessSaved = (): ((view: BusinessProfileView) => void) =>
  */
 export const useSpecialistSaved = (): ((view: SpecialistView) => void) =>
   useContext(SpecialistSavedContext);
+
+/**
+ * Reads the balance again after something may have spent credits (a GIA answer, a draft), so the
+ * top bar and the sidebar show what is left. A failed read keeps the balance already shown.
+ */
+export const useCreditsSpent = (): (() => void) => useContext(CreditsSpentContext);
 
 /**
  * The order the business profile suggests for the departments, once the business is described.
@@ -152,10 +159,20 @@ export function OfficeDataProvider({
     [],
   );
 
+  const creditsSpent = useCallback(() => {
+    if (!canCredits) return;
+    client.credits().then(
+      (value) => setData((current) => ({ ...current, credits: { status: 'ready', value } })),
+      () => undefined,
+    );
+  }, [client, canCredits]);
+
   return (
     <BusinessSavedContext.Provider value={saved}>
       <SpecialistSavedContext.Provider value={specialistSaved}>
-        <OfficeDataContext.Provider value={data}>{children}</OfficeDataContext.Provider>
+        <CreditsSpentContext.Provider value={creditsSpent}>
+          <OfficeDataContext.Provider value={data}>{children}</OfficeDataContext.Provider>
+        </CreditsSpentContext.Provider>
       </SpecialistSavedContext.Provider>
     </BusinessSavedContext.Provider>
   );
