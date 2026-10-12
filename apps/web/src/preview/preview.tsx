@@ -49,25 +49,6 @@ if (params.get('signedOut') !== '1') {
   store.setItem(REFRESH_KEY, 'refresh-preview');
 }
 SCENARIOS[scenario](backend, routes);
-// The Guardian's notice on the finished task t4, for the screenshots of a Brain not read whole (ADR-0132):
-// `?guardian=unchecked` shows the notice, `?guardian=clean` a checked answer with none.
-const guardianAsked = params.get('guardian');
-if (guardianAsked === 'unchecked' || guardianAsked === 'clean') {
-  const findings =
-    guardianAsked === 'unchecked'
-      ? [
-          {
-            code: 'organization_unchecked',
-            severity: 'info',
-            evidence: {},
-            recommendation: 'check_by_hand',
-          },
-        ]
-      : [];
-  for (const task of backend.options.agentTasks.spec_ana ?? []) {
-    if (task.id === 't4') task.guardian = { findings };
-  }
-}
 if (params.get('noOrg') === '1') backend.options.organizations = [];
 giaEngagements.reset();
 const brought = params.get('gia')?.split(':');
