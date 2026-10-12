@@ -136,7 +136,7 @@ describe('GIA prepares a task for an agent (AE-3)', () => {
     });
     const chat = await ask();
     fireEvent.click(await chat.findByRole('button', { name: 'Discard' }));
-    expect(chat.getByText('Task discarded. Nothing was sent.')).toBeTruthy();
+    expect(await chat.findByText('Task discarded. Nothing was sent.')).toBeTruthy();
     expect(giaEngagements.list()).toEqual([]);
     expect(taskPosts(backend)).toEqual([]);
   });
