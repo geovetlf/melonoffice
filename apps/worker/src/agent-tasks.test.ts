@@ -734,9 +734,8 @@ describe.each(STORES)('AE-2 agent tasks with storage in %s', (_storage, createSt
     ).toEqual([expect.objectContaining({ code: 'organization_unchecked', severity: 'info' })]);
     // The Guardian's check is left out of the verification, so it is not shown as passed.
     expect(checkCodesOf(execution)).not.toContain('agent_guardian');
-    // Logged with counts and the reason only: once for the figures' read and once for the secrets' (each reads the whole Brain).
+    // Logged once, with counts and the reason only: the figures and the secrets share one read of the Brain.
     expect(w.logged.filter((l) => l.message === 'brain.complete_read_refused')).toEqual([
-      expect.objectContaining({ reason: 'items', pages: 0, items: 0 }),
       expect.objectContaining({ reason: 'items', pages: 0, items: 0 }),
     ]);
   });
@@ -798,10 +797,9 @@ describe.each(STORES)('AE-2 agent tasks with storage in %s', (_storage, createSt
       guardianFindingsOf(await w.outputs.find(w.tenantA, must(execution).id, GUARDIAN_NODE)),
     ).toEqual([expect.objectContaining({ code: 'organization_unchecked' })]);
     expect(checkCodesOf(execution)).not.toContain('agent_guardian');
-    // Once for the figures' read and once for the secrets' read, each after its ten pages.
-    expect(calls).toBe(2 * LIMITS.completeReadPages);
+    // One read of the Brain for both checks, and it runs out after its ten pages.
+    expect(calls).toBe(LIMITS.completeReadPages);
     expect(w.logged.filter((l) => l.message === 'brain.complete_read_refused')).toEqual([
-      expect.objectContaining({ reason: 'pages', pages: LIMITS.completeReadPages, items: 0 }),
       expect.objectContaining({ reason: 'pages', pages: LIMITS.completeReadPages, items: 0 }),
     ]);
   });

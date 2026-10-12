@@ -23,6 +23,7 @@ import type {
   ExecutionId,
   ExecutionNode,
   ExecutionNodeId,
+  KnowledgeItem,
   OrganizationId,
   SpecialistConfiguration,
   SpecialistId,
@@ -741,6 +742,14 @@ export interface AgentTaskVerifier {
  * (`output_schema`), and a follow-up the task scheduled exists (`checks`, ADR-0084). It checks the
  * shape, not the advice: a person reads the answer.
  */
+/** The Brain's items, read by the first call and shared by the calls after it. */
+export type GuardianBrainRead = () => Promise<readonly KnowledgeItem[]>;
+
+function once<T>(read: () => Promise<T>): () => Promise<T> {
+  let started: Promise<T> | undefined;
+  return () => (started ??= read());
+}
+
 export function createAgentTaskVerifier(options: {
   readonly outputs: Pick<AgentOutputStore, 'find'>;
   /**
@@ -759,10 +768,19 @@ export function createAgentTaskVerifier(options: {
    */
   readonly guardian?: {
     readonly record: AgentOutputStore['record'];
+    /**
+     * Company Brain's items, read complete or refused. Both checks ask for it through `whole`, which
+     * reads it once per verification, so the Brain is read once, not once per check.
+     */
+    readonly wholeBrain: (
+      tenant: TenantContext,
+      execution: Execution,
+    ) => Promise<readonly KnowledgeItem[]>;
     /** Company Brain's figures the task's agent may read. Absent or undefined: not compared. */
     readonly figures?: (
       tenant: TenantContext,
       execution: Execution,
+      whole: GuardianBrainRead,
     ) => Promise<readonly FigureFact[] | undefined>;
     /**
      * The credentials stored in Company Brain (G-7), to look for in the answer. Absent or
@@ -771,6 +789,7 @@ export function createAgentTaskVerifier(options: {
     readonly secrets?: (
       tenant: TenantContext,
       execution: Execution,
+      whole: GuardianBrainRead,
     ) => Promise<readonly StoredSecret[] | undefined>;
     readonly mutating: (id: string, version: number) => boolean;
   };
@@ -795,8 +814,10 @@ export function createAgentTaskVerifier(options: {
       unread.any = true;
       return undefined;
     };
-    const figures = await guardian.figures?.(tenant, execution).catch(unreadSource);
-    const secrets = await guardian.secrets?.(tenant, execution).catch(unreadSource);
+    // One read of the Brain serves both checks: the first to ask starts it, and the other shares it.
+    const whole = once(() => guardian.wholeBrain(tenant, execution));
+    const figures = await guardian.figures?.(tenant, execution, whole).catch(unreadSource);
+    const secrets = await guardian.secrets?.(tenant, execution, whole).catch(unreadSource);
     const report = guardAnswer({
       answer: answer.answer,
       missing: answer.missing,

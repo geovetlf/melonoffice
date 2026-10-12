@@ -665,9 +665,12 @@ export function createAgentTaskParts(options: {
     // The Agent Guardian (G-2, ADR-0132): deterministic, for every agent, no model and no credits.
     guardian: {
       record: (tenant, input) => outputs.record(tenant, input),
+      // Company Brain, complete or not at all: a Brain too big to read whole leaves the checks unchecked. Both
+      // checks share one read of it (`whole`), made the first time either asks.
+      wholeBrain: (tenant) => brain.list(tenant, { complete: true }),
       // Company Brain's figures the agent's department may read, as the person the task is for,
       // never above `confidential`: what the Guardian keeps is read with the task.
-      async figures(tenant, execution) {
+      async figures(tenant, execution, whole) {
         const facts = taskOf(execution);
         if (facts === undefined || !isResolvedTenant(tenant)) return undefined;
         const organizationId = tenant.organizationId as OrganizationId;
@@ -685,8 +688,7 @@ export function createAgentTaskParts(options: {
           : undefined;
         const access = purpose === undefined ? undefined : DEPARTMENT_ACCESS[purpose];
         if (access === undefined) return undefined;
-        // Complete or not at all: a Brain too big to read whole leaves the figures unchecked.
-        const items = await brain.list(tenant, { complete: true });
+        const items = await whole();
         return figureFactsOf(items, {
           domains: access.domains,
           maxSensitivity:
@@ -695,9 +697,9 @@ export function createAgentTaskParts(options: {
       },
       // The credentials stored in Company Brain (G-7), as the person the task is for may read
       // them: only compared with the answer, never kept, logged or shown.
-      async secrets(tenant, execution) {
+      async secrets(tenant, execution, whole) {
         if (taskOf(execution) === undefined || !isResolvedTenant(tenant)) return undefined;
-        return storedSecretsOf(await brain.list(tenant, { complete: true }));
+        return storedSecretsOf(await whole());
       },
       // Unknown to this worker's catalogue: counted as a step that changed something.
       mutating: (id, version) =>

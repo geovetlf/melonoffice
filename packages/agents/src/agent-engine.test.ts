@@ -893,6 +893,7 @@ describe('Agent Guardian (G-2, ADR-0132)', () => {
       outputs: w.outputs,
       guardian: {
         record: (tenant, input) => w.outputs.record(tenant, input),
+        wholeBrain: async () => [],
         figures: async () => {
           reads += 1;
           return [price(25, confirmed)];
@@ -910,6 +911,7 @@ describe('Agent Guardian (G-2, ADR-0132)', () => {
       outputs: t.w.outputs,
       guardian: {
         record: (tenant, input) => t.w.outputs.record(tenant, input),
+        wholeBrain: async () => [],
         figures: async () => {
           attempts += 1;
           if (attempts === 1) throw new Error('brain unavailable');
@@ -949,6 +951,7 @@ describe('Agent Guardian (G-2, ADR-0132)', () => {
       outputs: t.w.outputs,
       guardian: {
         record: (tenant, input) => t.w.outputs.record(tenant, input),
+        wholeBrain: async () => [],
         figures: async () => {
           throw new Error('brain unavailable');
         },
@@ -970,6 +973,35 @@ describe('Agent Guardian (G-2, ADR-0132)', () => {
       expect.objectContaining({ code: 'secret_disclosed', severity: 'critical' }),
       expect.objectContaining({ code: 'organization_unchecked', severity: 'info' }),
     ]);
+  });
+
+  it('reads Company Brain once for both checks, and both use that one read', async () => {
+    const t = await setup('El Combo Familiar cuesta S/ 25. ¿Lo publico?');
+    let reads = 0;
+    const seen: unknown[] = [];
+    const verifier = createAgentTaskVerifier({
+      outputs: t.w.outputs,
+      guardian: {
+        record: (tenant, input) => t.w.outputs.record(tenant, input),
+        wholeBrain: async () => {
+          reads += 1;
+          return [];
+        },
+        figures: async (_tenant, _execution, whole) => {
+          seen.push(await whole());
+          return [];
+        },
+        secrets: async (_tenant, _execution, whole) => {
+          seen.push(await whole());
+          return [];
+        },
+        mutating: () => true,
+      },
+    });
+    await verifier.verify(t.w.runtime, t.done);
+    expect(reads).toBe(1);
+    expect(seen).toHaveLength(2);
+    expect(seen[1]).toBe(seen[0]);
   });
 
   it('passes a clean answer, keeps its report and never checks twice', async () => {
