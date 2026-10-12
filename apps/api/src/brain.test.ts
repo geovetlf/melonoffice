@@ -98,7 +98,11 @@ describe.each(STORES)('Company Brain with storage in %s (ADR-0051)', (_name, cre
     expect(events.map((e) => e.action)).toEqual(
       expect.arrayContaining(['knowledge.created', 'knowledge.updated']),
     );
-    expect(JSON.stringify(events)).not.toContain('2800');
+    // The price is never in the audit trail. Random ids can hold the same digits (an event id
+    // like 28002c53-…), so the value is matched only where it stands alone, as a number would.
+    const audited = JSON.stringify(events);
+    expect(audited).not.toMatch(/(?<![\w-])2800(?![\w-])/);
+    expect(audited).not.toContain('amountMinor');
     // Invalidating needs the current revision.
     expect(
       (await post('token-alice', `${brain(orgA)}/knowledge/${itemId}/invalidate`, { revision: 1 }))
