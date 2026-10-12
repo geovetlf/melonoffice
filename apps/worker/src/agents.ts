@@ -685,7 +685,8 @@ export function createAgentTaskParts(options: {
           : undefined;
         const access = purpose === undefined ? undefined : DEPARTMENT_ACCESS[purpose];
         if (access === undefined) return undefined;
-        const items = await brain.list(tenant);
+        // Complete or not at all: a Brain too big to read whole leaves the figures unchecked.
+        const items = await brain.list(tenant, { complete: true });
         return figureFactsOf(items, {
           domains: access.domains,
           maxSensitivity:
@@ -696,7 +697,7 @@ export function createAgentTaskParts(options: {
       // them: only compared with the answer, never kept, logged or shown.
       async secrets(tenant, execution) {
         if (taskOf(execution) === undefined || !isResolvedTenant(tenant)) return undefined;
-        return storedSecretsOf(await brain.list(tenant));
+        return storedSecretsOf(await brain.list(tenant, { complete: true }));
       },
       // Unknown to this worker's catalogue: counted as a step that changed something.
       mutating: (id, version) =>
