@@ -714,7 +714,30 @@ export function createToolGate(options: ToolGateOptions): ToolGate {
       } catch (error) {
         if (!isExecutionError(error)) throw error;
         // The execution ended (e.g. was cancelled) while the tool ran: its output is not passed on.
+        // The call still reached the provider, so its own result is audited, never left silent (ADR-0184).
         log.warn('tool finished after its execution ended', { code: error.code });
+        await audit.record(
+          eventOf(
+            tenant,
+            organizationId,
+            failure === undefined
+              ? {
+                  action: 'tool.execution_completed',
+                  result: 'success',
+                  executionId,
+                  tool: toolRef,
+                  reason: 'execution_ended',
+                }
+              : {
+                  action: 'tool.execution_failed',
+                  result: 'failure',
+                  executionId,
+                  tool: toolRef,
+                  reason: failure,
+                },
+            endAt,
+          ),
+        );
         return Object.freeze({ status: 'failure', code: 'execution_ended', durationMs });
       }
       log.info('tool finished', { status: result.status, durationMs });

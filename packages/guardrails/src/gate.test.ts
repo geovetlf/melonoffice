@@ -957,6 +957,26 @@ describe('tool gate: execution integration', () => {
     expect(JSON.stringify(w.events())).not.toContain('secret-host');
   });
 
+  it('a call that finishes after its execution was cancelled passes nothing on, and its result is audited', async () => {
+    const { w, invoke, node, execution } = await setup(['update_record'], {
+      answers: {
+        update_record: async () => {
+          // The person stops the work while the provider call runs.
+          await w.executions.cancel(w.tenantA, execution.id, 'user_cancelled');
+          return { status: 'success', output: { count: 3 } };
+        },
+      },
+    });
+    expect(await invoke()).toMatchObject({ status: 'failure', code: 'execution_ended' });
+    expect(w.calls).toHaveLength(1);
+    expect(await node()).toMatchObject({ status: 'cancelled' });
+    // The provider did change the record: the audit says so, with the reason its output was not used.
+    expect(w.events('tool.execution_completed')).toEqual([
+      expect.objectContaining({ result: 'success', reason: 'execution_ended' }),
+    ]);
+    expect(w.events('tool.execution_failed')).toHaveLength(0);
+  });
+
   it('refuses an unresolved tenant and a suspended organization', async () => {
     const { w, invoke } = await setup(['lookup']);
     expect(await invoke({ ...w.runtimeA } as TenantContext)).toEqual({
