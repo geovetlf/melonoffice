@@ -17,7 +17,9 @@ import {
   resolveRuntimeTenant,
   resolveTenant,
 } from '@melonoffice/tenancy';
-import { describe, expect, it } from 'vitest';
+import type * as NodeCrypto from 'node:crypto';
+import { describe, expect, it, vi } from 'vitest';
+import { LIMITS } from './catalogue.js';
 import { BrainError } from './errors.js';
 import { candidateOf, createGatewayKnowledgeExtractor } from './extractor.js';
 import { checkKnowledgeInput, knowledgeItemId } from './knowledge.js';
@@ -32,6 +34,17 @@ import {
   profileKnowledge,
   recordResult,
 } from './sources.js';
+
+// Deterministic ids. A random UUID that happens to contain "2500" (organization or audit event)
+// would fail the audit check below by chance; these never do, and that check still catches a leaked value.
+const uuids = vi.hoisted(() => ({ next: 0 }));
+vi.mock('node:crypto', async (importOriginal) => {
+  const actual = await importOriginal<typeof NodeCrypto>();
+  return {
+    ...actual,
+    randomUUID: () => `00000000-0000-4000-8000-${(++uuids.next).toString(16).padStart(12, '0')}`,
+  };
+});
 
 const ALICE = '11111111-1111-4111-8111-111111111111' as UserId;
 const BOB = '22222222-2222-4222-8222-222222222222' as UserId;
@@ -171,6 +184,74 @@ describe('Company Brain: creating and reading knowledge (ADR-0051)', () => {
       expect(await codeOf(w.brain.propose(w.alice, bad))).toBe('invalid_knowledge');
     }
     expect(await w.brain.list(w.alice)).toEqual([]);
+  });
+});
+
+describe('complete reads take every page, and refuse a Brain too large to read whole (Guardian, ADR-0132)', () => {
+  /** Stores `count` more items shaped like the proposed one, straight to the repository. */
+  async function seedItems(w: Awaited<ReturnType<typeof world>>, count: number) {
+    const [item] = await w.repository.listItems(w.orgA, {}, 1);
+    if (item === undefined) throw new Error('the proposed item is missing');
+    const items = Array.from({ length: count }, (_, i) => ({
+      ...item,
+      id: `seeded-${String(i).padStart(5, '0')}`,
+    }));
+    await w.repository.write(w.orgA, { itemIds: [] }, () => ({
+      write: { items, versions: [], conflicts: [], events: [] },
+      result: undefined,
+    }));
+  }
+
+  it('returns every item while the Brain fits in one read window', async () => {
+    const w = await world();
+    await w.brain.propose(w.alice, price(25));
+    expect((await w.brain.list(w.alice, { complete: true })).length).toBe(1);
+  });
+
+  it('reads every page of a Brain larger than one window', async () => {
+    const w = await world();
+    await w.brain.propose(w.alice, price(25));
+    await seedItems(w, 2_500);
+    const pages = vi.spyOn(w.repository, 'pageItems');
+    // The proposed item and the 2,500 seeded ones: three pages, the last one short.
+    expect((await w.brain.list(w.alice, { complete: true })).length).toBe(2_501);
+    expect(pages).toHaveBeenCalledTimes(3);
+  });
+
+  it('returns every item when the Brain is exactly one full window', async () => {
+    const w = await world();
+    await w.brain.propose(w.alice, price(25));
+    await seedItems(w, LIMITS.readWindow - 1);
+    const pages = vi.spyOn(w.repository, 'pageItems');
+    expect((await w.brain.list(w.alice, { complete: true })).length).toBe(LIMITS.readWindow);
+    // A full page does not say the walk is over: the next page is read, and it is empty.
+    expect(pages).toHaveBeenCalledTimes(2);
+  });
+
+  it('refuses a Brain of as many items as its pages take, before it reads any of them', async () => {
+    const w = await world();
+    await w.brain.propose(w.alice, price(25));
+    await seedItems(w, LIMITS.readWindow * LIMITS.completeReadPages - 1);
+    const pages = vi.spyOn(w.repository, 'pageItems');
+    const windows = vi.spyOn(w.repository, 'listItems');
+    await expect(w.brain.list(w.alice, { complete: true })).rejects.toMatchObject({
+      code: 'read_incomplete',
+    });
+    // The count decides it: a document read here would fail this test.
+    expect(pages).not.toHaveBeenCalled();
+    expect(windows).not.toHaveBeenCalled();
+  });
+
+  it('refuses a Brain larger than its pages take, and keeps the plain read as it was', async () => {
+    const w = await world();
+    await w.brain.propose(w.alice, price(25));
+    await seedItems(w, LIMITS.readWindow * LIMITS.completeReadPages);
+    const pages = vi.spyOn(w.repository, 'pageItems');
+    await expect(w.brain.list(w.alice, { complete: true })).rejects.toMatchObject({
+      code: 'read_incomplete',
+    });
+    expect(pages).not.toHaveBeenCalled();
+    expect((await w.brain.list(w.alice)).length).toBe(LIMITS.readWindow);
   });
 });
 

@@ -2,9 +2,15 @@ import { actAsGia, type AuthenticatedContext } from '@melonoffice/auth';
 import type { OrganizationId, UserId } from '@melonoffice/domain';
 import { describe, expect, it } from 'vitest';
 import { AUDIT_ACTIONS, isAuditAction } from './actions.js';
-import { actorOf, buildAuditEvent, type AuditEventInput } from './event.js';
+import {
+  actorOf,
+  buildAuditEvent,
+  stableAuditEventId,
+  type AuditEventId,
+  type AuditEventInput,
+} from './event.js';
 import { InMemoryAuditStore } from './memory.js';
-import { createAuditService } from './service.js';
+import { AuditEventAlreadyStored, AuditEventConflict, createAuditService } from './service.js';
 
 const NOW = new Date('2026-09-26T12:00:00Z');
 const ALICE = '11111111-1111-4111-8111-111111111111' as UserId;
@@ -221,12 +227,13 @@ describe('AuditService and InMemoryAuditStore', () => {
     const store = new InMemoryAuditStore();
     const event = await createAuditService(store).record(signIn);
     const methods = Object.getOwnPropertyNames(Object.getPrototypeOf(store));
-    // `query` and `history` only read (ADR-0049, ADR-0054).
+    // `query`, `history` and `find` only read (ADR-0049, ADR-0054, ADR-0044).
     expect(methods.sort()).toEqual([
       'append',
       'appendNow',
       'constructor',
       'events',
+      'find',
       'history',
       'query',
     ]);
@@ -277,7 +284,75 @@ describe('AuditService and InMemoryAuditStore', () => {
       append: async () => {
         throw new Error('down');
       },
+      find: async () => undefined,
     });
     await expect(audit.record(signIn)).rejects.toThrow('down');
+  });
+});
+
+describe('stable ids and recordOnce (ADR-0044)', () => {
+  const KEY = 'inbound:wamid.HBgLMTU1NTEyMzQ1Njc';
+  const id = stableAuditEventId(KEY);
+
+  it('gives a key one id, shaped as a UUID, and another key another id', () => {
+    expect(stableAuditEventId(KEY)).toBe(id);
+    expect(stableAuditEventId(`${KEY}.2`)).not.toBe(id);
+    expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-8[0-9a-f]{3}-[0-9a-f]{12}$/);
+  });
+
+  it('builds an event under the id it is given, and refuses a malformed one', () => {
+    expect(buildAuditEvent({ ...signIn, id }, NOW).id).toBe(id);
+    expect(() => buildAuditEvent({ ...signIn, id: 'inbound-1' as AuditEventId }, NOW)).toThrow(
+      'invalid audit event id',
+    );
+  });
+
+  it('writes a fact once, and a repeat of the same fact finds the stored copy', async () => {
+    const store = new InMemoryAuditStore();
+    const audit = createAuditService(store, () => NOW);
+    await expect(audit.recordOnce({ ...signIn, id })).resolves.toBe('written');
+    await expect(audit.recordOnce({ ...signIn, id })).resolves.toBe('same');
+    expect(store.events()).toHaveLength(1);
+    expect(await store.find(id)).toMatchObject({ id, action: 'auth.sign_in' });
+  });
+
+  it('treats a repeat at a later time as the same fact: the time is not compared', async () => {
+    const store = new InMemoryAuditStore();
+    let at = NOW;
+    const audit = createAuditService(store, () => at);
+    await audit.recordOnce({ ...signIn, id });
+    at = new Date('2026-09-26T12:05:00Z');
+    await expect(audit.recordOnce({ ...signIn, id })).resolves.toBe('same');
+    expect(store.events()).toHaveLength(1);
+  });
+
+  it('refuses a different fact under a stored id, and stores nothing', async () => {
+    const store = new InMemoryAuditStore();
+    const audit = createAuditService(store, () => NOW);
+    await audit.recordOnce({ ...signIn, id });
+    const other = audit.recordOnce({ ...signIn, id, reason: 'another_channel' });
+    await expect(other).rejects.toBeInstanceOf(AuditEventConflict);
+    await expect(other).rejects.toMatchObject({ code: 'audit_event_conflict' });
+    expect(store.events()).toHaveLength(1);
+  });
+
+  it('rejects a store failure that is not a repeat, and never reports it as the same fact', async () => {
+    const audit = createAuditService({
+      append: async () => {
+        throw new Error('down');
+      },
+      find: async () => undefined,
+    });
+    await expect(audit.recordOnce({ ...signIn, id })).rejects.toThrow('down');
+  });
+
+  it('a stored id that cannot be read back is a conflict, not a success', async () => {
+    const audit = createAuditService({
+      append: async () => {
+        throw new AuditEventAlreadyStored();
+      },
+      find: async () => undefined,
+    });
+    await expect(audit.recordOnce({ ...signIn, id })).rejects.toBeInstanceOf(AuditEventConflict);
   });
 });

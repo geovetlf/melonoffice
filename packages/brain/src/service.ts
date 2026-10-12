@@ -153,9 +153,14 @@ export interface DocumentResult extends IngestResult {
 
 export interface CompanyBrainService {
   summary(tenant: TenantContext): Promise<BrainSummary>;
+  /** `complete` reads every page, and refuses with `read_incomplete` a Brain too large for LIMITS.completeReadPages. */
   list(
     tenant: TenantContext,
-    filter?: { readonly domain?: KnowledgeDomain; readonly includeInactive?: boolean },
+    filter?: {
+      readonly domain?: KnowledgeDomain;
+      readonly includeInactive?: boolean;
+      readonly complete?: boolean;
+    },
   ): Promise<readonly KnowledgeView[]>;
   get(
     tenant: TenantContext,
@@ -556,24 +561,50 @@ export function createCompanyBrain(options: CompanyBrainOptions): CompanyBrainSe
     });
   }
 
+  /**
+   * Every item of the organization, a page at a time in document-id order (ADR-0132, ADR-0187). A Brain of
+   * as many items as the pages take is refused before any page is read: a count decides it.
+   */
+  async function everyItem(organizationId: OrganizationId): Promise<readonly KnowledgeItem[]> {
+    if (
+      (await repository.countItems(organizationId)) >=
+      LIMITS.readWindow * LIMITS.completeReadPages
+    ) {
+      throw new BrainError('read_incomplete');
+    }
+    const items: KnowledgeItem[] = [];
+    let after: string | undefined;
+    for (let page = 0; page < LIMITS.completeReadPages; page += 1) {
+      const request =
+        after === undefined ? { limit: LIMITS.readWindow } : { after, limit: LIMITS.readWindow };
+      const read = await repository.pageItems(organizationId, request);
+      items.push(...read.items);
+      if (read.next === undefined) return items;
+      after = read.next;
+    }
+    // Every page allowed was full, so the end is not in sight: a Brain that large is not read whole.
+    throw new BrainError('read_incomplete');
+  }
+
   async function visibleItems(
     tenant: TenantContext,
     organizationId: OrganizationId,
     domains: readonly KnowledgeDomain[] | undefined,
     includeInactive: boolean,
     ceiling = ceilingOf(tenant),
+    complete = false,
   ): Promise<KnowledgeItem[]> {
-    const items = await repository.listItems(
-      organizationId,
-      {
-        ...(domains === undefined ? {} : { domains }),
-        ...(includeInactive ? {} : { statuses: ['active'] }),
-      },
-      LIMITS.readWindow,
-    );
-    return items.filter(
+    // A plain read takes the organization's first window, whatever its status or domain: the filters
+    // apply to that window only, so they run here, after it. A complete read takes every page instead.
+    const stored = complete
+      ? await everyItem(organizationId)
+      : await repository.listItems(organizationId, {}, LIMITS.readWindow);
+    return stored.filter(
       (item) =>
-        item.organizationId === organizationId && sensitivityAllows(ceiling, item.sensitivity),
+        item.organizationId === organizationId &&
+        (domains === undefined || domains.includes(item.domain)) &&
+        (includeInactive || item.status === 'active') &&
+        sensitivityAllows(ceiling, item.sensitivity),
     );
   }
 
@@ -621,6 +652,8 @@ export function createCompanyBrain(options: CompanyBrainOptions): CompanyBrainSe
         organizationId,
         filter.domain === undefined ? undefined : [filter.domain],
         filter.includeInactive === true,
+        ceilingOf(tenant),
+        filter.complete === true,
       );
       return items
         .sort((a, b) => a.domain.localeCompare(b.domain) || a.key.localeCompare(b.key))

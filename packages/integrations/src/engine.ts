@@ -1,4 +1,10 @@
-import { actorOf, buildAuditEvent, type AuditMessage, type AuditService } from '@melonoffice/audit';
+import {
+  actorOf,
+  buildAuditEvent,
+  stableAuditEventId,
+  type AuditMessage,
+  type AuditService,
+} from '@melonoffice/audit';
 import type { ConversationIngress } from '@melonoffice/conversations';
 import type {
   ChannelConnection,
@@ -180,7 +186,7 @@ export interface IntegrationEngineOptions {
   /** Where inbound messages are stored. Absent: deliveries are refused (503). */
   readonly inbound?: ConversationIngressPort;
   /** Records received messages, and every provider call, retry and limit of a send. */
-  readonly audit?: Pick<AuditService, 'record'>;
+  readonly audit?: Pick<AuditService, 'record' | 'recordOnce'>;
   readonly logger?: Logger;
   readonly now?: () => Date;
   /** Limits and retries (ADR-0045). Defaults: `DEFAULT_DELIVERY_POLICY`. */
@@ -629,30 +635,28 @@ export function createIntegrationEngine(options: IntegrationEngineOptions): Inte
             });
             if (result.duplicate) {
               duplicates += 1;
-              continue;
+            } else {
+              received += 1;
+              logger?.info('inbound message stored', {
+                ...trace,
+                conversationId: result.conversation.id,
+                messageId: result.message.id,
+              });
             }
-            received += 1;
-            logger?.info('inbound message stored', {
-              ...trace,
-              conversationId: result.conversation.id,
-              messageId: result.message.id,
+            // A repeat records its audit fact if the first attempt could not: the retry is the only
+            // chance to write it. The stable id keeps one copy, however many attempts there are.
+            await audit?.recordOnce({
+              id: stableAuditEventId(`inbound:${result.message.id}`),
+              action: 'conversation.message_received',
+              result: 'success',
+              // The contact is not a user: the channel's signature is the only authority.
+              actor: { type: 'anonymous' },
+              organizationId: connection.organizationId,
+              target: { type: 'message', id: result.message.id },
+              reference: `conversation:${result.conversation.id}`,
+              reason: connection.channel,
+              source: 'api',
             });
-            await audit?.record(
-              buildAuditEvent(
-                {
-                  action: 'conversation.message_received',
-                  result: 'success',
-                  // The contact is not a user: the channel's signature is the only authority.
-                  actor: { type: 'anonymous' },
-                  organizationId: connection.organizationId,
-                  target: { type: 'message', id: result.message.id },
-                  reference: `conversation:${result.conversation.id}`,
-                  reason: connection.channel,
-                  source: 'api',
-                },
-                now(),
-              ),
-            );
           }
           for (const status of delivery.statuses) {
             const { applied } = await inbound.applyStatus({
@@ -664,7 +668,7 @@ export function createIntegrationEngine(options: IntegrationEngineOptions): Inte
           }
         }
       } catch (error) {
-        // Stored so far stays stored; the provider retries and the repeat changes nothing.
+        // Stored so far stays stored; the provider retries, and a repeat stores nothing twice.
         logger?.error('webhook storage failed', { ...trace, code: codeOf(error) });
         return refuse(503, 'unavailable');
       }

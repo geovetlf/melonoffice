@@ -1191,7 +1191,10 @@ function PlanCard({
 
   // A running plan is read again on its own until it ends (ADR-0167): no button to remember. Steps
   // that could not be read are read again the same way, so a plan that ended is not left stale.
-  const running = plan.status === 'ready' && (isRunningPlan(plan.value) || stepsStale);
+  // A plan whose first read failed is read again the same way, so a blip does not leave an error.
+  const running =
+    plan.status === 'error' ||
+    (plan.status === 'ready' && (isRunningPlan(plan.value) || stepsStale));
   useEffect(() => {
     if (!running) return undefined;
     const timer = setInterval(read, PLAN_REFRESH_MS);

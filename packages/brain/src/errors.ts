@@ -10,7 +10,8 @@ export type BrainErrorCode =
   | 'conflict_open'
   | 'not_open'
   | 'invalid_document'
-  | 'extraction_unavailable';
+  | 'extraction_unavailable'
+  | 'read_incomplete';
 
 export class BrainError extends Error {
   override readonly name = 'BrainError';

@@ -187,6 +187,16 @@ describe('job handler status mapping', () => {
     }).run({ jobId: JOB }, 'req-1');
     expect(answer).toEqual({ status, body: { result, code } });
   });
+
+  it('a storage error while leasing is not a refusal: it answers 503, so the queue delivers again', async () => {
+    const answer = await handler(async () => {
+      throw new Error('storage unavailable');
+    }).run({ jobId: JOB }, 'req-2');
+    expect(answer).toEqual({
+      status: 503,
+      body: { result: 'unavailable', code: 'lease_unavailable' },
+    });
+  });
 });
 
 describe('worker architecture', () => {
