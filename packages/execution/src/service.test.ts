@@ -61,7 +61,7 @@ async function codeOf(promise: Promise<unknown>): Promise<string> {
   return 'accepted';
 }
 
-async function world(roles?: Record<string, readonly string[]>) {
+async function world(roles?: Record<string, readonly string[]>, clock: () => Date = () => NOW) {
   const audit = new InMemoryAuditStore();
   const repository = new InMemoryExecutionRepository(audit);
   const tenancy = new InMemoryTenancyStore(() => NOW);
@@ -78,7 +78,7 @@ async function world(roles?: Record<string, readonly string[]>) {
     organizations: tenancy,
     authorization: createAuthorizationService(roles as never),
     audit: createAuditService(audit, () => NOW),
-    now: () => NOW,
+    now: clock,
     requestId: 'req-1',
   });
   const tenantA = await resolveTenant(as(ALICE), a.organization.id, tenancy);
@@ -249,6 +249,47 @@ describe('concurrency', () => {
     const final = await service.get(tenantA, id);
     expect(final.status).toBe('cancelled');
     expect(final.cancellation?.by).toBe(ALICE);
+  });
+
+  it('stamps a transition with the time its write commits, not when it began', async () => {
+    let clock = NOW;
+    const at = (seconds: number) => new Date(NOW.getTime() + seconds * 1000);
+    const { service, repository, tenantA, runtimeA, events } = await world(undefined, () => clock);
+    const { id } = await service.create(tenantA, REQUEST);
+    await service.start(tenantA, id);
+    await service.runtimeChangeNode(runtimeA, id, {
+      nodeId: 'work',
+      from: 'pending',
+      to: 'running',
+    });
+    await service.runtimeChangeNode(runtimeA, id, {
+      nodeId: 'work',
+      from: 'running',
+      to: 'completed',
+    });
+    // The cancellation starts at 60 s. Before its write lands, the runtime's change to verifying
+    // commits at 120 s, so the cancellation runs again on that state at 180 s, as Firestore does
+    // after a lost race. Its event must sort after the verifying event it follows.
+    const update = repository.update.bind(repository);
+    let racing: (() => Promise<unknown>) | undefined = async () => {
+      clock = at(120);
+      await service.runtimeChangeStatus(runtimeA, id, { from: 'running', to: 'verifying' });
+      clock = at(180);
+    };
+    repository.update = async (organizationId, executionId, change) => {
+      const first = racing;
+      racing = undefined;
+      if (first !== undefined) await first();
+      return update(organizationId, executionId, change);
+    };
+    clock = at(60);
+    expect(await codeOf(service.cancel(tenantA, id, 'director_request'))).toBe('accepted');
+    expect((await service.get(tenantA, id)).status).toBe('cancelled');
+    const changes = events()
+      .filter((e) => e.action === 'execution.state_changed')
+      .sort((x, y) => x.occurredAt.localeCompare(y.occurredAt))
+      .map((e) => e.transition?.to);
+    expect(changes).toEqual(['running', 'verifying', 'cancelled']);
   });
 
   it('refuses a write built on an older revision', async () => {

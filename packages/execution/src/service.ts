@@ -321,9 +321,10 @@ export function createExecutionService({
     id: ExecutionId,
     reason: string,
   ): Promise<Execution> {
-    const at = now();
     try {
       return await repository.update(organizationId, id, (current) => {
+        // Read in the transaction: a retried attempt must stamp the time its write commits.
+        const at = now();
         const next = applyStatusChange(
           current,
           { from: current.status, to: 'cancelled', reason },
@@ -390,8 +391,8 @@ export function createExecutionService({
   ): Promise<Execution> {
     requireRuntime(tenant);
     const organizationId = await organizationOf(tenant);
-    const at = now();
     return repository.update(organizationId, idOf(id), (current) => {
+      const at = now();
       const { next, reason } = apply(current, at.toISOString() as IsoTimestamp);
       return {
         execution: next,
@@ -417,8 +418,8 @@ export function createExecutionService({
       throw new ExecutionError('actor_not_allowed', 'runtime_cannot_cancel');
     }
     const organizationId = await organizationOf(tenant);
-    const at = now();
     return repository.update(organizationId, idOf(id), (current) => {
+      const at = now();
       if ((current.mode === 'plan') !== plan) {
         throw new ExecutionError(
           'actor_not_allowed',
@@ -438,8 +439,8 @@ export function createExecutionService({
   ): Promise<Execution> {
     requireRuntime(tenant);
     const organizationId = await organizationOf(tenant);
-    const at = now();
     return repository.update(organizationId, idOf(id), (current) => {
+      const at = now();
       if ((current.mode === 'plan') !== plan) {
         throw new ExecutionError(
           'actor_not_allowed',
@@ -522,9 +523,9 @@ export function createExecutionService({
         throw new ExecutionError('execution_parent_ended');
       }
     }
-    const at = now();
     try {
       return await repository.update(organizationId, executionId, (current) => {
+        const at = now();
         const next = startExecution(current, at.toISOString() as IsoTimestamp);
         return {
           execution: next,
@@ -595,8 +596,8 @@ export function createExecutionService({
         );
       }
       const organizationId = await organizationOf(tenant);
-      const at = now();
       return repository.update(organizationId, idOf(id), (current) => {
+        const at = now();
         // Only the planning lifecycle, and withdrawing work that never started. Running work is
         // the runtime's (ADR-0031); starting and cancelling it is a person's (ADR-0029).
         const withdrawn = change.to === 'cancelled' && current.status === 'pending';
@@ -619,8 +620,8 @@ export function createExecutionService({
         throw new ExecutionError('invalid_execution', 'sweep');
       }
       const organizationId = await organizationOf(tenant);
-      const at = now();
       return repository.update(organizationId, idOf(id), (current) => {
+        const at = now();
         if (current.mode === 'plan') {
           throw new ExecutionError('actor_not_allowed', 'plan_execution');
         }
@@ -659,11 +660,10 @@ export function createExecutionService({
     // Graph changes are operational detail: they live in the execution itself, not the audit log.
     async addNodes(tenant, id, nodes) {
       const organizationId = await organizationOf(tenant);
-      const at = now().toISOString() as IsoTimestamp;
-      return repository.update(organizationId, idOf(id), (current) => ({
-        execution: addNodes(current, nodes, at),
-        events: [],
-      }));
+      return repository.update(organizationId, idOf(id), (current) => {
+        const at = now().toISOString() as IsoTimestamp;
+        return { execution: addNodes(current, nodes, at), events: [] };
+      });
     },
 
     runtimeChangeNode: (tenant, id, change) => runtimeNode(tenant, id, change, false),
@@ -679,9 +679,9 @@ export function createExecutionService({
       const found = await repository.find(organizationId, executionId);
       if (found === undefined) throw new ExecutionError('execution_not_found');
       if (found.nodes.find((n) => n.id === nodeId)?.approvalId === approvalId) return found;
-      const at = now();
       const attached = () =>
         repository.update(organizationId, executionId, (current) => {
+          const at = now();
           if (
             current.input.type !== 'plan_step' ||
             current.parentExecutionId === undefined ||
