@@ -216,6 +216,10 @@ describe.each(STORES)('AE-2 agent tasks with storage in %s', (_storage, createSt
       clock = new Date(clock.getTime() + 1);
       return clock;
     };
+    /** Moves the clock on by `ms`, as a slow read would: the next reading is that much later. */
+    const jump = (ms: number) => {
+      clock = new Date(clock.getTime() + ms);
+    };
     const stores = createStores(now);
     const provision = (organization: Organization) =>
       provisionDepartments(organization, DEFAULT_DEPARTMENT_CATALOGUE);
@@ -465,6 +469,7 @@ describe.each(STORES)('AE-2 agent tasks with storage in %s', (_storage, createSt
       dispatched,
       agent,
       drive,
+      jump,
       promptOf,
       taskParts,
       published,
@@ -706,7 +711,7 @@ describe.each(STORES)('AE-2 agent tasks with storage in %s', (_storage, createSt
     expect(execution?.status).toBe('failed');
   });
 
-  it('3d. a Brain too large to read whole leaves its figures unchecked: the task is not failed, and no Guardian report is kept (ADR-0132)', async () => {
+  it('3d. a Brain too large to read whole shows its figures as unchecked: the task is not failed, and the report keeps the notice (ADR-0132)', async () => {
     const w = await world();
     await w.brain.propose(w.tenantA, price(25));
     // A Brain at the size a complete read refuses: its count decides it, before any page is read.
@@ -722,14 +727,103 @@ describe.each(STORES)('AE-2 agent tasks with storage in %s', (_storage, createSt
     });
     await w.drive();
     const { execution } = await w.tasks.get(w.tenantA, task.id);
-    // Unchecked is not wrong: nothing fails, and nothing is kept as checked.
+    // Unchecked is not wrong, but it is said: nothing fails, and the task shows one notice.
     expect(execution?.status).toBe('completed');
-    expect(await w.outputs.find(w.tenantA, must(execution).id, GUARDIAN_NODE)).toBeUndefined();
+    expect(
+      guardianFindingsOf(await w.outputs.find(w.tenantA, must(execution).id, GUARDIAN_NODE)),
+    ).toEqual([expect.objectContaining({ code: 'organization_unchecked', severity: 'info' })]);
+    // The Guardian's check is left out of the verification, so it is not shown as passed.
+    expect(checkCodesOf(execution)).not.toContain('agent_guardian');
     // Logged with counts and the reason only: once for the figures' read and once for the secrets' (each reads the whole Brain).
     expect(w.logged.filter((l) => l.message === 'brain.complete_read_refused')).toEqual([
       expect.objectContaining({ reason: 'items', pages: 0, items: 0 }),
       expect.objectContaining({ reason: 'items', pages: 0, items: 0 }),
     ]);
+  });
+
+  it('3e. a complete read that runs over its time budget shows the organization as unchecked: the task is not failed (ADR-0132)', async () => {
+    const w = await world();
+    await w.brain.propose(w.tenantA, price(25));
+    const real = w.stores.knowledge.pageItems.bind(w.stores.knowledge);
+    // The first page takes longer than the whole budget: the walk stops before its second page.
+    vi.spyOn(w.stores.knowledge, 'pageItems').mockImplementationOnce(
+      async (organizationId, page) => {
+        const read = await real(organizationId, page);
+        w.jump(LIMITS.completeReadMs + 1);
+        return { ...read, next: 'zzz' };
+      },
+    );
+    const lucia = await w.agent();
+    w.setModel(async () =>
+      answer({ answer: 'Publica que el Combo Familiar cuesta S/ 30.', missing: [] }),
+    );
+    const { task } = await w.tasks.assign(w.tenantA, lucia.identity.id, {
+      request: 'Confirma el precio del Combo Familiar',
+    });
+    await w.drive();
+    const { execution } = await w.tasks.get(w.tenantA, task.id);
+    expect(execution?.status).toBe('completed');
+    expect(
+      guardianFindingsOf(await w.outputs.find(w.tenantA, must(execution).id, GUARDIAN_NODE)),
+    ).toEqual([expect.objectContaining({ code: 'organization_unchecked' })]);
+    expect(checkCodesOf(execution)).not.toContain('agent_guardian');
+    // Only the figures' read stopped: the secrets' read finished in time.
+    expect(w.logged.filter((l) => l.message === 'brain.complete_read_refused')).toEqual([
+      expect.objectContaining({ reason: 'time', pages: 1, items: 1 }),
+    ]);
+  });
+
+  it('3f. a complete read that runs out of pages shows the organization as unchecked: the task is not failed (ADR-0132)', async () => {
+    const w = await world();
+    await w.brain.propose(w.tenantA, price(25));
+    // The count does not decide it: every page is full, so the walk runs out of pages before its end.
+    vi.spyOn(w.stores.knowledge, 'countItems').mockResolvedValue(0);
+    let calls = 0;
+    vi.spyOn(w.stores.knowledge, 'pageItems').mockImplementation(async () => {
+      calls += 1;
+      // A page that gives no item but a cursor after it, every time: a Brain that never ends.
+      return { items: [], next: `t${String(calls).padStart(3, '0')}` };
+    });
+    const lucia = await w.agent();
+    w.setModel(async () =>
+      answer({ answer: 'Publica que el Combo Familiar cuesta S/ 30.', missing: [] }),
+    );
+    const { task } = await w.tasks.assign(w.tenantA, lucia.identity.id, {
+      request: 'Confirma el precio del Combo Familiar',
+    });
+    await w.drive();
+    const { execution } = await w.tasks.get(w.tenantA, task.id);
+    expect(execution?.status).toBe('completed');
+    expect(
+      guardianFindingsOf(await w.outputs.find(w.tenantA, must(execution).id, GUARDIAN_NODE)),
+    ).toEqual([expect.objectContaining({ code: 'organization_unchecked' })]);
+    expect(checkCodesOf(execution)).not.toContain('agent_guardian');
+    // Once for the figures' read and once for the secrets' read, each after its ten pages.
+    expect(calls).toBe(2 * LIMITS.completeReadPages);
+    expect(w.logged.filter((l) => l.message === 'brain.complete_read_refused')).toEqual([
+      expect.objectContaining({ reason: 'pages', pages: LIMITS.completeReadPages, items: 0 }),
+      expect.objectContaining({ reason: 'pages', pages: LIMITS.completeReadPages, items: 0 }),
+    ]);
+  });
+
+  it('3g. a complete read that finishes in time shows no notice, and the Guardian check passes (ADR-0132)', async () => {
+    const w = await world();
+    await w.brain.propose(w.tenantA, price(25));
+    const lucia = await w.agent();
+    w.setModel(async () => answer({ answer: 'El Combo Familiar cuesta S/ 25.', missing: [] }));
+    const { task } = await w.tasks.assign(w.tenantA, lucia.identity.id, {
+      request: 'Confirma el precio del Combo Familiar',
+    });
+    await w.drive();
+    const { execution } = await w.tasks.get(w.tenantA, task.id);
+    expect(execution?.status).toBe('completed');
+    expect(
+      guardianFindingsOf(await w.outputs.find(w.tenantA, must(execution).id, GUARDIAN_NODE)),
+    ).toEqual([]);
+    expect(execution?.verification?.nodes.flatMap((n) => n.checks)).toContainEqual(
+      expect.objectContaining({ code: 'agent_guardian', result: 'passed' }),
+    );
+    expect(w.logged.filter((l) => l.message === 'brain.complete_read_refused')).toEqual([]);
   });
 
   it('4. without credits the model is never reached and the task fails', async () => {
@@ -928,4 +1022,24 @@ describe.each(STORES)('AE-2 agent tasks with storage in %s', (_storage, createSt
 function must<T>(value: T | undefined): T {
   if (value === undefined) throw new Error('missing value');
   return value;
+}
+
+/** The codes of the checks a verification recorded, in order. */
+function checkCodesOf(
+  execution:
+    | {
+        readonly verification?: {
+          readonly nodes: readonly { readonly checks: readonly { readonly code: string }[] }[];
+        };
+      }
+    | undefined,
+): string[] {
+  return execution?.verification?.nodes.flatMap((n) => n.checks.map((c) => c.code)) ?? [];
+}
+
+/** The findings of a kept Guardian report, or none when there is no report. */
+function guardianFindingsOf(
+  output: { readonly output: { readonly structured?: unknown } } | undefined,
+) {
+  return parseGuardianReport(output?.output.structured)?.findings ?? [];
 }

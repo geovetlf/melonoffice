@@ -11,6 +11,7 @@ import { AI_REVIEW_NODE, type AgentAnswerReviewer } from './ai-review.js';
 import {
   GUARDIAN_NODE,
   guardAnswer,
+  isUncheckedReport,
   parseGuardianReport,
   type GuardianReport,
 } from './guardian.js';
@@ -785,9 +786,10 @@ export function createAgentTaskVerifier(options: {
     if (guardian === undefined) return undefined;
     const kept = await outputs.find(tenant, execution.id, GUARDIAN_NODE);
     const previous = kept === undefined ? undefined : parseGuardianReport(kept.output.structured);
-    if (previous !== undefined) return previous;
-    // Company Brain that cannot be read now leaves the figures unchecked, never the task failed. Such a
-    // report is returned but not kept: the next verify checks the figures again, instead of keeping this one.
+    // A kept report that says Company Brain was not read whole is read again: it may be readable now.
+    if (previous !== undefined && !isUncheckedReport(previous)) return previous;
+    // Company Brain that cannot be read now leaves the figures and secrets unchecked, never the task failed.
+    // The report says so and is kept, so the task shows it; the next verify reads again and replaces it.
     const unread = { any: false };
     const unreadSource = () => {
       unread.any = true;
@@ -801,18 +803,17 @@ export function createAgentTaskVerifier(options: {
       execution,
       ...(figures === undefined ? {} : { figures }),
       ...(secrets === undefined ? {} : { secrets }),
+      unchecked: unread.any,
       mutating: guardian.mutating,
     });
-    if (!unread.any) {
-      await guardian
-        .record(tenant, {
-          executionId: execution.id,
-          nodeId: GUARDIAN_NODE as ExecutionNodeId,
-          requestId: `guardian-${execution.id}`,
-          output: { structured: report },
-        })
-        .catch(() => undefined);
-    }
+    await guardian
+      .record(tenant, {
+        executionId: execution.id,
+        nodeId: GUARDIAN_NODE as ExecutionNodeId,
+        requestId: `guardian-${execution.id}`,
+        output: { structured: report },
+      })
+      .catch(() => undefined);
     return report;
   }
 
@@ -836,8 +837,10 @@ export function createAgentTaskVerifier(options: {
           : undefined;
       const reviewed = review !== undefined && review.verdict !== 'unavailable';
       const report = valid ? await guard(tenant, execution, parsed) : undefined;
-      const guarded = report !== undefined;
       const critical = report?.findings.some((f) => f.severity === 'critical') ?? false;
+      // An unchecked report says nothing about the figures and secrets, so its check is left out, not
+      // passed. A critical finding in it (a secret in the answer) still shows as a failed check.
+      const guarded = report !== undefined && (!isUncheckedReport(report) || critical);
       const passed = valid && (!reviewed || review.verdict === 'pass') && !critical;
       const nodes: VerificationInput['nodes'][number][] = [
         {

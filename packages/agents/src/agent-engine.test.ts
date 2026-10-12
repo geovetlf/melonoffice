@@ -903,7 +903,7 @@ describe('Agent Guardian (G-2, ADR-0132)', () => {
     return { w, done, verifier, reads: () => reads };
   }
 
-  it('a Brain that cannot be read now is not kept as checked: the next verify compares the figures', async () => {
+  it('a Brain that cannot be read now is shown as unchecked, never as passed: the next verify compares the figures and replaces that notice', async () => {
     const t = await setup('Publica que el Combo Familiar cuesta S/ 30.');
     let attempts = 0;
     const verifier = createAgentTaskVerifier({
@@ -918,21 +918,28 @@ describe('Agent Guardian (G-2, ADR-0132)', () => {
         mutating: () => true,
       },
     });
-    // Unreadable now: the task is not failed, the figures are left unchecked, and nothing is kept.
+    // Unreadable now: the task is not failed, and the Guardian's check is left out rather than passed.
+    // The report is kept with one notice, so the task says the figures were not checked.
     const first = await verifier.verify(t.w.runtime, t.done);
-    expect(first?.verification.nodes[0]?.checks[1]).toMatchObject({
-      code: 'agent_guardian',
-      result: 'passed',
-    });
-    expect(await t.w.outputs.find(t.w.runtime, t.done.id, GUARDIAN_NODE)).toBeUndefined();
-    // Readable on the next verify: the figure disagrees with the confirmed fact, and that verdict is kept.
+    expect(first?.verification.nodes[0]?.checks.map((c) => c.code)).toEqual(['agent_answer_valid']);
+    const unchecked = await t.w.outputs.find(t.w.runtime, t.done.id, GUARDIAN_NODE);
+    expect(parseGuardianReport(unchecked?.output.structured)?.findings).toEqual([
+      expect.objectContaining({
+        code: 'organization_unchecked',
+        severity: 'info',
+        recommendation: 'check_by_hand',
+      }),
+    ]);
+    // Readable on the next verify: the figure disagrees with the confirmed fact, and that verdict replaces the notice.
     const second = await verifier.verify(t.w.runtime, t.done);
     expect(second?.verification.nodes[0]?.checks[1]).toMatchObject({
       code: 'agent_guardian',
       result: 'failed',
     });
     const kept = await t.w.outputs.find(t.w.runtime, t.done.id, GUARDIAN_NODE);
-    expect(parseGuardianReport(kept?.output.structured)?.findings).toHaveLength(1);
+    expect(parseGuardianReport(kept?.output.structured)?.findings).toEqual([
+      expect.objectContaining({ code: 'figure_contradiction', severity: 'critical' }),
+    ]);
     expect(attempts).toBe(2);
   });
 
