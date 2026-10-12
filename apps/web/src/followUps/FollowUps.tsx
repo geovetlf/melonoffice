@@ -257,6 +257,7 @@ export function FollowUpForm({
   opportunityId,
   initial,
   source = 'manual',
+  requestKey: givenKey,
   onDone,
 }: {
   readonly client: FollowUpsClient;
@@ -269,6 +270,8 @@ export function FollowUpForm({
     readonly time?: string | null;
   };
   readonly source?: 'manual' | 'gia';
+  /** The request's key, when its holder keeps it beyond this form (GIA's chat). */
+  readonly requestKey?: string;
   readonly onDone: (created: FollowUpView | undefined) => void;
 }) {
   const intl = useIntl();
@@ -279,7 +282,8 @@ export function FollowUpForm({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | undefined>();
   // One key per form: sending it again is the same follow-up, never a second one.
-  const [requestKey] = useState(newRequestKey);
+  const [ownKey] = useState(newRequestKey);
+  const requestKey = givenKey ?? ownKey;
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (title.trim() === '' || date === '' || time === '') return;
