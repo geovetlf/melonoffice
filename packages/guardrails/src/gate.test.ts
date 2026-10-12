@@ -721,6 +721,18 @@ describe('security: the 22 cases of the X3 brief', () => {
     expect(w.calls).toHaveLength(0);
   });
 
+  it('13b. an approval withdrawn before its call is denied, and nothing runs', async () => {
+    const { w, invoke } = await setup(['send_email']);
+    const first = await invoke();
+    const id = first.status === 'requires_approval' ? first.approvalId : '';
+    await w.approvals.cancel(w.tenantA, id, 'not_attached');
+    expect(await invoke()).toEqual({ status: 'denied', code: 'approval_cancelled' });
+    expect(await invoke()).toEqual({ status: 'denied', code: 'approval_cancelled' });
+    expect((await w.approvals.get(w.tenantA, id)).status).toBe('cancelled');
+    expect(await w.approvals.list(w.tenantA)).toHaveLength(1);
+    expect(w.calls).toHaveLength(0);
+  });
+
   it('14. a cancelled execution is denied', async () => {
     const { w, execution, invoke } = await setup(['lookup']);
     await w.executions.cancel(w.tenantA, execution.id, 'user_cancelled');

@@ -406,8 +406,8 @@ export const FOLLOW_UP_SCHEDULE_TOOL: ToolDefinition = {
 /**
  * `workflow_follow_up` (B6, ADR-0184): a workflow's write step schedules a follow-up with a contact a
  * person chose in the workflow, and a person approves this exact follow-up every time a plan
- * reaches it. Every field is fixed in the workflow; the date is today in the business's time zone
- * plus `inDays`, read when it runs; the request key is the server's. It wraps the follow-up
+ * reaches it. Every field is fixed in the workflow; the date is the day the person approved it, in
+ * the business's time zone, plus `inDays` (ADR-0189); the request key is the server's. It wraps the follow-up
  * service's own `create`, as `follow_up_schedule` does, with source `agent`. Its own tool, not a
  * version of `follow_up_schedule`: an agent holds one version of a tool, and keeps that one's
  * version 3 mid-task.

@@ -31,6 +31,7 @@ import {
   type AgentMemoryRepository,
   type AgentTaskRepository,
 } from '@melonoffice/agents';
+import type { ApprovalRepository } from '@melonoffice/approvals';
 import {
   createCompanyBrain,
   DEPARTMENT_ACCESS,
@@ -222,6 +223,8 @@ export interface AgentTaskProposalStores {
   readonly conversations: ConversationRepository;
   readonly followUps: Pick<FollowUpService, 'checkCreate' | 'create'>;
   readonly timeZone: (organizationId: OrganizationId) => Promise<string>;
+  /** The approvals a plan's write step runs under: the day one was decided fixes its date (ADR-0189). */
+  readonly approvals: Pick<ApprovalRepository, 'find'>;
 }
 
 /** What the runtime needs to run agent tasks (ADR-0063): no stop hook. */
@@ -504,9 +507,10 @@ export function createAgentTaskParts(options: {
                     },
                   },
                 }),
-            // A plan's write step (ADR-0184): its date is read in the business's time zone.
+            // A plan's write step (ADR-0184): its date is the day a person approved it, in the
+            // business's time zone (ADR-0189).
             timeZone: (organizationId) => records.timeZone(organizationId as OrganizationId),
-            now: clock,
+            approvals: records.approvals,
           }),
         }),
   };
