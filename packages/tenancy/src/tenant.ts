@@ -7,7 +7,7 @@ import type {
   OrganizationId,
   UserId,
 } from '@melonoffice/domain';
-import { TenancyError } from './errors.js';
+import { isTenancyError, TenancyError } from './errors.js';
 import { isOrganizationId } from './ids.js';
 import type { CreatedOrganization, NewOrganization, TenancyStore } from './store.js';
 
@@ -104,6 +104,24 @@ export async function resolveRuntimeTenant(
   const runtime: TenantContext = Object.freeze({ ...tenant, actor: 'runtime' });
   issued.add(runtime);
   return runtime;
+}
+
+/**
+ * The runtime context of a user, or `undefined` when they have none now: they left, their
+ * membership is suspended or the organization is inactive. Those are verdicts (ADR-0029). A failed
+ * read of the store is not one, so it is thrown: the caller retries instead of ending its work.
+ */
+export async function runtimeTenantIfAny(
+  initiatedBy: UserId,
+  organizationId: string,
+  store: TenancyStore,
+): Promise<TenantContext | undefined> {
+  try {
+    return await resolveRuntimeTenant(initiatedBy, organizationId, store);
+  } catch (error) {
+    if (isTenancyError(error)) return undefined;
+    throw error;
+  }
 }
 
 export const ORGANIZATION_NAME_MAX_LENGTH = 100;

@@ -1500,7 +1500,8 @@ describe('Writing workflows (block 4)', () => {
   async function toolDraft() {
     fireEvent.click(await screen.findByRole('button', { name: 'New workflow' }));
     const editor = within(await screen.findByRole('form', { name: 'New workflow' }));
-    fireEvent.change(editor.getByLabelText('Name'), { target: { value: 'Estudio' } });
+    // The form is there at once, but its fields come once the roles have loaded (WorkflowEditor).
+    fireEvent.change(await editor.findByLabelText('Name'), { target: { value: 'Estudio' } });
     fireEvent.change(editor.getByLabelText('Step 1: what to do'), {
       target: { value: 'Investigar' },
     });

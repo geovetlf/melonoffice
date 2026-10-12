@@ -21,6 +21,7 @@ import {
   parseOrganizationName,
   resolveRuntimeTenant,
   resolveTenant,
+  runtimeTenantIfAny,
 } from './tenant.js';
 
 const NOW = new Date('2026-09-26T12:00:00Z');
@@ -277,6 +278,26 @@ describe('resolveRuntimeTenant (ADR-0029)', () => {
     expect(await codeOf(resolveRuntimeTenant(ALICE, MISSING_ORG, store))).toBe(
       'organization_forbidden',
     );
+  });
+});
+
+describe('runtimeTenantIfAny (ADR-0029)', () => {
+  it('gives no context to a user with no membership: a verdict, not an error', async () => {
+    const { store, orgB } = await setup();
+    expect(await runtimeTenantIfAny(ALICE, orgB, store)).toBeUndefined();
+  });
+
+  it('throws a failed read of the store: the caller retries, it is not a verdict', async () => {
+    const { store, orgA } = await setup();
+    const unavailable = new Proxy(store, {
+      get: (target, property) =>
+        property === 'findMembership'
+          ? async () => {
+              throw new Error('store unavailable');
+            }
+          : Reflect.get(target, property, target),
+    });
+    await expect(runtimeTenantIfAny(ALICE, orgA, unavailable)).rejects.toThrow('store unavailable');
   });
 });
 

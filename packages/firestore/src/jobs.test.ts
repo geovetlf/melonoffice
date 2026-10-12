@@ -186,6 +186,7 @@ describe.each(STORES)('execution jobs with storage in %s', (_name, createStores)
       a,
       b,
       executions,
+      executionRepository: stores.executions,
       jobService,
       tenantA,
       tenantB,
@@ -580,6 +581,38 @@ describe.each(STORES)('execution jobs with storage in %s', (_name, createStores)
     );
     expect(await codeOf(w.jobService.acquire(next.id, 'worker-2'))).toBe('job_forbidden');
     expect(await w.jobService.get(w.runtimeB, next.id).catch(() => 'hidden')).toBe('hidden');
+  });
+
+  it('15b. a failed read of the membership is retried: the job is never ended as forbidden', async () => {
+    const w = await world();
+    const execution = await w.running();
+    const job = await w.jobService.enqueue(w.tenantA, { executionId: execution.id, nodeId: 'n0' });
+    const claim = await w.jobService.acquire(job.id, 'worker-1');
+    // A read that fails in the store is no verdict on the membership: the service must not turn it into job_forbidden.
+    const unavailable = new Proxy(w.tenancy, {
+      get: (target, property) =>
+        property === 'findMembership'
+          ? async () => {
+              throw new Error('store unavailable');
+            }
+          : Reflect.get(target, property, target),
+    });
+    const flaky = createJobService({
+      jobs: w.jobs,
+      executions: w.executionRepository,
+      tenancy: unavailable,
+      authorization: createAuthorizationService(),
+      audit: createAuditService(w.audit, () => NOW),
+      leaseMs: LEASE_MS,
+      now: () => NOW,
+      requestId: 'req-jobs-flaky',
+      logger: createLogger({ service: 'test', sink: () => undefined }),
+    });
+    await expect(flaky.finish(claim, { result: 'succeeded', code: 'x' })).rejects.toThrow(
+      'store unavailable',
+    );
+    // Nothing was ended: the same claim finishes once the store answers.
+    await w.jobService.finish(claim, { result: 'succeeded', code: 'x' });
   });
 
   it('16. refuses credentials or payloads anywhere in a job, and never stores or logs one', async () => {

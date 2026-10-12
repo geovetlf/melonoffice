@@ -21,7 +21,7 @@ import {
 import { withCorrelation, type Logger } from '@melonoffice/observability';
 import {
   isResolvedTenant,
-  resolveRuntimeTenant,
+  runtimeTenantIfAny,
   type TenancyStore,
   type TenantContext,
 } from '@melonoffice/tenancy';
@@ -289,14 +289,11 @@ export function createJobService({
 
   /**
    * The runtime context of the execution's user, resolved again from stored data only. A user
-   * who left, a suspended membership or an inactive organization gives none.
+   * who left, a suspended membership or an inactive organization gives none. A failed read gives
+   * no answer: it is thrown, so the job is retried instead of ended as forbidden.
    */
   async function runtimeTenantOf(execution: Execution): Promise<TenantContext | undefined> {
-    try {
-      return await resolveRuntimeTenant(execution.userId, execution.organizationId, tenancy);
-    } catch {
-      return undefined;
-    }
+    return runtimeTenantIfAny(execution.userId, execution.organizationId, tenancy);
   }
 
   /** A lease proof exactly: a job id, a lease id and a revision. Anything else is refused. */

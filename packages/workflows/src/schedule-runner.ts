@@ -19,7 +19,7 @@ import {
 import type { AuthorizationService } from '@melonoffice/rbac';
 import {
   isOrganizationId,
-  resolveRuntimeTenant,
+  runtimeTenantIfAny,
   type TenancyStore,
   type TenantContext,
 } from '@melonoffice/tenancy';
@@ -360,12 +360,8 @@ export function createScheduleRunner({
     schedule: WorkflowSchedule,
     occurrence: IsoTimestamp,
   ): Promise<void> {
-    let tenant: TenantContext;
-    try {
-      tenant = await resolveRuntimeTenant(schedule.confirmedBy, schedule.organizationId, tenancy);
-    } catch {
-      return;
-    }
+    const tenant = await runtimeTenantIfAny(schedule.confirmedBy, schedule.organizationId, tenancy);
+    if (tenant === undefined) return;
     const { items } = await plans.pageForWorkflow(tenant, schedule.workflowId, {
       limit: Number.MAX_SAFE_INTEGER,
     });
@@ -464,13 +460,9 @@ export function createScheduleRunner({
     occurrence: IsoTimestamp,
   ): Promise<boolean> {
     const { organizationId, workflowId } = schedule;
-    let tenant: TenantContext;
-    try {
-      tenant = await resolveRuntimeTenant(schedule.confirmedBy, organizationId, tenancy);
-    } catch {
-      // The person left: nothing of theirs is closed from here, and a later sweep looks again.
-      return false;
-    }
+    const tenant = await runtimeTenantIfAny(schedule.confirmedBy, organizationId, tenancy);
+    // The person left: nothing of theirs is closed from here, and a later sweep looks again.
+    if (tenant === undefined) return false;
     const untouchedBefore = new Date(
       now().getTime() - SCHEDULE_LEASE_MS,
     ).toISOString() as IsoTimestamp;
@@ -565,13 +557,10 @@ export function createScheduleRunner({
     if (workflow.version !== schedule.workflowVersion) {
       return finish(schedule, occurrence, 'version_changed');
     }
-    let tenant: TenantContext;
-    try {
-      tenant = await resolveRuntimeTenant(schedule.confirmedBy, organizationId, tenancy);
-    } catch {
-      // The person left, was suspended, or the organization is no longer active.
-      return finish(schedule, occurrence, 'not_allowed');
-    }
+    const tenant = await runtimeTenantIfAny(schedule.confirmedBy, organizationId, tenancy);
+    // The person left, was suspended, or the organization is no longer active. A failed read is
+    // not that: it is thrown, and the occurrence stays open for a later sweep.
+    if (tenant === undefined) return finish(schedule, occurrence, 'not_allowed');
     // The standing approval holds only while its person keeps all three permissions (ADR-0185 §6).
     const standing = STANDING_PERMISSIONS.every(
       (permission) => authorization.authorize(tenant, permission, { organizationId }).allowed,
