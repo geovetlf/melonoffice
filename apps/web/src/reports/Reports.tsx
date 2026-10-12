@@ -92,7 +92,7 @@ export function ReportsSection({
           (m) =>
             m.readable &&
             m.frequencies.includes(frequency) &&
-            (department === undefined || m.departments.includes(department)),
+            (department === undefined || m.owner === department),
         )
       : [];
   if (department !== undefined && metrics.status === 'ready' && shown.length === 0) return null;

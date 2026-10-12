@@ -14,6 +14,7 @@ export interface MetricView {
   readonly frequencies: readonly ReportFrequency[];
   /** The department types (catalogue ids) the metric serves. */
   readonly departments: readonly string[];
+  readonly owner: string | null;
   readonly readable: boolean;
 }
 

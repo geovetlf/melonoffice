@@ -16,6 +16,7 @@ const METRICS = [
     entity: 'currency',
     frequencies: ['day', 'week', 'month'],
     departments: ['sales', 'leadership', 'finance', 'research'],
+    owner: 'sales',
     readable: true,
   },
   {
@@ -24,6 +25,7 @@ const METRICS = [
     entity: 'source_kind',
     frequencies: ['day', 'week', 'month'],
     departments: ['sales', 'marketing', 'leadership', 'research'],
+    owner: 'sales',
     readable: true,
   },
   {
@@ -32,6 +34,7 @@ const METRICS = [
     entity: 'channel',
     frequencies: ['day', 'week', 'month'],
     departments: ['operations', 'sales', 'marketing', 'leadership', 'research'],
+    owner: null,
     // The person may not read conversations: never shown.
     readable: false,
   },
@@ -166,13 +169,19 @@ describe('Reports (ADR-0060): what was recorded, never a projection', () => {
     expect(globalThis.location.pathname).toBe('/memory');
   });
 
-  it("puts each department's metrics in its office, and no section where none serves it", async () => {
-    open('/office/marketing');
+  it("puts each department's own metrics in its office, and no section where it owns none", async () => {
+    open('/office/sales');
     const section = await screen.findByRole('region', { name: 'Reports' });
+    expect(await within(section).findByRole('article', { name: 'Sales won (value)' })).toBeTruthy();
     expect(
       await within(section).findByRole('article', { name: 'New leads and customers' }),
     ).toBeTruthy();
-    expect(within(section).queryByRole('article', { name: 'Sales won (value)' })).toBeNull();
+    cleanup();
+    // Marketing is served the leads metric but owns none, so its office shows no figures of Sales.
+    open('/office/marketing');
+    await screen.findByRole('heading', { level: 1 });
+    await vi.waitFor(() => expect(screen.queryByText('Loading…')).toBeNull());
+    expect(screen.queryByRole('region', { name: 'Reports' })).toBeNull();
     cleanup();
     open('/office/operations');
     await screen.findByRole('heading', { level: 1 });

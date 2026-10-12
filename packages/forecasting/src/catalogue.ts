@@ -33,6 +33,12 @@ export interface ForecastMetric {
    * must name one of them; the list is data and no code compares department names.
    */
   readonly departments: readonly string[];
+  /**
+   * The one department that owns the metric's figures in Informes (catalogue id), or `null` when
+   * no department owns it yet. A department's Informes show only the metrics it owns; forecasts
+   * still follow `departments`.
+   */
+  readonly owner: string | null;
 }
 
 const ALL_FREQUENCIES = ['day', 'week', 'month'] as const;
@@ -48,6 +54,7 @@ export const FORECAST_METRICS: readonly ForecastMetric[] = Object.freeze([
     permission: 'opportunity.read',
     frequencies: ALL_FREQUENCIES,
     departments: ['sales', 'leadership', 'finance', 'research'],
+    owner: 'sales',
   },
   {
     id: 'sales.won_count',
@@ -58,6 +65,7 @@ export const FORECAST_METRICS: readonly ForecastMetric[] = Object.freeze([
     permission: 'opportunity.read',
     frequencies: ALL_FREQUENCIES,
     departments: ['sales', 'leadership', 'operations', 'finance', 'research'],
+    owner: 'sales',
   },
   // C2 opportunities opened: demand entering the pipeline.
   {
@@ -69,6 +77,7 @@ export const FORECAST_METRICS: readonly ForecastMetric[] = Object.freeze([
     permission: 'opportunity.read',
     frequencies: ALL_FREQUENCIES,
     departments: ['sales', 'marketing', 'leadership', 'research'],
+    owner: 'sales',
   },
   // C1 contacts with a commercial profile (leads and customers), by the date they entered.
   {
@@ -80,6 +89,7 @@ export const FORECAST_METRICS: readonly ForecastMetric[] = Object.freeze([
     permission: 'contact.read',
     frequencies: ALL_FREQUENCIES,
     departments: ['sales', 'marketing', 'leadership', 'research'],
+    owner: 'sales',
   },
   // Conversations started (ADR-0033): incoming demand and service load.
   {
@@ -91,6 +101,7 @@ export const FORECAST_METRICS: readonly ForecastMetric[] = Object.freeze([
     permission: 'conversation.read',
     frequencies: ALL_FREQUENCIES,
     departments: ['operations', 'sales', 'marketing', 'leadership', 'research'],
+    owner: null,
   },
 ] satisfies readonly ForecastMetric[]);
 

@@ -383,6 +383,7 @@ export function createForecastEngine(options: ForecastEngineOptions): ForecastEn
           frequencies: m.frequencies,
           maxHorizon: limits.maxHorizon,
           departments: m.departments,
+          owner: m.owner,
           readable:
             isResolvedTenant(tenant) && can(tenant, 'forecast.read') && can(tenant, m.permission),
         }),
