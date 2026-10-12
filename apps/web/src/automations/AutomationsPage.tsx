@@ -1162,6 +1162,8 @@ function PlanCard({
   const agents = readyList(specialists);
   const [plan, setPlan] = useState<Load<PlanDetail>>({ status: 'loading' });
   const [steps, setSteps] = useState<readonly PlanStepProgress[]>([]);
+  // The steps on screen could not be read again; the next tick reads them again.
+  const [stepsStale, setStepsStale] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
 
@@ -1170,17 +1172,29 @@ function PlanCard({
       (value) => {
         setPlan({ status: 'ready', value });
         if (value.status !== 'approval_required' && value.status !== 'ready') {
-          client.steps(planId).then(setSteps, () => setSteps([]));
+          client.steps(planId).then(
+            (next) => {
+              setSteps(next);
+              setStepsStale(false);
+            },
+            // The steps shown stay until a read works.
+            () => setStepsStale(true),
+          );
         }
       },
-      () => setPlan({ status: 'error' }),
+      // A failed read keeps the plan on screen; only a plan not shown yet becomes the error.
+      () => setPlan((current) => (current.status === 'ready' ? current : { status: 'error' })),
     );
   }, [client, planId]);
 
   useEffect(read, [read]);
 
-  // A running plan is read again on its own until it ends (ADR-0167): no button to remember.
-  const running = plan.status === 'ready' && isRunningPlan(plan.value);
+  // A running plan is read again on its own until it ends (ADR-0167): no button to remember. Steps
+  // that could not be read are read again the same way, so a plan that ended is not left stale.
+  // A plan whose first read failed is read again the same way, so a blip does not leave an error.
+  const running =
+    plan.status === 'error' ||
+    (plan.status === 'ready' && (isRunningPlan(plan.value) || stepsStale));
   useEffect(() => {
     if (!running) return undefined;
     const timer = setInterval(read, PLAN_REFRESH_MS);

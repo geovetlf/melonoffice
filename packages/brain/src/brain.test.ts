@@ -17,7 +17,8 @@ import {
   resolveRuntimeTenant,
   resolveTenant,
 } from '@melonoffice/tenancy';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { LIMITS } from './catalogue.js';
 import { BrainError } from './errors.js';
 import { candidateOf, createGatewayKnowledgeExtractor } from './extractor.js';
 import { checkKnowledgeInput, knowledgeItemId } from './knowledge.js';
@@ -184,6 +185,29 @@ describe('Company Brain: creating and reading knowledge (ADR-0051)', () => {
       expect(await codeOf(w.brain.propose(w.alice, bad))).toBe('invalid_knowledge');
     }
     expect(await w.brain.list(w.alice)).toEqual([]);
+  });
+});
+
+describe('complete reads refuse a full read window (Guardian, ADR-0132)', () => {
+  it('returns every item while the Brain fits in one read window', async () => {
+    const w = await world();
+    await w.brain.propose(w.alice, price(25));
+    expect((await w.brain.list(w.alice, { complete: true })).length).toBe(1);
+  });
+
+  it('refuses a complete read when the window is full, and keeps the plain read as it was', async () => {
+    const w = await world();
+    await w.brain.propose(w.alice, price(25));
+    const [item] = await w.repository.listItems(w.orgA, {}, 1);
+    if (item === undefined) throw new Error('the proposed item is missing');
+    // The organization holds at least as many items as one read returns.
+    vi.spyOn(w.repository, 'listItems').mockResolvedValue(
+      Array.from({ length: LIMITS.readWindow }, () => item),
+    );
+    await expect(w.brain.list(w.alice, { complete: true })).rejects.toMatchObject({
+      code: 'read_incomplete',
+    });
+    expect((await w.brain.list(w.alice)).length).toBe(LIMITS.readWindow);
   });
 });
 

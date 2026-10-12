@@ -38,6 +38,7 @@ const STATUS: Record<BrainErrorCode, ContentfulStatusCode> = {
   conflict_open: 409,
   not_open: 409,
   extraction_unavailable: 503,
+  read_incomplete: 503,
 };
 
 /** What `sync` reads to feed Company Brain from MelonOffice's own records (ADR-0051). */

@@ -1,10 +1,11 @@
 import { I18nProvider } from '@melonoffice/i18n';
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../App.js';
 import { createServices } from '../identity/services.js';
 import { REFRESH_KEY } from '../identity/session.js';
 import { API, KEY, fakeBackend, memoryStore } from '../identity/testing.js';
+import { PLAN_REFRESH_MS } from './AutomationsPage.js';
 
 /**
  * Automations (WF-3, ADR-0071): the owner plans an active workflow, reads the plan it gave and
@@ -498,6 +499,161 @@ describe('Automations (WF-3)', () => {
     const offer = (await card.findByText('Offer')).closest('li') as HTMLElement;
     expect(within(offer).getByText('Not approved in time')).toBeTruthy();
     expect(within(offer).queryByText('Rejected')).toBeNull();
+  });
+
+  it('ADR-0167: a running plan keeps its screen when a read fails, and is read again on the next tick', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const plan = {
+        id: 'plan-r',
+        status: 'executing',
+        version: 1,
+        createdAt: '2026-09-29T09:00:00Z',
+        current: {
+          version: 1,
+          digest: 'f'.repeat(64),
+          request: { summary: 'Oferta', objective: 'Preparar la oferta' },
+          steps: [{ id: 'research', kind: 'specialist', label: 'Research', dependsOn: [] }],
+          riskLevel: 'low',
+          estimate: { status: 'not_estimated' },
+          source: { kind: 'workflow', workflowId: 'wf-launch', workflowVersion: 2 },
+        },
+      };
+      const backend = open((b) => {
+        b.options.plans.org_1 = [plan];
+        b.options.planSteps['plan-r'] = [];
+      });
+      const plans = within(await screen.findByRole('region', { name: 'Plans' }));
+      fireEvent.click(await plans.findByRole('button', { name: /Running/ }));
+      const card = await screen.findByRole('article', { name: 'Oferta' });
+
+      // The next read fails; the read after it finds the plan has ended.
+      backend.options.planReadFailures['plan-r'] = 1;
+      backend.options.plans.org_1 = [{ ...plan, status: 'completed' }];
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(PLAN_REFRESH_MS);
+      });
+      expect(card.isConnected).toBe(true);
+      expect(screen.queryByText(/could not be loaded/)).toBeNull();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(PLAN_REFRESH_MS);
+      });
+      expect(await within(card).findByText(/Completed/)).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('ADR-0167: a plan whose first read fails is read again on the next tick, without reloading', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const plan = {
+        id: 'plan-f',
+        status: 'executing',
+        version: 1,
+        createdAt: '2026-09-29T09:00:00Z',
+        current: {
+          version: 1,
+          digest: 'e'.repeat(64),
+          request: { summary: 'Propuesta', objective: 'Preparar la propuesta' },
+          steps: [{ id: 'research', kind: 'specialist', label: 'Research', dependsOn: [] }],
+          riskLevel: 'low',
+          estimate: { status: 'not_estimated' },
+          source: { kind: 'workflow', workflowId: 'wf-launch', workflowVersion: 2 },
+        },
+      };
+      const backend = open((b) => {
+        b.options.plans.org_1 = [plan];
+        b.options.planSteps['plan-f'] = [];
+        // The first read of the plan fails: the screen says so, and the next tick reads it again.
+        b.options.planReadFailures['plan-f'] = 1;
+      });
+      const plans = within(await screen.findByRole('region', { name: 'Plans' }));
+      fireEvent.click(await plans.findByRole('button', { name: /Running/ }));
+      expect(await screen.findByText('This could not be loaded. Try again.')).toBeTruthy();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(PLAN_REFRESH_MS);
+      });
+      expect(await screen.findByRole('article', { name: 'Propuesta' })).toBeTruthy();
+      expect(screen.queryByText('This could not be loaded. Try again.')).toBeNull();
+      expect(backend).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('ADR-0167: steps that could not be read stay on screen and are read again until the plan has ended and its steps are read', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const step = (stepId: string, state: string) => ({
+        stepId,
+        kind: 'specialist',
+        label: stepId,
+        state,
+        outcome: null,
+        executionId: `exec-${stepId}`,
+        status: state === 'completed' ? 'completed' : 'pending',
+        approvalId: state === 'awaiting_approval' ? `appr-${stepId}` : null,
+        failure: null,
+        answer: null,
+        missing: [],
+        attempt: 1,
+        until: null,
+      });
+      const plan = {
+        id: 'plan-s',
+        status: 'executing',
+        version: 1,
+        createdAt: '2026-09-29T09:00:00Z',
+        current: {
+          version: 1,
+          digest: 'e'.repeat(64),
+          request: { summary: 'Estudio', objective: 'Estudiar el mercado' },
+          steps: [
+            { id: 'research', kind: 'specialist', label: 'Research', dependsOn: [] },
+            { id: 'offer', kind: 'specialist', label: 'Offer', dependsOn: ['research'] },
+          ],
+          riskLevel: 'low',
+          estimate: { status: 'not_estimated' },
+          source: { kind: 'workflow', workflowId: 'wf-launch', workflowVersion: 2 },
+        },
+      };
+      const backend = open((b) => {
+        b.options.plans.org_1 = [plan];
+        b.options.planSteps['plan-s'] = [
+          step('research', 'completed'),
+          step('offer', 'awaiting_approval'),
+        ];
+      });
+      const plans = within(await screen.findByRole('region', { name: 'Plans' }));
+      fireEvent.click(await plans.findByRole('button', { name: /Running/ }));
+      const card = await screen.findByRole('article', { name: 'Estudio' });
+      expect(await within(card).findByText('Waiting for approval')).toBeTruthy();
+
+      // The plan has ended, but its steps cannot be read this time: the steps on screen stay.
+      backend.options.plans.org_1 = [{ ...plan, status: 'completed' }];
+      backend.options.planSteps['plan-s'] = [
+        step('research', 'completed'),
+        step('offer', 'completed'),
+      ];
+      backend.options.planStepsFailures['plan-s'] = 1;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(PLAN_REFRESH_MS);
+      });
+      expect(card.isConnected).toBe(true);
+      expect(within(card).getAllByText(/Completed/).length).toBeGreaterThan(0);
+      expect(within(card).getByText('Waiting for approval')).toBeTruthy();
+
+      // The next tick reads the steps again, and they replace the ones on screen.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(PLAN_REFRESH_MS);
+      });
+      await waitFor(() => expect(within(card).queryByText('Waiting for approval')).toBeNull());
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('ADR-0179: a step cancelled with its plan reads Cancelled, not Failed, and asks nothing to be fixed', async () => {
