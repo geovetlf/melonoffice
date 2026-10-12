@@ -490,3 +490,33 @@
 .partner-console .mo-list-item > .mo-state {
   flex-basis: 100%;
 }
+
+/* The agents' filters sit side by side where there is room, and stack on a phone. */
+.mo-page-section.agents__filters {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
+  align-items: end;
+}
+
+/* Documents' file picker: the page's own button over the browser's input, which keeps focus. */
+.documents__picker {
+  position: relative;
+  justify-self: start;
+}
+
+.documents__picker-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.documents__picker-input:disabled {
+  cursor: not-allowed;
+}
+
+.documents__picker-input:focus-visible + .mo-button {
+  outline: var(--mo-state-focus-ring-width) solid var(--mo-color-focus-ring);
+  outline-offset: var(--mo-state-focus-ring-offset);
+}

@@ -1074,6 +1074,11 @@ a.sidebar__item:hover {
   gap: var(--mo-space-4);
 }
 
+/* Each card keeps its own height: the agents card does not stretch empty to the strip's height. */
+.dept-office__grid > * {
+  align-self: start;
+}
+
 .agent-list {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(12rem, 1fr));
@@ -2146,8 +2151,6 @@ a.sidebar__item:hover {
   justify-self: start;
 }
 
-/* Follow-ups (C5, ADR-0058): a group or a record's follow-ups, their heading above the list. */
-.follow-ups__group,
 /* The follow-up a link opened is marked clearly: the accent's edge and its soft tint. */
 .follow-ups__item[aria-current='true'] {
   border-color: var(--mo-color-accent);
@@ -2155,6 +2158,8 @@ a.sidebar__item:hover {
   box-shadow: inset 4px 0 0 var(--mo-color-accent);
 }
 
+/* Follow-ups (C5, ADR-0058): a group or a record's follow-ups, their heading above the list. */
+.follow-ups__group,
 .follow-ups-record {
   display: grid;
   gap: var(--mo-space-2);

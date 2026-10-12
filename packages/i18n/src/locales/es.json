@@ -1517,6 +1517,7 @@
   "agents.autonomy.saved": "Guardado. El agente tiene una nueva versión.",
   "agents.autonomy.error": "No se pudo cambiar. Inténtalo de nuevo.",
   "agents.filters.autonomy": "Autonomía",
+  "agents.filters.label": "Filtrar agentes",
   "agents.approval.auto": "se ejecuta sin aprobación",
   "agents.approval.approval_required": "necesita aprobación",
   "agents.approval.denied": "nunca se ejecuta",
