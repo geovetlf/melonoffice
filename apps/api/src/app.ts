@@ -174,6 +174,7 @@ import { registerApprovalRoutes } from './approvals.js';
 import { createPlanStepDecisions } from './plan-step-decisions.js';
 import { registerAuthRoutes, type AuthEnv } from './auth.js';
 import { registerCors } from './cors.js';
+import { registerBodyLimit } from './body-limit.js';
 import { registerBillingRoutes } from './billing.js';
 import { effectiveBrandOf, PLATFORM_BRAND, type BrandRepository } from '@melonoffice/branding';
 import { registerBrandingRoutes, registerPublicBrandRoute } from './branding.js';
@@ -542,6 +543,8 @@ export function createApp({
   });
 
   registerHealth(app, { service: SERVICE_NAME, version });
+  // Before any route reads a body: none may be larger than a route could ever accept.
+  registerBodyLimit(app);
   // Before authentication, so a browser's preflight (which has no token) is answered.
   registerCors(app, webOrigins);
   // Outside /v1: providers sign deliveries, they have no user token.
