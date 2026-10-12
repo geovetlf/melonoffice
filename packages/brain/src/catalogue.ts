@@ -207,6 +207,11 @@ export const LIMITS = Object.freeze({
   contextFacts: 40,
   /** The most items read from storage for one retrieval or list. */
   readWindow: 1000,
+  /**
+   * Pages one complete read (the Guardian's, ADR-0132) takes, of `readWindow` items each. A Brain that
+   * fills them all is refused, since its end is not in sight; the sweep's passes are bounded the same way (ADR-0187).
+   */
+  completeReadPages: 10,
   documentCharacters: 60_000,
   documentName: 200,
 });
