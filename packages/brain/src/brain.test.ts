@@ -26,7 +26,11 @@ import { LIMITS } from './catalogue.js';
 import { BrainError } from './errors.js';
 import { candidateOf, createGatewayKnowledgeExtractor } from './extractor.js';
 import { checkKnowledgeInput, knowledgeItemId } from './knowledge.js';
-import { InMemoryKnowledgeRepository } from './repository.js';
+import {
+  InMemoryKnowledgeRepository,
+  type KnowledgeReader,
+  type KnowledgeRepository,
+} from './repository.js';
 import { createCompanyBrain, type KnowledgeExtractor } from './service.js';
 import {
   ingestFromConnection,
@@ -123,6 +127,7 @@ async function world(
     audit,
     brain,
     repository,
+    tenancy,
     orgA: a.organization.id,
     orgB: b.organization.id,
     alice: await resolveTenant(as(ALICE), a.organization.id, tenancy),
@@ -244,6 +249,84 @@ describe('complete reads take every page, and refuse a Brain too large to read w
     expect((await w.brain.list(w.alice, { complete: true })).length).toBe(LIMITS.readWindow);
     // A full page does not say the walk is over: the next page is read, and it is empty.
     expect(pages).toHaveBeenCalledTimes(2);
+  });
+
+  /**
+   * The repository with `between` run once, after the first page of a walk is read. Its snapshot is a copy of
+   * the organization's items taken when the walk begins, so a write in `between` is a write during the walk.
+   */
+  function betweenPages(
+    live: InMemoryKnowledgeRepository,
+    audit: InMemoryAuditStore,
+    organization: OrganizationId,
+    between: () => Promise<void>,
+  ): KnowledgeRepository {
+    let pages = 0;
+    const wrap = (view: KnowledgeReader): KnowledgeReader => ({
+      findItem: (...args) => view.findItem(...args),
+      listItems: (...args) => view.listItems(...args),
+      pageItems: async (organizationId, page) => {
+        const read = await view.pageItems(organizationId, page);
+        pages += 1;
+        if (pages === 1) await between();
+        return read;
+      },
+      countItems: (...args) => view.countItems(...args),
+      listVersions: (...args) => view.listVersions(...args),
+      findConflict: (...args) => view.findConflict(...args),
+      listConflicts: (...args) => view.listConflicts(...args),
+      findDocument: (...args) => view.findDocument(...args),
+    });
+    return {
+      ...wrap(live),
+      write: (...args) => live.write(...args),
+      snapshot: async (read) => {
+        // Every item is at revision one here, so a copy can be written in one go.
+        const copy = new InMemoryKnowledgeRepository(audit);
+        const items = await live.listItems(organization, {}, Number.MAX_SAFE_INTEGER);
+        await copy.write(organization, { itemIds: [] }, () => ({
+          write: { items, versions: [], conflicts: [], events: [] },
+          result: undefined,
+        }));
+        return read(wrap(copy));
+      },
+    } as KnowledgeRepository;
+  }
+
+  it('reads one moment of the Brain: an item retired during the walk and one added after it are not both read', async () => {
+    const w = await world();
+    await w.brain.propose(w.alice, price(25));
+    await seedItems(w, LIMITS.readWindow - 1);
+    // One full page holds every item, and its last id is the item retired during the walk. The item added
+    // after it sorts past that page, so the walk reads it only if it reads the live items.
+    const last = (await w.repository.listItems(w.orgA, {}, LIMITS.readWindow))
+      .map((i) => i.id)
+      .sort()
+      .at(-1);
+    const retired = last === undefined ? undefined : await w.repository.findItem(w.orgA, last);
+    if (retired === undefined) throw new Error('the page holds no item');
+    const added = { ...retired, id: `${retired.id}-after` };
+    const racing = createCompanyBrain({
+      repository: betweenPages(w.repository, w.audit, w.orgA, () =>
+        w.repository.write(w.orgA, { itemIds: [retired.id, added.id] }, () => ({
+          write: {
+            items: [{ ...retired, status: 'outdated', revision: retired.revision + 1 }, added],
+            versions: [],
+            conflicts: [],
+            events: [],
+          },
+          result: undefined,
+        })),
+      ),
+      organizations: w.tenancy,
+      authorization: createAuthorizationService(ROLES),
+      now: () => NOW,
+    });
+    const ids = (await racing.list(w.alice, { complete: true })).map((item) => item.id);
+    // The Brain as it stood when the walk began: the retired item still active, the added one not read.
+    expect(ids).toHaveLength(LIMITS.readWindow);
+    expect(ids).toContain(retired.id);
+    expect(ids).not.toContain(added.id);
   });
 
   it('refuses a Brain of as many items as its pages take, before it reads any of them', async () => {

@@ -11,6 +11,7 @@ import { emulatorFirestore, emulatorHost } from './testing.js';
 const ORG_A = '5e1d2c3b-4a59-4e6f-8a7b-9c0d1e2f3a4b' as OrganizationId;
 const ORG_B = '6f5e4d3c-2b1a-4f9e-8d7c-6b5a4f3e2d1c' as OrganizationId;
 const ORG_C = '7a6b5c4d-3e2f-4a1b-8c9d-0e1f2a3b4c5d' as OrganizationId;
+const ORG_D = '8b7c6d5e-4f3a-4b2c-9d8e-1f0a2b3c4d5e' as OrganizationId;
 
 describe.runIf(emulatorHost)('Company Brain pages (ADR-0132, emulator)', () => {
   it('walks an organization’s items a page at a time, in document-id order, and only its own', async () => {
@@ -51,6 +52,28 @@ describe.runIf(emulatorHost)('Company Brain pages (ADR-0132, emulator)', () => {
     expect(full.next).toBe('page-b');
     expect(await repository.pageItems(ORG_A, { after: 'page-b', limit: 2 })).toEqual({ items: [] });
     expect(await repository.pageItems(ORG_B, { limit: 2 })).toEqual({ items: [] });
+  });
+
+  it('reads one snapshot: an item written during a walk is not read by it, and the next read sees it', async () => {
+    const db = emulatorFirestore();
+    const repository = new FirestoreKnowledgeRepository(db);
+    await db.collection(KNOWLEDGE_ITEMS).doc('snap-a').set({ id: 'snap-a', organizationId: ORG_D });
+    await db.collection(KNOWLEDGE_ITEMS).doc('snap-b').set({ id: 'snap-b', organizationId: ORG_D });
+    const walked = await repository.snapshot(async (view) => {
+      const first = await view.pageItems(ORG_D, { limit: 1 });
+      if (first.next === undefined) throw new Error('the first page is not full');
+      // Written after the first page, past its cursor: the walk's later pages are from the moment it began.
+      await db
+        .collection(KNOWLEDGE_ITEMS)
+        .doc('snap-c')
+        .set({ id: 'snap-c', organizationId: ORG_D });
+      const rest = await view.pageItems(ORG_D, { after: first.next, limit: 10 });
+      return [...first.items, ...rest.items].map((item) => item.id);
+    });
+    expect(walked).toEqual(['snap-a', 'snap-b']);
+    expect((await repository.pageItems(ORG_D, { limit: 10 })).items.map((item) => item.id)).toEqual(
+      ['snap-a', 'snap-b', 'snap-c'],
+    );
   });
 
   it('counts an organization’s items exactly, and only its own', async () => {

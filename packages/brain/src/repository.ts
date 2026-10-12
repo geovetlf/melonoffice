@@ -78,7 +78,15 @@ export interface KnowledgeRepository {
     }) => { readonly write?: KnowledgeWrite; readonly result: T },
   ): Promise<T>;
   findDocument(organizationId: OrganizationId, id: string): Promise<KnowledgeDocument | undefined>;
+  /**
+   * Runs `read` against one view of the items as they stood when it began, so every page it reads is
+   * from the same moment (ADR-0132). A storage that cannot give one runs `read` on the live items.
+   */
+  snapshot?<T>(read: (view: KnowledgeReader) => Promise<T>): Promise<T>;
 }
+
+/** The read methods of a repository: all a snapshot gives, so a read cannot write. */
+export type KnowledgeReader = Omit<KnowledgeRepository, 'write' | 'snapshot'>;
 
 /** Checks a write belongs to its organization and bumps revisions by exactly one. */
 export function checkWrite(
@@ -196,5 +204,13 @@ export class InMemoryKnowledgeRepository implements KnowledgeRepository {
   async findDocument(organizationId: OrganizationId, id: string) {
     const document = this.#documents.get(id);
     return document?.organizationId === organizationId ? document : undefined;
+  }
+
+  /**
+   * The live items: nothing here writes while a read runs, unless a test makes it. A test that needs a write
+   * during a read gives its own repository, with a copy as its snapshot.
+   */
+  async snapshot<T>(read: (view: KnowledgeReader) => Promise<T>): Promise<T> {
+    return read(this);
   }
 }
