@@ -101,6 +101,57 @@ An agent stores its skills with their versions. Its capabilities never follow a 
 
 Geovet chose option B on 2026-09-29 21:10Z (ADR-0084): proposals 1 to 3 are implemented, and `opportunity.offer_discount` stays unassigned until something carries it out.
 
+## Capability policy (2026-10-12)
+
+Architecture rule, applied to every skill and tool: `Department → Specialist/Agent → Role → Skill (exact version) → Tool/Action → Tool Gate → Approval when due → Execution → Audit`. A tool or action is available only when the exact skill version assigned to the agent grants it.
+
+A skill never widens, by itself, any of these. Each keeps its own check:
+
+- RBAC permissions of the person the agent acts for;
+- plan limits and entitlements;
+- organization authorizations;
+- human approvals;
+- runtime guards;
+- the Tool Gate;
+- credits and budget;
+- tenant isolation;
+- audit.
+
+The Decision Engine analyses, recommends, checks policy and prepares actions. It executes nothing itself, and it never runs CRM changes, communications, payments or financial or irreversible actions.
+
+Capability assignments, checked against the catalogue as it is on main:
+
+| Capability                              | Assignment today                                                                                                           | Status                                                                                                              |
+| --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `follow_up_schedule`                    | `customer_follow_up@3`, tool `follow_up_schedule` v3, commercial agents only, human approval on every call (ADR-0104)      | In place.                                                                                                           |
+| Consult contacts                        | `customer_follow_up` reads `contact.read` (v1 and later)                                                                   | In place, read only.                                                                                                |
+| Update contacts                         | No tool. Contact changes are a person's action (`contact.manage`).                                                         | **Not granted. Decision needed:** a CRM management skill and tool, or leave it to people.                           |
+| Prepare messages                        | No tool. Drafting goes through `conversation_reply@1`.                                                                     | In place.                                                                                                           |
+| Send messages                           | `conversation_reply@1` → `message_send` v2 (supervised: approval every reply) or v3 (autonomous, only if the owner set it) | In place, with the send controls (limits, hours, last check).                                                       |
+| Offers and discounts                    | Action `opportunity.offer_discount` exists but no skill grants it (ADR-0065, ADR-0084)                                     | **Not granted. Decision needed:** nothing carries out a discount yet, and granting it would let agents propose one. |
+| Discounts above 20 %: owner approval    | Company Brain policy `discount_approval_above_percent` (`packages/decisions/src/deciders/policy.ts`)                       | Enforced by the policy path. **The 20 % value is not set in code;** the owner must set it in Company Brain.         |
+| Read-only commercial reports            | `pipeline_analysis@1` and `campaign_analysis@1` (reads only)                                                               | In place.                                                                                                           |
+| Payments, refunds and financial actions | None                                                                                                                       | Not enabled. They need their own policy and authorization.                                                          |
+
+No new skill was invented: the catalogue has no CRM management, sales-promotions or communications skill, so the rows marked "Decision needed" stay unassigned until Geovet decides.
+
+### Validation coverage
+
+| Required case                                     | Covered by                                                                                                                        |
+| ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| Correct skill and exact version                   | `packages/guardrails/src/gate.test.ts` (grants by exact version; unknown and other versions denied)                               |
+| Tool not granted                                  | `packages/guardrails/src/gate.test.ts` ("a skill that does not grant the tool blocks it")                                         |
+| Skill revoked or version changed                  | `packages/guardrails/src/gate.test.ts` (other version and unknown denied). **No explicit "revoked by a later version" case yet.** |
+| Tool reserved to people                           | `apps/api/src/skills-catalogue.test.ts` (human-only tools are not granted by any skill)                                           |
+| Skill, RBAC and entitlements in conflict          | Separate suites in `packages/rbac` and `packages/entitlements`. **No combined case yet.**                                         |
+| Decision Engine asking for an unauthorized action | `packages/decisions/src/decisions.test.ts`, `packages/decisions/src/deciders.test.ts` (`not_granted_by_skill`)                    |
+| Approval required and withdrawn                   | `packages/approvals/src/approvals.test.ts`, `packages/agents/src/lifecycle.test.ts`                                               |
+| Tenant isolation                                  | Tenant suites in `packages/guardrails`, `packages/planning` and `packages/agents`                                                 |
+| Audit                                             | `packages/agents/src/audit.test.ts`                                                                                               |
+| TL-1 and B6 regressions                           | `apps/api/src/skills-catalogue.test.ts`, `apps/worker/src/workflow-writes.test.ts`                                                |
+
+Gaps to close in a later block: the revoked-version case, and a combined skill, RBAC and entitlements case.
+
 ## UI
 
 - The agent's page lists, under "What this agent can do", each skill with its version. Under each skill it shows:
