@@ -70,7 +70,9 @@ Indexes needed (phase 2, Terraform): syncs by organization + connection + create
 3. **Phase 3: the first real adapter.** Chosen by Geovet from what customers use (options below), passing the contract suite against its sandbox or a DEV account he authorizes. Only then is it called operational.
 4. **Phase 4: the user-facing slice.** Screens for connections, syncs and documents, as a vertical slice, after his decisions on what users see.
 
-### Options for the first adapter (Geovet decides)
+### Options for the first adapter
+
+Geovet chose «Archivos XML» on 2026-10-13 (decision card, 02:54Z): the first real adapter imports the customer's UBL XML files (`ubl_xml`), with no credentials and no Clave SOL. Building it is phase 3 and waits for his go. The other options stay for later.
 
 | Option                                    | What it reads                          | Credentials of the customer                   | Fit                                                                          |
 | ----------------------------------------- | -------------------------------------- | --------------------------------------------- | ---------------------------------------------------------------------------- |
