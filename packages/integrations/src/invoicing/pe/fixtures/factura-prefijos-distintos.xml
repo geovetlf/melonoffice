@@ -1,0 +1,133 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Synthetic test file for MelonOffice (ADR-0193). Not a real fiscal document: every party, number and amount is invented. -->
+<inv:Invoice xmlns:inv="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2" xmlns:agg="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2" xmlns:basic="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2" xmlns:ds="http://www.w3.org/2000/09/xmldsig#" xmlns:ext="urn:oasis:names:specification:ubl:schema:xsd:CommonExtensionComponents-2">
+  <ext:UBLExtensions>
+    <ext:UBLExtension>
+      <ext:ExtensionContent>
+        <ds:Signature Id="SignatureSP">
+          <ds:SignedInfo>
+            <ds:CanonicalizationMethod Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"/>
+            <ds:SignatureMethod Algorithm="http://www.w3.org/2000/09/xmldsig#rsa-sha1"/>
+            <ds:Reference URI="">
+              <ds:Transforms><ds:Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"/></ds:Transforms>
+              <ds:DigestMethod Algorithm="http://www.w3.org/2000/09/xmldsig#sha1"/>
+              <ds:DigestValue>U0lOVEVUSUNP</ds:DigestValue>
+            </ds:Reference>
+          </ds:SignedInfo>
+          <ds:SignatureValue>U0lOVEVUSUNPLU5PLUZJUk1BRE8=</ds:SignatureValue>
+        </ds:Signature>
+      </ext:ExtensionContent>
+    </ext:UBLExtension>
+  </ext:UBLExtensions>
+  <basic:UBLVersionID>2.1</basic:UBLVersionID>
+  <basic:CustomizationID schemeAgencyName="PE:SUNAT">2.0</basic:CustomizationID>
+  <basic:ProfileID schemeName="Tipo de Operacion" schemeAgencyName="PE:SUNAT" schemeURI="urn:pe:gob:sunat:cpe:see:gem:catalogos:catalogo51">0101</basic:ProfileID>
+  <basic:ID>F001-00000105</basic:ID>
+  <basic:IssueDate>2026-09-15</basic:IssueDate>
+  <basic:IssueTime>10:15:00</basic:IssueTime>
+  <basic:DueDate>2026-10-15</basic:DueDate>
+  <basic:InvoiceTypeCode listAgencyName="PE:SUNAT" listName="Tipo de Documento" listURI="urn:pe:gob:sunat:cpe:see:gem:catalogos:catalogo01" listID="0101" name="Tipo de Operacion" listSchemeURI="urn:pe:gob:sunat:cpe:see:gem:catalogos:catalogo51">01</basic:InvoiceTypeCode>
+  <basic:Note languageLocaleID="1000"><![CDATA[DOSCIENTOS TREINTA Y SEIS CON 00/100 SOLES]]></basic:Note>
+  <basic:DocumentCurrencyCode listID="ISO 4217 Alpha" listName="Currency" listAgencyName="United Nations Economic Commission for Europe">PEN</basic:DocumentCurrencyCode>
+  <basic:LineCountNumeric>2</basic:LineCountNumeric>
+  <agg:Signature>
+    <basic:ID>IDSignSP</basic:ID>
+    <agg:SignatoryParty>
+      <agg:PartyIdentification><basic:ID>20999999019</basic:ID></agg:PartyIdentification>
+      <agg:PartyName><basic:Name><![CDATA[EMPRESA SINTETICA EMISORA S.A.C.]]></basic:Name></agg:PartyName>
+    </agg:SignatoryParty>
+    <agg:DigitalSignatureAttachment><agg:ExternalReference><basic:URI>#SignatureSP</basic:URI></agg:ExternalReference></agg:DigitalSignatureAttachment>
+  </agg:Signature>
+  <agg:AccountingSupplierParty>
+    <agg:Party>
+      <agg:PartyName><basic:Name><![CDATA[SINTETICA]]></basic:Name></agg:PartyName>
+      <agg:PartyTaxScheme>
+        <basic:RegistrationName><![CDATA[EMPRESA SINTETICA EMISORA S.A.C.]]></basic:RegistrationName>
+        <basic:CompanyID schemeID="6" schemeName="SUNAT:Identificador de Documento de Identidad" schemeAgencyName="PE:SUNAT" schemeURI="urn:pe:gob:sunat:cpe:see:gem:catalogos:catalogo06">20999999019</basic:CompanyID>
+        <agg:RegistrationAddress><basic:AddressTypeCode>0000</basic:AddressTypeCode></agg:RegistrationAddress>
+        <agg:TaxScheme><basic:ID>-</basic:ID></agg:TaxScheme>
+      </agg:PartyTaxScheme>
+    </agg:Party>
+  </agg:AccountingSupplierParty>
+  <agg:AccountingCustomerParty>
+    <agg:Party xmlns:x="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2">
+      <agg:PartyTaxScheme>
+        <x:RegistrationName><![CDATA[CLIENTE SINTETICO S.A.]]></x:RegistrationName>
+        <basic:CompanyID schemeID="6" schemeName="SUNAT:Identificador de Documento de Identidad" schemeAgencyName="PE:SUNAT" schemeURI="urn:pe:gob:sunat:cpe:see:gem:catalogos:catalogo06">20999999027</basic:CompanyID>
+        <agg:RegistrationAddress><basic:AddressTypeCode>0000</basic:AddressTypeCode></agg:RegistrationAddress>
+        <agg:TaxScheme><basic:ID>-</basic:ID></agg:TaxScheme>
+      </agg:PartyTaxScheme>
+    </agg:Party>
+  </agg:AccountingCustomerParty>
+  <agg:TaxTotal>
+    <basic:TaxAmount currencyID="PEN">36.00</basic:TaxAmount>
+    <agg:TaxSubtotal>
+          <basic:TaxableAmount currencyID="PEN">200.00</basic:TaxableAmount><basic:TaxAmount currencyID="PEN">36.00</basic:TaxAmount>
+          <agg:TaxCategory>
+            <basic:ID schemeID="UN/ECE 5305" schemeAgencyID="6">S</basic:ID>
+            <agg:TaxScheme><basic:ID schemeID="UN/ECE 5153" schemeAgencyID="6">1000</basic:ID><basic:Name>IGV</basic:Name><basic:TaxTypeCode>VAT</basic:TaxTypeCode></agg:TaxScheme>
+          </agg:TaxCategory>
+        </agg:TaxSubtotal>
+  </agg:TaxTotal>
+  <agg:LegalMonetaryTotal>
+    <basic:LineExtensionAmount currencyID="PEN">200.00</basic:LineExtensionAmount>
+    <basic:TaxInclusiveAmount currencyID="PEN">236.00</basic:TaxInclusiveAmount>
+    <basic:AllowanceTotalAmount currencyID="PEN">0.00</basic:AllowanceTotalAmount>
+    <basic:ChargeTotalAmount currencyID="PEN">0.00</basic:ChargeTotalAmount>
+    <basic:PrepaidAmount currencyID="PEN">0.00</basic:PrepaidAmount>
+    <basic:PayableAmount currencyID="PEN">236.00</basic:PayableAmount>
+  </agg:LegalMonetaryTotal>
+  <agg:InvoiceLine>
+    <basic:ID>1</basic:ID>
+    <basic:InvoicedQuantity unitCode="NIU" unitCodeListID="UN/ECE rec 20" unitCodeListAgencyName="United Nations Economic Commission for Europe">2</basic:InvoicedQuantity>
+    <basic:LineExtensionAmount currencyID="PEN">100.00</basic:LineExtensionAmount>
+    <agg:PricingReference>
+      <agg:AlternativeConditionPrice>
+        <basic:PriceAmount currencyID="PEN">59.00</basic:PriceAmount>
+        <basic:PriceTypeCode listName="Tipo de Precio" listAgencyName="PE:SUNAT" listURI="urn:pe:gob:sunat:cpe:see:gem:catalogos:catalogo16">01</basic:PriceTypeCode>
+      </agg:AlternativeConditionPrice>
+    </agg:PricingReference>
+    <agg:TaxTotal>
+      <basic:TaxAmount currencyID="PEN">18.00</basic:TaxAmount>
+        <agg:TaxSubtotal>
+          <basic:TaxableAmount currencyID="PEN">100.00</basic:TaxableAmount><basic:TaxAmount currencyID="PEN">18.00</basic:TaxAmount>
+          <agg:TaxCategory>
+            <basic:ID schemeID="UN/ECE 5305" schemeAgencyID="6">S</basic:ID><basic:Percent>18.00</basic:Percent><basic:TaxExemptionReasonCode listAgencyName="PE:SUNAT" listName="Afectacion del IGV" listURI="urn:pe:gob:sunat:cpe:see:gem:catalogos:catalogo07">10</basic:TaxExemptionReasonCode>
+            <agg:TaxScheme><basic:ID schemeID="UN/ECE 5153" schemeAgencyID="6">1000</basic:ID><basic:Name>IGV</basic:Name><basic:TaxTypeCode>VAT</basic:TaxTypeCode></agg:TaxScheme>
+          </agg:TaxCategory>
+        </agg:TaxSubtotal>
+    </agg:TaxTotal>
+    <agg:Item>
+      <basic:Description><![CDATA[Servicio de consultoria & soporte (mensual)]]></basic:Description>
+      <agg:SellersItemIdentification><basic:ID>SRV-001</basic:ID></agg:SellersItemIdentification>
+      <agg:CommodityClassification><basic:ItemClassificationCode listID="UNSPSC" listAgencyName="GS1 US" listName="Item Classification">80101500</basic:ItemClassificationCode></agg:CommodityClassification>
+    </agg:Item>
+    <agg:Price><basic:PriceAmount currencyID="PEN">50.00</basic:PriceAmount></agg:Price>
+  </agg:InvoiceLine>
+  <agg:InvoiceLine>
+    <basic:ID>2</basic:ID>
+    <basic:InvoicedQuantity unitCode="NIU" unitCodeListID="UN/ECE rec 20" unitCodeListAgencyName="United Nations Economic Commission for Europe">1</basic:InvoicedQuantity>
+    <basic:LineExtensionAmount currencyID="PEN">100.00</basic:LineExtensionAmount>
+    <agg:PricingReference>
+      <agg:AlternativeConditionPrice>
+        <basic:PriceAmount currencyID="PEN">118.00</basic:PriceAmount>
+        <basic:PriceTypeCode listName="Tipo de Precio" listAgencyName="PE:SUNAT" listURI="urn:pe:gob:sunat:cpe:see:gem:catalogos:catalogo16">01</basic:PriceTypeCode>
+      </agg:AlternativeConditionPrice>
+    </agg:PricingReference>
+    <agg:TaxTotal>
+      <basic:TaxAmount currencyID="PEN">18.00</basic:TaxAmount>
+        <agg:TaxSubtotal>
+          <basic:TaxableAmount currencyID="PEN">100.00</basic:TaxableAmount><basic:TaxAmount currencyID="PEN">18.00</basic:TaxAmount>
+          <agg:TaxCategory>
+            <basic:ID schemeID="UN/ECE 5305" schemeAgencyID="6">S</basic:ID><basic:Percent>18.00</basic:Percent><basic:TaxExemptionReasonCode listAgencyName="PE:SUNAT" listName="Afectacion del IGV" listURI="urn:pe:gob:sunat:cpe:see:gem:catalogos:catalogo07">10</basic:TaxExemptionReasonCode>
+            <agg:TaxScheme><basic:ID schemeID="UN/ECE 5153" schemeAgencyID="6">1000</basic:ID><basic:Name>IGV</basic:Name><basic:TaxTypeCode>VAT</basic:TaxTypeCode></agg:TaxScheme>
+          </agg:TaxCategory>
+        </agg:TaxSubtotal>
+    </agg:TaxTotal>
+    <agg:Item>
+      <basic:Description><![CDATA[Licencia anual <basica> "estandar"]]></basic:Description>
+      <agg:SellersItemIdentification><basic:ID>LIC-002</basic:ID></agg:SellersItemIdentification>
+    </agg:Item>
+    <agg:Price><basic:PriceAmount currencyID="PEN">100.00</basic:PriceAmount></agg:Price>
+  </agg:InvoiceLine>
+</inv:Invoice>

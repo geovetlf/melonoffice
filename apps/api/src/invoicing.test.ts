@@ -52,7 +52,12 @@ const invoice = (number: number, supplier = OURS) => `<?xml version="1.0" encodi
 
 describe.each(STORES)('invoicing with storage in %s', (_name, createStores) => {
   async function setup(
-    options: { permissions?: readonly string[]; scheduler?: 'none' | 'failing' } = {},
+    options: {
+      permissions?: readonly string[];
+      scheduler?: 'none' | 'failing';
+      /** As a server with `INVOICING_ENABLED` off: no invoicing part at all. */
+      off?: boolean;
+    } = {},
   ) {
     const stores: Stores = createStores();
     const overrides = new Map<string, EntitlementOverride[]>();
@@ -72,21 +77,30 @@ describe.each(STORES)('invoicing with storage in %s', (_name, createStores) => {
             ),
           } as never);
     const queued: { task: unknown; at: Date }[] = [];
-    const ctx = setupApp(stores, authorization, entitlements, undefined, undefined, {
-      invoicing: {
-        adapters: [createPeUblAdapter()],
-        ...(options.scheduler === 'none'
-          ? {}
-          : {
-              scheduler: {
-                schedule: async (task, at) => {
-                  if (options.scheduler === 'failing') throw new Error('queue down');
-                  queued.push({ task, at });
-                },
-              },
-            }),
-      },
-    });
+    const ctx = setupApp(
+      stores,
+      authorization,
+      entitlements,
+      undefined,
+      undefined,
+      options.off
+        ? {}
+        : {
+            invoicing: {
+              adapters: [createPeUblAdapter()],
+              ...(options.scheduler === 'none'
+                ? {}
+                : {
+                    scheduler: {
+                      schedule: async (task, at) => {
+                        if (options.scheduler === 'failing') throw new Error('queue down');
+                        queued.push({ task, at });
+                      },
+                    },
+                  }),
+            },
+          },
+    );
     const aliceId = (await ctx.register('token-alice')) as UserId;
     await ctx.register('token-bob');
     const request = async (token: string, path: string, init: RequestInit = {}) => {
@@ -144,6 +158,7 @@ describe.each(STORES)('invoicing with storage in %s', (_name, createStores) => {
     };
     return {
       ...ctx,
+      stores,
       orgA,
       orgB,
       base,
@@ -156,6 +171,50 @@ describe.each(STORES)('invoicing with storage in %s', (_name, createStores) => {
       queued,
     };
   }
+
+  it('answers 503 on every route and keeps nothing while INVOICING_ENABLED is off', async () => {
+    const t = await setup({ off: true });
+    // Even an organization whose plan allows invoicing gets nothing.
+    t.allow(t.orgA, 5);
+    const id = 'eeeeeeee-eeee-4eee-8eee-000000000001';
+    const routes: [string, string][] = [
+      ['GET', '/providers'],
+      ['GET', '/connections'],
+      ['POST', '/connections'],
+      ['GET', `/connections/${id}`],
+      ['PATCH', `/connections/${id}`],
+      ['DELETE', `/connections/${id}`],
+      ['POST', `/connections/${id}/connect`],
+      ['POST', `/connections/${id}/pause`],
+      ['POST', `/connections/${id}/disconnect`],
+      ['POST', `/connections/${id}/syncs`],
+      ['POST', `/connections/${id}/imports?format=ubl_xml&recordType=document`],
+      ['GET', '/syncs'],
+      ['GET', `/syncs/${id}`],
+      ['POST', `/syncs/${id}/resume`],
+      ['GET', '/records?recordType=document'],
+      ['GET', ''],
+    ];
+    for (const [method, path] of routes) {
+      const response = await t.send(
+        'token-alice',
+        method,
+        `${t.base(t.orgA)}${path}`,
+        method === 'GET' || method === 'DELETE' ? undefined : t.newConnection,
+      );
+      expect([method, path, response.status, response.body]).toEqual([
+        method,
+        path,
+        503,
+        { error: 'invoicing_not_configured' },
+      ]);
+    }
+    // A file sent anyway is not read or kept.
+    expect((await t.upload('token-alice', t.orgA, id, invoice(1))).status).toBe(503);
+    expect(await t.stores.invoicing.listConnections(t.orgA)).toEqual([]);
+    // Someone of another organization gets the same answer: it is off for everyone.
+    expect((await t.send('token-bob', 'GET', `${t.base(t.orgA)}/connections`)).status).toBe(503);
+  });
 
   it("keeps the plan's limits, shared with the channels", async () => {
     const t = await setup();

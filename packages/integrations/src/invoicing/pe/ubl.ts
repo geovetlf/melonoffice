@@ -91,24 +91,48 @@ function amountOf(element: XmlElement | undefined, currency: string, field: stri
   return { value, currency };
 }
 
-/** A party's tax identifier, with the scheme SUNAT's catálogo 06 names. */
+/**
+ * A party's tax identifier, with the scheme SUNAT's catálogo 06 names. SUNAT's guides for UBL 2.1
+ * put it in `cac:PartyTaxScheme/cbc:CompanyID`; later guides and most systems use
+ * `cac:PartyIdentification/cbc:ID`. Both are read; a file where they disagree is refused.
+ */
 function taxIdOf(party: XmlElement | undefined, field: string): TaxIdentifier | undefined {
-  const id = pathOf(party, [UBL.cac, 'PartyIdentification'], [UBL.cbc, 'ID']);
-  const value = textOf(id);
-  if (value === undefined || value === '' || value === '-') return undefined;
-  const scheme = IDENTITY_SCHEMES[id?.attributes.schemeID ?? ''];
+  const identification = idOf(pathOf(party, [UBL.cac, 'PartyIdentification'], [UBL.cbc, 'ID']));
+  const taxScheme = idOf(pathOf(party, [UBL.cac, 'PartyTaxScheme'], [UBL.cbc, 'CompanyID']));
+  if (
+    identification !== undefined &&
+    taxScheme !== undefined &&
+    (identification.value !== taxScheme.value || identification.scheme !== taxScheme.scheme)
+  ) {
+    return refuse(`${field}.conflict`);
+  }
+  const id = identification ?? taxScheme;
+  if (id === undefined) return undefined;
+  const scheme = IDENTITY_SCHEMES[id.scheme];
+  // Another catálogo 06 type (a foreign or non-domiciled document) is kept by name only.
   if (scheme === undefined) return undefined;
-  if (scheme === PE_RUC_SCHEME && !isValidRuc(value)) return refuse(`${field}.ruc`);
-  if (!/^[A-Za-z0-9-]{1,32}$/.test(value)) return refuse(`${field}.id`);
-  return { scheme, value };
+  if (scheme === PE_RUC_SCHEME && !isValidRuc(id.value)) return refuse(`${field}.ruc`);
+  if (!/^[A-Za-z0-9-]{1,32}$/.test(id.value)) return refuse(`${field}.id`);
+  return { scheme, value: id.value };
 }
 
-function legalNameOf(party: XmlElement | undefined, field: string): string {
-  const name =
-    textOf(pathOf(party, [UBL.cac, 'PartyLegalEntity'], [UBL.cbc, 'RegistrationName'])) ??
-    textOf(pathOf(party, [UBL.cac, 'PartyName'], [UBL.cbc, 'Name']));
-  if (name === undefined || name === '') return refuse(`${field}.name`);
-  return clean(name);
+/** An identifier and its catálogo 06 code, or nothing when it is absent or `-` (no document). */
+function idOf(element: XmlElement | undefined): { value: string; scheme: string } | undefined {
+  const value = textOf(element);
+  if (value === undefined || value === '' || value === '-') return undefined;
+  return { value, scheme: element?.attributes.schemeID?.trim() ?? '' };
+}
+
+/** The registered name, wherever SUNAT's guides put it; the trade name only when none is. */
+function legalNameOf(party: XmlElement | undefined): string | undefined {
+  const name = [
+    pathOf(party, [UBL.cac, 'PartyLegalEntity'], [UBL.cbc, 'RegistrationName']),
+    pathOf(party, [UBL.cac, 'PartyTaxScheme'], [UBL.cbc, 'RegistrationName']),
+    pathOf(party, [UBL.cac, 'PartyName'], [UBL.cbc, 'Name']),
+  ]
+    .map(textOf)
+    .find((text) => text !== undefined && text !== '');
+  return name === undefined ? undefined : clean(name);
 }
 
 /** Spaces collapsed; a description longer than the model keeps is cut, never rewritten. */
@@ -134,15 +158,11 @@ function linesOf(root: XmlElement, kind: 'Invoice' | 'CreditNote' | 'DebitNote',
     const unitCode = quantity?.attributes.unitCode;
     const price = cbc(cac(line, 'Price'), 'PriceAmount');
     const tax = cbc(cac(line, 'TaxTotal'), 'TaxAmount');
-    const category = textOf(
-      pathOf(
-        line,
-        [UBL.cac, 'TaxTotal'],
-        [UBL.cac, 'TaxSubtotal'],
-        [UBL.cac, 'TaxCategory'],
-        [UBL.cbc, 'TaxExemptionReasonCode'],
-      ),
-    );
+    // SUNAT's affectation code (catálogo 07) is on the IGV or IVAP subtotal, which need not be
+    // the first: a line can also carry ISC or ICBPER.
+    const category = childrenOf(cac(line, 'TaxTotal'), UBL.cac, 'TaxSubtotal')
+      .map((subtotal) => textOf(cbc(cac(subtotal, 'TaxCategory'), 'TaxExemptionReasonCode')))
+      .find((code) => code !== undefined && code !== '');
     const product = textOf(cbc(cac(cac(line, 'Item'), 'SellersItemIdentification'), 'ID'));
     return {
       position: i + 1,
@@ -222,14 +242,19 @@ export function readPeUbl(xmlText: string, account: InvoicingAccount): Normalize
   const customer = cac(cac(root, 'AccountingCustomerParty'), 'Party');
   const issuerTaxId = taxIdOf(supplier, 'supplier');
   if (issuerTaxId?.scheme !== PE_RUC_SCHEME) return refuse('supplier.ruc');
-  const issuer = { taxId: issuerTaxId, legalName: legalNameOf(supplier, 'supplier') };
+  const issuer = {
+    taxId: issuerTaxId,
+    legalName: legalNameOf(supplier) ?? refuse('supplier.name'),
+  };
   const customerTaxId = taxIdOf(customer, 'customer');
+  const customerName = legalNameOf(customer);
+  // A boleta to an unidentified person may name nobody (`-`): it has no counterparty then.
   const counterpartyOfIssuer =
-    customer === undefined
+    customerTaxId === undefined && (customerName === undefined || customerName === '-')
       ? undefined
       : {
           ...(customerTaxId === undefined ? {} : { taxId: customerTaxId }),
-          legalName: legalNameOf(customer, 'customer'),
+          legalName: customerName ?? refuse('customer.name'),
         };
   const ruc = account.taxId;
   const direction =

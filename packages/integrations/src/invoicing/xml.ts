@@ -27,6 +27,9 @@ export const MAX_XML_ELEMENTS = 50_000;
 
 const NAME = /^[A-Za-z_][A-Za-z0-9_.-]*(?::[A-Za-z_][A-Za-z0-9_.-]*)?$/;
 const XML_NS = 'http://www.w3.org/XML/1998/namespace';
+/** Characters XML 1.0 never allows, written or referenced. */
+// eslint-disable-next-line no-control-regex
+const NOT_XML = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\ufffe\uffff]/;
 const PREDEFINED: Readonly<Record<string, string>> = {
   amp: '&',
   lt: '<',
@@ -107,6 +110,7 @@ interface Open {
 /** Parses one XML document into its root element, or refuses it with `invalid_file`. */
 export function parseXml(source: string): XmlElement {
   const xml = source.startsWith('\uFEFF') ? source.slice(1) : source;
+  if (NOT_XML.test(xml)) refuse('control_character');
   const stack: Open[] = [];
   let root: XmlElement | undefined;
   let elements = 0;
