@@ -42,6 +42,8 @@ export interface ServiceConfig {
   readonly version: string;
   readonly runtime?: RuntimeConfig;
   readonly agents: AgentConfig;
+  /** The Billing Integration Gateway's syncs (ADR-0193): `INVOICING_ENABLED=true`. Off otherwise. */
+  readonly invoicingEnabled: boolean;
 }
 
 const RUNTIME_KEYS = [
@@ -74,7 +76,20 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): S
     version: env.SERVICE_VERSION ?? 'dev',
     ...(runtime === undefined ? {} : { runtime }),
     agents: loadAgentConfig(env),
+    invoicingEnabled: invoicingEnabledOf(env),
   };
+}
+
+/**
+ * `INVOICING_ENABLED`: the Billing Integration Gateway (ADR-0193), off unless exactly `true`.
+ * Nothing in Terraform sets it, so it is off in every deployed environment until that is decided.
+ */
+export function invoicingEnabledOf(env: Readonly<Record<string, string | undefined>>): boolean {
+  const value = env.INVOICING_ENABLED ?? '';
+  if (value !== '' && value !== 'true' && value !== 'false') {
+    throw new Error(`Invalid INVOICING_ENABLED: ${value}`);
+  }
+  return value === 'true';
 }
 
 /** The same settings, and the same checks, as the API's (ADR-0038). */

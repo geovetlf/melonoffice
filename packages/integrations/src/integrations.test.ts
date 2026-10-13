@@ -689,6 +689,28 @@ describe('channel connection service', () => {
     expect(await codeOf(one.service.create(one.tenantA, input))).toBe('invalid_connection');
   });
 
+  it('shares the connection limit with invoicing connections (ADR-0193)', async () => {
+    const w = await world(2);
+    const asked: string[] = [];
+    const shared = (taken: number) =>
+      createChannelConnectionService({
+        repository: w.connections,
+        registry: w.registry,
+        organizations: w.tenancy,
+        authorization: createAuthorizationService(),
+        entitlements: w.entitlements,
+        secretProjectId: PROJECT,
+        otherSlotsUsed: async (organizationId) => {
+          asked.push(organizationId);
+          return taken;
+        },
+      });
+    expect(await codeOf(shared(2).create(w.tenantA, input))).toBe('limit_reached');
+    expect(asked).toEqual([w.orgA]);
+    await shared(1).create(w.tenantA, input);
+    expect(await w.service.list(w.tenantA)).toHaveLength(1);
+  });
+
   it('only a person acting directly configures channels', async () => {
     const w = await world();
     const gia = await resolveTenant(as(ALICE, 'gia'), w.orgA, w.tenancy);

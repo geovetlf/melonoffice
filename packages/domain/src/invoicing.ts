@@ -35,8 +35,13 @@ export type InvoicingFileFormat =
  * its own decision, tests and controls (ADR-0193). `write` is the empty list by type.
  */
 export interface InvoicingCapabilities {
-  /** Which records it can list. */
+  /** Which records it reads, by listing or from files. */
   readonly records: readonly InvoicingRecordType[];
+  /**
+   * Whether it lists records from the provider (a sync). False for an adapter that only reads
+   * files a person exports and imports: it has no sync, incremental reading or webhooks.
+   */
+  readonly listing: boolean;
   /** Whether it can list only what changed since a watermark. Otherwise every sync is full. */
   readonly incrementalSync: boolean;
   /** Whether the provider calls a webhook when something changes. */

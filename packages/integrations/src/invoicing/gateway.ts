@@ -196,7 +196,10 @@ export interface InvoicingGatewayOptions {
    * `integrations.connectionsMax` counts every connection. Unset: none are counted (tests).
    */
   readonly channelSlotsUsed?: (organizationId: OrganizationId) => Promise<number>;
-  /** Unset: connections can be listed and turned off, but none created (`secret_unavailable`). */
+  /**
+   * Where connections' secrets live. Unset: connections to a provider that needs credentials can
+   * be listed and turned off, but not created (`secret_unavailable`).
+   */
   readonly secretProjectId?: string;
   readonly limits?: Partial<InvoicingLimits>;
   readonly now?: () => Date;
@@ -663,9 +666,13 @@ export function createInvoicingGateway(options: InvoicingGatewayOptions): Invoic
         continue;
       }
       const at = now();
+      let previous: StoredInvoicingRecord | undefined;
       const { outcome }: { outcome: UpsertOutcome } = await repository.upsertRecord(
         connection.organizationId,
-        (existing) => buildRecord(connection, job, record, existing, at),
+        (existing) => {
+          previous = existing;
+          return buildRecord(connection, job, record, existing, at);
+        },
         { connectionId: connection.id, recordType: job.recordType, externalId: record.externalId },
       );
       if (outcome === 'created') created += 1;
@@ -673,6 +680,11 @@ export function createInvoicingGateway(options: InvoicingGatewayOptions): Invoic
       else unchanged += 1;
       if (record.recordType === 'payment' && outcome !== 'unchanged') {
         for (const a of record.appliesTo) touchedDocuments.add(a.externalId);
+        // A document the payment no longer applies to loses its share too.
+        const before = previous as StoredInvoicingRecord | undefined;
+        if (before?.recordType === 'payment') {
+          for (const a of before.record.appliesTo) touchedDocuments.add(a.externalId);
+        }
       }
       if (record.recordType === 'document' && outcome !== 'unchanged') {
         touchedDocuments.add(record.externalId);
@@ -749,10 +761,13 @@ export function createInvoicingGateway(options: InvoicingGatewayOptions): Invoic
 
     async createConnection(tenant, input) {
       const organizationId = await organizationOf(tenant, 'channel.create', true);
-      if (secretProjectId === undefined) throw new IntegrationError('secret_unavailable');
       const adapter =
         typeof input.provider === 'string' ? registry.findInvoicing(input.provider) : undefined;
       if (adapter === undefined) throw new IntegrationError('invalid_connection', 'provider');
+      // A provider read with credentials needs somewhere to keep them; a file import does not.
+      if (secretProjectId === undefined && adapter.credentialKinds.length > 0) {
+        throw new IntegrationError('secret_unavailable');
+      }
       const displayName = checkName(input.displayName);
       if (typeof input.jurisdiction !== 'string' || !COUNTRY.test(input.jurisdiction)) {
         throw new IntegrationError('invalid_connection', 'jurisdiction');
@@ -800,7 +815,7 @@ export function createInvoicingGateway(options: InvoicingGatewayOptions): Invoic
           Object.fromEntries(
             adapter.credentialKinds.map((kind) => [
               kind,
-              invoicingSecretRefFor(secretProjectId, id, kind),
+              invoicingSecretRefFor(secretProjectId as string, id, kind),
             ]),
           ),
         ),
@@ -914,6 +929,9 @@ export function createInvoicingGateway(options: InvoicingGatewayOptions): Invoic
       if (!isInvoicingRecordType(input.recordType)) {
         throw new IntegrationError('invalid_payload', 'recordType');
       }
+      // A provider read only from exported files has no sync: its files are imported.
+      if (!connection.capabilities.listing)
+        throw new IntegrationError('capability_missing', 'listing');
       if (!connection.capabilities.records.includes(input.recordType)) {
         throw new IntegrationError('capability_missing', input.recordType);
       }
@@ -1044,6 +1062,9 @@ export function createInvoicingGateway(options: InvoicingGatewayOptions): Invoic
         let result: InvoicingPage;
         try {
           const adapter = adapterOf(connection);
+          if (adapter.listPage === undefined) {
+            throw new IntegrationError('provider_rejected', 'listing_not_supported');
+          }
           counts = { ...counts, providerCalls: counts.providerCalls + 1 };
           result = await adapter.listPage(connection, await credentialsOf(connection, adapter), {
             recordType: job.recordType,
@@ -1224,15 +1245,21 @@ export function createInvoicingGateway(options: InvoicingGatewayOptions): Invoic
         const since = connection.capabilities.incrementalSync
           ? connection.syncState[recordType]?.watermark
           : undefined;
-        const { job } = await createJob(connection, {
-          recordType,
-          trigger: 'webhook',
-          idempotencyKey: key,
-          initiatedBy: connection.createdBy,
-          actor: runtimeFor(connection.createdBy),
-          ...(since === undefined ? {} : { since }),
-        });
-        jobs.push(job);
+        try {
+          const { job } = await createJob(connection, {
+            recordType,
+            trigger: 'webhook',
+            idempotencyKey: key,
+            initiatedBy: connection.createdBy,
+            actor: runtimeFor(connection.createdBy),
+            ...(since === undefined ? {} : { since }),
+          });
+          jobs.push(job);
+        } catch (error) {
+          // Another sync started meanwhile: it reads the change too.
+          if (isIntegrationError(error) && error.code === 'sync_in_progress') continue;
+          throw error;
+        }
       }
       return { accepted: true, jobs };
     },

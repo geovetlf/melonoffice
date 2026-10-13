@@ -265,6 +265,12 @@ describe('contract', () => {
         headers: signDoubleWebhook(body, WEBHOOK_SECRET),
         secret: WEBHOOK_SECRET,
       },
+      file: {
+        format: 'provider_csv',
+        recordType: 'document',
+        content: new TextEncoder().encode(JSON.stringify([invoice(9)])),
+        refused: [new TextEncoder().encode('not json')],
+      },
     });
     expect(problems).toEqual([]);
   });
@@ -553,6 +559,13 @@ describe('syncs', () => {
     const run = await w.gateway.runSync(w.orgA, a.id, 'worker-1');
     expect(run.job.status).toBe('queued');
     expect((await w.gateway.listSyncs(w.tenantA)).length).toBe(1);
+    // Past the gateway's own check, the store still refuses a second sync of the type.
+    await expect(
+      w.repository.createJobOnce({
+        job: { ...a, id: 'eeeeeeee-eeee-4eee-8eee-0000000000f1' as never, idempotencyKey: 'x' },
+        events: [],
+      }),
+    ).rejects.toThrow('sync_in_progress');
   });
 
   it('waits and retries when the provider is unavailable, keeping its place', async () => {
@@ -761,6 +774,26 @@ describe('fiscal statuses and payments', () => {
     const [paid] = (await w.gateway.listRecords(w.tenantA, { recordType: 'document', pageSize: 1 }))
       .items;
     expect(paid?.recordType === 'document' && paid.record.confirmedPaid.value).toBe('118');
+
+    // The payment moves to another document: the first loses its share.
+    w.double.put(
+      {
+        ...payment('P-2', 'confirmed', '68.00', 'F001-0002'),
+        original: original('P-2', 'confirmed F001-0002'),
+      },
+      7,
+    );
+    await w.runToEnd(
+      await w.gateway.startSync(w.tenantA, {
+        connectionId: c.id,
+        recordType: 'payment',
+        idempotencyKey: 'key-payment-3',
+      }),
+    );
+    const totals = (await w.gateway.listRecords(w.tenantA, { recordType: 'document' })).items.map(
+      (s) => (s.recordType === 'document' ? s.record.confirmedPaid.value : undefined),
+    );
+    expect(totals).toEqual(['50', '68', '0']);
   });
 
   it('adds amounts exactly', () => {

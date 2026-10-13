@@ -290,6 +290,11 @@ export interface ChannelConnectionServiceOptions {
    * and turned off, but none can be created (`secret_unavailable`).
    */
   readonly secretProjectId?: string;
+  /**
+   * Slots the organization's other kinds of connection take (invoicing, ADR-0193): the plan's
+   * `integrations.connectionsMax` is one limit for all of them. Unset: none.
+   */
+  readonly otherSlotsUsed?: (organizationId: OrganizationId) => Promise<number>;
   readonly now?: () => Date;
   readonly newId?: () => string;
   readonly requestId?: string;
@@ -340,6 +345,7 @@ export function createChannelConnectionService({
   entitlements,
   checker,
   secretProjectId,
+  otherSlotsUsed,
   now = () => new Date(),
   newId = () => randomUUID(),
   requestId,
@@ -378,7 +384,10 @@ export function createChannelConnectionService({
     const used = (await repository.list(organizationId)).filter(
       (c) => c.id !== excluding && occupiesSlot(c),
     ).length;
-    if (limit !== 'unlimited' && used + 1 > limit) throw new IntegrationError('limit_reached');
+    const others = otherSlotsUsed === undefined ? 0 : await otherSlotsUsed(organizationId);
+    if (limit !== 'unlimited' && used + others + 1 > limit) {
+      throw new IntegrationError('limit_reached');
+    }
   }
 
   /** Changes one connection of the tenant's organization, as the person, audited in the same write. */

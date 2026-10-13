@@ -5,3 +5,5 @@ export * from './gateway.js';
 export * from './metrics.js';
 export * from './contract-suite.js';
 export * from './pe/sunat.js';
+export * from './xml.js';
+export * from './pe/ubl.js';

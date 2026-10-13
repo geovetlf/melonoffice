@@ -171,11 +171,11 @@ export interface InvoicingAdapter {
     credentials: InvoicingCredentials,
   ): Promise<ConnectionCheck>;
   /**
-   * One page of records, normalized. Once: retrying is the gateway's. Throws
+   * With `capabilities.listing`: one page of records, normalized. Once: retrying is the gateway's. Throws
    * `provider_rejected` (credentials or request refused; the detail is a stable code) or
    * `provider_unavailable` (no answer, rate limited; may carry `retryAfterMs`).
    */
-  listPage(
+  listPage?(
     connection: InvoicingConnection,
     credentials: InvoicingCredentials,
     request: InvoicingPageRequest,
@@ -216,6 +216,7 @@ const ADAPTER_KEYS: ReadonlySet<string> = new Set([
 
 const CAPABILITY_KEYS = [
   'records',
+  'listing',
   'incrementalSync',
   'webhooks',
   'fileImport',
@@ -240,6 +241,11 @@ export function isInvoicingCapabilities(value: unknown): value is InvoicingCapab
     c.records.length > 0 &&
     c.records.every(isInvoicingRecordType) &&
     new Set(c.records).size === c.records.length &&
+    typeof c.listing === 'boolean' &&
+    // Without listing there is nothing to read incrementally or to be told about.
+    (c.listing || (c.incrementalSync === false && c.webhooks === false)) &&
+    // An adapter reads somehow: by listing, or from files.
+    (c.listing || (Array.isArray(c.fileImport) && c.fileImport.length > 0)) &&
     typeof c.incrementalSync === 'boolean' &&
     typeof c.webhooks === 'boolean' &&
     Array.isArray(c.fileImport) &&
@@ -286,6 +292,7 @@ export function checkInvoicingAdapter(adapter: InvoicingAdapter): void {
     fail('credentialKinds');
   }
   const c = adapter.capabilities;
+  if (c.listing !== (adapter.listPage !== undefined)) fail('listing and listPage disagree');
   if (c.webhooks) {
     if (adapter.verifyWebhook === undefined || adapter.parseWebhook === undefined) {
       fail('webhooks without verifyWebhook and parseWebhook');

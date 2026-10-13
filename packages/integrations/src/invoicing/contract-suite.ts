@@ -1,4 +1,8 @@
-import type { InvoicingConnection, InvoicingRecordType } from '@melonoffice/domain';
+import type {
+  InvoicingConnection,
+  InvoicingFileFormat,
+  InvoicingRecordType,
+} from '@melonoffice/domain';
 import { isIntegrationError } from '../errors.js';
 import {
   checkInvoicingAdapter,
@@ -26,6 +30,13 @@ export interface InvoicingContractFixture {
   };
   /** The most pages a full read may take. */
   readonly maxPages?: number;
+  /** With `capabilities.fileImport`: an exported file it reads, and bytes it must refuse. */
+  readonly file?: {
+    readonly format: InvoicingFileFormat;
+    readonly recordType: InvoicingRecordType;
+    readonly content: Uint8Array;
+    readonly refused: readonly Uint8Array[];
+  };
 }
 
 const PROVIDER_CODES = new Set(['provider_unavailable', 'provider_rejected']);
@@ -65,82 +76,124 @@ export async function checkInvoicingAdapterContract(
     }
   }
 
-  // Credentials: a check answers, it does not throw.
-  try {
-    const good = await adapter.validateConnection(fixture.connection, fixture.credentials);
-    if (good.status !== 'valid') note('validateConnection refuses valid credentials');
-    const bad = await adapter.validateConnection(fixture.connection, fixture.refusedCredentials);
-    if (bad.status !== 'invalid') note('validateConnection accepts refused credentials');
-  } catch {
-    note('validateConnection throws');
+  // Credentials: a check answers, it does not throw. Nothing to refuse without any.
+  if (adapter.credentialKinds.length > 0)
+    try {
+      const good = await adapter.validateConnection(fixture.connection, fixture.credentials);
+      if (good.status !== 'valid') note('validateConnection refuses valid credentials');
+      const bad = await adapter.validateConnection(fixture.connection, fixture.refusedCredentials);
+      if (bad.status !== 'invalid') note('validateConnection accepts refused credentials');
+    } catch {
+      note('validateConnection throws');
+    }
+
+  // A file it can read: normalized, stable, and anything else refused as `invalid_file`.
+  if (adapter.capabilities.fileImport.length > 0) {
+    if (fixture.file === undefined) {
+      note('fileImport without a file to check');
+    } else {
+      const { format, recordType, content, refused } = fixture.file;
+      try {
+        const first = adapter.readFile?.(format, content, fixture.connection.account);
+        const second = adapter.readFile?.(format, content, fixture.connection.account);
+        if (first === undefined || first.records.length === 0) note('readFile reads nothing');
+        for (const record of first?.records ?? []) {
+          try {
+            checkNormalizedRecord(record, recordType);
+          } catch (error) {
+            note(`file: invalid record (${isIntegrationError(error) ? error.detail : 'unknown'})`);
+          }
+        }
+        const digests = (page: typeof first) =>
+          (page?.records ?? []).map((r) => digestOf(r.original.content)).join();
+        if (digests(first) !== digests(second)) note('file: original changed between two reads');
+      } catch (error) {
+        note(
+          `readFile threw ${isIntegrationError(error) ? error.code : 'a non-integration error'}`,
+        );
+      }
+      for (const bytes of refused) {
+        try {
+          adapter.readFile?.(format, bytes, fixture.connection.account);
+          note('readFile accepts a file it should refuse');
+        } catch (error) {
+          if (!isIntegrationError(error) || error.code !== 'invalid_file') {
+            note('readFile refuses with something other than invalid_file');
+          }
+        }
+      }
+    }
   }
 
   // Every declared record type reads to the end, page by page, normalized and stable.
   const maxPages = fixture.maxPages ?? 50;
-  for (const recordType of adapter.capabilities.records as readonly InvoicingRecordType[]) {
-    const seen = new Set<string>();
-    const digests: string[] = [];
-    let cursor: string | undefined;
-    let watermark: string | undefined;
-    let pages = 0;
-    try {
-      do {
-        const page = await adapter.listPage(fixture.connection, fixture.credentials, {
+  const listPage = adapter.listPage?.bind(adapter);
+  if (listPage !== undefined) {
+    for (const recordType of adapter.capabilities.records) {
+      const seen = new Set<string>();
+      const digests: string[] = [];
+      let cursor: string | undefined;
+      let watermark: string | undefined;
+      let pages = 0;
+      try {
+        do {
+          const page = await listPage(fixture.connection, fixture.credentials, {
+            recordType,
+            ...(cursor === undefined ? {} : { cursor }),
+            pageSize: Math.min(2, adapter.capabilities.maxPageSize),
+            timeoutMs: 5_000,
+          });
+          pages += 1;
+          if (page.records.length > Math.min(2, adapter.capabilities.maxPageSize)) {
+            note(`${recordType}: page larger than asked`);
+          }
+          if (!Number.isSafeInteger(page.bytes) || page.bytes < 0) note(`${recordType}: bytes`);
+          for (const record of page.records) {
+            try {
+              checkNormalizedRecord(record, recordType);
+            } catch (error) {
+              note(
+                `${recordType}: invalid record (${isIntegrationError(error) ? error.detail : 'unknown'})`,
+              );
+            }
+            if (seen.has(record.externalId)) note(`${recordType}: ${record.externalId} read twice`);
+            seen.add(record.externalId);
+            digests.push(digestOf(record.original.content));
+          }
+          cursor = page.nextCursor;
+          if (page.watermark !== undefined) watermark = page.watermark;
+        } while (cursor !== undefined && pages < maxPages);
+        if (cursor !== undefined) note(`${recordType}: more than ${maxPages} pages`);
+        if (adapter.capabilities.incrementalSync && watermark === undefined) {
+          note(`${recordType}: incremental without a watermark`);
+        }
+        // Reading again gives the same originals: digests are what tell a change from a re-read.
+        const again = await listPage(fixture.connection, fixture.credentials, {
           recordType,
-          ...(cursor === undefined ? {} : { cursor }),
           pageSize: Math.min(2, adapter.capabilities.maxPageSize),
           timeoutMs: 5_000,
         });
-        pages += 1;
-        if (page.records.length > Math.min(2, adapter.capabilities.maxPageSize)) {
-          note(`${recordType}: page larger than asked`);
-        }
-        if (!Number.isSafeInteger(page.bytes) || page.bytes < 0) note(`${recordType}: bytes`);
-        for (const record of page.records) {
-          try {
-            checkNormalizedRecord(record, recordType);
-          } catch (error) {
-            note(
-              `${recordType}: invalid record (${isIntegrationError(error) ? error.detail : 'unknown'})`,
-            );
+        again.records.forEach((record, i) => {
+          if (digestOf(record.original.content) !== digests[i]) {
+            note(`${recordType}: original changed between two reads`);
           }
-          if (seen.has(record.externalId)) note(`${recordType}: ${record.externalId} read twice`);
-          seen.add(record.externalId);
-          digests.push(digestOf(record.original.content));
-        }
-        cursor = page.nextCursor;
-        if (page.watermark !== undefined) watermark = page.watermark;
-      } while (cursor !== undefined && pages < maxPages);
-      if (cursor !== undefined) note(`${recordType}: more than ${maxPages} pages`);
-      if (adapter.capabilities.incrementalSync && watermark === undefined) {
-        note(`${recordType}: incremental without a watermark`);
+        });
+      } catch (error) {
+        note(
+          `${recordType}: listPage threw ${isIntegrationError(error) ? error.code : 'a non-integration error'}`,
+        );
       }
-      // Reading again gives the same originals: digests are what tell a change from a re-read.
-      const again = await adapter.listPage(fixture.connection, fixture.credentials, {
-        recordType,
-        pageSize: Math.min(2, adapter.capabilities.maxPageSize),
-        timeoutMs: 5_000,
-      });
-      again.records.forEach((record, i) => {
-        if (digestOf(record.original.content) !== digests[i]) {
-          note(`${recordType}: original changed between two reads`);
+      try {
+        await listPage(fixture.connection, fixture.refusedCredentials, {
+          recordType,
+          pageSize: 1,
+          timeoutMs: 5_000,
+        });
+        note(`${recordType}: listPage reads with refused credentials`);
+      } catch (error) {
+        if (!isIntegrationError(error) || !PROVIDER_CODES.has(error.code)) {
+          note(`${recordType}: refused credentials throw a non-provider error`);
         }
-      });
-    } catch (error) {
-      note(
-        `${recordType}: listPage threw ${isIntegrationError(error) ? error.code : 'a non-integration error'}`,
-      );
-    }
-    try {
-      await adapter.listPage(fixture.connection, fixture.refusedCredentials, {
-        recordType,
-        pageSize: 1,
-        timeoutMs: 5_000,
-      });
-      note(`${recordType}: listPage reads with refused credentials`);
-    } catch (error) {
-      if (!isIntegrationError(error) || !PROVIDER_CODES.has(error.code)) {
-        note(`${recordType}: refused credentials throw a non-provider error`);
       }
     }
   }

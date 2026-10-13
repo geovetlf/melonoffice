@@ -124,10 +124,16 @@ import {
   createChannelTemplateService,
   createFollowUpScheduleExecutor,
   createGatedFollowUpCreate,
+  createInvoicingGateway,
+  IntegrationError,
   createMessageSendService,
+  occupiesSlot,
   type ChannelConnectionRepository,
   type ChannelTemplateRepository,
   type IntegrationEngine,
+  type InvoicingAdapter,
+  type InvoicingRepository,
+  type SecretStore,
   type WebhookIngress,
 } from '@melonoffice/integrations';
 import type { Logger } from '@melonoffice/observability';
@@ -195,6 +201,7 @@ import { registerGiaRoutes, registerGiaSummaryRoute } from './gia.js';
 import { registerDepartmentRoutes } from './departments.js';
 import { registerDocumentRoutes } from './documents.js';
 import { registerConnectionRoutes } from './connections.js';
+import { registerInvoicingRoutes, type InvoicingSyncScheduler } from './invoicing.js';
 import { registerConversationRoutes } from './conversations.js';
 import { registerCreditRoutes } from './credits.js';
 import { registerAIUsageRoutes } from './ai-usage.js';
@@ -398,6 +405,22 @@ export interface AppOptions {
   /** Channel webhooks (ADR-0033). Absent: `/webhooks/*` answers 503. */
   readonly webhooks?: WebhookIngress;
   /**
+   * The Billing Integration Gateway (ADR-0193): organizations' connections to their own invoicing
+   * systems, read only. It shares the plan's connection limit with the channels, so it also needs
+   * `conversations`. Absent: its routes answer 503 (`invoicing_not_configured`).
+   */
+  readonly invoicing?: {
+    readonly repository: InvoicingRepository;
+    /** The invoicing providers this server reads from. */
+    readonly adapters: readonly InvoicingAdapter[];
+    /** Reads `invoicing-*` secrets only. Absent: no credential can be read. */
+    readonly secrets?: SecretStore;
+    /** Where their secrets live. Unset: no provider needing credentials can be connected. */
+    readonly secretProjectId?: string;
+    /** Queues syncs' runs for the worker. Absent: syncs cannot be started (503). */
+    readonly scheduler?: InvoicingSyncScheduler;
+  };
+  /**
    * Conversation agents (CV-6B, ADR-0043; built by `createAgentTurns`): hands a turn waiting on an
    * approval back to the worker once a person decides it. Absent: the decision is stored only.
    */
@@ -492,6 +515,7 @@ export function createApp({
   ai = {},
   forecasting,
   webhooks,
+  invoicing,
   agentTurns,
   agentTasks,
   webOrigins = [],
@@ -1805,6 +1829,14 @@ export function createApp({
           ...(conversations.secretProjectId === undefined
             ? {}
             : { secretProjectId: conversations.secretProjectId }),
+          // One connection limit for channels and invoicing (ADR-0193).
+          ...(invoicing === undefined
+            ? {}
+            : {
+                otherSlotsUsed: async (organizationId: OrganizationId) =>
+                  (await invoicing.repository.listConnections(organizationId)).filter(occupiesSlot)
+                    .length,
+              }),
         }),
         ...(conversations.templates === undefined
           ? {}
@@ -1818,7 +1850,47 @@ export function createApp({
               }),
             }),
       });
-    } else if (tenancy !== undefined) {
+      if (invoicing !== undefined) {
+        const invoicingRegistry = createIntegrationRegistry(registry.list(), {
+          invoicing: invoicing.adapters,
+        });
+        registerInvoicingRoutes(app, {
+          store: tenancy,
+          authorization,
+          audit,
+          registry: invoicingRegistry,
+          gateway: createInvoicingGateway({
+            repository: invoicing.repository,
+            registry: invoicingRegistry,
+            secrets: invoicing.secrets ?? {
+              read: async () => {
+                throw new IntegrationError('secret_unavailable');
+              },
+            },
+            organizations: tenancy,
+            authorization,
+            entitlements: planEntitlements ?? {
+              entitlementsOf: async () => ({ status: 'unavailable', reason: 'plan_missing' }),
+            },
+            channelSlotsUsed: async (organizationId) =>
+              (await conversations.connections.list(organizationId)).filter(occupiesSlot).length,
+            ...(invoicing.secretProjectId === undefined
+              ? {}
+              : { secretProjectId: invoicing.secretProjectId }),
+          }),
+          ...(invoicing.scheduler === undefined ? {} : { scheduler: invoicing.scheduler }),
+        });
+      }
+    }
+    if (
+      tenancy !== undefined &&
+      (invoicing === undefined || structure === undefined || conversations === undefined)
+    ) {
+      const unavailable = (c: Context<Env>) => c.json({ error: 'invoicing_not_configured' }, 503);
+      app.all('/v1/organizations/:organizationId/invoicing', unavailable);
+      app.all('/v1/organizations/:organizationId/invoicing/*', unavailable);
+    }
+    if (tenancy !== undefined && (structure === undefined || conversations === undefined)) {
       const unavailable = (c: Context<Env>) =>
         c.json({ error: 'conversations_not_configured' }, 503);
       for (const path of [

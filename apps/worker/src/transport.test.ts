@@ -340,6 +340,8 @@ describe('worker architecture', () => {
     expect([...server.matchAll(/create\w*Adapter\(/g)].map((m) => m[0]).sort()).toEqual([
       'createDeepSeekAdapter(',
       'createNvidiaAdapter(',
+      // Invoicing's file reader (ADR-0193): no model, no credential; it reads imported XML.
+      'createPeUblAdapter(',
       'createVertexAIAdapter(',
       'createWhatsAppAdapter(',
     ]);

@@ -50,7 +50,18 @@ describe('unknown routes', () => {
 
 describe('loadConfig', () => {
   it('uses safe defaults', () => {
-    expect(loadConfig({})).toEqual({ port: 8080, logLevel: 'info', version: 'dev' });
+    expect(loadConfig({})).toEqual({
+      port: 8080,
+      logLevel: 'info',
+      version: 'dev',
+      invoicingEnabled: false,
+    });
+  });
+
+  it('turns the Billing Integration Gateway on only with INVOICING_ENABLED=true (ADR-0193)', () => {
+    expect(loadConfig({ INVOICING_ENABLED: 'true' }).invoicingEnabled).toBe(true);
+    expect(loadConfig({ INVOICING_ENABLED: '' }).invoicingEnabled).toBe(false);
+    expect(() => loadConfig({ INVOICING_ENABLED: '1' })).toThrow('Invalid INVOICING_ENABLED');
   });
 
   it('reads the environment', () => {
@@ -58,6 +69,7 @@ describe('loadConfig', () => {
       port: 3000,
       logLevel: 'debug',
       version: 'abc',
+      invoicingEnabled: false,
     });
   });
 

@@ -22,9 +22,15 @@ import { canMoveSync, checkStoredInvoicingConnection, isFinalSync } from './mode
  *
  * Collections (phase 2, each document carrying `organizationId`):
  * - `invoicingConnections/{connectionId}`
- * - `invoicingSyncJobs/{jobId}`, with `invoicingSyncKeys/{organizationId}:{connectionId}:{key}`
- *   holding the job id, written in the same transaction, so a key starts one sync;
- * - `invoicingRecords/{organizationId}:{connectionId}:{recordType}:{sha256(externalId)}`.
+ * - `invoicingSyncJobs/{organizationId}:{jobId}`, with
+ *   `invoicingSyncKeys/{organizationId}:{connectionId}:{sha256(key)}` holding the job id and
+ *   `invoicingSyncLocks/{organizationId}:{connectionId}:{recordType}` holding the running sync,
+ *   written in the same transaction, so a key starts one sync and a record type runs one;
+ * - `invoicingRecords/{organizationId}:{recordType}:{connectionId}:{sha256(externalId)}`, with
+ *   `invoicingPaymentLinks/{organizationId}:{connectionId}:{sha256(documentExternalId)}` listing
+ *   the payments that apply to a document.
+ *
+ * Each is read by id or by id range, so none needs a composite index.
  */
 
 export type StoredInvoicingRecord =
@@ -76,7 +82,10 @@ export interface InvoicingRepository {
     organizationId: OrganizationId,
     id: InvoicingSyncJobId,
   ): Promise<InvoicingSyncJob | undefined>;
-  /** The sync not yet ended for one connection and record type, if any. */
+  /**
+   * The sync not yet ended for one connection and record type, if any (file imports aside: see
+   * `holdsSyncLock`). `createJobOnce` refuses a second one with `sync_in_progress`.
+   */
   activeJob(
     organizationId: OrganizationId,
     connectionId: InvoicingConnectionId,
@@ -135,7 +144,15 @@ const recordKey = (
   key: { connectionId: string; recordType: string; externalId: string },
 ) => `${organizationId}\u0000${key.connectionId}\u0000${key.recordType}\u0000${key.externalId}`;
 
-const MAX_LIST_PAGE = 100;
+/** The most records one listed page holds. */
+export const MAX_INVOICING_LIST_PAGE = 100;
+
+/**
+ * Whether a sync takes its connection and record type's lock: every sync that reads the provider.
+ * A file import reads only the file it was given, ends inside the request, and may run beside one.
+ */
+export const holdsSyncLock = (job: Pick<InvoicingSyncJob, 'trigger'>): boolean =>
+  job.trigger !== 'file_import';
 
 /** For tests and local runs only. */
 export class InMemoryInvoicingRepository implements InvoicingRepository {
@@ -191,6 +208,13 @@ export class InMemoryInvoicingRepository implements InvoicingRepository {
       return { job: this.#jobs.get(existing) as InvoicingSyncJob, created: false };
     }
     if (this.#jobs.has(job.id)) throw new Error('job already exists');
+    // One sync at a time per connection and record type, as the Firestore lock does.
+    if (
+      holdsSyncLock(job) &&
+      (await this.activeJob(job.organizationId, job.connectionId, job.recordType)) !== undefined
+    ) {
+      throw new IntegrationError('sync_in_progress');
+    }
     this.audit?.appendNow(events);
     this.#jobs.set(job.id, job);
     this.#jobKeys.set(key, job.id);
@@ -212,6 +236,7 @@ export class InMemoryInvoicingRepository implements InvoicingRepository {
         j.organizationId === organizationId &&
         j.connectionId === connectionId &&
         j.recordType === recordType &&
+        holdsSyncLock(j) &&
         !isFinalSync(j),
     );
   }
@@ -238,18 +263,7 @@ export class InMemoryInvoicingRepository implements InvoicingRepository {
     const current = await this.findJob(organizationId, id);
     if (current === undefined) throw new IntegrationError('sync_not_found');
     const { job, events } = change(current);
-    if (
-      job.id !== current.id ||
-      job.organizationId !== current.organizationId ||
-      job.connectionId !== current.connectionId ||
-      job.idempotencyKey !== current.idempotencyKey ||
-      job.revision !== current.revision + 1
-    ) {
-      throw new IntegrationError('invalid_connection', 'concurrency');
-    }
-    if (job.status !== current.status && !canMoveSync(current.status, job.status)) {
-      throw new IntegrationError('invalid_transition', `${current.status}->${job.status}`);
-    }
+    checkNextInvoicingJob(current, job);
     this.audit?.appendNow(events);
     this.#jobs.set(id, job);
     return job;
@@ -267,17 +281,8 @@ export class InMemoryInvoicingRepository implements InvoicingRepository {
     const k = recordKey(organizationId, key);
     const existing = this.#records.get(k);
     const stored = build(existing);
-    const r = stored.record;
-    if (
-      r.organizationId !== organizationId ||
-      stored.recordType !== key.recordType ||
-      r.source.connectionId !== key.connectionId ||
-      r.source.externalId !== key.externalId ||
-      (existing !== undefined && r.id !== existing.record.id)
-    ) {
-      throw new IntegrationError('invalid_payload', 'record.key');
-    }
-    if (existing !== undefined && existing.record.revision === r.revision) {
+    checkRecordWrite(organizationId, key, existing, stored);
+    if (existing !== undefined && existing.record.revision === stored.record.revision) {
       return { outcome: 'unchanged' as const, stored: existing };
     }
     this.#records.set(k, stored);
@@ -323,7 +328,7 @@ export class InMemoryInvoicingRepository implements InvoicingRepository {
       cursor?: string;
     },
   ) {
-    const size = Math.min(Math.max(1, Math.floor(filter.pageSize)), MAX_LIST_PAGE);
+    const size = Math.min(Math.max(1, Math.floor(filter.pageSize)), MAX_INVOICING_LIST_PAGE);
     const all = [...this.#records.entries()]
       .filter(
         ([, s]) =>
@@ -380,4 +385,45 @@ export function checkNextInvoicingConnection(
     throw new IntegrationError('invalid_transition', `${current.status}->${next.status}`);
   }
   checkStoredInvoicingConnection(next);
+}
+
+/** What a sync's change may alter: never its identity, key, trigger or record type. */
+export function checkNextInvoicingJob(current: InvoicingSyncJob, next: InvoicingSyncJob): void {
+  if (
+    next.id !== current.id ||
+    next.organizationId !== current.organizationId ||
+    next.connectionId !== current.connectionId ||
+    next.recordType !== current.recordType ||
+    next.trigger !== current.trigger ||
+    next.idempotencyKey !== current.idempotencyKey ||
+    next.revision !== current.revision + 1
+  ) {
+    throw new IntegrationError('invalid_connection', 'concurrency');
+  }
+  if (next.status !== current.status && !canMoveSync(current.status, next.status)) {
+    throw new IntegrationError('invalid_transition', `${current.status}->${next.status}`);
+  }
+}
+
+/** A record is stored under its own organization, connection, type and provider id only. */
+export function checkRecordWrite(
+  organizationId: OrganizationId,
+  key: {
+    readonly connectionId: InvoicingConnectionId;
+    readonly recordType: InvoicingRecordType;
+    readonly externalId: string;
+  },
+  existing: StoredInvoicingRecord | undefined,
+  stored: StoredInvoicingRecord,
+): void {
+  const r = stored.record;
+  if (
+    r.organizationId !== organizationId ||
+    stored.recordType !== key.recordType ||
+    r.source.connectionId !== key.connectionId ||
+    r.source.externalId !== key.externalId ||
+    (existing !== undefined && r.id !== existing.record.id)
+  ) {
+    throw new IntegrationError('invalid_payload', 'record.key');
+  }
 }

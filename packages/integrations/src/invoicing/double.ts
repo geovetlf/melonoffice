@@ -60,6 +60,7 @@ export function createInvoicingDouble(
   const calls = { listPage: 0, validate: 0, revoke: 0 };
   const capabilities: InvoicingCapabilities = Object.freeze({
     records: ['party', 'document', 'payment'] as InvoicingRecordType[],
+    listing: true,
     incrementalSync: true,
     webhooks: true,
     fileImport: ['provider_csv'] as const,
