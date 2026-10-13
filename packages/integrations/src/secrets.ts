@@ -33,6 +33,32 @@ const AI_REF =
 export const isAISecretRef = (value: unknown): value is SecretRef =>
   typeof value === 'string' && AI_REF.test(value);
 
+const INVOICING_REF =
+  /^projects\/[a-z][a-z0-9-]{4,28}[a-z0-9]\/secrets\/invoicing-[0-9a-f-]{36}-[a-z][a-z0-9-]{1,30}\/versions\/latest$/;
+
+/**
+ * An invoicing connection's secret (ADR-0193):
+ * `projects/{project}/secrets/invoicing-{connectionId}-{kind}/versions/latest`. Same store, same
+ * rules as a channel's: derived by the server from the connection id, put there by the owner or
+ * an operator, never through MelonOffice's API or web app. The `invoicing-` prefix keeps it apart
+ * from channel and AI secrets, so no reader can be pointed at the others.
+ */
+export const isInvoicingSecretRef = (value: unknown): value is SecretRef =>
+  typeof value === 'string' && INVOICING_REF.test(value);
+
+const INVOICING_KIND = /^[a-z][a-z0-9_]{1,30}$/;
+
+export function invoicingSecretRefFor(
+  projectId: string,
+  connectionId: string,
+  kind: string,
+): SecretRef {
+  if (!PROJECT.test(projectId)) throw new IntegrationError('invalid_connection', 'secretProject');
+  if (!UUID.test(connectionId)) throw new IntegrationError('invalid_connection', 'connectionId');
+  if (!INVOICING_KIND.test(kind)) throw new IntegrationError('invalid_connection', 'secretKind');
+  return `projects/${projectId}/secrets/invoicing-${connectionId}-${kind.replaceAll('_', '-')}/versions/latest` as SecretRef;
+}
+
 /** `projects/{project}/secrets/channel-{connectionId}-{kind}/versions/latest`. */
 export function secretRefFor(
   projectId: string,
@@ -72,12 +98,15 @@ export interface SecretStore {
 export class InMemorySecretStore implements SecretStore {
   readonly #values = new Map<string, string>();
 
+  /** Which references it reads: channel secrets unless told otherwise, as the real store. */
+  constructor(private readonly accepts: (ref: unknown) => ref is SecretRef = isSecretRef) {}
+
   put(ref: SecretRef, value: string): void {
     this.#values.set(ref, value);
   }
 
   async read(ref: SecretRef): Promise<string> {
-    if (!isSecretRef(ref)) throw new IntegrationError('secret_not_found');
+    if (!this.accepts(ref)) throw new IntegrationError('secret_not_found');
     const value = this.#values.get(ref);
     if (value === undefined) throw new IntegrationError('secret_not_found');
     return value;

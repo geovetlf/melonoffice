@@ -7,6 +7,7 @@ import { createGcsFileStore, createTextExtractor } from '@melonoffice/documents'
 import {
   createIntegrationEngine,
   createIntegrationRegistry,
+  createPeUblAdapter,
   createSecretManagerStore,
   createWhatsAppAdapter,
   deliveryPolicyFromEnv,
@@ -59,6 +60,7 @@ import {
   FirestoreUserDirectory,
   FirestoreWorkflowRepository,
   FirestoreWorkflowScheduleRepository,
+  FirestoreInvoicingRepository,
 } from '@melonoffice/firestore';
 // Billing is read by the API alone: the worker never loads it.
 import { FirestoreBillingStore } from '@melonoffice/firestore/billing';
@@ -294,6 +296,28 @@ function services(projectId: string) {
     },
     // Webhooks: the engine's inbound side, only where it exists.
     ...(engine === undefined ? {} : { webhooks: engine }),
+    // The Billing Integration Gateway (ADR-0193), only where `INVOICING_ENABLED` is on. Its one
+    // provider today reads UBL XML files people import: no credentials, nothing sent anywhere.
+    // Syncs go to the worker on the same queue and invoker; without the transport none starts.
+    ...(config.invoicingEnabled
+      ? {
+          invoicing: {
+            repository: new FirestoreInvoicingRepository(firestore),
+            adapters: [createPeUblAdapter()],
+            ...(transport === undefined
+              ? {}
+              : {
+                  scheduler: createCloudTasksScheduler({
+                    queue: transport.queue,
+                    targetUrl: `${transport.workerUrl}/internal/invoicing/sync`,
+                    audience: transport.workerUrl,
+                    invokerEmail: transport.invokerEmail,
+                    dispatchDeadlineSeconds: Math.ceil(transport.leaseMs / 1000),
+                  }),
+                }),
+          },
+        }
+      : {}),
   };
 }
 const configured = projectId === undefined ? {} : services(projectId);

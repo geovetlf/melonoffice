@@ -6,6 +6,7 @@ import { RUN_EVENT_PATH, type EventHandler } from './events.js';
 import { RUN_FORECAST_PATH, type ForecastHandler } from './forecasts.js';
 import type { JobHandler } from './handler.js';
 import { registerHealth } from './health.js';
+import { RUN_INVOICING_SYNC_PATH, type InvoicingSyncHandler } from './invoicing.js';
 import { RUN_PLAN_WAKE_PATH, type PlanWakeHandler } from './plan-wakeups.js';
 import { RUN_SWEEP_PATH, type ExecutionSweeper } from './sweeps.js';
 import { RUN_SCHEDULE_PATH, type ScheduleRunner } from './workflow-schedules.js';
@@ -59,6 +60,11 @@ export interface AppOptions {
      * occurrence deliveries are refused with 503.
      */
     readonly schedules?: Pick<ScheduleRunner, 'run'>;
+    /**
+     * Runs the Billing Integration Gateway's syncs (ADR-0193), behind the same invoker check.
+     * Absent: sync deliveries are refused with 503.
+     */
+    readonly invoicing?: InvoicingSyncHandler;
   };
 }
 
@@ -202,6 +208,15 @@ export function createApp({ logger, version, jobs }: AppOptions): Hono<Env> {
     const read = await delivery(c);
     if ('refused' in read) return read.refused;
     const result = await jobs.schedules.run(read.body);
+    return c.json(result.body, result.status);
+  });
+
+  // An invoicing sync's run (ADR-0193): same invoker, same checks, its own small body.
+  app.post(RUN_INVOICING_SYNC_PATH, async (c) => {
+    if (jobs?.invoicing === undefined) return c.json({ error: 'invoicing_not_configured' }, 503);
+    const read = await delivery(c);
+    if ('refused' in read) return read.refused;
+    const result = await jobs.invoicing.run(read.body);
     return c.json(result.body, result.status);
   });
 

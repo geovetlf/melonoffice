@@ -57,6 +57,8 @@ import {
   createIntegrationRegistry,
   createWhatsAppAdapter,
   InMemoryChannelConnectionRepository,
+  InMemoryInvoicingRepository,
+  type InvoicingRepository,
   InMemoryChannelTemplateRepository,
   InMemorySecretStore,
   type ChannelConnectionRepository,
@@ -156,6 +158,7 @@ import {
   FirestoreUserDirectory,
   CHANNEL_CONNECTIONS,
   FirestoreChannelConnectionRepository,
+  FirestoreInvoicingRepository,
   FirestoreChannelTemplateRepository,
   FirestoreConversationRepository,
   putOutboundMessage,
@@ -253,6 +256,8 @@ export interface Stores {
   readonly removeWallet: (organizationId: OrganizationId) => Promise<void>;
   readonly conversations: ConversationRepository;
   readonly connections: ChannelConnectionRepository;
+  /** Invoicing connections, syncs and records (ADR-0193). */
+  readonly invoicing: InvoicingRepository;
   /** The organizations' templates (ADR-0046). */
   readonly templates: ChannelTemplateRepository;
   /** Stores a channel connection as given, the way the server-side setup would. */
@@ -298,6 +303,7 @@ function memoryStores(): Stores {
   return {
     conversations,
     connections,
+    invoicing: new InMemoryInvoicingRepository(events),
     templates: new InMemoryChannelTemplateRepository(events),
     putConnection: async (c) => connections.put(c),
     putOutbound: async (m) => conversations.putOutbound(m),
@@ -361,6 +367,7 @@ function firestoreStores(): Stores {
   return {
     conversations: new FirestoreConversationRepository(db),
     connections: new FirestoreChannelConnectionRepository(db),
+    invoicing: new FirestoreInvoicingRepository(db),
     templates: new FirestoreChannelTemplateRepository(db),
     async putConnection(c) {
       await db.collection(CHANNEL_CONNECTIONS).doc(c.id).set(toConnectionDocument(c));
@@ -496,6 +503,7 @@ export function setupApp(
     extractor,
     platformAdmins,
     requestLimits,
+    invoicing,
   }: {
     readonly sending?: boolean;
     readonly webOrigins?: readonly string[];
@@ -516,6 +524,8 @@ export function setupApp(
     readonly platformAdmins?: readonly string[];
     /** Limits on sensitive requests (ADR-0092), with the stores' limiter. Absent: no limit. */
     readonly requestLimits?: AppOptions['requestLimits'];
+    /** The Billing Integration Gateway's providers and queue (ADR-0193). Absent: not served. */
+    readonly invoicing?: Omit<NonNullable<AppOptions['invoicing']>, 'repository'>;
   } = {},
 ) {
   const lines: string[] = [];
@@ -600,6 +610,9 @@ export function setupApp(
       ...(scheduler === null ? {} : { followUpScheduler: scheduler }),
     },
     webhooks: engine,
+    ...(invoicing === undefined
+      ? {}
+      : { invoicing: { ...invoicing, repository: stores.invoicing } }),
     agentTasks: {
       repository: stores.agentTasks,
       outputs: agentOutputs,

@@ -1,3 +1,4 @@
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { createLogger } from '@melonoffice/observability';
 import { describe, expect, it } from 'vitest';
 import { createApp } from './app.js';
@@ -50,7 +51,41 @@ describe('unknown routes', () => {
 
 describe('loadConfig', () => {
   it('uses safe defaults', () => {
-    expect(loadConfig({})).toEqual({ port: 8080, logLevel: 'info', version: 'dev' });
+    expect(loadConfig({})).toEqual({
+      port: 8080,
+      logLevel: 'info',
+      version: 'dev',
+      invoicingEnabled: false,
+    });
+  });
+
+  it('turns the Billing Integration Gateway on only with INVOICING_ENABLED=true (ADR-0193)', () => {
+    expect(loadConfig({ INVOICING_ENABLED: 'true' }).invoicingEnabled).toBe(true);
+    expect(loadConfig({ INVOICING_ENABLED: '' }).invoicingEnabled).toBe(false);
+    expect(() => loadConfig({ INVOICING_ENABLED: '1' })).toThrow('Invalid INVOICING_ENABLED');
+  });
+
+  it('is turned on by nothing deployed: no Terraform, workflow or image sets INVOICING_ENABLED', () => {
+    // Turning it on in any environment is Geovet's decision (ADR-0193): this test changes with it.
+    const root = new URL('../../../', import.meta.url);
+    const files = (dir: URL): URL[] =>
+      readdirSync(dir).flatMap((name) => {
+        if (name === 'node_modules' || name === '.terraform') return [];
+        const url = new URL(name, dir);
+        return statSync(url).isDirectory() ? files(new URL(`${name}/`, dir)) : [url];
+      });
+    const deployed = [
+      ...files(new URL('infra/', root)),
+      ...files(new URL('.github/', root)),
+      new URL('apps/api/Dockerfile', root),
+      new URL('apps/worker/Dockerfile', root),
+      new URL('apps/web/Dockerfile', root),
+    ];
+    expect(deployed.length).toBeGreaterThan(20);
+    const setting = deployed.filter((url) =>
+      readFileSync(url, 'utf8').includes('INVOICING_ENABLED'),
+    );
+    expect(setting.map((url) => url.pathname)).toEqual([]);
   });
 
   it('reads the environment', () => {
@@ -58,6 +93,7 @@ describe('loadConfig', () => {
       port: 3000,
       logLevel: 'debug',
       version: 'abc',
+      invoicingEnabled: false,
     });
   });
 

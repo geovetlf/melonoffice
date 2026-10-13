@@ -375,9 +375,11 @@ export type ChannelConnectionStatus =
 /**
  * The kinds of outside service the Integration Engine connects to (ADR-0044). Messaging is the
  * only one with an adapter today; the others are named so that plans can list them
- * (`integrations.categoriesAllowed`), not because anything implements them.
+ * (`integrations.categoriesAllowed`), not because anything implements them. `invoicing` is an
+ * organization's own invoicing system, read through the Billing Integration Gateway (ADR-0193).
  */
-export type IntegrationCategory = 'messaging' | 'email' | 'calendar' | 'crm' | 'storage';
+export type IntegrationCategory =
+  'messaging' | 'email' | 'calendar' | 'crm' | 'storage' | 'invoicing';
 
 /**
  * One official provider API, e.g. `meta_whatsapp_cloud` (Meta's WhatsApp Cloud API). Named by

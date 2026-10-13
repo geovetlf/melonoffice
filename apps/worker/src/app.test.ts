@@ -50,7 +50,19 @@ describe('unknown routes', () => {
 
 describe('loadConfig', () => {
   it('uses safe defaults', () => {
-    expect(loadConfig({})).toEqual({ port: 8080, logLevel: 'info', version: 'dev', agents: {} });
+    expect(loadConfig({})).toEqual({
+      port: 8080,
+      logLevel: 'info',
+      version: 'dev',
+      agents: {},
+      invoicingEnabled: false,
+    });
+  });
+
+  it('turns invoicing syncs on only with INVOICING_ENABLED=true (ADR-0193)', () => {
+    expect(loadConfig({ INVOICING_ENABLED: 'true' }).invoicingEnabled).toBe(true);
+    expect(loadConfig({ INVOICING_ENABLED: 'false' }).invoicingEnabled).toBe(false);
+    expect(() => loadConfig({ INVOICING_ENABLED: 'yes' })).toThrow('Invalid INVOICING_ENABLED');
   });
 
   it('reads the environment', () => {
@@ -59,6 +71,7 @@ describe('loadConfig', () => {
       logLevel: 'debug',
       version: 'abc',
       agents: {},
+      invoicingEnabled: false,
     });
   });
 

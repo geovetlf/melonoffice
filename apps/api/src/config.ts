@@ -62,6 +62,8 @@ export interface ServiceConfig {
    * Terraform. Unset: uploads and downloads answer 503 (`storage_unavailable`).
    */
   readonly documentsBucket?: string;
+  /** The Billing Integration Gateway (ADR-0193): `INVOICING_ENABLED=true`. Off otherwise. */
+  readonly invoicingEnabled: boolean;
   /**
    * Where an agent's first job is handed to the worker (CV-6B, ADR-0043): `JOB_QUEUE`,
    * `WORKER_URL`, `JOB_INVOKER_EMAIL` and `JOB_LEASE_MS`, all or none, the worker's own values.
@@ -231,5 +233,18 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): S
       : { vertexAI: { projectId: vertexProjectId, location: vertexLocation } }),
     ...(jobTransport === undefined ? {} : { jobTransport }),
     ...(documentsBucket === undefined ? {} : { documentsBucket }),
+    invoicingEnabled: invoicingEnabledOf(env),
   };
+}
+
+/**
+ * `INVOICING_ENABLED`: the Billing Integration Gateway (ADR-0193), off unless exactly `true`.
+ * Nothing in Terraform sets it, so it is off in every deployed environment until that is decided.
+ */
+export function invoicingEnabledOf(env: Readonly<Record<string, string | undefined>>): boolean {
+  const value = env.INVOICING_ENABLED ?? '';
+  if (value !== '' && value !== 'true' && value !== 'false') {
+    throw new Error(`Invalid INVOICING_ENABLED: ${value}`);
+  }
+  return value === 'true';
 }

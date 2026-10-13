@@ -27,3 +27,4 @@ export type * from './ai-usage.js';
 export type * from './document.js';
 export type * from './commercial.js';
 export type * from './brand.js';
+export type * from './invoicing.js';

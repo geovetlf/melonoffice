@@ -63,6 +63,7 @@ import {
   FirestoreEventOutbox,
   FirestoreExecutionRepository,
   FirestoreForecastRepository,
+  FirestoreInvoicingRepository,
   FirestoreJobRepository,
   FirestoreKnowledgeRepository,
   FirestorePlanRepository,
@@ -75,11 +76,14 @@ import {
 import {
   createIntegrationEngine,
   createIntegrationRegistry,
+  createInvoicingGateway,
+  createPeUblAdapter,
   aiProviderKeysFromSecrets,
   createSecretManagerStore,
   createWhatsAppAdapter,
   deliveryPolicyFromEnv,
   isAISecretRef,
+  isInvoicingSecretRef,
 } from '@melonoffice/integrations';
 import { createFollowUpService } from '@melonoffice/conversations';
 import { createEventBus } from '@melonoffice/events';
@@ -103,6 +107,7 @@ import { createCloudTasksDispatcher, createCloudTasksScheduler } from './dispatc
 import { createEventHandler, RUN_EVENT_PATH } from './events.js';
 import { createFollowUpHandler, RUN_FOLLOW_UP_PATH } from './follow-ups.js';
 import { createForecastHandler } from './forecasts.js';
+import { createInvoicingSyncHandler, RUN_INVOICING_SYNC_PATH } from './invoicing.js';
 import { createJobHandler } from './handler.js';
 import { createWorkerRuntime } from './runtime.js';
 import { createPlanWakeHandler, createPlanWakeups, RUN_PLAN_WAKE_PATH } from './plan-wakeups.js';
@@ -530,11 +535,43 @@ function jobs(runtime: RuntimeConfig): NonNullable<AppOptions['jobs']> {
             logger: logger.child({ component: 'plans' }),
           }),
         }),
+    // Invoicing syncs (ADR-0193), only where `INVOICING_ENABLED` is on: they read providers'
+    // records through the gateway, which re-reads each sync and its connection. The worker never
+    // creates or changes a connection, so the plan is never asked here.
+    ...(config.invoicingEnabled ? { invoicing: invoicingSyncs(firestore, runtime) } : {}),
     invoker: createServiceIdentityVerifier({
       audience: runtime.workerUrl,
       allowedEmails: [runtime.invokerEmail],
     }),
   };
+}
+
+function invoicingSyncs(firestore: Firestore, runtime: RuntimeConfig) {
+  const repository = new FirestoreInvoicingRepository(firestore);
+  const tenancy = new FirestoreTenancyStore(firestore);
+  return createInvoicingSyncHandler({
+    gateway: createInvoicingGateway({
+      repository,
+      registry: createIntegrationRegistry([], { invoicing: [createPeUblAdapter()] }),
+      // No provider registered today reads with credentials.
+      secrets: createSecretManagerStore({ accepts: isInvoicingSecretRef }),
+      organizations: tenancy,
+      authorization: createAuthorizationService(),
+      entitlements: {
+        entitlementsOf: async () => ({ status: 'unavailable', reason: 'plan_missing' }),
+      },
+    }),
+    syncs: repository,
+    scheduler: createCloudTasksScheduler({
+      queue: runtime.queue,
+      targetUrl: `${runtime.workerUrl}${RUN_INVOICING_SYNC_PATH}`,
+      audience: runtime.workerUrl,
+      invokerEmail: runtime.invokerEmail,
+      dispatchDeadlineSeconds: Math.ceil(runtime.leaseMs / 1000),
+    }),
+    workerId,
+    logger: logger.child({ component: 'invoicing' }),
+  });
 }
 
 logger.info('runtime', { enabled: config.runtime !== undefined, workerId });
