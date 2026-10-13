@@ -849,6 +849,36 @@ export const AUDIT_ACTIONS = {
       "The provider refused a channel connection's credentials during a send: it is in error until a person checks it again (ADR-0044).",
     results: ['failure'],
   },
+  'channel.invoicing_connection_created': {
+    category: 'channel',
+    description:
+      "A person connected the organization's invoicing system through the Billing Integration Gateway; its secrets are references only (ADR-0193).",
+    results: ['success'],
+  },
+  'channel.invoicing_connection_checked': {
+    category: 'channel',
+    description:
+      "An invoicing connection's credentials were checked with its provider: connected, or in error with the provider's code (ADR-0193).",
+    results: ['success', 'failure'],
+  },
+  'channel.invoicing_connection_changed': {
+    category: 'channel',
+    description:
+      'A person renamed, paused, turned off or deleted an invoicing connection; the reason is its new status (ADR-0193). Synced records are kept.',
+    results: ['success'],
+  },
+  'channel.invoicing_sync_started': {
+    category: 'channel',
+    description:
+      'A read of one kind of record from an invoicing connection was started: by a person, a webhook, a schedule or a file import (the reason). It reads only (ADR-0193).',
+    results: ['success'],
+  },
+  'channel.invoicing_sync_finished': {
+    category: 'channel',
+    description:
+      'A read from an invoicing connection ended: completed, incomplete with its reason, or failed with a stable code (ADR-0193). Counts only, never content.',
+    results: ['success', 'failure'],
+  },
   'channel.template_registered': {
     category: 'channel',
     description:

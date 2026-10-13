@@ -26,7 +26,15 @@ export type IntegrationErrorCode =
   | 'invalid_outbound'
   // Templates (ADR-0046).
   | 'invalid_template'
-  | 'template_not_found';
+  | 'template_not_found'
+  // Billing Integration Gateway (ADR-0193).
+  | 'capability_missing'
+  | 'sync_not_found'
+  | 'sync_in_progress'
+  | 'sync_not_resumable'
+  | 'invalid_file'
+  | 'file_too_large'
+  | 'record_not_found';
 
 export class IntegrationError extends Error {
   override readonly name = 'IntegrationError';

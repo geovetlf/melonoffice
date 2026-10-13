@@ -52,6 +52,8 @@ export interface AuditTarget {
     | 'conversation'
     | 'channel_connection'
     | 'channel_template'
+    | 'invoicing_connection'
+    | 'invoicing_sync'
     | 'message'
     | 'department'
     | 'specialist'

@@ -15,4 +15,6 @@ The Integration Engine ([ADR-0044](../../docs/adr/0044-integration-engine.md)): 
 
 - `agent-turns.ts` ([ADR-0043](../../docs/adr/0043-conversation-agent.md)): an agent's turn; before any model call it asks the engine whether the connection could send.
 
+- `invoicing/` ([ADR-0193](../../docs/adr/0193-billing-integration-gateway.md)): the Billing Integration Gateway, which reads an organization's own invoicing system (not MelonOffice's billing). `contract.ts` is the adapter contract (capabilities as data, read only: no method issues, voids or sends); `gateway.ts` is its only caller: connections on the same lifecycle and Secret Manager, leased, bounded and idempotent syncs with explicit incomplete states, verified webhooks as hints, file imports. `model.ts` checks normalized records and sums exact amounts; `store.ts` is the repository port and its in-memory store; `metrics.ts` counts usage and estimates costs only from sourced unit costs; `contract-suite.ts` is what every adapter passes; `double.ts` is a test double; `pe/sunat.ts` holds Peru's codes for Peruvian adapters. No real provider is registered.
+
 Nothing here sends on its own: a message leaves only through the tool gate, for a person or for an agent within its autonomy level. There are no templates or media.

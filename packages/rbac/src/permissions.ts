@@ -286,6 +286,18 @@ export const PERMISSIONS = {
     description:
       'Delete a connection for good (revoked): it is kept only as history and never used again (ADR-0044).',
   },
+  'invoicing.read': {
+    resource: 'invoicing',
+    action: 'read',
+    description:
+      "See what was read from the organization's own invoicing system: parties, fiscal documents, payments, syncs and their figures (ADR-0193). Never secrets.",
+  },
+  'invoicing.sync': {
+    resource: 'invoicing',
+    action: 'sync',
+    description:
+      'Start a read from an invoicing connection, resume one that stopped, or import an exported file (ADR-0193). Reads only: nothing is issued, voided or changed at the provider.',
+  },
   'credits.read': {
     resource: 'credits',
     action: 'read',

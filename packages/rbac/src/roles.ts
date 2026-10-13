@@ -61,6 +61,8 @@ export const ROLES = {
     'channel.update',
     'channel.disconnect',
     'channel.delete',
+    'invoicing.read',
+    'invoicing.sync',
     'relationship.read',
     'relationship.manage',
     'brand.manage',
